@@ -1,0 +1,63 @@
+[project]
+name = "home-finder"
+version = "0.1.0"
+description = "Multi-platform London rental property scraper with commute filtering and Telegram notifications"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "crawlee[beautifulsoup,playwright]>=0.5",
+    "traveltimepy>=4.0",
+    "aiogram>=3.4",
+    "pydantic>=2.6",
+    "pydantic-settings>=2.2",
+    "aiosqlite>=0.20",
+    "structlog>=24.1",
+    "curl-cffi>=0.7",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.24",
+    "pytest-httpx>=0.35",
+    "aioresponses>=0.7",
+    "pytest-cov>=6.0",
+    "hypothesis>=6.100",
+    "ruff>=0.8",
+    "mypy>=1.13",
+]
+
+[project.scripts]
+home-finder = "home_finder.main:main"
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+testpaths = ["tests"]
+addopts = "-v --tb=short"
+markers = [
+    "unit: Unit tests (fast, no I/O)",
+    "integration: Integration tests (may use in-memory DB)",
+    "slow: Slow tests (network, real scraping)",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+
+[tool.uv]
+package = true
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/home_finder"]

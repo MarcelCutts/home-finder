@@ -1,0 +1,34 @@
+{
+  "results": [
+    {
+      "search_id": "property-search",
+      "locations": [
+        {
+          "id": "loc-1",
+          "properties": [
+            {
+              "travel_time": 1200
+            }
+          ]
+        },
+        {
+          "id": "loc-2",
+          "properties": [
+            {
+              "travel_time": 2400
+            }
+          ]
+        },
+        {
+          "id": "loc-3",
+          "properties": [
+            {
+              "travel_time": 900
+            }
+          ]
+        }
+      ],
+      "unreachable": []
+    }
+  ]
+}
