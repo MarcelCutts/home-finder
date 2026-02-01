@@ -246,6 +246,185 @@ class TestCommuteFilter:
         # Should return empty results on geocoding failure
         assert len(results) == 0
 
+    def test_client_configured_with_rate_limiting(self) -> None:
+        """Test that client is configured with rate limiting parameters."""
+        commute_filter = CommuteFilter(
+            app_id="test-app-id",
+            api_key="test-api-key",
+            destination_postcode="N1 5AA",
+        )
+
+        with patch("traveltimepy.AsyncClient") as mock_client_class:
+            commute_filter._get_client()
+            mock_client_class.assert_called_once_with(
+                app_id="test-app-id",
+                api_key="test-api-key",
+                max_rpm=50,
+                retry_attempts=3,
+                timeout=60,
+            )
+
+    @pytest.mark.asyncio
+    async def test_geocoding_uses_cache_on_second_call(
+        self, sample_properties: list[Property]
+    ) -> None:
+        """Test that geocoding results are cached and reused."""
+        # Clear the cache before test
+        CommuteFilter._geocoding_cache.clear()
+
+        commute_filter = CommuteFilter(
+            app_id="test-app-id",
+            api_key="test-api-key",
+            destination_postcode="N1 5AA",
+        )
+
+        # Mock time_filter response
+        mock_location = MagicMock()
+        mock_location.id = "openrent:1"
+        mock_location.properties = [MagicMock(travel_time=1200)]
+
+        mock_search_result = MagicMock()
+        mock_search_result.locations = [mock_location]
+
+        mock_response = MagicMock()
+        mock_response.results = [mock_search_result]
+
+        # Mock geocoding response
+        mock_geocoding_response = MagicMock()
+        mock_geocoding_feature = MagicMock()
+        mock_geocoding_feature.geometry.coordinates = [-0.0934, 51.5448]
+        mock_geocoding_response.features = [mock_geocoding_feature]
+
+        mock_client = AsyncMock()
+        mock_client.geocoding = AsyncMock(return_value=mock_geocoding_response)
+        mock_client.time_filter = AsyncMock(return_value=mock_response)
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=None)
+
+        with patch.object(commute_filter, "_get_client", return_value=mock_client):
+            # First call - should hit API
+            await commute_filter.filter_properties(
+                sample_properties,
+                max_minutes=30,
+                transport_mode=TransportMode.CYCLING,
+            )
+
+            # Second call - should use cache
+            await commute_filter.filter_properties(
+                sample_properties,
+                max_minutes=30,
+                transport_mode=TransportMode.CYCLING,
+            )
+
+        # Geocoding should only be called once (first call)
+        assert mock_client.geocoding.call_count == 1
+
+    @pytest.mark.asyncio
+    async def test_geocoding_cache_stores_result(self) -> None:
+        """Test that geocoding results are stored in cache."""
+        # Clear the cache before test
+        CommuteFilter._geocoding_cache.clear()
+
+        commute_filter = CommuteFilter(
+            app_id="test-app-id",
+            api_key="test-api-key",
+            destination_postcode="SW1A 1AA",
+        )
+
+        # Mock geocoding response
+        mock_geocoding_response = MagicMock()
+        mock_geocoding_feature = MagicMock()
+        mock_geocoding_feature.geometry.coordinates = [-0.1276, 51.5034]  # lon, lat
+        mock_geocoding_response.features = [mock_geocoding_feature]
+
+        mock_client = AsyncMock()
+        mock_client.geocoding = AsyncMock(return_value=mock_geocoding_response)
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=None)
+
+        with patch.object(commute_filter, "_get_client", return_value=mock_client):
+            result = await commute_filter._geocode_postcode("SW1A 1AA")
+
+        assert result == (51.5034, -0.1276)
+        assert "SW1A 1AA" in CommuteFilter._geocoding_cache
+        assert CommuteFilter._geocoding_cache["SW1A 1AA"] == (51.5034, -0.1276)
+
+    @pytest.mark.asyncio
+    async def test_rate_limit_error_logged_as_warning(
+        self, sample_properties: list[Property]
+    ) -> None:
+        """Test that rate limit errors are logged as warnings, not errors."""
+        commute_filter = CommuteFilter(
+            app_id="test-app-id",
+            api_key="test-api-key",
+            destination_postcode="N1 5AA",
+        )
+
+        # Mock geocoding response
+        mock_geocoding_response = MagicMock()
+        mock_geocoding_feature = MagicMock()
+        mock_geocoding_feature.geometry.coordinates = [-0.0934, 51.5448]
+        mock_geocoding_response.features = [mock_geocoding_feature]
+
+        mock_client = AsyncMock()
+        mock_client.geocoding = AsyncMock(return_value=mock_geocoding_response)
+        mock_client.time_filter = AsyncMock(side_effect=Exception("Rate limit exceeded (429)"))
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=None)
+
+        with (
+            patch.object(commute_filter, "_get_client", return_value=mock_client),
+            patch("home_finder.filters.commute.logger") as mock_logger,
+        ):
+            results = await commute_filter.filter_properties(
+                sample_properties,
+                max_minutes=30,
+                transport_mode=TransportMode.CYCLING,
+            )
+
+        assert results == []
+        mock_logger.warning.assert_called_once()
+        call_args = mock_logger.warning.call_args
+        assert call_args[0][0] == "rate_limit_hit"
+
+    @pytest.mark.asyncio
+    async def test_general_api_error_logged_as_error(
+        self, sample_properties: list[Property]
+    ) -> None:
+        """Test that non-rate-limit errors are logged as errors."""
+        commute_filter = CommuteFilter(
+            app_id="test-app-id",
+            api_key="test-api-key",
+            destination_postcode="N1 5AA",
+        )
+
+        # Mock geocoding response
+        mock_geocoding_response = MagicMock()
+        mock_geocoding_feature = MagicMock()
+        mock_geocoding_feature.geometry.coordinates = [-0.0934, 51.5448]
+        mock_geocoding_response.features = [mock_geocoding_feature]
+
+        mock_client = AsyncMock()
+        mock_client.geocoding = AsyncMock(return_value=mock_geocoding_response)
+        mock_client.time_filter = AsyncMock(side_effect=Exception("Network connection error"))
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=None)
+
+        with (
+            patch.object(commute_filter, "_get_client", return_value=mock_client),
+            patch("home_finder.filters.commute.logger") as mock_logger,
+        ):
+            results = await commute_filter.filter_properties(
+                sample_properties,
+                max_minutes=30,
+                transport_mode=TransportMode.CYCLING,
+            )
+
+        assert results == []
+        mock_logger.error.assert_called_once()
+        call_args = mock_logger.error.call_args
+        assert call_args[0][0] == "traveltime_api_error"
+
 
 class TestCommuteResult:
     """Tests for CommuteResult model."""

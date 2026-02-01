@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, ClassVar
 
 from pydantic import BaseModel, ConfigDict
 
@@ -31,6 +31,9 @@ class CommuteResult(BaseModel):
 class CommuteFilter:
     """Filter properties by commute time using TravelTime API."""
 
+    # Class-level cache for geocoding results to avoid redundant API calls
+    _geocoding_cache: ClassVar[dict[str, tuple[float, float]]] = {}
+
     def __init__(
         self,
         *,
@@ -51,13 +54,16 @@ class CommuteFilter:
         self._client: AsyncClient | None = None
 
     def _get_client(self) -> AsyncClient:
-        """Lazily initialize the TravelTime async client."""
+        """Lazily initialize the TravelTime async client with rate limiting."""
         if self._client is None:
             from traveltimepy import AsyncClient
 
             self._client = AsyncClient(
                 app_id=self.app_id,
                 api_key=self.api_key,
+                max_rpm=50,  # Stay under 60 limit with safety margin
+                retry_attempts=3,  # Retry transient failures
+                timeout=60,  # Reasonable timeout in seconds
             )
         return self._client
 
@@ -165,7 +171,11 @@ class CommuteFilter:
                     arrival_searches=[arrival_search],
                 )
         except Exception as e:
-            logger.error("traveltime_api_error", error=str(e))
+            error_str = str(e).lower()
+            if "rate limit" in error_str or "429" in error_str:
+                logger.warning("rate_limit_hit", error=str(e))
+            else:
+                logger.error("traveltime_api_error", error=str(e))
             return []
 
         # Process results
@@ -203,6 +213,11 @@ class CommuteFilter:
         Returns:
             Tuple of (latitude, longitude) or None if geocoding fails.
         """
+        # Check cache first
+        if postcode in self._geocoding_cache:
+            logger.debug("geocoding_cache_hit", postcode=postcode)
+            return self._geocoding_cache[postcode]
+
         try:
             client = self._get_client()
             async with client:
@@ -210,7 +225,9 @@ class CommuteFilter:
                 if response.features:
                     coords = response.features[0].geometry.coordinates
                     # GeoJSON uses [longitude, latitude] order
-                    return (coords[1], coords[0])
+                    result = (coords[1], coords[0])
+                    self._geocoding_cache[postcode] = result
+                    return result
         except Exception as e:
             logger.warning("geocoding_failed", postcode=postcode, error=str(e))
 

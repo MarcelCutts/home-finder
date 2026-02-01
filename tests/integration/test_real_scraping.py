@@ -15,6 +15,58 @@ from home_finder.scrapers import (
     RightmoveScraper,
     ZooplaScraper,
 )
+from home_finder.scrapers.rightmove import _outcode_cache, get_rightmove_outcode_id
+
+
+@pytest.mark.slow
+@pytest.mark.asyncio
+class TestRealRightmoveOutcodeMapping:
+    """Real e2e tests for Rightmove outcode mapping and scraping."""
+
+    @pytest.fixture(autouse=True)
+    def clear_cache(self) -> None:
+        """Clear the outcode cache before each test."""
+        _outcode_cache.clear()
+
+    @pytest.mark.parametrize(
+        "outcode,expected_id",
+        [
+            ("E8", "OUTCODE%5E762"),
+            ("E3", "OUTCODE%5E756"),
+            ("E5", "OUTCODE%5E758"),
+            ("E9", "OUTCODE%5E763"),
+            ("E10", "OUTCODE%5E745"),
+            ("N15", "OUTCODE%5E1672"),
+        ],
+    )
+    async def test_outcode_mapping_exists(self, outcode: str, expected_id: str):
+        """Test that hardcoded outcode mappings exist and are correct."""
+        from home_finder.scrapers.rightmove import RIGHTMOVE_OUTCODES
+
+        location_id = RIGHTMOVE_OUTCODES.get(outcode)
+        assert location_id is not None, f"No mapping for outcode {outcode}"
+        assert location_id == expected_id, (
+            f"Expected {expected_id} for {outcode}, got {location_id}"
+        )
+        print(f"\n{outcode} -> {location_id}")
+
+    async def test_all_target_outcodes_mapped(self):
+        """Test that all target outcodes have hardcoded mappings."""
+        from home_finder.scrapers.rightmove import RIGHTMOVE_OUTCODES
+
+        target_outcodes = ["E3", "E5", "E8", "E9", "E10", "N15"]
+        missing = []
+
+        print("\n--- Outcode Mapping Results ---")
+        for outcode in target_outcodes:
+            location_id = RIGHTMOVE_OUTCODES.get(outcode)
+            if location_id:
+                print(f"  {outcode}: {location_id} [OK]")
+            else:
+                missing.append(outcode)
+                print(f"  {outcode}: NOT MAPPED [FAILED]")
+
+        assert not missing, f"Missing outcode mappings: {missing}"
 
 
 @pytest.mark.slow
@@ -90,6 +142,48 @@ class TestRealRightmoveScraping:
             print(f"  Sample: {prop.title}")
             print(f"  Price: £{prop.price_pcm}/month")
             print(f"  Beds: {prop.bedrooms}")
+            print(f"  URL: {prop.url}")
+
+    @pytest.mark.parametrize(
+        "outcode,area_name",
+        [
+            ("E8", "Hackney Central/Dalston"),
+            ("E3", "Bow"),
+            ("N15", "South Tottenham"),
+            ("E10", "Leyton"),
+        ],
+    )
+    async def test_scrape_rightmove_by_outcode(self, outcode: str, area_name: str):
+        """Scrape real Rightmove listings by postcode outcode."""
+        scraper = RightmoveScraper()
+
+        properties = await scraper.scrape(
+            min_price=1500,
+            max_price=2500,
+            min_bedrooms=1,
+            max_bedrooms=2,
+            area=outcode,
+        )
+
+        assert isinstance(properties, list)
+        print(f"\nRightmove ({outcode} - {area_name}): Found {len(properties)} properties")
+
+        if properties:
+            prop = properties[0]
+            assert prop.source == PropertySource.RIGHTMOVE
+            assert prop.source_id is not None
+            assert prop.url is not None
+            assert "rightmove" in str(prop.url).lower()
+            assert prop.price_pcm > 0
+            assert prop.bedrooms >= 0
+            assert prop.title
+            assert prop.address
+
+            print(f"  Sample: {prop.title}")
+            print(f"  Price: £{prop.price_pcm}/month")
+            print(f"  Beds: {prop.bedrooms}")
+            if prop.postcode:
+                print(f"  Postcode: {prop.postcode}")
             print(f"  URL: {prop.url}")
 
 

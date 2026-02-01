@@ -20,8 +20,20 @@ from home_finder.scrapers import (
 
 logger = get_logger(__name__)
 
-# Borough search areas
-SEARCH_BOROUGHS = ["hackney", "islington", "haringey", "tower-hamlets"]
+# Search areas - supports both boroughs and postcodes (outcodes)
+SEARCH_AREAS = [
+    # Boroughs
+    "hackney",
+    "islington",
+    "haringey",
+    "tower-hamlets",
+    # Postcodes
+    "e3",  # Bow (Tower Hamlets)
+    "e5",  # Clapton (Hackney)
+    "e9",  # Hackney Wick, Homerton (Hackney)
+    "e10",  # Leyton (Waltham Forest)
+    "n15",  # South Tottenham (Haringey)
+]
 
 
 async def scrape_all_platforms(
@@ -52,32 +64,32 @@ async def scrape_all_platforms(
     all_properties: list[Property] = []
 
     for scraper in scrapers:
-        for borough in SEARCH_BOROUGHS:
+        for area in SEARCH_AREAS:
             try:
                 logger.info(
                     "scraping_platform",
                     platform=scraper.source.value,
-                    borough=borough,
+                    area=area,
                 )
                 properties = await scraper.scrape(
                     min_price=min_price,
                     max_price=max_price,
                     min_bedrooms=min_bedrooms,
                     max_bedrooms=max_bedrooms,
-                    area=borough,
+                    area=area,
                 )
                 all_properties.extend(properties)
                 logger.info(
                     "scraping_complete",
                     platform=scraper.source.value,
-                    borough=borough,
+                    area=area,
                     count=len(properties),
                 )
             except Exception as e:
                 logger.error(
                     "scraping_failed",
                     platform=scraper.source.value,
-                    borough=borough,
+                    area=area,
                     error=str(e),
                 )
 

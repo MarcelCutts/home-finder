@@ -3,6 +3,7 @@
 import re
 from urllib.parse import urljoin
 
+import httpx
 from bs4 import BeautifulSoup, Tag
 from crawlee.crawlers import BeautifulSoupCrawler, BeautifulSoupCrawlingContext
 from pydantic import HttpUrl
@@ -10,8 +11,60 @@ from pydantic import HttpUrl
 from home_finder.logging import get_logger
 from home_finder.models import Property, PropertySource
 from home_finder.scrapers.base import BaseScraper
+from home_finder.scrapers.location_utils import is_outcode
 
 logger = get_logger(__name__)
+
+# Cache for discovered outcode identifiers
+_outcode_cache: dict[str, str] = {}
+
+
+async def get_rightmove_outcode_id(outcode: str) -> str | None:
+    """Look up Rightmove location identifier for an outcode via typeahead API.
+
+    Args:
+        outcode: UK postcode outcode (e.g., "E8", "N15").
+
+    Returns:
+        Rightmove location identifier (e.g., "OUTCODE^707") or None if not found.
+    """
+    outcode = outcode.upper()
+
+    if outcode in _outcode_cache:
+        return _outcode_cache[outcode]
+
+    # Tokenize: split into 2-char chunks
+    tokens = [outcode[i : i + 2] for i in range(0, len(outcode), 2)]
+    tokenized = "/".join(tokens) + "/"
+
+    url = f"https://www.rightmove.co.uk/typeAhead/uknostreet/{tokenized}"
+
+    try:
+        async with httpx.AsyncClient() as client:
+            resp = await client.get(url, timeout=10)
+            if resp.status_code == 200:
+                data = resp.json()
+                for loc in data.get("typeAheadLocations", []):
+                    name = loc.get("displayName", "").upper()
+                    # Match exact outcode or outcode followed by comma/space
+                    if (
+                        name == outcode
+                        or name.startswith(f"{outcode},")
+                        or name.startswith(f"{outcode} ")
+                    ):
+                        identifier = loc.get("locationIdentifier")
+                        if identifier:
+                            _outcode_cache[outcode] = identifier
+                            logger.debug(
+                                "rightmove_outcode_resolved",
+                                outcode=outcode,
+                                identifier=identifier,
+                            )
+                            return identifier
+    except Exception as e:
+        logger.warning("rightmove_outcode_lookup_error", outcode=outcode, error=str(e))
+
+    return None
 
 
 # Mapping of common area names to Rightmove location identifiers
@@ -22,6 +75,35 @@ RIGHTMOVE_LOCATIONS = {
     "haringey": "REGION%5E93963",
     "tower-hamlets": "REGION%5E94034",
     "tower hamlets": "REGION%5E94034",
+}
+
+# Mapping of UK outcodes to Rightmove OUTCODE identifiers
+# These are pre-discovered identifiers (the typeahead API is unreliable)
+RIGHTMOVE_OUTCODES = {
+    # East London
+    "E1": "OUTCODE%5E743",
+    "E2": "OUTCODE%5E755",
+    "E3": "OUTCODE%5E756",  # Bow
+    "E4": "OUTCODE%5E757",
+    "E5": "OUTCODE%5E758",  # Clapton
+    "E6": "OUTCODE%5E759",
+    "E7": "OUTCODE%5E760",
+    "E8": "OUTCODE%5E762",  # Hackney Central, Dalston
+    "E9": "OUTCODE%5E763",  # Hackney Wick, Homerton
+    "E10": "OUTCODE%5E745",  # Leyton
+    "E11": "OUTCODE%5E746",
+    "E14": "OUTCODE%5E749",
+    "E15": "OUTCODE%5E750",
+    "E17": "OUTCODE%5E752",
+    # North London
+    "N1": "OUTCODE%5E1666",
+    "N4": "OUTCODE%5E1682",
+    "N5": "OUTCODE%5E1683",
+    "N7": "OUTCODE%5E1685",
+    "N8": "OUTCODE%5E1686",
+    "N15": "OUTCODE%5E1672",  # South Tottenham
+    "N16": "OUTCODE%5E1673",
+    "N17": "OUTCODE%5E1674",
 }
 
 
@@ -46,7 +128,7 @@ class RightmoveScraper(BaseScraper):
         """Scrape Rightmove for matching properties."""
         properties: list[Property] = []
 
-        url = self._build_search_url(
+        url = await self._build_search_url(
             area=area,
             min_price=min_price,
             max_price=max_price,
@@ -71,7 +153,7 @@ class RightmoveScraper(BaseScraper):
 
         return properties
 
-    def _build_search_url(
+    async def _build_search_url(
         self,
         *,
         area: str,
@@ -80,10 +162,30 @@ class RightmoveScraper(BaseScraper):
         min_bedrooms: int,
         max_bedrooms: int,
     ) -> str:
-        """Build the Rightmove search URL with filters."""
-        # Normalize area name and look up location identifier
+        """Build the Rightmove search URL with filters.
+
+        Supports both borough names (e.g., "hackney") and postcodes (e.g., "E8").
+        """
         area_key = area.lower().replace("_", "-").replace(" ", "-")
-        location_id = RIGHTMOVE_LOCATIONS.get(area_key, RIGHTMOVE_LOCATIONS.get("hackney"))
+        area_upper = area.upper()
+
+        # Check if it's an outcode (postcode)
+        if is_outcode(area):
+            # First try hardcoded mapping (most reliable)
+            location_id = RIGHTMOVE_OUTCODES.get(area_upper)
+            if not location_id:
+                # Try API lookup for unknown outcodes
+                api_id = await get_rightmove_outcode_id(area)
+                if api_id:
+                    # URL encoding: ^ becomes %5E
+                    location_id = api_id.replace("^", "%5E")
+                else:
+                    logger.warning("rightmove_outcode_lookup_failed", outcode=area)
+                    # Fallback to hackney
+                    location_id = RIGHTMOVE_LOCATIONS.get("hackney", "REGION%5E93965")
+        else:
+            # Borough lookup
+            location_id = RIGHTMOVE_LOCATIONS.get(area_key, RIGHTMOVE_LOCATIONS.get("hackney"))
 
         params = [
             f"locationIdentifier={location_id}",
