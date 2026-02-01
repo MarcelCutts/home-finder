@@ -12,7 +12,6 @@ from home_finder.scrapers.zoopla_models import (
     ZooplaListingsAdapter,
     ZooplaListingUris,
     ZooplaNextData,
-    ZooplaPageProps,
     ZooplaPosition,
 )
 

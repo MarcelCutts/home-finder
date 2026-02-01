@@ -1,17 +1,19 @@
 """Integration tests for the full pipeline (excluding notifications)."""
 
+from collections.abc import AsyncGenerator
 from datetime import datetime
 
 import pytest
+import pytest_asyncio
 from pydantic import HttpUrl
 
 from home_finder.db import PropertyStorage
 from home_finder.filters import CriteriaFilter, Deduplicator
-from home_finder.models import Property, PropertySource, SearchCriteria, TransportMode
+from home_finder.models import Property, PropertySource, SearchCriteria
 
 
-@pytest.fixture
-async def storage():
+@pytest_asyncio.fixture
+async def storage() -> AsyncGenerator[PropertyStorage, None]:
     """Create an in-memory storage instance."""
     storage = PropertyStorage(":memory:")
     await storage.initialize()
@@ -20,7 +22,7 @@ async def storage():
 
 
 @pytest.fixture
-def mixed_properties():
+def mixed_properties() -> list[Property]:
     """Properties from multiple sources, some matching criteria, some not."""
     return [
         # Matches criteria (OpenRent)
@@ -81,7 +83,7 @@ def mixed_properties():
 
 
 @pytest.fixture
-def criteria():
+def criteria() -> SearchCriteria:
     """Standard search criteria."""
     return SearchCriteria(
         min_price=1800,
@@ -98,7 +100,9 @@ class TestFullPipeline:
     """Test the full scrape -> filter -> store pipeline."""
 
     @pytest.mark.asyncio
-    async def test_pipeline_filters_and_dedupes(self, storage, mixed_properties, criteria):
+    async def test_pipeline_filters_and_dedupes(
+        self, storage: PropertyStorage, mixed_properties: list[Property], criteria: SearchCriteria
+    ) -> None:
         """Properties go through criteria filter, deduplication, then storage."""
         # Step 1: Apply criteria filter
         criteria_filter = CriteriaFilter(criteria)
@@ -128,7 +132,9 @@ class TestFullPipeline:
         assert count == 2
 
     @pytest.mark.asyncio
-    async def test_pipeline_rerun_finds_no_new(self, storage, mixed_properties, criteria):
+    async def test_pipeline_rerun_finds_no_new(
+        self, storage: PropertyStorage, mixed_properties: list[Property], criteria: SearchCriteria
+    ) -> None:
         """Running pipeline twice should find no new properties second time."""
         criteria_filter = CriteriaFilter(criteria)
         deduplicator = Deduplicator(enable_cross_platform=True)
@@ -149,7 +155,9 @@ class TestFullPipeline:
         assert len(new2) == 0
 
     @pytest.mark.asyncio
-    async def test_pipeline_with_price_updates(self, storage, criteria):
+    async def test_pipeline_with_price_updates(
+        self, storage: PropertyStorage, criteria: SearchCriteria
+    ) -> None:
         """Properties with updated prices should be handled correctly."""
         prop_v1 = Property(
             source=PropertySource.OPENRENT,
@@ -193,7 +201,7 @@ class TestFullPipeline:
 class TestScraperToFilter:
     """Test scrapers output flows correctly into filters."""
 
-    def test_scraper_output_compatible_with_filter(self, criteria):
+    def test_scraper_output_compatible_with_filter(self, criteria: SearchCriteria) -> None:
         """Scraper output should work directly with CriteriaFilter."""
         # Simulate scraper output (list of Property)
         scraped = [
@@ -215,7 +223,7 @@ class TestScraperToFilter:
         assert len(result) == 1
         assert result[0].unique_id == "openrent:test1"
 
-    def test_filter_chain_preserves_property_data(self, criteria):
+    def test_filter_chain_preserves_property_data(self, criteria: SearchCriteria) -> None:
         """Filters should preserve all property data through the chain."""
         original = Property(
             source=PropertySource.RIGHTMOVE,
@@ -263,7 +271,7 @@ class TestFilterToStorage:
     """Test filtered properties store correctly."""
 
     @pytest.mark.asyncio
-    async def test_deduped_properties_store_correctly(self, storage):
+    async def test_deduped_properties_store_correctly(self, storage: PropertyStorage) -> None:
         """After deduplication, properties store and retrieve correctly."""
         props = [
             Property(
@@ -292,7 +300,7 @@ class TestFilterToStorage:
         assert stored.commute_minutes == 25
 
     @pytest.mark.asyncio
-    async def test_storage_handles_all_sources(self, storage):
+    async def test_storage_handles_all_sources(self, storage: PropertyStorage) -> None:
         """Storage should handle properties from all sources."""
         sources = [
             (PropertySource.OPENRENT, "openrent"),
@@ -329,7 +337,9 @@ class TestEdgeCases:
     """Test edge cases in the pipeline."""
 
     @pytest.mark.asyncio
-    async def test_empty_scrape_results(self, storage, criteria):
+    async def test_empty_scrape_results(
+        self, storage: PropertyStorage, criteria: SearchCriteria
+    ) -> None:
         """Pipeline handles empty scrape results gracefully."""
         criteria_filter = CriteriaFilter(criteria)
         deduplicator = Deduplicator(enable_cross_platform=True)
@@ -343,7 +353,7 @@ class TestEdgeCases:
         new = await storage.filter_new(unique)
         assert len(new) == 0
 
-    def test_all_properties_filtered_out(self, criteria):
+    def test_all_properties_filtered_out(self, criteria: SearchCriteria) -> None:
         """Pipeline handles when all properties are filtered out."""
         # All properties outside criteria
         expensive_properties = [
@@ -362,7 +372,7 @@ class TestEdgeCases:
         filtered = CriteriaFilter(criteria).filter_properties(expensive_properties)
         assert len(filtered) == 0
 
-    def test_properties_without_postcode_not_cross_deduped(self):
+    def test_properties_without_postcode_not_cross_deduped(self) -> None:
         """Properties without postcodes are kept even if otherwise similar."""
         props = [
             Property(

@@ -1,7 +1,5 @@
 """Tests for property criteria filtering."""
 
-from datetime import datetime
-
 import pytest
 from pydantic import HttpUrl
 

@@ -101,8 +101,8 @@ class TestRightmoveScraper:
                 min_bedrooms=1,
                 max_bedrooms=2,
             )
-            # Should fall back to hackney region
-            assert "REGION%5E93965" in url
+            # Should fall back to hackney region (correct ID is 93953)
+            assert "REGION%5E93953" in url
 
     @pytest.mark.asyncio
     async def test_build_search_url_all_target_outcodes(

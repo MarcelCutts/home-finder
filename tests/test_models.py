@@ -1,11 +1,9 @@
 """Tests for Pydantic models."""
 
-from datetime import datetime
-
 import pytest
 from hypothesis import given
 from hypothesis import strategies as st
-from pydantic import ValidationError
+from pydantic import HttpUrl, ValidationError
 
 from home_finder.models import (
     Property,
@@ -35,7 +33,7 @@ class TestProperty:
         prop = Property(
             source=PropertySource.OPENRENT,
             source_id="1",
-            url="https://example.com/1",
+            url=HttpUrl("https://example.com/1"),
             title="Test",
             price_pcm=1000,
             bedrooms=1,
@@ -49,7 +47,7 @@ class TestProperty:
         prop = Property(
             source=PropertySource.OPENRENT,
             source_id="1",
-            url="https://example.com/1",
+            url=HttpUrl("https://example.com/1"),
             title="Test",
             price_pcm=1000,
             bedrooms=1,
@@ -64,7 +62,7 @@ class TestProperty:
             Property(
                 source=PropertySource.OPENRENT,
                 source_id="1",
-                url="https://example.com/1",
+                url=HttpUrl("https://example.com/1"),
                 title="Test",
                 price_pcm=-100,
                 bedrooms=1,
@@ -78,7 +76,7 @@ class TestProperty:
             Property(
                 source=PropertySource.OPENRENT,
                 source_id="1",
-                url="https://example.com/1",
+                url=HttpUrl("https://example.com/1"),
                 title="Test",
                 price_pcm=1000,
                 bedrooms=-1,
@@ -92,7 +90,7 @@ class TestProperty:
             Property(
                 source=PropertySource.OPENRENT,
                 source_id="1",
-                url="https://example.com/1",
+                url=HttpUrl("https://example.com/1"),
                 title="Test",
                 price_pcm=1000,
                 bedrooms=1,
@@ -108,7 +106,7 @@ class TestProperty:
             Property(
                 source=PropertySource.OPENRENT,
                 source_id="1",
-                url="https://example.com/1",
+                url=HttpUrl("https://example.com/1"),
                 title="Test",
                 price_pcm=1000,
                 bedrooms=1,
@@ -124,7 +122,7 @@ class TestProperty:
             Property(
                 source=PropertySource.OPENRENT,
                 source_id="1",
-                url="https://example.com/1",
+                url=HttpUrl("https://example.com/1"),
                 title="Test",
                 price_pcm=1000,
                 bedrooms=1,
@@ -140,7 +138,7 @@ class TestProperty:
             Property(
                 source=PropertySource.OPENRENT,
                 source_id="1",
-                url="not-a-url",
+                url="not-a-url",  # type: ignore[arg-type]
                 title="Test",
                 price_pcm=1000,
                 bedrooms=1,
@@ -151,7 +149,7 @@ class TestProperty:
     def test_property_is_immutable(self, sample_property: Property) -> None:
         """Test that Property instances are immutable."""
         with pytest.raises(ValidationError):
-            sample_property.price_pcm = 2000  # type: ignore[misc]
+            sample_property.price_pcm = 2000
 
     @given(
         price=st.integers(min_value=0, max_value=100000),
@@ -162,7 +160,7 @@ class TestProperty:
         prop = Property(
             source=PropertySource.OPENRENT,
             source_id="1",
-            url="https://example.com/1",
+            url=HttpUrl("https://example.com/1"),
             title="Test",
             price_pcm=price,
             bedrooms=bedrooms,
@@ -247,7 +245,7 @@ class TestSearchCriteria:
         prop = Property(
             source=PropertySource.OPENRENT,
             source_id="1",
-            url="https://example.com/1",
+            url=HttpUrl("https://example.com/1"),
             title="Test",
             price_pcm=1500,  # Below 1800
             bedrooms=1,
@@ -260,7 +258,7 @@ class TestSearchCriteria:
         prop = Property(
             source=PropertySource.OPENRENT,
             source_id="1",
-            url="https://example.com/1",
+            url=HttpUrl("https://example.com/1"),
             title="Test",
             price_pcm=2500,  # Above 2200
             bedrooms=1,
@@ -275,7 +273,7 @@ class TestSearchCriteria:
         prop = Property(
             source=PropertySource.OPENRENT,
             source_id="1",
-            url="https://example.com/1",
+            url=HttpUrl("https://example.com/1"),
             title="Test",
             price_pcm=1900,
             bedrooms=0,  # Below 1
@@ -290,7 +288,7 @@ class TestSearchCriteria:
         prop = Property(
             source=PropertySource.OPENRENT,
             source_id="1",
-            url="https://example.com/1",
+            url=HttpUrl("https://example.com/1"),
             title="Test",
             price_pcm=1900,
             bedrooms=3,  # Above 2
@@ -304,7 +302,7 @@ class TestSearchCriteria:
         prop_min = Property(
             source=PropertySource.OPENRENT,
             source_id="1",
-            url="https://example.com/1",
+            url=HttpUrl("https://example.com/1"),
             title="Test",
             price_pcm=1800,
             bedrooms=1,
@@ -316,7 +314,7 @@ class TestSearchCriteria:
         prop_max = Property(
             source=PropertySource.OPENRENT,
             source_id="2",
-            url="https://example.com/2",
+            url=HttpUrl("https://example.com/2"),
             title="Test",
             price_pcm=2200,
             bedrooms=2,

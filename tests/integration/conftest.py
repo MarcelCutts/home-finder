@@ -4,12 +4,14 @@ Handles Crawlee state isolation between tests to prevent event loop conflicts.
 """
 
 import os
+from collections.abc import Generator
+from pathlib import Path
 
 import pytest
 
 
 @pytest.fixture(autouse=True)
-def reset_crawlee_state():
+def reset_crawlee_state() -> Generator[None, None, None]:
     """Reset Crawlee's global state between tests.
 
     Crawlee caches service locators and storage clients that are bound to
@@ -27,7 +29,7 @@ def reset_crawlee_state():
     _clear_crawlee_caches()
 
 
-def _clear_crawlee_caches():
+def _clear_crawlee_caches() -> None:
     """Clear Crawlee's internal caches and state."""
     try:
         from crawlee._service_locator import service_locator
@@ -72,7 +74,7 @@ def _clear_crawlee_caches():
 
 
 @pytest.fixture(autouse=True)
-def set_crawlee_storage_dir(tmp_path):
+def set_crawlee_storage_dir(tmp_path: Path) -> Generator[None, None, None]:
     """Use a temporary directory for Crawlee storage during tests.
 
     This prevents tests from interfering with each other through shared storage.

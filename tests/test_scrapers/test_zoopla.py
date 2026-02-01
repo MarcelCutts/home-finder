@@ -184,10 +184,11 @@ class TestZooplaJsonExtraction:
 
     def test_extract_next_data(self, zoopla_scraper: ZooplaScraper) -> None:
         """Test extraction of __NEXT_DATA__ script content."""
-        html = """
+        json_data = '{"props":{"pageProps":{"regularListingsFormatted":[]}}}'
+        html = f"""
         <html>
         <head>
-            <script id="__NEXT_DATA__" type="application/json">{"props":{"pageProps":{"regularListingsFormatted":[]}}}</script>
+            <script id="__NEXT_DATA__" type="application/json">{json_data}</script>
         </head>
         <body></body>
         </html>
@@ -218,7 +219,16 @@ class TestZooplaJsonExtraction:
     def test_extract_rsc_listings(self, zoopla_scraper: ZooplaScraper) -> None:
         """Test extraction from React Server Components format."""
         # Simulated RSC script content with escaped quotes
-        rsc_content = """self.__next_f.push([1,"\\"regularListingsFormatted\\":[{\\"listingId\\":123,\\"price\\":\\"£1850 pcm\\",\\"address\\":\\"Test Street\\",\\"title\\":\\"1 bed flat\\",\\"listingUris\\":{\\"detail\\":\\"/to-rent/details/123/\\"},\\"features\\":[{\\"iconId\\":\\"bed\\",\\"content\\":1}]}],\\"extendedListingsFormatted\\":[]"])"""
+        listing_json = (
+            '{\\"listingId\\":123,\\"price\\":\\"£1850 pcm\\",'
+            '\\"address\\":\\"Test Street\\",\\"title\\":\\"1 bed flat\\",'
+            '\\"listingUris\\":{\\"detail\\":\\"/to-rent/details/123/\\"},'
+            '\\"features\\":[{\\"iconId\\":\\"bed\\",\\"content\\":1}]}'
+        )
+        rsc_content = (
+            f'self.__next_f.push([1,"\\"regularListingsFormatted\\":'
+            f'[{listing_json}],\\"extendedListingsFormatted\\":[]"])'
+        )
         listings = zoopla_scraper._extract_rsc_listings(rsc_content)
         assert listings is not None
         assert len(listings) == 1
@@ -226,7 +236,10 @@ class TestZooplaJsonExtraction:
 
     def test_extract_rsc_listings_empty_array(self, zoopla_scraper: ZooplaScraper) -> None:
         """Test extraction when RSC has empty listings."""
-        rsc_content = """self.__next_f.push([1,"\\"regularListingsFormatted\\":[],\\"extendedListingsFormatted\\":[]"])"""
+        rsc_content = (
+            'self.__next_f.push([1,"\\"regularListingsFormatted\\":[],'
+            '\\"extendedListingsFormatted\\":[]"])'
+        )
         listings = zoopla_scraper._extract_rsc_listings(rsc_content)
         assert listings is not None
         assert len(listings) == 0

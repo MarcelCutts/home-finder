@@ -1,5 +1,7 @@
 """Tests for property storage with SQLite."""
 
+from collections.abc import AsyncGenerator
+
 import pytest
 import pytest_asyncio
 from pydantic import HttpUrl
@@ -46,7 +48,7 @@ def sample_property_2() -> Property:
 
 
 @pytest_asyncio.fixture
-async def storage() -> PropertyStorage:
+async def storage() -> AsyncGenerator[PropertyStorage, None]:
     """Create an in-memory storage instance."""
     storage = PropertyStorage(":memory:")
     await storage.initialize()

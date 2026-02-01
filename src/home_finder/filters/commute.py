@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, ClassVar
 
 from pydantic import BaseModel, ConfigDict
@@ -112,6 +112,8 @@ class CommuteFilter:
         from traveltimepy.requests.common import (
             Coordinates,
             Location,
+        )
+        from traveltimepy.requests.common import (
             Property as TravelTimeProperty,
         )
         from traveltimepy.requests.time_filter import TimeFilterArrivalSearch
@@ -156,7 +158,7 @@ class CommuteFilter:
             id="property-search",
             arrival_location_id="destination",
             departure_location_ids=[loc.id for loc in departure_locations],
-            arrival_time=datetime.now(timezone.utc),
+            arrival_time=datetime.now(UTC),
             travel_time=max_minutes * 60,  # Convert to seconds
             transportation=transportation,
             properties=[TravelTimeProperty.TRAVEL_TIME],

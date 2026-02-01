@@ -253,7 +253,7 @@ class TestOpenRentScraperIntegration:
                 mock_crawler_instance.router = MagicMock()
                 MockCrawler.return_value = mock_crawler_instance
 
-                properties = await openrent_scraper.scrape(
+                await openrent_scraper.scrape(
                     min_price=1800,
                     max_price=2500,
                     min_bedrooms=1,

@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 from hypothesis import HealthCheck, settings
+from pydantic import HttpUrl
 
 from home_finder.models import Property, PropertySource, SearchCriteria, TransportMode
 
@@ -31,7 +32,7 @@ def sample_property() -> Property:
     return Property(
         source=PropertySource.OPENRENT,
         source_id="12345",
-        url="https://www.openrent.com/property/12345",
+        url=HttpUrl("https://www.openrent.com/property/12345"),
         title="Spacious 1-bed flat in Hackney",
         price_pcm=1850,
         bedrooms=1,
@@ -50,7 +51,7 @@ def sample_property_no_coords() -> Property:
     return Property(
         source=PropertySource.RIGHTMOVE,
         source_id="67890",
-        url="https://www.rightmove.co.uk/properties/67890",
+        url=HttpUrl("https://www.rightmove.co.uk/properties/67890"),
         title="2-bed apartment in Islington",
         price_pcm=2100,
         bedrooms=2,

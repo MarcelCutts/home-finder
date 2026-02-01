@@ -3,11 +3,10 @@
 import argparse
 import asyncio
 import sys
-from pathlib import Path
 
 from home_finder.config import Settings
 from home_finder.db import PropertyStorage
-from home_finder.filters import CommuteFilter, CriteriaFilter, Deduplicator
+from home_finder.filters import CommuteFilter, CriteriaFilter, Deduplicator, LocationFilter
 from home_finder.logging import configure_logging, get_logger
 from home_finder.models import Property, TransportMode
 from home_finder.notifiers import TelegramNotifier
@@ -129,7 +128,9 @@ async def run_pipeline(settings: Settings) -> None:
                     await storage.mark_notified(tracked.property.unique_id)
                     logger.info("retry_notification_sent", unique_id=tracked.property.unique_id)
                 else:
-                    logger.warning("retry_notification_failed", unique_id=tracked.property.unique_id)
+                    logger.warning(
+                        "retry_notification_failed", unique_id=tracked.property.unique_id
+                    )
                 await asyncio.sleep(1)
 
         # Step 1: Scrape all platforms
@@ -154,6 +155,16 @@ async def run_pipeline(settings: Settings) -> None:
 
         if not filtered:
             logger.info("no_properties_match_criteria")
+            return
+
+        # Step 2.5: Apply location filter (catch scraper leakage)
+        logger.info("pipeline_started", phase="location_filtering")
+        location_filter = LocationFilter(SEARCH_AREAS, strict=False)
+        filtered = location_filter.filter_properties(filtered)
+        logger.info("location_filter_summary", matched=len(filtered))
+
+        if not filtered:
+            logger.info("no_properties_in_search_areas")
             return
 
         # Step 3: Deduplicate
@@ -199,12 +210,10 @@ async def run_pipeline(settings: Settings) -> None:
             commute_lookup: dict[str, tuple[int, TransportMode]] = {}
             for result in commute_results:
                 if result.within_limit:
-                    if result.property_id not in commute_lookup:
-                        commute_lookup[result.property_id] = (
-                            result.travel_time_minutes,
-                            result.transport_mode,
-                        )
-                    elif result.travel_time_minutes < commute_lookup[result.property_id][0]:
+                    if (
+                        result.property_id not in commute_lookup
+                        or result.travel_time_minutes < commute_lookup[result.property_id][0]
+                    ):
                         commute_lookup[result.property_id] = (
                             result.travel_time_minutes,
                             result.transport_mode,
@@ -339,6 +348,17 @@ async def run_dry_run(settings: Settings) -> None:
             print("\nNo properties match criteria.")
             return
 
+        # Step 2.5: Apply location filter (catch scraper leakage)
+        logger.info("pipeline_started", phase="location_filtering")
+        location_filter = LocationFilter(SEARCH_AREAS, strict=False)
+        filtered = location_filter.filter_properties(filtered)
+        logger.info("location_filter_summary", matched=len(filtered))
+
+        if not filtered:
+            logger.info("no_properties_in_search_areas")
+            print("\nNo properties in search areas.")
+            return
+
         # Step 3: Deduplicate
         logger.info("pipeline_started", phase="deduplication")
         deduplicator = Deduplicator(enable_cross_platform=True)
@@ -380,12 +400,10 @@ async def run_dry_run(settings: Settings) -> None:
 
             for result in commute_results:
                 if result.within_limit:
-                    if result.property_id not in commute_lookup:
-                        commute_lookup[result.property_id] = (
-                            result.travel_time_minutes,
-                            result.transport_mode,
-                        )
-                    elif result.travel_time_minutes < commute_lookup[result.property_id][0]:
+                    if (
+                        result.property_id not in commute_lookup
+                        or result.travel_time_minutes < commute_lookup[result.property_id][0]
+                    ):
                         commute_lookup[result.property_id] = (
                             result.travel_time_minutes,
                             result.transport_mode,

@@ -101,6 +101,7 @@ class TestOnTheMarketParser:
         """Test property ID extraction from data attribute."""
         soup = BeautifulSoup(onthemarket_search_html, "html.parser")
         card = soup.find("li", class_="otm-PropertyCard")
+        assert card is not None
         prop_id = card.get("data-property-id")
         assert prop_id == "15234567"
 

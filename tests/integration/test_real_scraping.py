@@ -15,7 +15,7 @@ from home_finder.scrapers import (
     RightmoveScraper,
     ZooplaScraper,
 )
-from home_finder.scrapers.rightmove import _outcode_cache, get_rightmove_outcode_id
+from home_finder.scrapers.rightmove import _outcode_cache
 
 
 @pytest.mark.slow
@@ -29,7 +29,7 @@ class TestRealRightmoveOutcodeMapping:
         _outcode_cache.clear()
 
     @pytest.mark.parametrize(
-        "outcode,expected_id",
+        ("outcode", "expected_id"),
         [
             ("E8", "OUTCODE%5E762"),
             ("E3", "OUTCODE%5E756"),
@@ -39,7 +39,7 @@ class TestRealRightmoveOutcodeMapping:
             ("N15", "OUTCODE%5E1672"),
         ],
     )
-    async def test_outcode_mapping_exists(self, outcode: str, expected_id: str):
+    async def test_outcode_mapping_exists(self, outcode: str, expected_id: str) -> None:
         """Test that hardcoded outcode mappings exist and are correct."""
         from home_finder.scrapers.rightmove import RIGHTMOVE_OUTCODES
 
@@ -50,7 +50,7 @@ class TestRealRightmoveOutcodeMapping:
         )
         print(f"\n{outcode} -> {location_id}")
 
-    async def test_all_target_outcodes_mapped(self):
+    async def test_all_target_outcodes_mapped(self) -> None:
         """Test that all target outcodes have hardcoded mappings."""
         from home_finder.scrapers.rightmove import RIGHTMOVE_OUTCODES
 
@@ -74,7 +74,7 @@ class TestRealRightmoveOutcodeMapping:
 class TestRealOpenRentScraping:
     """Real scraping tests for OpenRent."""
 
-    async def test_scrape_openrent_hackney(self):
+    async def test_scrape_openrent_hackney(self) -> None:
         """Scrape real OpenRent listings from Hackney."""
         scraper = OpenRentScraper()
 
@@ -113,7 +113,7 @@ class TestRealOpenRentScraping:
 class TestRealRightmoveScraping:
     """Real scraping tests for Rightmove."""
 
-    async def test_scrape_rightmove_hackney(self):
+    async def test_scrape_rightmove_hackney(self) -> None:
         """Scrape real Rightmove listings from Hackney."""
         scraper = RightmoveScraper()
 
@@ -145,7 +145,7 @@ class TestRealRightmoveScraping:
             print(f"  URL: {prop.url}")
 
     @pytest.mark.parametrize(
-        "outcode,area_name",
+        ("outcode", "area_name"),
         [
             ("E8", "Hackney Central/Dalston"),
             ("E3", "Bow"),
@@ -153,7 +153,7 @@ class TestRealRightmoveScraping:
             ("E10", "Leyton"),
         ],
     )
-    async def test_scrape_rightmove_by_outcode(self, outcode: str, area_name: str):
+    async def test_scrape_rightmove_by_outcode(self, outcode: str, area_name: str) -> None:
         """Scrape real Rightmove listings by postcode outcode."""
         scraper = RightmoveScraper()
 
@@ -192,7 +192,7 @@ class TestRealRightmoveScraping:
 class TestRealZooplaScraping:
     """Real scraping tests for Zoopla."""
 
-    async def test_scrape_zoopla_hackney(self):
+    async def test_scrape_zoopla_hackney(self) -> None:
         """Scrape real Zoopla listings from Hackney."""
         scraper = ZooplaScraper()
 
@@ -229,7 +229,7 @@ class TestRealZooplaScraping:
 class TestRealOnTheMarketScraping:
     """Real scraping tests for OnTheMarket."""
 
-    async def test_scrape_onthemarket_hackney(self):
+    async def test_scrape_onthemarket_hackney(self) -> None:
         """Scrape real OnTheMarket listings from Hackney."""
         scraper = OnTheMarketScraper()
 
@@ -266,7 +266,7 @@ class TestRealOnTheMarketScraping:
 class TestRealFullPipeline:
     """Real end-to-end pipeline test."""
 
-    async def test_scrape_all_platforms_hackney(self):
+    async def test_scrape_all_platforms_hackney(self) -> None:
         """Scrape from all platforms and aggregate results."""
         from home_finder.filters import CriteriaFilter, Deduplicator
         from home_finder.models import SearchCriteria

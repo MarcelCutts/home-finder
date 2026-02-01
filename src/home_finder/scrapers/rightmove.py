@@ -67,14 +67,55 @@ async def get_rightmove_outcode_id(outcode: str) -> str | None:
     return None
 
 
-# Mapping of common area names to Rightmove location identifiers
-# These are REGION% encoded identifiers that Rightmove uses
+# Mapping of London borough names to Rightmove REGION identifiers
+# Source: https://github.com/BrandonLow96/Rightmove-scrapping
+# These identifiers are used in the locationIdentifier URL parameter
 RIGHTMOVE_LOCATIONS = {
-    "hackney": "REGION%5E93965",
-    "islington": "REGION%5E93980",
-    "haringey": "REGION%5E93963",
-    "tower-hamlets": "REGION%5E94034",
-    "tower hamlets": "REGION%5E94034",
+    # Central London
+    "city-of-london": "REGION%5E61224",
+    "westminster": "REGION%5E93980",
+    "camden": "REGION%5E93941",
+    "islington": "REGION%5E93965",
+    # East London
+    "hackney": "REGION%5E93953",
+    "tower-hamlets": "REGION%5E61417",
+    "tower hamlets": "REGION%5E61417",
+    "newham": "REGION%5E61231",
+    "waltham-forest": "REGION%5E61232",
+    "waltham forest": "REGION%5E61232",
+    "barking-dagenham": "REGION%5E61400",
+    "barking and dagenham": "REGION%5E61400",
+    "havering": "REGION%5E61228",
+    "redbridge": "REGION%5E61537",
+    # North London
+    "haringey": "REGION%5E61227",
+    "enfield": "REGION%5E93950",
+    "barnet": "REGION%5E93929",
+    # West London
+    "kensington-chelsea": "REGION%5E61229",
+    "kensington and chelsea": "REGION%5E61229",
+    "hammersmith-fulham": "REGION%5E61407",
+    "hammersmith and fulham": "REGION%5E61407",
+    "brent": "REGION%5E93935",
+    "ealing": "REGION%5E93947",
+    "hounslow": "REGION%5E93962",
+    "hillingdon": "REGION%5E93959",
+    "harrow": "REGION%5E93956",
+    # South London
+    "lambeth": "REGION%5E93971",
+    "southwark": "REGION%5E61518",
+    "lewisham": "REGION%5E61413",
+    "greenwich": "REGION%5E61226",
+    "bromley": "REGION%5E93938",
+    "bexley": "REGION%5E93932",
+    "croydon": "REGION%5E93944",
+    "sutton": "REGION%5E93974",
+    "merton": "REGION%5E61414",
+    "wandsworth": "REGION%5E93977",
+    "kingston-thames": "REGION%5E93968",
+    "kingston upon thames": "REGION%5E93968",
+    "richmond-thames": "REGION%5E61415",
+    "richmond upon thames": "REGION%5E61415",
 }
 
 # Mapping of UK outcodes to Rightmove OUTCODE identifiers
