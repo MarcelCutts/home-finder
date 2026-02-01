@@ -1,4 +1,3 @@
-# syntax=docker/dockerfile:1
 FROM python:3.11-slim
 
 # Install uv (pinned version for reproducibility)
@@ -10,19 +9,17 @@ ENV UV_COMPILE_BYTECODE=1 \
 
 WORKDIR /app
 
-# Install dependencies first (better layer caching)
-# Dependencies change less often than source code
-RUN --mount=type=cache,target=/root/.cache/uv \
-    --mount=type=bind,source=uv.lock,target=uv.lock \
-    --mount=type=bind,source=pyproject.toml,target=pyproject.toml \
-    --mount=type=bind,source=README.md,target=README.md \
-    uv sync --frozen --no-dev --no-install-project
-
-# Copy source code and install the project
+# Copy dependency files first (better layer caching)
 COPY pyproject.toml uv.lock README.md ./
+
+# Install dependencies only (not the project itself)
+RUN uv sync --frozen --no-dev --no-install-project
+
+# Copy source code
 COPY src/ ./src/
-RUN --mount=type=cache,target=/root/.cache/uv \
-    uv sync --frozen --no-dev
+
+# Install the project
+RUN uv sync --frozen --no-dev
 
 # Create data directory for SQLite (will be mounted as volume)
 RUN mkdir -p /app/data

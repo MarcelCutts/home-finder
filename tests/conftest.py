@@ -1,11 +1,22 @@
 """Shared pytest fixtures."""
 
+import os
 from datetime import datetime
 from pathlib import Path
 
 import pytest
+from hypothesis import HealthCheck, settings
 
 from home_finder.models import Property, PropertySource, SearchCriteria, TransportMode
+
+# Hypothesis settings profiles for different environments
+settings.register_profile("fast", max_examples=10)
+settings.register_profile(
+    "ci",
+    max_examples=200,
+    suppress_health_check=[HealthCheck.too_slow],
+)
+settings.load_profile(os.getenv("HYPOTHESIS_PROFILE", "fast"))
 
 
 @pytest.fixture

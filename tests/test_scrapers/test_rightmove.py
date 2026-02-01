@@ -173,43 +173,87 @@ class TestRightmoveParser:
         prop_id = rightmove_scraper._extract_property_id(url)
         assert prop_id is None
 
-    def test_extract_price(self, rightmove_scraper: RightmoveScraper) -> None:
+    @pytest.mark.parametrize(
+        ("text", "expected"),
+        [
+            ("£2,300 pcm", 2300),
+            ("£1,950 pcm", 1950),
+            ("£2,100 pcm", 2100),
+            ("£500 pw", 2166),  # Weekly to monthly (500*52/12)
+        ],
+    )
+    def test_extract_price(
+        self, rightmove_scraper: RightmoveScraper, text: str, expected: int
+    ) -> None:
         """Test price extraction from text."""
-        assert rightmove_scraper._extract_price("£2,300 pcm") == 2300
-        assert rightmove_scraper._extract_price("£1,950 pcm") == 1950
-        assert rightmove_scraper._extract_price("£2,100 pcm") == 2100
-        assert rightmove_scraper._extract_price("£500 pw") == 2166  # Weekly to monthly (500*52/12)
+        assert rightmove_scraper._extract_price(text) == expected
 
-    def test_extract_price_invalid(self, rightmove_scraper: RightmoveScraper) -> None:
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "Contact agent",
+            "",
+            "POA",
+        ],
+    )
+    def test_extract_price_invalid(self, rightmove_scraper: RightmoveScraper, text: str) -> None:
         """Test price extraction with invalid text."""
-        assert rightmove_scraper._extract_price("Contact agent") is None
-        assert rightmove_scraper._extract_price("") is None
-        assert rightmove_scraper._extract_price("POA") is None
+        assert rightmove_scraper._extract_price(text) is None
 
-    def test_extract_bedrooms(self, rightmove_scraper: RightmoveScraper) -> None:
+    @pytest.mark.parametrize(
+        ("title", "expected"),
+        [
+            ("1 bedroom flat to rent", 1),
+            ("2 bedroom apartment to rent", 2),
+            ("Studio to rent", 0),
+            ("3 bed house", 3),
+        ],
+    )
+    def test_extract_bedrooms(
+        self, rightmove_scraper: RightmoveScraper, title: str, expected: int
+    ) -> None:
         """Test bedroom extraction from title."""
-        assert rightmove_scraper._extract_bedrooms("1 bedroom flat to rent") == 1
-        assert rightmove_scraper._extract_bedrooms("2 bedroom apartment to rent") == 2
-        assert rightmove_scraper._extract_bedrooms("Studio to rent") == 0
-        assert rightmove_scraper._extract_bedrooms("3 bed house") == 3
+        assert rightmove_scraper._extract_bedrooms(title) == expected
 
-    def test_extract_bedrooms_no_match(self, rightmove_scraper: RightmoveScraper) -> None:
+    @pytest.mark.parametrize(
+        "title",
+        [
+            "Flat to rent",
+            "",
+        ],
+    )
+    def test_extract_bedrooms_no_match(
+        self, rightmove_scraper: RightmoveScraper, title: str
+    ) -> None:
         """Test bedroom extraction with no bedroom info."""
-        assert rightmove_scraper._extract_bedrooms("Flat to rent") is None
-        assert rightmove_scraper._extract_bedrooms("") is None
+        assert rightmove_scraper._extract_bedrooms(title) is None
 
-    def test_extract_postcode(self, rightmove_scraper: RightmoveScraper) -> None:
+    @pytest.mark.parametrize(
+        ("address", "expected"),
+        [
+            ("Wayland Avenue, London E8", "E8"),
+            ("Mare Street, Hackney, London E8 3RH", "E8 3RH"),
+            ("Islington N1 2AA", "N1 2AA"),
+        ],
+    )
+    def test_extract_postcode(
+        self, rightmove_scraper: RightmoveScraper, address: str, expected: str
+    ) -> None:
         """Test postcode extraction from address."""
-        assert rightmove_scraper._extract_postcode("Wayland Avenue, London E8") == "E8"
-        assert (
-            rightmove_scraper._extract_postcode("Mare Street, Hackney, London E8 3RH") == "E8 3RH"
-        )
-        assert rightmove_scraper._extract_postcode("Islington N1 2AA") == "N1 2AA"
+        assert rightmove_scraper._extract_postcode(address) == expected
 
-    def test_extract_postcode_no_match(self, rightmove_scraper: RightmoveScraper) -> None:
+    @pytest.mark.parametrize(
+        "address",
+        [
+            "Some Address, London",
+            "",
+        ],
+    )
+    def test_extract_postcode_no_match(
+        self, rightmove_scraper: RightmoveScraper, address: str
+    ) -> None:
         """Test postcode extraction with no postcode."""
-        assert rightmove_scraper._extract_postcode("Some Address, London") is None
-        assert rightmove_scraper._extract_postcode("") is None
+        assert rightmove_scraper._extract_postcode(address) is None
 
     def test_parse_empty_results(self, rightmove_scraper: RightmoveScraper) -> None:
         """Test parsing page with no results."""
