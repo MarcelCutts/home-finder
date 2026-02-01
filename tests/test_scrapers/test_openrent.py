@@ -45,9 +45,7 @@ class TestOpenRentScraper:
         assert "bedrooms_min=1" in url
         assert "bedrooms_max=2" in url
 
-    def test_build_search_url_normalizes_area(
-        self, openrent_scraper: OpenRentScraper
-    ) -> None:
+    def test_build_search_url_normalizes_area(self, openrent_scraper: OpenRentScraper) -> None:
         """Test that area names are normalized to URL-safe format."""
         url = openrent_scraper._build_search_url(
             area="De Beauvoir Town",
@@ -113,9 +111,7 @@ class TestOpenRentParser:
         assert prop3.price_pcm == 2100
         assert prop3.bedrooms == 1
 
-    def test_parse_search_results_deduplicates(
-        self, openrent_scraper: OpenRentScraper
-    ) -> None:
+    def test_parse_search_results_deduplicates(self, openrent_scraper: OpenRentScraper) -> None:
         """Test that duplicate property links are deduplicated."""
         html = """
         <html>
@@ -157,9 +153,7 @@ class TestOpenRentParser:
         price = openrent_scraper._extract_price_from_html(link)
         assert price == 2300
 
-    def test_extract_price_from_html_no_price(
-        self, openrent_scraper: OpenRentScraper
-    ) -> None:
+    def test_extract_price_from_html_no_price(self, openrent_scraper: OpenRentScraper) -> None:
         """Test price extraction when no price present."""
         html = '<a href="/property/123"><span>View Details</span></a>'
         soup = BeautifulSoup(html, "html.parser")
@@ -167,9 +161,7 @@ class TestOpenRentParser:
         price = openrent_scraper._extract_price_from_html(link)
         assert price is None
 
-    def test_extract_bedrooms_from_html(
-        self, openrent_scraper: OpenRentScraper
-    ) -> None:
+    def test_extract_bedrooms_from_html(self, openrent_scraper: OpenRentScraper) -> None:
         """Test bedroom extraction from HTML text."""
         html = """
         <a href="/property/123">
@@ -182,9 +174,7 @@ class TestOpenRentParser:
         beds = openrent_scraper._extract_bedrooms_from_html(link)
         assert beds == 2
 
-    def test_extract_bedrooms_from_title(
-        self, openrent_scraper: OpenRentScraper
-    ) -> None:
+    def test_extract_bedrooms_from_title(self, openrent_scraper: OpenRentScraper) -> None:
         """Test bedroom extraction from title text."""
         html = """
         <a href="/property/123">
@@ -196,9 +186,7 @@ class TestOpenRentParser:
         beds = openrent_scraper._extract_bedrooms_from_html(link)
         assert beds == 1
 
-    def test_parse_link_text_extracts_postcode(
-        self, openrent_scraper: OpenRentScraper
-    ) -> None:
+    def test_parse_link_text_extracts_postcode(self, openrent_scraper: OpenRentScraper) -> None:
         """Test postcode extraction from link text."""
         html = """
         <a href="/property/123">
@@ -259,9 +247,7 @@ class TestOpenRentScraperIntegration:
                 soup = BeautifulSoup(openrent_search_html, "html.parser")
                 openrent_scraper._parse_search_results(soup, urls[0])
 
-            with patch(
-                "home_finder.scrapers.openrent.BeautifulSoupCrawler"
-            ) as MockCrawler:
+            with patch("home_finder.scrapers.openrent.BeautifulSoupCrawler") as MockCrawler:
                 mock_crawler_instance = AsyncMock()
                 mock_crawler_instance.run = mock_run
                 mock_crawler_instance.router = MagicMock()

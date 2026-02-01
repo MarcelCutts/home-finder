@@ -71,7 +71,7 @@ def format_property_message(
 
     # Add link
     lines.append("")
-    lines.append(f"<a href=\"{prop.url}\">View Property</a>")
+    lines.append(f'<a href="{prop.url}">View Property</a>')
 
     return "\n".join(lines)
 

@@ -44,9 +44,7 @@ class TestOnTheMarketScraper:
         assert "max-bedrooms=2" in url
         assert "to-rent" in url
 
-    def test_build_search_url_with_area(
-        self, onthemarket_scraper: OnTheMarketScraper
-    ) -> None:
+    def test_build_search_url_with_area(self, onthemarket_scraper: OnTheMarketScraper) -> None:
         """Test URL building includes area."""
         url = onthemarket_scraper._build_search_url(
             area="islington",
@@ -91,9 +89,7 @@ class TestOnTheMarketParser:
         assert prop3.bedrooms == 1
         assert "Dalston Lane" in prop3.address
 
-    def test_extract_property_id(
-        self, onthemarket_scraper: OnTheMarketScraper
-    ) -> None:
+    def test_extract_property_id(self, onthemarket_scraper: OnTheMarketScraper) -> None:
         """Test property ID extraction from URL."""
         url = "https://www.onthemarket.com/details/15234567/"
         prop_id = onthemarket_scraper._extract_property_id(url)
@@ -108,9 +104,7 @@ class TestOnTheMarketParser:
         prop_id = card.get("data-property-id")
         assert prop_id == "15234567"
 
-    def test_extract_property_id_no_match(
-        self, onthemarket_scraper: OnTheMarketScraper
-    ) -> None:
+    def test_extract_property_id_no_match(self, onthemarket_scraper: OnTheMarketScraper) -> None:
         """Test property ID extraction with invalid URL."""
         url = "https://www.onthemarket.com/to-rent/property/hackney/"
         prop_id = onthemarket_scraper._extract_property_id(url)
@@ -122,9 +116,7 @@ class TestOnTheMarketParser:
         assert onthemarket_scraper._extract_price("£1,950 pcm") == 1950
         assert onthemarket_scraper._extract_price("£500 pw") == 2166
 
-    def test_extract_price_invalid(
-        self, onthemarket_scraper: OnTheMarketScraper
-    ) -> None:
+    def test_extract_price_invalid(self, onthemarket_scraper: OnTheMarketScraper) -> None:
         """Test price extraction with invalid text."""
         assert onthemarket_scraper._extract_price("POA") is None
         assert onthemarket_scraper._extract_price("") is None
@@ -135,24 +127,18 @@ class TestOnTheMarketParser:
         assert onthemarket_scraper._extract_bedrooms("2 bedroom apartment to rent") == 2
         assert onthemarket_scraper._extract_bedrooms("Studio to rent") == 0
 
-    def test_extract_bedrooms_no_match(
-        self, onthemarket_scraper: OnTheMarketScraper
-    ) -> None:
+    def test_extract_bedrooms_no_match(self, onthemarket_scraper: OnTheMarketScraper) -> None:
         """Test bedroom extraction with no bedroom info."""
         assert onthemarket_scraper._extract_bedrooms("Flat to rent") is None
 
     def test_extract_postcode(self, onthemarket_scraper: OnTheMarketScraper) -> None:
         """Test postcode extraction from address."""
         assert (
-            onthemarket_scraper._extract_postcode(
-                "Wayland Avenue, Hackney, London E8 3RH"
-            )
+            onthemarket_scraper._extract_postcode("Wayland Avenue, Hackney, London E8 3RH")
             == "E8 3RH"
         )
 
-    def test_parse_empty_results(
-        self, onthemarket_scraper: OnTheMarketScraper
-    ) -> None:
+    def test_parse_empty_results(self, onthemarket_scraper: OnTheMarketScraper) -> None:
         """Test parsing page with no results."""
         html = """
         <html>
@@ -163,7 +149,5 @@ class TestOnTheMarketParser:
         </html>
         """
         soup = BeautifulSoup(html, "html.parser")
-        properties = onthemarket_scraper._parse_search_results(
-            soup, "https://onthemarket.com"
-        )
+        properties = onthemarket_scraper._parse_search_results(soup, "https://onthemarket.com")
         assert len(properties) == 0

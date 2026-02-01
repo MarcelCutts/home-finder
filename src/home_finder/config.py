@@ -16,13 +16,25 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
-    # Telegram configuration
-    telegram_bot_token: SecretStr = Field(description="Telegram bot token from @BotFather")
-    telegram_chat_id: int = Field(description="Telegram chat ID to send notifications to")
+    # Telegram configuration (required for notifications)
+    telegram_bot_token: SecretStr = Field(
+        default=SecretStr(""),
+        description="Telegram bot token from @BotFather",
+    )
+    telegram_chat_id: int = Field(
+        default=0,
+        description="Telegram chat ID to send notifications to",
+    )
 
-    # TravelTime API configuration
-    traveltime_app_id: str = Field(description="TravelTime API application ID")
-    traveltime_api_key: SecretStr = Field(description="TravelTime API key")
+    # TravelTime API configuration (optional, needed for commute filtering)
+    traveltime_app_id: str = Field(
+        default="",
+        description="TravelTime API application ID",
+    )
+    traveltime_api_key: SecretStr = Field(
+        default=SecretStr(""),
+        description="TravelTime API key",
+    )
 
     # Search criteria
     min_price: int = Field(default=1800, ge=0)

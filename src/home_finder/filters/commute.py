@@ -1,11 +1,17 @@
 """Commute time filtering using TravelTime API."""
 
+from __future__ import annotations
+
 from datetime import datetime, timezone
+from typing import TYPE_CHECKING
 
 from pydantic import BaseModel, ConfigDict
 
 from home_finder.logging import get_logger
 from home_finder.models import Property, TransportMode
+
+if TYPE_CHECKING:
+    from traveltimepy import AsyncClient
 
 logger = get_logger(__name__)
 
@@ -42,9 +48,9 @@ class CommuteFilter:
         self.app_id = app_id
         self.api_key = api_key
         self.destination_postcode = destination_postcode
-        self._client = None
+        self._client: AsyncClient | None = None
 
-    def _get_client(self):
+    def _get_client(self) -> AsyncClient:
         """Lazily initialize the TravelTime async client."""
         if self._client is None:
             from traveltimepy import AsyncClient
@@ -97,27 +103,31 @@ class CommuteFilter:
             return []
 
         # Import required types
-        from traveltimepy.requests.common import Coordinates, Location
-        from traveltimepy.requests.time_filter import (
+        from traveltimepy.requests.common import (
+            Coordinates,
+            Location,
+            Property as TravelTimeProperty,
+        )
+        from traveltimepy.requests.time_filter import TimeFilterArrivalSearch
+        from traveltimepy.requests.transportation import (
             Cycling,
             Driving,
-            Property as TravelTimeProperty,
             PublicTransport,
-            TimeFilterDepartureSearch,
-            TimeFilterRequest,
             Walking,
         )
 
-        # Create departure location (the destination we're commuting TO)
-        departure_location = Location(
+        # Create arrival location (the destination we're commuting TO)
+        arrival_location = Location(
             id="destination",
             coords=Coordinates(lat=dest_coords[0], lng=dest_coords[1]),
         )
 
-        # Create arrival locations (all the properties)
-        arrival_locations = []
+        # Create departure locations (all the properties we're commuting FROM)
+        departure_locations = []
         for prop in props_with_coords:
-            arrival_locations.append(
+            # Already filtered above, but assert for type checker
+            assert prop.latitude is not None and prop.longitude is not None
+            departure_locations.append(
                 Location(
                     id=prop.unique_id,
                     coords=Coordinates(lat=prop.latitude, lng=prop.longitude),
@@ -125,6 +135,7 @@ class CommuteFilter:
             )
 
         # Configure transportation
+        transportation: PublicTransport | Cycling | Driving | Walking
         if transport_mode == TransportMode.PUBLIC_TRANSPORT:
             transportation = PublicTransport()
         elif transport_mode == TransportMode.CYCLING:
@@ -134,12 +145,12 @@ class CommuteFilter:
         else:
             transportation = Walking()
 
-        # Create search request
-        departure_search = TimeFilterDepartureSearch(
+        # Create search request (many-to-one: from properties to destination)
+        arrival_search = TimeFilterArrivalSearch(
             id="property-search",
-            departure_location_id="destination",
-            arrival_location_ids=[loc.id for loc in arrival_locations],
-            departure_time=datetime.now(timezone.utc),
+            arrival_location_id="destination",
+            departure_location_ids=[loc.id for loc in departure_locations],
+            arrival_time=datetime.now(timezone.utc),
             travel_time=max_minutes * 60,  # Convert to seconds
             transportation=transportation,
             properties=[TravelTimeProperty.TRAVEL_TIME],
@@ -149,9 +160,9 @@ class CommuteFilter:
             client = self._get_client()
             async with client:
                 response = await client.time_filter(
-                    locations=[departure_location] + arrival_locations,
-                    departure_searches=[departure_search],
-                    arrival_searches=[],
+                    locations=[arrival_location] + departure_locations,
+                    departure_searches=[],
+                    arrival_searches=[arrival_search],
                 )
         except Exception as e:
             logger.error("traveltime_api_error", error=str(e))

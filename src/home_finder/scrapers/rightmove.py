@@ -3,7 +3,7 @@
 import re
 from urllib.parse import urljoin
 
-from bs4 import BeautifulSoup
+from bs4 import BeautifulSoup, Tag
 from crawlee.crawlers import BeautifulSoupCrawler, BeautifulSoupCrawlingContext
 from pydantic import HttpUrl
 
@@ -99,9 +99,7 @@ class RightmoveScraper(BaseScraper):
         ]
         return f"{self.BASE_URL}/property-to-rent/find.html?{'&'.join(params)}"
 
-    def _parse_search_results(
-        self, soup: BeautifulSoup, base_url: str
-    ) -> list[Property]:
+    def _parse_search_results(self, soup: BeautifulSoup, base_url: str) -> list[Property]:
         """Parse property listings from search results page."""
         properties: list[Property] = []
 
@@ -122,17 +120,17 @@ class RightmoveScraper(BaseScraper):
 
         return properties
 
-    def _parse_property_card(self, card: BeautifulSoup) -> Property | None:
+    def _parse_property_card(self, card: Tag) -> Property | None:
         """Parse a single property card element."""
         # Extract property ID from card data-testid or id attribute
         card_testid = card.get("data-testid", "")
         card_id = card.get("id", "")
 
         property_id = None
-        if card_testid and card_testid.startswith("propertyCard-"):
+        if isinstance(card_testid, str) and card_testid.startswith("propertyCard-"):
             # New format: data-testid="propertyCard-0" - need to get ID from link
             pass
-        elif card_id:
+        elif isinstance(card_id, str) and card_id:
             property_id = card_id.replace("property-", "")
 
         # Try to extract from link - look for any anchor with /properties/ in href
@@ -147,13 +145,16 @@ class RightmoveScraper(BaseScraper):
             # Just find any anchor tag
             all_links = card.find_all("a", href=True)
             for a in all_links:
-                if "/properties/" in a.get("href", ""):
+                a_href = a.get("href", "")
+                if isinstance(a_href, str) and "/properties/" in a_href:
                     link = a
                     break
 
         if link:
             href = link.get("href", "")
-            if not property_id:
+            if not isinstance(href, str):
+                href = ""
+            if not property_id and href:
                 property_id = self._extract_property_id(href)
         else:
             href = ""
@@ -264,7 +265,9 @@ class RightmoveScraper(BaseScraper):
         # Extract image URL
         img = card.find("img")
         image_url = img.get("src") if img else None
-        if image_url and not image_url.startswith("http"):
+        if not isinstance(image_url, str):
+            image_url = None
+        elif not image_url.startswith("http"):
             image_url = f"https:{image_url}"
 
         return Property(

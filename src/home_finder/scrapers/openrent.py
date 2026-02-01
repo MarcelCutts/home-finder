@@ -177,9 +177,9 @@ class OpenRentScraper(BaseScraper):
 
         return properties
 
-    def _extract_js_arrays(self, soup: "BeautifulSoup") -> dict[str, list]:  # type: ignore[name-defined]  # noqa: F821
+    def _extract_js_arrays(self, soup: "BeautifulSoup") -> dict[str, list[int | float]]:  # type: ignore[name-defined]  # noqa: F821
         """Extract JavaScript array variables from script tags."""
-        data: dict[str, list] = {}
+        data: dict[str, list[int | float]] = {}
         array_patterns = {
             "PROPERTYIDS": r"PROPERTYIDS\s*=\s*\[([\d,\s]+)\]",
             "prices": r"prices\s*=\s*\[([\d,\s]+)\]",

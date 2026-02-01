@@ -98,9 +98,7 @@ class TestFullPipeline:
     """Test the full scrape -> filter -> store pipeline."""
 
     @pytest.mark.asyncio
-    async def test_pipeline_filters_and_dedupes(
-        self, storage, mixed_properties, criteria
-    ):
+    async def test_pipeline_filters_and_dedupes(self, storage, mixed_properties, criteria):
         """Properties go through criteria filter, deduplication, then storage."""
         # Step 1: Apply criteria filter
         criteria_filter = CriteriaFilter(criteria)
@@ -130,9 +128,7 @@ class TestFullPipeline:
         assert count == 2
 
     @pytest.mark.asyncio
-    async def test_pipeline_rerun_finds_no_new(
-        self, storage, mixed_properties, criteria
-    ):
+    async def test_pipeline_rerun_finds_no_new(self, storage, mixed_properties, criteria):
         """Running pipeline twice should find no new properties second time."""
         criteria_filter = CriteriaFilter(criteria)
         deduplicator = Deduplicator(enable_cross_platform=True)

@@ -1,6 +1,5 @@
 """Tests for Zoopla scraper."""
 
-import json
 from pathlib import Path
 
 import pytest
@@ -8,6 +7,7 @@ from bs4 import BeautifulSoup
 
 from home_finder.models import PropertySource
 from home_finder.scrapers.zoopla import ZooplaScraper
+from home_finder.scrapers.zoopla_models import ZooplaListing, ZooplaNextData
 
 
 @pytest.fixture
@@ -17,9 +17,10 @@ def zoopla_search_html(fixtures_path: Path) -> str:
 
 
 @pytest.fixture
-def zoopla_nextdata_json(fixtures_path: Path) -> dict:
-    """Load Zoopla __NEXT_DATA__ JSON fixture."""
-    return json.loads((fixtures_path / "zoopla_nextdata.json").read_text())
+def zoopla_nextdata(fixtures_path: Path) -> ZooplaNextData:
+    """Load and parse Zoopla __NEXT_DATA__ JSON fixture."""
+    json_content = (fixtures_path / "zoopla_nextdata.json").read_text()
+    return ZooplaNextData.model_validate_json(json_content)
 
 
 @pytest.fixture
@@ -158,8 +159,7 @@ class TestZooplaHtmlParser:
     def test_extract_postcode(self, zoopla_scraper: ZooplaScraper) -> None:
         """Test postcode extraction from address."""
         assert (
-            zoopla_scraper._extract_postcode("Wayland Avenue, Hackney, London E8 3RH")
-            == "E8 3RH"
+            zoopla_scraper._extract_postcode("Wayland Avenue, Hackney, London E8 3RH") == "E8 3RH"
         )
         assert zoopla_scraper._extract_postcode("Some Street, N1") == "N1"
 
@@ -187,14 +187,14 @@ class TestZooplaJsonExtraction:
         html = """
         <html>
         <head>
-            <script id="__NEXT_DATA__" type="application/json">{"props":{"pageProps":{"test":"value"}}}</script>
+            <script id="__NEXT_DATA__" type="application/json">{"props":{"pageProps":{"regularListingsFormatted":[]}}}</script>
         </head>
         <body></body>
         </html>
         """
         data = zoopla_scraper._extract_next_data(html)
         assert data is not None
-        assert data["props"]["pageProps"]["test"] == "value"
+        assert data.get_listings() == []
 
     def test_extract_next_data_missing(self, zoopla_scraper: ZooplaScraper) -> None:
         """Test extraction when __NEXT_DATA__ script is missing."""
@@ -202,9 +202,7 @@ class TestZooplaJsonExtraction:
         data = zoopla_scraper._extract_next_data(html)
         assert data is None
 
-    def test_extract_next_data_invalid_json(
-        self, zoopla_scraper: ZooplaScraper
-    ) -> None:
+    def test_extract_next_data_invalid_json(self, zoopla_scraper: ZooplaScraper) -> None:
         """Test extraction with invalid JSON content."""
         html = """
         <html>
@@ -217,36 +215,33 @@ class TestZooplaJsonExtraction:
         data = zoopla_scraper._extract_next_data(html)
         assert data is None
 
-    def test_extract_rsc_data(self, zoopla_scraper: ZooplaScraper) -> None:
+    def test_extract_rsc_listings(self, zoopla_scraper: ZooplaScraper) -> None:
         """Test extraction from React Server Components format."""
         # Simulated RSC script content with escaped quotes
-        rsc_content = '''self.__next_f.push([1,"\\"regularListingsFormatted\\":[{\\"listingId\\":123,\\"price\\":\\"£1850 pcm\\",\\"address\\":\\"Test Street\\",\\"title\\":\\"1 bed flat\\",\\"listingUris\\":{\\"detail\\":\\"/to-rent/details/123/\\"},\\"features\\":[{\\"iconId\\":\\"bed\\",\\"content\\":1}]}],\\"extendedListingsFormatted\\":[]"])'''
-        data = zoopla_scraper._extract_rsc_data(rsc_content)
-        assert data is not None
-        assert "props" in data
-        listings = data["props"]["pageProps"]["regularListingsFormatted"]
+        rsc_content = """self.__next_f.push([1,"\\"regularListingsFormatted\\":[{\\"listingId\\":123,\\"price\\":\\"£1850 pcm\\",\\"address\\":\\"Test Street\\",\\"title\\":\\"1 bed flat\\",\\"listingUris\\":{\\"detail\\":\\"/to-rent/details/123/\\"},\\"features\\":[{\\"iconId\\":\\"bed\\",\\"content\\":1}]}],\\"extendedListingsFormatted\\":[]"])"""
+        listings = zoopla_scraper._extract_rsc_listings(rsc_content)
+        assert listings is not None
         assert len(listings) == 1
-        assert listings[0]["listingId"] == 123
+        assert listings[0].listing_id == 123
 
-    def test_extract_rsc_data_empty_array(self, zoopla_scraper: ZooplaScraper) -> None:
+    def test_extract_rsc_listings_empty_array(self, zoopla_scraper: ZooplaScraper) -> None:
         """Test extraction when RSC has empty listings."""
-        rsc_content = '''self.__next_f.push([1,"\\"regularListingsFormatted\\":[],\\"extendedListingsFormatted\\":[]"])'''
-        data = zoopla_scraper._extract_rsc_data(rsc_content)
-        assert data is not None
-        listings = data["props"]["pageProps"]["regularListingsFormatted"]
+        rsc_content = """self.__next_f.push([1,"\\"regularListingsFormatted\\":[],\\"extendedListingsFormatted\\":[]"])"""
+        listings = zoopla_scraper._extract_rsc_listings(rsc_content)
+        assert listings is not None
         assert len(listings) == 0
 
-    def test_extract_rsc_data_no_markers(self, zoopla_scraper: ZooplaScraper) -> None:
+    def test_extract_rsc_listings_no_markers(self, zoopla_scraper: ZooplaScraper) -> None:
         """Test extraction when RSC markers are missing."""
-        rsc_content = '''self.__next_f.push([1,"some other content"])'''
-        data = zoopla_scraper._extract_rsc_data(rsc_content)
-        assert data is None
+        rsc_content = """self.__next_f.push([1,"some other content"])"""
+        listings = zoopla_scraper._extract_rsc_listings(rsc_content)
+        assert listings is None
 
     def test_parse_next_data_properties(
-        self, zoopla_scraper: ZooplaScraper, zoopla_nextdata_json: dict
+        self, zoopla_scraper: ZooplaScraper, zoopla_nextdata: ZooplaNextData
     ) -> None:
         """Test parsing properties from __NEXT_DATA__ JSON."""
-        properties = zoopla_scraper._parse_next_data_properties(zoopla_nextdata_json)
+        properties = zoopla_scraper._parse_next_data_properties(zoopla_nextdata)
 
         assert len(properties) == 4
 
@@ -283,69 +278,69 @@ class TestZooplaJsonExtraction:
         assert prop4.latitude is None
         assert prop4.longitude is None
 
-    def test_parse_next_data_empty_listings(
-        self, zoopla_scraper: ZooplaScraper
-    ) -> None:
+    def test_parse_next_data_empty_listings(self, zoopla_scraper: ZooplaScraper) -> None:
         """Test parsing when regularListingsFormatted is empty."""
-        data = {"props": {"pageProps": {"regularListingsFormatted": []}}}
+        data = ZooplaNextData.model_validate(
+            {"props": {"pageProps": {"regularListingsFormatted": []}}}
+        )
         properties = zoopla_scraper._parse_next_data_properties(data)
         assert len(properties) == 0
 
-    def test_parse_next_data_missing_structure(
-        self, zoopla_scraper: ZooplaScraper
-    ) -> None:
+    def test_parse_next_data_missing_structure(self, zoopla_scraper: ZooplaScraper) -> None:
         """Test parsing when expected JSON structure is missing."""
-        data = {"props": {}}
+        data = ZooplaNextData.model_validate({"props": {}})
         properties = zoopla_scraper._parse_next_data_properties(data)
         assert len(properties) == 0
 
-    def test_parse_json_listing_missing_id(
-        self, zoopla_scraper: ZooplaScraper
-    ) -> None:
-        """Test parsing listing without ID returns None."""
-        listing = {
-            "price": "£1,850 pcm",
-            "detailUrl": "/to-rent/details/123/",
-            "features": {"beds": 1},
-        }
-        prop = zoopla_scraper._parse_json_listing(listing)
+    def test_listing_to_property_missing_url(self, zoopla_scraper: ZooplaScraper) -> None:
+        """Test converting listing without URL returns None."""
+        listing = ZooplaListing.model_validate(
+            {
+                "listingId": 123,
+                "price": "£1,850 pcm",
+                "features": [{"iconId": "bed", "content": 1}],
+            }
+        )
+        prop = zoopla_scraper._listing_to_property(listing)
         assert prop is None
 
-    def test_parse_json_listing_missing_url(
-        self, zoopla_scraper: ZooplaScraper
-    ) -> None:
-        """Test parsing listing without URL returns None."""
-        listing = {
-            "listingId": 123,
-            "price": "£1,850 pcm",
-            "features": {"beds": 1},
-        }
-        prop = zoopla_scraper._parse_json_listing(listing)
+    def test_listing_to_property_missing_price(self, zoopla_scraper: ZooplaScraper) -> None:
+        """Test converting listing without price returns None."""
+        listing = ZooplaListing.model_validate(
+            {
+                "listingId": 123,
+                "detailUrl": "/to-rent/details/123/",
+                "features": [{"iconId": "bed", "content": 1}],
+            }
+        )
+        prop = zoopla_scraper._listing_to_property(listing)
         assert prop is None
 
-    def test_parse_json_listing_missing_price(
-        self, zoopla_scraper: ZooplaScraper
-    ) -> None:
-        """Test parsing listing without price returns None."""
-        listing = {
-            "listingId": 123,
-            "detailUrl": "/to-rent/details/123/",
-            "features": {"beds": 1},
-        }
-        prop = zoopla_scraper._parse_json_listing(listing)
+    def test_listing_to_property_missing_bedrooms(self, zoopla_scraper: ZooplaScraper) -> None:
+        """Test converting listing without bedrooms returns None."""
+        listing = ZooplaListing.model_validate(
+            {
+                "listingId": 123,
+                "detailUrl": "/to-rent/details/123/",
+                "price": "£1,850 pcm",
+                "title": "Flat to rent",  # No bedroom info
+                "features": [],
+            }
+        )
+        prop = zoopla_scraper._listing_to_property(listing)
         assert prop is None
 
-    def test_parse_json_listing_bedrooms_from_title(
-        self, zoopla_scraper: ZooplaScraper
-    ) -> None:
-        """Test parsing listing that gets bedrooms from title."""
-        listing = {
-            "listingId": 123,
-            "detailUrl": "/to-rent/details/123/",
-            "price": "£1,850 pcm",
-            "title": "2 bedroom flat",
-            "features": {},  # No beds in features
-        }
-        prop = zoopla_scraper._parse_json_listing(listing)
+    def test_listing_to_property_bedrooms_from_title(self, zoopla_scraper: ZooplaScraper) -> None:
+        """Test converting listing that gets bedrooms from title."""
+        listing = ZooplaListing.model_validate(
+            {
+                "listingId": 123,
+                "detailUrl": "/to-rent/details/123/",
+                "price": "£1,850 pcm",
+                "title": "2 bedroom flat",
+                "features": [],
+            }
+        )
+        prop = zoopla_scraper._listing_to_property(listing)
         assert prop is not None
         assert prop.bedrooms == 2

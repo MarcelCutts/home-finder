@@ -108,9 +108,7 @@ class TestDeduplicator:
         # Different sources = different properties
         assert len(deduped) == 2
 
-    def test_dedupe_cross_platform_similar(
-        self, sample_properties: list[Property]
-    ) -> None:
+    def test_dedupe_cross_platform_similar(self, sample_properties: list[Property]) -> None:
         """Test cross-platform deduplication of similar listings."""
         # Enable cross-platform deduplication
         deduplicator = Deduplicator(enable_cross_platform=True)

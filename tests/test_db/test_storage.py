@@ -77,9 +77,7 @@ class TestPropertyStorage:
         await storage.save_property(prop)
 
     @pytest.mark.asyncio
-    async def test_save_property(
-        self, storage: PropertyStorage, sample_property: Property
-    ) -> None:
+    async def test_save_property(self, storage: PropertyStorage, sample_property: Property) -> None:
         """Test saving a property."""
         await storage.save_property(sample_property)
 
@@ -124,9 +122,7 @@ class TestPropertyStorage:
         assert is_seen is True
 
     @pytest.mark.asyncio
-    async def test_mark_notified(
-        self, storage: PropertyStorage, sample_property: Property
-    ) -> None:
+    async def test_mark_notified(self, storage: PropertyStorage, sample_property: Property) -> None:
         """Test marking a property as notified."""
         await storage.save_property(sample_property)
         await storage.mark_notified(sample_property.unique_id)

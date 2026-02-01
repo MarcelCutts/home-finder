@@ -195,9 +195,7 @@ class PropertyStorage:
             List of all tracked properties.
         """
         conn = await self._get_connection()
-        cursor = await conn.execute(
-            "SELECT * FROM properties ORDER BY first_seen DESC"
-        )
+        cursor = await conn.execute("SELECT * FROM properties ORDER BY first_seen DESC")
         rows = await cursor.fetchall()
         return [self._row_to_tracked_property(row) for row in rows]
 
@@ -295,13 +293,9 @@ class PropertyStorage:
         # Parse datetime fields
         first_seen = datetime.fromisoformat(row["first_seen"])
         available_from = (
-            datetime.fromisoformat(row["available_from"])
-            if row["available_from"]
-            else None
+            datetime.fromisoformat(row["available_from"]) if row["available_from"] else None
         )
-        notified_at = (
-            datetime.fromisoformat(row["notified_at"]) if row["notified_at"] else None
-        )
+        notified_at = datetime.fromisoformat(row["notified_at"]) if row["notified_at"] else None
 
         # Build Property
         prop = Property(

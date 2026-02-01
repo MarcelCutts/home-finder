@@ -3,13 +3,18 @@
 import json
 import re
 
-from bs4 import BeautifulSoup
+from bs4 import BeautifulSoup, Tag
 from curl_cffi.requests import AsyncSession
-from pydantic import HttpUrl
+from pydantic import HttpUrl, ValidationError
 
 from home_finder.logging import get_logger
 from home_finder.models import Property, PropertySource
 from home_finder.scrapers.base import BaseScraper
+from home_finder.scrapers.zoopla_models import (
+    ZooplaListing,
+    ZooplaListingsAdapter,
+    ZooplaNextData,
+)
 
 logger = get_logger(__name__)
 
@@ -87,7 +92,8 @@ class ZooplaScraper(BaseScraper):
                     timeout=30,
                 )
                 if response.status_code == 200:
-                    return response.text
+                    text: str = response.text
+                    return text
                 logger.warning(
                     "zoopla_http_error",
                     status=response.status_code,
@@ -98,8 +104,8 @@ class ZooplaScraper(BaseScraper):
             logger.error("zoopla_fetch_exception", error=str(e), url=url)
             return None
 
-    def _extract_next_data(self, html: str) -> dict | None:
-        """Extract listing data from Next.js page.
+    def _extract_next_data(self, html: str) -> ZooplaNextData | None:
+        """Extract and validate listing data from Next.js page.
 
         Zoopla uses Next.js App Router with React Server Components,
         so data is embedded in self.__next_f.push() calls rather than
@@ -110,26 +116,30 @@ class ZooplaScraper(BaseScraper):
         script = soup.find("script", {"id": "__NEXT_DATA__"})
         if script and script.string:
             try:
-                return json.loads(script.string)
-            except json.JSONDecodeError:
-                pass
+                return ZooplaNextData.model_validate_json(script.string)
+            except (json.JSONDecodeError, ValidationError) as e:
+                logger.debug("zoopla_next_data_parse_failed", error=str(e))
 
         # Try RSC format - find script containing regularListingsFormatted
         for script in soup.find_all("script"):
             if script.string and "regularListingsFormatted" in script.string:
-                return self._extract_rsc_data(script.string)
+                listings = self._extract_rsc_listings(script.string)
+                if listings:
+                    # Wrap in the expected structure
+                    return ZooplaNextData.model_validate(
+                        {"props": {"pageProps": {"regularListingsFormatted": listings}}}
+                    )
 
         return None
 
-    def _extract_rsc_data(self, script_content: str) -> dict | None:
+    def _extract_rsc_listings(self, script_content: str) -> list[ZooplaListing] | None:
         """Extract listing data from React Server Components format.
 
         RSC data is JSON-encoded inside self.__next_f.push() calls.
-        The content uses escaped quotes (\") that need to be unescaped.
+        The content uses escaped quotes that need to be unescaped.
         """
         try:
             # Find the array between markers
-            # Pattern: regularListingsFormatted\":[ ... ],\"extendedListingsFormatted
             start_marker = 'regularListingsFormatted\\":'
             end_marker = ',\\"extendedListingsFormatted'
 
@@ -147,120 +157,61 @@ class ZooplaScraper(BaseScraper):
             # Unescape the JSON - content is inside a JS string literal
             listings_json = listings_json_escaped.replace('\\"', '"').replace("\\\\", "\\")
 
-            listings = json.loads(listings_json)
-            # Return in the expected format
-            return {"props": {"pageProps": {"regularListingsFormatted": listings}}}
+            # Validate with Pydantic TypeAdapter
+            return ZooplaListingsAdapter.validate_json(listings_json)
 
-        except (json.JSONDecodeError, AttributeError) as e:
+        except (json.JSONDecodeError, ValidationError) as e:
             logger.warning("zoopla_rsc_parse_failed", error=str(e))
 
         return None
 
-    def _parse_next_data_properties(self, data: dict) -> list[Property]:
-        """Parse properties from Next.js JSON data."""
+    def _parse_next_data_properties(self, data: ZooplaNextData) -> list[Property]:
+        """Parse properties from validated Next.js JSON data."""
         properties: list[Property] = []
 
-        try:
-            # Navigate to the listings in the JSON structure
-            page_props = data.get("props", {}).get("pageProps", {})
-            listings = page_props.get("regularListingsFormatted", [])
-
-            for listing in listings:
-                try:
-                    prop = self._parse_json_listing(listing)
-                    if prop:
-                        properties.append(prop)
-                except Exception as e:
-                    logger.warning("failed_to_parse_zoopla_json_listing", error=str(e))
-
-        except Exception as e:
-            logger.warning("failed_to_navigate_zoopla_json", error=str(e))
+        for listing in data.get_listings():
+            prop = self._listing_to_property(listing)
+            if prop:
+                properties.append(prop)
 
         return properties
 
-    def _parse_json_listing(self, listing: dict) -> Property | None:
-        """Parse a single listing from JSON data.
-
-        RSC format fields:
-        - listingId: numeric ID
-        - listingUris: {detail: "/to-rent/details/123/", ...}
-        - price: "£1,900 pcm" or priceUnformatted: 1900
-        - features: [{iconId: "bed", content: 2}, ...]
-        - address: "Street, Area, City Postcode"
-        - title: "2 bed flat to rent"
-        - image: {src: "https://...", ...}
-        - pos: {lat: 51.5, lng: -0.1}
-        """
-        # Extract listing ID
-        listing_id = listing.get("listingId")
-        if not listing_id:
-            return None
-        listing_id = str(listing_id)
-
-        # Extract URL - RSC uses listingUris.detail
-        listing_uris = listing.get("listingUris", {})
-        detail_url = listing_uris.get("detail", "") if isinstance(listing_uris, dict) else ""
-        # Fallback to old format
-        if not detail_url:
-            detail_url = listing.get("detailUrl", "")
+    def _listing_to_property(self, listing: ZooplaListing) -> Property | None:
+        """Convert a validated ZooplaListing to a Property."""
+        # Get detail URL
+        detail_url = listing.get_detail_url()
         if not detail_url:
             return None
         if not detail_url.startswith("http"):
             detail_url = f"{self.BASE_URL}{detail_url}"
 
-        # Extract price - try unformatted first, then formatted
-        price = listing.get("priceUnformatted")
-        if price is None:
-            price_text = listing.get("price", "")
-            price = self._extract_price(price_text)
+        # Get price
+        price = listing.get_price_pcm()
         if price is None:
             return None
 
-        # Extract bedrooms - RSC uses features array [{iconId: "bed", content: 2}, ...]
-        bedrooms = None
-        features = listing.get("features", [])
-        if isinstance(features, list):
-            for feature in features:
-                if isinstance(feature, dict) and feature.get("iconId") == "bed":
-                    bedrooms = feature.get("content")
-                    break
-        # Fallback to old dict format
-        if bedrooms is None and isinstance(features, dict):
-            bedrooms = features.get("beds")
-        # Fallback to title parsing
-        if bedrooms is None:
-            title = listing.get("title", "")
-            bedrooms = self._extract_bedrooms(title)
+        # Get bedrooms
+        bedrooms = listing.get_bedrooms()
         if bedrooms is None:
             return None
 
-        # Extract address
-        address = listing.get("address", "")
-        if not address:
-            address = listing.get("title", "")
+        # Get address and title
+        address = listing.get_address()
+        title = listing.get_title()
 
-        # Extract postcode
+        # Extract postcode from address
         postcode = self._extract_postcode(address)
 
-        # Extract title
-        title = listing.get("title", "")
-        if not title:
-            title = address
+        # Get image URL
+        image_url = listing.get_image_url()
 
-        # Extract image
-        image_data = listing.get("image", {})
-        image_url = image_data.get("src") if isinstance(image_data, dict) else None
-        if image_url and not image_url.startswith("http"):
-            image_url = f"https:{image_url}"
-
-        # Extract coordinates (RSC uses pos: {lat, lng})
-        pos = listing.get("pos", {})
-        latitude = pos.get("lat") if isinstance(pos, dict) else None
-        longitude = pos.get("lng") if isinstance(pos, dict) else None
+        # Get coordinates
+        latitude = listing.pos.lat if listing.pos else None
+        longitude = listing.pos.lng if listing.pos else None
 
         return Property(
             source=PropertySource.ZOOPLA,
-            source_id=listing_id,
+            source_id=str(listing.listing_id),
             url=HttpUrl(detail_url),
             title=title,
             price_pcm=price,
@@ -324,9 +275,7 @@ class ZooplaScraper(BaseScraper):
         ]
         return f"{self.BASE_URL}/to-rent/property/{area_slug}/?{'&'.join(params)}"
 
-    def _parse_search_results(
-        self, soup: BeautifulSoup, base_url: str
-    ) -> list[Property]:
+    def _parse_search_results(self, soup: BeautifulSoup, _base_url: str) -> list[Property]:
         """Parse property listings from search results page (HTML fallback)."""
         properties: list[Property] = []
 
@@ -343,7 +292,7 @@ class ZooplaScraper(BaseScraper):
 
         return properties
 
-    def _parse_property_card(self, card: BeautifulSoup) -> Property | None:
+    def _parse_property_card(self, card: Tag) -> Property | None:
         """Parse a single property card element (HTML fallback)."""
         # Extract URL and property ID
         link = card.find("a", {"data-testid": "listing-details-link"})
@@ -351,7 +300,7 @@ class ZooplaScraper(BaseScraper):
             return None
 
         href = link.get("href", "")
-        if not href:
+        if not isinstance(href, str) or not href:
             return None
 
         property_id = self._extract_property_id(href)
@@ -405,7 +354,9 @@ class ZooplaScraper(BaseScraper):
         # Extract image URL
         img = card.find("img")
         image_url = img.get("src") if img else None
-        if image_url and not image_url.startswith("http"):
+        if not isinstance(image_url, str):
+            image_url = None
+        elif not image_url.startswith("http"):
             image_url = f"https:{image_url}"
 
         return Property(

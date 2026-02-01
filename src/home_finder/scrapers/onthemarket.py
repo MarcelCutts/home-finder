@@ -2,7 +2,7 @@
 
 import re
 
-from bs4 import BeautifulSoup
+from bs4 import BeautifulSoup, Tag
 from crawlee.crawlers import BeautifulSoupCrawler, BeautifulSoupCrawlingContext
 from pydantic import HttpUrl
 
@@ -82,9 +82,7 @@ class OnTheMarketScraper(BaseScraper):
         ]
         return f"{self.BASE_URL}/to-rent/property/{area_slug}/?{'&'.join(params)}"
 
-    def _parse_search_results(
-        self, soup: BeautifulSoup, base_url: str
-    ) -> list[Property]:
+    def _parse_search_results(self, soup: BeautifulSoup, base_url: str) -> list[Property]:
         """Parse property listings from search results page."""
         properties: list[Property] = []
 
@@ -102,7 +100,7 @@ class OnTheMarketScraper(BaseScraper):
 
         return properties
 
-    def _parse_property_card(self, card: BeautifulSoup) -> Property | None:
+    def _parse_property_card(self, card: Tag) -> Property | None:
         """Parse a single property card element."""
         # Extract property ID from data attribute or URL
         property_id = card.get("data-property-id")
@@ -111,7 +109,8 @@ class OnTheMarketScraper(BaseScraper):
             link = card.find("a", class_="otm-PropertyCard__link")
             if link:
                 href = link.get("href", "")
-                property_id = self._extract_property_id(href)
+                if isinstance(href, str):
+                    property_id = self._extract_property_id(href)
 
         if not property_id:
             return None
@@ -123,7 +122,7 @@ class OnTheMarketScraper(BaseScraper):
         if not link:
             link = card.find("a")
         href = link.get("href", "") if link else ""
-        if not href:
+        if not isinstance(href, str) or not href:
             return None
 
         if not href.startswith("http"):
@@ -173,7 +172,9 @@ class OnTheMarketScraper(BaseScraper):
         # Extract image URL
         img = card.find("img")
         image_url = img.get("src") if img else None
-        if image_url and not image_url.startswith("http"):
+        if not isinstance(image_url, str):
+            image_url = None
+        elif not image_url.startswith("http"):
             image_url = f"https:{image_url}"
 
         return Property(

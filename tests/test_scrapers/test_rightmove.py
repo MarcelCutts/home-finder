@@ -99,9 +99,7 @@ class TestRightmoveParser:
         prop_id = rightmove_scraper._extract_property_id(url)
         assert prop_id == "128459731"
 
-    def test_extract_property_id_no_match(
-        self, rightmove_scraper: RightmoveScraper
-    ) -> None:
+    def test_extract_property_id_no_match(self, rightmove_scraper: RightmoveScraper) -> None:
         """Test property ID extraction with invalid URL."""
         url = "/search/results.html"
         prop_id = rightmove_scraper._extract_property_id(url)
@@ -127,9 +125,7 @@ class TestRightmoveParser:
         assert rightmove_scraper._extract_bedrooms("Studio to rent") == 0
         assert rightmove_scraper._extract_bedrooms("3 bed house") == 3
 
-    def test_extract_bedrooms_no_match(
-        self, rightmove_scraper: RightmoveScraper
-    ) -> None:
+    def test_extract_bedrooms_no_match(self, rightmove_scraper: RightmoveScraper) -> None:
         """Test bedroom extraction with no bedroom info."""
         assert rightmove_scraper._extract_bedrooms("Flat to rent") is None
         assert rightmove_scraper._extract_bedrooms("") is None
@@ -138,14 +134,11 @@ class TestRightmoveParser:
         """Test postcode extraction from address."""
         assert rightmove_scraper._extract_postcode("Wayland Avenue, London E8") == "E8"
         assert (
-            rightmove_scraper._extract_postcode("Mare Street, Hackney, London E8 3RH")
-            == "E8 3RH"
+            rightmove_scraper._extract_postcode("Mare Street, Hackney, London E8 3RH") == "E8 3RH"
         )
         assert rightmove_scraper._extract_postcode("Islington N1 2AA") == "N1 2AA"
 
-    def test_extract_postcode_no_match(
-        self, rightmove_scraper: RightmoveScraper
-    ) -> None:
+    def test_extract_postcode_no_match(self, rightmove_scraper: RightmoveScraper) -> None:
         """Test postcode extraction with no postcode."""
         assert rightmove_scraper._extract_postcode("Some Address, London") is None
         assert rightmove_scraper._extract_postcode("") is None
@@ -162,7 +155,5 @@ class TestRightmoveParser:
         </html>
         """
         soup = BeautifulSoup(html, "html.parser")
-        properties = rightmove_scraper._parse_search_results(
-            soup, "https://rightmove.co.uk"
-        )
+        properties = rightmove_scraper._parse_search_results(soup, "https://rightmove.co.uk")
         assert len(properties) == 0

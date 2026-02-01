@@ -43,11 +43,11 @@ def _clear_crawlee_caches():
         from crawlee.storages import KeyValueStore
 
         # Clear KeyValueStore cache
-        if hasattr(KeyValueStore, '_cache'):
+        if hasattr(KeyValueStore, "_cache"):
             KeyValueStore._cache.clear()
-        if hasattr(KeyValueStore, '_cache_by_id'):
+        if hasattr(KeyValueStore, "_cache_by_id"):
             KeyValueStore._cache_by_id.clear()
-        if hasattr(KeyValueStore, '_cache_by_name'):
+        if hasattr(KeyValueStore, "_cache_by_name"):
             KeyValueStore._cache_by_name.clear()
     except (ImportError, AttributeError):
         pass
@@ -56,7 +56,7 @@ def _clear_crawlee_caches():
         from crawlee.statistics import Statistics
 
         # Clear Statistics instance cache
-        if hasattr(Statistics, '_instance'):
+        if hasattr(Statistics, "_instance"):
             Statistics._instance = None
     except (ImportError, AttributeError):
         pass
@@ -65,7 +65,7 @@ def _clear_crawlee_caches():
         from crawlee.crawlers import BasicCrawler
 
         # Clear BasicCrawler class-level cache
-        if hasattr(BasicCrawler, '_running_crawlers'):
+        if hasattr(BasicCrawler, "_running_crawlers"):
             BasicCrawler._running_crawlers.clear()
     except (ImportError, AttributeError):
         pass
@@ -77,12 +77,12 @@ def set_crawlee_storage_dir(tmp_path):
 
     This prevents tests from interfering with each other through shared storage.
     """
-    old_value = os.environ.get('CRAWLEE_STORAGE_DIR')
-    os.environ['CRAWLEE_STORAGE_DIR'] = str(tmp_path / 'crawlee_storage')
+    old_value = os.environ.get("CRAWLEE_STORAGE_DIR")
+    os.environ["CRAWLEE_STORAGE_DIR"] = str(tmp_path / "crawlee_storage")
 
     yield
 
     if old_value is not None:
-        os.environ['CRAWLEE_STORAGE_DIR'] = old_value
+        os.environ["CRAWLEE_STORAGE_DIR"] = old_value
     else:
-        os.environ.pop('CRAWLEE_STORAGE_DIR', None)
+        os.environ.pop("CRAWLEE_STORAGE_DIR", None)

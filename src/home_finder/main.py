@@ -182,9 +182,7 @@ async def run_pipeline(settings: Settings) -> None:
                         )
 
             # Keep properties within commute limit or without coords
-            properties_to_notify = [
-                p for p in props_with_coords if p.unique_id in commute_lookup
-            ]
+            properties_to_notify = [p for p in props_with_coords if p.unique_id in commute_lookup]
             # Include properties without coordinates (can't filter them)
             properties_to_notify.extend(props_without_coords)
 
@@ -339,9 +337,7 @@ async def run_dry_run(settings: Settings) -> None:
             )
 
             props_with_coords = [p for p in new_properties if p.latitude and p.longitude]
-            props_without_coords = [
-                p for p in new_properties if not (p.latitude and p.longitude)
-            ]
+            props_without_coords = [p for p in new_properties if not (p.latitude and p.longitude)]
 
             commute_results = []
             if props_with_coords:
@@ -366,9 +362,7 @@ async def run_dry_run(settings: Settings) -> None:
                             result.transport_mode,
                         )
 
-            properties_to_notify = [
-                p for p in props_with_coords if p.unique_id in commute_lookup
-            ]
+            properties_to_notify = [p for p in props_with_coords if p.unique_id in commute_lookup]
             properties_to_notify.extend(props_without_coords)
 
             logger.info(
@@ -450,24 +444,12 @@ def main() -> None:
     try:
         settings = Settings()
     except Exception as e:
-        # For --scrape-only, we don't need all settings
-        if args.scrape_only:
-            logger.warning("using_default_settings", error=str(e))
-            # Create minimal settings for scrape-only mode
-            import os
-
-            os.environ.setdefault("HOME_FINDER_TELEGRAM_BOT_TOKEN", "dummy")
-            os.environ.setdefault("HOME_FINDER_TELEGRAM_CHAT_ID", "0")
-            os.environ.setdefault("HOME_FINDER_TRAVELTIME_APP_ID", "")
-            os.environ.setdefault("HOME_FINDER_TRAVELTIME_API_KEY", "")
-            settings = Settings()
-        else:
-            logger.error("failed_to_load_settings", error=str(e))
-            print(f"Error: Failed to load settings. {e}")
-            print("Make sure you have a .env file with required settings.")
-            print("Required: HOME_FINDER_TELEGRAM_BOT_TOKEN, HOME_FINDER_TELEGRAM_CHAT_ID")
-            print("Optional: HOME_FINDER_TRAVELTIME_APP_ID, HOME_FINDER_TRAVELTIME_API_KEY")
-            sys.exit(1)
+        logger.error("failed_to_load_settings", error=str(e))
+        print(f"Error: Failed to load settings. {e}")
+        print("Make sure you have a .env file with required settings.")
+        print("Required: HOME_FINDER_TELEGRAM_BOT_TOKEN, HOME_FINDER_TELEGRAM_CHAT_ID")
+        print("Optional: HOME_FINDER_TRAVELTIME_APP_ID, HOME_FINDER_TRAVELTIME_API_KEY")
+        sys.exit(1)
 
     logger.info(
         "starting_home_finder",

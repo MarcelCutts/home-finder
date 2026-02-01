@@ -151,9 +151,7 @@ class TestCriteriaFilter:
             address="Above Address",
         )
 
-        filtered = filter.filter_properties(
-            [prop_min, prop_max, prop_below_min, prop_above_max]
-        )
+        filtered = filter.filter_properties([prop_min, prop_max, prop_below_min, prop_above_max])
 
         assert len(filtered) == 2
         source_ids = {p.source_id for p in filtered}

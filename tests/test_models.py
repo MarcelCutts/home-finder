@@ -242,9 +242,7 @@ class TestSearchCriteria:
         """Test that a property within criteria matches."""
         assert default_search_criteria.matches_property(sample_property) is True
 
-    def test_matches_property_price_too_low(
-        self, default_search_criteria: SearchCriteria
-    ) -> None:
+    def test_matches_property_price_too_low(self, default_search_criteria: SearchCriteria) -> None:
         """Test that a property with price below range doesn't match."""
         prop = Property(
             source=PropertySource.OPENRENT,
@@ -257,9 +255,7 @@ class TestSearchCriteria:
         )
         assert default_search_criteria.matches_property(prop) is False
 
-    def test_matches_property_price_too_high(
-        self, default_search_criteria: SearchCriteria
-    ) -> None:
+    def test_matches_property_price_too_high(self, default_search_criteria: SearchCriteria) -> None:
         """Test that a property with price above range doesn't match."""
         prop = Property(
             source=PropertySource.OPENRENT,
@@ -302,9 +298,7 @@ class TestSearchCriteria:
         )
         assert default_search_criteria.matches_property(prop) is False
 
-    def test_matches_property_at_boundaries(
-        self, default_search_criteria: SearchCriteria
-    ) -> None:
+    def test_matches_property_at_boundaries(self, default_search_criteria: SearchCriteria) -> None:
         """Test that properties at exact boundary values match."""
         # At min price and min bedrooms
         prop_min = Property(

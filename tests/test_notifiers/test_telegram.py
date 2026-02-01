@@ -56,9 +56,7 @@ class TestFormatPropertyMessage:
         assert "E8 3RH" in message
         assert "openrent.com" in message
 
-    def test_format_property_with_commute(
-        self, sample_tracked_property: TrackedProperty
-    ) -> None:
+    def test_format_property_with_commute(self, sample_tracked_property: TrackedProperty) -> None:
         """Test formatting a property with commute info."""
         message = format_property_message(
             sample_tracked_property.property,
@@ -92,7 +90,9 @@ class TestFormatPropertyMessage:
         message = format_property_message(prop_with_special)
 
         # Special chars should be escaped for HTML
-        assert "&lt;" in message or "<" not in message.replace("<a ", "").replace("<b>", "").replace("</b>", "").replace("</a>", "")
+        assert "&lt;" in message or "<" not in message.replace("<a ", "").replace(
+            "<b>", ""
+        ).replace("</b>", "").replace("</a>", "")
         assert "&amp;" in message or "& " not in message
 
 
