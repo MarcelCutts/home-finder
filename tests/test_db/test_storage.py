@@ -232,3 +232,72 @@ class TestPropertyStorage:
 
         await storage.save_property(sample_property_2)
         assert await storage.get_property_count() == 2
+
+    @pytest.mark.asyncio
+    async def test_get_unsent_notifications_returns_pending(
+        self,
+        storage: PropertyStorage,
+        storage_sample_property: Property,
+    ) -> None:
+        """Test that get_unsent_notifications returns pending properties."""
+        await storage.save_property(storage_sample_property)
+
+        unsent = await storage.get_unsent_notifications()
+        assert len(unsent) == 1
+        assert unsent[0].notification_status == NotificationStatus.PENDING
+
+    @pytest.mark.asyncio
+    async def test_get_unsent_notifications_returns_failed(
+        self,
+        storage: PropertyStorage,
+        storage_sample_property: Property,
+    ) -> None:
+        """Test that get_unsent_notifications returns failed properties."""
+        await storage.save_property(storage_sample_property)
+        await storage.mark_notification_failed(storage_sample_property.unique_id)
+
+        unsent = await storage.get_unsent_notifications()
+        assert len(unsent) == 1
+        assert unsent[0].notification_status == NotificationStatus.FAILED
+
+    @pytest.mark.asyncio
+    async def test_get_unsent_notifications_excludes_sent(
+        self,
+        storage: PropertyStorage,
+        storage_sample_property: Property,
+        sample_property_2: Property,
+    ) -> None:
+        """Test that get_unsent_notifications excludes sent properties."""
+        # Save both properties
+        await storage.save_property(storage_sample_property)
+        await storage.save_property(sample_property_2)
+
+        # Mark first as sent, second as failed
+        await storage.mark_notified(storage_sample_property.unique_id)
+        await storage.mark_notification_failed(sample_property_2.unique_id)
+
+        # Should only return the failed one
+        unsent = await storage.get_unsent_notifications()
+        assert len(unsent) == 1
+        assert unsent[0].property.source_id == "67890"
+        assert unsent[0].notification_status == NotificationStatus.FAILED
+
+    @pytest.mark.asyncio
+    async def test_get_unsent_notifications_returns_both_pending_and_failed(
+        self,
+        storage: PropertyStorage,
+        storage_sample_property: Property,
+        sample_property_2: Property,
+    ) -> None:
+        """Test that get_unsent_notifications returns both pending and failed."""
+        # Save both - first stays pending, second marked as failed
+        await storage.save_property(storage_sample_property)
+        await storage.save_property(sample_property_2)
+        await storage.mark_notification_failed(sample_property_2.unique_id)
+
+        unsent = await storage.get_unsent_notifications()
+        assert len(unsent) == 2
+
+        statuses = {u.notification_status for u in unsent}
+        assert NotificationStatus.PENDING in statuses
+        assert NotificationStatus.FAILED in statuses

@@ -115,6 +115,23 @@ async def run_pipeline(settings: Settings) -> None:
     )
 
     try:
+        # Step 0: Retry any unsent notifications from previous runs
+        unsent = await storage.get_unsent_notifications()
+        if unsent:
+            logger.info("retrying_unsent_notifications", count=len(unsent))
+            for tracked in unsent:
+                success = await notifier.send_property_notification(
+                    tracked.property,
+                    commute_minutes=tracked.commute_minutes,
+                    transport_mode=tracked.transport_mode,
+                )
+                if success:
+                    await storage.mark_notified(tracked.property.unique_id)
+                    logger.info("retry_notification_sent", unique_id=tracked.property.unique_id)
+                else:
+                    logger.warning("retry_notification_failed", unique_id=tracked.property.unique_id)
+                await asyncio.sleep(1)
+
         # Step 1: Scrape all platforms
         logger.info("pipeline_started", phase="scraping")
         all_properties = await scrape_all_platforms(

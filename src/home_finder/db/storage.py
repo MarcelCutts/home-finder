@@ -213,6 +213,22 @@ class PropertyStorage:
         rows = await cursor.fetchall()
         return [self._row_to_tracked_property(row) for row in rows]
 
+    async def get_unsent_notifications(self) -> list[TrackedProperty]:
+        """Get properties that need notification (pending or previously failed).
+
+        Returns:
+            List of properties with pending or failed notification status.
+        """
+        conn = await self._get_connection()
+        cursor = await conn.execute(
+            """SELECT * FROM properties
+               WHERE notification_status IN (?, ?)
+               ORDER BY first_seen ASC""",
+            (NotificationStatus.PENDING.value, NotificationStatus.FAILED.value),
+        )
+        rows = await cursor.fetchall()
+        return [self._row_to_tracked_property(row) for row in rows]
+
     async def mark_notified(self, unique_id: str) -> None:
         """Mark a property as notified.
 
