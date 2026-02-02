@@ -158,3 +158,6 @@ storage/
 
 # Claude
 CLAUDE.md
+
+# Worktrees
+.worktrees/
