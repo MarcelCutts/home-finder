@@ -36,6 +36,18 @@ class Settings(BaseSettings):
         description="TravelTime API key",
     )
 
+    # Anthropic API (optional, needed for floorplan analysis)
+    anthropic_api_key: SecretStr = Field(
+        default=SecretStr(""),
+        description="Anthropic API key for floorplan analysis",
+    )
+
+    # Floorplan filtering (optional)
+    enable_floorplan_filter: bool = Field(
+        default=True,
+        description="Filter out properties without floorplans and analyze 1-beds",
+    )
+
     # Search criteria
     min_price: int = Field(default=1800, ge=0)
     max_price: int = Field(default=2200, ge=0)
