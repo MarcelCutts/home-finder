@@ -56,9 +56,12 @@ class DetailFetcher:
         match prop.source:
             case PropertySource.RIGHTMOVE:
                 return await self._fetch_rightmove(prop)
-            case _:
-                logger.warning("unsupported_source", source=prop.source.value)
-                return None
+            case PropertySource.ZOOPLA:
+                return await self._fetch_zoopla(prop)
+            case PropertySource.OPENRENT:
+                return await self._fetch_openrent(prop)
+            case PropertySource.ONTHEMARKET:
+                return await self._fetch_onthemarket(prop)
 
     async def _fetch_rightmove(self, prop: Property) -> str | None:
         """Extract floorplan URL from Rightmove detail page."""
@@ -88,6 +91,93 @@ class DetailFetcher:
                 property_id=prop.unique_id,
                 error=str(e),
             )
+            return None
+
+    async def _fetch_zoopla(self, prop: Property) -> str | None:
+        """Extract floorplan URL from Zoopla detail page."""
+        try:
+            client = await self._get_client()
+            response = await client.get(str(prop.url))
+            response.raise_for_status()
+            html = response.text
+
+            # Find __NEXT_DATA__ JSON
+            match = re.search(
+                r'<script id="__NEXT_DATA__"[^>]*>(.*?)</script>',
+                html,
+                re.DOTALL,
+            )
+            if not match:
+                return None
+
+            data = json.loads(match.group(1))
+            media = (
+                data.get("props", {})
+                .get("pageProps", {})
+                .get("listing", {})
+                .get("propertyMedia", [])
+            )
+
+            for item in media:
+                if item.get("type") == "floorplan":
+                    return item.get("original")
+
+            return None
+
+        except Exception as e:
+            logger.warning("zoopla_fetch_failed", property_id=prop.unique_id, error=str(e))
+            return None
+
+    async def _fetch_openrent(self, prop: Property) -> str | None:
+        """Extract floorplan URL from OpenRent detail page."""
+        try:
+            client = await self._get_client()
+            response = await client.get(str(prop.url))
+            response.raise_for_status()
+            html = response.text
+
+            # Look for floorplan image
+            match = re.search(
+                r'<img[^>]*class="[^"]*floorplan[^"]*"[^>]*src="([^"]+)"',
+                html,
+                re.IGNORECASE,
+            )
+            if match:
+                return match.group(1)
+
+            return None
+
+        except Exception as e:
+            logger.warning("openrent_fetch_failed", property_id=prop.unique_id, error=str(e))
+            return None
+
+    async def _fetch_onthemarket(self, prop: Property) -> str | None:
+        """Extract floorplan URL from OnTheMarket detail page."""
+        try:
+            client = await self._get_client()
+            response = await client.get(str(prop.url))
+            response.raise_for_status()
+            html = response.text
+
+            # Find property-details JSON
+            match = re.search(
+                r'<script[^>]*data-testid="property-details"[^>]*>(.*?)</script>',
+                html,
+                re.DOTALL,
+            )
+            if not match:
+                return None
+
+            data = json.loads(match.group(1))
+            floorplans = data.get("floorplans", [])
+
+            if floorplans and floorplans[0].get("src"):
+                return floorplans[0]["src"]
+
+            return None
+
+        except Exception as e:
+            logger.warning("onthemarket_fetch_failed", property_id=prop.unique_id, error=str(e))
             return None
 
     async def close(self) -> None:
