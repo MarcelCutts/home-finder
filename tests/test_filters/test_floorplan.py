@@ -235,7 +235,7 @@ class TestDetailFetcherOnTheMarket:
         fetcher = DetailFetcher()
         url = await fetcher.fetch_floorplan_url(onthemarket_property)
 
-        assert url == "https://media.onthemarket.com/floor/123.jpg"
+        assert url == "https://media.onthemarket.com/floor/123.jpg"  # from 'original' field
 
     async def test_returns_none_when_no_floorplan(
         self, onthemarket_property: Property, fixtures_path: Path, httpx_mock

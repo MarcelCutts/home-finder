@@ -73,13 +73,27 @@ class DetailFetcher:
             response.raise_for_status()
             html = response.text
 
-            # Find PAGE_MODEL JSON in script tag
-            match = re.search(r"window\.PAGE_MODEL\s*=\s*({.*?});", html, re.DOTALL)
-            if not match:
+            # Find PAGE_MODEL JSON start
+            start_match = re.search(r"window\.PAGE_MODEL\s*=\s*", html)
+            if not start_match:
                 logger.debug("no_page_model", property_id=prop.unique_id)
                 return None
 
-            data = json.loads(match.group(1))
+            # Extract JSON using brace counting (handles nested objects)
+            start_idx = start_match.end()
+            depth = 0
+            end_idx = start_idx
+            for i, char in enumerate(html[start_idx:]):
+                if char == "{":
+                    depth += 1
+                elif char == "}":
+                    depth -= 1
+                    if depth == 0:
+                        end_idx = start_idx + i + 1
+                        break
+
+            json_str = html[start_idx:end_idx]
+            data = json.loads(json_str)
             floorplans = data.get("propertyData", {}).get("floorplans", [])
 
             if floorplans and floorplans[0].get("url"):
@@ -163,9 +177,9 @@ class DetailFetcher:
             response.raise_for_status()
             html = response.text
 
-            # Find property-details JSON
+            # OnTheMarket uses Next.js with Redux state in __NEXT_DATA__
             match = re.search(
-                r'<script[^>]*data-testid="property-details"[^>]*>(.*?)</script>',
+                r'<script id="__NEXT_DATA__"[^>]*>(.*?)</script>',
                 html,
                 re.DOTALL,
             )
@@ -173,10 +187,16 @@ class DetailFetcher:
                 return None
 
             data = json.loads(match.group(1))
-            floorplans = data.get("floorplans", [])
+            # Floorplans are in the Redux initial state under property
+            floorplans = (
+                data.get("props", {})
+                .get("initialReduxState", {})
+                .get("property", {})
+                .get("floorplans", [])
+            )
 
-            if floorplans and floorplans[0].get("src"):
-                url: str = floorplans[0]["src"]
+            if floorplans and floorplans[0].get("original"):
+                url: str = floorplans[0]["original"]
                 return url
 
             return None
