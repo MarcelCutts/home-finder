@@ -83,7 +83,8 @@ class DetailFetcher:
             floorplans = data.get("propertyData", {}).get("floorplans", [])
 
             if floorplans and floorplans[0].get("url"):
-                return floorplans[0]["url"]
+                url: str = floorplans[0]["url"]
+                return url
 
             return None
 
@@ -122,7 +123,8 @@ class DetailFetcher:
 
             for item in media:
                 if item.get("type") == "floorplan":
-                    return item.get("original")
+                    url: str | None = item.get("original")
+                    return url
 
             return None
 
@@ -174,7 +176,8 @@ class DetailFetcher:
             floorplans = data.get("floorplans", [])
 
             if floorplans and floorplans[0].get("src"):
-                return floorplans[0]["src"]
+                url: str = floorplans[0]["src"]
+                return url
 
             return None
 
@@ -195,7 +198,8 @@ I need to determine if the living room/lounge is spacious enough to:
 1. Fit a home office setup (desk, chair, monitors)
 2. Host a party of 8+ people comfortably
 
-Please analyze the floorplan and respond with ONLY a JSON object (no markdown, no explanation outside the JSON):
+Please analyze the floorplan and respond with ONLY a JSON object
+(no markdown, no explanation outside the JSON):
 
 {
     "living_room_sqm": <estimated size in square meters, or null if cannot determine>,
@@ -252,21 +256,21 @@ class FloorplanFilter:
 
             # Step 2: 2+ beds auto-pass
             if prop.bedrooms >= 2:
-                analysis = FloorplanAnalysis(
+                auto_pass_analysis = FloorplanAnalysis(
                     is_spacious_enough=True,
                     confidence="high",
                     reasoning="2+ bedrooms - office can go in spare room",
                 )
-                results.append((prop, analysis))
+                results.append((prop, auto_pass_analysis))
                 continue
 
             # Step 3: 1-bed needs LLM analysis
-            analysis = await self._analyze_floorplan(floorplan_url, prop.unique_id)
+            llm_analysis = await self._analyze_floorplan(floorplan_url, prop.unique_id)
 
-            if analysis and analysis.is_spacious_enough:
-                results.append((prop, analysis))
+            if llm_analysis and llm_analysis.is_spacious_enough:
+                results.append((prop, llm_analysis))
             else:
-                reason = analysis.reasoning if analysis else "analysis failed"
+                reason = llm_analysis.reasoning if llm_analysis else "analysis failed"
                 logger.info(
                     "filtered_small_living_room",
                     property_id=prop.unique_id,
@@ -309,9 +313,16 @@ class FloorplanFilter:
                 ],
             )
 
-            # Parse response
-            response_text = response.content[0].text
-            return FloorplanAnalysis.model_validate_json(response_text)
+            # Parse response - first content block should be TextBlock
+            first_block = response.content[0]
+            if not hasattr(first_block, "text"):
+                logger.warning(
+                    "unexpected_response_type",
+                    property_id=property_id,
+                    block_type=type(first_block).__name__,
+                )
+                return None
+            return FloorplanAnalysis.model_validate_json(first_block.text)
 
         except Exception as e:
             logger.warning(

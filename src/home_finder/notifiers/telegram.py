@@ -4,6 +4,7 @@ import asyncio
 import html
 from typing import TYPE_CHECKING
 
+from home_finder.filters.floorplan import FloorplanAnalysis
 from home_finder.logging import get_logger
 from home_finder.models import Property, TransportMode
 
@@ -18,6 +19,7 @@ def format_property_message(
     *,
     commute_minutes: int | None = None,
     transport_mode: TransportMode | None = None,
+    floorplan_analysis: FloorplanAnalysis | None = None,
 ) -> str:
     """Format a property as a Telegram message.
 
@@ -25,6 +27,7 @@ def format_property_message(
         prop: Property to format.
         commute_minutes: Commute time in minutes (optional).
         transport_mode: Transport mode used (optional).
+        floorplan_analysis: Floorplan analysis result (optional).
 
     Returns:
         Formatted message string with HTML markup.
@@ -58,6 +61,16 @@ def format_property_message(
             }
             mode_str = f" {mode_map.get(transport_mode, '')}"
         lines.append(f"<b>Commute:</b> {commute_minutes} min{mode_str}")
+
+    # Add floorplan analysis if available
+    if floorplan_analysis:
+        if floorplan_analysis.living_room_sqm:
+            lines.append(
+                f"<b>Living room:</b> ~{floorplan_analysis.living_room_sqm:.0f}sqm "
+                f"({floorplan_analysis.confidence} confidence)"
+            )
+        else:
+            lines.append(f"<b>Living room:</b> {floorplan_analysis.reasoning}")
 
     # Add source
     source_names = {
@@ -109,6 +122,7 @@ class TelegramNotifier:
         *,
         commute_minutes: int | None = None,
         transport_mode: TransportMode | None = None,
+        floorplan_analysis: FloorplanAnalysis | None = None,
     ) -> bool:
         """Send a property notification.
 
@@ -116,6 +130,7 @@ class TelegramNotifier:
             prop: Property to notify about.
             commute_minutes: Commute time in minutes (optional).
             transport_mode: Transport mode used (optional).
+            floorplan_analysis: Floorplan analysis result (optional).
 
         Returns:
             True if notification was sent successfully.
@@ -124,6 +139,7 @@ class TelegramNotifier:
             prop,
             commute_minutes=commute_minutes,
             transport_mode=transport_mode,
+            floorplan_analysis=floorplan_analysis,
         )
 
         try:

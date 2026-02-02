@@ -6,7 +6,14 @@ import sys
 
 from home_finder.config import Settings
 from home_finder.db import PropertyStorage
-from home_finder.filters import CommuteFilter, CriteriaFilter, Deduplicator, LocationFilter
+from home_finder.filters import (
+    CommuteFilter,
+    CriteriaFilter,
+    Deduplicator,
+    FloorplanAnalysis,
+    FloorplanFilter,
+    LocationFilter,
+)
 from home_finder.logging import configure_logging, get_logger
 from home_finder.models import Property, TransportMode
 from home_finder.notifiers import TelegramNotifier
@@ -238,6 +245,42 @@ async def run_pipeline(settings: Settings) -> None:
             logger.info("no_properties_within_commute_limit")
             return
 
+        # Step 5.5: Floorplan analysis (if configured)
+        floorplan_lookup: dict[str, FloorplanAnalysis] = {}
+        floorplan_filter = None
+        if (
+            settings.anthropic_api_key.get_secret_value()
+            and settings.enable_floorplan_filter
+        ):
+            logger.info("pipeline_started", phase="floorplan_filtering")
+            floorplan_filter = FloorplanFilter(
+                api_key=settings.anthropic_api_key.get_secret_value()
+            )
+
+            try:
+                floorplan_results = await floorplan_filter.filter_properties(
+                    properties_to_notify
+                )
+
+                # Build lookup and filter to passing properties
+                floorplan_lookup = {
+                    prop.unique_id: analysis for prop, analysis in floorplan_results
+                }
+                properties_to_notify = [prop for prop, _ in floorplan_results]
+
+                logger.info(
+                    "floorplan_filter_summary",
+                    passed=len(properties_to_notify),
+                )
+            finally:
+                await floorplan_filter.close()
+        else:
+            logger.info("skipping_floorplan_filter", reason="not_configured")
+
+        if not properties_to_notify:
+            logger.info("no_properties_with_suitable_floorplans")
+            return
+
         # Step 6: Save and notify
         logger.info(
             "pipeline_started",
@@ -249,6 +292,7 @@ async def run_pipeline(settings: Settings) -> None:
             commute_info = commute_lookup.get(prop.unique_id)
             commute_minutes = commute_info[0] if commute_info else None
             transport_mode = commute_info[1] if commute_info else None
+            floorplan_analysis = floorplan_lookup.get(prop.unique_id)
 
             # Save to database
             await storage.save_property(
@@ -262,6 +306,7 @@ async def run_pipeline(settings: Settings) -> None:
                 prop,
                 commute_minutes=commute_minutes,
                 transport_mode=transport_mode,
+                floorplan_analysis=floorplan_analysis,
             )
 
             if success:
@@ -426,6 +471,42 @@ async def run_dry_run(settings: Settings) -> None:
             print("\nNo properties within commute limit.")
             return
 
+        # Step 5.5: Floorplan analysis (if configured)
+        floorplan_lookup: dict[str, FloorplanAnalysis] = {}
+        floorplan_filter = None
+        if (
+            settings.anthropic_api_key.get_secret_value()
+            and settings.enable_floorplan_filter
+        ):
+            logger.info("pipeline_started", phase="floorplan_filtering")
+            floorplan_filter = FloorplanFilter(
+                api_key=settings.anthropic_api_key.get_secret_value()
+            )
+
+            try:
+                floorplan_results = await floorplan_filter.filter_properties(
+                    properties_to_notify
+                )
+
+                floorplan_lookup = {
+                    prop.unique_id: analysis for prop, analysis in floorplan_results
+                }
+                properties_to_notify = [prop for prop, _ in floorplan_results]
+
+                logger.info(
+                    "floorplan_filter_summary",
+                    passed=len(properties_to_notify),
+                )
+            finally:
+                await floorplan_filter.close()
+        else:
+            logger.info("skipping_floorplan_filter", reason="not_configured")
+
+        if not properties_to_notify:
+            logger.info("no_properties_with_suitable_floorplans")
+            print("\nNo properties with suitable floorplans.")
+            return
+
         # Step 6: Save (but don't notify in dry-run mode)
         logger.info(
             "pipeline_started",
@@ -442,6 +523,7 @@ async def run_dry_run(settings: Settings) -> None:
             commute_info = commute_lookup.get(prop.unique_id)
             commute_minutes = commute_info[0] if commute_info else None
             transport_mode = commute_info[1] if commute_info else None
+            floorplan_analysis = floorplan_lookup.get(prop.unique_id)
 
             # Save to database
             await storage.save_property(
@@ -459,6 +541,13 @@ async def run_dry_run(settings: Settings) -> None:
             if commute_minutes is not None:
                 mode_str = transport_mode.value if transport_mode else ""
                 print(f"  Commute: {commute_minutes} min ({mode_str})")
+            if floorplan_analysis:
+                sqm_str = (
+                    f"{floorplan_analysis.living_room_sqm:.0f}sqm"
+                    if floorplan_analysis.living_room_sqm
+                    else "size unknown"
+                )
+                print(f"  Living room: {sqm_str} ({floorplan_analysis.confidence})")
             print(f"  URL: {prop.url}")
             print()
 
