@@ -16,9 +16,7 @@ PRICE_TOLERANCE = 0.03
 COORDINATE_DISTANCE_METERS = 50
 
 # Regex to detect full UK postcodes (outcode + incode)
-FULL_POSTCODE_PATTERN = re.compile(
-    r"^[A-Z]{1,2}[0-9][0-9A-Z]?\s+[0-9][A-Z]{2}$", re.IGNORECASE
-)
+FULL_POSTCODE_PATTERN = re.compile(r"^[A-Z]{1,2}[0-9][0-9A-Z]?\s+[0-9][A-Z]{2}$", re.IGNORECASE)
 
 
 def is_full_postcode(postcode: str | None) -> bool:
@@ -71,9 +69,7 @@ def coordinates_match(
     if not (prop1.latitude and prop1.longitude and prop2.latitude and prop2.longitude):
         return False
 
-    distance = haversine_distance(
-        prop1.latitude, prop1.longitude, prop2.latitude, prop2.longitude
-    )
+    distance = haversine_distance(prop1.latitude, prop1.longitude, prop2.latitude, prop2.longitude)
     return distance <= max_meters
 
 
@@ -177,9 +173,7 @@ class Deduplicator:
 
         return result
 
-    def deduplicate_and_merge(
-        self, properties: list[Property]
-    ) -> list[MergedProperty]:
+    def deduplicate_and_merge(self, properties: list[Property]) -> list[MergedProperty]:
         """Deduplicate and merge properties from multiple sources.
 
         Unlike deduplicate(), this method preserves data from all sources
@@ -315,9 +309,7 @@ class Deduplicator:
 
         return f"{postcode}:{prop.bedrooms}"
 
-    def _group_by_price_and_location(
-        self, candidates: list[Property]
-    ) -> list[list[Property]]:
+    def _group_by_price_and_location(self, candidates: list[Property]) -> list[list[Property]]:
         """Group properties by similar prices AND location confirmation.
 
         CONSERVATIVE: Requires price match AND either:
@@ -356,12 +348,7 @@ class Deduplicator:
                     continue
 
                 # If both have coordinates, require them to be close
-                if (
-                    prop_i.latitude
-                    and prop_i.longitude
-                    and prop_j.latitude
-                    and prop_j.longitude
-                ):
+                if prop_i.latitude and prop_i.longitude and prop_j.latitude and prop_j.longitude:
                     if coordinates_match(prop_i, prop_j):
                         union(i, j)
                     # else: coordinates don't match, don't merge even with same postcode

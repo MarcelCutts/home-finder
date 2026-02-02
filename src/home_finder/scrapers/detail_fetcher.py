@@ -221,7 +221,7 @@ class DetailFetcher:
                 # Extract gallery images from zoocdn URLs (lid = listing image)
                 # Pattern: https://lid.zoocdn.com/u/{width}/{height}/{hash}.jpg
                 img_matches = re.findall(
-                    r'https://lid\.zoocdn\.com/u/(\d+)/(\d+)/([a-f0-9]+\.(?:jpg|jpeg|png|webp))',
+                    r"https://lid\.zoocdn\.com/u/(\d+)/(\d+)/([a-f0-9]+\.(?:jpg|jpeg|png|webp))",
                     html,
                     re.IGNORECASE,
                 )
@@ -231,7 +231,10 @@ class DetailFetcher:
                     hash_part = filename.split(".")[0]
                     size = int(width) * int(height)
                     if hash_part not in seen_hashes or size > seen_hashes[hash_part][0]:
-                        seen_hashes[hash_part] = (size, f"https://lid.zoocdn.com/u/{width}/{height}/{filename}")
+                        seen_hashes[hash_part] = (
+                            size,
+                            f"https://lid.zoocdn.com/u/{width}/{height}/{filename}",
+                        )
 
                 # Sort by size descending and take top images
                 sorted_imgs = sorted(seen_hashes.values(), key=lambda x: -x[0])
@@ -406,11 +409,7 @@ class DetailFetcher:
             floorplans = property_data.get("floorplans", [])
             if floorplans:
                 fp = floorplans[0]
-                floorplan_url = (
-                    fp.get("original")
-                    or fp.get("largeUrl")
-                    or fp.get("url")
-                )
+                floorplan_url = fp.get("original") or fp.get("largeUrl") or fp.get("url")
 
             # Extract gallery images
             # OnTheMarket uses 'largeUrl' or 'prefix' + geometry suffix
@@ -419,11 +418,7 @@ class DetailFetcher:
             for img in images[: self._max_gallery_images]:
                 if isinstance(img, dict):
                     # Try various URL fields
-                    url = (
-                        img.get("original")
-                        or img.get("largeUrl")
-                        or img.get("url")
-                    )
+                    url = img.get("original") or img.get("largeUrl") or img.get("url")
                     # Fallback: construct from prefix if available
                     if not url and img.get("prefix"):
                         url = f"{img['prefix']}-1024x1024.jpg"

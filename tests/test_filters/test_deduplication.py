@@ -769,9 +769,7 @@ class TestDeduplicatorMerge:
         assert len(merged) == 1
         assert len(merged[0].source_urls) == 3
         assert str(merged[0].source_urls[PropertySource.OPENRENT]) == "https://openrent.com/111"
-        assert (
-            str(merged[0].source_urls[PropertySource.RIGHTMOVE]) == "https://rightmove.co.uk/222"
-        )
+        assert str(merged[0].source_urls[PropertySource.RIGHTMOVE]) == "https://rightmove.co.uk/222"
         assert str(merged[0].source_urls[PropertySource.ZOOPLA]) == "https://zoopla.co.uk/333"
 
     def test_single_property_wrapped_as_merged(self) -> None:

@@ -318,9 +318,7 @@ async def run_pipeline(settings: Settings) -> None:
                     final_merged.unique_id, list(final_merged.images)
                 )
             if final_merged.floorplan:
-                await storage.save_property_images(
-                    final_merged.unique_id, [final_merged.floorplan]
-                )
+                await storage.save_property_images(final_merged.unique_id, [final_merged.floorplan])
 
             # Send notification
             success = await notifier.send_merged_property_notification(
@@ -567,9 +565,7 @@ async def run_dry_run(settings: Settings) -> None:
                     final_merged.unique_id, list(final_merged.images)
                 )
             if final_merged.floorplan:
-                await storage.save_property_images(
-                    final_merged.unique_id, [final_merged.floorplan]
-                )
+                await storage.save_property_images(final_merged.unique_id, [final_merged.floorplan])
 
             # Print instead of notify
             source_str = ", ".join(s.value for s in final_merged.sources)

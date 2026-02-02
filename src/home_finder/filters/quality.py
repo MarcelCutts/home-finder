@@ -625,8 +625,7 @@ class PropertyQualityFilter:
 
                     # Keep longest description
                     if detail_data.description and (
-                        not best_description
-                        or len(detail_data.description) > len(best_description)
+                        not best_description or len(detail_data.description) > len(best_description)
                     ):
                         best_description = detail_data.description
 

@@ -222,7 +222,6 @@ class TestOpenRentParser:
         assert "km" not in title.lower()
         assert "Test Area" in title
 
-
     def test_parse_search_results_handles_missing_longitude(
         self, openrent_scraper: OpenRentScraper
     ) -> None:

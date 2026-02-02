@@ -312,9 +312,7 @@ class PropertyStorage:
                 new_properties.append(prop)
         return new_properties
 
-    async def filter_new_merged(
-        self, properties: list[MergedProperty]
-    ) -> list[MergedProperty]:
+    async def filter_new_merged(self, properties: list[MergedProperty]) -> list[MergedProperty]:
         """Filter to only merged properties not yet seen.
 
         A merged property is considered "seen" if its canonical unique_id exists
@@ -407,9 +405,7 @@ class PropertyStorage:
             sources=[s.value for s in merged.sources],
         )
 
-    async def save_property_images(
-        self, unique_id: str, images: list[PropertyImage]
-    ) -> None:
+    async def save_property_images(self, unique_id: str, images: list[PropertyImage]) -> None:
         """Save property images to the database.
 
         Args:

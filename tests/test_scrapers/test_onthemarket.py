@@ -28,8 +28,14 @@ def sample_listing() -> dict[str, Any]:
         "bedrooms": 1,
         "details-url": "/details/15234567/",
         "images": [
-            {"default": "https://media.onthemarket.com/image1.jpg", "webp": "https://media.onthemarket.com/image1.webp"},
-            {"default": "https://media.onthemarket.com/image2.jpg", "webp": "https://media.onthemarket.com/image2.webp"},
+            {
+                "default": "https://media.onthemarket.com/image1.jpg",
+                "webp": "https://media.onthemarket.com/image1.webp",
+            },
+            {
+                "default": "https://media.onthemarket.com/image2.jpg",
+                "webp": "https://media.onthemarket.com/image2.webp",
+            },
         ],
         "location": {"lat": 51.549, "lon": -0.055},
     }
@@ -103,7 +109,9 @@ class TestOnTheMarketScraper:
         )
         assert "islington" in url.lower()
 
-    async def test_scrape_uses_curl_cffi(self, onthemarket_scraper: OnTheMarketScraper, sample_next_data: str) -> None:
+    async def test_scrape_uses_curl_cffi(
+        self, onthemarket_scraper: OnTheMarketScraper, sample_next_data: str
+    ) -> None:
         """Test that scrape uses curl_cffi with Chrome impersonation."""
         mock_response = MagicMock()
         mock_response.status_code = 200
@@ -186,7 +194,9 @@ class TestOnTheMarketParser:
         prop = onthemarket_scraper._listing_to_property(listing)
         assert prop is None
 
-    def test_listing_to_property_extracts_id_from_url(self, onthemarket_scraper: OnTheMarketScraper) -> None:
+    def test_listing_to_property_extracts_id_from_url(
+        self, onthemarket_scraper: OnTheMarketScraper
+    ) -> None:
         """Test ID extraction from details-url when id field is missing."""
         listing = {
             "details-url": "/details/99999999/",
