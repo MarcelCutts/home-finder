@@ -1,11 +1,11 @@
 """Tests for floorplan analysis filter."""
 
 from pathlib import Path
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from pydantic import ValidationError
-
-from unittest.mock import AsyncMock, MagicMock, patch
+from anthropic.types import TextBlock
+from pydantic import HttpUrl, ValidationError
 
 from home_finder.filters.floorplan import DetailFetcher, FloorplanAnalysis, FloorplanFilter
 from home_finder.models import Property, PropertySource
@@ -41,7 +41,7 @@ class TestFloorplanAnalysis:
         with pytest.raises(ValidationError):
             FloorplanAnalysis(
                 is_spacious_enough=True,
-                confidence="very high",  # Invalid
+                confidence="very high",  # type: ignore[arg-type]  # Intentionally invalid
                 reasoning="Test",
             )
 
@@ -62,7 +62,7 @@ def rightmove_property() -> Property:
     return Property(
         source=PropertySource.RIGHTMOVE,
         source_id="123456789",
-        url="https://www.rightmove.co.uk/properties/123456789",
+        url=HttpUrl("https://www.rightmove.co.uk/properties/123456789"),
         title="2 bed flat",
         price_pcm=2000,
         bedrooms=2,
@@ -130,7 +130,7 @@ def zoopla_property() -> Property:
     return Property(
         source=PropertySource.ZOOPLA,
         source_id="123456789",
-        url="https://www.zoopla.co.uk/to-rent/details/123456789",
+        url=HttpUrl("https://www.zoopla.co.uk/to-rent/details/123456789"),
         title="2 bed flat",
         price_pcm=2000,
         bedrooms=2,
@@ -144,7 +144,7 @@ def openrent_property() -> Property:
     return Property(
         source=PropertySource.OPENRENT,
         source_id="123456789",
-        url="https://www.openrent.com/property/123456789",
+        url=HttpUrl("https://www.openrent.com/property/123456789"),
         title="2 bed flat",
         price_pcm=2000,
         bedrooms=2,
@@ -158,7 +158,7 @@ def onthemarket_property() -> Property:
     return Property(
         source=PropertySource.ONTHEMARKET,
         source_id="123456789",
-        url="https://www.onthemarket.com/details/123456789",
+        url=HttpUrl("https://www.onthemarket.com/details/123456789"),
         title="2 bed flat",
         price_pcm=2000,
         bedrooms=2,
@@ -167,29 +167,66 @@ def onthemarket_property() -> Property:
 
 
 class TestDetailFetcherZoopla:
-    """Tests for Zoopla detail page parsing."""
+    """Tests for Zoopla detail page parsing.
+
+    Uses curl_cffi for TLS fingerprint impersonation, so we mock AsyncSession.
+    """
 
     async def test_extracts_floorplan_url(
-        self, zoopla_property: Property, fixtures_path: Path, httpx_mock
+        self, zoopla_property: Property, fixtures_path: Path
     ):
         """Should extract floorplan URL from Zoopla detail page."""
         html = (fixtures_path / "zoopla_detail_with_floorplan.html").read_text()
-        httpx_mock.add_response(html=html)
 
-        fetcher = DetailFetcher()
-        url = await fetcher.fetch_floorplan_url(zoopla_property)
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.text = html
+
+        mock_session = MagicMock()
+        mock_session.get = AsyncMock(return_value=mock_response)
+        mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session.__aexit__ = AsyncMock(return_value=None)
+
+        with patch("home_finder.filters.floorplan.AsyncSession", return_value=mock_session):
+            fetcher = DetailFetcher()
+            url = await fetcher.fetch_floorplan_url(zoopla_property)
 
         assert url == "https://lid.zoocdn.com/u/floor/123.jpg"
 
     async def test_returns_none_when_no_floorplan(
-        self, zoopla_property: Property, fixtures_path: Path, httpx_mock
+        self, zoopla_property: Property, fixtures_path: Path
     ):
         """Should return None when property has no floorplan."""
         html = (fixtures_path / "zoopla_detail_no_floorplan.html").read_text()
-        httpx_mock.add_response(html=html)
 
-        fetcher = DetailFetcher()
-        url = await fetcher.fetch_floorplan_url(zoopla_property)
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.text = html
+
+        mock_session = MagicMock()
+        mock_session.get = AsyncMock(return_value=mock_response)
+        mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session.__aexit__ = AsyncMock(return_value=None)
+
+        with patch("home_finder.filters.floorplan.AsyncSession", return_value=mock_session):
+            fetcher = DetailFetcher()
+            url = await fetcher.fetch_floorplan_url(zoopla_property)
+
+        assert url is None
+
+    async def test_returns_none_on_http_error(self, zoopla_property: Property):
+        """Should return None when HTTP request fails with 403."""
+        mock_response = MagicMock()
+        mock_response.status_code = 403
+
+        mock_session = MagicMock()
+        mock_session.get = AsyncMock(return_value=mock_response)
+        mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session.__aexit__ = AsyncMock(return_value=None)
+
+        with patch("home_finder.filters.floorplan.AsyncSession", return_value=mock_session):
+            fetcher = DetailFetcher()
+            url = await fetcher.fetch_floorplan_url(zoopla_property)
 
         assert url is None
 
@@ -285,7 +322,7 @@ class TestFloorplanFilter:
         one_bed = Property(
             source=PropertySource.RIGHTMOVE,
             source_id="999",
-            url="https://www.rightmove.co.uk/properties/999",
+            url=HttpUrl("https://www.rightmove.co.uk/properties/999"),
             title="1 bed flat",
             price_pcm=1800,
             bedrooms=1,
@@ -294,8 +331,10 @@ class TestFloorplanFilter:
 
         mock_response = MagicMock()
         mock_response.content = [
-            MagicMock(
-                text='{"living_room_sqm": 25, "is_spacious_enough": true, "confidence": "high", "reasoning": "Large living room"}'
+            TextBlock(
+                type="text",
+                text='{"living_room_sqm": 25, "is_spacious_enough": true, '
+                '"confidence": "high", "reasoning": "Large living room"}',
             )
         ]
 
@@ -318,7 +357,7 @@ class TestFloorplanFilter:
         one_bed = Property(
             source=PropertySource.RIGHTMOVE,
             source_id="999",
-            url="https://www.rightmove.co.uk/properties/999",
+            url=HttpUrl("https://www.rightmove.co.uk/properties/999"),
             title="1 bed flat",
             price_pcm=1800,
             bedrooms=1,
@@ -327,8 +366,10 @@ class TestFloorplanFilter:
 
         mock_response = MagicMock()
         mock_response.content = [
-            MagicMock(
-                text='{"living_room_sqm": 12, "is_spacious_enough": false, "confidence": "high", "reasoning": "Small living room"}'
+            TextBlock(
+                type="text",
+                text='{"living_room_sqm": 12, "is_spacious_enough": false, '
+                '"confidence": "high", "reasoning": "Small living room"}',
             )
         ]
 
@@ -348,7 +389,7 @@ class TestFloorplanFilter:
         one_bed = Property(
             source=PropertySource.RIGHTMOVE,
             source_id="999",
-            url="https://www.rightmove.co.uk/properties/999",
+            url=HttpUrl("https://www.rightmove.co.uk/properties/999"),
             title="1 bed flat",
             price_pcm=1800,
             bedrooms=1,
@@ -356,7 +397,7 @@ class TestFloorplanFilter:
         )
 
         mock_response = MagicMock()
-        mock_response.content = [MagicMock(text="This is not JSON")]
+        mock_response.content = [TextBlock(type="text", text="This is not JSON")]
 
         with patch.object(
             DetailFetcher, "fetch_floorplan_url", return_value="https://example.com/floor.jpg"

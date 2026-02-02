@@ -211,6 +211,33 @@ class TestZooplaListing:
         # £500 * 52 / 12 = £2166.67, rounded down to 2166
         assert listing.get_price_pcm() == 2166
 
+    def test_get_price_pcm_float_unformatted(self) -> None:
+        """Test that float priceUnformatted values are handled correctly.
+
+        Zoopla sometimes returns weekly prices as floats (e.g., 357.69).
+        """
+        listing = ZooplaListing.model_validate(
+            {
+                "listingId": 1,
+                "priceUnformatted": 357.69,
+                "price": "£358 pw",
+            }
+        )
+        # Float should be truncated to int, then converted: 357 * 52 / 12 = 1547
+        assert listing.get_price_pcm() == 1547
+
+    def test_get_price_pcm_float_monthly(self) -> None:
+        """Test that float priceUnformatted for monthly prices works."""
+        listing = ZooplaListing.model_validate(
+            {
+                "listingId": 1,
+                "priceUnformatted": 1899.99,
+                "price": "£1,900 pcm",
+            }
+        )
+        # Float should be truncated to int: 1899
+        assert listing.get_price_pcm() == 1899
+
     def test_get_price_pcm_none_when_missing(self) -> None:
         """Test that get_price_pcm returns None when no price."""
         listing = ZooplaListing.model_validate({"listingId": 1})

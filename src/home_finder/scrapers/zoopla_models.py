@@ -61,7 +61,8 @@ class ZooplaListing(BaseModel):
     detail_url: str | None = Field(default=None, validation_alias="detailUrl")
 
     # Price fields - prefer unformatted, fall back to formatted
-    price_unformatted: int | None = Field(default=None, validation_alias="priceUnformatted")
+    # Note: priceUnformatted can be float for weekly prices (e.g., 357.69 pw)
+    price_unformatted: float | int | None = Field(default=None, validation_alias="priceUnformatted")
     price: str = ""
 
     # Features - can be list (RSC) or dict (older format)
@@ -86,7 +87,12 @@ class ZooplaListing(BaseModel):
     def get_price_pcm(self) -> int | None:
         """Extract monthly price from available price fields."""
         if self.price_unformatted is not None:
-            return self.price_unformatted
+            # price_unformatted can be float for weekly prices
+            price = int(self.price_unformatted)
+            # Check if it's a weekly price (needs conversion to monthly)
+            if "pw" in self.price.lower():
+                price = int(price * 52 / 12)
+            return price
 
         if not self.price:
             return None

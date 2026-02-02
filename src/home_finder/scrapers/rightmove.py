@@ -53,7 +53,7 @@ async def get_rightmove_outcode_id(outcode: str) -> str | None:
                         or name.startswith(f"{outcode} ")
                     ):
                         identifier = loc.get("locationIdentifier")
-                        if identifier:
+                        if isinstance(identifier, str):
                             _outcode_cache[outcode] = identifier
                             logger.debug(
                                 "rightmove_outcode_resolved",

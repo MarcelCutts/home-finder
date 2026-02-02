@@ -7,6 +7,8 @@ from typing import Literal
 
 import anthropic
 import httpx
+from anthropic.types import TextBlock
+from curl_cffi.requests import AsyncSession
 from pydantic import BaseModel, ConfigDict
 
 from home_finder.logging import get_logger
@@ -111,12 +113,31 @@ class DetailFetcher:
             return None
 
     async def _fetch_zoopla(self, prop: Property) -> str | None:
-        """Extract floorplan URL from Zoopla detail page."""
+        """Extract floorplan URL from Zoopla detail page.
+
+        Uses curl_cffi with Chrome TLS fingerprint impersonation to bypass
+        Zoopla's bot detection.
+        """
         try:
-            client = await self._get_client()
-            response = await client.get(str(prop.url))
-            response.raise_for_status()
-            html = response.text
+            async with AsyncSession() as session:
+                response = await session.get(
+                    str(prop.url),
+                    impersonate="chrome",
+                    headers={
+                        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                        "Accept-Language": "en-GB,en;q=0.9",
+                        "Accept-Encoding": "gzip, deflate, br",
+                    },
+                    timeout=30,
+                )
+                if response.status_code != 200:
+                    logger.warning(
+                        "zoopla_http_error",
+                        property_id=prop.unique_id,
+                        status=response.status_code,
+                    )
+                    return None
+                html: str = response.text
 
             # Find __NEXT_DATA__ JSON
             match = re.search(
@@ -335,7 +356,7 @@ class FloorplanFilter:
 
             # Parse response - first content block should be TextBlock
             first_block = response.content[0]
-            if not hasattr(first_block, "text"):
+            if not isinstance(first_block, TextBlock):
                 logger.warning(
                     "unexpected_response_type",
                     property_id=property_id,
