@@ -24,19 +24,19 @@ from home_finder.scrapers.detail_fetcher import DetailFetcher, DetailPageData
 class TestExtractJsonFromResponse:
     """Tests for extract_json_from_response function."""
 
-    def test_parses_raw_json(self):
+    def test_parses_raw_json(self) -> None:
         """Should parse raw JSON without any wrapping."""
         text = '{"key": "value", "number": 42}'
         result = extract_json_from_response(text)
         assert result == {"key": "value", "number": 42}
 
-    def test_parses_json_with_whitespace(self):
+    def test_parses_json_with_whitespace(self) -> None:
         """Should parse JSON with leading/trailing whitespace."""
         text = '  \n{"key": "value"}\n  '
         result = extract_json_from_response(text)
         assert result == {"key": "value"}
 
-    def test_extracts_from_markdown_json_block(self):
+    def test_extracts_from_markdown_json_block(self) -> None:
         """Should extract JSON from ```json code block."""
         text = """Here is the analysis:
 
@@ -48,7 +48,7 @@ That's the result."""
         result = extract_json_from_response(text)
         assert result == {"status": "success", "items": [1, 2, 3]}
 
-    def test_extracts_from_plain_markdown_block(self):
+    def test_extracts_from_plain_markdown_block(self) -> None:
         """Should extract JSON from ``` code block without language specifier."""
         text = """```
 {"data": "test"}
@@ -56,25 +56,25 @@ That's the result."""
         result = extract_json_from_response(text)
         assert result == {"data": "test"}
 
-    def test_extracts_json_embedded_in_text(self):
+    def test_extracts_json_embedded_in_text(self) -> None:
         """Should find JSON braces embedded in surrounding text."""
         text = 'Here is my analysis: {"result": true} End of response.'
         result = extract_json_from_response(text)
         assert result == {"result": True}
 
-    def test_raises_on_no_json(self):
+    def test_raises_on_no_json(self) -> None:
         """Should raise JSONDecodeError when no JSON found."""
         text = "This is just plain text with no JSON."
         with pytest.raises(ValueError):  # json.JSONDecodeError is a ValueError subclass
             extract_json_from_response(text)
 
-    def test_raises_on_invalid_json(self):
+    def test_raises_on_invalid_json(self) -> None:
         """Should raise JSONDecodeError on malformed JSON."""
         text = '{"key": "value", "missing": }'
         with pytest.raises(ValueError):
             extract_json_from_response(text)
 
-    def test_handles_nested_json(self):
+    def test_handles_nested_json(self) -> None:
         """Should handle nested JSON structures."""
         text = """```json
 {
@@ -90,7 +90,7 @@ That's the result."""
 class TestKitchenAnalysis:
     """Tests for KitchenAnalysis model."""
 
-    def test_valid_full_analysis(self):
+    def test_valid_full_analysis(self) -> None:
         """Should create analysis with all fields."""
         analysis = KitchenAnalysis(
             has_gas_hob=True,
@@ -103,13 +103,13 @@ class TestKitchenAnalysis:
         assert analysis.has_gas_hob is True
         assert analysis.appliance_quality == "high"
 
-    def test_minimal_analysis(self):
+    def test_minimal_analysis(self) -> None:
         """Should create analysis with only defaults."""
         analysis = KitchenAnalysis()
         assert analysis.has_gas_hob is None
         assert analysis.notes == ""
 
-    def test_invalid_appliance_quality(self):
+    def test_invalid_appliance_quality(self) -> None:
         """Should reject invalid appliance quality."""
         with pytest.raises(ValidationError):
             KitchenAnalysis(appliance_quality="excellent")  # type: ignore[arg-type]
@@ -118,7 +118,7 @@ class TestKitchenAnalysis:
 class TestConditionAnalysis:
     """Tests for ConditionAnalysis model."""
 
-    def test_valid_analysis_with_concerns(self):
+    def test_valid_analysis_with_concerns(self) -> None:
         """Should create analysis with condition concerns."""
         analysis = ConditionAnalysis(
             overall_condition="fair",
@@ -132,14 +132,14 @@ class TestConditionAnalysis:
         assert analysis.has_visible_damp is True
         assert len(analysis.maintenance_concerns) == 2
 
-    def test_minimal_analysis(self):
+    def test_minimal_analysis(self) -> None:
         """Should create analysis with defaults."""
         analysis = ConditionAnalysis(overall_condition="good")
         assert analysis.has_visible_damp is False
         assert analysis.maintenance_concerns == []
         assert analysis.confidence == "medium"
 
-    def test_invalid_condition(self):
+    def test_invalid_condition(self) -> None:
         """Should reject invalid condition values."""
         with pytest.raises(ValidationError):
             ConditionAnalysis(overall_condition="amazing")  # type: ignore[arg-type]
@@ -148,7 +148,7 @@ class TestConditionAnalysis:
 class TestLightSpaceAnalysis:
     """Tests for LightSpaceAnalysis model."""
 
-    def test_valid_full_analysis(self):
+    def test_valid_full_analysis(self) -> None:
         """Should create analysis with all fields."""
         analysis = LightSpaceAnalysis(
             natural_light="excellent",
@@ -160,7 +160,7 @@ class TestLightSpaceAnalysis:
         assert analysis.natural_light == "excellent"
         assert analysis.feels_spacious is True
 
-    def test_minimal_analysis(self):
+    def test_minimal_analysis(self) -> None:
         """Should create analysis with required fields only."""
         analysis = LightSpaceAnalysis(
             natural_light="fair",
@@ -173,7 +173,7 @@ class TestLightSpaceAnalysis:
 class TestSpaceAnalysis:
     """Tests for SpaceAnalysis model."""
 
-    def test_valid_analysis_with_sqm(self):
+    def test_valid_analysis_with_sqm(self) -> None:
         """Should create analysis with square meters."""
         analysis = SpaceAnalysis(
             living_room_sqm=25.5,
@@ -183,7 +183,7 @@ class TestSpaceAnalysis:
         assert analysis.living_room_sqm == 25.5
         assert analysis.is_spacious_enough is True
 
-    def test_analysis_without_sqm(self):
+    def test_analysis_without_sqm(self) -> None:
         """Should create analysis without square meters."""
         analysis = SpaceAnalysis(
             is_spacious_enough=False,
@@ -195,7 +195,7 @@ class TestSpaceAnalysis:
 class TestValueAnalysis:
     """Tests for ValueAnalysis model and assess_value function."""
 
-    def test_value_analysis_model(self):
+    def test_value_analysis_model(self) -> None:
         """Should create ValueAnalysis with all fields."""
         value = ValueAnalysis(
             area_average=1900,
@@ -208,42 +208,42 @@ class TestValueAnalysis:
         assert value.area_average == 1900
         assert value.quality_adjusted_rating == "excellent"
 
-    def test_excellent_value_below_average(self):
+    def test_excellent_value_below_average(self) -> None:
         """Property well below average should be excellent value."""
         value = assess_value(price_pcm=1600, postcode="E8 2LX", bedrooms=1)
         assert value.rating == "excellent"
         assert value.difference is not None and value.difference < 0
         assert "below" in value.note.lower()
 
-    def test_good_value_at_average(self):
+    def test_good_value_at_average(self) -> None:
         """Property at average should be good value."""
         value = assess_value(price_pcm=1900, postcode="E8 2LX", bedrooms=1)
         assert value.rating == "good"
 
-    def test_fair_value_slightly_above(self):
+    def test_fair_value_slightly_above(self) -> None:
         """Property slightly above average should be fair value."""
         value = assess_value(price_pcm=2050, postcode="E8 2LX", bedrooms=1)
         assert value.rating == "fair"
         assert "above" in value.note.lower()
 
-    def test_poor_value_well_above(self):
+    def test_poor_value_well_above(self) -> None:
         """Property well above average should be poor value."""
         value = assess_value(price_pcm=2300, postcode="E8 2LX", bedrooms=1)
         assert value.rating == "poor"
 
-    def test_handles_missing_postcode(self):
+    def test_handles_missing_postcode(self) -> None:
         """Should handle missing postcode gracefully."""
         value = assess_value(price_pcm=1800, postcode=None, bedrooms=1)
         assert value.rating is None
         assert "cannot assess" in value.note.lower()
 
-    def test_uses_default_for_unknown_area(self):
+    def test_uses_default_for_unknown_area(self) -> None:
         """Should use default benchmark for unknown areas."""
         # W1 is not in our benchmarks, should use default
         value = assess_value(price_pcm=1800, postcode="W1A 1AA", bedrooms=1)
         assert value.rating is not None  # Should still produce a rating
 
-    def test_different_bedroom_benchmarks(self):
+    def test_different_bedroom_benchmarks(self) -> None:
         """Different bedroom counts should use different benchmarks."""
         value_1bed = assess_value(price_pcm=2000, postcode="E8 2LX", bedrooms=1)
         value_2bed = assess_value(price_pcm=2000, postcode="E8 2LX", bedrooms=2)
@@ -256,7 +256,7 @@ class TestValueAnalysis:
 class TestPropertyQualityAnalysis:
     """Tests for PropertyQualityAnalysis model."""
 
-    def test_valid_full_analysis(self):
+    def test_valid_full_analysis(self) -> None:
         """Should create complete quality analysis."""
         analysis = PropertyQualityAnalysis(
             kitchen=KitchenAnalysis(has_gas_hob=True, appliance_quality="medium"),
@@ -280,7 +280,7 @@ class TestPropertyQualityAnalysis:
         assert analysis.condition_concerns is False
         assert "Well-maintained" in analysis.summary
 
-    def test_analysis_with_concerns(self):
+    def test_analysis_with_concerns(self) -> None:
         """Should create analysis with condition concerns flagged."""
         analysis = PropertyQualityAnalysis(
             kitchen=KitchenAnalysis(),
@@ -302,7 +302,7 @@ class TestPropertyQualityAnalysis:
         assert analysis.condition_concerns is True
         assert analysis.concern_severity == "serious"
 
-    def test_model_is_frozen(self):
+    def test_model_is_frozen(self) -> None:
         """Should be immutable."""
         analysis = PropertyQualityAnalysis(
             kitchen=KitchenAnalysis(),
@@ -397,7 +397,7 @@ def sample_llm_response() -> str:
 class TestPropertyQualityFilter:
     """Tests for PropertyQualityFilter."""
 
-    async def test_creates_minimal_analysis_when_no_images(self, sample_property: Property):
+    async def test_creates_minimal_analysis_when_no_images(self, sample_property: Property) -> None:
         """Should create minimal analysis when no images available."""
         with patch.object(DetailFetcher, "fetch_detail_page", return_value=None):
             quality_filter = PropertyQualityFilter(api_key="test-key")
@@ -413,7 +413,7 @@ class TestPropertyQualityFilter:
         sample_property: Property,
         sample_detail_data: DetailPageData,
         sample_llm_response: str,
-    ):
+    ) -> None:
         """Should analyze property with gallery images."""
         mock_response = MagicMock()
         mock_response.content = [TextBlock(type="text", text=sample_llm_response)]
@@ -436,7 +436,7 @@ class TestPropertyQualityFilter:
         self,
         sample_property: Property,
         sample_detail_data: DetailPageData,
-    ):
+    ) -> None:
         """Should override space assessment for 2+ bedroom properties."""
         # Response says not spacious enough, but 2-bed should override
         response_json = """{
@@ -466,7 +466,7 @@ class TestPropertyQualityFilter:
         self,
         one_bed_property: Property,
         sample_detail_data: DetailPageData,
-    ):
+    ) -> None:
         """Should NOT override space assessment for 1-bed properties."""
         response_json = """{
             "kitchen": {"notes": ""},
@@ -494,7 +494,7 @@ class TestPropertyQualityFilter:
         self,
         sample_property: Property,
         sample_detail_data: DetailPageData,
-    ):
+    ) -> None:
         """Should return minimal analysis on LLM failure."""
         with patch.object(DetailFetcher, "fetch_detail_page", return_value=sample_detail_data):
             quality_filter = PropertyQualityFilter(api_key="test-key")
@@ -511,7 +511,7 @@ class TestPropertyQualityFilter:
         self,
         sample_property: Property,
         sample_detail_data: DetailPageData,
-    ):
+    ) -> None:
         """Should return minimal analysis on invalid JSON response."""
         mock_response = MagicMock()
         mock_response.content = [TextBlock(type="text", text="This is not JSON")]
@@ -532,7 +532,7 @@ class TestPropertyQualityFilter:
         sample_property: Property,
         sample_detail_data: DetailPageData,
         sample_llm_response: str,
-    ):
+    ) -> None:
         """Should include gallery images and floorplan in API call."""
         mock_response = MagicMock()
         mock_response.content = [TextBlock(type="text", text=sample_llm_response)]
@@ -558,7 +558,7 @@ class TestPropertyQualityFilter:
         self,
         sample_property: Property,
         sample_llm_response: str,
-    ):
+    ) -> None:
         """Should respect max_images configuration."""
         # Create detail data with many images
         many_images = DetailPageData(

@@ -14,7 +14,9 @@ from collections import defaultdict
 
 import pytest
 
-from home_finder.models import Property
+from pydantic import HttpUrl
+
+from home_finder.models import Property, PropertySource
 from home_finder.scrapers.location_utils import is_outcode
 from home_finder.scrapers.onthemarket import OnTheMarketScraper
 from home_finder.scrapers.openrent import OpenRentScraper
@@ -490,9 +492,9 @@ class TestLocationCategorization:
     def test_categorize_leakage(self) -> None:
         """Test that property from West London is categorized as leakage."""
         prop = Property(
-            source="rightmove",
+            source=PropertySource.RIGHTMOVE,
             source_id="123",
-            url="https://example.com/123",
+            url=HttpUrl("https://example.com/123"),
             title="Flat in Notting Hill",
             price_pcm=2000,
             bedrooms=1,
@@ -505,9 +507,9 @@ class TestLocationCategorization:
     def test_categorize_unknown_no_postcode(self) -> None:
         """Test that property without postcode is categorized as unknown."""
         prop = Property(
-            source="rightmove",
+            source=PropertySource.RIGHTMOVE,
             source_id="123",
-            url="https://example.com/123",
+            url=HttpUrl("https://example.com/123"),
             title="Flat somewhere",
             price_pcm=2000,
             bedrooms=1,
@@ -521,9 +523,9 @@ class TestLocationCategorization:
         """Test that outcode searches are strict about matching."""
         # Property in E9 when searching for E8 should be leakage
         prop = Property(
-            source="rightmove",
+            source=PropertySource.RIGHTMOVE,
             source_id="123",
-            url="https://example.com/123",
+            url=HttpUrl("https://example.com/123"),
             title="Flat in Hackney Wick",
             price_pcm=2000,
             bedrooms=1,
