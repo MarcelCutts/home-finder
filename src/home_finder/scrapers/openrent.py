@@ -4,6 +4,7 @@ import re
 from urllib.parse import urljoin
 
 from crawlee.crawlers import BeautifulSoupCrawler, BeautifulSoupCrawlingContext
+from crawlee.storage_clients import MemoryStorageClient
 from pydantic import HttpUrl
 
 from home_finder.logging import get_logger
@@ -52,7 +53,10 @@ class OpenRentScraper(BaseScraper):
                 properties_found=len(parsed),
             )
 
-        crawler = BeautifulSoupCrawler(max_requests_per_crawl=1)
+        crawler = BeautifulSoupCrawler(
+            max_requests_per_crawl=1,
+            storage_client=MemoryStorageClient(),
+        )
         crawler.router.default_handler(handle_page)
 
         await crawler.run([url])

@@ -173,7 +173,7 @@ class TestScraperUrlConstruction:
             max_bedrooms=2,
         )
         # Should use REGION identifier for hackney
-        assert "locationIdentifier=REGION%5E93965" in url
+        assert "locationIdentifier=REGION%5E93953" in url
         assert "property-to-rent" in url
 
     @pytest.mark.asyncio

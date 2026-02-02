@@ -51,21 +51,6 @@ class CommuteFilter:
         self.app_id = app_id
         self.api_key = api_key
         self.destination_postcode = destination_postcode
-        self._client: AsyncClient | None = None
-
-    def _get_client(self) -> AsyncClient:
-        """Lazily initialize the TravelTime async client with rate limiting."""
-        if self._client is None:
-            from traveltimepy import AsyncClient
-
-            self._client = AsyncClient(
-                app_id=self.app_id,
-                api_key=self.api_key,
-                max_rpm=50,  # Stay under 60 limit with safety margin
-                retry_attempts=3,  # Retry transient failures
-                timeout=60,  # Reasonable timeout in seconds
-            )
-        return self._client
 
     async def filter_properties(
         self,
@@ -99,16 +84,8 @@ class CommuteFilter:
             transport_mode=transport_mode.value,
         )
 
-        # Get destination coordinates from postcode
-        dest_coords = await self._geocode_postcode(self.destination_postcode)
-        if not dest_coords:
-            logger.error(
-                "failed_to_geocode_destination",
-                postcode=self.destination_postcode,
-            )
-            return []
-
         # Import required types
+        from traveltimepy import AsyncClient
         from traveltimepy.requests.common import (
             Coordinates,
             Location,
@@ -122,12 +99,6 @@ class CommuteFilter:
             Driving,
             PublicTransport,
             Walking,
-        )
-
-        # Create arrival location (the destination we're commuting TO)
-        arrival_location = Location(
-            id="destination",
-            coords=Coordinates(lat=dest_coords[0], lng=dest_coords[1]),
         )
 
         # Create departure locations (all the properties we're commuting FROM)
@@ -153,20 +124,42 @@ class CommuteFilter:
         else:
             transportation = Walking()
 
-        # Create search request (many-to-one: from properties to destination)
-        arrival_search = TimeFilterArrivalSearch(
-            id="property-search",
-            arrival_location_id="destination",
-            departure_location_ids=[loc.id for loc in departure_locations],
-            arrival_time=datetime.now(UTC),
-            travel_time=max_minutes * 60,  # Convert to seconds
-            transportation=transportation,
-            properties=[TravelTimeProperty.TRAVEL_TIME],
-        )
-
         try:
-            client = self._get_client()
-            async with client:
+            # Create fresh client for this operation - don't cache because
+            # the context manager closes the session on exit
+            async with AsyncClient(
+                app_id=self.app_id,
+                api_key=self.api_key,
+                max_rpm=50,  # Stay under 60 limit with safety margin
+                retry_attempts=3,  # Retry transient failures
+                timeout=60,  # Reasonable timeout in seconds
+            ) as client:
+                # Geocode destination within the same context manager
+                dest_coords = await self._geocode_with_client(client, self.destination_postcode)
+                if not dest_coords:
+                    logger.error(
+                        "failed_to_geocode_destination",
+                        postcode=self.destination_postcode,
+                    )
+                    return []
+
+                # Create arrival location (the destination we're commuting TO)
+                arrival_location = Location(
+                    id="destination",
+                    coords=Coordinates(lat=dest_coords[0], lng=dest_coords[1]),
+                )
+
+                # Create search request (many-to-one: from properties to destination)
+                arrival_search = TimeFilterArrivalSearch(
+                    id="property-search",
+                    arrival_location_id="destination",
+                    departure_location_ids=[loc.id for loc in departure_locations],
+                    arrival_time=datetime.now(UTC),
+                    travel_time=max_minutes * 60,  # Convert to seconds
+                    transportation=transportation,
+                    properties=[TravelTimeProperty.TRAVEL_TIME],
+                )
+
                 response = await client.time_filter(
                     locations=[arrival_location] + departure_locations,
                     departure_searches=[],
@@ -206,10 +199,13 @@ class CommuteFilter:
 
         return results
 
-    async def _geocode_postcode(self, postcode: str) -> tuple[float, float] | None:
-        """Geocode a UK postcode to coordinates.
+    async def _geocode_with_client(
+        self, client: AsyncClient, postcode: str
+    ) -> tuple[float, float] | None:
+        """Geocode a UK postcode to coordinates using the provided client.
 
         Args:
+            client: TravelTime AsyncClient (must be within an active context manager).
             postcode: UK postcode to geocode.
 
         Returns:
@@ -221,15 +217,13 @@ class CommuteFilter:
             return self._geocoding_cache[postcode]
 
         try:
-            client = self._get_client()
-            async with client:
-                response = await client.geocoding(query=postcode, limit=1)
-                if response.features:
-                    coords = response.features[0].geometry.coordinates
-                    # GeoJSON uses [longitude, latitude] order
-                    result = (coords[1], coords[0])
-                    self._geocoding_cache[postcode] = result
-                    return result
+            response = await client.geocoding(query=postcode, limit=1)
+            if response.features:
+                coords = response.features[0].geometry.coordinates
+                # GeoJSON uses [longitude, latitude] order
+                result = (coords[1], coords[0])
+                self._geocoding_cache[postcode] = result
+                return result
         except Exception as e:
             logger.warning("geocoding_failed", postcode=postcode, error=str(e))
 

@@ -4,7 +4,7 @@ import asyncio
 import html
 from typing import TYPE_CHECKING
 
-from home_finder.filters.floorplan import FloorplanAnalysis
+from home_finder.filters.quality import PropertyQualityAnalysis
 from home_finder.logging import get_logger
 from home_finder.models import Property, TransportMode
 
@@ -14,12 +14,99 @@ if TYPE_CHECKING:
 logger = get_logger(__name__)
 
 
+def _format_kitchen_info(analysis: PropertyQualityAnalysis) -> str:
+    """Format kitchen analysis for display."""
+    kitchen = analysis.kitchen
+    items = []
+
+    if kitchen.has_gas_hob is True:
+        items.append("Gas hob")
+    elif kitchen.has_gas_hob is False:
+        items.append("Electric hob")
+
+    if kitchen.has_dishwasher is True:
+        items.append("Dishwasher")
+    if kitchen.has_washing_machine is True:
+        items.append("Washer")
+    if kitchen.has_dryer is True:
+        items.append("Dryer")
+
+    quality_str = ""
+    if kitchen.appliance_quality:
+        quality_str = f" ({kitchen.appliance_quality} quality)"
+
+    if items:
+        return ", ".join(items) + quality_str
+    return "Not visible in photos"
+
+
+def _format_light_space_info(analysis: PropertyQualityAnalysis) -> str:
+    """Format light/space analysis for display."""
+    light = analysis.light_space
+    parts = [f"Light: {light.natural_light.capitalize()}"]
+    if light.feels_spacious is True:
+        parts.append("Feels spacious")
+    elif light.feels_spacious is False:
+        parts.append("Compact")
+    # None = unknown, don't add anything
+    return " | ".join(parts)
+
+
+def _format_space_info(analysis: PropertyQualityAnalysis) -> str:
+    """Format space analysis for display."""
+    space = analysis.space
+    if space.living_room_sqm:
+        sqm = f"~{space.living_room_sqm:.0f}m²"
+        if space.is_spacious_enough is True:
+            return f"{sqm} (good for office + hosting)"
+        elif space.is_spacious_enough is False:
+            return f"{sqm} (may be tight for office + hosting)"
+        return sqm  # Unknown spaciousness
+    if space.is_spacious_enough is True:
+        return "Size unknown (likely spacious)"
+    elif space.is_spacious_enough is False:
+        return "May be compact"
+    return "Size unknown"
+
+
+def _format_value_info(analysis: PropertyQualityAnalysis) -> str | None:
+    """Format value assessment for display.
+
+    Prefers the quality-adjusted rating from Claude if available,
+    falls back to the simple price-based rating.
+    """
+    value = analysis.value
+    if not value:
+        return None
+
+    # Emoji based on rating
+    emoji_map = {
+        "excellent": "💰",
+        "good": "✓",
+        "fair": "~",
+        "poor": "⚠️",
+    }
+
+    # Prefer quality-adjusted rating from Claude
+    if value.quality_adjusted_rating:
+        emoji = emoji_map.get(value.quality_adjusted_rating, "")
+        note = value.quality_adjusted_note or value.note
+        return f"{emoji} {value.quality_adjusted_rating.capitalize()} value ({note})"
+
+    # Fall back to simple price comparison
+    if value.rating:
+        emoji = emoji_map.get(value.rating, "")
+        return f"{emoji} {value.rating.capitalize()} value ({value.note})"
+
+    return None
+
+
 def format_property_message(
     prop: Property,
     *,
     commute_minutes: int | None = None,
     transport_mode: TransportMode | None = None,
-    floorplan_analysis: FloorplanAnalysis | None = None,
+    quality_analysis: PropertyQualityAnalysis | None = None,
 ) -> str:
     """Format a property as a Telegram message.
 
@@ -27,7 +114,7 @@ def format_property_message(
         prop: Property to format.
         commute_minutes: Commute time in minutes (optional).
         transport_mode: Transport mode used (optional).
-        floorplan_analysis: Floorplan analysis result (optional).
+        quality_analysis: Quality analysis result (optional).
 
     Returns:
         Formatted message string with HTML markup.
@@ -62,15 +149,37 @@ def format_property_message(
             mode_str = f" {mode_map.get(transport_mode, '')}"
         lines.append(f"<b>Commute:</b> {commute_minutes} min{mode_str}")
 
-    # Add floorplan analysis if available
-    if floorplan_analysis:
-        if floorplan_analysis.living_room_sqm:
-            lines.append(
-                f"<b>Living room:</b> ~{floorplan_analysis.living_room_sqm:.0f}sqm "
-                f"({floorplan_analysis.confidence} confidence)"
-            )
-        else:
-            lines.append(f"<b>Living room:</b> {floorplan_analysis.reasoning}")
+    # Add quality analysis if available
+    if quality_analysis:
+        lines.append("")
+
+        # Condition concerns banner (if any)
+        if quality_analysis.condition_concerns:
+            severity = quality_analysis.concern_severity or "unknown"
+            lines.append(f"⚠️ <b>CONDITION CONCERNS</b> ({severity})")
+            for concern in quality_analysis.condition.maintenance_concerns:
+                lines.append(f"  • {html.escape(concern)}")
+            lines.append("")
+
+        # Claude's summary
+        lines.append(f"<b>Summary:</b> {html.escape(quality_analysis.summary)}")
+
+        # Kitchen info
+        lines.append(f"<b>Kitchen:</b> {_format_kitchen_info(quality_analysis)}")
+
+        # Light & space
+        lines.append(f"<b>Light/Space:</b> {_format_light_space_info(quality_analysis)}")
+
+        # Living room size
+        lines.append(f"<b>Living room:</b> {_format_space_info(quality_analysis)}")
+
+        # Overall condition
+        lines.append(f"<b>Condition:</b> {quality_analysis.condition.overall_condition}")
+
+        # Value assessment
+        value_info = _format_value_info(quality_analysis)
+        if value_info:
+            lines.append(f"<b>Value:</b> {value_info}")
 
     # Add source
     source_names = {
@@ -122,7 +231,7 @@ class TelegramNotifier:
         *,
         commute_minutes: int | None = None,
         transport_mode: TransportMode | None = None,
-        floorplan_analysis: FloorplanAnalysis | None = None,
+        quality_analysis: PropertyQualityAnalysis | None = None,
     ) -> bool:
         """Send a property notification.
 
@@ -130,7 +239,7 @@ class TelegramNotifier:
             prop: Property to notify about.
             commute_minutes: Commute time in minutes (optional).
             transport_mode: Transport mode used (optional).
-            floorplan_analysis: Floorplan analysis result (optional).
+            quality_analysis: Quality analysis result (optional).
 
         Returns:
             True if notification was sent successfully.
@@ -139,7 +248,7 @@ class TelegramNotifier:
             prop,
             commute_minutes=commute_minutes,
             transport_mode=transport_mode,
-            floorplan_analysis=floorplan_analysis,
+            quality_analysis=quality_analysis,
         )
 
         try:

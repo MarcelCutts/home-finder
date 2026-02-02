@@ -36,16 +36,28 @@ class Settings(BaseSettings):
         description="TravelTime API key",
     )
 
-    # Anthropic API (optional, needed for floorplan analysis)
+    # Anthropic API (optional, needed for property quality analysis)
     anthropic_api_key: SecretStr = Field(
         default=SecretStr(""),
-        description="Anthropic API key for floorplan analysis",
+        description="Anthropic API key for property quality analysis",
     )
 
-    # Floorplan filtering (optional)
+    # Property quality analysis (optional)
+    enable_quality_filter: bool = Field(
+        default=True,
+        description="Enable property quality analysis using Claude vision",
+    )
+    quality_filter_max_images: int = Field(
+        default=10,
+        ge=1,
+        le=20,
+        description="Maximum number of gallery images to analyze per property",
+    )
+
+    # Deprecated: use enable_quality_filter instead
     enable_floorplan_filter: bool = Field(
         default=True,
-        description="Filter out properties without floorplans and analyze 1-beds",
+        description="DEPRECATED: Use enable_quality_filter instead",
     )
 
     # Search criteria

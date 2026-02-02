@@ -7,8 +7,9 @@ import pytest
 from anthropic.types import TextBlock
 from pydantic import HttpUrl, ValidationError
 
-from home_finder.filters.floorplan import DetailFetcher, FloorplanAnalysis, FloorplanFilter
+from home_finder.filters.floorplan import FloorplanAnalysis, FloorplanFilter
 from home_finder.models import Property, PropertySource
+from home_finder.scrapers.detail_fetcher import DetailFetcher
 
 
 class TestFloorplanAnalysis:
@@ -109,9 +110,7 @@ class TestDetailFetcherRightmove:
 
         assert url is None
 
-    async def test_returns_none_on_http_error(
-        self, rightmove_property: Property, httpx_mock
-    ):
+    async def test_returns_none_on_http_error(self, rightmove_property: Property, httpx_mock):
         """Should return None when HTTP request fails."""
         httpx_mock.add_response(
             url="https://www.rightmove.co.uk/properties/123456789",
@@ -172,9 +171,7 @@ class TestDetailFetcherZoopla:
     Uses curl_cffi for TLS fingerprint impersonation, so we mock AsyncSession.
     """
 
-    async def test_extracts_floorplan_url(
-        self, zoopla_property: Property, fixtures_path: Path
-    ):
+    async def test_extracts_floorplan_url(self, zoopla_property: Property, fixtures_path: Path):
         """Should extract floorplan URL from Zoopla detail page."""
         html = (fixtures_path / "zoopla_detail_with_floorplan.html").read_text()
 
@@ -187,7 +184,7 @@ class TestDetailFetcherZoopla:
         mock_session.__aenter__ = AsyncMock(return_value=mock_session)
         mock_session.__aexit__ = AsyncMock(return_value=None)
 
-        with patch("home_finder.filters.floorplan.AsyncSession", return_value=mock_session):
+        with patch("home_finder.scrapers.detail_fetcher.AsyncSession", return_value=mock_session):
             fetcher = DetailFetcher()
             url = await fetcher.fetch_floorplan_url(zoopla_property)
 
@@ -208,7 +205,7 @@ class TestDetailFetcherZoopla:
         mock_session.__aenter__ = AsyncMock(return_value=mock_session)
         mock_session.__aexit__ = AsyncMock(return_value=None)
 
-        with patch("home_finder.filters.floorplan.AsyncSession", return_value=mock_session):
+        with patch("home_finder.scrapers.detail_fetcher.AsyncSession", return_value=mock_session):
             fetcher = DetailFetcher()
             url = await fetcher.fetch_floorplan_url(zoopla_property)
 
@@ -224,7 +221,7 @@ class TestDetailFetcherZoopla:
         mock_session.__aenter__ = AsyncMock(return_value=mock_session)
         mock_session.__aexit__ = AsyncMock(return_value=None)
 
-        with patch("home_finder.filters.floorplan.AsyncSession", return_value=mock_session):
+        with patch("home_finder.scrapers.detail_fetcher.AsyncSession", return_value=mock_session):
             fetcher = DetailFetcher()
             url = await fetcher.fetch_floorplan_url(zoopla_property)
 

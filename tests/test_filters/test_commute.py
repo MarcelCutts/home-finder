@@ -69,6 +69,67 @@ def properties_without_coords() -> list[Property]:
     ]
 
 
+def create_mock_client(
+    geocoding_response: MagicMock | None = None,
+    time_filter_response: MagicMock | None = None,
+    time_filter_error: Exception | None = None,
+) -> MagicMock:
+    """Create a mock AsyncClient with configured responses."""
+    mock_client = AsyncMock()
+
+    if geocoding_response:
+        mock_client.geocoding = AsyncMock(return_value=geocoding_response)
+    else:
+        # Default: empty geocoding response
+        default_geocoding = MagicMock()
+        default_geocoding.features = []
+        mock_client.geocoding = AsyncMock(return_value=default_geocoding)
+
+    if time_filter_error:
+        mock_client.time_filter = AsyncMock(side_effect=time_filter_error)
+    elif time_filter_response:
+        mock_client.time_filter = AsyncMock(return_value=time_filter_response)
+    else:
+        mock_client.time_filter = AsyncMock()
+
+    # Context manager support
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=None)
+
+    return mock_client
+
+
+def create_geocoding_response(lat: float, lon: float) -> MagicMock:
+    """Create a mock geocoding response."""
+    mock_response = MagicMock()
+    mock_feature = MagicMock()
+    mock_feature.geometry.coordinates = [lon, lat]  # GeoJSON: [lon, lat]
+    mock_response.features = [mock_feature]
+    return mock_response
+
+
+def create_time_filter_response(locations: list[tuple[str, int]]) -> MagicMock:
+    """Create a mock time_filter response.
+
+    Args:
+        locations: List of (property_id, travel_time_seconds) tuples.
+    """
+    mock_locations = []
+    for prop_id, travel_time in locations:
+        mock_loc = MagicMock()
+        mock_loc.id = prop_id
+        mock_loc.properties = [MagicMock(travel_time=travel_time)]
+        mock_locations.append(mock_loc)
+
+    mock_search_result = MagicMock()
+    mock_search_result.locations = mock_locations
+
+    mock_response = MagicMock()
+    mock_response.results = [mock_search_result]
+
+    return mock_response
+
+
 class TestCommuteFilter:
     """Tests for CommuteFilter."""
 
@@ -92,39 +153,22 @@ class TestCommuteFilter:
             destination_postcode="N1 5AA",
         )
 
-        # Mock the time_filter response
-        mock_location_1 = MagicMock()
-        mock_location_1.id = "openrent:1"
-        mock_location_1.properties = [MagicMock(travel_time=1200)]  # 20 min
+        # Create mock responses
+        geocoding_response = create_geocoding_response(51.5448, -0.0934)
+        time_filter_response = create_time_filter_response(
+            [
+                ("openrent:1", 1200),  # 20 min
+                ("rightmove:2", 2400),  # 40 min
+                ("zoopla:3", 900),  # 15 min
+            ]
+        )
 
-        mock_location_2 = MagicMock()
-        mock_location_2.id = "rightmove:2"
-        mock_location_2.properties = [MagicMock(travel_time=2400)]  # 40 min
+        mock_client = create_mock_client(
+            geocoding_response=geocoding_response,
+            time_filter_response=time_filter_response,
+        )
 
-        mock_location_3 = MagicMock()
-        mock_location_3.id = "zoopla:3"
-        mock_location_3.properties = [MagicMock(travel_time=900)]  # 15 min
-
-        mock_search_result = MagicMock()
-        mock_search_result.locations = [mock_location_1, mock_location_2, mock_location_3]
-
-        mock_response = MagicMock()
-        mock_response.results = [mock_search_result]
-
-        # Mock geocoding response
-        mock_geocoding_response = MagicMock()
-        mock_geocoding_feature = MagicMock()
-        mock_geocoding_feature.geometry.coordinates = [-0.0934, 51.5448]  # lon, lat
-        mock_geocoding_response.features = [mock_geocoding_feature]
-
-        # Create mock client
-        mock_client = AsyncMock()
-        mock_client.geocoding = AsyncMock(return_value=mock_geocoding_response)
-        mock_client.time_filter = AsyncMock(return_value=mock_response)
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=None)
-
-        with patch.object(commute_filter, "_get_client", return_value=mock_client):
+        with patch("traveltimepy.AsyncClient", return_value=mock_client):
             results = await commute_filter.filter_properties(
                 sample_properties,
                 max_minutes=30,
@@ -159,14 +203,12 @@ class TestCommuteFilter:
             destination_postcode="N1 5AA",
         )
 
-        mock_client = AsyncMock()
-
-        with patch.object(commute_filter, "_get_client", return_value=mock_client):
-            results = await commute_filter.filter_properties(
-                properties_without_coords,
-                max_minutes=30,
-                transport_mode=TransportMode.CYCLING,
-            )
+        # No mocking needed - filter should exit early
+        results = await commute_filter.filter_properties(
+            properties_without_coords,
+            max_minutes=30,
+            transport_mode=TransportMode.CYCLING,
+        )
 
         # No properties should be filtered (all lack coordinates)
         assert len(results) == 0
@@ -182,30 +224,20 @@ class TestCommuteFilter:
             destination_postcode="N1 5AA",
         )
 
-        # Mock response with only one reachable location
-        mock_location_1 = MagicMock()
-        mock_location_1.id = "openrent:1"
-        mock_location_1.properties = [MagicMock(travel_time=1200)]
+        # Only one reachable location in response
+        geocoding_response = create_geocoding_response(51.5448, -0.0934)
+        time_filter_response = create_time_filter_response(
+            [
+                ("openrent:1", 1200),  # Only one reachable
+            ]
+        )
 
-        mock_search_result = MagicMock()
-        mock_search_result.locations = [mock_location_1]  # Only one reachable
+        mock_client = create_mock_client(
+            geocoding_response=geocoding_response,
+            time_filter_response=time_filter_response,
+        )
 
-        mock_response = MagicMock()
-        mock_response.results = [mock_search_result]
-
-        # Mock geocoding response
-        mock_geocoding_response = MagicMock()
-        mock_geocoding_feature = MagicMock()
-        mock_geocoding_feature.geometry.coordinates = [-0.0934, 51.5448]
-        mock_geocoding_response.features = [mock_geocoding_feature]
-
-        mock_client = AsyncMock()
-        mock_client.geocoding = AsyncMock(return_value=mock_geocoding_response)
-        mock_client.time_filter = AsyncMock(return_value=mock_response)
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=None)
-
-        with patch.object(commute_filter, "_get_client", return_value=mock_client):
+        with patch("traveltimepy.AsyncClient", return_value=mock_client):
             results = await commute_filter.filter_properties(
                 sample_properties,
                 max_minutes=30,
@@ -231,12 +263,9 @@ class TestCommuteFilter:
         mock_geocoding_response = MagicMock()
         mock_geocoding_response.features = []
 
-        mock_client = AsyncMock()
-        mock_client.geocoding = AsyncMock(return_value=mock_geocoding_response)
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=None)
+        mock_client = create_mock_client(geocoding_response=mock_geocoding_response)
 
-        with patch.object(commute_filter, "_get_client", return_value=mock_client):
+        with patch("traveltimepy.AsyncClient", return_value=mock_client):
             results = await commute_filter.filter_properties(
                 sample_properties,
                 max_minutes=30,
@@ -246,7 +275,10 @@ class TestCommuteFilter:
         # Should return empty results on geocoding failure
         assert len(results) == 0
 
-    def test_client_configured_with_rate_limiting(self) -> None:
+    @pytest.mark.asyncio
+    async def test_client_configured_with_rate_limiting(
+        self, sample_properties: list[Property]
+    ) -> None:
         """Test that client is configured with rate limiting parameters."""
         commute_filter = CommuteFilter(
             app_id="test-app-id",
@@ -254,8 +286,20 @@ class TestCommuteFilter:
             destination_postcode="N1 5AA",
         )
 
-        with patch("traveltimepy.AsyncClient") as mock_client_class:
-            commute_filter._get_client()
+        geocoding_response = create_geocoding_response(51.5448, -0.0934)
+        time_filter_response = create_time_filter_response([("openrent:1", 1200)])
+        mock_client = create_mock_client(
+            geocoding_response=geocoding_response,
+            time_filter_response=time_filter_response,
+        )
+
+        with patch("traveltimepy.AsyncClient", return_value=mock_client) as mock_client_class:
+            await commute_filter.filter_properties(
+                sample_properties,
+                max_minutes=30,
+                transport_mode=TransportMode.CYCLING,
+            )
+
             mock_client_class.assert_called_once_with(
                 app_id="test-app-id",
                 api_key="test-api-key",
@@ -278,49 +322,33 @@ class TestCommuteFilter:
             destination_postcode="N1 5AA",
         )
 
-        # Mock time_filter response
-        mock_location = MagicMock()
-        mock_location.id = "openrent:1"
-        mock_location.properties = [MagicMock(travel_time=1200)]
+        geocoding_response = create_geocoding_response(51.5448, -0.0934)
+        time_filter_response = create_time_filter_response([("openrent:1", 1200)])
+        mock_client = create_mock_client(
+            geocoding_response=geocoding_response,
+            time_filter_response=time_filter_response,
+        )
 
-        mock_search_result = MagicMock()
-        mock_search_result.locations = [mock_location]
-
-        mock_response = MagicMock()
-        mock_response.results = [mock_search_result]
-
-        # Mock geocoding response
-        mock_geocoding_response = MagicMock()
-        mock_geocoding_feature = MagicMock()
-        mock_geocoding_feature.geometry.coordinates = [-0.0934, 51.5448]
-        mock_geocoding_response.features = [mock_geocoding_feature]
-
-        mock_client = AsyncMock()
-        mock_client.geocoding = AsyncMock(return_value=mock_geocoding_response)
-        mock_client.time_filter = AsyncMock(return_value=mock_response)
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=None)
-
-        with patch.object(commute_filter, "_get_client", return_value=mock_client):
-            # First call - should hit API
+        with patch("traveltimepy.AsyncClient", return_value=mock_client):
+            # First call - should hit geocoding API
             await commute_filter.filter_properties(
                 sample_properties,
                 max_minutes=30,
                 transport_mode=TransportMode.CYCLING,
             )
 
-            # Second call - should use cache
+            # Second call - should use cache for geocoding
             await commute_filter.filter_properties(
                 sample_properties,
                 max_minutes=30,
                 transport_mode=TransportMode.CYCLING,
             )
 
-        # Geocoding should only be called once (first call)
+        # Geocoding should only be called once (first call), cached for second
         assert mock_client.geocoding.call_count == 1
 
     @pytest.mark.asyncio
-    async def test_geocoding_cache_stores_result(self) -> None:
+    async def test_geocoding_cache_stores_result(self, sample_properties: list[Property]) -> None:
         """Test that geocoding results are stored in cache."""
         # Clear the cache before test
         CommuteFilter._geocoding_cache.clear()
@@ -331,21 +359,21 @@ class TestCommuteFilter:
             destination_postcode="SW1A 1AA",
         )
 
-        # Mock geocoding response
-        mock_geocoding_response = MagicMock()
-        mock_geocoding_feature = MagicMock()
-        mock_geocoding_feature.geometry.coordinates = [-0.1276, 51.5034]  # lon, lat
-        mock_geocoding_response.features = [mock_geocoding_feature]
+        geocoding_response = create_geocoding_response(51.5034, -0.1276)
+        time_filter_response = create_time_filter_response([("openrent:1", 1200)])
+        mock_client = create_mock_client(
+            geocoding_response=geocoding_response,
+            time_filter_response=time_filter_response,
+        )
 
-        mock_client = AsyncMock()
-        mock_client.geocoding = AsyncMock(return_value=mock_geocoding_response)
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=None)
+        with patch("traveltimepy.AsyncClient", return_value=mock_client):
+            await commute_filter.filter_properties(
+                sample_properties,
+                max_minutes=30,
+                transport_mode=TransportMode.CYCLING,
+            )
 
-        with patch.object(commute_filter, "_get_client", return_value=mock_client):
-            result = await commute_filter._geocode_postcode("SW1A 1AA")
-
-        assert result == (51.5034, -0.1276)
+        # Check cache was populated
         assert "SW1A 1AA" in CommuteFilter._geocoding_cache
         assert CommuteFilter._geocoding_cache["SW1A 1AA"] == (51.5034, -0.1276)
 
@@ -360,20 +388,14 @@ class TestCommuteFilter:
             destination_postcode="N1 5AA",
         )
 
-        # Mock geocoding response
-        mock_geocoding_response = MagicMock()
-        mock_geocoding_feature = MagicMock()
-        mock_geocoding_feature.geometry.coordinates = [-0.0934, 51.5448]
-        mock_geocoding_response.features = [mock_geocoding_feature]
-
-        mock_client = AsyncMock()
-        mock_client.geocoding = AsyncMock(return_value=mock_geocoding_response)
-        mock_client.time_filter = AsyncMock(side_effect=Exception("Rate limit exceeded (429)"))
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=None)
+        geocoding_response = create_geocoding_response(51.5448, -0.0934)
+        mock_client = create_mock_client(
+            geocoding_response=geocoding_response,
+            time_filter_error=Exception("Rate limit exceeded (429)"),
+        )
 
         with (
-            patch.object(commute_filter, "_get_client", return_value=mock_client),
+            patch("traveltimepy.AsyncClient", return_value=mock_client),
             patch("home_finder.filters.commute.logger") as mock_logger,
         ):
             results = await commute_filter.filter_properties(
@@ -398,20 +420,14 @@ class TestCommuteFilter:
             destination_postcode="N1 5AA",
         )
 
-        # Mock geocoding response
-        mock_geocoding_response = MagicMock()
-        mock_geocoding_feature = MagicMock()
-        mock_geocoding_feature.geometry.coordinates = [-0.0934, 51.5448]
-        mock_geocoding_response.features = [mock_geocoding_feature]
-
-        mock_client = AsyncMock()
-        mock_client.geocoding = AsyncMock(return_value=mock_geocoding_response)
-        mock_client.time_filter = AsyncMock(side_effect=Exception("Network connection error"))
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=None)
+        geocoding_response = create_geocoding_response(51.5448, -0.0934)
+        mock_client = create_mock_client(
+            geocoding_response=geocoding_response,
+            time_filter_error=Exception("Network connection error"),
+        )
 
         with (
-            patch.object(commute_filter, "_get_client", return_value=mock_client),
+            patch("traveltimepy.AsyncClient", return_value=mock_client),
             patch("home_finder.filters.commute.logger") as mock_logger,
         ):
             results = await commute_filter.filter_properties(

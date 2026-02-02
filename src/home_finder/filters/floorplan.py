@@ -1,18 +1,19 @@
-"""Floorplan analysis filter using Claude vision."""
+"""Floorplan analysis filter using Claude vision.
+
+DEPRECATED: This module is superseded by quality.py which provides more
+comprehensive property analysis. Kept for backwards compatibility.
+"""
 
 import asyncio
-import json
-import re
 from typing import Literal
 
 import anthropic
-import httpx
 from anthropic.types import TextBlock
-from curl_cffi.requests import AsyncSession
 from pydantic import BaseModel, ConfigDict
 
 from home_finder.logging import get_logger
-from home_finder.models import Property, PropertySource
+from home_finder.models import Property
+from home_finder.scrapers.detail_fetcher import DetailFetcher
 
 logger = get_logger(__name__)
 
@@ -26,211 +27,6 @@ class FloorplanAnalysis(BaseModel):
     is_spacious_enough: bool
     confidence: Literal["high", "medium", "low"]
     reasoning: str
-
-
-class DetailFetcher:
-    """Fetches property detail pages and extracts floorplan URLs."""
-
-    def __init__(self) -> None:
-        """Initialize the detail fetcher."""
-        self._client: httpx.AsyncClient | None = None
-
-    async def _get_client(self) -> httpx.AsyncClient:
-        """Get or create HTTP client."""
-        if self._client is None:
-            self._client = httpx.AsyncClient(
-                timeout=30.0,
-                follow_redirects=True,
-                headers={
-                    "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-                    "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-                },
-            )
-        return self._client
-
-    async def fetch_floorplan_url(self, prop: Property) -> str | None:
-        """Fetch detail page and extract floorplan URL.
-
-        Args:
-            prop: Property to fetch floorplan for.
-
-        Returns:
-            Floorplan URL or None if not found.
-        """
-        match prop.source:
-            case PropertySource.RIGHTMOVE:
-                return await self._fetch_rightmove(prop)
-            case PropertySource.ZOOPLA:
-                return await self._fetch_zoopla(prop)
-            case PropertySource.OPENRENT:
-                return await self._fetch_openrent(prop)
-            case PropertySource.ONTHEMARKET:
-                return await self._fetch_onthemarket(prop)
-
-    async def _fetch_rightmove(self, prop: Property) -> str | None:
-        """Extract floorplan URL from Rightmove detail page."""
-        try:
-            client = await self._get_client()
-            response = await client.get(str(prop.url))
-            response.raise_for_status()
-            html = response.text
-
-            # Find PAGE_MODEL JSON start
-            start_match = re.search(r"window\.PAGE_MODEL\s*=\s*", html)
-            if not start_match:
-                logger.debug("no_page_model", property_id=prop.unique_id)
-                return None
-
-            # Extract JSON using brace counting (handles nested objects)
-            start_idx = start_match.end()
-            depth = 0
-            end_idx = start_idx
-            for i, char in enumerate(html[start_idx:]):
-                if char == "{":
-                    depth += 1
-                elif char == "}":
-                    depth -= 1
-                    if depth == 0:
-                        end_idx = start_idx + i + 1
-                        break
-
-            json_str = html[start_idx:end_idx]
-            data = json.loads(json_str)
-            floorplans = data.get("propertyData", {}).get("floorplans", [])
-
-            if floorplans and floorplans[0].get("url"):
-                url: str = floorplans[0]["url"]
-                return url
-
-            return None
-
-        except Exception as e:
-            logger.warning(
-                "rightmove_fetch_failed",
-                property_id=prop.unique_id,
-                error=str(e),
-            )
-            return None
-
-    async def _fetch_zoopla(self, prop: Property) -> str | None:
-        """Extract floorplan URL from Zoopla detail page.
-
-        Uses curl_cffi with Chrome TLS fingerprint impersonation to bypass
-        Zoopla's bot detection.
-        """
-        try:
-            async with AsyncSession() as session:
-                response = await session.get(
-                    str(prop.url),
-                    impersonate="chrome",
-                    headers={
-                        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-                        "Accept-Language": "en-GB,en;q=0.9",
-                        "Accept-Encoding": "gzip, deflate, br",
-                    },
-                    timeout=30,
-                )
-                if response.status_code != 200:
-                    logger.warning(
-                        "zoopla_http_error",
-                        property_id=prop.unique_id,
-                        status=response.status_code,
-                    )
-                    return None
-                html: str = response.text
-
-            # Find __NEXT_DATA__ JSON
-            match = re.search(
-                r'<script id="__NEXT_DATA__"[^>]*>(.*?)</script>',
-                html,
-                re.DOTALL,
-            )
-            if not match:
-                return None
-
-            data = json.loads(match.group(1))
-            media = (
-                data.get("props", {})
-                .get("pageProps", {})
-                .get("listing", {})
-                .get("propertyMedia", [])
-            )
-
-            for item in media:
-                if item.get("type") == "floorplan":
-                    url: str | None = item.get("original")
-                    return url
-
-            return None
-
-        except Exception as e:
-            logger.warning("zoopla_fetch_failed", property_id=prop.unique_id, error=str(e))
-            return None
-
-    async def _fetch_openrent(self, prop: Property) -> str | None:
-        """Extract floorplan URL from OpenRent detail page."""
-        try:
-            client = await self._get_client()
-            response = await client.get(str(prop.url))
-            response.raise_for_status()
-            html = response.text
-
-            # Look for floorplan image
-            match = re.search(
-                r'<img[^>]*class="[^"]*floorplan[^"]*"[^>]*src="([^"]+)"',
-                html,
-                re.IGNORECASE,
-            )
-            if match:
-                return match.group(1)
-
-            return None
-
-        except Exception as e:
-            logger.warning("openrent_fetch_failed", property_id=prop.unique_id, error=str(e))
-            return None
-
-    async def _fetch_onthemarket(self, prop: Property) -> str | None:
-        """Extract floorplan URL from OnTheMarket detail page."""
-        try:
-            client = await self._get_client()
-            response = await client.get(str(prop.url))
-            response.raise_for_status()
-            html = response.text
-
-            # OnTheMarket uses Next.js with Redux state in __NEXT_DATA__
-            match = re.search(
-                r'<script id="__NEXT_DATA__"[^>]*>(.*?)</script>',
-                html,
-                re.DOTALL,
-            )
-            if not match:
-                return None
-
-            data = json.loads(match.group(1))
-            # Floorplans are in the Redux initial state under property
-            floorplans = (
-                data.get("props", {})
-                .get("initialReduxState", {})
-                .get("property", {})
-                .get("floorplans", [])
-            )
-
-            if floorplans and floorplans[0].get("original"):
-                url: str = floorplans[0]["original"]
-                return url
-
-            return None
-
-        except Exception as e:
-            logger.warning("onthemarket_fetch_failed", property_id=prop.unique_id, error=str(e))
-            return None
-
-    async def close(self) -> None:
-        """Close the HTTP client."""
-        if self._client:
-            await self._client.aclose()
-            self._client = None
 
 
 FLOORPLAN_PROMPT = """Analyze this floorplan image for a rental property.

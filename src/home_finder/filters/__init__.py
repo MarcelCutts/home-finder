@@ -5,6 +5,11 @@ from home_finder.filters.criteria import CriteriaFilter
 from home_finder.filters.deduplication import Deduplicator
 from home_finder.filters.floorplan import FloorplanAnalysis, FloorplanFilter
 from home_finder.filters.location import LocationFilter
+from home_finder.filters.quality import (
+    PropertyQualityAnalysis,
+    PropertyQualityFilter,
+    ValueAnalysis,
+)
 
 __all__ = [
     "CommuteFilter",
@@ -14,4 +19,7 @@ __all__ = [
     "FloorplanAnalysis",
     "FloorplanFilter",
     "LocationFilter",
+    "PropertyQualityAnalysis",
+    "PropertyQualityFilter",
+    "ValueAnalysis",
 ]

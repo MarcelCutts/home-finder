@@ -10,9 +10,9 @@ from home_finder.filters import (
     CommuteFilter,
     CriteriaFilter,
     Deduplicator,
-    FloorplanAnalysis,
-    FloorplanFilter,
     LocationFilter,
+    PropertyQualityAnalysis,
+    PropertyQualityFilter,
 )
 from home_finder.logging import configure_logging, get_logger
 from home_finder.models import Property, TransportMode
@@ -245,41 +245,33 @@ async def run_pipeline(settings: Settings) -> None:
             logger.info("no_properties_within_commute_limit")
             return
 
-        # Step 5.5: Floorplan analysis (if configured)
-        floorplan_lookup: dict[str, FloorplanAnalysis] = {}
-        floorplan_filter = None
-        if (
-            settings.anthropic_api_key.get_secret_value()
-            and settings.enable_floorplan_filter
-        ):
-            logger.info("pipeline_started", phase="floorplan_filtering")
-            floorplan_filter = FloorplanFilter(
-                api_key=settings.anthropic_api_key.get_secret_value()
+        # Step 5.5: Property quality analysis (if configured)
+        quality_lookup: dict[str, PropertyQualityAnalysis] = {}
+        quality_filter = None
+        if settings.anthropic_api_key.get_secret_value() and settings.enable_quality_filter:
+            logger.info("pipeline_started", phase="quality_analysis")
+            quality_filter = PropertyQualityFilter(
+                api_key=settings.anthropic_api_key.get_secret_value(),
+                max_images=settings.quality_filter_max_images,
             )
 
             try:
-                floorplan_results = await floorplan_filter.filter_properties(
-                    properties_to_notify
-                )
+                quality_results = await quality_filter.analyze_properties(properties_to_notify)
 
-                # Build lookup and filter to passing properties
-                floorplan_lookup = {
-                    prop.unique_id: analysis for prop, analysis in floorplan_results
-                }
-                properties_to_notify = [prop for prop, _ in floorplan_results]
+                # Build lookup (does NOT filter - all properties pass through)
+                quality_lookup = {prop.unique_id: analysis for prop, analysis in quality_results}
 
+                # Log condition concerns
+                concerns = sum(1 for _, a in quality_results if a.condition_concerns)
                 logger.info(
-                    "floorplan_filter_summary",
-                    passed=len(properties_to_notify),
+                    "quality_analysis_summary",
+                    analyzed=len(quality_results),
+                    condition_concerns=concerns,
                 )
             finally:
-                await floorplan_filter.close()
+                await quality_filter.close()
         else:
-            logger.info("skipping_floorplan_filter", reason="not_configured")
-
-        if not properties_to_notify:
-            logger.info("no_properties_with_suitable_floorplans")
-            return
+            logger.info("skipping_quality_analysis", reason="not_configured")
 
         # Step 6: Save and notify
         logger.info(
@@ -292,7 +284,7 @@ async def run_pipeline(settings: Settings) -> None:
             commute_info = commute_lookup.get(prop.unique_id)
             commute_minutes = commute_info[0] if commute_info else None
             transport_mode = commute_info[1] if commute_info else None
-            floorplan_analysis = floorplan_lookup.get(prop.unique_id)
+            quality_analysis = quality_lookup.get(prop.unique_id)
 
             # Save to database
             await storage.save_property(
@@ -306,7 +298,7 @@ async def run_pipeline(settings: Settings) -> None:
                 prop,
                 commute_minutes=commute_minutes,
                 transport_mode=transport_mode,
-                floorplan_analysis=floorplan_analysis,
+                quality_analysis=quality_analysis,
             )
 
             if success:
@@ -471,41 +463,31 @@ async def run_dry_run(settings: Settings) -> None:
             print("\nNo properties within commute limit.")
             return
 
-        # Step 5.5: Floorplan analysis (if configured)
-        floorplan_lookup: dict[str, FloorplanAnalysis] = {}
-        floorplan_filter = None
-        if (
-            settings.anthropic_api_key.get_secret_value()
-            and settings.enable_floorplan_filter
-        ):
-            logger.info("pipeline_started", phase="floorplan_filtering")
-            floorplan_filter = FloorplanFilter(
-                api_key=settings.anthropic_api_key.get_secret_value()
+        # Step 5.5: Property quality analysis (if configured)
+        quality_lookup: dict[str, PropertyQualityAnalysis] = {}
+        quality_filter = None
+        if settings.anthropic_api_key.get_secret_value() and settings.enable_quality_filter:
+            logger.info("pipeline_started", phase="quality_analysis")
+            quality_filter = PropertyQualityFilter(
+                api_key=settings.anthropic_api_key.get_secret_value(),
+                max_images=settings.quality_filter_max_images,
             )
 
             try:
-                floorplan_results = await floorplan_filter.filter_properties(
-                    properties_to_notify
-                )
+                quality_results = await quality_filter.analyze_properties(properties_to_notify)
 
-                floorplan_lookup = {
-                    prop.unique_id: analysis for prop, analysis in floorplan_results
-                }
-                properties_to_notify = [prop for prop, _ in floorplan_results]
+                quality_lookup = {prop.unique_id: analysis for prop, analysis in quality_results}
 
+                concerns = sum(1 for _, a in quality_results if a.condition_concerns)
                 logger.info(
-                    "floorplan_filter_summary",
-                    passed=len(properties_to_notify),
+                    "quality_analysis_summary",
+                    analyzed=len(quality_results),
+                    condition_concerns=concerns,
                 )
             finally:
-                await floorplan_filter.close()
+                await quality_filter.close()
         else:
-            logger.info("skipping_floorplan_filter", reason="not_configured")
-
-        if not properties_to_notify:
-            logger.info("no_properties_with_suitable_floorplans")
-            print("\nNo properties with suitable floorplans.")
-            return
+            logger.info("skipping_quality_analysis", reason="not_configured")
 
         # Step 6: Save (but don't notify in dry-run mode)
         logger.info(
@@ -523,7 +505,7 @@ async def run_dry_run(settings: Settings) -> None:
             commute_info = commute_lookup.get(prop.unique_id)
             commute_minutes = commute_info[0] if commute_info else None
             transport_mode = commute_info[1] if commute_info else None
-            floorplan_analysis = floorplan_lookup.get(prop.unique_id)
+            quality_analysis = quality_lookup.get(prop.unique_id)
 
             # Save to database
             await storage.save_property(
@@ -541,13 +523,23 @@ async def run_dry_run(settings: Settings) -> None:
             if commute_minutes is not None:
                 mode_str = transport_mode.value if transport_mode else ""
                 print(f"  Commute: {commute_minutes} min ({mode_str})")
-            if floorplan_analysis:
+            if quality_analysis:
+                print(f"  Summary: {quality_analysis.summary}")
+                if quality_analysis.condition_concerns:
+                    print(
+                        f"  ⚠️ Condition concerns ({quality_analysis.concern_severity}): "
+                        f"{', '.join(quality_analysis.condition.maintenance_concerns)}"
+                    )
                 sqm_str = (
-                    f"{floorplan_analysis.living_room_sqm:.0f}sqm"
-                    if floorplan_analysis.living_room_sqm
+                    f"~{quality_analysis.space.living_room_sqm:.0f}sqm"
+                    if quality_analysis.space.living_room_sqm
                     else "size unknown"
                 )
-                print(f"  Living room: {sqm_str} ({floorplan_analysis.confidence})")
+                print(f"  Living room: {sqm_str}")
+                if quality_analysis.value and quality_analysis.value.rating:
+                    print(
+                        f"  Value: {quality_analysis.value.rating} ({quality_analysis.value.note})"
+                    )
             print(f"  URL: {prop.url}")
             print()
 
