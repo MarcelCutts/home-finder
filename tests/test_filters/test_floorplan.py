@@ -5,7 +5,9 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from home_finder.filters.floorplan import DetailFetcher, FloorplanAnalysis
+from unittest.mock import AsyncMock, MagicMock, patch
+
+from home_finder.filters.floorplan import DetailFetcher, FloorplanAnalysis, FloorplanFilter
 from home_finder.models import Property, PropertySource
 
 
@@ -246,3 +248,123 @@ class TestDetailFetcherOnTheMarket:
         url = await fetcher.fetch_floorplan_url(onthemarket_property)
 
         assert url is None
+
+
+class TestFloorplanFilter:
+    """Tests for FloorplanFilter."""
+
+    async def test_filters_out_properties_without_floorplan(self, rightmove_property: Property):
+        """Properties without floorplans should be excluded."""
+        with patch.object(DetailFetcher, "fetch_floorplan_url", return_value=None):
+            floorplan_filter = FloorplanFilter(api_key="test-key")
+            results = await floorplan_filter.filter_properties([rightmove_property])
+
+        assert len(results) == 0
+
+    async def test_two_bed_skips_llm_analysis(self, rightmove_property: Property):
+        """2+ bed properties should auto-pass without LLM call."""
+        # rightmove_property has 2 bedrooms
+        with patch.object(
+            DetailFetcher, "fetch_floorplan_url", return_value="https://example.com/floor.jpg"
+        ):
+            floorplan_filter = FloorplanFilter(api_key="test-key")
+            # Mock the anthropic client to verify it's NOT called
+            floorplan_filter._client = MagicMock()
+
+            results = await floorplan_filter.filter_properties([rightmove_property])
+
+        assert len(results) == 1
+        prop, analysis = results[0]
+        assert analysis.is_spacious_enough is True
+        assert "2+ bedrooms" in analysis.reasoning
+        # Verify LLM was not called
+        floorplan_filter._client.messages.create.assert_not_called()
+
+    async def test_one_bed_spacious_passes(self):
+        """1-bed with spacious living room should pass."""
+        one_bed = Property(
+            source=PropertySource.RIGHTMOVE,
+            source_id="999",
+            url="https://www.rightmove.co.uk/properties/999",
+            title="1 bed flat",
+            price_pcm=1800,
+            bedrooms=1,
+            address="Test Street",
+        )
+
+        mock_response = MagicMock()
+        mock_response.content = [
+            MagicMock(
+                text='{"living_room_sqm": 25, "is_spacious_enough": true, "confidence": "high", "reasoning": "Large living room"}'
+            )
+        ]
+
+        with patch.object(
+            DetailFetcher, "fetch_floorplan_url", return_value="https://example.com/floor.jpg"
+        ):
+            floorplan_filter = FloorplanFilter(api_key="test-key")
+            floorplan_filter._client = MagicMock()
+            floorplan_filter._client.messages.create = AsyncMock(return_value=mock_response)
+
+            results = await floorplan_filter.filter_properties([one_bed])
+
+        assert len(results) == 1
+        _, analysis = results[0]
+        assert analysis.is_spacious_enough is True
+        assert analysis.living_room_sqm == 25
+
+    async def test_one_bed_small_filtered_out(self):
+        """1-bed with small living room should be filtered out."""
+        one_bed = Property(
+            source=PropertySource.RIGHTMOVE,
+            source_id="999",
+            url="https://www.rightmove.co.uk/properties/999",
+            title="1 bed flat",
+            price_pcm=1800,
+            bedrooms=1,
+            address="Test Street",
+        )
+
+        mock_response = MagicMock()
+        mock_response.content = [
+            MagicMock(
+                text='{"living_room_sqm": 12, "is_spacious_enough": false, "confidence": "high", "reasoning": "Small living room"}'
+            )
+        ]
+
+        with patch.object(
+            DetailFetcher, "fetch_floorplan_url", return_value="https://example.com/floor.jpg"
+        ):
+            floorplan_filter = FloorplanFilter(api_key="test-key")
+            floorplan_filter._client = MagicMock()
+            floorplan_filter._client.messages.create = AsyncMock(return_value=mock_response)
+
+            results = await floorplan_filter.filter_properties([one_bed])
+
+        assert len(results) == 0
+
+    async def test_llm_invalid_json_filters_out(self):
+        """Invalid LLM response should filter out property (fail-safe)."""
+        one_bed = Property(
+            source=PropertySource.RIGHTMOVE,
+            source_id="999",
+            url="https://www.rightmove.co.uk/properties/999",
+            title="1 bed flat",
+            price_pcm=1800,
+            bedrooms=1,
+            address="Test Street",
+        )
+
+        mock_response = MagicMock()
+        mock_response.content = [MagicMock(text="This is not JSON")]
+
+        with patch.object(
+            DetailFetcher, "fetch_floorplan_url", return_value="https://example.com/floor.jpg"
+        ):
+            floorplan_filter = FloorplanFilter(api_key="test-key")
+            floorplan_filter._client = MagicMock()
+            floorplan_filter._client.messages.create = AsyncMock(return_value=mock_response)
+
+            results = await floorplan_filter.filter_properties([one_bed])
+
+        assert len(results) == 0
