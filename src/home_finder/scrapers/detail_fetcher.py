@@ -19,6 +19,8 @@ class DetailPageData:
 
     floorplan_url: str | None = None
     gallery_urls: list[str] | None = None
+    description: str | None = None
+    features: list[str] | None = None  # Key features like "Gas central heating"
 
 
 class DetailFetcher:
@@ -122,9 +124,20 @@ class DetailFetcher:
                 if img.get("url"):
                     gallery_urls.append(img["url"])
 
+            # Extract description
+            description = property_data.get("text", {}).get("description")
+
+            # Extract key features
+            features: list[str] = []
+            key_features = property_data.get("keyFeatures", [])
+            if key_features:
+                features.extend(key_features)
+
             return DetailPageData(
                 floorplan_url=floorplan_url,
                 gallery_urls=gallery_urls if gallery_urls else None,
+                description=description,
+                features=features if features else None,
             )
 
         except Exception as e:
@@ -162,39 +175,83 @@ class DetailFetcher:
                     return None
                 html: str = response.text
 
-            # Find __NEXT_DATA__ JSON
+            floorplan_url: str | None = None
+            gallery_urls: list[str] = []
+            description: str | None = None
+            features: list[str] = []
+
+            # Try __NEXT_DATA__ first (legacy SSR approach)
             match = re.search(
                 r'<script id="__NEXT_DATA__"[^>]*>(.*?)</script>',
                 html,
                 re.DOTALL,
             )
-            if not match:
-                return None
+            if match:
+                data = json.loads(match.group(1))
+                listing = data.get("props", {}).get("pageProps", {}).get("listing", {})
+                media = listing.get("propertyMedia", [])
 
-            data = json.loads(match.group(1))
-            media = (
-                data.get("props", {})
-                .get("pageProps", {})
-                .get("listing", {})
-                .get("propertyMedia", [])
-            )
+                for item in media:
+                    item_type = item.get("type")
+                    if item_type == "floorplan" and floorplan_url is None:
+                        floorplan_url = item.get("original")
+                    elif item_type == "image" and len(gallery_urls) < self._max_gallery_images:
+                        url = item.get("original")
+                        if url:
+                            gallery_urls.append(url)
 
-            # Extract floorplan and gallery
-            floorplan_url: str | None = None
-            gallery_urls: list[str] = []
+                description = listing.get("detailedDescription")
 
-            for item in media:
-                item_type = item.get("type")
-                if item_type == "floorplan" and floorplan_url is None:
-                    floorplan_url = item.get("original")
-                elif item_type == "image" and len(gallery_urls) < self._max_gallery_images:
-                    url = item.get("original")
-                    if url:
-                        gallery_urls.append(url)
+                # Extract features from various Zoopla fields
+                key_features = listing.get("keyFeatures", [])
+                if key_features:
+                    features.extend(key_features)
+                bullets = listing.get("bullets", [])
+                if bullets:
+                    features.extend(bullets)
+                tags = listing.get("tags", [])
+                for tag in tags:
+                    if isinstance(tag, dict) and tag.get("label"):
+                        features.append(tag["label"])
+                    elif isinstance(tag, str):
+                        features.append(tag)
+
+            # Fallback: Extract directly from HTML (RSC/streaming pages)
+            if not gallery_urls:
+                # Extract gallery images from zoocdn URLs (lid = listing image)
+                # Pattern: https://lid.zoocdn.com/u/{width}/{height}/{hash}.jpg
+                img_matches = re.findall(
+                    r'https://lid\.zoocdn\.com/u/(\d+)/(\d+)/([a-f0-9]+\.(?:jpg|jpeg|png|webp))',
+                    html,
+                    re.IGNORECASE,
+                )
+                # Deduplicate by hash and prefer larger images
+                seen_hashes: dict[str, tuple[int, str]] = {}
+                for width, height, filename in img_matches:
+                    hash_part = filename.split(".")[0]
+                    size = int(width) * int(height)
+                    if hash_part not in seen_hashes or size > seen_hashes[hash_part][0]:
+                        seen_hashes[hash_part] = (size, f"https://lid.zoocdn.com/u/{width}/{height}/{filename}")
+
+                # Sort by size descending and take top images
+                sorted_imgs = sorted(seen_hashes.values(), key=lambda x: -x[0])
+                gallery_urls = [url for _, url in sorted_imgs[: self._max_gallery_images]]
+
+            # Extract floorplan if not found yet (lc = listing content for floorplans)
+            if not floorplan_url:
+                floorplan_match = re.search(
+                    r'(https://lc\.zoocdn\.com/[^\s"\']+)',
+                    html,
+                    re.IGNORECASE,
+                )
+                if floorplan_match:
+                    floorplan_url = floorplan_match.group(1)
 
             return DetailPageData(
                 floorplan_url=floorplan_url,
                 gallery_urls=gallery_urls if gallery_urls else None,
+                description=description,
+                features=features if features else None,
             )
 
         except Exception as e:
@@ -209,44 +266,95 @@ class DetailFetcher:
             response.raise_for_status()
             html = response.text
 
-            # Extract floorplan
+            # Check if we got redirected to homepage (property no longer available)
+            if "/properties-to-rent" in str(response.url) or "homepage" in html.lower()[:1000]:
+                logger.debug("openrent_property_unavailable", property_id=prop.unique_id)
+                return None
+
+            # Extract floorplan - look for floorplan images in the carousel
             floorplan_url: str | None = None
             floorplan_match = re.search(
-                r'<img[^>]*class="[^"]*floorplan[^"]*"[^>]*src="([^"]+)"',
+                r'href="(//imagescdn\.openrent\.co\.uk/[^"]*floorplan[^"]*)"',
                 html,
                 re.IGNORECASE,
             )
             if floorplan_match:
-                floorplan_url = floorplan_match.group(1)
+                url = floorplan_match.group(1)
+                floorplan_url = f"https:{url}" if url.startswith("//") else url
 
-            # Extract gallery images from the lightbox gallery
-            # OpenRent uses a lightbox with data-src attributes for full-size images
+            # Extract gallery images from PhotoSwipe lightbox (new structure)
+            # OpenRent now uses class="lightbox_item" with data-pswp-* attributes
             gallery_urls: list[str] = []
 
-            # Pattern 1: Look for gallery images in lightbox anchors
+            # Pattern 1: PhotoSwipe lightbox items (current structure)
             gallery_matches = re.findall(
-                r'<a[^>]*href="([^"]+)"[^>]*data-lightbox="gallery"',
+                r'<a[^>]*href="([^"]+)"[^>]*class="[^"]*lightbox_item[^"]*"',
                 html,
                 re.IGNORECASE,
             )
             for url in gallery_matches[: self._max_gallery_images]:
-                if url and not url.endswith("-floorplan.jpg"):
-                    gallery_urls.append(url)
+                if url and "floorplan" not in url.lower():
+                    full_url = f"https:{url}" if url.startswith("//") else url
+                    gallery_urls.append(full_url)
 
-            # Pattern 2: Fallback - look for property images
+            # Pattern 2: Fallback - old data-lightbox="gallery" pattern
+            if not gallery_urls:
+                gallery_matches = re.findall(
+                    r'<a[^>]*href="([^"]+)"[^>]*data-lightbox="gallery"',
+                    html,
+                    re.IGNORECASE,
+                )
+                for url in gallery_matches[: self._max_gallery_images]:
+                    if url and "floorplan" not in url.lower():
+                        full_url = f"https:{url}" if url.startswith("//") else url
+                        gallery_urls.append(full_url)
+
+            # Pattern 3: Fallback - look for property images by URL pattern
             if not gallery_urls:
                 img_matches = re.findall(
-                    r'<img[^>]*class="[^"]*property-image[^"]*"[^>]*src="([^"]+)"',
+                    r'(//imagescdn\.openrent\.co\.uk/listings/\d+/[^"]+\.(?:jpg|jpeg|png|webp))',
                     html,
                     re.IGNORECASE,
                 )
                 for url in img_matches[: self._max_gallery_images]:
                     if url and "floorplan" not in url.lower():
-                        gallery_urls.append(url)
+                        full_url = f"https:{url}"
+                        if full_url not in gallery_urls:
+                            gallery_urls.append(full_url)
+
+            # Extract description - OpenRent uses a description div
+            description: str | None = None
+            desc_match = re.search(
+                r'<div[^>]*class="[^"]*description[^"]*"[^>]*>(.*?)</div>',
+                html,
+                re.DOTALL | re.IGNORECASE,
+            )
+            if desc_match:
+                # Strip HTML tags
+                desc_text = re.sub(r"<[^>]+>", " ", desc_match.group(1))
+                desc_text = re.sub(r"\s+", " ", desc_text).strip()
+                if desc_text:
+                    description = desc_text
+
+            # Extract features - OpenRent lists features in a ul
+            features: list[str] = []
+            features_match = re.search(
+                r'<ul[^>]*class="[^"]*feature[^"]*"[^>]*>(.*?)</ul>',
+                html,
+                re.DOTALL | re.IGNORECASE,
+            )
+            if features_match:
+                feature_items = re.findall(r"<li[^>]*>(.*?)</li>", features_match.group(1))
+                for item in feature_items:
+                    text = re.sub(r"<[^>]+>", "", item).strip()
+                    if text:
+                        features.append(text)
 
             return DetailPageData(
                 floorplan_url=floorplan_url,
                 gallery_urls=gallery_urls if gallery_urls else None,
+                description=description,
+                features=features if features else None,
             )
 
         except Exception as e:
@@ -254,12 +362,31 @@ class DetailFetcher:
             return None
 
     async def _fetch_onthemarket(self, prop: Property) -> DetailPageData | None:
-        """Extract floorplan and gallery URLs from OnTheMarket detail page."""
+        """Extract floorplan and gallery URLs from OnTheMarket detail page.
+
+        Uses curl_cffi with Chrome TLS fingerprint impersonation to bypass
+        OnTheMarket's bot detection.
+        """
         try:
-            client = await self._get_client()
-            response = await client.get(str(prop.url))
-            response.raise_for_status()
-            html = response.text
+            async with AsyncSession() as session:
+                response = await session.get(
+                    str(prop.url),
+                    impersonate="chrome",
+                    headers={
+                        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                        "Accept-Language": "en-GB,en;q=0.9",
+                        "Accept-Encoding": "gzip, deflate, br",
+                    },
+                    timeout=30,
+                )
+                if response.status_code != 200:
+                    logger.warning(
+                        "onthemarket_http_error",
+                        property_id=prop.unique_id,
+                        status=response.status_code,
+                    )
+                    return None
+                html: str = response.text
 
             # OnTheMarket uses Next.js with Redux state in __NEXT_DATA__
             match = re.search(
@@ -277,20 +404,52 @@ class DetailFetcher:
             # Extract floorplan
             floorplan_url: str | None = None
             floorplans = property_data.get("floorplans", [])
-            if floorplans and floorplans[0].get("original"):
-                floorplan_url = floorplans[0]["original"]
+            if floorplans:
+                fp = floorplans[0]
+                floorplan_url = (
+                    fp.get("original")
+                    or fp.get("largeUrl")
+                    or fp.get("url")
+                )
 
             # Extract gallery images
+            # OnTheMarket uses 'largeUrl' or 'prefix' + geometry suffix
             gallery_urls: list[str] = []
             images = property_data.get("images", [])
             for img in images[: self._max_gallery_images]:
-                url = img.get("original") if isinstance(img, dict) else img
+                if isinstance(img, dict):
+                    # Try various URL fields
+                    url = (
+                        img.get("original")
+                        or img.get("largeUrl")
+                        or img.get("url")
+                    )
+                    # Fallback: construct from prefix if available
+                    if not url and img.get("prefix"):
+                        url = f"{img['prefix']}-1024x1024.jpg"
+                else:
+                    url = img
                 if url:
                     gallery_urls.append(url)
+
+            # Extract description
+            description = property_data.get("description")
+
+            # Extract features
+            features: list[str] = []
+            key_features = property_data.get("keyFeatures", [])
+            if key_features:
+                features.extend(key_features)
+            # Also check for bullet points
+            bullets = property_data.get("bullets", [])
+            if bullets:
+                features.extend(bullets)
 
             return DetailPageData(
                 floorplan_url=floorplan_url,
                 gallery_urls=gallery_urls if gallery_urls else None,
+                description=description,
+                features=features if features else None,
             )
 
         except Exception as e:

@@ -2,7 +2,7 @@
 
 from datetime import datetime
 from enum import Enum
-from typing import Self
+from typing import Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, HttpUrl, field_validator, model_validator
 
@@ -137,3 +137,55 @@ class TrackedProperty(BaseModel):
     transport_mode: TransportMode | None = None
     notification_status: NotificationStatus = NotificationStatus.PENDING
     notified_at: datetime | None = None
+
+
+class PropertyImage(BaseModel):
+    """An image from a property listing."""
+
+    model_config = ConfigDict(frozen=True)
+
+    url: HttpUrl
+    source: PropertySource
+    image_type: Literal["gallery", "floorplan"]
+
+
+class MergedProperty(BaseModel):
+    """A property aggregated from multiple listing sources.
+
+    When the same property is listed on multiple platforms (e.g., OpenRent and Rightmove),
+    this model combines data from all sources rather than discarding duplicates.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    # Canonical data (from first-seen source)
+    canonical: Property
+
+    # All sources where this property was found
+    sources: tuple[PropertySource, ...]
+
+    # URLs per platform (for "Also listed on...")
+    source_urls: dict[PropertySource, HttpUrl]
+
+    # Combined images from all sources
+    images: tuple[PropertyImage, ...] = ()
+
+    # Best floorplan found (prefer highest resolution)
+    floorplan: PropertyImage | None = None
+
+    # Price range if varies across platforms
+    min_price: int
+    max_price: int
+
+    # Combined descriptions (keyed by source)
+    descriptions: dict[PropertySource, str] = Field(default_factory=dict)
+
+    @property
+    def unique_id(self) -> str:
+        """Unique identifier based on canonical property."""
+        return self.canonical.unique_id
+
+    @property
+    def price_varies(self) -> bool:
+        """Whether the price differs across platforms."""
+        return self.min_price != self.max_price

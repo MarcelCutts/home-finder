@@ -134,6 +134,9 @@ class OpenRentScraper(BaseScraper):
             beds = bedrooms[idx] if idx >= 0 and idx < len(bedrooms) else None
             lat = latitudes[idx] if idx >= 0 and idx < len(latitudes) else None
             lon = longitudes[idx] if idx >= 0 and idx < len(longitudes) else None
+            # Property model requires both or neither coordinate
+            if lat is None or lon is None:
+                lat, lon = None, None
 
             # Parse title/address from link text
             title, address, postcode = self._parse_link_text(link)

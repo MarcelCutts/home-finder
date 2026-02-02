@@ -1,12 +1,14 @@
 """Tests for property quality analysis filter."""
 
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from anthropic.types import TextBlock
+from anthropic.types import ToolUseBlock
 from pydantic import HttpUrl, ValidationError
 
 from home_finder.filters.quality import (
+    QUALITY_ANALYSIS_TOOL,
     ConditionAnalysis,
     KitchenAnalysis,
     LightSpaceAnalysis,
@@ -15,76 +17,9 @@ from home_finder.filters.quality import (
     SpaceAnalysis,
     ValueAnalysis,
     assess_value,
-    extract_json_from_response,
 )
 from home_finder.models import Property, PropertySource
 from home_finder.scrapers.detail_fetcher import DetailFetcher, DetailPageData
-
-
-class TestExtractJsonFromResponse:
-    """Tests for extract_json_from_response function."""
-
-    def test_parses_raw_json(self) -> None:
-        """Should parse raw JSON without any wrapping."""
-        text = '{"key": "value", "number": 42}'
-        result = extract_json_from_response(text)
-        assert result == {"key": "value", "number": 42}
-
-    def test_parses_json_with_whitespace(self) -> None:
-        """Should parse JSON with leading/trailing whitespace."""
-        text = '  \n{"key": "value"}\n  '
-        result = extract_json_from_response(text)
-        assert result == {"key": "value"}
-
-    def test_extracts_from_markdown_json_block(self) -> None:
-        """Should extract JSON from ```json code block."""
-        text = """Here is the analysis:
-
-```json
-{"status": "success", "items": [1, 2, 3]}
-```
-
-That's the result."""
-        result = extract_json_from_response(text)
-        assert result == {"status": "success", "items": [1, 2, 3]}
-
-    def test_extracts_from_plain_markdown_block(self) -> None:
-        """Should extract JSON from ``` code block without language specifier."""
-        text = """```
-{"data": "test"}
-```"""
-        result = extract_json_from_response(text)
-        assert result == {"data": "test"}
-
-    def test_extracts_json_embedded_in_text(self) -> None:
-        """Should find JSON braces embedded in surrounding text."""
-        text = 'Here is my analysis: {"result": true} End of response.'
-        result = extract_json_from_response(text)
-        assert result == {"result": True}
-
-    def test_raises_on_no_json(self) -> None:
-        """Should raise JSONDecodeError when no JSON found."""
-        text = "This is just plain text with no JSON."
-        with pytest.raises(ValueError):  # json.JSONDecodeError is a ValueError subclass
-            extract_json_from_response(text)
-
-    def test_raises_on_invalid_json(self) -> None:
-        """Should raise JSONDecodeError on malformed JSON."""
-        text = '{"key": "value", "missing": }'
-        with pytest.raises(ValueError):
-            extract_json_from_response(text)
-
-    def test_handles_nested_json(self) -> None:
-        """Should handle nested JSON structures."""
-        text = """```json
-{
-    "kitchen": {"has_gas_hob": true},
-    "condition": {"overall_condition": "good"}
-}
-```"""
-        result = extract_json_from_response(text)
-        assert result["kitchen"]["has_gas_hob"] is True
-        assert result["condition"]["overall_condition"] == "good"
 
 
 class TestKitchenAnalysis:
@@ -93,26 +28,84 @@ class TestKitchenAnalysis:
     def test_valid_full_analysis(self) -> None:
         """Should create analysis with all fields."""
         analysis = KitchenAnalysis(
-            has_gas_hob=True,
+            overall_quality="modern",
+            hob_type="gas",
             has_dishwasher=True,
             has_washing_machine=True,
-            has_dryer=False,
-            appliance_quality="high",
             notes="Modern kitchen with integrated appliances",
         )
-        assert analysis.has_gas_hob is True
-        assert analysis.appliance_quality == "high"
+        assert analysis.overall_quality == "modern"
+        assert analysis.hob_type == "gas"
 
     def test_minimal_analysis(self) -> None:
         """Should create analysis with only defaults."""
         analysis = KitchenAnalysis()
-        assert analysis.has_gas_hob is None
+        assert analysis.overall_quality == "unknown"
         assert analysis.notes == ""
 
-    def test_invalid_appliance_quality(self) -> None:
-        """Should reject invalid appliance quality."""
+    def test_invalid_kitchen_quality(self) -> None:
+        """Should reject invalid kitchen quality."""
         with pytest.raises(ValidationError):
-            KitchenAnalysis(appliance_quality="excellent")  # type: ignore[arg-type]
+            KitchenAnalysis(overall_quality="excellent")  # type: ignore[arg-type]
+
+
+class TestToolSchema:
+    """Tests for QUALITY_ANALYSIS_TOOL schema structure."""
+
+    def test_uses_anyof_for_nullable_enum_fields(self) -> None:
+        """Should use anyOf pattern for nullable enum fields (strict mode compatibility)."""
+        input_schema = QUALITY_ANALYSIS_TOOL["input_schema"]
+        schema = input_schema["properties"]
+
+        # Kitchen hob_type should use anyOf
+        hob_type = schema["kitchen"]["properties"]["hob_type"]
+        assert "anyOf" in hob_type
+        assert {"type": "null"} in hob_type["anyOf"]
+        enum_option = next(o for o in hob_type["anyOf"] if o.get("type") == "string")
+        assert "enum" in enum_option
+        assert "gas" in enum_option["enum"]
+
+        # Light space window_sizes should use anyOf
+        window_sizes = schema["light_space"]["properties"]["window_sizes"]
+        assert "anyOf" in window_sizes
+        assert {"type": "null"} in window_sizes["anyOf"]
+
+        # Light space ceiling_height should use anyOf
+        ceiling_height = schema["light_space"]["properties"]["ceiling_height"]
+        assert "anyOf" in ceiling_height
+        assert {"type": "null"} in ceiling_height["anyOf"]
+
+        # Concern severity should use anyOf
+        concern_severity = schema["concern_severity"]
+        assert "anyOf" in concern_severity
+        assert {"type": "null"} in concern_severity["anyOf"]
+
+    def test_uses_anyof_for_nullable_primitive_fields(self) -> None:
+        """Should use anyOf pattern for nullable boolean/number fields."""
+        input_schema = QUALITY_ANALYSIS_TOOL["input_schema"]
+        schema = input_schema["properties"]
+
+        # Kitchen has_dishwasher should use anyOf
+        has_dishwasher = schema["kitchen"]["properties"]["has_dishwasher"]
+        assert "anyOf" in has_dishwasher
+        assert {"type": "boolean"} in has_dishwasher["anyOf"]
+        assert {"type": "null"} in has_dishwasher["anyOf"]
+
+        # Space living_room_sqm should use anyOf
+        living_room_sqm = schema["space"]["properties"]["living_room_sqm"]
+        assert "anyOf" in living_room_sqm
+        assert {"type": "number"} in living_room_sqm["anyOf"]
+        assert {"type": "null"} in living_room_sqm["anyOf"]
+
+        # Space is_spacious_enough should use anyOf
+        is_spacious = schema["space"]["properties"]["is_spacious_enough"]
+        assert "anyOf" in is_spacious
+        assert {"type": "boolean"} in is_spacious["anyOf"]
+        assert {"type": "null"} in is_spacious["anyOf"]
+
+    def test_schema_has_strict_mode_enabled(self) -> None:
+        """Should have strict mode enabled for guaranteed schema compliance."""
+        assert QUALITY_ANALYSIS_TOOL["strict"] is True
 
 
 class TestConditionAnalysis:
@@ -259,7 +252,7 @@ class TestPropertyQualityAnalysis:
     def test_valid_full_analysis(self) -> None:
         """Should create complete quality analysis."""
         analysis = PropertyQualityAnalysis(
-            kitchen=KitchenAnalysis(has_gas_hob=True, appliance_quality="medium"),
+            kitchen=KitchenAnalysis(overall_quality="modern", hob_type="gas"),
             condition=ConditionAnalysis(
                 overall_condition="good",
                 has_visible_damp=False,
@@ -357,41 +350,102 @@ def sample_detail_data() -> DetailPageData:
 
 
 @pytest.fixture
-def sample_llm_response() -> str:
-    """Sample JSON response from Claude."""
-    return """{
+def sample_tool_response_with_nulls() -> dict[str, Any]:
+    """Sample tool response with nullable fields set to null."""
+    return {
         "kitchen": {
-            "has_gas_hob": true,
-            "has_dishwasher": true,
-            "has_washing_machine": true,
-            "has_dryer": false,
-            "appliance_quality": "medium",
-            "notes": "Modern integrated kitchen"
+            "overall_quality": "unknown",
+            "hob_type": None,
+            "has_dishwasher": None,
+            "has_washing_machine": None,
+            "notes": "Kitchen not visible in images",
+        },
+        "condition": {
+            "overall_condition": "unknown",
+            "has_visible_damp": False,
+            "has_visible_mold": False,
+            "has_worn_fixtures": False,
+            "maintenance_concerns": [],
+            "confidence": "low",
+        },
+        "light_space": {
+            "natural_light": "unknown",
+            "window_sizes": None,
+            "feels_spacious": None,
+            "ceiling_height": None,
+            "notes": "Limited photos available",
+        },
+        "space": {
+            "living_room_sqm": None,
+            "is_spacious_enough": None,
+            "confidence": "low",
+        },
+        "value_for_quality": {
+            "rating": "fair",
+            "reasoning": "Cannot assess quality from available images",
+        },
+        "condition_concerns": False,
+        "concern_severity": None,
+        "summary": "Limited visibility - cannot fully assess property condition.",
+    }
+
+
+@pytest.fixture
+def sample_tool_response() -> dict[str, Any]:
+    """Sample structured tool response from Claude."""
+    return {
+        "kitchen": {
+            "overall_quality": "modern",
+            "hob_type": "gas",
+            "has_dishwasher": True,
+            "has_washing_machine": True,
+            "notes": "Modern integrated kitchen",
         },
         "condition": {
             "overall_condition": "good",
-            "has_visible_damp": false,
-            "has_visible_mold": false,
-            "has_worn_fixtures": false,
+            "has_visible_damp": False,
+            "has_visible_mold": False,
+            "has_worn_fixtures": False,
             "maintenance_concerns": [],
-            "confidence": "high"
+            "confidence": "high",
         },
         "light_space": {
             "natural_light": "excellent",
             "window_sizes": "large",
-            "feels_spacious": true,
+            "feels_spacious": True,
             "ceiling_height": "standard",
-            "notes": "South-facing with good light"
+            "notes": "South-facing with good light",
         },
         "space": {
             "living_room_sqm": 22,
-            "is_spacious_enough": true,
-            "confidence": "high"
+            "is_spacious_enough": True,
+            "confidence": "high",
         },
-        "condition_concerns": false,
-        "concern_severity": null,
-        "summary": "Well-maintained flat with modern kitchen. Living room suitable for home office."
-    }"""
+        "value_for_quality": {
+            "rating": "good",
+            "reasoning": "Well-maintained property at reasonable price",
+        },
+        "condition_concerns": False,
+        "concern_severity": None,
+        "summary": "Well-maintained flat with modern kitchen. Living room suitable for home office.",
+    }
+
+
+def create_mock_response(tool_input: dict[str, Any], stop_reason: str = "tool_use") -> MagicMock:
+    """Create a mock API response with tool use block."""
+    tool_block = ToolUseBlock(
+        id="toolu_123",
+        type="tool_use",
+        name="property_quality_analysis",
+        input=tool_input,
+    )
+    mock_response = MagicMock()
+    mock_response.content = [tool_block]
+    mock_response.stop_reason = stop_reason
+    mock_response.usage = MagicMock()
+    mock_response.usage.cache_read_input_tokens = 0
+    mock_response.usage.cache_creation_input_tokens = 0
+    return mock_response
 
 
 class TestPropertyQualityFilter:
@@ -412,11 +466,10 @@ class TestPropertyQualityFilter:
         self,
         sample_property: Property,
         sample_detail_data: DetailPageData,
-        sample_llm_response: str,
+        sample_tool_response: dict[str, Any],
     ) -> None:
-        """Should analyze property with gallery images."""
-        mock_response = MagicMock()
-        mock_response.content = [TextBlock(type="text", text=sample_llm_response)]
+        """Should analyze property with gallery images using structured outputs."""
+        mock_response = create_mock_response(sample_tool_response)
 
         with patch.object(DetailFetcher, "fetch_detail_page", return_value=sample_detail_data):
             quality_filter = PropertyQualityFilter(api_key="test-key")
@@ -427,7 +480,8 @@ class TestPropertyQualityFilter:
 
         assert len(results) == 1
         _, analysis = results[0]
-        assert analysis.kitchen.has_gas_hob is True
+        assert analysis.kitchen.overall_quality == "modern"
+        assert analysis.kitchen.hob_type == "gas"
         assert analysis.condition.overall_condition == "good"
         assert analysis.light_space.natural_light == "excellent"
         assert analysis.space.living_room_sqm == 22
@@ -439,16 +493,24 @@ class TestPropertyQualityFilter:
     ) -> None:
         """Should override space assessment for 2+ bedroom properties."""
         # Response says not spacious enough, but 2-bed should override
-        response_json = """{
+        tool_response = {
             "kitchen": {"notes": ""},
-            "condition": {"overall_condition": "good", "maintenance_concerns": []},
-            "light_space": {"natural_light": "good", "feels_spacious": true},
-            "space": {"living_room_sqm": 15, "is_spacious_enough": false, "confidence": "high"},
-            "condition_concerns": false,
-            "summary": "Compact living room"
-        }"""
-        mock_response = MagicMock()
-        mock_response.content = [TextBlock(type="text", text=response_json)]
+            "condition": {
+                "overall_condition": "good",
+                "has_visible_damp": False,
+                "has_visible_mold": False,
+                "has_worn_fixtures": False,
+                "maintenance_concerns": [],
+                "confidence": "high",
+            },
+            "light_space": {"natural_light": "good", "feels_spacious": True, "notes": ""},
+            "space": {"living_room_sqm": 15, "is_spacious_enough": False, "confidence": "high"},
+            "value_for_quality": {"rating": "good", "reasoning": "Fair price"},
+            "condition_concerns": False,
+            "concern_severity": None,
+            "summary": "Compact living room",
+        }
+        mock_response = create_mock_response(tool_response)
 
         with patch.object(DetailFetcher, "fetch_detail_page", return_value=sample_detail_data):
             quality_filter = PropertyQualityFilter(api_key="test-key")
@@ -468,16 +530,24 @@ class TestPropertyQualityFilter:
         sample_detail_data: DetailPageData,
     ) -> None:
         """Should NOT override space assessment for 1-bed properties."""
-        response_json = """{
+        tool_response = {
             "kitchen": {"notes": ""},
-            "condition": {"overall_condition": "good", "maintenance_concerns": []},
-            "light_space": {"natural_light": "good", "feels_spacious": true},
-            "space": {"living_room_sqm": 15, "is_spacious_enough": false, "confidence": "high"},
-            "condition_concerns": false,
-            "summary": "Compact living room"
-        }"""
-        mock_response = MagicMock()
-        mock_response.content = [TextBlock(type="text", text=response_json)]
+            "condition": {
+                "overall_condition": "good",
+                "has_visible_damp": False,
+                "has_visible_mold": False,
+                "has_worn_fixtures": False,
+                "maintenance_concerns": [],
+                "confidence": "high",
+            },
+            "light_space": {"natural_light": "good", "feels_spacious": True, "notes": ""},
+            "space": {"living_room_sqm": 15, "is_spacious_enough": False, "confidence": "high"},
+            "value_for_quality": {"rating": "good", "reasoning": "Fair price"},
+            "condition_concerns": False,
+            "concern_severity": None,
+            "summary": "Compact living room",
+        }
+        mock_response = create_mock_response(tool_response)
 
         with patch.object(DetailFetcher, "fetch_detail_page", return_value=sample_detail_data):
             quality_filter = PropertyQualityFilter(api_key="test-key")
@@ -507,14 +577,15 @@ class TestPropertyQualityFilter:
         _, analysis = results[0]
         assert "No images available" in analysis.summary
 
-    async def test_handles_invalid_json_response(
+    async def test_handles_unexpected_stop_reason(
         self,
         sample_property: Property,
         sample_detail_data: DetailPageData,
     ) -> None:
-        """Should return minimal analysis on invalid JSON response."""
+        """Should return minimal analysis on unexpected stop reason (e.g., max_tokens)."""
         mock_response = MagicMock()
-        mock_response.content = [TextBlock(type="text", text="This is not JSON")]
+        mock_response.content = []
+        mock_response.stop_reason = "max_tokens"  # Unexpected stop reason
 
         with patch.object(DetailFetcher, "fetch_detail_page", return_value=sample_detail_data):
             quality_filter = PropertyQualityFilter(api_key="test-key")
@@ -531,11 +602,10 @@ class TestPropertyQualityFilter:
         self,
         sample_property: Property,
         sample_detail_data: DetailPageData,
-        sample_llm_response: str,
+        sample_tool_response: dict[str, Any],
     ) -> None:
         """Should include gallery images and floorplan in API call."""
-        mock_response = MagicMock()
-        mock_response.content = [TextBlock(type="text", text=sample_llm_response)]
+        mock_response = create_mock_response(sample_tool_response)
 
         with patch.object(DetailFetcher, "fetch_detail_page", return_value=sample_detail_data):
             quality_filter = PropertyQualityFilter(api_key="test-key", max_images=10)
@@ -557,7 +627,7 @@ class TestPropertyQualityFilter:
     async def test_respects_max_images_limit(
         self,
         sample_property: Property,
-        sample_llm_response: str,
+        sample_tool_response: dict[str, Any],
     ) -> None:
         """Should respect max_images configuration."""
         # Create detail data with many images
@@ -565,8 +635,7 @@ class TestPropertyQualityFilter:
             floorplan_url="https://example.com/floor.jpg",
             gallery_urls=[f"https://example.com/img{i}.jpg" for i in range(20)],
         )
-        mock_response = MagicMock()
-        mock_response.content = [TextBlock(type="text", text=sample_llm_response)]
+        mock_response = create_mock_response(sample_tool_response)
 
         with patch.object(DetailFetcher, "fetch_detail_page", return_value=many_images):
             quality_filter = PropertyQualityFilter(api_key="test-key", max_images=5)
@@ -581,3 +650,174 @@ class TestPropertyQualityFilter:
         # Should have 5 gallery images + 1 floorplan + 1 text prompt = 7 content blocks
         image_blocks = [c for c in content if c.get("type") == "image"]
         assert len(image_blocks) == 6  # 5 gallery + 1 floorplan
+
+    async def test_uses_tool_choice_for_structured_output(
+        self,
+        sample_property: Property,
+        sample_detail_data: DetailPageData,
+        sample_tool_response: dict[str, Any],
+    ) -> None:
+        """Should use tool_choice to force structured output."""
+        mock_response = create_mock_response(sample_tool_response)
+
+        with patch.object(DetailFetcher, "fetch_detail_page", return_value=sample_detail_data):
+            quality_filter = PropertyQualityFilter(api_key="test-key")
+            quality_filter._client = MagicMock()
+            quality_filter._client.messages.create = AsyncMock(return_value=mock_response)
+
+            await quality_filter.analyze_properties([sample_property])
+
+        call_args = quality_filter._client.messages.create.call_args
+
+        # Verify tool_choice forces the property_quality_analysis tool
+        assert call_args.kwargs["tool_choice"] == {
+            "type": "tool",
+            "name": "property_quality_analysis",
+        }
+
+        # Verify tools include our schema with strict mode
+        tools = call_args.kwargs["tools"]
+        assert len(tools) == 1
+        assert tools[0]["name"] == "property_quality_analysis"
+        assert tools[0]["strict"] is True
+
+    async def test_uses_cached_system_prompt(
+        self,
+        sample_property: Property,
+        sample_detail_data: DetailPageData,
+        sample_tool_response: dict[str, Any],
+    ) -> None:
+        """Should use system prompt with cache_control for cost savings."""
+        mock_response = create_mock_response(sample_tool_response)
+
+        with patch.object(DetailFetcher, "fetch_detail_page", return_value=sample_detail_data):
+            quality_filter = PropertyQualityFilter(api_key="test-key")
+            quality_filter._client = MagicMock()
+            quality_filter._client.messages.create = AsyncMock(return_value=mock_response)
+
+            await quality_filter.analyze_properties([sample_property])
+
+        call_args = quality_filter._client.messages.create.call_args
+
+        # Verify system prompt uses cache_control
+        system = call_args.kwargs["system"]
+        assert len(system) == 1
+        assert system[0]["type"] == "text"
+        assert system[0]["cache_control"] == {"type": "ephemeral"}
+        assert "expert property analyst" in system[0]["text"]
+
+    async def test_extracts_value_for_quality_from_tool_response(
+        self,
+        sample_property: Property,
+        sample_detail_data: DetailPageData,
+        sample_tool_response: dict[str, Any],
+    ) -> None:
+        """Should extract quality-adjusted value rating from tool response."""
+        mock_response = create_mock_response(sample_tool_response)
+
+        with patch.object(DetailFetcher, "fetch_detail_page", return_value=sample_detail_data):
+            quality_filter = PropertyQualityFilter(api_key="test-key")
+            quality_filter._client = MagicMock()
+            quality_filter._client.messages.create = AsyncMock(return_value=mock_response)
+
+            results = await quality_filter.analyze_properties([sample_property])
+
+        _, analysis = results[0]
+        # value.quality_adjusted_rating comes from the tool response
+        assert analysis.value is not None
+        assert analysis.value.quality_adjusted_rating == "good"
+        assert "Well-maintained" in analysis.value.quality_adjusted_note
+
+    async def test_handles_end_turn_with_tool_use(
+        self,
+        sample_property: Property,
+        sample_detail_data: DetailPageData,
+        sample_tool_response: dict[str, Any],
+    ) -> None:
+        """Should handle end_turn stop_reason when tool_use block is present."""
+        # Some responses come with end_turn but still have tool_use
+        mock_response = create_mock_response(sample_tool_response, stop_reason="end_turn")
+
+        with patch.object(DetailFetcher, "fetch_detail_page", return_value=sample_detail_data):
+            quality_filter = PropertyQualityFilter(api_key="test-key")
+            quality_filter._client = MagicMock()
+            quality_filter._client.messages.create = AsyncMock(return_value=mock_response)
+
+            results = await quality_filter.analyze_properties([sample_property])
+
+        assert len(results) == 1
+        _, analysis = results[0]
+        assert analysis.kitchen.overall_quality == "modern"
+        assert analysis.kitchen.hob_type == "gas"
+
+    async def test_includes_description_and_features_in_prompt(
+        self,
+        sample_property: Property,
+        sample_tool_response: dict[str, Any],
+    ) -> None:
+        """Should include listing description and features in the user prompt."""
+        detail_data = DetailPageData(
+            floorplan_url="https://example.com/floor.jpg",
+            gallery_urls=["https://example.com/img1.jpg"],
+            description="Spacious flat with modern kitchen and gas hob.",
+            features=["Gas central heating", "Double glazing", "Garden access"],
+        )
+        mock_response = create_mock_response(sample_tool_response)
+
+        with patch.object(DetailFetcher, "fetch_detail_page", return_value=detail_data):
+            quality_filter = PropertyQualityFilter(api_key="test-key")
+            quality_filter._client = MagicMock()
+            quality_filter._client.messages.create = AsyncMock(return_value=mock_response)
+
+            await quality_filter.analyze_properties([sample_property])
+
+        call_args = quality_filter._client.messages.create.call_args
+        content = call_args.kwargs["messages"][0]["content"]
+
+        # Find the text block with the user prompt
+        text_blocks = [c for c in content if c.get("type") == "text"]
+        assert len(text_blocks) == 1
+        prompt_text = text_blocks[0]["text"]
+
+        # Verify description and features are included (markdown format)
+        assert "**Listing Description:**" in prompt_text
+        assert "gas hob" in prompt_text
+        assert "**Listed Features:**" in prompt_text
+        assert "Gas central heating" in prompt_text
+        assert "Double glazing" in prompt_text
+
+    async def test_handles_nullable_fields_in_response(
+        self,
+        one_bed_property: Property,
+        sample_detail_data: DetailPageData,
+        sample_tool_response_with_nulls: dict[str, Any],
+    ) -> None:
+        """Should handle null values for optional fields in tool response."""
+        mock_response = create_mock_response(sample_tool_response_with_nulls)
+
+        # Use 1-bed property to avoid space override for 2+ beds
+        with patch.object(DetailFetcher, "fetch_detail_page", return_value=sample_detail_data):
+            quality_filter = PropertyQualityFilter(api_key="test-key")
+            quality_filter._client = MagicMock()
+            quality_filter._client.messages.create = AsyncMock(return_value=mock_response)
+
+            results = await quality_filter.analyze_properties([one_bed_property])
+
+        assert len(results) == 1
+        _, analysis = results[0]
+
+        # Verify null values are handled correctly
+        assert analysis.kitchen.overall_quality == "unknown"
+        assert analysis.kitchen.hob_type is None
+        assert analysis.kitchen.has_dishwasher is None
+        assert analysis.kitchen.has_washing_machine is None
+
+        assert analysis.light_space.window_sizes is None
+        assert analysis.light_space.feels_spacious is None
+        assert analysis.light_space.ceiling_height is None
+
+        assert analysis.space.living_room_sqm is None
+        assert analysis.space.is_spacious_enough is None
+        assert analysis.space.confidence == "low"
+
+        assert analysis.concern_severity is None

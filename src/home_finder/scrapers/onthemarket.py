@@ -1,10 +1,10 @@
-"""OnTheMarket property scraper."""
+"""OnTheMarket property scraper using curl_cffi for TLS fingerprint impersonation."""
 
+import json
 import re
+from typing import Any
 
-from bs4 import BeautifulSoup, Tag
-from crawlee.crawlers import BeautifulSoupCrawler, BeautifulSoupCrawlingContext
-from crawlee.storage_clients import MemoryStorageClient
+from curl_cffi.requests import AsyncSession
 from pydantic import HttpUrl
 
 from home_finder.logging import get_logger
@@ -13,9 +13,15 @@ from home_finder.scrapers.base import BaseScraper
 
 logger = get_logger(__name__)
 
+HEADERS = {
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept-Language": "en-GB,en;q=0.9",
+    "Accept-Encoding": "gzip, deflate, br",
+}
+
 
 class OnTheMarketScraper(BaseScraper):
-    """Scraper for OnTheMarket.com listings."""
+    """Scraper for OnTheMarket.com listings using curl_cffi."""
 
     BASE_URL = "https://www.onthemarket.com"
 
@@ -33,8 +39,6 @@ class OnTheMarketScraper(BaseScraper):
         area: str,
     ) -> list[Property]:
         """Scrape OnTheMarket for matching properties."""
-        properties: list[Property] = []
-
         url = self._build_search_url(
             area=area,
             min_price=min_price,
@@ -43,25 +47,148 @@ class OnTheMarketScraper(BaseScraper):
             max_bedrooms=max_bedrooms,
         )
 
-        async def handle_page(context: BeautifulSoupCrawlingContext) -> None:
-            soup = context.soup
-            parsed = self._parse_search_results(soup, str(context.request.url))
-            properties.extend(parsed)
-            logger.info(
-                "scraped_onthemarket_page",
-                url=str(context.request.url),
-                properties_found=len(parsed),
-            )
+        html = await self._fetch_page(url)
+        if not html:
+            logger.warning("onthemarket_fetch_failed", url=url)
+            return []
 
-        crawler = BeautifulSoupCrawler(
-            max_requests_per_crawl=1,
-            storage_client=MemoryStorageClient(),
+        # Parse __NEXT_DATA__ JSON
+        properties = self._parse_next_data(html)
+        logger.info(
+            "scraped_onthemarket_page",
+            url=url,
+            properties_found=len(properties),
         )
-        crawler.router.default_handler(handle_page)
+        return properties
 
-        await crawler.run([url])
+    async def _fetch_page(self, url: str) -> str | None:
+        """Fetch page using curl_cffi with Chrome impersonation."""
+        try:
+            async with AsyncSession() as session:
+                response = await session.get(
+                    url,
+                    impersonate="chrome",
+                    headers=HEADERS,
+                    timeout=30,
+                )
+                if response.status_code == 200:
+                    text: str = response.text
+                    return text
+                logger.warning(
+                    "onthemarket_http_error",
+                    status=response.status_code,
+                    url=url,
+                )
+                return None
+        except Exception as e:
+            logger.error("onthemarket_fetch_exception", error=str(e), url=url)
+            return None
+
+    def _parse_next_data(self, html: str) -> list[Property]:
+        """Parse properties from __NEXT_DATA__ JSON."""
+        match = re.search(
+            r'<script id="__NEXT_DATA__"[^>]*>(.*?)</script>',
+            html,
+            re.DOTALL,
+        )
+        if not match:
+            logger.warning("onthemarket_no_next_data")
+            return []
+
+        try:
+            data = json.loads(match.group(1))
+            listings = (
+                data.get("props", {})
+                .get("initialReduxState", {})
+                .get("results", {})
+                .get("list", [])
+            )
+        except (json.JSONDecodeError, KeyError) as e:
+            logger.warning("onthemarket_parse_failed", error=str(e))
+            return []
+
+        properties: list[Property] = []
+        for listing in listings:
+            try:
+                prop = self._listing_to_property(listing)
+                if prop:
+                    properties.append(prop)
+            except Exception as e:
+                logger.warning("onthemarket_listing_parse_failed", error=str(e))
 
         return properties
+
+    def _listing_to_property(self, listing: dict[str, Any]) -> Property | None:
+        """Convert a listing dict to a Property."""
+        # Extract property ID
+        property_id = listing.get("id")
+        if not property_id:
+            details_url = listing.get("details-url", "")
+            match = re.search(r"/details/(\d+)", details_url)
+            property_id = match.group(1) if match else None
+        if not property_id:
+            return None
+        property_id = str(property_id)
+
+        # Extract URL
+        details_url = listing.get("details-url", "")
+        if not details_url:
+            return None
+        if not details_url.startswith("http"):
+            details_url = f"{self.BASE_URL}{details_url}"
+
+        # Extract price
+        price_text = listing.get("short-price", "")
+        price = self._extract_price(price_text)
+        if price is None:
+            return None
+
+        # Extract bedrooms
+        bedrooms = listing.get("bedrooms")
+        if bedrooms is None:
+            title = listing.get("property-title", "")
+            bedrooms = self._extract_bedrooms(title)
+        if bedrooms is None:
+            return None
+
+        # Extract address and title
+        address = listing.get("address", "")
+        if not address:
+            return None
+        title = listing.get("property-title", address)
+
+        # Extract postcode
+        postcode = self._extract_postcode(address)
+
+        # Extract image URL
+        image_url: str | None = None
+        images = listing.get("images", [])
+        if images:
+            image_url = images[0].get("default") or images[0].get("webp")
+        if not image_url:
+            cover = listing.get("cover-image", {})
+            image_url = cover.get("default") or cover.get("webp")
+
+        # Extract coordinates
+        location = listing.get("location", {})
+        latitude = location.get("lat")
+        longitude = location.get("lon")
+        if latitude is None or longitude is None:
+            latitude, longitude = None, None
+
+        return Property(
+            source=PropertySource.ONTHEMARKET,
+            source_id=property_id,
+            url=HttpUrl(details_url),
+            title=title,
+            price_pcm=price,
+            bedrooms=bedrooms,
+            address=address,
+            postcode=postcode,
+            image_url=HttpUrl(image_url) if image_url else None,
+            latitude=latitude,
+            longitude=longitude,
+        )
 
     def _build_search_url(
         self,
@@ -85,119 +212,6 @@ class OnTheMarketScraper(BaseScraper):
             "rent-frequency=per-month",
         ]
         return f"{self.BASE_URL}/to-rent/property/{area_slug}/?{'&'.join(params)}"
-
-    def _parse_search_results(self, soup: BeautifulSoup, base_url: str) -> list[Property]:
-        """Parse property listings from search results page."""
-        properties: list[Property] = []
-
-        # Find all property cards
-        # OnTheMarket uses various card class names
-        property_cards = soup.find_all("li", class_="otm-PropertyCard")
-
-        for card in property_cards:
-            try:
-                prop = self._parse_property_card(card)
-                if prop:
-                    properties.append(prop)
-            except Exception as e:
-                logger.warning("failed_to_parse_onthemarket_card", error=str(e))
-
-        return properties
-
-    def _parse_property_card(self, card: Tag) -> Property | None:
-        """Parse a single property card element."""
-        # Extract property ID from data attribute or URL
-        property_id = card.get("data-property-id")
-
-        if not property_id:
-            link = card.find("a", class_="otm-PropertyCard__link")
-            if link:
-                href = link.get("href", "")
-                if isinstance(href, str):
-                    property_id = self._extract_property_id(href)
-
-        if not property_id:
-            return None
-
-        property_id = str(property_id)
-
-        # Extract URL
-        link = card.find("a", class_="otm-PropertyCard__link")
-        if not link:
-            link = card.find("a")
-        href = link.get("href", "") if link else ""
-        if not isinstance(href, str) or not href:
-            return None
-
-        if not href.startswith("http"):
-            href = f"{self.BASE_URL}{href}"
-
-        # Extract price
-        price_elem = card.find("p", class_="otm-PropertyCard__price")
-        if not price_elem:
-            price_elem = card.find(class_=re.compile(r"price", re.I))
-        price_text = price_elem.get_text(strip=True) if price_elem else ""
-        price = self._extract_price(price_text)
-        if price is None:
-            return None
-
-        # Extract address
-        address_elem = card.find("p", class_="otm-PropertyCard__address")
-        if not address_elem:
-            address_elem = card.find(class_=re.compile(r"address", re.I))
-        address = address_elem.get_text(strip=True) if address_elem else ""
-        if not address:
-            return None
-
-        # Extract title
-        title_elem = card.find("h3", class_="otm-PropertyCard__title")
-        if not title_elem:
-            title_elem = card.find("h3")
-        title = title_elem.get_text(strip=True) if title_elem else address
-
-        # Extract bedrooms from title
-        bedrooms = self._extract_bedrooms(title)
-        if bedrooms is None:
-            # Try from features list
-            features = card.find_all("li")
-            for feat in features:
-                feat_text = feat.get_text(strip=True).lower()
-                match = re.match(r"(\d+)\s*beds?", feat_text)
-                if match:
-                    bedrooms = int(match.group(1))
-                    break
-
-        if bedrooms is None:
-            return None
-
-        # Extract postcode
-        postcode = self._extract_postcode(address)
-
-        # Extract image URL
-        img = card.find("img")
-        image_url = img.get("src") if img else None
-        if not isinstance(image_url, str):
-            image_url = None
-        elif not image_url.startswith("http"):
-            image_url = f"https:{image_url}"
-
-        return Property(
-            source=PropertySource.ONTHEMARKET,
-            source_id=property_id,
-            url=HttpUrl(href),
-            title=title,
-            price_pcm=price,
-            bedrooms=bedrooms,
-            address=address,
-            postcode=postcode,
-            image_url=HttpUrl(image_url) if image_url else None,
-        )
-
-    def _extract_property_id(self, url: str) -> str | None:
-        """Extract property ID from URL."""
-        # OnTheMarket URLs: /details/15234567/
-        match = re.search(r"/details/(\d+)", url)
-        return match.group(1) if match else None
 
     def _extract_price(self, text: str) -> int | None:
         """Extract monthly price from text."""

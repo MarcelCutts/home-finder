@@ -1,5 +1,6 @@
 """SQLite storage for tracked properties."""
 
+import json
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -8,8 +9,10 @@ import aiosqlite
 
 from home_finder.logging import get_logger
 from home_finder.models import (
+    MergedProperty,
     NotificationStatus,
     Property,
+    PropertyImage,
     PropertySource,
     TrackedProperty,
     TransportMode,
@@ -74,7 +77,11 @@ class PropertyStorage:
                 transport_mode TEXT,
                 notification_status TEXT NOT NULL DEFAULT 'pending',
                 notified_at TEXT,
-                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                sources TEXT,
+                source_urls TEXT,
+                min_price INTEGER,
+                max_price INTEGER
             )
         """)
 
@@ -90,6 +97,25 @@ class PropertyStorage:
         await conn.execute("""
             CREATE INDEX IF NOT EXISTS idx_first_seen
             ON properties(first_seen)
+        """)
+
+        # Property images table for storing gallery and floorplan images
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS property_images (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                property_unique_id TEXT NOT NULL,
+                source TEXT NOT NULL,
+                url TEXT NOT NULL,
+                image_type TEXT NOT NULL,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (property_unique_id) REFERENCES properties(unique_id),
+                UNIQUE(property_unique_id, url)
+            )
+        """)
+
+        await conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_property_images_property
+            ON property_images(property_unique_id)
         """)
 
         await conn.commit()
@@ -285,6 +311,173 @@ class PropertyStorage:
             if not await self.is_seen(prop.unique_id):
                 new_properties.append(prop)
         return new_properties
+
+    async def filter_new_merged(
+        self, properties: list[MergedProperty]
+    ) -> list[MergedProperty]:
+        """Filter to only merged properties not yet seen.
+
+        A merged property is considered "seen" if its canonical unique_id exists
+        in the database.
+
+        Args:
+            properties: List of merged properties to filter.
+
+        Returns:
+            List of merged properties not in the database.
+        """
+        new_properties = []
+        for merged in properties:
+            if not await self.is_seen(merged.canonical.unique_id):
+                new_properties.append(merged)
+        return new_properties
+
+    async def save_merged_property(
+        self,
+        merged: MergedProperty,
+        *,
+        commute_minutes: int | None = None,
+        transport_mode: TransportMode | None = None,
+    ) -> None:
+        """Save a merged property with multi-source data.
+
+        Args:
+            merged: Merged property to save.
+            commute_minutes: Commute time in minutes (if calculated).
+            transport_mode: Transport mode used for commute calculation.
+        """
+        prop = merged.canonical
+        conn = await self._get_connection()
+
+        # Serialize sources and source_urls as JSON
+        sources_json = json.dumps([s.value for s in merged.sources])
+        source_urls_json = json.dumps({s.value: str(url) for s, url in merged.source_urls.items()})
+
+        await conn.execute(
+            """
+            INSERT INTO properties (
+                unique_id, source, source_id, url, title, price_pcm,
+                bedrooms, address, postcode, latitude, longitude,
+                description, image_url, available_from, first_seen,
+                commute_minutes, transport_mode, notification_status,
+                sources, source_urls, min_price, max_price
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(unique_id) DO UPDATE SET
+                price_pcm = excluded.price_pcm,
+                title = excluded.title,
+                description = excluded.description,
+                image_url = excluded.image_url,
+                commute_minutes = COALESCE(excluded.commute_minutes, commute_minutes),
+                transport_mode = COALESCE(excluded.transport_mode, transport_mode),
+                sources = excluded.sources,
+                source_urls = excluded.source_urls,
+                min_price = excluded.min_price,
+                max_price = excluded.max_price
+        """,
+            (
+                prop.unique_id,
+                prop.source.value,
+                prop.source_id,
+                str(prop.url),
+                prop.title,
+                prop.price_pcm,
+                prop.bedrooms,
+                prop.address,
+                prop.postcode,
+                prop.latitude,
+                prop.longitude,
+                prop.description,
+                str(prop.image_url) if prop.image_url else None,
+                prop.available_from.isoformat() if prop.available_from else None,
+                prop.first_seen.isoformat(),
+                commute_minutes,
+                transport_mode.value if transport_mode else None,
+                NotificationStatus.PENDING.value,
+                sources_json,
+                source_urls_json,
+                merged.min_price,
+                merged.max_price,
+            ),
+        )
+        await conn.commit()
+
+        logger.debug(
+            "merged_property_saved",
+            unique_id=prop.unique_id,
+            sources=[s.value for s in merged.sources],
+        )
+
+    async def save_property_images(
+        self, unique_id: str, images: list[PropertyImage]
+    ) -> None:
+        """Save property images to the database.
+
+        Args:
+            unique_id: Property unique ID.
+            images: List of images to save.
+        """
+        if not images:
+            return
+
+        conn = await self._get_connection()
+
+        for img in images:
+            try:
+                await conn.execute(
+                    """
+                    INSERT OR IGNORE INTO property_images
+                    (property_unique_id, source, url, image_type)
+                    VALUES (?, ?, ?, ?)
+                """,
+                    (unique_id, img.source.value, str(img.url), img.image_type),
+                )
+            except Exception as e:
+                logger.warning(
+                    "failed_to_save_image",
+                    unique_id=unique_id,
+                    url=str(img.url),
+                    error=str(e),
+                )
+
+        await conn.commit()
+
+        logger.debug(
+            "property_images_saved",
+            unique_id=unique_id,
+            image_count=len(images),
+        )
+
+    async def get_property_images(self, unique_id: str) -> list[PropertyImage]:
+        """Get all images for a property.
+
+        Args:
+            unique_id: Property unique ID.
+
+        Returns:
+            List of property images.
+        """
+        conn = await self._get_connection()
+        cursor = await conn.execute(
+            """
+            SELECT source, url, image_type
+            FROM property_images
+            WHERE property_unique_id = ?
+            ORDER BY image_type, id
+        """,
+            (unique_id,),
+        )
+        rows = await cursor.fetchall()
+
+        images = []
+        for row in rows:
+            images.append(
+                PropertyImage(
+                    source=PropertySource(row["source"]),
+                    url=row["url"],
+                    image_type=row["image_type"],
+                )
+            )
+        return images
 
     async def get_property_count(self) -> int:
         """Get total number of tracked properties.

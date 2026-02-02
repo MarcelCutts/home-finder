@@ -223,6 +223,67 @@ class TestOpenRentParser:
         assert "Test Area" in title
 
 
+    def test_parse_search_results_handles_missing_longitude(
+        self, openrent_scraper: OpenRentScraper
+    ) -> None:
+        """Test that missing longitude results in both coordinates being None."""
+        html = """
+        <html>
+        <script>
+            var PROPERTYIDS = [123];
+            var prices = [2000];
+            var bedrooms = [1];
+            var PROPERTYLISTLATITUDES = [51.5];
+            var PROPERTYLISTLONGITUDES = [];
+        </script>
+        <body>
+            <a href="/property-to-rent/london/flat/123">
+                <span>£2,000 per month</span>
+                <span>1 Bed Flat, Test, E8 1AA</span>
+                <li>1 Bed</li>
+            </a>
+        </body>
+        </html>
+        """
+        soup = BeautifulSoup(html, "html.parser")
+        properties = openrent_scraper._parse_search_results(soup, "https://openrent.co.uk")
+
+        assert len(properties) == 1
+        # Both should be None when one is missing (Property model requires both or neither)
+        assert properties[0].latitude is None
+        assert properties[0].longitude is None
+
+    def test_parse_search_results_handles_missing_latitude(
+        self, openrent_scraper: OpenRentScraper
+    ) -> None:
+        """Test that missing latitude results in both coordinates being None."""
+        html = """
+        <html>
+        <script>
+            var PROPERTYIDS = [456];
+            var prices = [1800];
+            var bedrooms = [2];
+            var PROPERTYLISTLATITUDES = [];
+            var PROPERTYLISTLONGITUDES = [-0.1];
+        </script>
+        <body>
+            <a href="/property-to-rent/london/flat/456">
+                <span>£1,800 per month</span>
+                <span>2 Bed Flat, Test, E8 2BB</span>
+                <li>2 Beds</li>
+            </a>
+        </body>
+        </html>
+        """
+        soup = BeautifulSoup(html, "html.parser")
+        properties = openrent_scraper._parse_search_results(soup, "https://openrent.co.uk")
+
+        assert len(properties) == 1
+        # Both should be None when one is missing
+        assert properties[0].latitude is None
+        assert properties[0].longitude is None
+
+
 class TestOpenRentScraperIntegration:
     """Integration tests for OpenRent scraper (with mocked HTTP)."""
 

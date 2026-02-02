@@ -205,9 +205,11 @@ class ZooplaScraper(BaseScraper):
         # Get image URL
         image_url = listing.get_image_url()
 
-        # Get coordinates
+        # Get coordinates (Property model requires both or neither)
         latitude = listing.pos.lat if listing.pos else None
         longitude = listing.pos.lng if listing.pos else None
+        if latitude is None or longitude is None:
+            latitude, longitude = None, None
 
         return Property(
             source=PropertySource.ZOOPLA,

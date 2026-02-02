@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING
 
 from home_finder.filters.quality import PropertyQualityAnalysis
 from home_finder.logging import get_logger
-from home_finder.models import Property, TransportMode
+from home_finder.models import MergedProperty, Property, TransportMode
 
 if TYPE_CHECKING:
     from aiogram import Bot
@@ -19,21 +19,19 @@ def _format_kitchen_info(analysis: PropertyQualityAnalysis) -> str:
     kitchen = analysis.kitchen
     items = []
 
-    if kitchen.has_gas_hob is True:
+    if kitchen.hob_type == "gas":
         items.append("Gas hob")
-    elif kitchen.has_gas_hob is False:
-        items.append("Electric hob")
+    elif kitchen.hob_type in ("electric", "induction"):
+        items.append(f"{kitchen.hob_type.capitalize()} hob")
 
     if kitchen.has_dishwasher is True:
         items.append("Dishwasher")
     if kitchen.has_washing_machine is True:
         items.append("Washer")
-    if kitchen.has_dryer is True:
-        items.append("Dryer")
 
     quality_str = ""
-    if kitchen.appliance_quality:
-        quality_str = f" ({kitchen.appliance_quality} quality)"
+    if kitchen.overall_quality and kitchen.overall_quality != "unknown":
+        quality_str = f" ({kitchen.overall_quality})"
 
     if items:
         return ", ".join(items) + quality_str
@@ -198,6 +196,132 @@ def format_property_message(
     return "\n".join(lines)
 
 
+def format_merged_property_message(
+    merged: MergedProperty,
+    *,
+    commute_minutes: int | None = None,
+    transport_mode: TransportMode | None = None,
+    quality_analysis: PropertyQualityAnalysis | None = None,
+) -> str:
+    """Format a merged property as a Telegram message.
+
+    Shows multi-source information when property is listed on multiple platforms.
+
+    Args:
+        merged: Merged property to format.
+        commute_minutes: Commute time in minutes (optional).
+        transport_mode: Transport mode used (optional).
+        quality_analysis: Quality analysis result (optional).
+
+    Returns:
+        Formatted message string with HTML markup.
+    """
+    prop = merged.canonical
+    title = html.escape(prop.title)
+    address = html.escape(prop.address)
+    postcode = html.escape(prop.postcode or "")
+
+    # Build the message
+    lines = [
+        f"<b>{title}</b>",
+        "",
+    ]
+
+    # Show price range if varies across platforms
+    if merged.price_varies:
+        lines.append(f"<b>Price:</b> £{merged.min_price:,}-£{merged.max_price:,}/month")
+    else:
+        lines.append(f"<b>Price:</b> £{prop.price_pcm:,}/month")
+
+    lines.append(f"<b>Bedrooms:</b> {prop.bedrooms}")
+    lines.append(f"<b>Address:</b> {address}")
+
+    if postcode:
+        lines.append(f"<b>Postcode:</b> {postcode}")
+
+    # Add commute info if available
+    if commute_minutes is not None:
+        mode_str = ""
+        if transport_mode:
+            mode_map = {
+                TransportMode.CYCLING: "by bike",
+                TransportMode.PUBLIC_TRANSPORT: "by transit",
+                TransportMode.DRIVING: "by car",
+                TransportMode.WALKING: "walking",
+            }
+            mode_str = f" {mode_map.get(transport_mode, '')}"
+        lines.append(f"<b>Commute:</b> {commute_minutes} min{mode_str}")
+
+    # Add quality analysis if available
+    if quality_analysis:
+        lines.append("")
+
+        # Condition concerns banner
+        if quality_analysis.condition_concerns:
+            severity = quality_analysis.concern_severity or "unknown"
+            lines.append(f"⚠️ <b>CONDITION CONCERNS</b> ({severity})")
+            for concern in quality_analysis.condition.maintenance_concerns:
+                lines.append(f"  • {html.escape(concern)}")
+            lines.append("")
+
+        # Claude's summary
+        lines.append(f"<b>Summary:</b> {html.escape(quality_analysis.summary)}")
+
+        # Kitchen info
+        lines.append(f"<b>Kitchen:</b> {_format_kitchen_info(quality_analysis)}")
+
+        # Light & space
+        lines.append(f"<b>Light/Space:</b> {_format_light_space_info(quality_analysis)}")
+
+        # Living room size
+        lines.append(f"<b>Living room:</b> {_format_space_info(quality_analysis)}")
+
+        # Overall condition
+        lines.append(f"<b>Condition:</b> {quality_analysis.condition.overall_condition}")
+
+        # Value assessment
+        value_info = _format_value_info(quality_analysis)
+        if value_info:
+            lines.append(f"<b>Value:</b> {value_info}")
+
+    # Show image count and floorplan availability
+    if merged.images or merged.floorplan:
+        image_parts = []
+        if merged.images:
+            image_parts.append(f"{len(merged.images)} images")
+        if merged.floorplan:
+            image_parts.append("floorplan")
+        lines.append(f"<b>Photos:</b> {' + '.join(image_parts)}")
+
+    # Source information
+    source_names = {
+        "openrent": "OpenRent",
+        "rightmove": "Rightmove",
+        "zoopla": "Zoopla",
+        "onthemarket": "OnTheMarket",
+    }
+
+    if len(merged.sources) > 1:
+        # Multiple sources - show "Listed on: X, Y" with links
+        source_links = []
+        for source in merged.sources:
+            name = source_names.get(source.value, source.value)
+            url = merged.source_urls.get(source)
+            if url:
+                source_links.append(f'<a href="{url}">{name}</a>')
+            else:
+                source_links.append(name)
+        lines.append(f"<b>Listed on:</b> {', '.join(source_links)}")
+    else:
+        # Single source
+        source_name = source_names.get(prop.source.value, prop.source.value)
+        lines.append(f"<b>Source:</b> {source_name}")
+        lines.append("")
+        lines.append(f'<a href="{prop.url}">View Property</a>')
+
+    return "\n".join(lines)
+
+
 class TelegramNotifier:
     """Send property notifications via Telegram."""
 
@@ -268,6 +392,56 @@ class TelegramNotifier:
             logger.error(
                 "notification_failed",
                 property_id=prop.unique_id,
+                error=str(e),
+            )
+            return False
+
+    async def send_merged_property_notification(
+        self,
+        merged: MergedProperty,
+        *,
+        commute_minutes: int | None = None,
+        transport_mode: TransportMode | None = None,
+        quality_analysis: PropertyQualityAnalysis | None = None,
+    ) -> bool:
+        """Send a merged property notification.
+
+        Shows multi-source information when property is listed on multiple platforms.
+
+        Args:
+            merged: Merged property to notify about.
+            commute_minutes: Commute time in minutes (optional).
+            transport_mode: Transport mode used (optional).
+            quality_analysis: Quality analysis result (optional).
+
+        Returns:
+            True if notification was sent successfully.
+        """
+        message = format_merged_property_message(
+            merged,
+            commute_minutes=commute_minutes,
+            transport_mode=transport_mode,
+            quality_analysis=quality_analysis,
+        )
+
+        try:
+            bot = self._get_bot()
+            await bot.send_message(
+                chat_id=self.chat_id,
+                text=message,
+                disable_web_page_preview=False,
+            )
+            logger.info(
+                "notification_sent",
+                property_id=merged.unique_id,
+                chat_id=self.chat_id,
+                sources=[s.value for s in merged.sources],
+            )
+            return True
+        except Exception as e:
+            logger.error(
+                "notification_failed",
+                property_id=merged.unique_id,
                 error=str(e),
             )
             return False

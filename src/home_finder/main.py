@@ -15,7 +15,7 @@ from home_finder.filters import (
     PropertyQualityFilter,
 )
 from home_finder.logging import configure_logging, get_logger
-from home_finder.models import Property, TransportMode
+from home_finder.models import MergedProperty, Property, TransportMode
 from home_finder.notifiers import TelegramNotifier
 from home_finder.scrapers import (
     OnTheMarketScraper,
@@ -174,18 +174,22 @@ async def run_pipeline(settings: Settings) -> None:
             logger.info("no_properties_in_search_areas")
             return
 
-        # Step 3: Deduplicate
-        logger.info("pipeline_started", phase="deduplication")
+        # Step 3: Deduplicate and merge cross-platform listings
+        logger.info("pipeline_started", phase="deduplication_merge")
         deduplicator = Deduplicator(enable_cross_platform=True)
-        unique = deduplicator.deduplicate(filtered)
-        logger.info("deduplication_summary", unique_count=len(unique))
+        merged_properties = deduplicator.deduplicate_and_merge(filtered)
+        logger.info(
+            "deduplication_merge_summary",
+            merged_count=len(merged_properties),
+            multi_source_count=sum(1 for m in merged_properties if len(m.sources) > 1),
+        )
 
         # Step 4: Filter to new properties only
         logger.info("pipeline_started", phase="new_property_filter")
-        new_properties = await storage.filter_new(unique)
-        logger.info("new_property_summary", new_count=len(new_properties))
+        new_merged = await storage.filter_new_merged(merged_properties)
+        logger.info("new_property_summary", new_count=len(new_merged))
 
-        if not new_properties:
+        if not new_merged:
             logger.info("no_new_properties")
             return
 
@@ -199,9 +203,16 @@ async def run_pipeline(settings: Settings) -> None:
                 destination_postcode=criteria.destination_postcode,
             )
 
-            # Filter properties with coordinates
-            props_with_coords = [p for p in new_properties if p.latitude and p.longitude]
-            props_without_coords = [p for p in new_properties if not (p.latitude and p.longitude)]
+            # Filter merged properties with coordinates (use canonical property)
+            merged_with_coords = [
+                m for m in new_merged if m.canonical.latitude and m.canonical.longitude
+            ]
+            merged_without_coords = [
+                m for m in new_merged if not (m.canonical.latitude and m.canonical.longitude)
+            ]
+
+            # Extract canonical properties for commute filtering
+            props_with_coords = [m.canonical for m in merged_with_coords]
 
             commute_results = []
             if props_with_coords:
@@ -226,27 +237,30 @@ async def run_pipeline(settings: Settings) -> None:
                             result.transport_mode,
                         )
 
-            # Keep properties within commute limit or without coords
-            properties_to_notify = [p for p in props_with_coords if p.unique_id in commute_lookup]
-            # Include properties without coordinates (can't filter them)
-            properties_to_notify.extend(props_without_coords)
+            # Keep merged properties within commute limit or without coords
+            merged_to_notify = [
+                m for m in merged_with_coords if m.canonical.unique_id in commute_lookup
+            ]
+            # Include merged properties without coordinates (can't filter them)
+            merged_to_notify.extend(merged_without_coords)
 
             logger.info(
                 "commute_filter_summary",
-                within_limit=len(properties_to_notify),
-                total_checked=len(props_with_coords),
+                within_limit=len(merged_to_notify),
+                total_checked=len(merged_with_coords),
             )
         else:
-            properties_to_notify = new_properties
+            merged_to_notify = new_merged
             commute_lookup = {}
             logger.info("skipping_commute_filter", reason="no_traveltime_credentials")
 
-        if not properties_to_notify:
+        if not merged_to_notify:
             logger.info("no_properties_within_commute_limit")
             return
 
         # Step 5.5: Property quality analysis (if configured)
         quality_lookup: dict[str, PropertyQualityAnalysis] = {}
+        analyzed_merged: dict[str, MergedProperty] = {}  # Updated with images
         quality_filter = None
         if settings.anthropic_api_key.get_secret_value() and settings.enable_quality_filter:
             logger.info("pipeline_started", phase="quality_analysis")
@@ -256,10 +270,12 @@ async def run_pipeline(settings: Settings) -> None:
             )
 
             try:
-                quality_results = await quality_filter.analyze_properties(properties_to_notify)
+                quality_results = await quality_filter.analyze_merged_properties(merged_to_notify)
 
-                # Build lookup (does NOT filter - all properties pass through)
-                quality_lookup = {prop.unique_id: analysis for prop, analysis in quality_results}
+                # Build lookups
+                for merged, analysis in quality_results:
+                    quality_lookup[merged.unique_id] = analysis
+                    analyzed_merged[merged.unique_id] = merged
 
                 # Log condition concerns
                 concerns = sum(1 for _, a in quality_results if a.condition_concerns)
@@ -277,39 +293,52 @@ async def run_pipeline(settings: Settings) -> None:
         logger.info(
             "pipeline_started",
             phase="save_and_notify",
-            count=len(properties_to_notify),
+            count=len(merged_to_notify),
         )
 
-        for prop in properties_to_notify:
-            commute_info = commute_lookup.get(prop.unique_id)
+        for merged in merged_to_notify:
+            # Use updated merged property with images if available
+            final_merged = analyzed_merged.get(merged.unique_id, merged)
+
+            commute_info = commute_lookup.get(merged.canonical.unique_id)
             commute_minutes = commute_info[0] if commute_info else None
             transport_mode = commute_info[1] if commute_info else None
-            quality_analysis = quality_lookup.get(prop.unique_id)
+            quality_analysis = quality_lookup.get(merged.unique_id)
 
-            # Save to database
-            await storage.save_property(
-                prop,
+            # Save merged property to database
+            await storage.save_merged_property(
+                final_merged,
                 commute_minutes=commute_minutes,
                 transport_mode=transport_mode,
             )
 
+            # Save images if any
+            if final_merged.images:
+                await storage.save_property_images(
+                    final_merged.unique_id, list(final_merged.images)
+                )
+            if final_merged.floorplan:
+                await storage.save_property_images(
+                    final_merged.unique_id, [final_merged.floorplan]
+                )
+
             # Send notification
-            success = await notifier.send_property_notification(
-                prop,
+            success = await notifier.send_merged_property_notification(
+                final_merged,
                 commute_minutes=commute_minutes,
                 transport_mode=transport_mode,
                 quality_analysis=quality_analysis,
             )
 
             if success:
-                await storage.mark_notified(prop.unique_id)
+                await storage.mark_notified(merged.unique_id)
             else:
-                await storage.mark_notification_failed(prop.unique_id)
+                await storage.mark_notification_failed(merged.unique_id)
 
             # Small delay between notifications
             await asyncio.sleep(1)
 
-        logger.info("pipeline_complete", notified=len(properties_to_notify))
+        logger.info("pipeline_complete", notified=len(merged_to_notify))
 
     finally:
         await notifier.close()
@@ -396,18 +425,22 @@ async def run_dry_run(settings: Settings) -> None:
             print("\nNo properties in search areas.")
             return
 
-        # Step 3: Deduplicate
-        logger.info("pipeline_started", phase="deduplication")
+        # Step 3: Deduplicate and merge cross-platform listings
+        logger.info("pipeline_started", phase="deduplication_merge")
         deduplicator = Deduplicator(enable_cross_platform=True)
-        unique = deduplicator.deduplicate(filtered)
-        logger.info("deduplication_summary", unique_count=len(unique))
+        merged_properties = deduplicator.deduplicate_and_merge(filtered)
+        logger.info(
+            "deduplication_merge_summary",
+            merged_count=len(merged_properties),
+            multi_source_count=sum(1 for m in merged_properties if len(m.sources) > 1),
+        )
 
         # Step 4: Filter to new properties only
         logger.info("pipeline_started", phase="new_property_filter")
-        new_properties = await storage.filter_new(unique)
-        logger.info("new_property_summary", new_count=len(new_properties))
+        new_merged = await storage.filter_new_merged(merged_properties)
+        logger.info("new_property_summary", new_count=len(new_merged))
 
-        if not new_properties:
+        if not new_merged:
             logger.info("no_new_properties")
             print("\nNo new properties found.")
             return
@@ -422,8 +455,14 @@ async def run_dry_run(settings: Settings) -> None:
                 destination_postcode=criteria.destination_postcode,
             )
 
-            props_with_coords = [p for p in new_properties if p.latitude and p.longitude]
-            props_without_coords = [p for p in new_properties if not (p.latitude and p.longitude)]
+            merged_with_coords = [
+                m for m in new_merged if m.canonical.latitude and m.canonical.longitude
+            ]
+            merged_without_coords = [
+                m for m in new_merged if not (m.canonical.latitude and m.canonical.longitude)
+            ]
+
+            props_with_coords = [m.canonical for m in merged_with_coords]
 
             commute_results = []
             if props_with_coords:
@@ -446,25 +485,28 @@ async def run_dry_run(settings: Settings) -> None:
                             result.transport_mode,
                         )
 
-            properties_to_notify = [p for p in props_with_coords if p.unique_id in commute_lookup]
-            properties_to_notify.extend(props_without_coords)
+            merged_to_notify = [
+                m for m in merged_with_coords if m.canonical.unique_id in commute_lookup
+            ]
+            merged_to_notify.extend(merged_without_coords)
 
             logger.info(
                 "commute_filter_summary",
-                within_limit=len(properties_to_notify),
-                total_checked=len(props_with_coords),
+                within_limit=len(merged_to_notify),
+                total_checked=len(merged_with_coords),
             )
         else:
-            properties_to_notify = new_properties
+            merged_to_notify = new_merged
             logger.info("skipping_commute_filter", reason="no_traveltime_credentials")
 
-        if not properties_to_notify:
+        if not merged_to_notify:
             logger.info("no_properties_within_commute_limit")
             print("\nNo properties within commute limit.")
             return
 
         # Step 5.5: Property quality analysis (if configured)
         quality_lookup: dict[str, PropertyQualityAnalysis] = {}
+        analyzed_merged: dict[str, MergedProperty] = {}
         quality_filter = None
         if settings.anthropic_api_key.get_secret_value() and settings.enable_quality_filter:
             logger.info("pipeline_started", phase="quality_analysis")
@@ -474,9 +516,11 @@ async def run_dry_run(settings: Settings) -> None:
             )
 
             try:
-                quality_results = await quality_filter.analyze_properties(properties_to_notify)
+                quality_results = await quality_filter.analyze_merged_properties(merged_to_notify)
 
-                quality_lookup = {prop.unique_id: analysis for prop, analysis in quality_results}
+                for merged, analysis in quality_results:
+                    quality_lookup[merged.unique_id] = analysis
+                    analyzed_merged[merged.unique_id] = merged
 
                 concerns = sum(1 for _, a in quality_results if a.condition_concerns)
                 logger.info(
@@ -493,36 +537,65 @@ async def run_dry_run(settings: Settings) -> None:
         logger.info(
             "pipeline_started",
             phase="save_only",
-            count=len(properties_to_notify),
+            count=len(merged_to_notify),
             dry_run=True,
         )
 
         print(f"\n{'=' * 60}")
-        print(f"[DRY RUN] Would notify about {len(properties_to_notify)} properties:")
+        print(f"[DRY RUN] Would notify about {len(merged_to_notify)} properties:")
         print(f"{'=' * 60}\n")
 
-        for prop in properties_to_notify:
+        for merged in merged_to_notify:
+            final_merged = analyzed_merged.get(merged.unique_id, merged)
+            prop = final_merged.canonical
+
             commute_info = commute_lookup.get(prop.unique_id)
             commute_minutes = commute_info[0] if commute_info else None
             transport_mode = commute_info[1] if commute_info else None
-            quality_analysis = quality_lookup.get(prop.unique_id)
+            quality_analysis = quality_lookup.get(merged.unique_id)
 
-            # Save to database
-            await storage.save_property(
-                prop,
+            # Save merged property to database
+            await storage.save_merged_property(
+                final_merged,
                 commute_minutes=commute_minutes,
                 transport_mode=transport_mode,
             )
 
+            # Save images if any
+            if final_merged.images:
+                await storage.save_property_images(
+                    final_merged.unique_id, list(final_merged.images)
+                )
+            if final_merged.floorplan:
+                await storage.save_property_images(
+                    final_merged.unique_id, [final_merged.floorplan]
+                )
+
             # Print instead of notify
-            print(f"[{prop.source.value}] {prop.title}")
-            print(f"  Price: £{prop.price_pcm}/month | Beds: {prop.bedrooms}")
+            source_str = ", ".join(s.value for s in final_merged.sources)
+            print(f"[{source_str}] {prop.title}")
+
+            if final_merged.price_varies:
+                print(
+                    f"  Price: £{final_merged.min_price}-£{final_merged.max_price}/month | "
+                    f"Beds: {prop.bedrooms}"
+                )
+            else:
+                print(f"  Price: £{prop.price_pcm}/month | Beds: {prop.bedrooms}")
+
             print(f"  Address: {prop.address}")
             if prop.postcode:
                 print(f"  Postcode: {prop.postcode}")
             if commute_minutes is not None:
                 mode_str = transport_mode.value if transport_mode else ""
                 print(f"  Commute: {commute_minutes} min ({mode_str})")
+            if len(final_merged.sources) > 1:
+                print(f"  Listed on: {len(final_merged.sources)} platforms")
+            if final_merged.images or final_merged.floorplan:
+                img_str = f"{len(final_merged.images)} images"
+                if final_merged.floorplan:
+                    img_str += " + floorplan"
+                print(f"  Photos: {img_str}")
             if quality_analysis:
                 print(f"  Summary: {quality_analysis.summary}")
                 if quality_analysis.condition_concerns:
@@ -543,7 +616,7 @@ async def run_dry_run(settings: Settings) -> None:
             print(f"  URL: {prop.url}")
             print()
 
-        logger.info("dry_run_complete", saved=len(properties_to_notify))
+        logger.info("dry_run_complete", saved=len(merged_to_notify))
 
     finally:
         await storage.close()

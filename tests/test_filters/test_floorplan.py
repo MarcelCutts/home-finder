@@ -246,7 +246,7 @@ class TestDetailFetcherOpenRent:
         fetcher = DetailFetcher()
         url = await fetcher.fetch_floorplan_url(openrent_property)
 
-        assert url == "https://www.openrent.com/floorplan/123.jpg"
+        assert url == "https://imagescdn.openrent.co.uk/listings/123456/o_floorplan.JPG"
 
     async def test_returns_none_when_no_floorplan(
         self, openrent_property: Property, fixtures_path: Path, httpx_mock: HTTPXMock
@@ -262,29 +262,50 @@ class TestDetailFetcherOpenRent:
 
 
 class TestDetailFetcherOnTheMarket:
-    """Tests for OnTheMarket detail page parsing."""
+    """Tests for OnTheMarket detail page parsing.
+
+    Uses curl_cffi for TLS fingerprint impersonation, so we mock AsyncSession.
+    """
 
     async def test_extracts_floorplan_url(
-        self, onthemarket_property: Property, fixtures_path: Path, httpx_mock: HTTPXMock
+        self, onthemarket_property: Property, fixtures_path: Path
     ) -> None:
         """Should extract floorplan URL from OnTheMarket detail page."""
         html = (fixtures_path / "onthemarket_detail_with_floorplan.html").read_text()
-        httpx_mock.add_response(html=html)
 
-        fetcher = DetailFetcher()
-        url = await fetcher.fetch_floorplan_url(onthemarket_property)
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.text = html
+
+        mock_session = MagicMock()
+        mock_session.get = AsyncMock(return_value=mock_response)
+        mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session.__aexit__ = AsyncMock(return_value=None)
+
+        with patch("home_finder.scrapers.detail_fetcher.AsyncSession", return_value=mock_session):
+            fetcher = DetailFetcher()
+            url = await fetcher.fetch_floorplan_url(onthemarket_property)
 
         assert url == "https://media.onthemarket.com/floor/123.jpg"  # from 'original' field
 
     async def test_returns_none_when_no_floorplan(
-        self, onthemarket_property: Property, fixtures_path: Path, httpx_mock: HTTPXMock
+        self, onthemarket_property: Property, fixtures_path: Path
     ) -> None:
         """Should return None when property has no floorplan."""
         html = (fixtures_path / "onthemarket_detail_no_floorplan.html").read_text()
-        httpx_mock.add_response(html=html)
 
-        fetcher = DetailFetcher()
-        url = await fetcher.fetch_floorplan_url(onthemarket_property)
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.text = html
+
+        mock_session = MagicMock()
+        mock_session.get = AsyncMock(return_value=mock_response)
+        mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session.__aexit__ = AsyncMock(return_value=None)
+
+        with patch("home_finder.scrapers.detail_fetcher.AsyncSession", return_value=mock_session):
+            fetcher = DetailFetcher()
+            url = await fetcher.fetch_floorplan_url(onthemarket_property)
 
         assert url is None
 

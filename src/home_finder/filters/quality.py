@@ -1,25 +1,38 @@
 """Property quality analysis filter using Claude vision."""
 
 import asyncio
-import json
-import re
 from typing import Any, Literal
 
 import anthropic
-from anthropic import RateLimitError
-from anthropic.types import ImageBlockParam, TextBlock, TextBlockParam
-from pydantic import BaseModel, ConfigDict
+import httpx
+from anthropic import (
+    APIConnectionError,
+    APIStatusError,
+    BadRequestError,
+    InternalServerError,
+    RateLimitError,
+)
+from anthropic.types import (
+    ImageBlockParam,
+    TextBlockParam,
+    ToolParam,
+    ToolUseBlock,
+)
+from pydantic import BaseModel, ConfigDict, HttpUrl
 
 from home_finder.logging import get_logger
-from home_finder.models import Property
+from home_finder.models import MergedProperty, Property, PropertyImage
 from home_finder.scrapers.detail_fetcher import DetailFetcher
 
 logger = get_logger(__name__)
 
 # Rate limit settings for Tier 1
-MAX_RETRIES = 3
-INITIAL_RETRY_DELAY = 5.0  # seconds
+# SDK handles retry automatically, we just need delay between calls
 DELAY_BETWEEN_CALLS = 1.5  # seconds (50 RPM = 1.2s minimum, add buffer)
+
+# SDK retry configuration
+MAX_RETRIES = 3
+REQUEST_TIMEOUT = 180.0  # 3 minutes for vision requests
 
 # Average monthly rents by outcode and bedroom count (£/month)
 # Based on ONS Private Rent data and Rightmove/Zoopla market research (Jan 2026)
@@ -61,15 +74,14 @@ DEFAULT_BENCHMARK: dict[int, int] = {1: 1800, 2: 2200, 3: 2850}
 
 
 class KitchenAnalysis(BaseModel):
-    """Analysis of kitchen amenities."""
+    """Analysis of kitchen amenities and condition."""
 
     model_config = ConfigDict(frozen=True)
 
-    has_gas_hob: bool | None = None
+    overall_quality: Literal["modern", "decent", "dated", "unknown"] = "unknown"
+    hob_type: Literal["gas", "electric", "induction", "unknown"] | None = None
     has_dishwasher: bool | None = None
     has_washing_machine: bool | None = None
-    has_dryer: bool | None = None
-    appliance_quality: Literal["high", "medium", "low"] | None = None
     notes: str = ""
 
 
@@ -200,84 +212,212 @@ class PropertyQualityAnalysis(BaseModel):
     summary: str
 
 
-QUALITY_ANALYSIS_PROMPT_TEMPLATE = """Analyze these property images for a rental flat in London.
+# System prompt for quality analysis - cached for cost savings
+QUALITY_ANALYSIS_SYSTEM_PROMPT = """You are an expert property analyst \
+specializing in London rental properties.
 
-**Property Details:**
-- Price: £{price_pcm}/month
-- Bedrooms: {bedrooms}
-- Area average for {bedrooms}-bed: £{area_average}/month ({price_comparison})
+Your task is to analyze property images and provide a comprehensive quality \
+assessment. You will be given gallery images, optionally a floorplan, and \
+the listing description/features when available.
 
-I need a comprehensive quality assessment covering:
+IMPORTANT: Cross-reference what you see in the images with the listing text. \
+The description often mentions things like "new kitchen", "gas hob", "recently \
+refurbished" that help confirm or clarify what's in the photos.
 
-1. **Kitchen Amenities**: Look for gas hob (vs electric), dishwasher, washing machine, dryer.
-   Assess appliance quality (modern/high-end vs basic/dated).
+Analyze the following aspects:
+
+1. **Kitchen Quality**: Focus on whether the kitchen looks MODERN or DATED.
+   - Modern: New units, integrated appliances, good worktops, contemporary style
+   - Dated: Old-fashioned units, worn surfaces, mismatched appliances
+   - Note the hob type if visible/mentioned (gas, electric, induction)
+   - Check listing for mentions of "new kitchen", "recently fitted", etc.
 
 2. **Property Condition**: Look for any signs of:
    - Damp (water stains, peeling paint near windows/ceilings)
    - Mold (dark patches, especially in corners, bathrooms)
    - Worn fixtures (dated bathroom fittings, tired carpets, scuffed walls)
-   - Any maintenance concerns
+   - Cross-reference with listing mentions of "refurbished", "newly decorated"
 
 3. **Natural Light & Space**: Assess:
    - Natural light levels (window sizes, brightness)
    - Does it feel spacious or cramped?
    - Ceiling heights if visible
 
-4. **Living Room Size**: If a floorplan is included, estimate the living room size in sqm.
-   The living room should ideally fit a home office AND host 8+ people (~20-25 sqm minimum).
+4. **Living Room Size**: If a floorplan is included, estimate the living room \
+size in sqm. The living room should ideally fit a home office AND host 8+ \
+people (~20-25 sqm minimum).
 
-5. **Value Assessment**: Given the price is {price_comparison} the area average, assess whether
-   this is good value CONSIDERING THE QUALITY you see in the photos. A property slightly above
-   average could still be excellent value if it's in great condition with modern appliances.
-   A property below average might be poor value if it has damp or condition issues.
+5. **Value Assessment**: Consider if the property is good value given its \
+condition and features mentioned in the listing.
 
-6. **Overall Summary**: Write a brief 1-2 sentence summary highlighting the key positives
-   and any concerns a potential renter should know about.
+6. **Overall Summary**: Write a brief 1-2 sentence summary highlighting the \
+key positives and any concerns a potential renter should know about.
 
-Respond with ONLY a JSON object (no markdown, no explanation outside the JSON):
-
-{{
-    "kitchen": {{
-        "has_gas_hob": <true/false/null if cannot determine>,
-        "has_dishwasher": <true/false/null>,
-        "has_washing_machine": <true/false/null>,
-        "has_dryer": <true/false/null>,
-        "appliance_quality": <"high"/"medium"/"low"/null>,
-        "notes": "<any notable kitchen features or concerns>"
-    }},
-    "condition": {{
-        "overall_condition": <"excellent"/"good"/"fair"/"poor">,
-        "has_visible_damp": <true/false>,
-        "has_visible_mold": <true/false>,
-        "has_worn_fixtures": <true/false>,
-        "maintenance_concerns": [<list of specific concerns if any>],
-        "confidence": <"high"/"medium"/"low">
-    }},
-    "light_space": {{
-        "natural_light": <"excellent"/"good"/"fair"/"poor">,
-        "window_sizes": <"large"/"medium"/"small"/null>,
-        "feels_spacious": <true/false>,
-        "ceiling_height": <"high"/"standard"/"low"/null>,
-        "notes": "<any notable observations>"
-    }},
-    "space": {{
-        "living_room_sqm": <estimated size or null>,
-        "is_spacious_enough": <true if can fit office AND host 8+ people>,
-        "confidence": <"high"/"medium"/"low">
-    }},
-    "value_for_quality": {{
-        "rating": <"excellent"/"good"/"fair"/"poor" considering quality vs price>,
-        "reasoning": "<brief explanation of value assessment considering condition>"
-    }},
-    "condition_concerns": <true if any significant condition issues>,
-    "concern_severity": <"minor"/"moderate"/"serious"/null>,
-    "summary": "<1-2 sentence summary for the notification>"
-}}
-"""
+Always use the property_quality_analysis tool to return your assessment."""
 
 
-def build_quality_prompt(price_pcm: int, bedrooms: int, area_average: int) -> str:
-    """Build the quality analysis prompt with price context."""
+# Tool schema for structured outputs - guarantees valid JSON response
+QUALITY_ANALYSIS_TOOL: dict[str, Any] = {
+    "name": "property_quality_analysis",
+    "description": "Return comprehensive property quality analysis results",
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "kitchen": {
+                "type": "object",
+                "properties": {
+                    "overall_quality": {
+                        "type": "string",
+                        "enum": ["modern", "decent", "dated", "unknown"],
+                        "description": "Overall kitchen quality/age assessment",
+                    },
+                    "hob_type": {
+                        "anyOf": [
+                            {"type": "string", "enum": ["gas", "electric", "induction", "unknown"]},
+                            {"type": "null"},
+                        ],
+                        "description": "Type of hob if visible or mentioned",
+                    },
+                    "has_dishwasher": {
+                        "anyOf": [{"type": "boolean"}, {"type": "null"}],
+                    },
+                    "has_washing_machine": {
+                        "anyOf": [{"type": "boolean"}, {"type": "null"}],
+                    },
+                    "notes": {
+                        "type": "string",
+                        "description": "Notable kitchen features or concerns",
+                    },
+                },
+                "required": ["overall_quality", "notes"],
+                "additionalProperties": False,
+            },
+            "condition": {
+                "type": "object",
+                "properties": {
+                    "overall_condition": {
+                        "type": "string",
+                        "enum": ["excellent", "good", "fair", "poor", "unknown"],
+                    },
+                    "has_visible_damp": {"type": "boolean"},
+                    "has_visible_mold": {"type": "boolean"},
+                    "has_worn_fixtures": {"type": "boolean"},
+                    "maintenance_concerns": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "List of specific maintenance concerns",
+                    },
+                    "confidence": {"type": "string", "enum": ["high", "medium", "low"]},
+                },
+                "required": [
+                    "overall_condition",
+                    "has_visible_damp",
+                    "has_visible_mold",
+                    "has_worn_fixtures",
+                    "maintenance_concerns",
+                    "confidence",
+                ],
+                "additionalProperties": False,
+            },
+            "light_space": {
+                "type": "object",
+                "properties": {
+                    "natural_light": {
+                        "type": "string",
+                        "enum": ["excellent", "good", "fair", "poor", "unknown"],
+                    },
+                    "window_sizes": {
+                        "anyOf": [
+                            {"type": "string", "enum": ["large", "medium", "small"]},
+                            {"type": "null"},
+                        ],
+                    },
+                    "feels_spacious": {
+                        "anyOf": [{"type": "boolean"}, {"type": "null"}],
+                        "description": "Whether the property feels spacious",
+                    },
+                    "ceiling_height": {
+                        "anyOf": [
+                            {"type": "string", "enum": ["high", "standard", "low"]},
+                            {"type": "null"},
+                        ],
+                    },
+                    "notes": {"type": "string"},
+                },
+                "required": ["natural_light", "notes"],
+                "additionalProperties": False,
+            },
+            "space": {
+                "type": "object",
+                "properties": {
+                    "living_room_sqm": {
+                        "anyOf": [{"type": "number"}, {"type": "null"}],
+                        "description": "Estimated living room size in sqm from floorplan",
+                    },
+                    "is_spacious_enough": {
+                        "anyOf": [{"type": "boolean"}, {"type": "null"}],
+                        "description": "True if can fit office AND host 8+ people",
+                    },
+                    "confidence": {"type": "string", "enum": ["high", "medium", "low"]},
+                },
+                "required": ["confidence"],
+                "additionalProperties": False,
+            },
+            "value_for_quality": {
+                "type": "object",
+                "properties": {
+                    "rating": {
+                        "type": "string",
+                        "enum": ["excellent", "good", "fair", "poor"],
+                        "description": "Value rating considering quality vs price",
+                    },
+                    "reasoning": {
+                        "type": "string",
+                        "description": "Brief explanation of value assessment",
+                    },
+                },
+                "required": ["rating", "reasoning"],
+                "additionalProperties": False,
+            },
+            "condition_concerns": {
+                "type": "boolean",
+                "description": "True if any significant condition issues found",
+            },
+            "concern_severity": {
+                "anyOf": [
+                    {"type": "string", "enum": ["minor", "moderate", "serious"]},
+                    {"type": "null"},
+                ],
+            },
+            "summary": {
+                "type": "string",
+                "description": "1-2 sentence summary for notification",
+            },
+        },
+        "required": [
+            "kitchen",
+            "condition",
+            "light_space",
+            "space",
+            "value_for_quality",
+            "condition_concerns",
+            "concern_severity",
+            "summary",
+        ],
+        "additionalProperties": False,
+    },
+    "strict": True,
+}
+
+
+def build_user_prompt(
+    price_pcm: int,
+    bedrooms: int,
+    area_average: int,
+    description: str | None = None,
+    features: list[str] | None = None,
+) -> str:
+    """Build the user prompt with property-specific context."""
     diff = price_pcm - area_average
     if diff < -50:
         price_comparison = f"£{abs(diff)} below"
@@ -286,50 +426,26 @@ def build_quality_prompt(price_pcm: int, bedrooms: int, area_average: int) -> st
     else:
         price_comparison = "at"
 
-    return QUALITY_ANALYSIS_PROMPT_TEMPLATE.format(
-        price_pcm=price_pcm,
-        bedrooms=bedrooms,
-        area_average=area_average,
-        price_comparison=price_comparison,
-    )
+    prompt = f"""Analyze these property images.
 
+**Property Details:**
+- Price: £{price_pcm}/month
+- Bedrooms: {bedrooms}
+- Area average for {bedrooms}-bed: £{area_average}/month ({price_comparison})"""
 
-def extract_json_from_response(text: str) -> dict[str, Any]:
-    """Extract JSON from a response that may be wrapped in markdown code blocks.
+    if features:
+        prompt += "\n\n**Listed Features:**\n"
+        prompt += "\n".join(f"- {f}" for f in features[:15])  # Limit to 15 features
 
-    Args:
-        text: Raw response text that may contain JSON wrapped in ```json...``` blocks.
+    if description:
+        # Truncate very long descriptions to save tokens
+        desc = description[:1500] + "..." if len(description) > 1500 else description
+        prompt += f"\n\n**Listing Description:**\n{desc}"
 
-    Returns:
-        Parsed JSON as a dictionary.
+    prompt += "\n\nPlease provide your quality assessment using the "
+    prompt += "property_quality_analysis tool."
 
-    Raises:
-        json.JSONDecodeError: If no valid JSON can be extracted.
-    """
-    # Try direct parse first
-    text = text.strip()
-    if text.startswith("{"):
-        result: dict[str, Any] = json.loads(text)
-        return result
-
-    # Try to extract from markdown code block
-    # Match ```json ... ``` or ``` ... ```
-    code_block_pattern = r"```(?:json)?\s*\n?(.*?)\n?```"
-    match = re.search(code_block_pattern, text, re.DOTALL)
-    if match:
-        json_text = match.group(1).strip()
-        result = json.loads(json_text)
-        return result
-
-    # Last resort: find the first { and last } and try to parse
-    first_brace = text.find("{")
-    last_brace = text.rfind("}")
-    if first_brace != -1 and last_brace != -1 and last_brace > first_brace:
-        json_text = text[first_brace : last_brace + 1]
-        result = json.loads(json_text)
-        return result
-
-    raise json.JSONDecodeError("No JSON found in response", text, 0)
+    return prompt
 
 
 class PropertyQualityFilter:
@@ -348,9 +464,13 @@ class PropertyQualityFilter:
         self._detail_fetcher = DetailFetcher(max_gallery_images=max_images)
 
     def _get_client(self) -> anthropic.AsyncAnthropic:
-        """Get or create the Anthropic client."""
+        """Get or create the Anthropic client with optimized settings."""
         if self._client is None:
-            self._client = anthropic.AsyncAnthropic(api_key=self._api_key)
+            self._client = anthropic.AsyncAnthropic(
+                api_key=self._api_key,
+                max_retries=MAX_RETRIES,  # SDK handles retry with exponential backoff
+                timeout=httpx.Timeout(REQUEST_TIMEOUT),  # 3 min for vision requests
+            )
         return self._client
 
     async def analyze_properties(
@@ -384,7 +504,7 @@ class PropertyQualityFilter:
                 results.append((prop, minimal))
                 continue
 
-            # Analyze with Claude vision
+            # Analyze with Claude vision + listing text
             analysis = await self._analyze_property(
                 prop.unique_id,
                 gallery_urls=detail_data.gallery_urls or [],
@@ -392,6 +512,8 @@ class PropertyQualityFilter:
                 bedrooms=prop.bedrooms,
                 price_pcm=prop.price_pcm,
                 area_average=value.area_average,
+                description=detail_data.description,
+                features=detail_data.features,
             )
 
             if analysis:
@@ -430,6 +552,158 @@ class PropertyQualityFilter:
 
         return results
 
+    async def analyze_merged_properties(
+        self, properties: list[MergedProperty]
+    ) -> list[tuple[MergedProperty, PropertyQualityAnalysis]]:
+        """Analyze quality for merged properties, collecting images from all sources.
+
+        This method fetches detail pages from all source URLs for each merged
+        property, combining images from all platforms. The collected images
+        are attached to the returned MergedProperty.
+
+        Args:
+            properties: Merged properties to analyze.
+
+        Returns:
+            List of (merged_property, analysis) tuples. The merged property
+            will have its images and floorplan fields populated.
+        """
+        results: list[tuple[MergedProperty, PropertyQualityAnalysis]] = []
+
+        for merged in properties:
+            prop = merged.canonical
+            # Calculate value assessment using canonical property
+            value = assess_value(prop.price_pcm, prop.postcode, prop.bedrooms)
+
+            # Collect images from all sources
+            all_images: list[PropertyImage] = []
+            all_gallery_urls: list[str] = []
+            floorplan_image: PropertyImage | None = None
+            floorplan_url: str | None = None
+            best_description: str | None = None
+            best_features: list[str] | None = None
+
+            # Fetch from each source URL
+            for source, url in merged.source_urls.items():
+                # Create temporary property with this source's URL
+                temp_prop = Property(
+                    source=source,
+                    source_id=prop.source_id,
+                    url=url,
+                    title=prop.title,
+                    price_pcm=prop.price_pcm,
+                    bedrooms=prop.bedrooms,
+                    address=prop.address,
+                    postcode=prop.postcode,
+                    latitude=prop.latitude,
+                    longitude=prop.longitude,
+                )
+
+                detail_data = await self._detail_fetcher.fetch_detail_page(temp_prop)
+
+                if detail_data:
+                    # Collect gallery images
+                    if detail_data.gallery_urls:
+                        for img_url in detail_data.gallery_urls:
+                            all_images.append(
+                                PropertyImage(
+                                    url=HttpUrl(img_url),
+                                    source=source,
+                                    image_type="gallery",
+                                )
+                            )
+                            all_gallery_urls.append(img_url)
+
+                    # Keep first floorplan found
+                    if detail_data.floorplan_url and not floorplan_image:
+                        floorplan_image = PropertyImage(
+                            url=HttpUrl(detail_data.floorplan_url),
+                            source=source,
+                            image_type="floorplan",
+                        )
+                        floorplan_url = detail_data.floorplan_url
+
+                    # Keep longest description
+                    if detail_data.description and (
+                        not best_description
+                        or len(detail_data.description) > len(best_description)
+                    ):
+                        best_description = detail_data.description
+
+                    # Keep most features
+                    if detail_data.features and (
+                        not best_features or len(detail_data.features) > len(best_features)
+                    ):
+                        best_features = detail_data.features
+
+            # Update merged property with collected images
+            updated_merged = MergedProperty(
+                canonical=merged.canonical,
+                sources=merged.sources,
+                source_urls=merged.source_urls,
+                images=tuple(all_images),
+                floorplan=floorplan_image,
+                min_price=merged.min_price,
+                max_price=merged.max_price,
+                descriptions=merged.descriptions,
+            )
+
+            if not all_gallery_urls and not floorplan_url:
+                logger.info(
+                    "no_images_for_analysis",
+                    property_id=merged.unique_id,
+                    sources=[s.value for s in merged.sources],
+                )
+                minimal = self._create_minimal_analysis(value=value)
+                results.append((updated_merged, minimal))
+                continue
+
+            # Analyze with Claude vision (use combined images)
+            analysis = await self._analyze_property(
+                merged.unique_id,
+                gallery_urls=all_gallery_urls[: self._max_images],
+                floorplan_url=floorplan_url,
+                bedrooms=prop.bedrooms,
+                price_pcm=prop.price_pcm,
+                area_average=value.area_average,
+                description=best_description,
+                features=best_features,
+            )
+
+            if analysis:
+                # Merge value assessment
+                merged_value = ValueAnalysis(
+                    area_average=value.area_average,
+                    difference=value.difference,
+                    rating=value.rating,
+                    note=value.note,
+                    quality_adjusted_rating=analysis.value.quality_adjusted_rating
+                    if analysis.value
+                    else None,
+                    quality_adjusted_note=analysis.value.quality_adjusted_note
+                    if analysis.value
+                    else "",
+                )
+                analysis = PropertyQualityAnalysis(
+                    kitchen=analysis.kitchen,
+                    condition=analysis.condition,
+                    light_space=analysis.light_space,
+                    space=analysis.space,
+                    condition_concerns=analysis.condition_concerns,
+                    concern_severity=analysis.concern_severity,
+                    value=merged_value,
+                    summary=analysis.summary,
+                )
+                results.append((updated_merged, analysis))
+            else:
+                minimal = self._create_minimal_analysis(value=value)
+                results.append((updated_merged, minimal))
+
+            # Rate limit
+            await asyncio.sleep(DELAY_BETWEEN_CALLS)
+
+        return results
+
     def _create_minimal_analysis(
         self, value: ValueAnalysis | None = None
     ) -> PropertyQualityAnalysis:
@@ -463,8 +737,10 @@ class PropertyQualityFilter:
         bedrooms: int,
         price_pcm: int,
         area_average: int | None,
+        description: str | None = None,
+        features: list[str] | None = None,
     ) -> PropertyQualityAnalysis | None:
-        """Analyze a single property using Claude vision.
+        """Analyze a single property using Claude vision with structured outputs.
 
         Args:
             property_id: Property ID for logging.
@@ -473,13 +749,15 @@ class PropertyQualityFilter:
             bedrooms: Number of bedrooms (for space assessment).
             price_pcm: Monthly rent price.
             area_average: Average rent for this area and bedroom count.
+            description: Listing description text for cross-reference.
+            features: Listed features for cross-reference.
 
         Returns:
             Analysis result or None if analysis failed.
         """
         client = self._get_client()
 
-        # Build image content blocks
+        # Build image content blocks (images first for best vision performance)
         content: list[ImageBlockParam | TextBlockParam] = []
 
         # Add gallery images (up to max_images)
@@ -500,10 +778,12 @@ class PropertyQualityFilter:
                 )
             )
 
-        # Build prompt with price context
+        # Build user prompt with property context and listing text
         effective_average = area_average or DEFAULT_BENCHMARK.get(min(bedrooms, 3), 1800)
-        prompt = build_quality_prompt(price_pcm, bedrooms, effective_average)
-        content.append(TextBlockParam(type="text", text=prompt))
+        user_prompt = build_user_prompt(
+            price_pcm, bedrooms, effective_average, description, features
+        )
+        content.append(TextBlockParam(type="text", text=user_prompt))
 
         logger.info(
             "analyzing_property",
@@ -512,94 +792,140 @@ class PropertyQualityFilter:
             has_floorplan=floorplan_url is not None,
         )
 
-        # Retry loop with exponential backoff for rate limits
-        last_error: Exception | None = None
-        response_text: str = ""  # Track for error logging
-        for attempt in range(MAX_RETRIES):
-            try:
-                response = await client.messages.create(
-                    model="claude-sonnet-4-20250514",
-                    max_tokens=2048,
-                    messages=[{"role": "user", "content": content}],
+        try:
+            # Use structured outputs via tool_choice for guaranteed valid JSON
+            # System prompt uses cache_control for 90% cost savings on input tokens
+            tool: ToolParam = QUALITY_ANALYSIS_TOOL  # type: ignore[assignment]
+            response = await client.messages.create(
+                model="claude-sonnet-4-5-20250929",
+                max_tokens=2048,
+                system=[
+                    {
+                        "type": "text",
+                        "text": QUALITY_ANALYSIS_SYSTEM_PROMPT,
+                        "cache_control": {"type": "ephemeral"},  # Cache for 5 mins
+                    }
+                ],
+                messages=[{"role": "user", "content": content}],
+                tools=[tool],
+                tool_choice={"type": "tool", "name": "property_quality_analysis"},
+            )
+
+            # Log cache performance for monitoring
+            if hasattr(response, "usage"):
+                usage = response.usage
+                cache_read = getattr(usage, "cache_read_input_tokens", 0)
+                cache_creation = getattr(usage, "cache_creation_input_tokens", 0)
+                if cache_read or cache_creation:
+                    logger.debug(
+                        "prompt_cache_stats",
+                        property_id=property_id,
+                        cache_read_tokens=cache_read,
+                        cache_creation_tokens=cache_creation,
+                    )
+
+            # Check for safety refusal (stop_reason: "refusal")
+            if response.stop_reason == "end_turn":
+                # Check if we got a tool use block
+                tool_use_block = next(
+                    (block for block in response.content if isinstance(block, ToolUseBlock)),
+                    None,
                 )
-
-                # Parse response
-                first_block = response.content[0]
-                if not isinstance(first_block, TextBlock):
+                if not tool_use_block:
                     logger.warning(
-                        "unexpected_response_type",
+                        "no_tool_use_in_response",
                         property_id=property_id,
-                        block_type=type(first_block).__name__,
+                        stop_reason=response.stop_reason,
                     )
                     return None
 
-                response_text = first_block.text
+                data: dict[str, Any] = tool_use_block.input
 
-                # Check for empty response
-                if not response_text.strip():
+            elif response.stop_reason == "tool_use":
+                # Normal tool use response
+                tool_use_block = next(
+                    (block for block in response.content if isinstance(block, ToolUseBlock)),
+                    None,
+                )
+                if not tool_use_block:
                     logger.warning(
-                        "empty_response",
+                        "tool_use_stop_but_no_block",
                         property_id=property_id,
-                        attempt=attempt + 1,
-                    )
-                    last_error = ValueError("Empty response from API")
-                    if attempt < MAX_RETRIES - 1:
-                        delay = INITIAL_RETRY_DELAY * (2**attempt)
-                        logger.info("retrying_after_empty", delay=delay)
-                        await asyncio.sleep(delay)
-                        continue
-                    return None
-
-                # Parse JSON response (handles markdown-wrapped JSON)
-                data = extract_json_from_response(response_text)
-                break  # Success, exit retry loop
-
-            except RateLimitError as e:
-                last_error = e
-                if attempt < MAX_RETRIES - 1:
-                    delay = INITIAL_RETRY_DELAY * (2**attempt)
-                    logger.warning(
-                        "rate_limited",
-                        property_id=property_id,
-                        attempt=attempt + 1,
-                        retry_delay=delay,
-                    )
-                    await asyncio.sleep(delay)
-                else:
-                    logger.error(
-                        "rate_limit_exhausted",
-                        property_id=property_id,
-                        attempts=MAX_RETRIES,
                     )
                     return None
 
-            except json.JSONDecodeError as e:
+                data = tool_use_block.input
+
+            else:
+                # Unexpected stop reason (e.g., max_tokens, refusal)
                 logger.warning(
-                    "json_parse_failed",
+                    "unexpected_stop_reason",
                     property_id=property_id,
-                    error=str(e),
-                    response_preview=response_text[:200] if response_text else "N/A",
+                    stop_reason=response.stop_reason,
+                    request_id=getattr(response, "_request_id", None),
                 )
                 return None
 
-            except Exception as e:
-                logger.warning(
-                    "quality_analysis_failed",
-                    property_id=property_id,
-                    error=str(e),
-                    error_type=type(e).__name__,
-                )
-                return None
-        else:
-            # All retries exhausted (loop completed without break)
-            logger.error(
-                "all_retries_failed",
+        except BadRequestError as e:
+            # 400 - Invalid request (bad images, invalid params)
+            logger.warning(
+                "bad_request_error",
                 property_id=property_id,
-                last_error=str(last_error),
+                error=str(e),
+                request_id=getattr(e, "_request_id", None),
             )
             return None
 
-        # Extract value_for_quality from LLM response
+        except RateLimitError as e:
+            # 429 - Rate limited (SDK already retried, this means exhausted)
+            logger.error(
+                "rate_limit_exhausted",
+                property_id=property_id,
+                error=str(e),
+                request_id=getattr(e, "_request_id", None),
+            )
+            return None
+
+        except InternalServerError as e:
+            # 5xx - Server error (SDK already retried)
+            logger.error(
+                "server_error",
+                property_id=property_id,
+                error=str(e),
+                request_id=getattr(e, "_request_id", None),
+            )
+            return None
+
+        except APIConnectionError as e:
+            # Network issues (SDK already retried)
+            logger.error(
+                "connection_error",
+                property_id=property_id,
+                error=str(e),
+            )
+            return None
+
+        except APIStatusError as e:
+            # Other API errors
+            logger.warning(
+                "api_status_error",
+                property_id=property_id,
+                status_code=e.status_code,
+                error=str(e),
+                request_id=getattr(e, "_request_id", None),
+            )
+            return None
+
+        except Exception as e:
+            logger.warning(
+                "quality_analysis_failed",
+                property_id=property_id,
+                error=str(e),
+                error_type=type(e).__name__,
+            )
+            return None
+
+        # Extract value_for_quality from tool response
         value_for_quality = data.pop("value_for_quality", {})
         quality_adjusted_rating = value_for_quality.get("rating")
         quality_adjusted_note = value_for_quality.get("reasoning", "")
