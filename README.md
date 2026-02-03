@@ -1,20 +1,23 @@
 # Home Finder
 
-Multi-platform London rental property scraper with commute filtering and Telegram notifications.
+Multi-platform London rental property scraper with commute filtering, AI quality analysis, and Telegram notifications.
 
 ## Features
 
 - **Multi-platform scraping**: OpenRent, Rightmove, Zoopla, OnTheMarket
+- **Cross-platform deduplication**: Weighted multi-signal matching merges the same property listed on different platforms
 - **Commute filtering**: Filter properties within X minutes of your destination using TravelTime API
-- **Telegram notifications**: Get instant alerts for matching properties
-- **Deduplication**: Avoid seeing the same property from multiple platforms
-- **SQLite storage**: Track seen properties to only notify about new listings
+- **AI quality analysis**: Claude vision analyzes property images for condition, kitchen, space, and value
+- **Floorplan gating**: Optionally require properties to have floorplans before notifying
+- **Rich Telegram notifications**: Property cards with photos, star ratings, commute times, quality summaries, and direct links
+- **Detail enrichment**: Fetches gallery images, floorplans, and descriptions from property detail pages
+- **SQLite storage**: Track seen properties to only notify about new listings, with notification retry on failure
 
 ## Quick Start
 
 1. **Install dependencies**:
    ```bash
-   uv sync
+   uv sync --all-extras
    ```
 
 2. **Configure environment**:
@@ -28,17 +31,33 @@ Multi-platform London rental property scraper with commute filtering and Telegra
    uv run home-finder
    ```
 
+### Run Modes
+
+```bash
+uv run home-finder                    # Full pipeline with Telegram notifications
+uv run home-finder --dry-run          # Full pipeline, save to DB but no notifications
+uv run home-finder --scrape-only      # Just scrape and print (no filtering/storage)
+uv run home-finder --max-per-scraper 5  # Limit results per scraper (for testing)
+```
+
 ## Configuration
 
-Create a `.env` file with these settings:
+Create a `.env` file with these settings (all use `HOME_FINDER_` prefix):
 
 ### Required
 - `HOME_FINDER_TELEGRAM_BOT_TOKEN`: Your Telegram bot token (from @BotFather)
 - `HOME_FINDER_TELEGRAM_CHAT_ID`: Your Telegram chat ID
 
-### Optional (enables commute filtering)
-- `HOME_FINDER_TRAVELTIME_APP_ID`: TravelTime API app ID
+### Optional APIs
+- `HOME_FINDER_TRAVELTIME_APP_ID`: TravelTime API app ID (enables commute filtering)
 - `HOME_FINDER_TRAVELTIME_API_KEY`: TravelTime API key
+- `HOME_FINDER_ANTHROPIC_API_KEY`: Anthropic API key (enables AI quality analysis)
+
+### Feature Flags
+- `HOME_FINDER_ENABLE_QUALITY_FILTER`: Enable Claude vision property analysis (default: true)
+- `HOME_FINDER_REQUIRE_FLOORPLAN`: Drop properties without floorplans (default: true)
+- `HOME_FINDER_QUALITY_FILTER_MAX_IMAGES`: Max gallery images to analyze per property (default: 10, max: 20)
+- `HOME_FINDER_ENABLE_IMAGE_HASH_MATCHING`: Enable perceptual image hashing for deduplication (default: false)
 
 ### Search Criteria
 - `HOME_FINDER_MIN_PRICE`: Minimum monthly rent (default: 1800)
@@ -46,7 +65,16 @@ Create a `.env` file with these settings:
 - `HOME_FINDER_MIN_BEDROOMS`: Minimum bedrooms (default: 1)
 - `HOME_FINDER_MAX_BEDROOMS`: Maximum bedrooms (default: 2)
 - `HOME_FINDER_DESTINATION_POSTCODE`: Your destination postcode (default: N1 5AA)
-- `HOME_FINDER_MAX_COMMUTE_MINUTES`: Maximum commute time (default: 30)
+- `HOME_FINDER_MAX_COMMUTE_MINUTES`: Maximum commute time in minutes (default: 30)
+
+### Scraper Filters
+- `HOME_FINDER_FURNISH_TYPES`: Comma-separated furnishing filter (default: unfurnished,part_furnished)
+- `HOME_FINDER_MIN_BATHROOMS`: Minimum bathrooms (default: 1)
+- `HOME_FINDER_INCLUDE_LET_AGREED`: Include already-let properties (default: false)
+
+### Other
+- `HOME_FINDER_DATABASE_PATH`: SQLite database path (default: data/properties.db)
+- `HOME_FINDER_SCRAPE_INTERVAL_MINUTES`: Interval for scheduled runs (default: 55)
 
 ## Getting API Keys
 
@@ -62,36 +90,70 @@ Create a `.env` file with these settings:
 2. Get your App ID and API Key from the dashboard
 3. Add to your `.env`
 
+### Anthropic API (Optional)
+1. Get an API key at https://console.anthropic.com/
+2. Add to your `.env` as `HOME_FINDER_ANTHROPIC_API_KEY`
+3. Enables AI-powered property quality analysis using Claude vision
+
 ## Running Tests
 
 ```bash
-uv run pytest
-```
-
-With coverage:
-```bash
-uv run pytest --cov=src
+uv run pytest                         # Run all tests (slow tests excluded by default)
+uv run pytest tests/test_models.py    # Run specific test file
+uv run pytest -k "test_openrent"      # Run tests matching pattern
+uv run pytest --cov=src               # Run with coverage
+uv run pytest -m slow                 # Run slow tests (real scraping)
 ```
 
 ## Project Structure
 
 ```
 src/home_finder/
-├── scrapers/          # Platform scrapers (OpenRent, Rightmove, etc.)
-├── filters/           # Criteria and commute filtering
-├── notifiers/         # Telegram notifications
-├── db/                # SQLite storage
-├── models.py          # Pydantic models
-├── config.py          # Settings management
-├── logging.py         # Structured logging
-└── main.py            # Main entry point
+├── scrapers/              # Platform scrapers
+│   ├── base.py            # Abstract BaseScraper interface
+│   ├── openrent.py        # OpenRent (crawlee)
+│   ├── rightmove.py       # Rightmove (crawlee + typeahead API)
+│   ├── zoopla.py          # Zoopla (curl_cffi for TLS fingerprinting)
+│   ├── onthemarket.py     # OnTheMarket (curl_cffi)
+│   ├── zoopla_models.py   # Pydantic models for Zoopla JSON parsing
+│   ├── detail_fetcher.py  # Gallery/floorplan extraction from detail pages
+│   └── location_utils.py  # Outcode detection utilities
+├── filters/               # Filtering and analysis
+│   ├── criteria.py        # Price/bedroom filtering
+│   ├── commute.py         # TravelTime API commute filtering
+│   ├── deduplication.py   # Weighted multi-signal cross-platform deduplication
+│   ├── location.py        # Location validation (catches scraper leakage)
+│   ├── detail_enrichment.py  # Enriches merged properties with images/descriptions
+│   ├── floorplan.py       # Floorplan analysis (legacy)
+│   └── quality.py         # Claude vision property quality analysis
+├── notifiers/
+│   └── telegram.py        # Rich Telegram notifications with quality cards
+├── db/
+│   └── storage.py         # SQLite storage with notification tracking
+├── utils/
+│   ├── address.py         # Address normalization for deduplication
+│   └── image_hash.py      # Perceptual image hashing
+├── models.py              # Pydantic models (Property, MergedProperty, etc.)
+├── config.py              # Settings management (pydantic-settings)
+├── logging.py             # Structured logging (structlog)
+└── main.py                # Pipeline orchestration and CLI
 ```
 
 ## Deployment
 
-For continuous monitoring, run with a scheduler:
+### Docker (recommended)
 
-### systemd timer (recommended)
+```bash
+docker build -t home-finder .
+docker run --env-file .env -v ./data:/app/data home-finder
+```
+
+### Railway
+
+The project includes `railway.toml` configured for cron-based deployment (every 55 minutes with restart-on-failure).
+
+### systemd timer
+
 Create `/etc/systemd/system/home-finder.service`:
 ```ini
 [Unit]
@@ -111,11 +173,11 @@ WantedBy=multi-user.target
 Create `/etc/systemd/system/home-finder.timer`:
 ```ini
 [Unit]
-Description=Run Home Finder every 10 minutes
+Description=Run Home Finder every 55 minutes
 
 [Timer]
 OnBootSec=1min
-OnUnitActiveSec=10min
+OnUnitActiveSec=55min
 
 [Install]
 WantedBy=timers.target
@@ -128,7 +190,7 @@ sudo systemctl enable --now home-finder.timer
 
 ### cron
 ```bash
-*/10 * * * * cd /path/to/home-finder && /path/to/uv run home-finder >> /var/log/home-finder.log 2>&1
+*/55 * * * * cd /path/to/home-finder && /path/to/uv run home-finder >> /var/log/home-finder.log 2>&1
 ```
 
 ## License
