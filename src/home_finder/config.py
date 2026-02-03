@@ -101,11 +101,7 @@ class Settings(BaseSettings):
 
     def get_furnish_types(self) -> tuple[FurnishType, ...]:
         """Parse furnish_types string into FurnishType enum values."""
-        return tuple(
-            FurnishType(t.strip())
-            for t in self.furnish_types.split(",")
-            if t.strip()
-        )
+        return tuple(FurnishType(t.strip()) for t in self.furnish_types.split(",") if t.strip())
 
     def get_search_criteria(self) -> SearchCriteria:
         """Build SearchCriteria from settings."""
