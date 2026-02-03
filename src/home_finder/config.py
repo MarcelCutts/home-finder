@@ -3,7 +3,7 @@
 from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from home_finder.models import SearchCriteria, TransportMode
+from home_finder.models import FurnishType, SearchCriteria, TransportMode
 
 
 class Settings(BaseSettings):
@@ -53,6 +53,10 @@ class Settings(BaseSettings):
         le=20,
         description="Maximum number of gallery images to analyze per property",
     )
+    require_floorplan: bool = Field(
+        default=True,
+        description="Drop properties without floorplans before quality analysis",
+    )
 
     # Deprecated: use enable_quality_filter instead
     enable_floorplan_filter: bool = Field(
@@ -74,11 +78,34 @@ class Settings(BaseSettings):
     destination_postcode: str = Field(default="N1 5AA")
     max_commute_minutes: int = Field(default=30, ge=1, le=120)
 
+    # Scraper filters
+    furnish_types: str = Field(
+        default="unfurnished,part_furnished",
+        description="Comma-separated: furnished, unfurnished, part_furnished",
+    )
+    min_bathrooms: int = Field(
+        default=1,
+        ge=0,
+        description="Minimum number of bathrooms",
+    )
+    include_let_agreed: bool = Field(
+        default=False,
+        description="Include properties already let agreed",
+    )
+
     # Database
     database_path: str = Field(default="data/properties.db")
 
     # Scraping
     scrape_interval_minutes: int = Field(default=10, ge=1)
+
+    def get_furnish_types(self) -> tuple[FurnishType, ...]:
+        """Parse furnish_types string into FurnishType enum values."""
+        return tuple(
+            FurnishType(t.strip())
+            for t in self.furnish_types.split(",")
+            if t.strip()
+        )
 
     def get_search_criteria(self) -> SearchCriteria:
         """Build SearchCriteria from settings."""
