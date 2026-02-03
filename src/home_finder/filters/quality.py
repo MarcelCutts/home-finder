@@ -22,11 +22,10 @@ from anthropic.types import (
     URLImageSourceParam,
 )
 from curl_cffi.requests import AsyncSession
-from pydantic import BaseModel, ConfigDict, HttpUrl
+from pydantic import BaseModel, ConfigDict
 
 from home_finder.logging import get_logger
-from home_finder.models import MergedProperty, Property, PropertyImage
-from home_finder.scrapers.detail_fetcher import DetailFetcher
+from home_finder.models import MergedProperty
 
 logger = get_logger(__name__)
 
@@ -472,7 +471,6 @@ class PropertyQualityFilter:
         self._api_key = api_key
         self._max_images = max_images
         self._client: anthropic.AsyncAnthropic | None = None
-        self._detail_fetcher = DetailFetcher(max_gallery_images=max_images)
 
     def _get_client(self) -> anthropic.AsyncAnthropic:
         """Get or create the Anthropic client with optimized settings."""
@@ -601,208 +599,58 @@ class PropertyQualityFilter:
                 source=URLImageSourceParam(type="url", url=url),
             )
 
-    async def analyze_properties(
-        self, properties: list[Property]
-    ) -> list[tuple[Property, PropertyQualityAnalysis]]:
-        """Analyze quality for a list of properties.
-
-        Unlike the FloorplanFilter, this does NOT filter out properties.
-        It enriches them with quality analysis for notification display.
-
-        Args:
-            properties: Properties to analyze.
-
-        Returns:
-            List of (property, analysis) tuples. Properties without images
-            will have a minimal analysis with low confidence.
-        """
-        results: list[tuple[Property, PropertyQualityAnalysis]] = []
-
-        for prop in properties:
-            # Calculate value assessment (doesn't need images)
-            value = assess_value(prop.price_pcm, prop.postcode, prop.bedrooms)
-
-            # Fetch detail page with gallery and floorplan URLs
-            detail_data = await self._detail_fetcher.fetch_detail_page(prop)
-
-            if not detail_data or (not detail_data.gallery_urls and not detail_data.floorplan_url):
-                logger.info("no_images_for_analysis", property_id=prop.unique_id)
-                # Create minimal analysis for properties without images
-                minimal = self._create_minimal_analysis(value=value)
-                results.append((prop, minimal))
-                continue
-
-            # Analyze with Claude vision + listing text
-            analysis = await self._analyze_property(
-                prop.unique_id,
-                gallery_urls=detail_data.gallery_urls or [],
-                floorplan_url=detail_data.floorplan_url,
-                bedrooms=prop.bedrooms,
-                price_pcm=prop.price_pcm,
-                area_average=value.area_average,
-                description=detail_data.description,
-                features=detail_data.features,
-            )
-
-            if analysis:
-                # Merge value assessment with LLM quality-adjusted rating
-                merged_value = ValueAnalysis(
-                    area_average=value.area_average,
-                    difference=value.difference,
-                    rating=value.rating,
-                    note=value.note,
-                    quality_adjusted_rating=analysis.value.quality_adjusted_rating
-                    if analysis.value
-                    else None,
-                    quality_adjusted_note=analysis.value.quality_adjusted_note
-                    if analysis.value
-                    else "",
-                )
-                # Add merged value assessment to the analysis
-                analysis = PropertyQualityAnalysis(
-                    kitchen=analysis.kitchen,
-                    condition=analysis.condition,
-                    light_space=analysis.light_space,
-                    space=analysis.space,
-                    condition_concerns=analysis.condition_concerns,
-                    concern_severity=analysis.concern_severity,
-                    value=merged_value,
-                    summary=analysis.summary,
-                )
-                results.append((prop, analysis))
-            else:
-                # Fallback to minimal analysis on failure
-                minimal = self._create_minimal_analysis(value=value)
-                results.append((prop, minimal))
-
-            # Rate limit: delay between API calls to respect Tier 1 limits (50 RPM)
-            await asyncio.sleep(DELAY_BETWEEN_CALLS)
-
-        return results
-
     async def analyze_merged_properties(
         self, properties: list[MergedProperty]
     ) -> list[tuple[MergedProperty, PropertyQualityAnalysis]]:
-        """Analyze quality for merged properties, collecting images from all sources.
+        """Analyze quality for pre-enriched merged properties.
 
-        This method fetches detail pages from all source URLs for each merged
-        property, combining images from all platforms. The collected images
-        are attached to the returned MergedProperty.
+        Properties should already have images and floorplan populated
+        by the detail enrichment step.
 
         Args:
-            properties: Merged properties to analyze.
+            properties: Enriched merged properties to analyze.
 
         Returns:
-            List of (merged_property, analysis) tuples. The merged property
-            will have its images and floorplan fields populated.
+            List of (merged_property, analysis) tuples.
         """
         results: list[tuple[MergedProperty, PropertyQualityAnalysis]] = []
 
         for merged in properties:
             prop = merged.canonical
-            # Calculate value assessment using canonical property
             value = assess_value(prop.price_pcm, prop.postcode, prop.bedrooms)
 
-            # Collect images from all sources
-            all_images: list[PropertyImage] = []
-            all_gallery_urls: list[str] = []
-            floorplan_image: PropertyImage | None = None
-            floorplan_url: str | None = None
-            best_description: str | None = None
-            best_features: list[str] | None = None
+            # Build URL lists from pre-enriched images
+            gallery_urls = [str(img.url) for img in merged.images if img.image_type == "gallery"]
+            floorplan_url = str(merged.floorplan.url) if merged.floorplan else None
 
-            # Fetch from each source URL
-            for source, url in merged.source_urls.items():
-                # Create temporary property with this source's URL
-                temp_prop = Property(
-                    source=source,
-                    source_id=prop.source_id,
-                    url=url,
-                    title=prop.title,
-                    price_pcm=prop.price_pcm,
-                    bedrooms=prop.bedrooms,
-                    address=prop.address,
-                    postcode=prop.postcode,
-                    latitude=prop.latitude,
-                    longitude=prop.longitude,
-                )
-
-                detail_data = await self._detail_fetcher.fetch_detail_page(temp_prop)
-
-                if detail_data:
-                    # Collect gallery images
-                    if detail_data.gallery_urls:
-                        for img_url in detail_data.gallery_urls:
-                            all_images.append(
-                                PropertyImage(
-                                    url=HttpUrl(img_url),
-                                    source=source,
-                                    image_type="gallery",
-                                )
-                            )
-                            all_gallery_urls.append(img_url)
-
-                    # Keep first floorplan found (skip PDFs - not supported by Vision API)
-                    if (
-                        detail_data.floorplan_url
-                        and not floorplan_image
-                        and self._is_valid_image_url(detail_data.floorplan_url)
-                    ):
-                        floorplan_image = PropertyImage(
-                            url=HttpUrl(detail_data.floorplan_url),
-                            source=source,
-                            image_type="floorplan",
-                        )
-                        floorplan_url = detail_data.floorplan_url
-
-                    # Keep longest description
-                    if detail_data.description and (
-                        not best_description or len(detail_data.description) > len(best_description)
-                    ):
-                        best_description = detail_data.description
-
-                    # Keep most features
-                    if detail_data.features and (
-                        not best_features or len(detail_data.features) > len(best_features)
-                    ):
-                        best_features = detail_data.features
-
-            # Update merged property with collected images
-            updated_merged = MergedProperty(
-                canonical=merged.canonical,
-                sources=merged.sources,
-                source_urls=merged.source_urls,
-                images=tuple(all_images),
-                floorplan=floorplan_image,
-                min_price=merged.min_price,
-                max_price=merged.max_price,
-                descriptions=merged.descriptions,
-            )
-
-            if not all_gallery_urls and not floorplan_url:
+            if not gallery_urls and not floorplan_url:
                 logger.info(
                     "no_images_for_analysis",
                     property_id=merged.unique_id,
                     sources=[s.value for s in merged.sources],
                 )
                 minimal = self._create_minimal_analysis(value=value)
-                results.append((updated_merged, minimal))
+                results.append((merged, minimal))
                 continue
 
-            # Analyze with Claude vision (use combined images)
+            # Use best description from descriptions dict
+            best_description: str | None = None
+            for desc in merged.descriptions.values():
+                if desc and (not best_description or len(desc) > len(best_description)):
+                    best_description = desc
+
             analysis = await self._analyze_property(
                 merged.unique_id,
-                gallery_urls=all_gallery_urls[: self._max_images],
+                gallery_urls=gallery_urls[: self._max_images],
                 floorplan_url=floorplan_url,
                 bedrooms=prop.bedrooms,
                 price_pcm=prop.price_pcm,
                 area_average=value.area_average,
                 description=best_description,
-                features=best_features,
+                features=None,
             )
 
             if analysis:
-                # Merge value assessment
                 merged_value = ValueAnalysis(
                     area_average=value.area_average,
                     difference=value.difference,
@@ -825,12 +673,11 @@ class PropertyQualityFilter:
                     value=merged_value,
                     summary=analysis.summary,
                 )
-                results.append((updated_merged, analysis))
+                results.append((merged, analysis))
             else:
                 minimal = self._create_minimal_analysis(value=value)
-                results.append((updated_merged, minimal))
+                results.append((merged, minimal))
 
-            # Rate limit
             await asyncio.sleep(DELAY_BETWEEN_CALLS)
 
         return results
@@ -1111,4 +958,3 @@ class PropertyQualityFilter:
         if self._client is not None:
             await self._client.close()
             self._client = None
-        await self._detail_fetcher.close()

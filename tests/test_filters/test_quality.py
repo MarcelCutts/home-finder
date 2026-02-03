@@ -1,7 +1,7 @@
 """Tests for property quality analysis filter."""
 
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from anthropic.types import ToolUseBlock
@@ -18,8 +18,7 @@ from home_finder.filters.quality import (
     ValueAnalysis,
     assess_value,
 )
-from home_finder.models import Property, PropertySource
-from home_finder.scrapers.detail_fetcher import DetailFetcher, DetailPageData
+from home_finder.models import MergedProperty, Property, PropertyImage, PropertySource
 
 
 class TestKitchenAnalysis:
@@ -337,15 +336,60 @@ def one_bed_property() -> Property:
 
 
 @pytest.fixture
-def sample_detail_data() -> DetailPageData:
-    """Sample detail page data with gallery and floorplan."""
-    return DetailPageData(
-        floorplan_url="https://example.com/floor.jpg",
-        gallery_urls=[
-            "https://example.com/img1.jpg",
-            "https://example.com/img2.jpg",
-            "https://example.com/img3.jpg",
-        ],
+def sample_merged_property(sample_property: Property) -> MergedProperty:
+    """Pre-enriched merged property with images and floorplan."""
+    return MergedProperty(
+        canonical=sample_property,
+        sources=(sample_property.source,),
+        source_urls={sample_property.source: sample_property.url},
+        images=(
+            PropertyImage(
+                url=HttpUrl("https://example.com/img1.jpg"),
+                source=sample_property.source,
+                image_type="gallery",
+            ),
+            PropertyImage(
+                url=HttpUrl("https://example.com/img2.jpg"),
+                source=sample_property.source,
+                image_type="gallery",
+            ),
+            PropertyImage(
+                url=HttpUrl("https://example.com/img3.jpg"),
+                source=sample_property.source,
+                image_type="gallery",
+            ),
+        ),
+        floorplan=PropertyImage(
+            url=HttpUrl("https://example.com/floor.jpg"),
+            source=sample_property.source,
+            image_type="floorplan",
+        ),
+        min_price=sample_property.price_pcm,
+        max_price=sample_property.price_pcm,
+    )
+
+
+@pytest.fixture
+def one_bed_merged_property(one_bed_property: Property) -> MergedProperty:
+    """Pre-enriched 1-bed merged property."""
+    return MergedProperty(
+        canonical=one_bed_property,
+        sources=(one_bed_property.source,),
+        source_urls={one_bed_property.source: one_bed_property.url},
+        images=(
+            PropertyImage(
+                url=HttpUrl("https://example.com/img1.jpg"),
+                source=one_bed_property.source,
+                image_type="gallery",
+            ),
+        ),
+        floorplan=PropertyImage(
+            url=HttpUrl("https://example.com/floor.jpg"),
+            source=one_bed_property.source,
+            image_type="floorplan",
+        ),
+        min_price=one_bed_property.price_pcm,
+        max_price=one_bed_property.price_pcm,
     )
 
 
@@ -477,9 +521,19 @@ class TestPropertyQualityFilter:
 
     async def test_creates_minimal_analysis_when_no_images(self, sample_property: Property) -> None:
         """Should create minimal analysis when no images available."""
-        with patch.object(DetailFetcher, "fetch_detail_page", return_value=None):
-            quality_filter = PropertyQualityFilter(api_key="test-key")
-            results = await quality_filter.analyze_properties([sample_property])
+        # Merged property with no images and no floorplan
+        merged = MergedProperty(
+            canonical=sample_property,
+            sources=(sample_property.source,),
+            source_urls={sample_property.source: sample_property.url},
+            images=(),
+            floorplan=None,
+            min_price=sample_property.price_pcm,
+            max_price=sample_property.price_pcm,
+        )
+
+        quality_filter = PropertyQualityFilter(api_key="test-key")
+        results = await quality_filter.analyze_merged_properties([merged])
 
         assert len(results) == 1
         _, analysis = results[0]
@@ -488,19 +542,17 @@ class TestPropertyQualityFilter:
 
     async def test_analyzes_property_with_images(
         self,
-        sample_property: Property,
-        sample_detail_data: DetailPageData,
+        sample_merged_property: MergedProperty,
         sample_tool_response: dict[str, Any],
     ) -> None:
         """Should analyze property with gallery images using structured outputs."""
         mock_response = create_mock_response(sample_tool_response)
 
-        with patch.object(DetailFetcher, "fetch_detail_page", return_value=sample_detail_data):
-            quality_filter = PropertyQualityFilter(api_key="test-key")
-            quality_filter._client = MagicMock()
-            quality_filter._client.messages.create = AsyncMock(return_value=mock_response)
+        quality_filter = PropertyQualityFilter(api_key="test-key")
+        quality_filter._client = MagicMock()
+        quality_filter._client.messages.create = AsyncMock(return_value=mock_response)
 
-            results = await quality_filter.analyze_properties([sample_property])
+        results = await quality_filter.analyze_merged_properties([sample_merged_property])
 
         assert len(results) == 1
         _, analysis = results[0]
@@ -512,8 +564,7 @@ class TestPropertyQualityFilter:
 
     async def test_overrides_space_for_two_plus_beds(
         self,
-        sample_property: Property,
-        sample_detail_data: DetailPageData,
+        sample_merged_property: MergedProperty,
     ) -> None:
         """Should override space assessment for 2+ bedroom properties."""
         # Response says not spacious enough, but 2-bed should override
@@ -536,12 +587,11 @@ class TestPropertyQualityFilter:
         }
         mock_response = create_mock_response(tool_response)
 
-        with patch.object(DetailFetcher, "fetch_detail_page", return_value=sample_detail_data):
-            quality_filter = PropertyQualityFilter(api_key="test-key")
-            quality_filter._client = MagicMock()
-            quality_filter._client.messages.create = AsyncMock(return_value=mock_response)
+        quality_filter = PropertyQualityFilter(api_key="test-key")
+        quality_filter._client = MagicMock()
+        quality_filter._client.messages.create = AsyncMock(return_value=mock_response)
 
-            results = await quality_filter.analyze_properties([sample_property])
+        results = await quality_filter.analyze_merged_properties([sample_merged_property])
 
         _, analysis = results[0]
         # Should be overridden because property has 2 bedrooms
@@ -550,8 +600,7 @@ class TestPropertyQualityFilter:
 
     async def test_does_not_override_space_for_one_bed(
         self,
-        one_bed_property: Property,
-        sample_detail_data: DetailPageData,
+        one_bed_merged_property: MergedProperty,
     ) -> None:
         """Should NOT override space assessment for 1-bed properties."""
         tool_response = {
@@ -573,12 +622,11 @@ class TestPropertyQualityFilter:
         }
         mock_response = create_mock_response(tool_response)
 
-        with patch.object(DetailFetcher, "fetch_detail_page", return_value=sample_detail_data):
-            quality_filter = PropertyQualityFilter(api_key="test-key")
-            quality_filter._client = MagicMock()
-            quality_filter._client.messages.create = AsyncMock(return_value=mock_response)
+        quality_filter = PropertyQualityFilter(api_key="test-key")
+        quality_filter._client = MagicMock()
+        quality_filter._client.messages.create = AsyncMock(return_value=mock_response)
 
-            results = await quality_filter.analyze_properties([one_bed_property])
+        results = await quality_filter.analyze_merged_properties([one_bed_merged_property])
 
         _, analysis = results[0]
         # Should keep original assessment
@@ -586,16 +634,14 @@ class TestPropertyQualityFilter:
 
     async def test_handles_llm_failure_gracefully(
         self,
-        sample_property: Property,
-        sample_detail_data: DetailPageData,
+        sample_merged_property: MergedProperty,
     ) -> None:
         """Should return minimal analysis on LLM failure."""
-        with patch.object(DetailFetcher, "fetch_detail_page", return_value=sample_detail_data):
-            quality_filter = PropertyQualityFilter(api_key="test-key")
-            quality_filter._client = MagicMock()
-            quality_filter._client.messages.create = AsyncMock(side_effect=Exception("API error"))
+        quality_filter = PropertyQualityFilter(api_key="test-key")
+        quality_filter._client = MagicMock()
+        quality_filter._client.messages.create = AsyncMock(side_effect=Exception("API error"))
 
-            results = await quality_filter.analyze_properties([sample_property])
+        results = await quality_filter.analyze_merged_properties([sample_merged_property])
 
         assert len(results) == 1
         _, analysis = results[0]
@@ -603,20 +649,18 @@ class TestPropertyQualityFilter:
 
     async def test_handles_unexpected_stop_reason(
         self,
-        sample_property: Property,
-        sample_detail_data: DetailPageData,
+        sample_merged_property: MergedProperty,
     ) -> None:
         """Should return minimal analysis on unexpected stop reason (e.g., max_tokens)."""
         mock_response = MagicMock()
         mock_response.content = []
         mock_response.stop_reason = "max_tokens"  # Unexpected stop reason
 
-        with patch.object(DetailFetcher, "fetch_detail_page", return_value=sample_detail_data):
-            quality_filter = PropertyQualityFilter(api_key="test-key")
-            quality_filter._client = MagicMock()
-            quality_filter._client.messages.create = AsyncMock(return_value=mock_response)
+        quality_filter = PropertyQualityFilter(api_key="test-key")
+        quality_filter._client = MagicMock()
+        quality_filter._client.messages.create = AsyncMock(return_value=mock_response)
 
-            results = await quality_filter.analyze_properties([sample_property])
+        results = await quality_filter.analyze_merged_properties([sample_merged_property])
 
         assert len(results) == 1
         _, analysis = results[0]
@@ -624,19 +668,17 @@ class TestPropertyQualityFilter:
 
     async def test_includes_all_images_in_api_call(
         self,
-        sample_property: Property,
-        sample_detail_data: DetailPageData,
+        sample_merged_property: MergedProperty,
         sample_tool_response: dict[str, Any],
     ) -> None:
         """Should include gallery images and floorplan in API call."""
         mock_response = create_mock_response(sample_tool_response)
 
-        with patch.object(DetailFetcher, "fetch_detail_page", return_value=sample_detail_data):
-            quality_filter = PropertyQualityFilter(api_key="test-key", max_images=10)
-            quality_filter._client = MagicMock()
-            quality_filter._client.messages.create = AsyncMock(return_value=mock_response)
+        quality_filter = PropertyQualityFilter(api_key="test-key", max_images=10)
+        quality_filter._client = MagicMock()
+        quality_filter._client.messages.create = AsyncMock(return_value=mock_response)
 
-            await quality_filter.analyze_properties([sample_property])
+        await quality_filter.analyze_merged_properties([sample_merged_property])
 
         # Check the API call
         call_args = quality_filter._client.messages.create.call_args
@@ -654,19 +696,34 @@ class TestPropertyQualityFilter:
         sample_tool_response: dict[str, Any],
     ) -> None:
         """Should respect max_images configuration."""
-        # Create detail data with many images
-        many_images = DetailPageData(
-            floorplan_url="https://example.com/floor.jpg",
-            gallery_urls=[f"https://example.com/img{i}.jpg" for i in range(20)],
+        # Create merged property with 20 gallery images
+        many_images_merged = MergedProperty(
+            canonical=sample_property,
+            sources=(sample_property.source,),
+            source_urls={sample_property.source: sample_property.url},
+            images=tuple(
+                PropertyImage(
+                    url=HttpUrl(f"https://example.com/img{i}.jpg"),
+                    source=sample_property.source,
+                    image_type="gallery",
+                )
+                for i in range(20)
+            ),
+            floorplan=PropertyImage(
+                url=HttpUrl("https://example.com/floor.jpg"),
+                source=sample_property.source,
+                image_type="floorplan",
+            ),
+            min_price=sample_property.price_pcm,
+            max_price=sample_property.price_pcm,
         )
         mock_response = create_mock_response(sample_tool_response)
 
-        with patch.object(DetailFetcher, "fetch_detail_page", return_value=many_images):
-            quality_filter = PropertyQualityFilter(api_key="test-key", max_images=5)
-            quality_filter._client = MagicMock()
-            quality_filter._client.messages.create = AsyncMock(return_value=mock_response)
+        quality_filter = PropertyQualityFilter(api_key="test-key", max_images=5)
+        quality_filter._client = MagicMock()
+        quality_filter._client.messages.create = AsyncMock(return_value=mock_response)
 
-            await quality_filter.analyze_properties([sample_property])
+        await quality_filter.analyze_merged_properties([many_images_merged])
 
         call_args = quality_filter._client.messages.create.call_args
         content = call_args.kwargs["messages"][0]["content"]
@@ -677,19 +734,17 @@ class TestPropertyQualityFilter:
 
     async def test_uses_tool_choice_for_structured_output(
         self,
-        sample_property: Property,
-        sample_detail_data: DetailPageData,
+        sample_merged_property: MergedProperty,
         sample_tool_response: dict[str, Any],
     ) -> None:
         """Should use tool_choice to force structured output."""
         mock_response = create_mock_response(sample_tool_response)
 
-        with patch.object(DetailFetcher, "fetch_detail_page", return_value=sample_detail_data):
-            quality_filter = PropertyQualityFilter(api_key="test-key")
-            quality_filter._client = MagicMock()
-            quality_filter._client.messages.create = AsyncMock(return_value=mock_response)
+        quality_filter = PropertyQualityFilter(api_key="test-key")
+        quality_filter._client = MagicMock()
+        quality_filter._client.messages.create = AsyncMock(return_value=mock_response)
 
-            await quality_filter.analyze_properties([sample_property])
+        await quality_filter.analyze_merged_properties([sample_merged_property])
 
         call_args = quality_filter._client.messages.create.call_args
 
@@ -707,19 +762,17 @@ class TestPropertyQualityFilter:
 
     async def test_uses_cached_system_prompt(
         self,
-        sample_property: Property,
-        sample_detail_data: DetailPageData,
+        sample_merged_property: MergedProperty,
         sample_tool_response: dict[str, Any],
     ) -> None:
         """Should use system prompt with cache_control for cost savings."""
         mock_response = create_mock_response(sample_tool_response)
 
-        with patch.object(DetailFetcher, "fetch_detail_page", return_value=sample_detail_data):
-            quality_filter = PropertyQualityFilter(api_key="test-key")
-            quality_filter._client = MagicMock()
-            quality_filter._client.messages.create = AsyncMock(return_value=mock_response)
+        quality_filter = PropertyQualityFilter(api_key="test-key")
+        quality_filter._client = MagicMock()
+        quality_filter._client.messages.create = AsyncMock(return_value=mock_response)
 
-            await quality_filter.analyze_properties([sample_property])
+        await quality_filter.analyze_merged_properties([sample_merged_property])
 
         call_args = quality_filter._client.messages.create.call_args
 
@@ -732,19 +785,17 @@ class TestPropertyQualityFilter:
 
     async def test_extracts_value_for_quality_from_tool_response(
         self,
-        sample_property: Property,
-        sample_detail_data: DetailPageData,
+        sample_merged_property: MergedProperty,
         sample_tool_response: dict[str, Any],
     ) -> None:
         """Should extract quality-adjusted value rating from tool response."""
         mock_response = create_mock_response(sample_tool_response)
 
-        with patch.object(DetailFetcher, "fetch_detail_page", return_value=sample_detail_data):
-            quality_filter = PropertyQualityFilter(api_key="test-key")
-            quality_filter._client = MagicMock()
-            quality_filter._client.messages.create = AsyncMock(return_value=mock_response)
+        quality_filter = PropertyQualityFilter(api_key="test-key")
+        quality_filter._client = MagicMock()
+        quality_filter._client.messages.create = AsyncMock(return_value=mock_response)
 
-            results = await quality_filter.analyze_properties([sample_property])
+        results = await quality_filter.analyze_merged_properties([sample_merged_property])
 
         _, analysis = results[0]
         # value.quality_adjusted_rating comes from the tool response
@@ -754,46 +805,60 @@ class TestPropertyQualityFilter:
 
     async def test_handles_end_turn_with_tool_use(
         self,
-        sample_property: Property,
-        sample_detail_data: DetailPageData,
+        sample_merged_property: MergedProperty,
         sample_tool_response: dict[str, Any],
     ) -> None:
         """Should handle end_turn stop_reason when tool_use block is present."""
         # Some responses come with end_turn but still have tool_use
         mock_response = create_mock_response(sample_tool_response, stop_reason="end_turn")
 
-        with patch.object(DetailFetcher, "fetch_detail_page", return_value=sample_detail_data):
-            quality_filter = PropertyQualityFilter(api_key="test-key")
-            quality_filter._client = MagicMock()
-            quality_filter._client.messages.create = AsyncMock(return_value=mock_response)
+        quality_filter = PropertyQualityFilter(api_key="test-key")
+        quality_filter._client = MagicMock()
+        quality_filter._client.messages.create = AsyncMock(return_value=mock_response)
 
-            results = await quality_filter.analyze_properties([sample_property])
+        results = await quality_filter.analyze_merged_properties([sample_merged_property])
 
         assert len(results) == 1
         _, analysis = results[0]
         assert analysis.kitchen.overall_quality == "modern"
         assert analysis.kitchen.hob_type == "gas"
 
-    async def test_includes_description_and_features_in_prompt(
+    async def test_includes_description_in_prompt(
         self,
         sample_property: Property,
         sample_tool_response: dict[str, Any],
     ) -> None:
-        """Should include listing description and features in the user prompt."""
-        detail_data = DetailPageData(
-            floorplan_url="https://example.com/floor.jpg",
-            gallery_urls=["https://example.com/img1.jpg"],
-            description="Spacious flat with modern kitchen and gas hob.",
-            features=["Gas central heating", "Double glazing", "Garden access"],
+        """Should include listing description in the user prompt."""
+        # Create merged property with description populated
+        merged = MergedProperty(
+            canonical=sample_property,
+            sources=(sample_property.source,),
+            source_urls={sample_property.source: sample_property.url},
+            images=(
+                PropertyImage(
+                    url=HttpUrl("https://example.com/img1.jpg"),
+                    source=sample_property.source,
+                    image_type="gallery",
+                ),
+            ),
+            floorplan=PropertyImage(
+                url=HttpUrl("https://example.com/floor.jpg"),
+                source=sample_property.source,
+                image_type="floorplan",
+            ),
+            min_price=sample_property.price_pcm,
+            max_price=sample_property.price_pcm,
+            descriptions={
+                PropertySource.RIGHTMOVE: "Spacious flat with modern kitchen and gas hob."
+            },
         )
         mock_response = create_mock_response(sample_tool_response)
 
-        with patch.object(DetailFetcher, "fetch_detail_page", return_value=detail_data):
-            quality_filter = PropertyQualityFilter(api_key="test-key")
-            quality_filter._client = MagicMock()
-            quality_filter._client.messages.create = AsyncMock(return_value=mock_response)
+        quality_filter = PropertyQualityFilter(api_key="test-key")
+        quality_filter._client = MagicMock()
+        quality_filter._client.messages.create = AsyncMock(return_value=mock_response)
 
-            await quality_filter.analyze_properties([sample_property])
+        await quality_filter.analyze_merged_properties([merged])
 
         call_args = quality_filter._client.messages.create.call_args
         content = call_args.kwargs["messages"][0]["content"]
@@ -803,29 +868,24 @@ class TestPropertyQualityFilter:
         assert len(text_blocks) == 1
         prompt_text = text_blocks[0]["text"]
 
-        # Verify description and features are included (markdown format)
+        # Verify description is included (markdown format)
         assert "**Listing Description:**" in prompt_text
         assert "gas hob" in prompt_text
-        assert "**Listed Features:**" in prompt_text
-        assert "Gas central heating" in prompt_text
-        assert "Double glazing" in prompt_text
 
     async def test_handles_nullable_fields_in_response(
         self,
-        one_bed_property: Property,
-        sample_detail_data: DetailPageData,
+        one_bed_merged_property: MergedProperty,
         sample_tool_response_with_nulls: dict[str, Any],
     ) -> None:
         """Should handle null values for optional fields in tool response."""
         mock_response = create_mock_response(sample_tool_response_with_nulls)
 
         # Use 1-bed property to avoid space override for 2+ beds
-        with patch.object(DetailFetcher, "fetch_detail_page", return_value=sample_detail_data):
-            quality_filter = PropertyQualityFilter(api_key="test-key")
-            quality_filter._client = MagicMock()
-            quality_filter._client.messages.create = AsyncMock(return_value=mock_response)
+        quality_filter = PropertyQualityFilter(api_key="test-key")
+        quality_filter._client = MagicMock()
+        quality_filter._client.messages.create = AsyncMock(return_value=mock_response)
 
-            results = await quality_filter.analyze_properties([one_bed_property])
+        results = await quality_filter.analyze_merged_properties([one_bed_merged_property])
 
         assert len(results) == 1
         _, analysis = results[0]
