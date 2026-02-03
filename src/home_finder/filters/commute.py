@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, ClassVar
 from pydantic import BaseModel, ConfigDict
 
 from home_finder.logging import get_logger
-from home_finder.models import Property, TransportMode
+from home_finder.models import MergedProperty, Property, TransportMode
 
 if TYPE_CHECKING:
     from traveltimepy import AsyncClient
@@ -198,6 +198,74 @@ class CommuteFilter:
         )
 
         return results
+
+    async def geocode_properties(
+        self, properties: list[MergedProperty]
+    ) -> list[MergedProperty]:
+        """Geocode merged properties that have a postcode but no coordinates.
+
+        Properties that already have coordinates are returned unchanged.
+        Uses the class-level geocoding cache to avoid redundant API calls.
+
+        Args:
+            properties: Merged properties, some possibly missing coordinates.
+
+        Returns:
+            Updated list with coordinates filled in where possible.
+        """
+        from traveltimepy import AsyncClient
+
+        needs_geocoding = [
+            m
+            for m in properties
+            if not (m.canonical.latitude and m.canonical.longitude) and m.canonical.postcode
+        ]
+
+        if not needs_geocoding:
+            return properties
+
+        logger.info("geocoding_properties", count=len(needs_geocoding))
+
+        geocoded_count = 0
+        try:
+            async with AsyncClient(
+                app_id=self.app_id,
+                api_key=self.api_key,
+                max_rpm=50,
+                retry_attempts=3,
+                timeout=60,
+            ) as client:
+                # Build a lookup of postcode -> coords (batch unique postcodes)
+                postcodes = {m.canonical.postcode for m in needs_geocoding if m.canonical.postcode}
+                coords_lookup: dict[str, tuple[float, float]] = {}
+                for postcode in postcodes:
+                    coords = await self._geocode_with_client(client, postcode)
+                    if coords:
+                        coords_lookup[postcode] = coords
+        except Exception as e:
+            logger.warning("geocoding_batch_failed", error=str(e))
+            return properties
+
+        # Build updated list, replacing properties that got coordinates
+        result: list[MergedProperty] = []
+        for merged in properties:
+            canon = merged.canonical
+            if not (canon.latitude and canon.longitude) and canon.postcode:
+                coords = coords_lookup.get(canon.postcode)
+                if coords:
+                    updated_canon = canon.model_copy(
+                        update={"latitude": coords[0], "longitude": coords[1]}
+                    )
+                    merged = merged.model_copy(update={"canonical": updated_canon})
+                    geocoded_count += 1
+            result.append(merged)
+
+        logger.info(
+            "geocoding_complete",
+            geocoded=geocoded_count,
+            failed=len(needs_geocoding) - geocoded_count,
+        )
+        return result
 
     async def _geocode_with_client(
         self, client: AsyncClient, postcode: str

@@ -2,6 +2,7 @@
 
 import asyncio
 import html
+import urllib.parse
 from typing import TYPE_CHECKING
 
 from home_finder.filters.quality import PropertyQualityAnalysis
@@ -93,9 +94,9 @@ def _format_value_info(analysis: PropertyQualityAnalysis) -> str | None:
 
     # Emoji based on rating
     emoji_map = {
-        "excellent": "💰",
-        "good": "✓",
-        "fair": "~",
+        "excellent": "💎",
+        "good": "💎",
+        "fair": "📊",
         "poor": "⚠️",
     }
 
@@ -145,74 +146,56 @@ def format_property_message(
     address = html.escape(prop.address)
     postcode = html.escape(prop.postcode or "")
 
-    # Build the message
-    lines = [
-        f"<b>{title}</b>",
-        "",
-        f"<b>Price:</b> £{prop.price_pcm:,}/month",
-        f"<b>Bedrooms:</b> {prop.bedrooms}",
-        f"<b>Address:</b> {address}",
-    ]
+    lines = [f"🏠 <b>{title}</b>", ""]
 
-    if postcode:
-        lines.append(f"<b>Postcode:</b> {postcode}")
+    # Star rating
+    if quality_analysis and quality_analysis.overall_rating is not None:
+        lines.append(_format_star_rating(quality_analysis.overall_rating))
 
-    # Add commute info if available
+    # Price + beds
+    lines.append(f"💰 £{prop.price_pcm:,}/mo · 🛏 {prop.bedrooms} bed")
+
+    # Address
+    location = f"{address}, {postcode}" if postcode else address
+    lines.append(f"📍 {location}")
+
+    # Commute
     if commute_minutes is not None:
-        mode_str = ""
+        mode_emoji = ""
         if transport_mode:
             mode_map = {
-                TransportMode.CYCLING: "by bike",
-                TransportMode.PUBLIC_TRANSPORT: "by transit",
-                TransportMode.DRIVING: "by car",
-                TransportMode.WALKING: "walking",
+                TransportMode.CYCLING: "🚴",
+                TransportMode.PUBLIC_TRANSPORT: "🚇",
+                TransportMode.DRIVING: "🚗",
+                TransportMode.WALKING: "🚶",
             }
-            mode_str = f" {mode_map.get(transport_mode, '')}"
-        lines.append(f"<b>Commute:</b> {commute_minutes} min{mode_str}")
+            mode_emoji = f"{mode_map.get(transport_mode, '')} "
+        lines.append(f"{mode_emoji}{commute_minutes} min")
 
-    # Add quality analysis if available
+    # Quality analysis
     if quality_analysis:
-        lines.append("")
-
-        # Star rating
-        if quality_analysis.overall_rating is not None:
-            lines.append(f"<b>Rating:</b> {_format_star_rating(quality_analysis.overall_rating)}")
-
-        # Condition concerns banner (if any)
+        # Condition concerns
         if quality_analysis.condition_concerns:
-            severity = quality_analysis.concern_severity or "unknown"
-            lines.append(f"⚠️ <b>CONDITION CONCERNS</b> ({severity})")
-            for concern in quality_analysis.condition.maintenance_concerns:
-                lines.append(f"  • {html.escape(concern)}")
-            lines.append("")
+            concerns_text = ", ".join(
+                html.escape(c) for c in quality_analysis.condition.maintenance_concerns
+            )
+            lines.append(f"⚠️ <b>Concerns:</b> {concerns_text}")
 
-        # Claude's summary
-        lines.append(f"<b>Summary:</b> {html.escape(quality_analysis.summary)}")
+        lines.append("")
+        lines.append(f"<blockquote>{html.escape(quality_analysis.summary)}</blockquote>")
 
-        # Kitchen info
-        lines.append(f"<b>Kitchen:</b> {_format_kitchen_info(quality_analysis)}")
+        lines.append(f"🍳 {_format_kitchen_info(quality_analysis)}")
+        lines.append(f"💡 {_format_light_space_info(quality_analysis)}")
+        lines.append(f"📐 {_format_space_info(quality_analysis)}")
+        lines.append(f"🔧 {quality_analysis.condition.overall_condition}")
 
-        # Light & space
-        lines.append(f"<b>Light/Space:</b> {_format_light_space_info(quality_analysis)}")
-
-        # Living room size
-        lines.append(f"<b>Living room:</b> {_format_space_info(quality_analysis)}")
-
-        # Overall condition
-        lines.append(f"<b>Condition:</b> {quality_analysis.condition.overall_condition}")
-
-        # Value assessment
         value_info = _format_value_info(quality_analysis)
         if value_info:
-            lines.append(f"<b>Value:</b> {value_info}")
+            lines.append(value_info)
 
-    # Add source
+    # Source
     source_name = SOURCE_NAMES.get(prop.source.value, prop.source.value)
-    lines.append(f"<b>Source:</b> {source_name}")
-
-    # Add link
-    lines.append("")
-    lines.append(f'<a href="{prop.url}">View Property</a>')
+    lines.append(f"\n🔗 {source_name}")
 
     return "\n".join(lines)
 
@@ -242,85 +225,67 @@ def format_merged_property_message(
     address = html.escape(prop.address)
     postcode = html.escape(prop.postcode or "")
 
-    # Build the message
-    lines = [
-        f"<b>{title}</b>",
-        "",
-    ]
+    lines = [f"🏠 <b>{title}</b>", ""]
 
-    # Show price range if varies across platforms
+    # Star rating
+    if quality_analysis and quality_analysis.overall_rating is not None:
+        lines.append(_format_star_rating(quality_analysis.overall_rating))
+
+    # Price + beds
     if merged.price_varies:
-        lines.append(f"<b>Price:</b> £{merged.min_price:,}-£{merged.max_price:,}/month")
+        lines.append(f"💰 £{merged.min_price:,}-£{merged.max_price:,}/mo · 🛏 {prop.bedrooms} bed")
     else:
-        lines.append(f"<b>Price:</b> £{prop.price_pcm:,}/month")
+        lines.append(f"💰 £{prop.price_pcm:,}/mo · 🛏 {prop.bedrooms} bed")
 
-    lines.append(f"<b>Bedrooms:</b> {prop.bedrooms}")
-    lines.append(f"<b>Address:</b> {address}")
+    # Address
+    location = f"{address}, {postcode}" if postcode else address
+    lines.append(f"📍 {location}")
 
-    if postcode:
-        lines.append(f"<b>Postcode:</b> {postcode}")
-
-    # Add commute info if available
+    # Commute
     if commute_minutes is not None:
-        mode_str = ""
+        mode_emoji = ""
         if transport_mode:
             mode_map = {
-                TransportMode.CYCLING: "by bike",
-                TransportMode.PUBLIC_TRANSPORT: "by transit",
-                TransportMode.DRIVING: "by car",
-                TransportMode.WALKING: "walking",
+                TransportMode.CYCLING: "🚴",
+                TransportMode.PUBLIC_TRANSPORT: "🚇",
+                TransportMode.DRIVING: "🚗",
+                TransportMode.WALKING: "🚶",
             }
-            mode_str = f" {mode_map.get(transport_mode, '')}"
-        lines.append(f"<b>Commute:</b> {commute_minutes} min{mode_str}")
+            mode_emoji = f"{mode_map.get(transport_mode, '')} "
+        lines.append(f"{mode_emoji}{commute_minutes} min")
 
-    # Add quality analysis if available
+    # Quality analysis
     if quality_analysis:
-        lines.append("")
-
-        # Star rating
-        if quality_analysis.overall_rating is not None:
-            lines.append(f"<b>Rating:</b> {_format_star_rating(quality_analysis.overall_rating)}")
-
-        # Condition concerns banner
+        # Condition concerns
         if quality_analysis.condition_concerns:
-            severity = quality_analysis.concern_severity or "unknown"
-            lines.append(f"⚠️ <b>CONDITION CONCERNS</b> ({severity})")
-            for concern in quality_analysis.condition.maintenance_concerns:
-                lines.append(f"  • {html.escape(concern)}")
-            lines.append("")
+            concerns_text = ", ".join(
+                html.escape(c) for c in quality_analysis.condition.maintenance_concerns
+            )
+            lines.append(f"⚠️ <b>Concerns:</b> {concerns_text}")
 
-        # Claude's summary
-        lines.append(f"<b>Summary:</b> {html.escape(quality_analysis.summary)}")
+        lines.append("")
+        lines.append(f"<blockquote>{html.escape(quality_analysis.summary)}</blockquote>")
 
-        # Kitchen info
-        lines.append(f"<b>Kitchen:</b> {_format_kitchen_info(quality_analysis)}")
+        lines.append(f"🍳 {_format_kitchen_info(quality_analysis)}")
+        lines.append(f"💡 {_format_light_space_info(quality_analysis)}")
+        lines.append(f"📐 {_format_space_info(quality_analysis)}")
+        lines.append(f"🔧 {quality_analysis.condition.overall_condition}")
 
-        # Light & space
-        lines.append(f"<b>Light/Space:</b> {_format_light_space_info(quality_analysis)}")
-
-        # Living room size
-        lines.append(f"<b>Living room:</b> {_format_space_info(quality_analysis)}")
-
-        # Overall condition
-        lines.append(f"<b>Condition:</b> {quality_analysis.condition.overall_condition}")
-
-        # Value assessment
         value_info = _format_value_info(quality_analysis)
         if value_info:
-            lines.append(f"<b>Value:</b> {value_info}")
+            lines.append(value_info)
 
-    # Show image count and floorplan availability
+    # Image count and floorplan
     if merged.images or merged.floorplan:
         image_parts = []
         if merged.images:
             image_parts.append(f"{len(merged.images)} images")
         if merged.floorplan:
             image_parts.append("floorplan")
-        lines.append(f"<b>Photos:</b> {' + '.join(image_parts)}")
+        lines.append(f"\n📸 {' + '.join(image_parts)}")
 
     # Source information
     if len(merged.sources) > 1:
-        # Multiple sources - show "Listed on: X, Y" with links
         source_links = []
         for source in merged.sources:
             name = SOURCE_NAMES.get(source.value, source.value)
@@ -329,13 +294,10 @@ def format_merged_property_message(
                 source_links.append(f'<a href="{url}">{name}</a>')
             else:
                 source_links.append(name)
-        lines.append(f"<b>Listed on:</b> {', '.join(source_links)}")
+        lines.append(f"🔗 Listed on: {', '.join(source_links)}")
     else:
-        # Single source
         source_name = SOURCE_NAMES.get(prop.source.value, prop.source.value)
-        lines.append(f"<b>Source:</b> {source_name}")
-        lines.append("")
-        lines.append(f'<a href="{prop.url}">View Property</a>')
+        lines.append(f"🔗 {source_name}")
 
     return "\n".join(lines)
 
@@ -355,24 +317,27 @@ def format_merged_property_caption(
     prop = merged.canonical
     title = html.escape(prop.title)
     address = html.escape(prop.address)
+    postcode = html.escape(prop.postcode or "")
 
-    lines = [f"<b>{title}</b>", ""]
+    lines = [f"🏠 <b>{title}</b>", ""]
 
     # Star rating
     if quality_analysis and quality_analysis.overall_rating is not None:
         lines.append(_format_star_rating(quality_analysis.overall_rating))
 
-    # Price
+    # Price + beds
     if merged.price_varies:
-        lines.append(f"💷 £{merged.min_price:,}-£{merged.max_price:,}/mo")
+        lines.append(f"💰 £{merged.min_price:,}-£{merged.max_price:,}/mo · 🛏 {prop.bedrooms} bed")
     else:
-        lines.append(f"💷 £{prop.price_pcm:,}/mo")
+        lines.append(f"💰 £{prop.price_pcm:,}/mo · 🛏 {prop.bedrooms} bed")
 
-    lines.append(f"🛏 {prop.bedrooms} bed | 📍 {address}")
+    # Address
+    location = f"{address}, {postcode}" if postcode else address
+    lines.append(f"📍 {location}")
 
     # Commute
     if commute_minutes is not None:
-        mode_str = ""
+        mode_emoji = ""
         if transport_mode:
             mode_map = {
                 TransportMode.CYCLING: "🚴",
@@ -380,17 +345,24 @@ def format_merged_property_caption(
                 TransportMode.DRIVING: "🚗",
                 TransportMode.WALKING: "🚶",
             }
-            mode_str = f"{mode_map.get(transport_mode, '')} "
-        lines.append(f"{mode_str}{commute_minutes} min commute")
+            mode_emoji = f"{mode_map.get(transport_mode, '')} "
+        lines.append(f"{mode_emoji}{commute_minutes} min")
 
     # Quality summary
     if quality_analysis:
+        # Condition concerns
+        if quality_analysis.condition_concerns:
+            concerns_text = ", ".join(
+                html.escape(c) for c in quality_analysis.condition.maintenance_concerns
+            )
+            lines.append(f"⚠️ <b>Concerns:</b> {concerns_text}")
+
         lines.append("")
-        lines.append(html.escape(quality_analysis.summary))
+        lines.append(f"<i>{html.escape(quality_analysis.summary)}</i>")
 
         value_info = _format_value_info(quality_analysis)
         if value_info:
-            lines.append(f"Value: {value_info}")
+            lines.append(value_info)
 
     caption = "\n".join(lines)
     # Telegram caption limit is 1024 chars
@@ -416,10 +388,14 @@ def _build_inline_keyboard(
         if url:
             buttons.append(InlineKeyboardButton(text=name, url=str(url)))
 
-    # Map button using coordinates
+    # Map button: prefer coordinates, fall back to address search
     prop = merged.canonical
     if prop.latitude is not None and prop.longitude is not None:
         map_url = f"https://www.google.com/maps?q={prop.latitude},{prop.longitude}"
+        buttons.append(InlineKeyboardButton(text="Map 📍", url=map_url))
+    elif prop.postcode or prop.address:
+        query = f"{prop.postcode}, London" if prop.postcode else prop.address
+        map_url = f"https://www.google.com/maps/search/?api=1&query={urllib.parse.quote(query)}"
         buttons.append(InlineKeyboardButton(text="Map 📍", url=map_url))
 
     # Arrange in rows of 2
@@ -513,6 +489,12 @@ class TelegramNotifier:
             ]
             if prop.latitude is not None and prop.longitude is not None:
                 map_url = f"https://www.google.com/maps?q={prop.latitude},{prop.longitude}"
+                buttons.append(InlineKeyboardButton(text="Map 📍", url=map_url))
+            elif prop.postcode or prop.address:
+                query = f"{prop.postcode}, London" if prop.postcode else prop.address
+                map_url = (
+                    f"https://www.google.com/maps/search/?api=1&query={urllib.parse.quote(query)}"
+                )
                 buttons.append(InlineKeyboardButton(text="Map 📍", url=map_url))
 
             keyboard = InlineKeyboardMarkup(inline_keyboard=[buttons])

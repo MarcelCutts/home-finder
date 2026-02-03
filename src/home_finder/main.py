@@ -95,9 +95,7 @@ async def scrape_all_platforms(
                     platform=scraper.source.value,
                     area=area,
                 )
-                remaining = (
-                    max_per_scraper - scraper_count if max_per_scraper is not None else None
-                )
+                remaining = max_per_scraper - scraper_count if max_per_scraper is not None else None
                 properties = await scraper.scrape(
                     min_price=min_price,
                     max_price=max_price,
@@ -239,6 +237,9 @@ async def run_pipeline(settings: Settings, *, max_per_scraper: int | None = None
                 api_key=settings.traveltime_api_key.get_secret_value(),
                 destination_postcode=criteria.destination_postcode,
             )
+
+            # Geocode properties that have postcode but no coordinates
+            new_merged = await commute_filter.geocode_properties(new_merged)
 
             # Filter merged properties with coordinates (use canonical property)
             merged_with_coords = [
@@ -407,9 +408,7 @@ async def run_pipeline(settings: Settings, *, max_per_scraper: int | None = None
         await storage.close()
 
 
-async def run_scrape_only(
-    settings: Settings, *, max_per_scraper: int | None = None
-) -> None:
+async def run_scrape_only(settings: Settings, *, max_per_scraper: int | None = None) -> None:
     """Run scraping only and print results (no filtering, storage, or notifications).
 
     Args:
@@ -531,6 +530,9 @@ async def run_dry_run(settings: Settings, *, max_per_scraper: int | None = None)
                 api_key=settings.traveltime_api_key.get_secret_value(),
                 destination_postcode=criteria.destination_postcode,
             )
+
+            # Geocode properties that have postcode but no coordinates
+            new_merged = await commute_filter.geocode_properties(new_merged)
 
             merged_with_coords = [
                 m for m in new_merged if m.canonical.latitude and m.canonical.longitude

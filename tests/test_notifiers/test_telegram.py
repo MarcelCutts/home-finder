@@ -137,7 +137,7 @@ class TestFormatPropertyMessage:
         assert "£1,900" in message
         assert "1 bed" in message.lower()
         assert "E8 3RH" in message
-        assert "openrent.com" in message
+        assert "OpenRent" in message
 
     def test_format_property_with_commute(self, sample_tracked_property: TrackedProperty) -> None:
         """Test formatting a property with commute info."""
@@ -148,14 +148,14 @@ class TestFormatPropertyMessage:
         )
 
         assert "18 min" in message
-        assert "cycling" in message.lower() or "bike" in message.lower()
+        assert "🚴" in message
 
-    def test_format_property_contains_link(self, sample_property: Property) -> None:
-        """Test that message contains clickable link."""
+    def test_format_property_contains_source(self, sample_property: Property) -> None:
+        """Test that message contains source name."""
         message = format_property_message(sample_property)
 
-        # Should contain the URL
-        assert "https://openrent.com/property/12345" in message
+        # Should contain the source name
+        assert "OpenRent" in message
 
     def test_format_property_html_safe(self, sample_property: Property) -> None:
         """Test that message is safe for HTML parsing."""
@@ -186,7 +186,6 @@ class TestFormatPropertyMessage:
         """Test that star rating appears in message when quality analysis has rating."""
         message = format_property_message(sample_property, quality_analysis=sample_quality_analysis)
         assert "⭐⭐⭐⭐☆" in message
-        assert "Rating:" in message
 
 
 class TestFormatMergedPropertyCaption:

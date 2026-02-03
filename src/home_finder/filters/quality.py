@@ -36,10 +36,10 @@ REQUEST_TIMEOUT = 180.0  # 3 minutes for vision requests
 RENTAL_BENCHMARKS: dict[str, dict[int, int]] = {
     # Hackney
     "E2": {1: 1950, 2: 2400, 3: 3100},
-    "E5": {1: 1750, 2: 2200, 3: 2600},
+    "E5": {1: 1800, 2: 2200, 3: 2750},
     "E8": {1: 1900, 2: 2350, 3: 3000},
-    "E9": {1: 1900, 2: 2400, 3: 2850},
-    "N16": {1: 1650, 2: 2150, 3: 2900},
+    "E9": {1: 1950, 2: 2400, 3: 2950},
+    "N16": {1: 1800, 2: 2300, 3: 2950},
     # Islington
     "N1": {1: 2100, 2: 2600, 3: 3400},
     "N4": {1: 1800, 2: 2200, 3: 2850},
@@ -52,23 +52,23 @@ RENTAL_BENCHMARKS: dict[str, dict[int, int]] = {
     "N8": {1: 1750, 2: 2150, 3: 2750},
     "N10": {1: 1650, 2: 2050, 3: 2650},
     "N11": {1: 1600, 2: 2000, 3: 2600},
-    "N15": {1: 1600, 2: 1850, 3: 2600},
-    "N17": {1: 1800, 2: 2300, 3: 2950},
+    "N15": {1: 1550, 2: 1850, 3: 2400},
+    "N17": {1: 1650, 2: 2000, 3: 2550},
     "N22": {1: 1600, 2: 1950, 3: 2500},
     # Tower Hamlets
     "E1": {1: 2050, 2: 2550, 3: 3300},
-    "E3": {1: 1750, 2: 2200, 3: 2750},
+    "E3": {1: 1800, 2: 2150, 3: 2700},
     "E14": {1: 2100, 2: 2600, 3: 3350},
     # Newham
-    "E15": {1: 1950, 2: 2200, 3: 2800},
+    "E15": {1: 1950, 2: 2250, 3: 2800},
     # Waltham Forest
-    "E10": {1: 1550, 2: 1750, 3: 2600},
+    "E10": {1: 1550, 2: 1750, 3: 2400},
     "E11": {1: 1550, 2: 1900, 3: 2450},
-    "E17": {1: 1850, 2: 1850, 3: 2350},
+    "E17": {1: 1700, 2: 1850, 3: 2350},
 }
 
 # Default benchmark for unknown areas (East London average)
-DEFAULT_BENCHMARK: dict[int, int] = {1: 1750, 2: 2100, 3: 2700}
+DEFAULT_BENCHMARK: dict[int, int] = {1: 1750, 2: 2100, 3: 2650}
 
 # Area context for LLM quality analysis — concise renter-focused summaries per outcode
 # Injected into the quality analysis prompt to inform value-for-quality ratings
@@ -137,6 +137,71 @@ AREA_CONTEXT: dict[str, str] = {
         "direct trains to Stansted. Northumberland Park area remains challenging. Higher crime "
         "in Tottenham Hale ward; flood risk near waterways."
     ),
+}
+
+
+# Borough for each search outcode (for council tax / rent trend lookup)
+OUTCODE_BOROUGH: dict[str, str] = {
+    "E3": "Tower Hamlets",
+    "E5": "Hackney",
+    "E9": "Hackney",
+    "E10": "Waltham Forest",
+    "E15": "Newham",
+    "E17": "Waltham Forest",
+    "N15": "Haringey",
+    "N16": "Hackney",
+    "N17": "Haringey",
+}
+
+# Council tax monthly £ by borough and band (2025-26)
+COUNCIL_TAX_MONTHLY: dict[str, dict[str, int]] = {
+    "Tower Hamlets": {"A": 97, "B": 114, "C": 130, "D": 146},
+    "Hackney": {"A": 109, "B": 127, "C": 146, "D": 164},
+    "Waltham Forest": {"A": 127, "B": 148, "C": 169, "D": 190},
+    "Newham": {"A": 96, "B": 112, "C": 128, "D": 144},
+    "Haringey": {"A": 123, "B": 143, "C": 164, "D": 184},
+}
+
+# Crime rate per 1,000 residents (London avg = 85)
+CRIME_RATES: dict[str, dict[str, Any]] = {
+    "E3": {"rate": 125, "vs_london": "+47%", "risk": "medium"},
+    "E5": {
+        "rate": 150,
+        "vs_london": "+76%",
+        "risk": "medium-high",
+        "note": "varies 47-354 within postcode",
+    },
+    "E9": {"rate": 165, "vs_london": "+94%", "risk": "medium-high"},
+    "E10": {
+        "rate": 110,
+        "vs_london": "+29%",
+        "risk": "medium",
+        "note": "High Road 264 vs residential 67",
+    },
+    "E15": {
+        "rate": 150,
+        "vs_london": "+76%",
+        "risk": "medium",
+        "note": "retail skews to 398",
+    },
+    "E17": {"rate": 95, "vs_london": "+12%", "risk": "low-medium"},
+    "N15": {"rate": 143, "vs_london": "+68%", "risk": "medium-high"},
+    "N16": {
+        "rate": 125,
+        "vs_london": "+47%",
+        "risk": "medium",
+        "note": "Church St 170 vs High St 82",
+    },
+    "N17": {"rate": 143, "vs_london": "+68%", "risk": "medium-high"},
+}
+
+# YoY rent trend by borough (applied to outcodes via OUTCODE_BOROUGH)
+RENT_TRENDS: dict[str, dict[str, Any]] = {
+    "Tower Hamlets": {"yoy_pct": 2.6, "direction": "rising"},
+    "Hackney": {"yoy_pct": 4.3, "direction": "rising"},
+    "Waltham Forest": {"yoy_pct": 2.8, "direction": "rising"},
+    "Newham": {"yoy_pct": 8.9, "direction": "rising strongly"},
+    "Haringey": {"yoy_pct": 4.7, "direction": "rising"},
 }
 
 
@@ -283,89 +348,110 @@ class PropertyQualityAnalysis(BaseModel):
 
 
 # System prompt for quality analysis - cached for cost savings
-QUALITY_ANALYSIS_SYSTEM_PROMPT = """You are an expert property analyst \
-specializing in London rental properties.
+QUALITY_ANALYSIS_SYSTEM_PROMPT = """\
+You are an expert London rental property analyst with perfect vision \
+and meticulous attention to detail.
 
-Your task is to analyze property images and provide a comprehensive quality \
-assessment. You will be given gallery images, optionally a floorplan, and \
-the listing description/features when available.
+Your analysis goes directly into a Telegram notification for a renter actively \
+searching. Be concise, specific, and actionable — flag genuine concerns, skip \
+hedging language.
 
-IMPORTANT: Cross-reference what you see in the images with the listing text. \
-The description often mentions things like "new kitchen", "gas hob", "recently \
-refurbished" that help confirm or clarify what's in the photos.
+When you cannot determine something from the images, use "unknown" or null. \
+Do not guess — a confident "unknown" is more useful than a wrong answer.
 
-**Stock Type Identification**: First, identify the property type from the \
-photos and listing — this fundamentally affects expected pricing and what \
-condition issues to look for:
-- **Victorian/Edwardian conversion**: Period features, high ceilings, sash \
-windows. These are the baseline stock in East London. Watch for awkward room \
-subdivisions, original single glazing, rising damp, and uneven floors.
-- **Purpose-built new-build / Build-to-Rent**: Clean lines, uniform finish, \
-large windows. Commands 15-30% premium but check for suspiciously small rooms \
-(developers optimise unit count), thin partition walls, and developer-grade \
-finishes that look good but wear quickly.
-- **Warehouse/industrial conversion**: High ceilings, exposed brick, large \
-windows. Premium pricing (especially E9 canalside). Watch for cold/draughty \
-spaces, echo/noise issues, and damp from inadequate conversion.
-- **Ex-council / post-war estate**: Concrete construction, uniform exteriors, \
-communal corridors. Should be 20-40% below area average. Check communal area \
-maintenance quality — it signals management standards.
-- **Georgian terrace**: Grand proportions, original features. Premium stock.
+<task>
+Analyze property images (gallery photos and optional floorplan) together with \
+listing text to produce a structured quality assessment. Cross-reference what \
+you see in the images with the listing description — it often mentions \
+"new kitchen", "gas hob", "recently refurbished" that confirm or clarify \
+what's in the photos.
+</task>
 
-**Listing Text Signals**: Scan the description for cost and quality signals:
-- EPC rating: Band D-G = significantly higher energy bills (£50-150/month)
+<stock_types>
+First, identify the property type — this fundamentally affects expected pricing \
+and what condition issues to look for:
+- Victorian/Edwardian conversion: Period features, high ceilings, sash windows. \
+Baseline East London stock. Watch for awkward subdivisions, original single \
+glazing, rising damp, uneven floors.
+- Purpose-built new-build / Build-to-Rent: Clean lines, uniform finish, large \
+windows. Commands 15-30% premium but check for small rooms, thin partition \
+walls, developer-grade finishes that wear quickly.
+- Warehouse/industrial conversion: High ceilings, exposed brick, large windows. \
+Premium pricing (especially E9 canalside). Watch for draughts, echo/noise, \
+damp from inadequate conversion.
+- Ex-council / post-war estate: Concrete construction, uniform exteriors, \
+communal corridors. Should be 20-40% below area average. Communal area \
+quality signals management standards.
+- Georgian terrace: Grand proportions, original features. Premium stock.
+</stock_types>
+
+<listing_signals>
+Scan the description for cost and quality signals:
+- EPC rating: Band D-G = £50-150/month higher energy bills
 - "Service charge" amount: Add to headline rent for true monthly cost
 - "Rent-free weeks" or move-in incentives: Calculate effective monthly discount
-- "Selective licensing" or licence number: Compliant landlord (positive signal)
+- "Selective licensing" or licence number: Compliant landlord (positive)
 - "Ground rent" or leasehold terms: Check for escalation clauses
 - Proximity to active construction/regeneration: Short-term noise but \
-potential future rent increases (relevant in E9, E15, N17)
+potential rent increases (relevant in E9, E15, N17)
+</listing_signals>
 
-Analyze the following aspects:
+<analysis_steps>
+1. Kitchen Quality: Modern (new units, integrated appliances, good worktops) \
+vs Dated (old-fashioned units, worn surfaces, mismatched appliances). Note hob \
+type if visible/mentioned. Check listing for "new kitchen", "recently fitted".
 
-1. **Kitchen Quality**: Focus on whether the kitchen looks MODERN or DATED.
-   - Modern: New units, integrated appliances, good worktops, contemporary style
-   - Dated: Old-fashioned units, worn surfaces, mismatched appliances
-   - Note the hob type if visible/mentioned (gas, electric, induction)
-   - Check listing for mentions of "new kitchen", "recently fitted", etc.
+2. Property Condition: Look for damp (water stains, peeling paint near \
+windows/ceilings), mold (dark patches in corners/bathrooms), worn fixtures \
+(dated bathroom fittings, tired carpets, scuffed walls). Check stock-type-specific \
+issues. Cross-reference listing mentions of "refurbished", "newly decorated".
 
-2. **Property Condition**: Look for any signs of:
-   - Damp (water stains, peeling paint near windows/ceilings)
-   - Mold (dark patches, especially in corners, bathrooms)
-   - Worn fixtures (dated bathroom fittings, tired carpets, scuffed walls)
-   - Stock-type-specific issues identified above (e.g., single glazing in \
-Victorian, thin walls in new-build, draughts in warehouse conversion)
-   - Cross-reference with listing mentions of "refurbished", "newly decorated"
+3. Natural Light & Space: Window sizes, brightness, spacious vs cramped feel, \
+ceiling heights if visible.
 
-3. **Natural Light & Space**: Assess:
-   - Natural light levels (window sizes, brightness)
-   - Does it feel spacious or cramped?
-   - Ceiling heights if visible
+4. Living Room Size: From floorplan if included, estimate sqm. Target: fits a \
+home office AND hosts 8+ people (~20-25 sqm minimum).
 
-4. **Living Room Size**: If a floorplan is included, estimate the living room \
-size in sqm. The living room should ideally fit a home office AND host 8+ \
-people (~20-25 sqm minimum).
+5. Value Assessment: Consider stock type (new-build at +15-30% is expected, \
+Victorian at +15% is overpriced, ex-council at average is poor value). Factor \
+area context, true monthly cost (council tax, service charges, EPC costs, \
+rent-free incentives), crime context, and rent trend trajectory. Your reasoning \
+should focus on price-side factors — don't restate condition details.
 
-5. **Value Assessment**: Assess value-for-money considering:
-   - The property's stock type: area averages reflect typical older stock. \
-New-build/BTR at 15-30% above average is expected, not poor value. But a \
-Victorian conversion at 15% above average IS overpriced. Ex-council stock \
-at average price is poor value — it should be 20-40% below.
-   - The Area Context provided (local market, transport, value pockets, watch-outs)
-   - Whether this specific property is above or below typical quality for \
-its stock type AND area
-   - True monthly cost: add any service charges, subtract rent-free incentive \
-discounts, and note high EPC energy costs when assessing value
-   - Regeneration trajectory: properties in E9, E15, N17 face upward rent \
-pressure through 2026-2027, so at-market pricing today may be good value
-   Your value_for_quality rating should reflect what the renter gets for their \
-money in THIS area, not just raw price comparison.
+6. Overall Summary: 1-2 sentences — property character and what it's like to \
+live here. Don't restate condition concerns (they're listed separately) or \
+value analysis (separate field).
 
-6. **Overall Summary**: Write a brief 1-2 sentence summary highlighting the \
-key positives and any concerns a potential renter should know about.
+7. Overall Rating: 1-5 stars for rental desirability.
+</analysis_steps>
 
-7. **Overall Rating**: Give a 1-5 star rating for rental desirability.
-   5=Exceptional, 4=Good, 3=Acceptable, 2=Below average, 1=Avoid
+<rating_criteria>
+Overall rating (1-5 stars):
+  5 = Exceptional: Modern/refurbished to high standard, excellent light/space, \
+no concerns, good or excellent value. Rare find.
+  4 = Good: Well-maintained, comfortable, minor issues at most. Fair or better value.
+  3 = Acceptable: Liveable but with notable trade-offs (dated kitchen, limited \
+light, average condition). Price should reflect this.
+  2 = Below average: Multiple issues (poor condition, cramped, dated throughout). \
+Only worth it if significantly below market.
+  1 = Avoid: Serious problems (damp/mold, very poor condition, major red flags).
+
+Value-for-quality rating:
+  excellent = Quality clearly exceeds what this price normally buys in the area.
+  good = Fair deal — quality matches or slightly exceeds the price point.
+  fair = Typical for the price — no standout value, no major overpay.
+  poor = Overpriced relative to quality/condition. Renter is overpaying.
+</rating_criteria>
+
+<output_rules>
+Each output field appears in a different section of the notification. Avoid \
+restating information across fields:
+- maintenance_concerns: Specific condition issues (shown in ⚠️ section)
+- summary: Property character, layout, standout features (shown in blockquote)
+- value_for_quality.reasoning: Price analysis — why the price is/isn't fair \
+(shown in 📊 section)
+If a fact belongs in one field, don't repeat it in another.
+</output_rules>
 
 Always use the property_quality_analysis tool to return your assessment."""
 
@@ -487,7 +573,14 @@ QUALITY_ANALYSIS_TOOL: dict[str, Any] = {
                     },
                     "reasoning": {
                         "type": "string",
-                        "description": "Brief explanation of value assessment",
+                        "description": (
+                            "Value justification: why this price is or isn't fair for "
+                            "what you get. Focus on price factors: stock type "
+                            "premium/discount, true monthly cost, area rent trajectory, "
+                            "service charges, incentives. Reference condition only as "
+                            "'condition justifies/doesn't justify price' — don't "
+                            "restate specific issues."
+                        ),
                     },
                 },
                 "required": ["rating", "reasoning"],
@@ -509,7 +602,12 @@ QUALITY_ANALYSIS_TOOL: dict[str, Any] = {
             },
             "summary": {
                 "type": "string",
-                "description": "1-2 sentence summary for notification",
+                "description": (
+                    "1-2 sentence property overview for notification. Focus on what "
+                    "it's like to live here: character, standout features, layout feel. "
+                    "Do NOT restate condition concerns (already listed separately) or "
+                    "price/value analysis (covered in value_for_quality)."
+                ),
             },
         },
         "required": [
@@ -537,6 +635,9 @@ def build_user_prompt(
     features: list[str] | None = None,
     area_context: str | None = None,
     outcode: str | None = None,
+    council_tax_band_c: int | None = None,
+    crime_summary: str | None = None,
+    rent_trend: str | None = None,
 ) -> str:
     """Build the user prompt with property-specific context."""
     diff = price_pcm - area_average
@@ -547,26 +648,32 @@ def build_user_prompt(
     else:
         price_comparison = "at"
 
-    prompt = f"""Analyze these property images.
-
-**Property Details:**
-- Price: £{price_pcm}/month
-- Bedrooms: {bedrooms}
-- Area average for {bedrooms}-bed: £{area_average}/month ({price_comparison})"""
+    prompt = f"<property>\nPrice: £{price_pcm:,}/month | Bedrooms: {bedrooms}"
+    prompt += f" | Area avg: £{area_average:,}/month ({price_comparison})"
+    if council_tax_band_c:
+        true_cost = price_pcm + council_tax_band_c
+        prompt += f"\nCouncil tax (Band C est.): £{council_tax_band_c}/month"
+        prompt += f" → True monthly cost: ~£{true_cost:,}"
+    prompt += "\n</property>"
 
     if area_context and outcode:
-        prompt += f"\n\n**Area Context ({outcode}):**\n{area_context}"
+        prompt += f'\n\n<area_context outcode="{outcode}">\n{area_context}'
+        if crime_summary:
+            prompt += f"\nCrime: {crime_summary}"
+        if rent_trend:
+            prompt += f"\nRent trend: {rent_trend}"
+        prompt += "\n</area_context>"
 
     if features:
-        prompt += "\n\n**Listed Features:**\n"
-        prompt += "\n".join(f"- {f}" for f in features[:15])  # Limit to 15 features
+        prompt += "\n\n<listing_features>\n"
+        prompt += "\n".join(f"- {f}" for f in features[:15])
+        prompt += "\n</listing_features>"
 
     if description:
-        # Truncate very long descriptions to save tokens
         desc = description[:1500] + "..." if len(description) > 1500 else description
-        prompt += f"\n\n**Listing Description:**\n{desc}"
+        prompt += f"\n\n<listing_description>\n{desc}\n</listing_description>"
 
-    prompt += "\n\nPlease provide your quality assessment using the "
+    prompt += "\n\nProvide your quality assessment using the "
     prompt += "property_quality_analysis tool."
 
     return prompt
@@ -754,6 +861,18 @@ class PropertyQualityFilter:
                 )
             area_context = AREA_CONTEXT.get(outcode) if outcode else None
 
+            # Look up new contextual data
+            borough = OUTCODE_BOROUGH.get(outcode) if outcode else None
+            council_tax_c = COUNCIL_TAX_MONTHLY.get(borough, {}).get("C") if borough else None
+            crime = CRIME_RATES.get(outcode) if outcode else None
+            crime_summary: str | None = None
+            if crime:
+                crime_summary = f"{crime['rate']}/1,000 ({crime['vs_london']} vs London avg)"
+                if crime.get("note"):
+                    crime_summary += f". {crime['note']}"
+            trend = RENT_TRENDS.get(borough) if borough else None
+            rent_trend = f"+{trend['yoy_pct']}% YoY ({trend['direction']})" if trend else None
+
             # Build URL lists from pre-enriched images
             gallery_urls = [str(img.url) for img in merged.images if img.image_type == "gallery"]
             floorplan_url = str(merged.floorplan.url) if merged.floorplan else None
@@ -785,6 +904,9 @@ class PropertyQualityFilter:
                 features=None,
                 area_context=area_context,
                 outcode=outcode,
+                council_tax_band_c=council_tax_c,
+                crime_summary=crime_summary,
+                rent_trend=rent_trend,
             )
 
             if analysis:
@@ -857,6 +979,9 @@ class PropertyQualityFilter:
         features: list[str] | None = None,
         area_context: str | None = None,
         outcode: str | None = None,
+        council_tax_band_c: int | None = None,
+        crime_summary: str | None = None,
+        rent_trend: str | None = None,
     ) -> PropertyQualityAnalysis | None:
         """Analyze a single property using Claude vision with structured outputs.
 
@@ -869,6 +994,11 @@ class PropertyQualityFilter:
             area_average: Average rent for this area and bedroom count.
             description: Listing description text for cross-reference.
             features: Listed features for cross-reference.
+            area_context: Area context string for the outcode.
+            outcode: Property outcode (e.g., "E8").
+            council_tax_band_c: Estimated monthly council tax (Band C).
+            crime_summary: Crime rate summary string.
+            rent_trend: YoY rent trend string.
 
         Returns:
             Analysis result or None if analysis failed.
@@ -893,17 +1023,21 @@ class PropertyQualityFilter:
         # For anti-bot sites (Zoopla), download images locally and send as base64
         content: list[ImageBlockParam | TextBlockParam] = []
 
-        # Add gallery images (up to max_images)
+        # Add gallery images with labels (up to max_images)
+        gallery_num = 0
         for url in gallery_urls[: self._max_images]:
             image_block = await self._build_image_block(url)
             if image_block:
+                gallery_num += 1
+                content.append(TextBlockParam(type="text", text=f"Gallery image {gallery_num}:"))
                 content.append(image_block)
 
-        # Add floorplan if available and is a supported image format
+        # Add floorplan with label if available and is a supported image format
         # (PDFs are not supported by Claude Vision API)
         if floorplan_url and self._is_valid_image_url(floorplan_url):
             floorplan_block = await self._build_image_block(floorplan_url)
             if floorplan_block:
+                content.append(TextBlockParam(type="text", text="Floorplan:"))
                 content.append(floorplan_block)
         elif floorplan_url:
             logger.debug("skipping_pdf_floorplan", url=floorplan_url)
@@ -918,6 +1052,9 @@ class PropertyQualityFilter:
             features,
             area_context=area_context,
             outcode=outcode,
+            council_tax_band_c=council_tax_band_c,
+            crime_summary=crime_summary,
+            rent_trend=rent_trend,
         )
         content.append(TextBlockParam(type="text", text=user_prompt))
 

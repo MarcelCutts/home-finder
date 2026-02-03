@@ -370,9 +370,7 @@ class ZooplaScraper(BaseScraper):
                 FurnishType.UNFURNISHED: "unfurnished",
                 FurnishType.PART_FURNISHED: "part_furnished",
             }
-            ft_str = ",".join(
-                zoopla_values[ft] for ft in furnish_types if ft in zoopla_values
-            )
+            ft_str = ",".join(zoopla_values[ft] for ft in furnish_types if ft in zoopla_values)
             if ft_str:
                 params.append(f"furnished_state={ft_str}")
 

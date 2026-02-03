@@ -684,11 +684,13 @@ class TestPropertyQualityFilter:
         call_args = quality_filter._client.messages.create.call_args
         content = call_args.kwargs["messages"][0]["content"]
 
-        # Should have 3 gallery images + 1 floorplan + 1 text prompt = 5 content blocks
-        assert len(content) == 5
-        assert content[0]["type"] == "image"
-        assert content[3]["type"] == "image"  # floorplan
-        assert content[4]["type"] == "text"
+        # With image labels: 3 gallery × (label + image) + 1 floorplan × (label + image) + 1 text = 9
+        assert len(content) == 9
+        assert content[0]["type"] == "text"  # "Gallery image 1:"
+        assert content[1]["type"] == "image"
+        assert content[6]["type"] == "text"  # "Floorplan:"
+        assert content[7]["type"] == "image"  # floorplan
+        assert content[8]["type"] == "text"  # user prompt
 
     async def test_respects_max_images_limit(
         self,
@@ -728,9 +730,17 @@ class TestPropertyQualityFilter:
         call_args = quality_filter._client.messages.create.call_args
         content = call_args.kwargs["messages"][0]["content"]
 
-        # Should have 5 gallery images + 1 floorplan + 1 text prompt = 7 content blocks
+        # With labels: 5 gallery × (label + image) + 1 floorplan × (label + image) + 1 text = 13
         image_blocks = [c for c in content if c.get("type") == "image"]
         assert len(image_blocks) == 6  # 5 gallery + 1 floorplan
+        label_blocks = [
+            c
+            for c in content
+            if c.get("type") == "text"
+            and "image" in c.get("text", "").lower()
+            or "Floorplan" in c.get("text", "")
+        ]
+        assert len(label_blocks) >= 5  # at least 5 gallery labels
 
     async def test_uses_tool_choice_for_structured_output(
         self,
@@ -781,7 +791,7 @@ class TestPropertyQualityFilter:
         assert len(system) == 1
         assert system[0]["type"] == "text"
         assert system[0]["cache_control"] == {"type": "ephemeral"}
-        assert "expert property analyst" in system[0]["text"]
+        assert "expert London rental property analyst" in system[0]["text"]
 
     async def test_extracts_value_for_quality_from_tool_response(
         self,
@@ -863,13 +873,12 @@ class TestPropertyQualityFilter:
         call_args = quality_filter._client.messages.create.call_args
         content = call_args.kwargs["messages"][0]["content"]
 
-        # Find the text block with the user prompt
+        # Find the text block with the user prompt (last text block, after image labels)
         text_blocks = [c for c in content if c.get("type") == "text"]
-        assert len(text_blocks) == 1
-        prompt_text = text_blocks[0]["text"]
+        prompt_text = text_blocks[-1]["text"]  # User prompt is last
 
-        # Verify description is included (markdown format)
-        assert "**Listing Description:**" in prompt_text
+        # Verify description is included (XML format)
+        assert "<listing_description>" in prompt_text
         assert "gas hob" in prompt_text
 
     async def test_handles_nullable_fields_in_response(
