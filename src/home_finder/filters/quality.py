@@ -691,9 +691,9 @@ class PropertyQualityFilter:
         """
         self._api_key = api_key
         self._max_images = max_images
-        self._client: anthropic.AsyncAnthropic | None = None
+        self._client: "anthropic.AsyncAnthropic | None" = None
 
-    def _get_client(self) -> anthropic.AsyncAnthropic:
+    def _get_client(self) -> "anthropic.AsyncAnthropic":
         """Get or create the Anthropic client with optimized settings."""
         if self._client is None:
             import anthropic as _anthropic
@@ -796,7 +796,7 @@ class PropertyQualityFilter:
             logger.warning("image_download_error", url=url, error=str(e))
             return None
 
-    async def _build_image_block(self, url: str) -> ImageBlockParam | None:
+    async def _build_image_block(self, url: str) -> "ImageBlockParam | None":
         """Build an image block, downloading as base64 if needed for anti-bot sites.
 
         Args:

@@ -435,7 +435,7 @@ class TelegramNotifier:
         """
         self.bot_token = bot_token
         self.chat_id = chat_id
-        self._bot: Bot | None = None
+        self._bot: "Bot | None" = None
 
     def _get_bot(self) -> "Bot":
         """Get or create the bot instance."""
