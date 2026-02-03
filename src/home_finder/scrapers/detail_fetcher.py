@@ -241,9 +241,10 @@ class DetailFetcher:
                 gallery_urls = [url for _, url in sorted_imgs[: self._max_gallery_images]]
 
             # Extract floorplan if not found yet (lc = listing content for floorplans)
+            # Only match image files - PDFs are not supported by Claude Vision API
             if not floorplan_url:
                 floorplan_match = re.search(
-                    r'(https://lc\.zoocdn\.com/[^\s"\']+)',
+                    r'(https://lc\.zoocdn\.com/[^\s"\']+\.(?:jpg|jpeg|png|gif|webp))',
                     html,
                     re.IGNORECASE,
                 )

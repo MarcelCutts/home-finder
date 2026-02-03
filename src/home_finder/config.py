@@ -60,6 +60,12 @@ class Settings(BaseSettings):
         description="DEPRECATED: Use enable_quality_filter instead",
     )
 
+    # Deduplication
+    enable_image_hash_matching: bool = Field(
+        default=False,
+        description="Enable image hash comparison for cross-platform deduplication",
+    )
+
     # Search criteria
     min_price: int = Field(default=1800, ge=0)
     max_price: int = Field(default=2200, ge=0)

@@ -1,7 +1,8 @@
 """Property quality analysis filter using Claude vision."""
 
 import asyncio
-from typing import Any, Literal
+import base64
+from typing import Any, Literal, get_args
 
 import anthropic
 import httpx
@@ -13,11 +14,14 @@ from anthropic import (
     RateLimitError,
 )
 from anthropic.types import (
+    Base64ImageSourceParam,
     ImageBlockParam,
     TextBlockParam,
     ToolParam,
     ToolUseBlock,
+    URLImageSourceParam,
 )
+from curl_cffi.requests import AsyncSession
 from pydantic import BaseModel, ConfigDict, HttpUrl
 
 from home_finder.logging import get_logger
@@ -25,6 +29,13 @@ from home_finder.models import MergedProperty, Property, PropertyImage
 from home_finder.scrapers.detail_fetcher import DetailFetcher
 
 logger = get_logger(__name__)
+
+# Valid media types for Claude vision API
+ImageMediaType = Literal["image/jpeg", "image/png", "image/gif", "image/webp"]
+VALID_MEDIA_TYPES: tuple[str, ...] = get_args(ImageMediaType)
+
+# Valid image extensions (for URL filtering)
+VALID_IMAGE_EXTENSIONS = (".jpg", ".jpeg", ".png", ".gif", ".webp")
 
 # Rate limit settings for Tier 1
 # SDK handles retry automatically, we just need delay between calls
@@ -473,6 +484,123 @@ class PropertyQualityFilter:
             )
         return self._client
 
+    @staticmethod
+    def _is_valid_image_url(url: str) -> bool:
+        """Check if URL points to a supported image format.
+
+        Claude Vision API only supports jpeg, png, gif, and webp.
+        PDFs and other formats will fail, so we filter them out.
+        """
+        # Extract path without query params
+        path = url.split("?")[0].lower()
+        return path.endswith(VALID_IMAGE_EXTENSIONS)
+
+    @staticmethod
+    def _needs_base64_download(url: str) -> bool:
+        """Check if URL requires local download due to anti-bot protection.
+
+        Some image CDNs (Zoopla's zoocdn.com) use TLS fingerprinting to block
+        non-browser requests. When we send URL-based images to Claude's API,
+        Anthropic's servers fetch them directly and get blocked with 403.
+
+        For these sites, we need to download the images locally using curl_cffi
+        (which can impersonate Chrome's TLS fingerprint) and send as base64.
+        """
+        # Zoopla image CDNs use anti-bot protection
+        return "zoocdn.com" in url
+
+    @staticmethod
+    def _get_media_type(url: str) -> ImageMediaType:
+        """Determine media type from URL extension."""
+        # Try to get from URL extension
+        ext = url.lower().split("?")[0].rsplit(".", 1)[-1] if "." in url else ""
+        type_map: dict[str, ImageMediaType] = {
+            "jpg": "image/jpeg",
+            "jpeg": "image/jpeg",
+            "png": "image/png",
+            "gif": "image/gif",
+            "webp": "image/webp",
+        }
+        return type_map.get(ext, "image/jpeg")  # Default to JPEG
+
+    async def _download_image_as_base64(self, url: str) -> tuple[str, ImageMediaType] | None:
+        """Download image using curl_cffi and return base64 data with media type.
+
+        Uses Chrome TLS fingerprint impersonation to bypass anti-bot protection.
+
+        Args:
+            url: Image URL to download.
+
+        Returns:
+            Tuple of (base64_data, media_type) or None if download failed.
+        """
+        try:
+            async with AsyncSession() as session:
+                response = await session.get(
+                    url,
+                    impersonate="chrome",
+                    headers={
+                        "Accept": "image/webp,image/apng,image/*,*/*;q=0.8",
+                        "Accept-Language": "en-GB,en;q=0.9",
+                        "Accept-Encoding": "gzip, deflate, br",
+                    },
+                    timeout=30,
+                )
+                if response.status_code != 200:
+                    logger.warning(
+                        "image_download_failed",
+                        url=url,
+                        status=response.status_code,
+                    )
+                    return None
+
+                # Get content type from response or guess from URL
+                content_type = response.headers.get("content-type", "")
+                media_type_raw = content_type.split(";")[0] if content_type else ""
+
+                # Validate and use the media type if valid, otherwise guess from URL
+                if media_type_raw in VALID_MEDIA_TYPES:
+                    media_type: ImageMediaType = media_type_raw  # type: ignore[assignment]
+                else:
+                    media_type = self._get_media_type(url)
+
+                # Encode to base64
+                image_data = base64.standard_b64encode(response.content).decode("utf-8")
+                return image_data, media_type
+
+        except Exception as e:
+            logger.warning("image_download_error", url=url, error=str(e))
+            return None
+
+    async def _build_image_block(self, url: str) -> ImageBlockParam | None:
+        """Build an image block, downloading as base64 if needed for anti-bot sites.
+
+        Args:
+            url: Image URL.
+
+        Returns:
+            ImageBlockParam or None if image couldn't be loaded.
+        """
+        if self._needs_base64_download(url):
+            result = await self._download_image_as_base64(url)
+            if result is None:
+                return None
+            image_data, media_type = result
+            return ImageBlockParam(
+                type="image",
+                source=Base64ImageSourceParam(
+                    type="base64",
+                    media_type=media_type,
+                    data=image_data,
+                ),
+            )
+        else:
+            # Use URL-based image (Anthropic fetches directly)
+            return ImageBlockParam(
+                type="image",
+                source=URLImageSourceParam(type="url", url=url),
+            )
+
     async def analyze_properties(
         self, properties: list[Property]
     ) -> list[tuple[Property, PropertyQualityAnalysis]]:
@@ -614,8 +742,12 @@ class PropertyQualityFilter:
                             )
                             all_gallery_urls.append(img_url)
 
-                    # Keep first floorplan found
-                    if detail_data.floorplan_url and not floorplan_image:
+                    # Keep first floorplan found (skip PDFs - not supported by Vision API)
+                    if (
+                        detail_data.floorplan_url
+                        and not floorplan_image
+                        and self._is_valid_image_url(detail_data.floorplan_url)
+                    ):
                         floorplan_image = PropertyImage(
                             url=HttpUrl(detail_data.floorplan_url),
                             source=source,
@@ -757,25 +889,23 @@ class PropertyQualityFilter:
         client = self._get_client()
 
         # Build image content blocks (images first for best vision performance)
+        # For anti-bot sites (Zoopla), download images locally and send as base64
         content: list[ImageBlockParam | TextBlockParam] = []
 
         # Add gallery images (up to max_images)
         for url in gallery_urls[: self._max_images]:
-            content.append(
-                ImageBlockParam(
-                    type="image",
-                    source={"type": "url", "url": url},
-                )
-            )
+            image_block = await self._build_image_block(url)
+            if image_block:
+                content.append(image_block)
 
-        # Add floorplan if available
-        if floorplan_url:
-            content.append(
-                ImageBlockParam(
-                    type="image",
-                    source={"type": "url", "url": floorplan_url},
-                )
-            )
+        # Add floorplan if available and is a supported image format
+        # (PDFs are not supported by Claude Vision API)
+        if floorplan_url and self._is_valid_image_url(floorplan_url):
+            floorplan_block = await self._build_image_block(floorplan_url)
+            if floorplan_block:
+                content.append(floorplan_block)
+        elif floorplan_url:
+            logger.debug("skipping_pdf_floorplan", url=floorplan_url)
 
         # Build user prompt with property context and listing text
         effective_average = area_average or DEFAULT_BENCHMARK.get(min(bedrooms, 3), 1800)
@@ -784,11 +914,12 @@ class PropertyQualityFilter:
         )
         content.append(TextBlockParam(type="text", text=user_prompt))
 
+        has_usable_floorplan = floorplan_url is not None and self._is_valid_image_url(floorplan_url)
         logger.info(
             "analyzing_property",
             property_id=property_id,
             gallery_count=len(gallery_urls),
-            has_floorplan=floorplan_url is not None,
+            has_floorplan=has_usable_floorplan,
         )
 
         try:

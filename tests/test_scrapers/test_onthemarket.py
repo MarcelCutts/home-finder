@@ -113,12 +113,18 @@ class TestOnTheMarketScraper:
         self, onthemarket_scraper: OnTheMarketScraper, sample_next_data: str
     ) -> None:
         """Test that scrape uses curl_cffi with Chrome impersonation."""
-        mock_response = MagicMock()
-        mock_response.status_code = 200
-        mock_response.text = sample_next_data
+        # Page 1 returns data, page 2 returns empty to stop pagination
+        mock_response_with_data = MagicMock()
+        mock_response_with_data.status_code = 200
+        mock_response_with_data.text = sample_next_data
+
+        empty_next_data = '{"props":{"initialReduxState":{"results":{"list":[]}}}}'
+        mock_response_empty = MagicMock()
+        mock_response_empty.status_code = 200
+        mock_response_empty.text = empty_next_data
 
         mock_session = MagicMock()
-        mock_session.get = AsyncMock(return_value=mock_response)
+        mock_session.get = AsyncMock(side_effect=[mock_response_with_data, mock_response_empty])
         mock_session.__aenter__ = AsyncMock(return_value=mock_session)
         mock_session.__aexit__ = AsyncMock(return_value=None)
 
@@ -132,11 +138,11 @@ class TestOnTheMarketScraper:
             )
 
         # Verify curl_cffi was used with impersonation
-        mock_session.get.assert_called_once()
-        call_kwargs = mock_session.get.call_args[1]
+        assert mock_session.get.call_count >= 1
+        call_kwargs = mock_session.get.call_args_list[0][1]
         assert call_kwargs["impersonate"] == "chrome"
 
-        # Verify properties were parsed
+        # Verify properties were parsed from first page
         assert len(properties) == 3
 
 

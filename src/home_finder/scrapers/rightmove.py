@@ -158,6 +158,11 @@ class RightmoveScraper(BaseScraper):
     def source(self) -> PropertySource:
         return PropertySource.RIGHTMOVE
 
+    # Pagination constants
+    RESULTS_PER_PAGE = 24
+    MAX_PAGES = 20
+    PAGE_DELAY_SECONDS = 0.5
+
     async def scrape(
         self,
         *,
@@ -167,10 +172,12 @@ class RightmoveScraper(BaseScraper):
         max_bedrooms: int,
         area: str,
     ) -> list[Property]:
-        """Scrape Rightmove for matching properties."""
+        """Scrape Rightmove for matching properties (all pages)."""
+        import asyncio
+
         properties: list[Property] = []
 
-        url = await self._build_search_url(
+        base_url = await self._build_search_url(
             area=area,
             min_price=min_price,
             max_price=max_price,
@@ -178,23 +185,47 @@ class RightmoveScraper(BaseScraper):
             max_bedrooms=max_bedrooms,
         )
 
-        async def handle_page(context: BeautifulSoupCrawlingContext) -> None:
-            soup = context.soup
-            parsed = self._parse_search_results(soup, str(context.request.url))
-            properties.extend(parsed)
+        for page in range(self.MAX_PAGES):
+            index = page * self.RESULTS_PER_PAGE
+            url = f"{base_url}&index={index}" if page > 0 else base_url
+
+            page_properties: list[Property] = []
+
+            async def handle_page(context: BeautifulSoupCrawlingContext) -> None:
+                soup = context.soup
+                parsed = self._parse_search_results(soup, str(context.request.url))
+                page_properties.extend(parsed)
+
+            crawler = BeautifulSoupCrawler(
+                max_requests_per_crawl=1,
+                storage_client=MemoryStorageClient(),
+            )
+            crawler.router.default_handler(handle_page)
+
+            await crawler.run([url])
+
             logger.info(
                 "scraped_rightmove_page",
-                url=str(context.request.url),
-                properties_found=len(parsed),
+                url=url,
+                page=page + 1,
+                properties_found=len(page_properties),
             )
 
-        crawler = BeautifulSoupCrawler(
-            max_requests_per_crawl=1,
-            storage_client=MemoryStorageClient(),
-        )
-        crawler.router.default_handler(handle_page)
+            if not page_properties:
+                break
 
-        await crawler.run([url])
+            properties.extend(page_properties)
+
+            # Be polite - delay between pages
+            if page < self.MAX_PAGES - 1:
+                await asyncio.sleep(self.PAGE_DELAY_SECONDS)
+
+        logger.info(
+            "scraped_rightmove_complete",
+            area=area,
+            total_properties=len(properties),
+            pages_scraped=min(page + 1, self.MAX_PAGES),
+        )
 
         return properties
 

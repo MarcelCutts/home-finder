@@ -19,6 +19,11 @@ class OpenRentScraper(BaseScraper):
 
     BASE_URL = "https://www.openrent.co.uk"
 
+    # Pagination constants
+    RESULTS_PER_PAGE = 20
+    MAX_PAGES = 20
+    PAGE_DELAY_SECONDS = 0.5
+
     @property
     def source(self) -> PropertySource:
         return PropertySource.OPENRENT
@@ -32,10 +37,13 @@ class OpenRentScraper(BaseScraper):
         max_bedrooms: int,
         area: str,
     ) -> list[Property]:
-        """Scrape OpenRent for matching properties."""
-        properties: list[Property] = []
+        """Scrape OpenRent for matching properties (all pages)."""
+        import asyncio
 
-        url = self._build_search_url(
+        all_properties: list[Property] = []
+        seen_ids: set[str] = set()
+
+        base_url = self._build_search_url(
             area=area,
             min_price=min_price,
             max_price=max_price,
@@ -43,25 +51,57 @@ class OpenRentScraper(BaseScraper):
             max_bedrooms=max_bedrooms,
         )
 
-        async def handle_page(context: BeautifulSoupCrawlingContext) -> None:
-            soup = context.soup
-            parsed = self._parse_search_results(soup, str(context.request.url))
-            properties.extend(parsed)
+        for page in range(self.MAX_PAGES):
+            skip = page * self.RESULTS_PER_PAGE
+            url = f"{base_url}&skip={skip}" if page > 0 else base_url
+
+            page_properties: list[Property] = []
+
+            async def handle_page(context: BeautifulSoupCrawlingContext) -> None:
+                soup = context.soup
+                parsed = self._parse_search_results(soup, str(context.request.url))
+                page_properties.extend(parsed)
+
+            crawler = BeautifulSoupCrawler(
+                max_requests_per_crawl=1,
+                storage_client=MemoryStorageClient(),
+            )
+            crawler.router.default_handler(handle_page)
+
+            await crawler.run([url])
+
             logger.info(
                 "scraped_openrent_page",
-                url=str(context.request.url),
-                properties_found=len(parsed),
+                url=url,
+                page=page + 1,
+                properties_found=len(page_properties),
             )
 
-        crawler = BeautifulSoupCrawler(
-            max_requests_per_crawl=1,
-            storage_client=MemoryStorageClient(),
+            if not page_properties:
+                break
+
+            # Deduplicate within scraper (OpenRent can repeat listings)
+            new_properties = [p for p in page_properties if p.source_id not in seen_ids]
+            for p in new_properties:
+                seen_ids.add(p.source_id)
+            all_properties.extend(new_properties)
+
+            # If we got fewer new properties than on the page, we might be seeing repeats
+            if len(new_properties) == 0:
+                break
+
+            # Be polite - delay between pages
+            if page < self.MAX_PAGES - 1:
+                await asyncio.sleep(self.PAGE_DELAY_SECONDS)
+
+        logger.info(
+            "scraped_openrent_complete",
+            area=area,
+            total_properties=len(all_properties),
+            pages_scraped=page + 1,
         )
-        crawler.router.default_handler(handle_page)
 
-        await crawler.run([url])
-
-        return properties
+        return all_properties
 
     def _build_search_url(
         self,

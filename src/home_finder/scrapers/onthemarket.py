@@ -25,6 +25,10 @@ class OnTheMarketScraper(BaseScraper):
 
     BASE_URL = "https://www.onthemarket.com"
 
+    # Pagination constants
+    MAX_PAGES = 20
+    PAGE_DELAY_SECONDS = 0.5
+
     @property
     def source(self) -> PropertySource:
         return PropertySource.ONTHEMARKET
@@ -38,8 +42,12 @@ class OnTheMarketScraper(BaseScraper):
         max_bedrooms: int,
         area: str,
     ) -> list[Property]:
-        """Scrape OnTheMarket for matching properties."""
-        url = self._build_search_url(
+        """Scrape OnTheMarket for matching properties (all pages)."""
+        import asyncio
+
+        all_properties: list[Property] = []
+
+        base_url = self._build_search_url(
             area=area,
             min_price=min_price,
             max_price=max_price,
@@ -47,19 +55,40 @@ class OnTheMarketScraper(BaseScraper):
             max_bedrooms=max_bedrooms,
         )
 
-        html = await self._fetch_page(url)
-        if not html:
-            logger.warning("onthemarket_fetch_failed", url=url)
-            return []
+        for page in range(1, self.MAX_PAGES + 1):
+            url = f"{base_url}&page={page}" if page > 1 else base_url
 
-        # Parse __NEXT_DATA__ JSON
-        properties = self._parse_next_data(html)
+            html = await self._fetch_page(url)
+            if not html:
+                logger.warning("onthemarket_fetch_failed", url=url, page=page)
+                break
+
+            # Parse __NEXT_DATA__ JSON
+            properties = self._parse_next_data(html)
+            logger.info(
+                "scraped_onthemarket_page",
+                url=url,
+                page=page,
+                properties_found=len(properties),
+            )
+
+            if not properties:
+                break
+
+            all_properties.extend(properties)
+
+            # Be polite - delay between pages
+            if page < self.MAX_PAGES:
+                await asyncio.sleep(self.PAGE_DELAY_SECONDS)
+
         logger.info(
-            "scraped_onthemarket_page",
-            url=url,
-            properties_found=len(properties),
+            "scraped_onthemarket_complete",
+            area=area,
+            total_properties=len(all_properties),
+            pages_scraped=page,
         )
-        return properties
+
+        return all_properties
 
     async def _fetch_page(self, url: str) -> str | None:
         """Fetch page using curl_cffi with Chrome impersonation."""

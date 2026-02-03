@@ -30,6 +30,10 @@ class ZooplaScraper(BaseScraper):
 
     BASE_URL = "https://www.zoopla.co.uk"
 
+    # Pagination constants
+    MAX_PAGES = 20
+    PAGE_DELAY_SECONDS = 0.5
+
     @property
     def source(self) -> PropertySource:
         return PropertySource.ZOOPLA
@@ -43,8 +47,13 @@ class ZooplaScraper(BaseScraper):
         max_bedrooms: int,
         area: str,
     ) -> list[Property]:
-        """Scrape Zoopla for matching properties."""
-        url = self._build_search_url(
+        """Scrape Zoopla for matching properties (all pages)."""
+        import asyncio
+
+        all_properties: list[Property] = []
+        seen_ids: set[str] = set()
+
+        initial_url = self._build_search_url(
             area=area,
             min_price=min_price,
             max_price=max_price,
@@ -52,34 +61,98 @@ class ZooplaScraper(BaseScraper):
             max_bedrooms=max_bedrooms,
         )
 
-        html = await self._fetch_page(url)
-        if not html:
-            logger.warning("zoopla_fetch_failed", url=url)
+        # Fetch page 1 to get the redirect URL (Zoopla redirects to a different URL format)
+        result = await self._fetch_page_with_url(initial_url)
+        if not result:
+            logger.warning("zoopla_fetch_failed", url=initial_url, page=1)
             return []
 
-        # Try JSON extraction first (more reliable for Next.js pages)
-        next_data = self._extract_next_data(html)
-        if next_data:
-            properties = self._parse_next_data_properties(next_data)
-            if properties:
+        html, final_url = result
+        # Use the redirect URL as base for pagination (strip any existing pn param)
+        base_url = re.sub(r"[&?]pn=\d+", "", final_url)
+
+        for page in range(1, self.MAX_PAGES + 1):
+            if page > 1:
+                # Fetch subsequent pages using the redirect URL format
+                separator = "&" if "?" in base_url else "?"
+                url = f"{base_url}{separator}pn={page}"
+                result = await self._fetch_page_with_url(url)
+                if not result:
+                    logger.warning("zoopla_fetch_failed", url=url, page=page)
+                    break
+                html, _ = result
+
+            # Try JSON extraction first (more reliable for Next.js pages)
+            properties: list[Property] = []
+            next_data = self._extract_next_data(html)
+            if next_data:
+                properties = self._parse_next_data_properties(next_data)
                 logger.info(
                     "scraped_zoopla_page",
-                    url=url,
+                    url=base_url,
+                    page=page,
                     properties_found=len(properties),
                     method="json",
                 )
-                return properties
+            else:
+                # Fallback to HTML parsing
+                soup = BeautifulSoup(html, "html.parser")
+                properties = self._parse_search_results(soup, base_url)
+                logger.info(
+                    "scraped_zoopla_page",
+                    url=base_url,
+                    page=page,
+                    properties_found=len(properties),
+                    method="html",
+                )
 
-        # Fallback to HTML parsing
-        soup = BeautifulSoup(html, "html.parser")
-        properties = self._parse_search_results(soup, url)
+            if not properties:
+                break
+
+            # Deduplicate (Zoopla can return overlapping results)
+            new_properties = [p for p in properties if p.source_id not in seen_ids]
+            for p in new_properties:
+                seen_ids.add(p.source_id)
+
+            if not new_properties:
+                break
+
+            all_properties.extend(new_properties)
+
+            # Be polite - delay between pages
+            if page < self.MAX_PAGES:
+                await asyncio.sleep(self.PAGE_DELAY_SECONDS)
+
         logger.info(
-            "scraped_zoopla_page",
-            url=url,
-            properties_found=len(properties),
-            method="html",
+            "scraped_zoopla_complete",
+            area=area,
+            total_properties=len(all_properties),
+            pages_scraped=page,
         )
-        return properties
+
+        return all_properties
+
+    async def _fetch_page_with_url(self, url: str) -> tuple[str, str] | None:
+        """Fetch page and return (html, final_url) after redirects."""
+        try:
+            async with AsyncSession() as session:
+                response = await session.get(
+                    url,
+                    impersonate="chrome",
+                    headers=HEADERS,
+                    timeout=30,
+                )
+                if response.status_code == 200:
+                    return response.text, str(response.url)
+                logger.warning(
+                    "zoopla_http_error",
+                    status=response.status_code,
+                    url=url,
+                )
+                return None
+        except Exception as e:
+            logger.error("zoopla_fetch_exception", error=str(e), url=url)
+            return None
 
     async def _fetch_page(self, url: str) -> str | None:
         """Fetch page using curl_cffi with Chrome impersonation."""

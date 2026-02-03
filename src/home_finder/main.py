@@ -38,7 +38,10 @@ SEARCH_AREAS = [
     "e5",  # Clapton (Hackney)
     "e9",  # Hackney Wick, Homerton (Hackney)
     "e10",  # Leyton (Waltham Forest)
+    "e17",  # Walthamstow (Waltham Forest)
     "n15",  # South Tottenham (Haringey)
+    "n16",  # Stoke Newington (Hackney)
+    "n17",  # Tottenham (Haringey)
 ]
 
 
@@ -176,8 +179,11 @@ async def run_pipeline(settings: Settings) -> None:
 
         # Step 3: Deduplicate and merge cross-platform listings
         logger.info("pipeline_started", phase="deduplication_merge")
-        deduplicator = Deduplicator(enable_cross_platform=True)
-        merged_properties = deduplicator.deduplicate_and_merge(filtered)
+        deduplicator = Deduplicator(
+            enable_cross_platform=True,
+            enable_image_hashing=settings.enable_image_hash_matching,
+        )
+        merged_properties = await deduplicator.deduplicate_and_merge_async(filtered)
         logger.info(
             "deduplication_merge_summary",
             merged_count=len(merged_properties),
@@ -425,8 +431,11 @@ async def run_dry_run(settings: Settings) -> None:
 
         # Step 3: Deduplicate and merge cross-platform listings
         logger.info("pipeline_started", phase="deduplication_merge")
-        deduplicator = Deduplicator(enable_cross_platform=True)
-        merged_properties = deduplicator.deduplicate_and_merge(filtered)
+        deduplicator = Deduplicator(
+            enable_cross_platform=True,
+            enable_image_hashing=settings.enable_image_hash_matching,
+        )
+        merged_properties = await deduplicator.deduplicate_and_merge_async(filtered)
         logger.info(
             "deduplication_merge_summary",
             merged_count=len(merged_properties),

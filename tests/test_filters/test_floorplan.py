@@ -232,6 +232,34 @@ class TestDetailFetcherZoopla:
 
         assert url is None
 
+    async def test_ignores_pdf_floorplans(self, zoopla_property: Property) -> None:
+        """Should ignore PDF floorplans (not supported by Claude Vision API)."""
+        # HTML with only a PDF floorplan URL
+        html = """
+        <html>
+        <body>
+            <script id="__NEXT_DATA__" type="application/json">{"props":{}}</script>
+            <a href="https://lc.zoocdn.com/abc123def456.pdf">Floor plan (PDF)</a>
+        </body>
+        </html>
+        """
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.text = html
+
+        mock_session = MagicMock()
+        mock_session.get = AsyncMock(return_value=mock_response)
+        mock_session.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session.__aexit__ = AsyncMock(return_value=None)
+
+        with patch("home_finder.scrapers.detail_fetcher.AsyncSession", return_value=mock_session):
+            fetcher = DetailFetcher()
+            url = await fetcher.fetch_floorplan_url(zoopla_property)
+
+        # Should return None since PDF is not a valid image format
+        assert url is None
+
 
 class TestDetailFetcherOpenRent:
     """Tests for OpenRent detail page parsing."""

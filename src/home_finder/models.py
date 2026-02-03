@@ -42,6 +42,7 @@ class Property(BaseModel):
     longitude: float | None = Field(default=None, ge=-180, le=180)
     description: str | None = None
     image_url: HttpUrl | None = None
+    image_hash: str | None = None  # Perceptual hash of main listing image
     available_from: datetime | None = None
     first_seen: datetime = Field(default_factory=datetime.now)
 

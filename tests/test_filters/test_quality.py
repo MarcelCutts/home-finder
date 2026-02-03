@@ -427,7 +427,7 @@ def sample_tool_response() -> dict[str, Any]:
         },
         "condition_concerns": False,
         "concern_severity": None,
-        "summary": "Well-maintained flat with modern kitchen. Living room suitable for home office.",
+        "summary": "Well-maintained flat with modern kitchen. Living room suits home office.",
     }
 
 
@@ -450,6 +450,30 @@ def create_mock_response(tool_input: dict[str, Any], stop_reason: str = "tool_us
 
 class TestPropertyQualityFilter:
     """Tests for PropertyQualityFilter."""
+
+    def test_is_valid_image_url_accepts_images(self) -> None:
+        """Should accept valid image URLs."""
+        valid_urls = [
+            "https://example.com/image.jpg",
+            "https://example.com/image.jpeg",
+            "https://example.com/image.png",
+            "https://example.com/image.gif",
+            "https://example.com/image.webp",
+            "https://example.com/image.JPG",  # Case insensitive
+            "https://example.com/image.jpg?w=800",  # With query params
+        ]
+        for url in valid_urls:
+            assert PropertyQualityFilter._is_valid_image_url(url), f"Should accept {url}"
+
+    def test_is_valid_image_url_rejects_pdfs(self) -> None:
+        """Should reject PDF URLs (not supported by Claude Vision API)."""
+        pdf_urls = [
+            "https://lc.zoocdn.com/abc123.pdf",
+            "https://example.com/floorplan.PDF",
+            "https://example.com/doc.pdf?download=true",
+        ]
+        for url in pdf_urls:
+            assert not PropertyQualityFilter._is_valid_image_url(url), f"Should reject {url}"
 
     async def test_creates_minimal_analysis_when_no_images(self, sample_property: Property) -> None:
         """Should create minimal analysis when no images available."""
