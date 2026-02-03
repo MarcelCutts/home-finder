@@ -13,9 +13,11 @@ from home_finder.filters import (
     LocationFilter,
     PropertyQualityAnalysis,
     PropertyQualityFilter,
+    enrich_merged_properties,
+    filter_by_floorplan,
 )
 from home_finder.logging import configure_logging, get_logger
-from home_finder.models import MergedProperty, Property, TransportMode
+from home_finder.models import FurnishType, MergedProperty, Property, TransportMode
 from home_finder.notifiers import TelegramNotifier
 from home_finder.scrapers import (
     OnTheMarketScraper,
@@ -23,21 +25,23 @@ from home_finder.scrapers import (
     RightmoveScraper,
     ZooplaScraper,
 )
+from home_finder.scrapers.detail_fetcher import DetailFetcher
 
 logger = get_logger(__name__)
 
 # Search areas - supports both boroughs and postcodes (outcodes)
 SEARCH_AREAS = [
     # Boroughs
-    "hackney",
-    "islington",
-    "haringey",
-    "tower-hamlets",
-    # Postcodes
+    # "hackney",
+    # "islington",
+    # "haringey",
+    # "tower-hamlets",
+    # # Postcodes
     "e3",  # Bow (Tower Hamlets)
     "e5",  # Clapton (Hackney)
     "e9",  # Hackney Wick, Homerton (Hackney)
     "e10",  # Leyton (Waltham Forest)
+    "e15",  # Stratford (Newham)
     "e17",  # Walthamstow (Waltham Forest)
     "n15",  # South Tottenham (Haringey)
     "n16",  # Stoke Newington (Hackney)
@@ -51,6 +55,9 @@ async def scrape_all_platforms(
     max_price: int,
     min_bedrooms: int,
     max_bedrooms: int,
+    furnish_types: tuple[FurnishType, ...] = (),
+    min_bathrooms: int = 0,
+    include_let_agreed: bool = True,
 ) -> list[Property]:
     """Scrape all platforms for matching properties.
 
@@ -59,6 +66,9 @@ async def scrape_all_platforms(
         max_price: Maximum monthly rent.
         min_bedrooms: Minimum bedrooms.
         max_bedrooms: Maximum bedrooms.
+        furnish_types: Furnishing types to include.
+        min_bathrooms: Minimum number of bathrooms.
+        include_let_agreed: Whether to include already-let properties.
 
     Returns:
         Combined list of properties from all platforms.
@@ -73,7 +83,7 @@ async def scrape_all_platforms(
     all_properties: list[Property] = []
 
     for scraper in scrapers:
-        for area in SEARCH_AREAS:
+        for i, area in enumerate(SEARCH_AREAS):
             try:
                 logger.info(
                     "scraping_platform",
@@ -86,6 +96,9 @@ async def scrape_all_platforms(
                     min_bedrooms=min_bedrooms,
                     max_bedrooms=max_bedrooms,
                     area=area,
+                    furnish_types=furnish_types,
+                    min_bathrooms=min_bathrooms,
+                    include_let_agreed=include_let_agreed,
                 )
                 all_properties.extend(properties)
                 logger.info(
@@ -101,6 +114,9 @@ async def scrape_all_platforms(
                     area=area,
                     error=str(e),
                 )
+            # Delay between areas to avoid rate limiting
+            if i < len(SEARCH_AREAS) - 1:
+                await asyncio.sleep(2)
 
     return all_properties
 
@@ -150,6 +166,9 @@ async def run_pipeline(settings: Settings) -> None:
             max_price=criteria.max_price,
             min_bedrooms=criteria.min_bedrooms,
             max_bedrooms=criteria.max_bedrooms,
+            furnish_types=settings.get_furnish_types(),
+            min_bathrooms=settings.min_bathrooms,
+            include_let_agreed=settings.include_let_agreed,
         )
         logger.info("scraping_summary", total_found=len(all_properties))
 
@@ -233,15 +252,14 @@ async def run_pipeline(settings: Settings) -> None:
             # Build lookup of best commute time per property
             commute_lookup: dict[str, tuple[int, TransportMode]] = {}
             for result in commute_results:
-                if result.within_limit:
-                    if (
-                        result.property_id not in commute_lookup
-                        or result.travel_time_minutes < commute_lookup[result.property_id][0]
-                    ):
-                        commute_lookup[result.property_id] = (
-                            result.travel_time_minutes,
-                            result.transport_mode,
-                        )
+                if result.within_limit and (
+                    result.property_id not in commute_lookup
+                    or result.travel_time_minutes < commute_lookup[result.property_id][0]
+                ):
+                    commute_lookup[result.property_id] = (
+                        result.travel_time_minutes,
+                        result.transport_mode,
+                    )
 
             # Keep merged properties within commute limit or without coords
             merged_to_notify = [
@@ -264,9 +282,39 @@ async def run_pipeline(settings: Settings) -> None:
             logger.info("no_properties_within_commute_limit")
             return
 
-        # Step 5.5: Property quality analysis (if configured)
+        # Step 5.5: Enrich with detail page data (gallery, floorplan, descriptions)
+        logger.info("pipeline_started", phase="detail_enrichment")
+        detail_fetcher = DetailFetcher(max_gallery_images=settings.quality_filter_max_images)
+        try:
+            merged_to_notify = await enrich_merged_properties(merged_to_notify, detail_fetcher)
+        finally:
+            await detail_fetcher.close()
+
+        logger.info(
+            "enrichment_summary",
+            total=len(merged_to_notify),
+            with_floorplan=sum(1 for m in merged_to_notify if m.floorplan),
+            with_images=sum(1 for m in merged_to_notify if m.images),
+        )
+
+        # Step 5.6: Floorplan gate (if configured)
+        if settings.require_floorplan:
+            before_count = len(merged_to_notify)
+            merged_to_notify = filter_by_floorplan(merged_to_notify)
+            logger.info(
+                "floorplan_filter",
+                before=before_count,
+                after=len(merged_to_notify),
+                dropped=before_count - len(merged_to_notify),
+            )
+
+            if not merged_to_notify:
+                logger.info("no_properties_with_floorplans")
+                return
+
+        # Step 6: Property quality analysis (if configured)
         quality_lookup: dict[str, PropertyQualityAnalysis] = {}
-        analyzed_merged: dict[str, MergedProperty] = {}  # Updated with images
+        analyzed_merged: dict[str, MergedProperty] = {}
         quality_filter = None
         if settings.anthropic_api_key.get_secret_value() and settings.enable_quality_filter:
             logger.info("pipeline_started", phase="quality_analysis")
@@ -278,12 +326,10 @@ async def run_pipeline(settings: Settings) -> None:
             try:
                 quality_results = await quality_filter.analyze_merged_properties(merged_to_notify)
 
-                # Build lookups
                 for merged, analysis in quality_results:
                     quality_lookup[merged.unique_id] = analysis
                     analyzed_merged[merged.unique_id] = merged
 
-                # Log condition concerns
                 concerns = sum(1 for _, a in quality_results if a.condition_concerns)
                 logger.info(
                     "quality_analysis_summary",
@@ -295,7 +341,7 @@ async def run_pipeline(settings: Settings) -> None:
         else:
             logger.info("skipping_quality_analysis", reason="not_configured")
 
-        # Step 6: Save and notify
+        # Step 7: Save and notify
         logger.info(
             "pipeline_started",
             phase="save_and_notify",
@@ -363,6 +409,9 @@ async def run_scrape_only(settings: Settings) -> None:
         max_price=criteria.max_price,
         min_bedrooms=criteria.min_bedrooms,
         max_bedrooms=criteria.max_bedrooms,
+        furnish_types=settings.get_furnish_types(),
+        min_bathrooms=settings.min_bathrooms,
+        include_let_agreed=settings.include_let_agreed,
     )
 
     print(f"\n{'=' * 60}")
@@ -399,6 +448,9 @@ async def run_dry_run(settings: Settings) -> None:
             max_price=criteria.max_price,
             min_bedrooms=criteria.min_bedrooms,
             max_bedrooms=criteria.max_bedrooms,
+            furnish_types=settings.get_furnish_types(),
+            min_bathrooms=settings.min_bathrooms,
+            include_let_agreed=settings.include_let_agreed,
         )
         logger.info("scraping_summary", total_found=len(all_properties))
 
@@ -482,15 +534,14 @@ async def run_dry_run(settings: Settings) -> None:
                     commute_results.extend(results)
 
             for result in commute_results:
-                if result.within_limit:
-                    if (
-                        result.property_id not in commute_lookup
-                        or result.travel_time_minutes < commute_lookup[result.property_id][0]
-                    ):
-                        commute_lookup[result.property_id] = (
-                            result.travel_time_minutes,
-                            result.transport_mode,
-                        )
+                if result.within_limit and (
+                    result.property_id not in commute_lookup
+                    or result.travel_time_minutes < commute_lookup[result.property_id][0]
+                ):
+                    commute_lookup[result.property_id] = (
+                        result.travel_time_minutes,
+                        result.transport_mode,
+                    )
 
             merged_to_notify = [
                 m for m in merged_with_coords if m.canonical.unique_id in commute_lookup
@@ -511,7 +562,38 @@ async def run_dry_run(settings: Settings) -> None:
             print("\nNo properties within commute limit.")
             return
 
-        # Step 5.5: Property quality analysis (if configured)
+        # Step 5.5: Enrich with detail page data (gallery, floorplan, descriptions)
+        logger.info("pipeline_started", phase="detail_enrichment")
+        detail_fetcher = DetailFetcher(max_gallery_images=settings.quality_filter_max_images)
+        try:
+            merged_to_notify = await enrich_merged_properties(merged_to_notify, detail_fetcher)
+        finally:
+            await detail_fetcher.close()
+
+        logger.info(
+            "enrichment_summary",
+            total=len(merged_to_notify),
+            with_floorplan=sum(1 for m in merged_to_notify if m.floorplan),
+            with_images=sum(1 for m in merged_to_notify if m.images),
+        )
+
+        # Step 5.6: Floorplan gate (if configured)
+        if settings.require_floorplan:
+            before_count = len(merged_to_notify)
+            merged_to_notify = filter_by_floorplan(merged_to_notify)
+            logger.info(
+                "floorplan_filter",
+                before=before_count,
+                after=len(merged_to_notify),
+                dropped=before_count - len(merged_to_notify),
+            )
+
+            if not merged_to_notify:
+                logger.info("no_properties_with_floorplans")
+                print("\nNo properties with floorplans.")
+                return
+
+        # Step 5.7: Property quality analysis (if configured)
         quality_lookup: dict[str, PropertyQualityAnalysis] = {}
         analyzed_merged: dict[str, MergedProperty] = {}
         quality_filter = None
