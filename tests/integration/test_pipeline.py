@@ -8,7 +8,8 @@ import pytest_asyncio
 from pydantic import HttpUrl
 
 from home_finder.db import PropertyStorage
-from home_finder.filters import CriteriaFilter, Deduplicator
+from home_finder.filters.criteria import CriteriaFilter
+from home_finder.filters.deduplication import Deduplicator
 from home_finder.models import Property, PropertySource, SearchCriteria
 
 

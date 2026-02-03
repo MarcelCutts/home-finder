@@ -37,7 +37,7 @@ home-finder = "home_finder.main:main"
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 testpaths = ["tests"]
-addopts = "-v --tb=short"
+addopts = "--tb=short -p no:cacheprovider -m 'not slow'"
 markers = [
     "unit: Unit tests (fast, no I/O)",
     "integration: Integration tests (may use in-memory DB)",

@@ -58,6 +58,7 @@ async def scrape_all_platforms(
     furnish_types: tuple[FurnishType, ...] = (),
     min_bathrooms: int = 0,
     include_let_agreed: bool = True,
+    max_per_scraper: int | None = None,
 ) -> list[Property]:
     """Scrape all platforms for matching properties.
 
@@ -69,6 +70,7 @@ async def scrape_all_platforms(
         furnish_types: Furnishing types to include.
         min_bathrooms: Minimum number of bathrooms.
         include_let_agreed: Whether to include already-let properties.
+        max_per_scraper: Maximum properties per scraper (None for unlimited).
 
     Returns:
         Combined list of properties from all platforms.
@@ -83,12 +85,18 @@ async def scrape_all_platforms(
     all_properties: list[Property] = []
 
     for scraper in scrapers:
+        scraper_count = 0
         for i, area in enumerate(SEARCH_AREAS):
+            if max_per_scraper is not None and scraper_count >= max_per_scraper:
+                break
             try:
                 logger.info(
                     "scraping_platform",
                     platform=scraper.source.value,
                     area=area,
+                )
+                remaining = (
+                    max_per_scraper - scraper_count if max_per_scraper is not None else None
                 )
                 properties = await scraper.scrape(
                     min_price=min_price,
@@ -99,7 +107,9 @@ async def scrape_all_platforms(
                     furnish_types=furnish_types,
                     min_bathrooms=min_bathrooms,
                     include_let_agreed=include_let_agreed,
+                    max_results=remaining,
                 )
+                scraper_count += len(properties)
                 all_properties.extend(properties)
                 logger.info(
                     "scraping_complete",
@@ -121,11 +131,12 @@ async def scrape_all_platforms(
     return all_properties
 
 
-async def run_pipeline(settings: Settings) -> None:
+async def run_pipeline(settings: Settings, *, max_per_scraper: int | None = None) -> None:
     """Run the full scraping and notification pipeline.
 
     Args:
         settings: Application settings.
+        max_per_scraper: Maximum properties per scraper (None for unlimited).
     """
     criteria = settings.get_search_criteria()
 
@@ -169,6 +180,7 @@ async def run_pipeline(settings: Settings) -> None:
             furnish_types=settings.get_furnish_types(),
             min_bathrooms=settings.min_bathrooms,
             include_let_agreed=settings.include_let_agreed,
+            max_per_scraper=max_per_scraper,
         )
         logger.info("scraping_summary", total_found=len(all_properties))
 
@@ -395,11 +407,14 @@ async def run_pipeline(settings: Settings) -> None:
         await storage.close()
 
 
-async def run_scrape_only(settings: Settings) -> None:
+async def run_scrape_only(
+    settings: Settings, *, max_per_scraper: int | None = None
+) -> None:
     """Run scraping only and print results (no filtering, storage, or notifications).
 
     Args:
         settings: Application settings.
+        max_per_scraper: Maximum properties per scraper (None for unlimited).
     """
     criteria = settings.get_search_criteria()
 
@@ -412,6 +427,7 @@ async def run_scrape_only(settings: Settings) -> None:
         furnish_types=settings.get_furnish_types(),
         min_bathrooms=settings.min_bathrooms,
         include_let_agreed=settings.include_let_agreed,
+        max_per_scraper=max_per_scraper,
     )
 
     print(f"\n{'=' * 60}")
@@ -428,11 +444,12 @@ async def run_scrape_only(settings: Settings) -> None:
         print()
 
 
-async def run_dry_run(settings: Settings) -> None:
+async def run_dry_run(settings: Settings, *, max_per_scraper: int | None = None) -> None:
     """Run the full pipeline without sending Telegram notifications.
 
     Args:
         settings: Application settings.
+        max_per_scraper: Maximum properties per scraper (None for unlimited).
     """
     criteria = settings.get_search_criteria()
 
@@ -451,6 +468,7 @@ async def run_dry_run(settings: Settings) -> None:
             furnish_types=settings.get_furnish_types(),
             min_bathrooms=settings.min_bathrooms,
             include_let_agreed=settings.include_let_agreed,
+            max_per_scraper=max_per_scraper,
         )
         logger.info("scraping_summary", total_found=len(all_properties))
 
@@ -724,6 +742,12 @@ def main() -> None:
         action="store_true",
         help="Only scrape and print properties (no filtering, storage, or notifications)",
     )
+    parser.add_argument(
+        "--max-per-scraper",
+        type=int,
+        default=None,
+        help="Limit properties per scraper (for faster dev/test runs)",
+    )
     args = parser.parse_args()
 
     # Configure logging
@@ -752,11 +776,11 @@ def main() -> None:
     )
 
     if args.scrape_only:
-        asyncio.run(run_scrape_only(settings))
+        asyncio.run(run_scrape_only(settings, max_per_scraper=args.max_per_scraper))
     elif args.dry_run:
-        asyncio.run(run_dry_run(settings))
+        asyncio.run(run_dry_run(settings, max_per_scraper=args.max_per_scraper))
     else:
-        asyncio.run(run_pipeline(settings))
+        asyncio.run(run_pipeline(settings, max_per_scraper=args.max_per_scraper))
 
 
 if __name__ == "__main__":

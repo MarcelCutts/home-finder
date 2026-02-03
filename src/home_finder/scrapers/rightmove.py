@@ -10,7 +10,7 @@ from crawlee.storage_clients import MemoryStorageClient
 from pydantic import HttpUrl
 
 from home_finder.logging import get_logger
-from home_finder.models import Property, PropertySource
+from home_finder.models import FurnishType, Property, PropertySource
 from home_finder.scrapers.base import BaseScraper
 from home_finder.scrapers.location_utils import is_outcode
 
@@ -161,7 +161,7 @@ class RightmoveScraper(BaseScraper):
     # Pagination constants
     RESULTS_PER_PAGE = 24
     MAX_PAGES = 20
-    PAGE_DELAY_SECONDS = 0.5
+    PAGE_DELAY_SECONDS = 2.0
 
     async def scrape(
         self,
@@ -171,6 +171,10 @@ class RightmoveScraper(BaseScraper):
         min_bedrooms: int,
         max_bedrooms: int,
         area: str,
+        furnish_types: tuple[FurnishType, ...] = (),
+        min_bathrooms: int = 0,
+        include_let_agreed: bool = True,
+        max_results: int | None = None,
     ) -> list[Property]:
         """Scrape Rightmove for matching properties (all pages)."""
         import asyncio
@@ -183,6 +187,9 @@ class RightmoveScraper(BaseScraper):
             max_price=max_price,
             min_bedrooms=min_bedrooms,
             max_bedrooms=max_bedrooms,
+            furnish_types=furnish_types,
+            min_bathrooms=min_bathrooms,
+            include_let_agreed=include_let_agreed,
         )
 
         for page in range(self.MAX_PAGES):
@@ -191,10 +198,13 @@ class RightmoveScraper(BaseScraper):
 
             page_properties: list[Property] = []
 
-            async def handle_page(context: BeautifulSoupCrawlingContext) -> None:
+            async def handle_page(
+                context: BeautifulSoupCrawlingContext,
+                _props: list[Property] = page_properties,
+            ) -> None:
                 soup = context.soup
                 parsed = self._parse_search_results(soup, str(context.request.url))
-                page_properties.extend(parsed)
+                _props.extend(parsed)
 
             crawler = BeautifulSoupCrawler(
                 max_requests_per_crawl=1,
@@ -215,6 +225,10 @@ class RightmoveScraper(BaseScraper):
                 break
 
             properties.extend(page_properties)
+
+            if max_results is not None and len(properties) >= max_results:
+                properties = properties[:max_results]
+                break
 
             # Be polite - delay between pages
             if page < self.MAX_PAGES - 1:
@@ -237,6 +251,9 @@ class RightmoveScraper(BaseScraper):
         max_price: int,
         min_bedrooms: int,
         max_bedrooms: int,
+        furnish_types: tuple[FurnishType, ...] = (),
+        min_bathrooms: int = 0,
+        include_let_agreed: bool = True,
     ) -> str:
         """Build the Rightmove search URL with filters.
 
@@ -269,12 +286,28 @@ class RightmoveScraper(BaseScraper):
             f"maxBedrooms={max_bedrooms}",
             f"minPrice={min_price}",
             f"maxPrice={max_price}",
-            "propertyTypes=flat",  # Only flats, not houses
-            "mustHave=",
-            "dontShow=houseShare",  # Exclude house shares
-            "furnishTypes=",
-            "keywords=",
+            "propertyTypes=flat",
+            "dontShow=houseShare",
+            "letType=longTerm",
+            "sortType=6",
         ]
+
+        if furnish_types:
+            rm_values = {
+                FurnishType.FURNISHED: "furnished",
+                FurnishType.UNFURNISHED: "unfurnished",
+                FurnishType.PART_FURNISHED: "partFurnished",
+            }
+            ft_str = ",".join(rm_values[ft] for ft in furnish_types if ft in rm_values)
+            if ft_str:
+                params.append(f"furnishTypes={ft_str}")
+
+        if min_bathrooms > 0:
+            params.append(f"minBathrooms={min_bathrooms}")
+
+        if not include_let_agreed:
+            params.append("includeLetAgreed=false")
+
         return f"{self.BASE_URL}/property-to-rent/find.html?{'&'.join(params)}"
 
     def _parse_search_results(self, soup: BeautifulSoup, base_url: str) -> list[Property]:

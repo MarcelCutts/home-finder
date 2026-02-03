@@ -1,5 +1,6 @@
 """SQLite storage for tracked properties."""
 
+import contextlib
 import json
 from datetime import datetime
 from pathlib import Path
@@ -117,6 +118,16 @@ class PropertyStorage:
             CREATE INDEX IF NOT EXISTS idx_property_images_property
             ON property_images(property_unique_id)
         """)
+
+        # Migrate: add columns that may not exist in older databases
+        for column, col_type in [
+            ("sources", "TEXT"),
+            ("source_urls", "TEXT"),
+            ("min_price", "INTEGER"),
+            ("max_price", "INTEGER"),
+        ]:
+            with contextlib.suppress(Exception):
+                await conn.execute(f"ALTER TABLE properties ADD COLUMN {column} {col_type}")
 
         await conn.commit()
 

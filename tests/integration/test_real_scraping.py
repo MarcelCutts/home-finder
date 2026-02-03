@@ -9,13 +9,10 @@ Run with: uv run pytest -m slow -v
 import pytest
 
 from home_finder.models import PropertySource
-from home_finder.scrapers import (
-    OnTheMarketScraper,
-    OpenRentScraper,
-    RightmoveScraper,
-    ZooplaScraper,
-)
-from home_finder.scrapers.rightmove import _outcode_cache
+from home_finder.scrapers.onthemarket import OnTheMarketScraper
+from home_finder.scrapers.openrent import OpenRentScraper
+from home_finder.scrapers.rightmove import RightmoveScraper, _outcode_cache
+from home_finder.scrapers.zoopla import ZooplaScraper
 
 
 @pytest.mark.slow

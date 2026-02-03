@@ -8,7 +8,7 @@ from curl_cffi.requests import AsyncSession
 from pydantic import HttpUrl, ValidationError
 
 from home_finder.logging import get_logger
-from home_finder.models import Property, PropertySource
+from home_finder.models import FurnishType, Property, PropertySource
 from home_finder.scrapers.base import BaseScraper
 from home_finder.scrapers.zoopla_models import (
     ZooplaListing,
@@ -46,6 +46,10 @@ class ZooplaScraper(BaseScraper):
         min_bedrooms: int,
         max_bedrooms: int,
         area: str,
+        furnish_types: tuple[FurnishType, ...] = (),
+        min_bathrooms: int = 0,
+        include_let_agreed: bool = True,
+        max_results: int | None = None,
     ) -> list[Property]:
         """Scrape Zoopla for matching properties (all pages)."""
         import asyncio
@@ -59,6 +63,9 @@ class ZooplaScraper(BaseScraper):
             max_price=max_price,
             min_bedrooms=min_bedrooms,
             max_bedrooms=max_bedrooms,
+            furnish_types=furnish_types,
+            min_bathrooms=min_bathrooms,
+            include_let_agreed=include_let_agreed,
         )
 
         # Fetch page 1 to get the redirect URL (Zoopla redirects to a different URL format)
@@ -118,6 +125,10 @@ class ZooplaScraper(BaseScraper):
                 break
 
             all_properties.extend(new_properties)
+
+            if max_results is not None and len(all_properties) >= max_results:
+                all_properties = all_properties[:max_results]
+                break
 
             # Be polite - delay between pages
             if page < self.MAX_PAGES:
@@ -329,6 +340,9 @@ class ZooplaScraper(BaseScraper):
         max_price: int,
         min_bedrooms: int,
         max_bedrooms: int,
+        furnish_types: tuple[FurnishType, ...] = (),
+        min_bathrooms: int = 0,
+        include_let_agreed: bool = True,
     ) -> str:
         """Build the Zoopla search URL with filters."""
         # Normalize area name
@@ -347,7 +361,27 @@ class ZooplaScraper(BaseScraper):
             "is_shared_accommodation=false",
             "is_retirement_home=false",
             "is_student_accommodation=false",
+            "results_sort=newest_listings",
         ]
+
+        if furnish_types:
+            zoopla_values = {
+                FurnishType.FURNISHED: "furnished",
+                FurnishType.UNFURNISHED: "unfurnished",
+                FurnishType.PART_FURNISHED: "part_furnished",
+            }
+            ft_str = ",".join(
+                zoopla_values[ft] for ft in furnish_types if ft in zoopla_values
+            )
+            if ft_str:
+                params.append(f"furnished_state={ft_str}")
+
+        if min_bathrooms > 0:
+            params.append(f"bathrooms_min={min_bathrooms}")
+
+        if not include_let_agreed:
+            params.append("available_only=true")
+
         return f"{self.BASE_URL}/to-rent/property/{area_slug}/?{'&'.join(params)}"
 
     def _parse_search_results(self, soup: BeautifulSoup, _base_url: str) -> list[Property]:

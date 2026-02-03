@@ -1,7 +1,6 @@
 """Tests for OnTheMarket scraper."""
 
 import json
-from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -72,7 +71,9 @@ def sample_next_data(sample_listing: dict[str, Any]) -> str:
             }
         }
     }
-    return f'<html><body><script id="__NEXT_DATA__" type="application/json">{json.dumps(next_data)}</script></body></html>'
+    data = json.dumps(next_data)
+    script = f'<script id="__NEXT_DATA__" type="application/json">{data}</script>'
+    return f"<html><body>{script}</body></html>"
 
 
 class TestOnTheMarketScraper:
@@ -244,7 +245,8 @@ class TestOnTheMarketParser:
 
     def test_parse_empty_results(self, onthemarket_scraper: OnTheMarketScraper) -> None:
         """Test parsing page with no results."""
-        html = '<html><body><script id="__NEXT_DATA__">{"props":{"initialReduxState":{"results":{"list":[]}}}}</script></body></html>'
+        next_data = '{"props":{"initialReduxState":{"results":{"list":[]}}}}'
+        html = f'<html><body><script id="__NEXT_DATA__">{next_data}</script></body></html>'
         properties = onthemarket_scraper._parse_next_data(html)
         assert len(properties) == 0
 

@@ -16,6 +16,14 @@ class PropertySource(str, Enum):
     ONTHEMARKET = "onthemarket"
 
 
+class FurnishType(str, Enum):
+    """Furnishing type for property search filters."""
+
+    FURNISHED = "furnished"
+    UNFURNISHED = "unfurnished"
+    PART_FURNISHED = "part_furnished"
+
+
 class TransportMode(str, Enum):
     """Transport modes for commute filtering."""
 

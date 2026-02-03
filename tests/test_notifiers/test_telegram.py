@@ -6,13 +6,29 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from pydantic import HttpUrl
 
+from home_finder.filters.quality import (
+    ConditionAnalysis,
+    KitchenAnalysis,
+    LightSpaceAnalysis,
+    PropertyQualityAnalysis,
+    SpaceAnalysis,
+    ValueAnalysis,
+)
 from home_finder.models import (
+    MergedProperty,
     Property,
+    PropertyImage,
     PropertySource,
     TrackedProperty,
     TransportMode,
 )
-from home_finder.notifiers.telegram import TelegramNotifier, format_property_message
+from home_finder.notifiers.telegram import (
+    TelegramNotifier,
+    _format_star_rating,
+    _get_best_image_url,
+    format_merged_property_caption,
+    format_property_message,
+)
 
 
 @pytest.fixture
@@ -41,6 +57,73 @@ def sample_tracked_property(sample_property: Property) -> TrackedProperty:
         commute_minutes=18,
         transport_mode=TransportMode.CYCLING,
     )
+
+
+@pytest.fixture
+def sample_merged_property(sample_property: Property) -> MergedProperty:
+    """Create a sample merged property with two sources."""
+    zoopla_url = HttpUrl("https://www.zoopla.co.uk/to-rent/details/99999")
+    return MergedProperty(
+        canonical=sample_property,
+        sources=(PropertySource.OPENRENT, PropertySource.ZOOPLA),
+        source_urls={
+            PropertySource.OPENRENT: sample_property.url,
+            PropertySource.ZOOPLA: zoopla_url,
+        },
+        images=(
+            PropertyImage(
+                url=HttpUrl("https://example.com/img1.jpg"),
+                source=PropertySource.OPENRENT,
+                image_type="gallery",
+            ),
+        ),
+        min_price=1850,
+        max_price=1900,
+    )
+
+
+@pytest.fixture
+def sample_quality_analysis() -> PropertyQualityAnalysis:
+    """Create a sample quality analysis with overall_rating."""
+    return PropertyQualityAnalysis(
+        kitchen=KitchenAnalysis(
+            overall_quality="modern",
+            hob_type="gas",
+            has_dishwasher=True,
+            notes="Nice kitchen",
+        ),
+        condition=ConditionAnalysis(overall_condition="good", confidence="high"),
+        light_space=LightSpaceAnalysis(natural_light="good", feels_spacious=True, notes="Bright"),
+        space=SpaceAnalysis(living_room_sqm=20.0, is_spacious_enough=True, confidence="high"),
+        condition_concerns=False,
+        value=ValueAnalysis(
+            area_average=2200,
+            difference=-300,
+            rating="excellent",
+            note="£300 below E8 average",
+        ),
+        overall_rating=4,
+        summary="Bright flat with modern kitchen.",
+    )
+
+
+class TestFormatStarRating:
+    """Tests for _format_star_rating."""
+
+    def test_rating_1(self) -> None:
+        assert _format_star_rating(1) == "⭐☆☆☆☆"
+
+    def test_rating_2(self) -> None:
+        assert _format_star_rating(2) == "⭐⭐☆☆☆"
+
+    def test_rating_3(self) -> None:
+        assert _format_star_rating(3) == "⭐⭐⭐☆☆"
+
+    def test_rating_4(self) -> None:
+        assert _format_star_rating(4) == "⭐⭐⭐⭐☆"
+
+    def test_rating_5(self) -> None:
+        assert _format_star_rating(5) == "⭐⭐⭐⭐⭐"
 
 
 class TestFormatPropertyMessage:
@@ -94,6 +177,97 @@ class TestFormatPropertyMessage:
             "<b>", ""
         ).replace("</b>", "").replace("</a>", "")
         assert "&amp;" in message or "& " not in message
+
+    def test_format_property_with_star_rating(
+        self,
+        sample_property: Property,
+        sample_quality_analysis: PropertyQualityAnalysis,
+    ) -> None:
+        """Test that star rating appears in message when quality analysis has rating."""
+        message = format_property_message(sample_property, quality_analysis=sample_quality_analysis)
+        assert "⭐⭐⭐⭐☆" in message
+        assert "Rating:" in message
+
+
+class TestFormatMergedPropertyCaption:
+    """Tests for format_merged_property_caption."""
+
+    def test_caption_under_1024_chars(
+        self,
+        sample_merged_property: MergedProperty,
+        sample_quality_analysis: PropertyQualityAnalysis,
+    ) -> None:
+        caption = format_merged_property_caption(
+            sample_merged_property,
+            commute_minutes=14,
+            transport_mode=TransportMode.CYCLING,
+            quality_analysis=sample_quality_analysis,
+        )
+        assert len(caption) <= 1024
+
+    def test_caption_contains_key_fields(
+        self,
+        sample_merged_property: MergedProperty,
+        sample_quality_analysis: PropertyQualityAnalysis,
+    ) -> None:
+        caption = format_merged_property_caption(
+            sample_merged_property,
+            commute_minutes=14,
+            transport_mode=TransportMode.CYCLING,
+            quality_analysis=sample_quality_analysis,
+        )
+        assert "1 Bed Flat" in caption
+        assert "⭐⭐⭐⭐☆" in caption
+        assert "£" in caption
+        assert "1 bed" in caption.lower()
+        assert "14 min" in caption
+
+    def test_caption_without_quality(self, sample_merged_property: MergedProperty) -> None:
+        caption = format_merged_property_caption(sample_merged_property)
+        assert "£" in caption
+        assert len(caption) <= 1024
+
+
+class TestGetBestImageUrl:
+    """Tests for _get_best_image_url."""
+
+    def test_returns_canonical_image(self, sample_property: Property) -> None:
+        prop_with_img = sample_property.model_copy(
+            update={"image_url": HttpUrl("https://example.com/main.jpg")}
+        )
+        merged = MergedProperty(
+            canonical=prop_with_img,
+            sources=(PropertySource.OPENRENT,),
+            source_urls={PropertySource.OPENRENT: prop_with_img.url},
+            min_price=1900,
+            max_price=1900,
+        )
+        assert _get_best_image_url(merged) == "https://example.com/main.jpg"
+
+    def test_falls_back_to_gallery(self, sample_merged_property: MergedProperty) -> None:
+        # sample_merged_property has no canonical image_url but has gallery images
+        merged_no_canonical_img = MergedProperty(
+            canonical=sample_merged_property.canonical.model_copy(update={"image_url": None}),
+            sources=sample_merged_property.sources,
+            source_urls=sample_merged_property.source_urls,
+            images=sample_merged_property.images,
+            min_price=sample_merged_property.min_price,
+            max_price=sample_merged_property.max_price,
+        )
+        url = _get_best_image_url(merged_no_canonical_img)
+        assert url is not None
+        assert "img1.jpg" in url
+
+    def test_returns_none_when_no_images(self, sample_property: Property) -> None:
+        prop_no_img = sample_property.model_copy(update={"image_url": None})
+        merged = MergedProperty(
+            canonical=prop_no_img,
+            sources=(PropertySource.OPENRENT,),
+            source_urls={PropertySource.OPENRENT: prop_no_img.url},
+            min_price=1900,
+            max_price=1900,
+        )
+        assert _get_best_image_url(merged) is None
 
 
 class TestTelegramNotifier:
@@ -190,3 +364,89 @@ class TestTelegramNotifier:
         assert len(results) == 3
         assert all(results)
         assert mock_bot.send_message.call_count == 3
+
+    @pytest.mark.asyncio
+    async def test_send_merged_with_image_sends_photo(
+        self,
+        sample_merged_property: MergedProperty,
+        sample_quality_analysis: PropertyQualityAnalysis,
+    ) -> None:
+        """Test that send_merged_property_notification uses send_photo when image available."""
+        notifier = TelegramNotifier(bot_token="123456:ABC-DEF", chat_id=12345678)
+        mock_bot = AsyncMock()
+        mock_bot.send_photo = AsyncMock(return_value=MagicMock(message_id=1))
+        mock_bot.send_venue = AsyncMock(return_value=MagicMock(message_id=2))
+
+        with patch.object(notifier, "_get_bot", return_value=mock_bot):
+            result = await notifier.send_merged_property_notification(
+                sample_merged_property, quality_analysis=sample_quality_analysis
+            )
+
+        assert result is True
+        mock_bot.send_photo.assert_called_once()
+        call_kwargs = mock_bot.send_photo.call_args[1]
+        assert call_kwargs["chat_id"] == 12345678
+        assert "reply_markup" in call_kwargs
+
+    @pytest.mark.asyncio
+    async def test_send_merged_without_image_sends_message(self, sample_property: Property) -> None:
+        """Test fallback to send_message when no image available."""
+        merged_no_img = MergedProperty(
+            canonical=sample_property.model_copy(update={"image_url": None}),
+            sources=(PropertySource.OPENRENT,),
+            source_urls={PropertySource.OPENRENT: sample_property.url},
+            min_price=1900,
+            max_price=1900,
+        )
+        notifier = TelegramNotifier(bot_token="123456:ABC-DEF", chat_id=12345678)
+        mock_bot = AsyncMock()
+        mock_bot.send_message = AsyncMock(return_value=MagicMock(message_id=1))
+        mock_bot.send_venue = AsyncMock(return_value=MagicMock(message_id=2))
+
+        with patch.object(notifier, "_get_bot", return_value=mock_bot):
+            result = await notifier.send_merged_property_notification(merged_no_img)
+
+        assert result is True
+        mock_bot.send_message.assert_called_once()
+        mock_bot.send_photo.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_send_merged_sends_venue_when_coords(
+        self, sample_merged_property: MergedProperty
+    ) -> None:
+        """Test that venue is sent when coordinates are available."""
+        notifier = TelegramNotifier(bot_token="123456:ABC-DEF", chat_id=12345678)
+        mock_bot = AsyncMock()
+        mock_bot.send_photo = AsyncMock(return_value=MagicMock(message_id=1))
+        mock_bot.send_venue = AsyncMock(return_value=MagicMock(message_id=2))
+
+        with patch.object(notifier, "_get_bot", return_value=mock_bot):
+            await notifier.send_merged_property_notification(sample_merged_property)
+
+        mock_bot.send_venue.assert_called_once()
+        venue_kwargs = mock_bot.send_venue.call_args[1]
+        assert venue_kwargs["latitude"] == 51.5465
+        assert venue_kwargs["longitude"] == -0.0553
+
+    @pytest.mark.asyncio
+    async def test_send_merged_no_venue_when_no_coords(self, sample_property: Property) -> None:
+        """Test that venue is NOT sent when coordinates are absent."""
+        prop_no_coords = sample_property.model_copy(
+            update={"latitude": None, "longitude": None, "image_url": None}
+        )
+        merged = MergedProperty(
+            canonical=prop_no_coords,
+            sources=(PropertySource.OPENRENT,),
+            source_urls={PropertySource.OPENRENT: prop_no_coords.url},
+            min_price=1900,
+            max_price=1900,
+        )
+        notifier = TelegramNotifier(bot_token="123456:ABC-DEF", chat_id=12345678)
+        mock_bot = AsyncMock()
+        mock_bot.send_message = AsyncMock(return_value=MagicMock(message_id=1))
+        mock_bot.send_venue = AsyncMock(return_value=MagicMock(message_id=2))
+
+        with patch.object(notifier, "_get_bot", return_value=mock_bot):
+            await notifier.send_merged_property_notification(merged)
+
+        mock_bot.send_venue.assert_not_called()

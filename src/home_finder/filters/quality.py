@@ -2,30 +2,16 @@
 
 import asyncio
 import base64
-from typing import Any, Literal, get_args
+from typing import TYPE_CHECKING, Any, Literal, get_args
 
-import anthropic
-import httpx
-from anthropic import (
-    APIConnectionError,
-    APIStatusError,
-    BadRequestError,
-    InternalServerError,
-    RateLimitError,
-)
-from anthropic.types import (
-    Base64ImageSourceParam,
-    ImageBlockParam,
-    TextBlockParam,
-    ToolParam,
-    ToolUseBlock,
-    URLImageSourceParam,
-)
-from curl_cffi.requests import AsyncSession
 from pydantic import BaseModel, ConfigDict
 
 from home_finder.logging import get_logger
 from home_finder.models import MergedProperty
+
+if TYPE_CHECKING:
+    import anthropic
+    from anthropic.types import ImageBlockParam
 
 logger = get_logger(__name__)
 
@@ -45,15 +31,15 @@ MAX_RETRIES = 3
 REQUEST_TIMEOUT = 180.0  # 3 minutes for vision requests
 
 # Average monthly rents by outcode and bedroom count (£/month)
-# Based on ONS Private Rent data and Rightmove/Zoopla market research (Jan 2026)
+# Based on Rightmove/Zoopla asking prices and ONS Private Rent data (Jan-Feb 2026)
 # Format: {outcode: {bedrooms: average_rent}}
 RENTAL_BENCHMARKS: dict[str, dict[int, int]] = {
     # Hackney
     "E2": {1: 1950, 2: 2400, 3: 3100},
-    "E5": {1: 1800, 2: 2200, 3: 2800},
+    "E5": {1: 1750, 2: 2200, 3: 2600},
     "E8": {1: 1900, 2: 2350, 3: 3000},
-    "E9": {1: 1850, 2: 2250, 3: 2900},
-    "N16": {1: 1850, 2: 2300, 3: 2950},
+    "E9": {1: 1900, 2: 2400, 3: 2850},
+    "N16": {1: 1650, 2: 2150, 3: 2900},
     # Islington
     "N1": {1: 2100, 2: 2600, 3: 3400},
     "N4": {1: 1800, 2: 2200, 3: 2850},
@@ -66,21 +52,92 @@ RENTAL_BENCHMARKS: dict[str, dict[int, int]] = {
     "N8": {1: 1750, 2: 2150, 3: 2750},
     "N10": {1: 1650, 2: 2050, 3: 2650},
     "N11": {1: 1600, 2: 2000, 3: 2600},
-    "N15": {1: 1650, 2: 2000, 3: 2550},
-    "N17": {1: 1550, 2: 1900, 3: 2450},
+    "N15": {1: 1600, 2: 1850, 3: 2600},
+    "N17": {1: 1800, 2: 2300, 3: 2950},
     "N22": {1: 1600, 2: 1950, 3: 2500},
     # Tower Hamlets
     "E1": {1: 2050, 2: 2550, 3: 3300},
-    "E3": {1: 1900, 2: 2350, 3: 3000},
+    "E3": {1: 1750, 2: 2200, 3: 2750},
     "E14": {1: 2100, 2: 2600, 3: 3350},
+    # Newham
+    "E15": {1: 1950, 2: 2200, 3: 2800},
     # Waltham Forest
-    "E10": {1: 1600, 2: 1950, 3: 2500},
+    "E10": {1: 1550, 2: 1750, 3: 2600},
     "E11": {1: 1550, 2: 1900, 3: 2450},
-    "E17": {1: 1650, 2: 2000, 3: 2600},
+    "E17": {1: 1850, 2: 1850, 3: 2350},
 }
 
 # Default benchmark for unknown areas (East London average)
-DEFAULT_BENCHMARK: dict[int, int] = {1: 1800, 2: 2200, 3: 2850}
+DEFAULT_BENCHMARK: dict[int, int] = {1: 1750, 2: 2100, 3: 2700}
+
+# Area context for LLM quality analysis — concise renter-focused summaries per outcode
+# Injected into the quality analysis prompt to inform value-for-quality ratings
+AREA_CONTEXT: dict[str, str] = {
+    "E3": (
+        "Bow offers Zone 2 value near Victoria Park with District/H&C/Central line access. "
+        "Value pockets in Victorian conversions near Roman Road; Fish Island canalside commands "
+        "15-25% premiums. New-build developments (Bow Green, Fish Island Village) are pushing "
+        "average prices higher. Watch for A12 noise/pollution, variable estate quality, and "
+        "poor EPC ratings on cheap main-road offerings."
+    ),
+    "E5": (
+        "Clapton is 15-20% cheaper than neighbouring Dalston (E8) and Stoke Newington (N16) "
+        "with similar Victorian stock. Overground from Clapton/Homerton reaches Liverpool Street "
+        "in under 15 min. Best value in Upper Clapton near Stamford Hill; Chatsworth Road "
+        "artisan hub commands premiums. Clapton Park Estate 1970s blocks vary significantly in "
+        "quality. Liveable Neighbourhood bus gates (Aug 2025) cause congestion on boundary roads."
+    ),
+    "E9": (
+        "Hackney Wick commands premium rents due to Creative Enterprise Zone status and Olympic "
+        "Park proximity. Overground reaches Liverpool Street in 15 min. Value in older Homerton "
+        "stock; warehouse conversions and waterfront new-builds cost significantly more. Note: "
+        "Fish Island is technically Tower Hamlets (E3), not Hackney—different council tax. "
+        "Flood risk near canals and late-night venue noise affect some locations."
+    ),
+    "E10": (
+        "Leyton offers the best value—10% below Walthamstow and 15-25% below Stratford—with "
+        "Central Line access (12 min to Liverpool Street, 21 to Oxford Circus). Francis Road "
+        "area combines period character with good amenities; proximity to QE Olympic Park and "
+        "Hackney Marshes adds appeal. Flood risk near River Lea; High Road Leyton has higher "
+        "crime rates than borough average. Waltham Forest requires selective landlord licensing."
+    ),
+    "E15": (
+        "Stratford commands premium rents due to Elizabeth Line connectivity and Olympic legacy "
+        "regeneration—London's second-most connected transport hub. Value pockets in Victorian "
+        "terraces around Stratford Village and West Ham run 15-20% below purpose-built towers. "
+        "Avoid Carpenters Estate (facing demolition/regen uncertainty). New-build service charges "
+        "add £150-400/month; scrutinise ground rent terms. Flood risk near Stratford High Street."
+    ),
+    "E17": (
+        "Walthamstow shows dramatic price variation between premium Village area and affordable "
+        "Higham Hill/Wood Street pockets. Victoria Line reaches King's Cross in 15 minutes. "
+        "Build-to-Rent developments (e.g. The Eades) offer 8 weeks rent-free (~15% effective "
+        "discount)—factor incentives into comparisons. Waltham Forest operates borough-wide "
+        "selective landlord licensing. Marlowe Road estate flagged for intervention."
+    ),
+    "N15": (
+        "South Tottenham offers 15-20% savings versus neighbouring N16 with Victoria Line access "
+        "(Seven Sisters to King's Cross in ~15 min). Zone between Seven Sisters and South "
+        "Tottenham stations offers best balance of price and transport. Gradual gentrification "
+        "spillover from N16; new BTR developments (Vabel Lawrence, Apex Gardens) adding modern "
+        "stock. Markfield Road flood risk zone; Haringey crime rate 14% above London average "
+        "with violence/theft concentrating around transport hubs."
+    ),
+    "N16": (
+        "Stoke Newington commands 15-20% premiums over N15/N17 reflecting its village feel, "
+        "independent shops, and excellent schools. Church Street core has highest rents; prime "
+        "houses near Clissold Park reach £1,800/week. Value pockets near Hackney Downs and "
+        "Stamford Hill. Woodberry Down regeneration (5,500 homes by 2035) may ease supply. "
+        "Manor House tube (Piccadilly) nearby but no direct tube; above-average property crime."
+    ),
+    "N17": (
+        "Tottenham Hale has a stark two-tier market: Build-to-Rent developments (Heart of Hale, "
+        "Hale Village, The Gessner—£2,170-2,615 for 1-beds with gym/concierge) vs older "
+        "Victorian conversions at 20-30% less. Victoria Line reaches King's Cross in 12 min; "
+        "direct trains to Stansted. Northumberland Park area remains challenging. Higher crime "
+        "in Tottenham Hale ward; flood risk near waterways."
+    ),
+}
 
 
 class KitchenAnalysis(BaseModel):
@@ -218,6 +275,9 @@ class PropertyQualityAnalysis(BaseModel):
     # Value assessment (calculated, not from LLM)
     value: ValueAnalysis | None = None
 
+    # Overall star rating (1-5, from LLM)
+    overall_rating: int | None = None
+
     # For notifications
     summary: str
 
@@ -234,6 +294,33 @@ IMPORTANT: Cross-reference what you see in the images with the listing text. \
 The description often mentions things like "new kitchen", "gas hob", "recently \
 refurbished" that help confirm or clarify what's in the photos.
 
+**Stock Type Identification**: First, identify the property type from the \
+photos and listing — this fundamentally affects expected pricing and what \
+condition issues to look for:
+- **Victorian/Edwardian conversion**: Period features, high ceilings, sash \
+windows. These are the baseline stock in East London. Watch for awkward room \
+subdivisions, original single glazing, rising damp, and uneven floors.
+- **Purpose-built new-build / Build-to-Rent**: Clean lines, uniform finish, \
+large windows. Commands 15-30% premium but check for suspiciously small rooms \
+(developers optimise unit count), thin partition walls, and developer-grade \
+finishes that look good but wear quickly.
+- **Warehouse/industrial conversion**: High ceilings, exposed brick, large \
+windows. Premium pricing (especially E9 canalside). Watch for cold/draughty \
+spaces, echo/noise issues, and damp from inadequate conversion.
+- **Ex-council / post-war estate**: Concrete construction, uniform exteriors, \
+communal corridors. Should be 20-40% below area average. Check communal area \
+maintenance quality — it signals management standards.
+- **Georgian terrace**: Grand proportions, original features. Premium stock.
+
+**Listing Text Signals**: Scan the description for cost and quality signals:
+- EPC rating: Band D-G = significantly higher energy bills (£50-150/month)
+- "Service charge" amount: Add to headline rent for true monthly cost
+- "Rent-free weeks" or move-in incentives: Calculate effective monthly discount
+- "Selective licensing" or licence number: Compliant landlord (positive signal)
+- "Ground rent" or leasehold terms: Check for escalation clauses
+- Proximity to active construction/regeneration: Short-term noise but \
+potential future rent increases (relevant in E9, E15, N17)
+
 Analyze the following aspects:
 
 1. **Kitchen Quality**: Focus on whether the kitchen looks MODERN or DATED.
@@ -246,6 +333,8 @@ Analyze the following aspects:
    - Damp (water stains, peeling paint near windows/ceilings)
    - Mold (dark patches, especially in corners, bathrooms)
    - Worn fixtures (dated bathroom fittings, tired carpets, scuffed walls)
+   - Stock-type-specific issues identified above (e.g., single glazing in \
+Victorian, thin walls in new-build, draughts in warehouse conversion)
    - Cross-reference with listing mentions of "refurbished", "newly decorated"
 
 3. **Natural Light & Space**: Assess:
@@ -257,11 +346,26 @@ Analyze the following aspects:
 size in sqm. The living room should ideally fit a home office AND host 8+ \
 people (~20-25 sqm minimum).
 
-5. **Value Assessment**: Consider if the property is good value given its \
-condition and features mentioned in the listing.
+5. **Value Assessment**: Assess value-for-money considering:
+   - The property's stock type: area averages reflect typical older stock. \
+New-build/BTR at 15-30% above average is expected, not poor value. But a \
+Victorian conversion at 15% above average IS overpriced. Ex-council stock \
+at average price is poor value — it should be 20-40% below.
+   - The Area Context provided (local market, transport, value pockets, watch-outs)
+   - Whether this specific property is above or below typical quality for \
+its stock type AND area
+   - True monthly cost: add any service charges, subtract rent-free incentive \
+discounts, and note high EPC energy costs when assessing value
+   - Regeneration trajectory: properties in E9, E15, N17 face upward rent \
+pressure through 2026-2027, so at-market pricing today may be good value
+   Your value_for_quality rating should reflect what the renter gets for their \
+money in THIS area, not just raw price comparison.
 
 6. **Overall Summary**: Write a brief 1-2 sentence summary highlighting the \
 key positives and any concerns a potential renter should know about.
+
+7. **Overall Rating**: Give a 1-5 star rating for rental desirability.
+   5=Exceptional, 4=Good, 3=Acceptable, 2=Below average, 1=Avoid
 
 Always use the property_quality_analysis tool to return your assessment."""
 
@@ -389,6 +493,10 @@ QUALITY_ANALYSIS_TOOL: dict[str, Any] = {
                 "required": ["rating", "reasoning"],
                 "additionalProperties": False,
             },
+            "overall_rating": {
+                "type": "integer",
+                "description": "Overall 1-5 star rating for rental desirability (1=worst, 5=best)",
+            },
             "condition_concerns": {
                 "type": "boolean",
                 "description": "True if any significant condition issues found",
@@ -410,6 +518,7 @@ QUALITY_ANALYSIS_TOOL: dict[str, Any] = {
             "light_space",
             "space",
             "value_for_quality",
+            "overall_rating",
             "condition_concerns",
             "concern_severity",
             "summary",
@@ -426,6 +535,8 @@ def build_user_prompt(
     area_average: int,
     description: str | None = None,
     features: list[str] | None = None,
+    area_context: str | None = None,
+    outcode: str | None = None,
 ) -> str:
     """Build the user prompt with property-specific context."""
     diff = price_pcm - area_average
@@ -442,6 +553,9 @@ def build_user_prompt(
 - Price: £{price_pcm}/month
 - Bedrooms: {bedrooms}
 - Area average for {bedrooms}-bed: £{area_average}/month ({price_comparison})"""
+
+    if area_context and outcode:
+        prompt += f"\n\n**Area Context ({outcode}):**\n{area_context}"
 
     if features:
         prompt += "\n\n**Listed Features:**\n"
@@ -475,7 +589,10 @@ class PropertyQualityFilter:
     def _get_client(self) -> anthropic.AsyncAnthropic:
         """Get or create the Anthropic client with optimized settings."""
         if self._client is None:
-            self._client = anthropic.AsyncAnthropic(
+            import anthropic as _anthropic
+            import httpx
+
+            self._client = _anthropic.AsyncAnthropic(
                 api_key=self._api_key,
                 max_retries=MAX_RETRIES,  # SDK handles retry with exponential backoff
                 timeout=httpx.Timeout(REQUEST_TIMEOUT),  # 3 min for vision requests
@@ -533,6 +650,8 @@ class PropertyQualityFilter:
             Tuple of (base64_data, media_type) or None if download failed.
         """
         try:
+            from curl_cffi.requests import AsyncSession
+
             async with AsyncSession() as session:
                 response = await session.get(
                     url,
@@ -579,6 +698,12 @@ class PropertyQualityFilter:
         Returns:
             ImageBlockParam or None if image couldn't be loaded.
         """
+        from anthropic.types import (
+            Base64ImageSourceParam,
+            ImageBlockParam,
+            URLImageSourceParam,
+        )
+
         if self._needs_base64_download(url):
             result = await self._download_image_as_base64(url)
             if result is None:
@@ -619,6 +744,16 @@ class PropertyQualityFilter:
             prop = merged.canonical
             value = assess_value(prop.price_pcm, prop.postcode, prop.bedrooms)
 
+            # Extract outcode for area context lookup
+            outcode: str | None = None
+            if prop.postcode:
+                outcode = (
+                    prop.postcode.split()[0].upper()
+                    if " " in prop.postcode
+                    else prop.postcode.upper()
+                )
+            area_context = AREA_CONTEXT.get(outcode) if outcode else None
+
             # Build URL lists from pre-enriched images
             gallery_urls = [str(img.url) for img in merged.images if img.image_type == "gallery"]
             floorplan_url = str(merged.floorplan.url) if merged.floorplan else None
@@ -648,6 +783,8 @@ class PropertyQualityFilter:
                 area_average=value.area_average,
                 description=best_description,
                 features=None,
+                area_context=area_context,
+                outcode=outcode,
             )
 
             if analysis:
@@ -671,6 +808,7 @@ class PropertyQualityFilter:
                     condition_concerns=analysis.condition_concerns,
                     concern_severity=analysis.concern_severity,
                     value=merged_value,
+                    overall_rating=analysis.overall_rating,
                     summary=analysis.summary,
                 )
                 results.append((merged, analysis))
@@ -717,6 +855,8 @@ class PropertyQualityFilter:
         area_average: int | None,
         description: str | None = None,
         features: list[str] | None = None,
+        area_context: str | None = None,
+        outcode: str | None = None,
     ) -> PropertyQualityAnalysis | None:
         """Analyze a single property using Claude vision with structured outputs.
 
@@ -733,6 +873,20 @@ class PropertyQualityFilter:
         Returns:
             Analysis result or None if analysis failed.
         """
+        from anthropic import (
+            APIConnectionError,
+            APIStatusError,
+            BadRequestError,
+            InternalServerError,
+            RateLimitError,
+        )
+        from anthropic.types import (
+            ImageBlockParam,
+            TextBlockParam,
+            ToolParam,
+            ToolUseBlock,
+        )
+
         client = self._get_client()
 
         # Build image content blocks (images first for best vision performance)
@@ -757,7 +911,13 @@ class PropertyQualityFilter:
         # Build user prompt with property context and listing text
         effective_average = area_average or DEFAULT_BENCHMARK.get(min(bedrooms, 3), 1800)
         user_prompt = build_user_prompt(
-            price_pcm, bedrooms, effective_average, description, features
+            price_pcm,
+            bedrooms,
+            effective_average,
+            description,
+            features,
+            area_context=area_context,
+            outcode=outcode,
         )
         content.append(TextBlockParam(type="text", text=user_prompt))
 
@@ -923,6 +1083,7 @@ class PropertyQualityFilter:
                 condition_concerns=data.get("condition_concerns", False),
                 concern_severity=data.get("concern_severity"),
                 value=value,
+                overall_rating=data.get("overall_rating"),
                 summary=data.get("summary", "Analysis completed"),
             )
         except Exception as e:
@@ -948,6 +1109,7 @@ class PropertyQualityFilter:
                 condition_concerns=analysis.condition_concerns,
                 concern_severity=analysis.concern_severity,
                 value=analysis.value,
+                overall_rating=analysis.overall_rating,
                 summary=analysis.summary,
             )
 

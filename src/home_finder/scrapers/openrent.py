@@ -8,7 +8,7 @@ from crawlee.storage_clients import MemoryStorageClient
 from pydantic import HttpUrl
 
 from home_finder.logging import get_logger
-from home_finder.models import Property, PropertySource
+from home_finder.models import FurnishType, Property, PropertySource
 from home_finder.scrapers.base import BaseScraper
 
 logger = get_logger(__name__)
@@ -22,7 +22,7 @@ class OpenRentScraper(BaseScraper):
     # Pagination constants
     RESULTS_PER_PAGE = 20
     MAX_PAGES = 20
-    PAGE_DELAY_SECONDS = 0.5
+    PAGE_DELAY_SECONDS = 2.0
 
     @property
     def source(self) -> PropertySource:
@@ -36,6 +36,10 @@ class OpenRentScraper(BaseScraper):
         min_bedrooms: int,
         max_bedrooms: int,
         area: str,
+        furnish_types: tuple[FurnishType, ...] = (),
+        min_bathrooms: int = 0,
+        include_let_agreed: bool = True,
+        max_results: int | None = None,
     ) -> list[Property]:
         """Scrape OpenRent for matching properties (all pages)."""
         import asyncio
@@ -49,6 +53,9 @@ class OpenRentScraper(BaseScraper):
             max_price=max_price,
             min_bedrooms=min_bedrooms,
             max_bedrooms=max_bedrooms,
+            furnish_types=furnish_types,
+            min_bathrooms=min_bathrooms,
+            include_let_agreed=include_let_agreed,
         )
 
         for page in range(self.MAX_PAGES):
@@ -57,13 +64,17 @@ class OpenRentScraper(BaseScraper):
 
             page_properties: list[Property] = []
 
-            async def handle_page(context: BeautifulSoupCrawlingContext) -> None:
+            async def handle_page(
+                context: BeautifulSoupCrawlingContext,
+                _props: list[Property] = page_properties,
+            ) -> None:
                 soup = context.soup
                 parsed = self._parse_search_results(soup, str(context.request.url))
-                page_properties.extend(parsed)
+                _props.extend(parsed)
 
             crawler = BeautifulSoupCrawler(
                 max_requests_per_crawl=1,
+                max_request_retries=1,
                 storage_client=MemoryStorageClient(),
             )
             crawler.router.default_handler(handle_page)
@@ -90,6 +101,10 @@ class OpenRentScraper(BaseScraper):
             if len(new_properties) == 0:
                 break
 
+            if max_results is not None and len(all_properties) >= max_results:
+                all_properties = all_properties[:max_results]
+                break
+
             # Be polite - delay between pages
             if page < self.MAX_PAGES - 1:
                 await asyncio.sleep(self.PAGE_DELAY_SECONDS)
@@ -111,6 +126,9 @@ class OpenRentScraper(BaseScraper):
         max_price: int,
         min_bedrooms: int,
         max_bedrooms: int,
+        furnish_types: tuple[FurnishType, ...] = (),
+        min_bathrooms: int = 0,
+        include_let_agreed: bool = True,
     ) -> str:
         """Build the OpenRent search URL with filters."""
         # OpenRent URL format: /properties-to-rent/{area}?filters...
@@ -121,6 +139,28 @@ class OpenRentScraper(BaseScraper):
             f"bedrooms_min={min_bedrooms}",
             f"bedrooms_max={max_bedrooms}",
         ]
+
+        # OpenRent filtering is client-side (server returns all properties,
+        # JS filters in browser), but these params pre-set the filter state.
+        if furnish_types:
+            # furnishedType: 0=any, 1=furnished, 2=unfurnished
+            has_furnished = FurnishType.FURNISHED in furnish_types
+            has_unfurnished = FurnishType.UNFURNISHED in furnish_types
+            has_part = FurnishType.PART_FURNISHED in furnish_types
+            if not (has_furnished and has_unfurnished and has_part):
+                if has_unfurnished and not has_furnished and not has_part:
+                    params.append("furnishedType=2")
+                elif has_furnished and not has_unfurnished and not has_part:
+                    params.append("furnishedType=1")
+
+        if min_bathrooms > 0:
+            params.append(f"bathrooms_min={min_bathrooms}")
+
+        if not include_let_agreed:
+            params.append("isLive=true")
+
+        params.append("sortType=3")
+
         return f"{self.BASE_URL}/properties-to-rent/{area_slug}?{'&'.join(params)}"
 
     def _parse_search_results(self, soup: "BeautifulSoup", base_url: str) -> list[Property]:  # type: ignore[name-defined]  # noqa: F821

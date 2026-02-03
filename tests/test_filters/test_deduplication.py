@@ -620,7 +620,7 @@ class TestDeduplicatorMerge:
         assert all(len(m.sources) == 1 for m in merged)
 
     def test_coordinates_prevent_false_merge(self) -> None:
-        """Test that properties with different coordinates are NOT merged even with same postcode."""
+        """Properties with different coordinates are NOT merged even with same postcode."""
         deduplicator = Deduplicator(enable_cross_platform=True)
 
         props = [

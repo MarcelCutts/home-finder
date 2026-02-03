@@ -13,7 +13,6 @@ import re
 from collections import defaultdict
 
 import pytest
-
 from pydantic import HttpUrl
 
 from home_finder.models import Property, PropertySource
@@ -418,15 +417,12 @@ class TestLiveScraperLocationLeakage:
         print(f"LOCATION LEAKAGE ANALYSIS: {source.upper()} searching for '{search_area}'")
         print(f"{'=' * 60}")
         print(f"Total properties: {total}")
-        print(
-            f"  Expected location: {expected_count} ({expected_count * 100 // total if total else 0}%)"
-        )
-        print(
-            f"  Location leakage:  {leakage_count} ({leakage_count * 100 // total if total else 0}%)"
-        )
-        print(
-            f"  Unknown location:  {unknown_count} ({unknown_count * 100 // total if total else 0}%)"
-        )
+        exp_pct = expected_count * 100 // total if total else 0
+        leak_pct = leakage_count * 100 // total if total else 0
+        unk_pct = unknown_count * 100 // total if total else 0
+        print(f"  Expected location: {expected_count} ({exp_pct}%)")
+        print(f"  Location leakage:  {leakage_count} ({leak_pct}%)")
+        print(f"  Unknown location:  {unknown_count} ({unk_pct}%)")
         print()
         print("Outcode distribution:")
         for outcode, count in sorted(outcode_counts.items(), key=lambda x: -x[1]):

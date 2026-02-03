@@ -8,7 +8,7 @@ from curl_cffi.requests import AsyncSession
 from pydantic import HttpUrl
 
 from home_finder.logging import get_logger
-from home_finder.models import Property, PropertySource
+from home_finder.models import FurnishType, Property, PropertySource
 from home_finder.scrapers.base import BaseScraper
 
 logger = get_logger(__name__)
@@ -41,6 +41,10 @@ class OnTheMarketScraper(BaseScraper):
         min_bedrooms: int,
         max_bedrooms: int,
         area: str,
+        furnish_types: tuple[FurnishType, ...] = (),
+        min_bathrooms: int = 0,
+        include_let_agreed: bool = True,
+        max_results: int | None = None,
     ) -> list[Property]:
         """Scrape OnTheMarket for matching properties (all pages)."""
         import asyncio
@@ -53,6 +57,9 @@ class OnTheMarketScraper(BaseScraper):
             max_price=max_price,
             min_bedrooms=min_bedrooms,
             max_bedrooms=max_bedrooms,
+            furnish_types=furnish_types,
+            min_bathrooms=min_bathrooms,
+            include_let_agreed=include_let_agreed,
         )
 
         for page in range(1, self.MAX_PAGES + 1):
@@ -76,6 +83,10 @@ class OnTheMarketScraper(BaseScraper):
                 break
 
             all_properties.extend(properties)
+
+            if max_results is not None and len(all_properties) >= max_results:
+                all_properties = all_properties[:max_results]
+                break
 
             # Be polite - delay between pages
             if page < self.MAX_PAGES:
@@ -227,6 +238,9 @@ class OnTheMarketScraper(BaseScraper):
         max_price: int,
         min_bedrooms: int,
         max_bedrooms: int,
+        furnish_types: tuple[FurnishType, ...] = (),
+        min_bathrooms: int = 0,
+        include_let_agreed: bool = True,
     ) -> str:
         """Build the OnTheMarket search URL with filters."""
         # Normalize area name
@@ -237,9 +251,28 @@ class OnTheMarketScraper(BaseScraper):
             f"max-bedrooms={max_bedrooms}",
             f"min-price={min_price}",
             f"max-price={max_price}",
-            "property-types=flats-apartments",
-            "rent-frequency=per-month",
+            "prop-types=flat",
+            "price-per=pcm",
+            "shared=false",
+            "let-length=long-term",
+            "sort-field=update_date",
         ]
+
+        if furnish_types and len(furnish_types) == 1:
+            otm_values = {
+                FurnishType.FURNISHED: "furnished",
+                FurnishType.UNFURNISHED: "unfurnished",
+                FurnishType.PART_FURNISHED: "part-furnished",
+            }
+            ft = furnish_types[0]
+            if ft in otm_values:
+                params.append(f"furnished={otm_values[ft]}")
+
+        if include_let_agreed:
+            params.append("let-agreed=true")
+
+        # OnTheMarket has no bathroom count filter
+
         return f"{self.BASE_URL}/to-rent/property/{area_slug}/?{'&'.join(params)}"
 
     def _extract_price(self, text: str) -> int | None:
