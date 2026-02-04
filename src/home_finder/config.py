@@ -96,9 +96,6 @@ class Settings(BaseSettings):
     # Database
     database_path: str = Field(default="data/properties.db")
 
-    # Scraping
-    scrape_interval_minutes: int = Field(default=10, ge=1)
-
     def get_furnish_types(self) -> tuple[FurnishType, ...]:
         """Parse furnish_types string into FurnishType enum values."""
         return tuple(FurnishType(t.strip()) for t in self.furnish_types.split(",") if t.strip())

@@ -40,6 +40,7 @@ class OpenRentScraper(BaseScraper):
         min_bathrooms: int = 0,
         include_let_agreed: bool = True,
         max_results: int | None = None,
+        known_source_ids: set[str] | None = None,
     ) -> list[Property]:
         """Scrape OpenRent for matching properties (all pages)."""
         import asyncio
@@ -89,6 +90,18 @@ class OpenRentScraper(BaseScraper):
             )
 
             if not page_properties:
+                break
+
+            # Early-stop: all results on this page are already in DB
+            if known_source_ids is not None and all(
+                p.source_id in known_source_ids for p in page_properties
+            ):
+                logger.info(
+                    "early_stop_all_known",
+                    source=self.source.value,
+                    area=area,
+                    page=page + 1,
+                )
                 break
 
             # Deduplicate within scraper (OpenRent can repeat listings)

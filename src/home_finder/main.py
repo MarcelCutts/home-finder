@@ -26,6 +26,7 @@ from home_finder.scrapers import (
     ZooplaScraper,
 )
 from home_finder.scrapers.detail_fetcher import DetailFetcher
+from home_finder.scrapers.location_utils import is_outcode
 
 logger = get_logger(__name__)
 
@@ -59,6 +60,7 @@ async def scrape_all_platforms(
     min_bathrooms: int = 0,
     include_let_agreed: bool = True,
     max_per_scraper: int | None = None,
+    known_ids_by_source: dict[str, set[str]] | None = None,
 ) -> list[Property]:
     """Scrape all platforms for matching properties.
 
@@ -71,6 +73,7 @@ async def scrape_all_platforms(
         min_bathrooms: Minimum number of bathrooms.
         include_let_agreed: Whether to include already-let properties.
         max_per_scraper: Maximum properties per scraper (None for unlimited).
+        known_ids_by_source: Known source IDs per platform for early-stop pagination.
 
     Returns:
         Combined list of properties from all platforms.
@@ -85,6 +88,11 @@ async def scrape_all_platforms(
     all_properties: list[Property] = []
 
     for scraper in scrapers:
+        scraper_known = (
+            known_ids_by_source.get(scraper.source.value)
+            if known_ids_by_source
+            else None
+        )
         scraper_count = 0
         for i, area in enumerate(SEARCH_AREAS):
             if max_per_scraper is not None and scraper_count >= max_per_scraper:
@@ -106,7 +114,17 @@ async def scrape_all_platforms(
                     min_bathrooms=min_bathrooms,
                     include_let_agreed=include_let_agreed,
                     max_results=remaining,
+                    known_source_ids=scraper_known,
                 )
+                # Backfill outcode for properties missing postcode
+                if is_outcode(area):
+                    outcode = area.upper()
+                    properties = [
+                        p.model_copy(update={"postcode": outcode})
+                        if p.postcode is None
+                        else p
+                        for p in properties
+                    ]
                 scraper_count += len(properties)
                 all_properties.extend(properties)
                 logger.info(
@@ -168,6 +186,13 @@ async def run_pipeline(settings: Settings, *, max_per_scraper: int | None = None
                     )
                 await asyncio.sleep(1)
 
+        # Load known source IDs for early-stop pagination
+        known_ids_by_source = await storage.get_all_known_source_ids()
+        logger.info(
+            "loaded_known_ids",
+            total=sum(len(v) for v in known_ids_by_source.values()),
+        )
+
         # Step 1: Scrape all platforms
         logger.info("pipeline_started", phase="scraping")
         all_properties = await scrape_all_platforms(
@@ -179,6 +204,7 @@ async def run_pipeline(settings: Settings, *, max_per_scraper: int | None = None
             min_bathrooms=settings.min_bathrooms,
             include_let_agreed=settings.include_let_agreed,
             max_per_scraper=max_per_scraper,
+            known_ids_by_source=known_ids_by_source,
         )
         logger.info("scraping_summary", total_found=len(all_properties))
 
@@ -457,6 +483,13 @@ async def run_dry_run(settings: Settings, *, max_per_scraper: int | None = None)
     await storage.initialize()
 
     try:
+        # Load known source IDs for early-stop pagination
+        known_ids_by_source = await storage.get_all_known_source_ids()
+        logger.info(
+            "loaded_known_ids",
+            total=sum(len(v) for v in known_ids_by_source.values()),
+        )
+
         # Step 1: Scrape all platforms
         logger.info("pipeline_started", phase="scraping", dry_run=True)
         all_properties = await scrape_all_platforms(
@@ -468,6 +501,7 @@ async def run_dry_run(settings: Settings, *, max_per_scraper: int | None = None)
             min_bathrooms=settings.min_bathrooms,
             include_let_agreed=settings.include_let_agreed,
             max_per_scraper=max_per_scraper,
+            known_ids_by_source=known_ids_by_source,
         )
         logger.info("scraping_summary", total_found=len(all_properties))
 

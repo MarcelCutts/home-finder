@@ -50,6 +50,7 @@ class ZooplaScraper(BaseScraper):
         min_bathrooms: int = 0,
         include_let_agreed: bool = True,
         max_results: int | None = None,
+        known_source_ids: set[str] | None = None,
     ) -> list[Property]:
         """Scrape Zoopla for matching properties (all pages)."""
         import asyncio
@@ -114,6 +115,18 @@ class ZooplaScraper(BaseScraper):
                 )
 
             if not properties:
+                break
+
+            # Early-stop: all results on this page are already in DB
+            if known_source_ids is not None and all(
+                p.source_id in known_source_ids for p in properties
+            ):
+                logger.info(
+                    "early_stop_all_known",
+                    source=self.source.value,
+                    area=area,
+                    page=page,
+                )
                 break
 
             # Deduplicate (Zoopla can return overlapping results)

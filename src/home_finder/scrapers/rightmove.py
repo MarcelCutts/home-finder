@@ -175,11 +175,13 @@ class RightmoveScraper(BaseScraper):
         min_bathrooms: int = 0,
         include_let_agreed: bool = True,
         max_results: int | None = None,
+        known_source_ids: set[str] | None = None,
     ) -> list[Property]:
         """Scrape Rightmove for matching properties (all pages)."""
         import asyncio
 
         properties: list[Property] = []
+        seen_ids: set[str] = set()
 
         base_url = await self._build_search_url(
             area=area,
@@ -224,7 +226,27 @@ class RightmoveScraper(BaseScraper):
             if not page_properties:
                 break
 
-            properties.extend(page_properties)
+            # Early-stop: all results on this page are already in DB
+            if known_source_ids is not None and all(
+                p.source_id in known_source_ids for p in page_properties
+            ):
+                logger.info(
+                    "early_stop_all_known",
+                    source=self.source.value,
+                    area=area,
+                    page=page + 1,
+                )
+                break
+
+            # Deduplicate within run (Rightmove can return overlapping results)
+            new_properties = [p for p in page_properties if p.source_id not in seen_ids]
+            for p in new_properties:
+                seen_ids.add(p.source_id)
+
+            if not new_properties:
+                break
+
+            properties.extend(new_properties)
 
             if max_results is not None and len(properties) >= max_results:
                 properties = properties[:max_results]

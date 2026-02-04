@@ -45,11 +45,13 @@ class OnTheMarketScraper(BaseScraper):
         min_bathrooms: int = 0,
         include_let_agreed: bool = True,
         max_results: int | None = None,
+        known_source_ids: set[str] | None = None,
     ) -> list[Property]:
         """Scrape OnTheMarket for matching properties (all pages)."""
         import asyncio
 
         all_properties: list[Property] = []
+        seen_ids: set[str] = set()
 
         base_url = self._build_search_url(
             area=area,
@@ -82,7 +84,27 @@ class OnTheMarketScraper(BaseScraper):
             if not properties:
                 break
 
-            all_properties.extend(properties)
+            # Early-stop: all results on this page are already in DB
+            if known_source_ids is not None and all(
+                p.source_id in known_source_ids for p in properties
+            ):
+                logger.info(
+                    "early_stop_all_known",
+                    source=self.source.value,
+                    area=area,
+                    page=page,
+                )
+                break
+
+            # Deduplicate within run (OnTheMarket can return overlapping results)
+            new_properties = [p for p in properties if p.source_id not in seen_ids]
+            for p in new_properties:
+                seen_ids.add(p.source_id)
+
+            if not new_properties:
+                break
+
+            all_properties.extend(new_properties)
 
             if max_results is not None and len(all_properties) >= max_results:
                 all_properties = all_properties[:max_results]

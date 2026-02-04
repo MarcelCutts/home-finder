@@ -27,6 +27,7 @@ class BaseScraper(ABC):
         min_bathrooms: int = 0,
         include_let_agreed: bool = True,
         max_results: int | None = None,
+        known_source_ids: set[str] | None = None,
     ) -> list[Property]:
         """Scrape properties matching the given criteria.
 
@@ -40,6 +41,7 @@ class BaseScraper(ABC):
             min_bathrooms: Minimum number of bathrooms (0 = no filter).
             include_let_agreed: Whether to include already-let properties.
             max_results: Maximum number of results to return (None for unlimited).
+            known_source_ids: Source IDs already in DB; enables early-stop pagination.
 
         Returns:
             List of Property objects found.

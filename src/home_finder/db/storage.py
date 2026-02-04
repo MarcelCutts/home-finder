@@ -486,6 +486,20 @@ class PropertyStorage:
             )
         return images
 
+    async def get_all_known_source_ids(self) -> dict[str, set[str]]:
+        """Get all source_ids grouped by property source.
+
+        Returns:
+            Dict mapping source name to set of source_ids.
+        """
+        conn = await self._get_connection()
+        cursor = await conn.execute("SELECT source, source_id FROM properties")
+        rows = await cursor.fetchall()
+        result: dict[str, set[str]] = {}
+        for source, source_id in rows:
+            result.setdefault(source, set()).add(source_id)
+        return result
+
     async def get_property_count(self) -> int:
         """Get total number of tracked properties.
 
