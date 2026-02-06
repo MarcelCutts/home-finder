@@ -29,6 +29,21 @@ class OnTheMarketScraper(BaseScraper):
     MAX_PAGES = 20
     PAGE_DELAY_SECONDS = 0.5
 
+    def __init__(self) -> None:
+        self._session: AsyncSession | None = None  # type: ignore[type-arg]
+
+    async def _get_session(self) -> AsyncSession:  # type: ignore[type-arg]
+        """Get or create a reusable curl_cffi session."""
+        if self._session is None:
+            self._session = AsyncSession()
+        return self._session
+
+    async def close(self) -> None:
+        """Close the curl_cffi session."""
+        if self._session is not None:
+            await self._session.close()
+            self._session = None
+
     @property
     def source(self) -> PropertySource:
         return PropertySource.ONTHEMARKET
@@ -126,22 +141,22 @@ class OnTheMarketScraper(BaseScraper):
     async def _fetch_page(self, url: str) -> str | None:
         """Fetch page using curl_cffi with Chrome impersonation."""
         try:
-            async with AsyncSession() as session:
-                response = await session.get(
-                    url,
-                    impersonate="chrome",
-                    headers=HEADERS,
-                    timeout=30,
-                )
-                if response.status_code == 200:
-                    text: str = response.text
-                    return text
-                logger.warning(
-                    "onthemarket_http_error",
-                    status=response.status_code,
-                    url=url,
-                )
-                return None
+            session = await self._get_session()
+            response = await session.get(
+                url,
+                impersonate="chrome",
+                headers=HEADERS,
+                timeout=30,
+            )
+            if response.status_code == 200:
+                text: str = response.text
+                return text
+            logger.warning(
+                "onthemarket_http_error",
+                status=response.status_code,
+                url=url,
+            )
+            return None
         except Exception as e:
             logger.error("onthemarket_fetch_exception", error=str(e), url=url)
             return None

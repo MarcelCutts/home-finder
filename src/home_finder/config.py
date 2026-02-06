@@ -93,8 +93,18 @@ class Settings(BaseSettings):
         description="Include properties already let agreed",
     )
 
+    # Search areas (boroughs or outcodes)
+    search_areas: str = Field(
+        default="e3,e5,e9,e10,e15,e17,n15,n16,n17",
+        description="Comma-separated list of boroughs or outcodes to search",
+    )
+
     # Database
     database_path: str = Field(default="data/properties.db")
+
+    def get_search_areas(self) -> list[str]:
+        """Parse search_areas string into a list of area names."""
+        return [a.strip() for a in self.search_areas.split(",") if a.strip()]
 
     def get_furnish_types(self) -> tuple[FurnishType, ...]:
         """Parse furnish_types string into FurnishType enum values."""

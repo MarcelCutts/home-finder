@@ -2,7 +2,7 @@
 
 import contextlib
 import json
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -46,6 +46,11 @@ class PropertyStorage:
         if self._conn is None:
             self._conn = await aiosqlite.connect(self.db_path)
             self._conn.row_factory = aiosqlite.Row
+            await self._conn.execute("PRAGMA journal_mode=WAL")
+            await self._conn.execute("PRAGMA busy_timeout=5000")
+            await self._conn.execute("PRAGMA synchronous=NORMAL")
+            await self._conn.execute("PRAGMA cache_size=-64000")
+            await self._conn.execute("PRAGMA foreign_keys=ON")
         return self._conn
 
     async def close(self) -> None:
@@ -281,7 +286,7 @@ class PropertyStorage:
         """,
             (
                 NotificationStatus.SENT.value,
-                datetime.now().isoformat(),
+                datetime.now(UTC).isoformat(),
                 unique_id,
             ),
         )
@@ -308,6 +313,31 @@ class PropertyStorage:
 
         logger.debug("property_notification_failed", unique_id=unique_id)
 
+    async def _get_seen_ids(self, unique_ids: list[str]) -> set[str]:
+        """Batch-check which unique IDs already exist in the database.
+
+        Args:
+            unique_ids: List of unique IDs to check.
+
+        Returns:
+            Set of IDs that exist in the database.
+        """
+        if not unique_ids:
+            return set()
+        conn = await self._get_connection()
+        seen: set[str] = set()
+        chunk_size = 500
+        for i in range(0, len(unique_ids), chunk_size):
+            chunk = unique_ids[i : i + chunk_size]
+            placeholders = ",".join("?" * len(chunk))
+            cursor = await conn.execute(
+                f"SELECT unique_id FROM properties WHERE unique_id IN ({placeholders})",  # noqa: S608
+                chunk,
+            )
+            rows = await cursor.fetchall()
+            seen.update(row[0] for row in rows)
+        return seen
+
     async def filter_new(self, properties: list[Property]) -> list[Property]:
         """Filter to only properties not yet seen.
 
@@ -317,11 +347,8 @@ class PropertyStorage:
         Returns:
             List of properties not in the database.
         """
-        new_properties = []
-        for prop in properties:
-            if not await self.is_seen(prop.unique_id):
-                new_properties.append(prop)
-        return new_properties
+        seen = await self._get_seen_ids([p.unique_id for p in properties])
+        return [p for p in properties if p.unique_id not in seen]
 
     async def filter_new_merged(self, properties: list[MergedProperty]) -> list[MergedProperty]:
         """Filter to only merged properties not yet seen.
@@ -335,11 +362,8 @@ class PropertyStorage:
         Returns:
             List of merged properties not in the database.
         """
-        new_properties = []
-        for merged in properties:
-            if not await self.is_seen(merged.canonical.unique_id):
-                new_properties.append(merged)
-        return new_properties
+        seen = await self._get_seen_ids([m.canonical.unique_id for m in properties])
+        return [m for m in properties if m.canonical.unique_id not in seen]
 
     async def save_merged_property(
         self,
@@ -428,24 +452,15 @@ class PropertyStorage:
 
         conn = await self._get_connection()
 
-        for img in images:
-            try:
-                await conn.execute(
-                    """
-                    INSERT OR IGNORE INTO property_images
-                    (property_unique_id, source, url, image_type)
-                    VALUES (?, ?, ?, ?)
-                """,
-                    (unique_id, img.source.value, str(img.url), img.image_type),
-                )
-            except Exception as e:
-                logger.warning(
-                    "failed_to_save_image",
-                    unique_id=unique_id,
-                    url=str(img.url),
-                    error=str(e),
-                )
-
+        rows = [(unique_id, img.source.value, str(img.url), img.image_type) for img in images]
+        await conn.executemany(
+            """
+            INSERT OR IGNORE INTO property_images
+            (property_unique_id, source, url, image_type)
+            VALUES (?, ?, ?, ?)
+            """,
+            rows,
+        )
         await conn.commit()
 
         logger.debug(

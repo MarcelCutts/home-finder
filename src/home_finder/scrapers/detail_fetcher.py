@@ -33,6 +33,7 @@ class DetailFetcher:
             max_gallery_images: Maximum number of gallery images to extract.
         """
         self._client: httpx.AsyncClient | None = None
+        self._curl_session: AsyncSession | None = None  # type: ignore[type-arg]
         self._max_gallery_images = max_gallery_images
 
     async def _get_client(self) -> httpx.AsyncClient:
@@ -47,6 +48,12 @@ class DetailFetcher:
                 },
             )
         return self._client
+
+    async def _get_curl_session(self) -> AsyncSession:  # type: ignore[type-arg]
+        """Get or create a reusable curl_cffi session for anti-bot sites."""
+        if self._curl_session is None:
+            self._curl_session = AsyncSession()
+        return self._curl_session
 
     async def fetch_floorplan_url(self, prop: Property) -> str | None:
         """Fetch detail page and extract floorplan URL.
@@ -155,25 +162,25 @@ class DetailFetcher:
         Zoopla's bot detection.
         """
         try:
-            async with AsyncSession() as session:
-                response = await session.get(
-                    str(prop.url),
-                    impersonate="chrome",
-                    headers={
-                        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-                        "Accept-Language": "en-GB,en;q=0.9",
-                        "Accept-Encoding": "gzip, deflate, br",
-                    },
-                    timeout=30,
+            session = await self._get_curl_session()
+            response = await session.get(
+                str(prop.url),
+                impersonate="chrome",
+                headers={
+                    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                    "Accept-Language": "en-GB,en;q=0.9",
+                    "Accept-Encoding": "gzip, deflate, br",
+                },
+                timeout=30,
+            )
+            if response.status_code != 200:
+                logger.warning(
+                    "zoopla_http_error",
+                    property_id=prop.unique_id,
+                    status=response.status_code,
                 )
-                if response.status_code != 200:
-                    logger.warning(
-                        "zoopla_http_error",
-                        property_id=prop.unique_id,
-                        status=response.status_code,
-                    )
-                    return None
-                html: str = response.text
+                return None
+            html: str = response.text
 
             floorplan_url: str | None = None
             gallery_urls: list[str] = []
@@ -372,25 +379,25 @@ class DetailFetcher:
         OnTheMarket's bot detection.
         """
         try:
-            async with AsyncSession() as session:
-                response = await session.get(
-                    str(prop.url),
-                    impersonate="chrome",
-                    headers={
-                        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-                        "Accept-Language": "en-GB,en;q=0.9",
-                        "Accept-Encoding": "gzip, deflate, br",
-                    },
-                    timeout=30,
+            session = await self._get_curl_session()
+            response = await session.get(
+                str(prop.url),
+                impersonate="chrome",
+                headers={
+                    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                    "Accept-Language": "en-GB,en;q=0.9",
+                    "Accept-Encoding": "gzip, deflate, br",
+                },
+                timeout=30,
+            )
+            if response.status_code != 200:
+                logger.warning(
+                    "onthemarket_http_error",
+                    property_id=prop.unique_id,
+                    status=response.status_code,
                 )
-                if response.status_code != 200:
-                    logger.warning(
-                        "onthemarket_http_error",
-                        property_id=prop.unique_id,
-                        status=response.status_code,
-                    )
-                    return None
-                html: str = response.text
+                return None
+            html: str = response.text
 
             # OnTheMarket uses Next.js with Redux state in __NEXT_DATA__
             match = re.search(
@@ -453,7 +460,10 @@ class DetailFetcher:
             return None
 
     async def close(self) -> None:
-        """Close the HTTP client."""
+        """Close the HTTP clients."""
         if self._client:
             await self._client.aclose()
             self._client = None
+        if self._curl_session:
+            await self._curl_session.close()
+            self._curl_session = None

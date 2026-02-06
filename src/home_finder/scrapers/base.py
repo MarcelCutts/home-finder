@@ -47,3 +47,6 @@ class BaseScraper(ABC):
             List of Property objects found.
         """
         ...
+
+    async def close(self) -> None:  # noqa: B027
+        """Clean up scraper resources (e.g. HTTP sessions)."""

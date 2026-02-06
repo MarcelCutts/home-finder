@@ -1,5 +1,7 @@
 """Detail enrichment pipeline step: fetch detail pages and populate images."""
 
+import asyncio
+
 from pydantic import HttpUrl
 
 from home_finder.logging import get_logger
@@ -17,22 +19,16 @@ def _is_valid_image_url(url: str) -> bool:
     return path.endswith(VALID_IMAGE_EXTENSIONS)
 
 
-async def enrich_merged_properties(
-    merged_properties: list[MergedProperty],
+_ENRICHMENT_CONCURRENCY = 5
+
+
+async def _enrich_single(
+    merged: MergedProperty,
     detail_fetcher: DetailFetcher,
-) -> list[MergedProperty]:
-    """Fetch detail pages for all sources and populate images, floorplan, descriptions.
-
-    Args:
-        merged_properties: Properties to enrich.
-        detail_fetcher: DetailFetcher instance for HTTP requests.
-
-    Returns:
-        List of MergedProperty with images, floorplan, and descriptions populated.
-    """
-    results: list[MergedProperty] = []
-
-    for merged in merged_properties:
+    semaphore: asyncio.Semaphore,
+) -> MergedProperty:
+    """Enrich a single merged property with detail page data."""
+    async with semaphore:
         prop = merged.canonical
         all_images: list[PropertyImage] = []
         floorplan_image: PropertyImage | None = None
@@ -106,9 +102,27 @@ async def enrich_merged_properties(
             has_floorplan=floorplan_image is not None,
         )
 
-        results.append(updated)
+        return updated
 
-    return results
+
+async def enrich_merged_properties(
+    merged_properties: list[MergedProperty],
+    detail_fetcher: DetailFetcher,
+) -> list[MergedProperty]:
+    """Fetch detail pages for all sources and populate images, floorplan, descriptions.
+
+    Fetches up to _ENRICHMENT_CONCURRENCY properties in parallel.
+
+    Args:
+        merged_properties: Properties to enrich.
+        detail_fetcher: DetailFetcher instance for HTTP requests.
+
+    Returns:
+        List of MergedProperty with images, floorplan, and descriptions populated.
+    """
+    semaphore = asyncio.Semaphore(_ENRICHMENT_CONCURRENCY)
+    tasks = [_enrich_single(merged, detail_fetcher, semaphore) for merged in merged_properties]
+    return list(await asyncio.gather(*tasks))
 
 
 def filter_by_floorplan(properties: list[MergedProperty]) -> list[MergedProperty]:

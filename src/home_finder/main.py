@@ -3,6 +3,7 @@
 import argparse
 import asyncio
 import sys
+from dataclasses import dataclass, field
 
 from home_finder.config import Settings
 from home_finder.db import PropertyStorage
@@ -30,23 +31,17 @@ from home_finder.scrapers.location_utils import is_outcode
 
 logger = get_logger(__name__)
 
-# Search areas - supports both boroughs and postcodes (outcodes)
-SEARCH_AREAS = [
-    # Boroughs
-    # "hackney",
-    # "islington",
-    # "haringey",
-    # "tower-hamlets",
-    # # Postcodes
-    "e3",  # Bow (Tower Hamlets)
-    "e5",  # Clapton (Hackney)
-    "e9",  # Hackney Wick, Homerton (Hackney)
-    "e10",  # Leyton (Waltham Forest)
-    "e15",  # Stratford (Newham)
-    "e17",  # Walthamstow (Waltham Forest)
-    "n15",  # South Tottenham (Haringey)
-    "n16",  # Stoke Newington (Hackney)
-    "n17",  # Tottenham (Haringey)
+# Default search areas (used as fallback if Settings.search_areas is empty)
+_DEFAULT_SEARCH_AREAS = [
+    "e3",
+    "e5",
+    "e9",
+    "e10",
+    "e15",
+    "e17",
+    "n15",
+    "n16",
+    "n17",
 ]
 
 
@@ -56,6 +51,7 @@ async def scrape_all_platforms(
     max_price: int,
     min_bedrooms: int,
     max_bedrooms: int,
+    search_areas: list[str] | None = None,
     furnish_types: tuple[FurnishType, ...] = (),
     min_bathrooms: int = 0,
     include_let_agreed: bool = True,
@@ -69,6 +65,7 @@ async def scrape_all_platforms(
         max_price: Maximum monthly rent.
         min_bedrooms: Minimum bedrooms.
         max_bedrooms: Maximum bedrooms.
+        search_areas: Areas to search (boroughs or outcodes). Defaults to _DEFAULT_SEARCH_AREAS.
         furnish_types: Furnishing types to include.
         min_bathrooms: Minimum number of bathrooms.
         include_let_agreed: Whether to include already-let properties.
@@ -78,6 +75,7 @@ async def scrape_all_platforms(
     Returns:
         Combined list of properties from all platforms.
     """
+    areas = search_areas or _DEFAULT_SEARCH_AREAS
     scrapers = [
         OpenRentScraper(),
         RightmoveScraper(),
@@ -87,64 +85,308 @@ async def scrape_all_platforms(
 
     all_properties: list[Property] = []
 
-    for scraper in scrapers:
-        scraper_known = (
-            known_ids_by_source.get(scraper.source.value)
-            if known_ids_by_source
-            else None
-        )
-        scraper_count = 0
-        for i, area in enumerate(SEARCH_AREAS):
-            if max_per_scraper is not None and scraper_count >= max_per_scraper:
-                break
-            try:
-                logger.info(
-                    "scraping_platform",
-                    platform=scraper.source.value,
-                    area=area,
-                )
-                remaining = max_per_scraper - scraper_count if max_per_scraper is not None else None
-                properties = await scraper.scrape(
-                    min_price=min_price,
-                    max_price=max_price,
-                    min_bedrooms=min_bedrooms,
-                    max_bedrooms=max_bedrooms,
-                    area=area,
-                    furnish_types=furnish_types,
-                    min_bathrooms=min_bathrooms,
-                    include_let_agreed=include_let_agreed,
-                    max_results=remaining,
-                    known_source_ids=scraper_known,
-                )
-                # Backfill outcode for properties missing postcode
-                if is_outcode(area):
-                    outcode = area.upper()
-                    properties = [
-                        p.model_copy(update={"postcode": outcode})
-                        if p.postcode is None
-                        else p
-                        for p in properties
-                    ]
-                scraper_count += len(properties)
-                all_properties.extend(properties)
-                logger.info(
-                    "scraping_complete",
-                    platform=scraper.source.value,
-                    area=area,
-                    count=len(properties),
-                )
-            except Exception as e:
-                logger.error(
-                    "scraping_failed",
-                    platform=scraper.source.value,
-                    area=area,
-                    error=str(e),
-                )
-            # Delay between areas to avoid rate limiting
-            if i < len(SEARCH_AREAS) - 1:
-                await asyncio.sleep(2)
+    try:
+        for scraper in scrapers:
+            scraper_known = (
+                known_ids_by_source.get(scraper.source.value) if known_ids_by_source else None
+            )
+            scraper_count = 0
+            for i, area in enumerate(areas):
+                if max_per_scraper is not None and scraper_count >= max_per_scraper:
+                    break
+                try:
+                    logger.info(
+                        "scraping_platform",
+                        platform=scraper.source.value,
+                        area=area,
+                    )
+                    remaining = (
+                        max_per_scraper - scraper_count if max_per_scraper is not None else None
+                    )
+                    properties = await scraper.scrape(
+                        min_price=min_price,
+                        max_price=max_price,
+                        min_bedrooms=min_bedrooms,
+                        max_bedrooms=max_bedrooms,
+                        area=area,
+                        furnish_types=furnish_types,
+                        min_bathrooms=min_bathrooms,
+                        include_let_agreed=include_let_agreed,
+                        max_results=remaining,
+                        known_source_ids=scraper_known,
+                    )
+                    # Backfill outcode for properties missing postcode
+                    if is_outcode(area):
+                        outcode = area.upper()
+                        properties = [
+                            p.model_copy(update={"postcode": outcode}) if p.postcode is None else p
+                            for p in properties
+                        ]
+                    scraper_count += len(properties)
+                    all_properties.extend(properties)
+                    logger.info(
+                        "scraping_complete",
+                        platform=scraper.source.value,
+                        area=area,
+                        count=len(properties),
+                    )
+                except Exception as e:
+                    logger.error(
+                        "scraping_failed",
+                        platform=scraper.source.value,
+                        area=area,
+                        error=str(e),
+                    )
+                # Delay between areas to avoid rate limiting
+                if i < len(areas) - 1:
+                    await asyncio.sleep(2)
+    finally:
+        for scraper in scrapers:
+            await scraper.close()
 
     return all_properties
+
+
+@dataclass
+class PipelineResult:
+    """Result of the core pipeline (scrape -> filter -> enrich -> analyze)."""
+
+    merged_to_notify: list[MergedProperty] = field(default_factory=list)
+    commute_lookup: dict[str, tuple[int, TransportMode]] = field(default_factory=dict)
+    quality_lookup: dict[str, PropertyQualityAnalysis] = field(default_factory=dict)
+    analyzed_merged: dict[str, MergedProperty] = field(default_factory=dict)
+
+
+async def _run_core_pipeline(
+    settings: Settings,
+    storage: PropertyStorage,
+    *,
+    max_per_scraper: int | None = None,
+) -> PipelineResult | None:
+    """Run the core pipeline: scrape, filter, deduplicate, enrich, analyze.
+
+    Returns None if pipeline ends early (no properties at any stage).
+    """
+    criteria = settings.get_search_criteria()
+    search_areas = settings.get_search_areas()
+
+    # Load known source IDs for early-stop pagination
+    known_ids_by_source = await storage.get_all_known_source_ids()
+    logger.info(
+        "loaded_known_ids",
+        total=sum(len(v) for v in known_ids_by_source.values()),
+    )
+
+    # Step 1: Scrape all platforms
+    logger.info("pipeline_started", phase="scraping")
+    all_properties = await scrape_all_platforms(
+        min_price=criteria.min_price,
+        max_price=criteria.max_price,
+        min_bedrooms=criteria.min_bedrooms,
+        max_bedrooms=criteria.max_bedrooms,
+        search_areas=search_areas,
+        furnish_types=settings.get_furnish_types(),
+        min_bathrooms=settings.min_bathrooms,
+        include_let_agreed=settings.include_let_agreed,
+        max_per_scraper=max_per_scraper,
+        known_ids_by_source=known_ids_by_source,
+    )
+    logger.info("scraping_summary", total_found=len(all_properties))
+
+    if not all_properties:
+        logger.info("no_properties_found")
+        return None
+
+    # Step 2: Apply criteria filter
+    logger.info("pipeline_started", phase="criteria_filtering")
+    criteria_filter = CriteriaFilter(criteria)
+    filtered = criteria_filter.filter_properties(all_properties)
+    logger.info("criteria_filter_summary", matched=len(filtered))
+
+    if not filtered:
+        logger.info("no_properties_match_criteria")
+        return None
+
+    # Step 2.5: Apply location filter (catch scraper leakage)
+    logger.info("pipeline_started", phase="location_filtering")
+    location_filter = LocationFilter(search_areas, strict=False)
+    filtered = location_filter.filter_properties(filtered)
+    logger.info("location_filter_summary", matched=len(filtered))
+
+    if not filtered:
+        logger.info("no_properties_in_search_areas")
+        return None
+
+    # Step 3: Deduplicate and merge cross-platform listings
+    logger.info("pipeline_started", phase="deduplication_merge")
+    deduplicator = Deduplicator(
+        enable_cross_platform=True,
+        enable_image_hashing=settings.enable_image_hash_matching,
+    )
+    merged_properties = await deduplicator.deduplicate_and_merge_async(filtered)
+    logger.info(
+        "deduplication_merge_summary",
+        merged_count=len(merged_properties),
+        multi_source_count=sum(1 for m in merged_properties if len(m.sources) > 1),
+    )
+
+    # Step 4: Filter to new properties only
+    logger.info("pipeline_started", phase="new_property_filter")
+    new_merged = await storage.filter_new_merged(merged_properties)
+    logger.info("new_property_summary", new_count=len(new_merged))
+
+    if not new_merged:
+        logger.info("no_new_properties")
+        return None
+
+    # Step 5: Filter by commute time (if TravelTime configured)
+    commute_lookup: dict[str, tuple[int, TransportMode]] = {}
+    if settings.traveltime_app_id and settings.traveltime_api_key:
+        logger.info("pipeline_started", phase="commute_filtering")
+        commute_filter = CommuteFilter(
+            app_id=settings.traveltime_app_id,
+            api_key=settings.traveltime_api_key.get_secret_value(),
+            destination_postcode=criteria.destination_postcode,
+        )
+
+        # Geocode properties that have postcode but no coordinates
+        new_merged = await commute_filter.geocode_properties(new_merged)
+
+        merged_with_coords = [
+            m for m in new_merged if m.canonical.latitude and m.canonical.longitude
+        ]
+        merged_without_coords = [
+            m for m in new_merged if not (m.canonical.latitude and m.canonical.longitude)
+        ]
+
+        props_with_coords = [m.canonical for m in merged_with_coords]
+
+        commute_results = []
+        if props_with_coords:
+            for mode in criteria.transport_modes:
+                results = await commute_filter.filter_properties(
+                    props_with_coords,
+                    max_minutes=criteria.max_commute_minutes,
+                    transport_mode=mode,
+                )
+                commute_results.extend(results)
+
+        for result in commute_results:
+            if result.within_limit and (
+                result.property_id not in commute_lookup
+                or result.travel_time_minutes < commute_lookup[result.property_id][0]
+            ):
+                commute_lookup[result.property_id] = (
+                    result.travel_time_minutes,
+                    result.transport_mode,
+                )
+
+        merged_to_notify = [
+            m for m in merged_with_coords if m.canonical.unique_id in commute_lookup
+        ]
+        merged_to_notify.extend(merged_without_coords)
+
+        logger.info(
+            "commute_filter_summary",
+            within_limit=len(merged_to_notify),
+            total_checked=len(merged_with_coords),
+        )
+    else:
+        merged_to_notify = new_merged
+        logger.info("skipping_commute_filter", reason="no_traveltime_credentials")
+
+    if not merged_to_notify:
+        logger.info("no_properties_within_commute_limit")
+        return None
+
+    # Step 5.5: Enrich with detail page data (gallery, floorplan, descriptions)
+    logger.info("pipeline_started", phase="detail_enrichment")
+    detail_fetcher = DetailFetcher(max_gallery_images=settings.quality_filter_max_images)
+    try:
+        merged_to_notify = await enrich_merged_properties(merged_to_notify, detail_fetcher)
+    finally:
+        await detail_fetcher.close()
+
+    logger.info(
+        "enrichment_summary",
+        total=len(merged_to_notify),
+        with_floorplan=sum(1 for m in merged_to_notify if m.floorplan),
+        with_images=sum(1 for m in merged_to_notify if m.images),
+    )
+
+    # Step 5.6: Floorplan gate (if configured)
+    if settings.require_floorplan:
+        before_count = len(merged_to_notify)
+        merged_to_notify = filter_by_floorplan(merged_to_notify)
+        logger.info(
+            "floorplan_filter",
+            before=before_count,
+            after=len(merged_to_notify),
+            dropped=before_count - len(merged_to_notify),
+        )
+
+        if not merged_to_notify:
+            logger.info("no_properties_with_floorplans")
+            return None
+
+    # Step 6: Property quality analysis (if configured)
+    quality_lookup: dict[str, PropertyQualityAnalysis] = {}
+    analyzed_merged: dict[str, MergedProperty] = {}
+    if settings.anthropic_api_key.get_secret_value() and settings.enable_quality_filter:
+        logger.info("pipeline_started", phase="quality_analysis")
+        quality_filter = PropertyQualityFilter(
+            api_key=settings.anthropic_api_key.get_secret_value(),
+            max_images=settings.quality_filter_max_images,
+        )
+
+        try:
+            quality_results = await quality_filter.analyze_merged_properties(merged_to_notify)
+
+            for merged, analysis in quality_results:
+                quality_lookup[merged.unique_id] = analysis
+                analyzed_merged[merged.unique_id] = merged
+
+            concerns = sum(1 for _, a in quality_results if a.condition_concerns)
+            logger.info(
+                "quality_analysis_summary",
+                analyzed=len(quality_results),
+                condition_concerns=concerns,
+            )
+        finally:
+            await quality_filter.close()
+    else:
+        logger.info("skipping_quality_analysis", reason="not_configured")
+
+    return PipelineResult(
+        merged_to_notify=merged_to_notify,
+        commute_lookup=commute_lookup,
+        quality_lookup=quality_lookup,
+        analyzed_merged=analyzed_merged,
+    )
+
+
+async def _save_properties(
+    result: PipelineResult,
+    storage: PropertyStorage,
+) -> None:
+    """Save pipeline results to the database."""
+    for merged in result.merged_to_notify:
+        final_merged = result.analyzed_merged.get(merged.unique_id, merged)
+
+        commute_info = result.commute_lookup.get(merged.canonical.unique_id)
+        commute_minutes = commute_info[0] if commute_info else None
+        transport_mode = commute_info[1] if commute_info else None
+
+        await storage.save_merged_property(
+            final_merged,
+            commute_minutes=commute_minutes,
+            transport_mode=transport_mode,
+        )
+
+        if final_merged.images:
+            await storage.save_property_images(final_merged.unique_id, list(final_merged.images))
+        if final_merged.floorplan:
+            await storage.save_property_images(final_merged.unique_id, [final_merged.floorplan])
 
 
 async def run_pipeline(settings: Settings, *, max_per_scraper: int | None = None) -> None:
@@ -154,13 +396,9 @@ async def run_pipeline(settings: Settings, *, max_per_scraper: int | None = None
         settings: Application settings.
         max_per_scraper: Maximum properties per scraper (None for unlimited).
     """
-    criteria = settings.get_search_criteria()
-
-    # Initialize storage
     storage = PropertyStorage(settings.database_path)
     await storage.initialize()
 
-    # Initialize notifier
     notifier = TelegramNotifier(
         bot_token=settings.telegram_bot_token.get_secret_value(),
         chat_id=settings.telegram_chat_id,
@@ -186,232 +424,27 @@ async def run_pipeline(settings: Settings, *, max_per_scraper: int | None = None
                     )
                 await asyncio.sleep(1)
 
-        # Load known source IDs for early-stop pagination
-        known_ids_by_source = await storage.get_all_known_source_ids()
-        logger.info(
-            "loaded_known_ids",
-            total=sum(len(v) for v in known_ids_by_source.values()),
-        )
-
-        # Step 1: Scrape all platforms
-        logger.info("pipeline_started", phase="scraping")
-        all_properties = await scrape_all_platforms(
-            min_price=criteria.min_price,
-            max_price=criteria.max_price,
-            min_bedrooms=criteria.min_bedrooms,
-            max_bedrooms=criteria.max_bedrooms,
-            furnish_types=settings.get_furnish_types(),
-            min_bathrooms=settings.min_bathrooms,
-            include_let_agreed=settings.include_let_agreed,
-            max_per_scraper=max_per_scraper,
-            known_ids_by_source=known_ids_by_source,
-        )
-        logger.info("scraping_summary", total_found=len(all_properties))
-
-        if not all_properties:
-            logger.info("no_properties_found")
+        result = await _run_core_pipeline(settings, storage, max_per_scraper=max_per_scraper)
+        if result is None:
             return
 
-        # Step 2: Apply criteria filter
-        logger.info("pipeline_started", phase="criteria_filtering")
-        criteria_filter = CriteriaFilter(criteria)
-        filtered = criteria_filter.filter_properties(all_properties)
-        logger.info("criteria_filter_summary", matched=len(filtered))
-
-        if not filtered:
-            logger.info("no_properties_match_criteria")
-            return
-
-        # Step 2.5: Apply location filter (catch scraper leakage)
-        logger.info("pipeline_started", phase="location_filtering")
-        location_filter = LocationFilter(SEARCH_AREAS, strict=False)
-        filtered = location_filter.filter_properties(filtered)
-        logger.info("location_filter_summary", matched=len(filtered))
-
-        if not filtered:
-            logger.info("no_properties_in_search_areas")
-            return
-
-        # Step 3: Deduplicate and merge cross-platform listings
-        logger.info("pipeline_started", phase="deduplication_merge")
-        deduplicator = Deduplicator(
-            enable_cross_platform=True,
-            enable_image_hashing=settings.enable_image_hash_matching,
-        )
-        merged_properties = await deduplicator.deduplicate_and_merge_async(filtered)
-        logger.info(
-            "deduplication_merge_summary",
-            merged_count=len(merged_properties),
-            multi_source_count=sum(1 for m in merged_properties if len(m.sources) > 1),
-        )
-
-        # Step 4: Filter to new properties only
-        logger.info("pipeline_started", phase="new_property_filter")
-        new_merged = await storage.filter_new_merged(merged_properties)
-        logger.info("new_property_summary", new_count=len(new_merged))
-
-        if not new_merged:
-            logger.info("no_new_properties")
-            return
-
-        # Step 5: Filter by commute time (if TravelTime configured)
-        commute_filter = None
-        if settings.traveltime_app_id and settings.traveltime_api_key:
-            logger.info("pipeline_started", phase="commute_filtering")
-            commute_filter = CommuteFilter(
-                app_id=settings.traveltime_app_id,
-                api_key=settings.traveltime_api_key.get_secret_value(),
-                destination_postcode=criteria.destination_postcode,
-            )
-
-            # Geocode properties that have postcode but no coordinates
-            new_merged = await commute_filter.geocode_properties(new_merged)
-
-            # Filter merged properties with coordinates (use canonical property)
-            merged_with_coords = [
-                m for m in new_merged if m.canonical.latitude and m.canonical.longitude
-            ]
-            merged_without_coords = [
-                m for m in new_merged if not (m.canonical.latitude and m.canonical.longitude)
-            ]
-
-            # Extract canonical properties for commute filtering
-            props_with_coords = [m.canonical for m in merged_with_coords]
-
-            commute_results = []
-            if props_with_coords:
-                for mode in criteria.transport_modes:
-                    results = await commute_filter.filter_properties(
-                        props_with_coords,
-                        max_minutes=criteria.max_commute_minutes,
-                        transport_mode=mode,
-                    )
-                    commute_results.extend(results)
-
-            # Build lookup of best commute time per property
-            commute_lookup: dict[str, tuple[int, TransportMode]] = {}
-            for result in commute_results:
-                if result.within_limit and (
-                    result.property_id not in commute_lookup
-                    or result.travel_time_minutes < commute_lookup[result.property_id][0]
-                ):
-                    commute_lookup[result.property_id] = (
-                        result.travel_time_minutes,
-                        result.transport_mode,
-                    )
-
-            # Keep merged properties within commute limit or without coords
-            merged_to_notify = [
-                m for m in merged_with_coords if m.canonical.unique_id in commute_lookup
-            ]
-            # Include merged properties without coordinates (can't filter them)
-            merged_to_notify.extend(merged_without_coords)
-
-            logger.info(
-                "commute_filter_summary",
-                within_limit=len(merged_to_notify),
-                total_checked=len(merged_with_coords),
-            )
-        else:
-            merged_to_notify = new_merged
-            commute_lookup = {}
-            logger.info("skipping_commute_filter", reason="no_traveltime_credentials")
-
-        if not merged_to_notify:
-            logger.info("no_properties_within_commute_limit")
-            return
-
-        # Step 5.5: Enrich with detail page data (gallery, floorplan, descriptions)
-        logger.info("pipeline_started", phase="detail_enrichment")
-        detail_fetcher = DetailFetcher(max_gallery_images=settings.quality_filter_max_images)
-        try:
-            merged_to_notify = await enrich_merged_properties(merged_to_notify, detail_fetcher)
-        finally:
-            await detail_fetcher.close()
-
-        logger.info(
-            "enrichment_summary",
-            total=len(merged_to_notify),
-            with_floorplan=sum(1 for m in merged_to_notify if m.floorplan),
-            with_images=sum(1 for m in merged_to_notify if m.images),
-        )
-
-        # Step 5.6: Floorplan gate (if configured)
-        if settings.require_floorplan:
-            before_count = len(merged_to_notify)
-            merged_to_notify = filter_by_floorplan(merged_to_notify)
-            logger.info(
-                "floorplan_filter",
-                before=before_count,
-                after=len(merged_to_notify),
-                dropped=before_count - len(merged_to_notify),
-            )
-
-            if not merged_to_notify:
-                logger.info("no_properties_with_floorplans")
-                return
-
-        # Step 6: Property quality analysis (if configured)
-        quality_lookup: dict[str, PropertyQualityAnalysis] = {}
-        analyzed_merged: dict[str, MergedProperty] = {}
-        quality_filter = None
-        if settings.anthropic_api_key.get_secret_value() and settings.enable_quality_filter:
-            logger.info("pipeline_started", phase="quality_analysis")
-            quality_filter = PropertyQualityFilter(
-                api_key=settings.anthropic_api_key.get_secret_value(),
-                max_images=settings.quality_filter_max_images,
-            )
-
-            try:
-                quality_results = await quality_filter.analyze_merged_properties(merged_to_notify)
-
-                for merged, analysis in quality_results:
-                    quality_lookup[merged.unique_id] = analysis
-                    analyzed_merged[merged.unique_id] = merged
-
-                concerns = sum(1 for _, a in quality_results if a.condition_concerns)
-                logger.info(
-                    "quality_analysis_summary",
-                    analyzed=len(quality_results),
-                    condition_concerns=concerns,
-                )
-            finally:
-                await quality_filter.close()
-        else:
-            logger.info("skipping_quality_analysis", reason="not_configured")
-
-        # Step 7: Save and notify
+        # Save and notify
         logger.info(
             "pipeline_started",
             phase="save_and_notify",
-            count=len(merged_to_notify),
+            count=len(result.merged_to_notify),
         )
 
-        for merged in merged_to_notify:
-            # Use updated merged property with images if available
-            final_merged = analyzed_merged.get(merged.unique_id, merged)
+        await _save_properties(result, storage)
 
-            commute_info = commute_lookup.get(merged.canonical.unique_id)
+        for merged in result.merged_to_notify:
+            final_merged = result.analyzed_merged.get(merged.unique_id, merged)
+
+            commute_info = result.commute_lookup.get(merged.canonical.unique_id)
             commute_minutes = commute_info[0] if commute_info else None
             transport_mode = commute_info[1] if commute_info else None
-            quality_analysis = quality_lookup.get(merged.unique_id)
+            quality_analysis = result.quality_lookup.get(merged.unique_id)
 
-            # Save merged property to database
-            await storage.save_merged_property(
-                final_merged,
-                commute_minutes=commute_minutes,
-                transport_mode=transport_mode,
-            )
-
-            # Save images if any
-            if final_merged.images:
-                await storage.save_property_images(
-                    final_merged.unique_id, list(final_merged.images)
-                )
-            if final_merged.floorplan:
-                await storage.save_property_images(final_merged.unique_id, [final_merged.floorplan])
-
-            # Send notification
             success = await notifier.send_merged_property_notification(
                 final_merged,
                 commute_minutes=commute_minutes,
@@ -424,10 +457,9 @@ async def run_pipeline(settings: Settings, *, max_per_scraper: int | None = None
             else:
                 await storage.mark_notification_failed(merged.unique_id)
 
-            # Small delay between notifications
             await asyncio.sleep(1)
 
-        logger.info("pipeline_complete", notified=len(merged_to_notify))
+        logger.info("pipeline_complete", notified=len(result.merged_to_notify))
 
     finally:
         await notifier.close()
@@ -442,6 +474,7 @@ async def run_scrape_only(settings: Settings, *, max_per_scraper: int | None = N
         max_per_scraper: Maximum properties per scraper (None for unlimited).
     """
     criteria = settings.get_search_criteria()
+    search_areas = settings.get_search_areas()
 
     logger.info("scrape_only_started")
     all_properties = await scrape_all_platforms(
@@ -449,6 +482,7 @@ async def run_scrape_only(settings: Settings, *, max_per_scraper: int | None = N
         max_price=criteria.max_price,
         min_bedrooms=criteria.min_bedrooms,
         max_bedrooms=criteria.max_bedrooms,
+        search_areas=search_areas,
         furnish_types=settings.get_furnish_types(),
         min_bathrooms=settings.min_bathrooms,
         include_let_agreed=settings.include_let_agreed,
@@ -476,243 +510,39 @@ async def run_dry_run(settings: Settings, *, max_per_scraper: int | None = None)
         settings: Application settings.
         max_per_scraper: Maximum properties per scraper (None for unlimited).
     """
-    criteria = settings.get_search_criteria()
-
-    # Initialize storage
     storage = PropertyStorage(settings.database_path)
     await storage.initialize()
 
     try:
-        # Load known source IDs for early-stop pagination
-        known_ids_by_source = await storage.get_all_known_source_ids()
-        logger.info(
-            "loaded_known_ids",
-            total=sum(len(v) for v in known_ids_by_source.values()),
-        )
-
-        # Step 1: Scrape all platforms
-        logger.info("pipeline_started", phase="scraping", dry_run=True)
-        all_properties = await scrape_all_platforms(
-            min_price=criteria.min_price,
-            max_price=criteria.max_price,
-            min_bedrooms=criteria.min_bedrooms,
-            max_bedrooms=criteria.max_bedrooms,
-            furnish_types=settings.get_furnish_types(),
-            min_bathrooms=settings.min_bathrooms,
-            include_let_agreed=settings.include_let_agreed,
-            max_per_scraper=max_per_scraper,
-            known_ids_by_source=known_ids_by_source,
-        )
-        logger.info("scraping_summary", total_found=len(all_properties))
-
-        if not all_properties:
-            logger.info("no_properties_found")
-            print("\nNo properties found.")
+        result = await _run_core_pipeline(settings, storage, max_per_scraper=max_per_scraper)
+        if result is None:
+            print("\nNo new properties to report.")
             return
 
-        # Step 2: Apply criteria filter
-        logger.info("pipeline_started", phase="criteria_filtering")
-        criteria_filter = CriteriaFilter(criteria)
-        filtered = criteria_filter.filter_properties(all_properties)
-        logger.info("criteria_filter_summary", matched=len(filtered))
-
-        if not filtered:
-            logger.info("no_properties_match_criteria")
-            print("\nNo properties match criteria.")
-            return
-
-        # Step 2.5: Apply location filter (catch scraper leakage)
-        logger.info("pipeline_started", phase="location_filtering")
-        location_filter = LocationFilter(SEARCH_AREAS, strict=False)
-        filtered = location_filter.filter_properties(filtered)
-        logger.info("location_filter_summary", matched=len(filtered))
-
-        if not filtered:
-            logger.info("no_properties_in_search_areas")
-            print("\nNo properties in search areas.")
-            return
-
-        # Step 3: Deduplicate and merge cross-platform listings
-        logger.info("pipeline_started", phase="deduplication_merge")
-        deduplicator = Deduplicator(
-            enable_cross_platform=True,
-            enable_image_hashing=settings.enable_image_hash_matching,
-        )
-        merged_properties = await deduplicator.deduplicate_and_merge_async(filtered)
-        logger.info(
-            "deduplication_merge_summary",
-            merged_count=len(merged_properties),
-            multi_source_count=sum(1 for m in merged_properties if len(m.sources) > 1),
-        )
-
-        # Step 4: Filter to new properties only
-        logger.info("pipeline_started", phase="new_property_filter")
-        new_merged = await storage.filter_new_merged(merged_properties)
-        logger.info("new_property_summary", new_count=len(new_merged))
-
-        if not new_merged:
-            logger.info("no_new_properties")
-            print("\nNo new properties found.")
-            return
-
-        # Step 5: Filter by commute time (if TravelTime configured)
-        commute_lookup: dict[str, tuple[int, TransportMode]] = {}
-        if settings.traveltime_app_id and settings.traveltime_api_key:
-            logger.info("pipeline_started", phase="commute_filtering")
-            commute_filter = CommuteFilter(
-                app_id=settings.traveltime_app_id,
-                api_key=settings.traveltime_api_key.get_secret_value(),
-                destination_postcode=criteria.destination_postcode,
-            )
-
-            # Geocode properties that have postcode but no coordinates
-            new_merged = await commute_filter.geocode_properties(new_merged)
-
-            merged_with_coords = [
-                m for m in new_merged if m.canonical.latitude and m.canonical.longitude
-            ]
-            merged_without_coords = [
-                m for m in new_merged if not (m.canonical.latitude and m.canonical.longitude)
-            ]
-
-            props_with_coords = [m.canonical for m in merged_with_coords]
-
-            commute_results = []
-            if props_with_coords:
-                for mode in criteria.transport_modes:
-                    results = await commute_filter.filter_properties(
-                        props_with_coords,
-                        max_minutes=criteria.max_commute_minutes,
-                        transport_mode=mode,
-                    )
-                    commute_results.extend(results)
-
-            for result in commute_results:
-                if result.within_limit and (
-                    result.property_id not in commute_lookup
-                    or result.travel_time_minutes < commute_lookup[result.property_id][0]
-                ):
-                    commute_lookup[result.property_id] = (
-                        result.travel_time_minutes,
-                        result.transport_mode,
-                    )
-
-            merged_to_notify = [
-                m for m in merged_with_coords if m.canonical.unique_id in commute_lookup
-            ]
-            merged_to_notify.extend(merged_without_coords)
-
-            logger.info(
-                "commute_filter_summary",
-                within_limit=len(merged_to_notify),
-                total_checked=len(merged_with_coords),
-            )
-        else:
-            merged_to_notify = new_merged
-            logger.info("skipping_commute_filter", reason="no_traveltime_credentials")
-
-        if not merged_to_notify:
-            logger.info("no_properties_within_commute_limit")
-            print("\nNo properties within commute limit.")
-            return
-
-        # Step 5.5: Enrich with detail page data (gallery, floorplan, descriptions)
-        logger.info("pipeline_started", phase="detail_enrichment")
-        detail_fetcher = DetailFetcher(max_gallery_images=settings.quality_filter_max_images)
-        try:
-            merged_to_notify = await enrich_merged_properties(merged_to_notify, detail_fetcher)
-        finally:
-            await detail_fetcher.close()
-
-        logger.info(
-            "enrichment_summary",
-            total=len(merged_to_notify),
-            with_floorplan=sum(1 for m in merged_to_notify if m.floorplan),
-            with_images=sum(1 for m in merged_to_notify if m.images),
-        )
-
-        # Step 5.6: Floorplan gate (if configured)
-        if settings.require_floorplan:
-            before_count = len(merged_to_notify)
-            merged_to_notify = filter_by_floorplan(merged_to_notify)
-            logger.info(
-                "floorplan_filter",
-                before=before_count,
-                after=len(merged_to_notify),
-                dropped=before_count - len(merged_to_notify),
-            )
-
-            if not merged_to_notify:
-                logger.info("no_properties_with_floorplans")
-                print("\nNo properties with floorplans.")
-                return
-
-        # Step 5.7: Property quality analysis (if configured)
-        quality_lookup: dict[str, PropertyQualityAnalysis] = {}
-        analyzed_merged: dict[str, MergedProperty] = {}
-        quality_filter = None
-        if settings.anthropic_api_key.get_secret_value() and settings.enable_quality_filter:
-            logger.info("pipeline_started", phase="quality_analysis")
-            quality_filter = PropertyQualityFilter(
-                api_key=settings.anthropic_api_key.get_secret_value(),
-                max_images=settings.quality_filter_max_images,
-            )
-
-            try:
-                quality_results = await quality_filter.analyze_merged_properties(merged_to_notify)
-
-                for merged, analysis in quality_results:
-                    quality_lookup[merged.unique_id] = analysis
-                    analyzed_merged[merged.unique_id] = merged
-
-                concerns = sum(1 for _, a in quality_results if a.condition_concerns)
-                logger.info(
-                    "quality_analysis_summary",
-                    analyzed=len(quality_results),
-                    condition_concerns=concerns,
-                )
-            finally:
-                await quality_filter.close()
-        else:
-            logger.info("skipping_quality_analysis", reason="not_configured")
-
-        # Step 6: Save (but don't notify in dry-run mode)
+        # Save to DB
         logger.info(
             "pipeline_started",
             phase="save_only",
-            count=len(merged_to_notify),
+            count=len(result.merged_to_notify),
             dry_run=True,
         )
 
+        await _save_properties(result, storage)
+
+        # Print summary
         print(f"\n{'=' * 60}")
-        print(f"[DRY RUN] Would notify about {len(merged_to_notify)} properties:")
+        print(f"[DRY RUN] Would notify about {len(result.merged_to_notify)} properties:")
         print(f"{'=' * 60}\n")
 
-        for merged in merged_to_notify:
-            final_merged = analyzed_merged.get(merged.unique_id, merged)
+        for merged in result.merged_to_notify:
+            final_merged = result.analyzed_merged.get(merged.unique_id, merged)
             prop = final_merged.canonical
 
-            commute_info = commute_lookup.get(prop.unique_id)
+            commute_info = result.commute_lookup.get(prop.unique_id)
             commute_minutes = commute_info[0] if commute_info else None
             transport_mode = commute_info[1] if commute_info else None
-            quality_analysis = quality_lookup.get(merged.unique_id)
+            quality_analysis = result.quality_lookup.get(merged.unique_id)
 
-            # Save merged property to database
-            await storage.save_merged_property(
-                final_merged,
-                commute_minutes=commute_minutes,
-                transport_mode=transport_mode,
-            )
-
-            # Save images if any
-            if final_merged.images:
-                await storage.save_property_images(
-                    final_merged.unique_id, list(final_merged.images)
-                )
-            if final_merged.floorplan:
-                await storage.save_property_images(final_merged.unique_id, [final_merged.floorplan])
-
-            # Print instead of notify
             source_str = ", ".join(s.value for s in final_merged.sources)
             print(f"[{source_str}] {prop.title}")
 
@@ -741,7 +571,7 @@ async def run_dry_run(settings: Settings, *, max_per_scraper: int | None = None)
                 print(f"  Summary: {quality_analysis.summary}")
                 if quality_analysis.condition_concerns:
                     print(
-                        f"  ⚠️ Condition concerns ({quality_analysis.concern_severity}): "
+                        f"  Condition concerns ({quality_analysis.concern_severity}): "
                         f"{', '.join(quality_analysis.condition.maintenance_concerns)}"
                     )
                 sqm_str = (
@@ -757,7 +587,7 @@ async def run_dry_run(settings: Settings, *, max_per_scraper: int | None = None)
             print(f"  URL: {prop.url}")
             print()
 
-        logger.info("dry_run_complete", saved=len(merged_to_notify))
+        logger.info("dry_run_complete", saved=len(result.merged_to_notify))
 
     finally:
         await storage.close()
