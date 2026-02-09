@@ -180,7 +180,9 @@ def compare(zs_listings: list[dict], hf_listings: list[dict]) -> None:
     if diffs:
         print()
         print("-" * 90)
-        print(f"FIELD DIFFERENCES ({len(diffs)} mismatches across {len(set(d[0] for d in diffs))} listings):")
+        print(
+            f"FIELD DIFFERENCES ({len(diffs)} mismatches across {len(set(d[0] for d in diffs))} listings):"
+        )
         print("-" * 90)
         for lid, field, zs_val, hf_val in diffs:
             print(f"  ID={lid}  {field}:")
@@ -211,9 +213,7 @@ def compare(zs_listings: list[dict], hf_listings: list[dict]) -> None:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(
-        description="Compare zoopla-scraper vs home-finder parsing"
-    )
+    parser = argparse.ArgumentParser(description="Compare zoopla-scraper vs home-finder parsing")
     parser.add_argument("area", nargs="?", default="e8", help="Area to search (default: e8)")
     parser.add_argument("--page", type=int, default=1, help="Page number (default: 1)")
     args = parser.parse_args()

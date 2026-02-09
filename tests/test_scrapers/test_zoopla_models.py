@@ -391,9 +391,7 @@ class TestZooplaModelIntegration:
 
         data = json.loads(fixture_path.read_text())
         raw_listings = (
-            data.get("props", {})
-            .get("pageProps", {})
-            .get("regularListingsFormatted", [])
+            data.get("props", {}).get("pageProps", {}).get("regularListingsFormatted", [])
         )
 
         listings = [ZooplaListing.model_validate(item) for item in raw_listings]

@@ -235,7 +235,7 @@ class ZooplaScraper(BaseScraper):
         The second element is a string containing an RSC line ID followed by
         a colon and then JSON content.
         """
-        pattern = r'self\.__next_f\.push\(\s*\[(.*?)\]\s*\)'
+        pattern = r"self\.__next_f\.push\(\s*\[(.*?)\]\s*\)"
         matches = re.findall(pattern, html, re.DOTALL)
         listings: list[ZooplaListing] = []
 
@@ -259,7 +259,7 @@ class ZooplaScraper(BaseScraper):
             if colon_idx < 0:
                 continue
 
-            rsc_content = payload[colon_idx + 1:]
+            rsc_content = payload[colon_idx + 1 :]
 
             # The RSC content is a JSON array like ["$","$L7a",null,{props}]
             try:
@@ -280,9 +280,7 @@ class ZooplaScraper(BaseScraper):
 
         return unique
 
-    def _extract_listings_from_parsed(
-        self, data: Any, depth: int = 0
-    ) -> list[ZooplaListing]:
+    def _extract_listings_from_parsed(self, data: Any, depth: int = 0) -> list[ZooplaListing]:
         """Recursively search a parsed JSON structure for listing data."""
         if depth > 15:
             return []
@@ -312,15 +310,11 @@ class ZooplaScraper(BaseScraper):
             if not listings:
                 for value in data.values():
                     if isinstance(value, (dict, list)):
-                        listings.extend(
-                            self._extract_listings_from_parsed(value, depth + 1)
-                        )
+                        listings.extend(self._extract_listings_from_parsed(value, depth + 1))
 
         elif isinstance(data, list):
             for item in data:
-                listings.extend(
-                    self._extract_listings_from_parsed(item, depth + 1)
-                )
+                listings.extend(self._extract_listings_from_parsed(item, depth + 1))
 
         return listings
 
@@ -437,14 +431,9 @@ class ZooplaScraper(BaseScraper):
         if page > 1:
             params["pn"] = str(page)
 
-        return (
-            f"{self.BASE_URL}/to-rent/property/{path_seg}/?"
-            f"{urllib.parse.urlencode(params)}"
-        )
+        return f"{self.BASE_URL}/to-rent/property/{path_seg}/?{urllib.parse.urlencode(params)}"
 
-    def _parse_search_results(
-        self, soup: BeautifulSoup, _base_url: str
-    ) -> list[Property]:
+    def _parse_search_results(self, soup: BeautifulSoup, _base_url: str) -> list[Property]:
         """Parse property listings from search results page (HTML fallback)."""
         properties: list[Property] = []
 

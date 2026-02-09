@@ -244,16 +244,14 @@ class TestZooplaRscExtraction:
         # Wrap in RSC push format: self.__next_f.push([1, "79:{json}"])
         inner_str = f"79:{rsc_json}"
         # The push array contains [1, "79:{json}"]
-        push_content = f'1,{json.dumps(inner_str)}'
+        push_content = f"1,{json.dumps(inner_str)}"
         html = f"<script>self.__next_f.push([{push_content}])</script>"
 
         listings = zoopla_scraper._extract_rsc_listings(html)
         assert len(listings) == 1
         assert listings[0].listing_id == 123
 
-    def test_extract_rsc_listings_with_listing_id(
-        self, zoopla_scraper: ZooplaScraper
-    ) -> None:
+    def test_extract_rsc_listings_with_listing_id(self, zoopla_scraper: ZooplaScraper) -> None:
         """Test extraction from RSC payload containing individual listings."""
         listing_data = {
             "listingId": 456,
@@ -265,32 +263,26 @@ class TestZooplaRscExtraction:
         }
         rsc_json = json.dumps(listing_data)
         inner_str = f"80:{rsc_json}"
-        push_content = f'1,{json.dumps(inner_str)}'
+        push_content = f"1,{json.dumps(inner_str)}"
         html = f"<script>self.__next_f.push([{push_content}])</script>"
 
         listings = zoopla_scraper._extract_rsc_listings(html)
         assert len(listings) == 1
         assert listings[0].listing_id == 456
 
-    def test_extract_rsc_listings_empty_html(
-        self, zoopla_scraper: ZooplaScraper
-    ) -> None:
+    def test_extract_rsc_listings_empty_html(self, zoopla_scraper: ZooplaScraper) -> None:
         """Test extraction from HTML with no RSC data."""
         html = "<html><head></head><body></body></html>"
         listings = zoopla_scraper._extract_rsc_listings(html)
         assert listings == []
 
-    def test_extract_rsc_listings_no_listing_data(
-        self, zoopla_scraper: ZooplaScraper
-    ) -> None:
+    def test_extract_rsc_listings_no_listing_data(self, zoopla_scraper: ZooplaScraper) -> None:
         """Test extraction from RSC payload with no listing data."""
         html = """<script>self.__next_f.push([1,"some other content"])</script>"""
         listings = zoopla_scraper._extract_rsc_listings(html)
         assert listings == []
 
-    def test_extract_rsc_listings_deduplicates(
-        self, zoopla_scraper: ZooplaScraper
-    ) -> None:
+    def test_extract_rsc_listings_deduplicates(self, zoopla_scraper: ZooplaScraper) -> None:
         """Test that duplicate listings are removed."""
         listing_data = {
             "listingId": 789,
@@ -302,7 +294,7 @@ class TestZooplaRscExtraction:
         }
         rsc_json = json.dumps(listing_data)
         inner_str = f"80:{rsc_json}"
-        push_content = f'1,{json.dumps(inner_str)}'
+        push_content = f"1,{json.dumps(inner_str)}"
         # Same listing appears twice
         html = (
             f"<script>self.__next_f.push([{push_content}])</script>"
@@ -329,7 +321,7 @@ class TestZooplaRscExtraction:
         ]
         rsc_json = json.dumps({"regularListingsFormatted": listings_data})
         inner_str = f"79:{rsc_json}"
-        push_content = f'1,{json.dumps(inner_str)}'
+        push_content = f"1,{json.dumps(inner_str)}"
         html = f"<script>self.__next_f.push([{push_content}])</script>"
 
         properties = zoopla_scraper._parse_rsc_properties(html)

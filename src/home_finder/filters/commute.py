@@ -199,9 +199,7 @@ class CommuteFilter:
 
         return results
 
-    async def geocode_properties(
-        self, properties: list[MergedProperty]
-    ) -> list[MergedProperty]:
+    async def geocode_properties(self, properties: list[MergedProperty]) -> list[MergedProperty]:
         """Geocode merged properties that have a postcode but no coordinates.
 
         Properties that already have coordinates are returned unchanged.

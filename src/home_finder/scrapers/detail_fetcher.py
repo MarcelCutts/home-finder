@@ -276,7 +276,7 @@ class DetailFetcher:
 
             # Try RSC taxonomy payload for description (contains detailedDescription, etc.)
             if not description:
-                rsc_pattern = r'self\.__next_f\.push\(\s*\[(.*?)\]\s*\)'
+                rsc_pattern = r"self\.__next_f\.push\(\s*\[(.*?)\]\s*\)"
                 for m in re.finditer(rsc_pattern, html, re.DOTALL):
                     match_text = m.group(1)
                     if "epcRating" not in match_text or "numBaths" not in match_text:
@@ -287,7 +287,7 @@ class DetailFetcher:
                             payload = arr[1]
                             colon_idx = payload.find(":")
                             if colon_idx >= 0:
-                                parsed = json.loads(payload[colon_idx + 1:])
+                                parsed = json.loads(payload[colon_idx + 1 :])
                                 taxonomy = _find_dict_with_key(parsed, "epcRating")
                                 if taxonomy:
                                     desc = taxonomy.get("detailedDescription", "")
@@ -296,9 +296,7 @@ class DetailFetcher:
                                         description = re.sub(r"\s+", " ", desc).strip()
                                     kf = taxonomy.get("keyFeatures", [])
                                     if isinstance(kf, list) and kf and not features:
-                                        features = [
-                                            f for f in kf if isinstance(f, str)
-                                        ]
+                                        features = [f for f in kf if isinstance(f, str)]
                     except (json.JSONDecodeError, TypeError):
                         continue
 
