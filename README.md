@@ -16,11 +16,13 @@ Multi-platform London rental property scraper with commute filtering, AI quality
 ## Quick Start
 
 1. **Install dependencies**:
+
    ```bash
    uv sync --all-extras
    ```
 
 2. **Configure environment**:
+
    ```bash
    cp .env.example .env
    # Edit .env with your settings
@@ -45,21 +47,25 @@ uv run home-finder --max-per-scraper 5  # Limit results per scraper (for testing
 Create a `.env` file with these settings (all use `HOME_FINDER_` prefix):
 
 ### Required
+
 - `HOME_FINDER_TELEGRAM_BOT_TOKEN`: Your Telegram bot token (from @BotFather)
 - `HOME_FINDER_TELEGRAM_CHAT_ID`: Your Telegram chat ID
 
 ### Optional APIs
+
 - `HOME_FINDER_TRAVELTIME_APP_ID`: TravelTime API app ID (enables commute filtering)
 - `HOME_FINDER_TRAVELTIME_API_KEY`: TravelTime API key
 - `HOME_FINDER_ANTHROPIC_API_KEY`: Anthropic API key (enables AI quality analysis)
 
 ### Feature Flags
+
 - `HOME_FINDER_ENABLE_QUALITY_FILTER`: Enable Claude vision property analysis (default: true)
 - `HOME_FINDER_REQUIRE_FLOORPLAN`: Drop properties without floorplans (default: true)
 - `HOME_FINDER_QUALITY_FILTER_MAX_IMAGES`: Max gallery images to analyze per property (default: 10, max: 20)
 - `HOME_FINDER_ENABLE_IMAGE_HASH_MATCHING`: Enable perceptual image hashing for deduplication (default: false)
 
 ### Search Criteria
+
 - `HOME_FINDER_MIN_PRICE`: Minimum monthly rent (default: 1800)
 - `HOME_FINDER_MAX_PRICE`: Maximum monthly rent (default: 2200)
 - `HOME_FINDER_MIN_BEDROOMS`: Minimum bedrooms (default: 1)
@@ -68,17 +74,19 @@ Create a `.env` file with these settings (all use `HOME_FINDER_` prefix):
 - `HOME_FINDER_MAX_COMMUTE_MINUTES`: Maximum commute time in minutes (default: 30)
 
 ### Scraper Filters
+
 - `HOME_FINDER_FURNISH_TYPES`: Comma-separated furnishing filter (default: unfurnished,part_furnished)
 - `HOME_FINDER_MIN_BATHROOMS`: Minimum bathrooms (default: 1)
 - `HOME_FINDER_INCLUDE_LET_AGREED`: Include already-let properties (default: false)
 
 ### Other
+
 - `HOME_FINDER_DATABASE_PATH`: SQLite database path (default: data/properties.db)
-- `HOME_FINDER_SCRAPE_INTERVAL_MINUTES`: Interval for scheduled runs (default: 55)
 
 ## Getting API Keys
 
 ### Telegram Bot
+
 1. Message @BotFather on Telegram
 2. Send `/newbot` and follow instructions
 3. Copy the bot token to your `.env`
@@ -86,11 +94,13 @@ Create a `.env` file with these settings (all use `HOME_FINDER_` prefix):
 5. Get your chat ID from `https://api.telegram.org/bot<YOUR_TOKEN>/getUpdates`
 
 ### TravelTime API (Optional)
+
 1. Sign up at https://traveltime.com/
 2. Get your App ID and API Key from the dashboard
 3. Add to your `.env`
 
 ### Anthropic API (Optional)
+
 1. Get an API key at https://console.anthropic.com/
 2. Add to your `.env` as `HOME_FINDER_ANTHROPIC_API_KEY`
 3. Enables AI-powered property quality analysis using Claude vision
@@ -113,7 +123,7 @@ src/home_finder/
 │   ├── base.py            # Abstract BaseScraper interface
 │   ├── openrent.py        # OpenRent (crawlee)
 │   ├── rightmove.py       # Rightmove (crawlee + typeahead API)
-│   ├── zoopla.py          # Zoopla (curl_cffi for TLS fingerprinting)
+│   ├── zoopla.py          # Zoopla (Playwright for Cloudflare bypass)
 │   ├── onthemarket.py     # OnTheMarket (curl_cffi)
 │   ├── zoopla_models.py   # Pydantic models for Zoopla JSON parsing
 │   ├── detail_fetcher.py  # Gallery/floorplan extraction from detail pages
@@ -141,20 +151,28 @@ src/home_finder/
 
 ## Deployment
 
-### Docker (recommended)
+### Fly.io (recommended)
+
+Deploys to London (`lhr`) for UK IP, with supercronic for cron scheduling:
+
+```bash
+fly apps create home-finder
+fly volumes create home_finder_data --region lhr --size 1
+fly secrets set HOME_FINDER_TELEGRAM_BOT_TOKEN=xxx HOME_FINDER_TELEGRAM_CHAT_ID=xxx ...
+fly deploy
+```
+
+### Docker (local)
 
 ```bash
 docker build -t home-finder .
 docker run --env-file .env -v ./data:/app/data home-finder
 ```
 
-### Railway
-
-The project includes `railway.toml` configured for cron-based deployment (every 55 minutes with restart-on-failure).
-
 ### systemd timer
 
 Create `/etc/systemd/system/home-finder.service`:
+
 ```ini
 [Unit]
 Description=Home Finder Property Scraper
@@ -171,6 +189,7 @@ WantedBy=multi-user.target
 ```
 
 Create `/etc/systemd/system/home-finder.timer`:
+
 ```ini
 [Unit]
 Description=Run Home Finder every 55 minutes
@@ -184,11 +203,13 @@ WantedBy=timers.target
 ```
 
 Enable:
+
 ```bash
 sudo systemctl enable --now home-finder.timer
 ```
 
 ### cron
+
 ```bash
 */55 * * * * cd /path/to/home-finder && /path/to/uv run home-finder >> /var/log/home-finder.log 2>&1
 ```

@@ -1,0 +1,1 @@
+*/55 * * * * cd /app && uv run home-finder 2>&1

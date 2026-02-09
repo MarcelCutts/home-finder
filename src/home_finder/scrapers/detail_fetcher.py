@@ -1,14 +1,19 @@
 """Detail page fetcher for extracting gallery and floorplan URLs."""
 
+import asyncio
 import json
 import re
 from dataclasses import dataclass
+from typing import Any
 
 import httpx
 from curl_cffi.requests import AsyncSession
 
 from home_finder.logging import get_logger
 from home_finder.models import Property, PropertySource
+
+_MAX_RETRIES = 3
+_RETRY_BASE_DELAY = 2.0  # seconds, doubled each retry
 
 logger = get_logger(__name__)
 
@@ -26,15 +31,17 @@ class DetailPageData:
 class DetailFetcher:
     """Fetches property detail pages and extracts floorplan/gallery URLs."""
 
-    def __init__(self, max_gallery_images: int = 10) -> None:
+    def __init__(self, max_gallery_images: int = 10, *, proxy_url: str = "") -> None:
         """Initialize the detail fetcher.
 
         Args:
             max_gallery_images: Maximum number of gallery images to extract.
+            proxy_url: HTTP/SOCKS5 proxy URL for geo-restricted sites.
         """
         self._client: httpx.AsyncClient | None = None
         self._curl_session: AsyncSession | None = None  # type: ignore[type-arg]
         self._max_gallery_images = max_gallery_images
+        self._proxy_url = proxy_url
 
     async def _get_client(self) -> httpx.AsyncClient:
         """Get or create HTTP client."""
@@ -54,6 +61,43 @@ class DetailFetcher:
         if self._curl_session is None:
             self._curl_session = AsyncSession()
         return self._curl_session
+
+    async def _httpx_get_with_retry(self, url: str) -> httpx.Response:
+        """GET with retry on 429 Too Many Requests."""
+        client = await self._get_client()
+        for attempt in range(_MAX_RETRIES):
+            response = await client.get(url)
+            if response.status_code != 429:
+                response.raise_for_status()
+                return response
+            delay = _RETRY_BASE_DELAY * (2**attempt)
+            logger.debug("rate_limited_retrying", url=url, attempt=attempt + 1, delay=delay)
+            await asyncio.sleep(delay)
+        response.raise_for_status()  # raise the 429 on final failure
+        return response  # unreachable but satisfies type checker
+
+    async def _curl_get_with_retry(self, url: str) -> Any:
+        """GET with retry on 429 for curl_cffi session."""
+        session = await self._get_curl_session()
+        kwargs: dict[str, object] = {
+            "impersonate": "chrome",
+            "headers": {
+                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                "Accept-Language": "en-GB,en;q=0.9",
+                "Accept-Encoding": "gzip, deflate, br",
+            },
+            "timeout": 30,
+        }
+        if self._proxy_url:
+            kwargs["proxy"] = self._proxy_url
+        for attempt in range(_MAX_RETRIES):
+            response = await session.get(url, **kwargs)  # type: ignore[arg-type]
+            if response.status_code != 429:
+                return response
+            delay = _RETRY_BASE_DELAY * (2**attempt)
+            logger.debug("rate_limited_retrying", url=url, attempt=attempt + 1, delay=delay)
+            await asyncio.sleep(delay)
+        return response
 
     async def fetch_floorplan_url(self, prop: Property) -> str | None:
         """Fetch detail page and extract floorplan URL.
@@ -90,9 +134,7 @@ class DetailFetcher:
     async def _fetch_rightmove(self, prop: Property) -> DetailPageData | None:
         """Extract floorplan and gallery URLs from Rightmove detail page."""
         try:
-            client = await self._get_client()
-            response = await client.get(str(prop.url))
-            response.raise_for_status()
+            response = await self._httpx_get_with_retry(str(prop.url))
             html = response.text
 
             # Find PAGE_MODEL JSON start
@@ -162,17 +204,7 @@ class DetailFetcher:
         Zoopla's bot detection.
         """
         try:
-            session = await self._get_curl_session()
-            response = await session.get(
-                str(prop.url),
-                impersonate="chrome",
-                headers={
-                    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-                    "Accept-Language": "en-GB,en;q=0.9",
-                    "Accept-Encoding": "gzip, deflate, br",
-                },
-                timeout=30,
-            )
+            response = await self._curl_get_with_retry(str(prop.url))
             if response.status_code != 200:
                 logger.warning(
                     "zoopla_http_error",
@@ -272,9 +304,7 @@ class DetailFetcher:
     async def _fetch_openrent(self, prop: Property) -> DetailPageData | None:
         """Extract floorplan and gallery URLs from OpenRent detail page."""
         try:
-            client = await self._get_client()
-            response = await client.get(str(prop.url))
-            response.raise_for_status()
+            response = await self._httpx_get_with_retry(str(prop.url))
             html = response.text
 
             # Check if we got redirected to homepage (property no longer available)
@@ -379,17 +409,7 @@ class DetailFetcher:
         OnTheMarket's bot detection.
         """
         try:
-            session = await self._get_curl_session()
-            response = await session.get(
-                str(prop.url),
-                impersonate="chrome",
-                headers={
-                    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-                    "Accept-Language": "en-GB,en;q=0.9",
-                    "Accept-Encoding": "gzip, deflate, br",
-                },
-                timeout=30,
-            )
+            response = await self._curl_get_with_retry(str(prop.url))
             if response.status_code != 200:
                 logger.warning(
                     "onthemarket_http_error",

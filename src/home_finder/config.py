@@ -99,6 +99,12 @@ class Settings(BaseSettings):
         description="Comma-separated list of boroughs or outcodes to search",
     )
 
+    # Proxy (for accessing geo-restricted sites like Zoopla from outside the UK)
+    proxy_url: str = Field(
+        default="",
+        description="HTTP/SOCKS5 proxy URL (e.g. socks5://user:pass@host:port)",
+    )
+
     # Database
     database_path: str = Field(default="data/properties.db")
 

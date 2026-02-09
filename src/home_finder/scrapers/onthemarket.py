@@ -29,8 +29,9 @@ class OnTheMarketScraper(BaseScraper):
     MAX_PAGES = 20
     PAGE_DELAY_SECONDS = 0.5
 
-    def __init__(self) -> None:
+    def __init__(self, *, proxy_url: str = "") -> None:
         self._session: AsyncSession | None = None  # type: ignore[type-arg]
+        self._proxy_url = proxy_url
 
     async def _get_session(self) -> AsyncSession:  # type: ignore[type-arg]
         """Get or create a reusable curl_cffi session."""
@@ -142,12 +143,14 @@ class OnTheMarketScraper(BaseScraper):
         """Fetch page using curl_cffi with Chrome impersonation."""
         try:
             session = await self._get_session()
-            response = await session.get(
-                url,
-                impersonate="chrome",
-                headers=HEADERS,
-                timeout=30,
-            )
+            kwargs: dict[str, object] = {
+                "impersonate": "chrome",
+                "headers": HEADERS,
+                "timeout": 30,
+            }
+            if self._proxy_url:
+                kwargs["proxy"] = self._proxy_url
+            response = await session.get(url, **kwargs)  # type: ignore[arg-type]
             if response.status_code == 200:
                 text: str = response.text
                 return text

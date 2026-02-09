@@ -1,0 +1,12 @@
+app = "home-finder"
+primary_region = "lhr"
+
+[build]
+  dockerfile = "Dockerfile.fly"
+
+[mounts]
+  source = "home_finder_data"
+  destination = "/app/data"
+
+[env]
+  MALLOC_ARENA_MAX = "2"

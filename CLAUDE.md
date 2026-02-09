@@ -111,7 +111,7 @@ This is an async Python application that scrapes London rental properties from m
 
 | Component | HTTP Client | Reason |
 |-----------|-------------|--------|
-| Zoopla scraper | `curl_cffi` with `impersonate="chrome"` | TLS fingerprinting detection |
+| Zoopla scraper | `crawlee.PlaywrightCrawler` + `BrowserPool` | Cloudflare JS challenges require real browser |
 | OnTheMarket scraper | `curl_cffi` with `impersonate="chrome"` | TLS fingerprinting detection |
 | Rightmove scraper | `crawlee.BeautifulSoupCrawler` | Standard requests work |
 | OpenRent scraper | `crawlee.BeautifulSoupCrawler` | Standard requests work |
@@ -119,7 +119,9 @@ This is an async Python application that scrapes London rental properties from m
 | DetailFetcher (others) | `httpx.AsyncClient` | Standard requests work |
 | QualityFilter (Zoopla images) | `curl_cffi` with `impersonate="chrome"` | Anti-bot protection on CDN images |
 
-**Why curl_cffi?** Sites like Zoopla and OnTheMarket use TLS fingerprinting to detect bots. Standard Python HTTP clients (httpx, aiohttp, requests) have distinctive TLS fingerprints that get blocked with 403. `curl_cffi` impersonates Chrome's TLS fingerprint.
+**Why Playwright for Zoopla?** Zoopla's Cloudflare protection now defeats `curl_cffi` TLS fingerprinting — serving JS challenges or empty shells where listings load client-side. The Zoopla scraper uses a shared `BrowserPool` (one Chromium process) with lightweight `PlaywrightCrawler` instances per page fetch.
+
+**Why curl_cffi?** OnTheMarket and detail fetchers use TLS fingerprinting to detect bots. `curl_cffi` impersonates Chrome's TLS fingerprint.
 
 ```python
 # Example: curl_cffi usage for anti-bot sites
@@ -177,7 +179,7 @@ The deduplicator uses weighted multi-signal scoring to match properties across p
 - Rightmove uses region codes mapped via hardcoded dicts (`RIGHTMOVE_LOCATIONS`, `RIGHTMOVE_OUTCODES`) with async typeahead API fallback for unknown outcodes
 - All scrapers handle rate limiting with configurable page delays (0.5-2s)
 - All scrapers deduplicate within their own results (track seen IDs/URLs)
-- **New scrapers for anti-bot sites MUST use curl_cffi** (see HTTP Client Selection above)
+- **New scrapers for anti-bot sites**: Use `curl_cffi` for TLS fingerprinting or `PlaywrightCrawler` for JS-challenge sites (see HTTP Client Selection above)
 
 **Data extraction patterns:**
 - Zoopla: Next.js — `__NEXT_DATA__` JSON or RSC format via `self.__next_f.push()` calls. Parsed with `zoopla_models.py` Pydantic models.
@@ -209,6 +211,14 @@ Key feature flags in `config.py`:
 
 ### Deployment
 
-- **Docker**: `Dockerfile` uses python:3.11-slim with uv 0.6.6, multi-stage build
-- **Railway**: `railway.toml` configured for cron schedule (`*/55 * * * *`) with restart-on-failure (3 retries)
+- **Docker**: `Dockerfile` uses python:3.11-slim-bookworm with uv 0.6.6, includes Playwright Chromium
+- **Fly.io** (primary): `fly.toml` + `Dockerfile.fly` deploy to London (`lhr`) with supercronic cron scheduling (`*/55 * * * *`). Persistent volume for SQLite at `/app/data`.
 - SQLite database stored at `data/properties.db` (mount as volume in Docker)
+
+**Fly.io setup:**
+```bash
+fly apps create home-finder
+fly volumes create home_finder_data --region lhr --size 1
+fly secrets set HOME_FINDER_TELEGRAM_BOT_TOKEN=xxx HOME_FINDER_TELEGRAM_CHAT_ID=xxx ...
+fly deploy
+```

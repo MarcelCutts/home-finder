@@ -578,7 +578,7 @@ class Deduplicator:
                         is_match=score.is_match,
                     )
 
-                if score.is_match:
+                if score.is_match and prop_i.source != prop_j.source:
                     union(i, j)
 
         # Build groups from union-find

@@ -1,10 +1,14 @@
-"""Zoopla property scraper using curl_cffi for TLS fingerprint impersonation."""
+"""Zoopla property scraper using Playwright for browser-based rendering."""
+
+from __future__ import annotations
 
 import json
 import re
 
 from bs4 import BeautifulSoup, Tag
-from curl_cffi.requests import AsyncSession
+from crawlee.browsers import BrowserPool
+from crawlee.crawlers import PlaywrightCrawler, PlaywrightCrawlingContext
+from crawlee.storage_clients import MemoryStorageClient
 from pydantic import HttpUrl, ValidationError
 
 from home_finder.logging import get_logger
@@ -18,15 +22,9 @@ from home_finder.scrapers.zoopla_models import (
 
 logger = get_logger(__name__)
 
-HEADERS = {
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-    "Accept-Language": "en-GB,en;q=0.9",
-    "Accept-Encoding": "gzip, deflate, br",
-}
-
 
 class ZooplaScraper(BaseScraper):
-    """Scraper for Zoopla.co.uk listings using curl_cffi."""
+    """Scraper for Zoopla.co.uk listings using Playwright."""
 
     BASE_URL = "https://www.zoopla.co.uk"
 
@@ -35,19 +33,26 @@ class ZooplaScraper(BaseScraper):
     PAGE_DELAY_SECONDS = 0.5
 
     def __init__(self) -> None:
-        self._session: AsyncSession | None = None  # type: ignore[type-arg]
+        self._browser_pool: BrowserPool | None = None
 
-    async def _get_session(self) -> AsyncSession:  # type: ignore[type-arg]
-        """Get or create a reusable curl_cffi session."""
-        if self._session is None:
-            self._session = AsyncSession()
-        return self._session
+    async def _get_browser_pool(self) -> BrowserPool:
+        """Get or create a shared BrowserPool for all page fetches."""
+        if self._browser_pool is None:
+            self._browser_pool = BrowserPool.with_default_plugin(
+                headless=True,
+                browser_type="chromium",
+                browser_launch_options={
+                    "args": ["--disable-dev-shm-usage", "--no-sandbox"],
+                },
+            )
+            await self._browser_pool.__aenter__()
+        return self._browser_pool
 
     async def close(self) -> None:
-        """Close the curl_cffi session."""
-        if self._session is not None:
-            await self._session.close()
-            self._session = None
+        """Close the browser pool."""
+        if self._browser_pool is not None:
+            await self._browser_pool.__aexit__(None, None, None)
+            self._browser_pool = None
 
     @property
     def source(self) -> PropertySource:
@@ -172,49 +177,38 @@ class ZooplaScraper(BaseScraper):
         return all_properties
 
     async def _fetch_page_with_url(self, url: str) -> tuple[str, str] | None:
-        """Fetch page and return (html, final_url) after redirects."""
+        """Fetch page using Playwright and return (html, final_url)."""
+        pool = await self._get_browser_pool()
+        result: list[tuple[str, str]] = []
+
+        crawler = PlaywrightCrawler(
+            browser_pool=pool,
+            max_requests_per_crawl=1,
+            storage_client=MemoryStorageClient(),
+            use_incognito_pages=True,
+        )
+
+        @crawler.router.default_handler
+        async def handler(context: PlaywrightCrawlingContext) -> None:
+            try:
+                await context.page.wait_for_selector(
+                    '[data-testid="search-result"]',
+                    timeout=15000,
+                )
+            except Exception:
+                # No results or slow load — get whatever rendered
+                await context.page.wait_for_load_state("networkidle")
+            html = await context.page.content()
+            final_url = context.request.loaded_url or str(context.request.url)
+            result.append((html, final_url))
+
         try:
-            session = await self._get_session()
-            response = await session.get(
-                url,
-                impersonate="chrome",
-                headers=HEADERS,
-                timeout=30,
-            )
-            if response.status_code == 200:
-                return response.text, str(response.url)
-            logger.warning(
-                "zoopla_http_error",
-                status=response.status_code,
-                url=url,
-            )
-            return None
+            await crawler.run([url])
         except Exception as e:
             logger.error("zoopla_fetch_exception", error=str(e), url=url)
             return None
 
-    async def _fetch_page(self, url: str) -> str | None:
-        """Fetch page using curl_cffi with Chrome impersonation."""
-        try:
-            session = await self._get_session()
-            response = await session.get(
-                url,
-                impersonate="chrome",
-                headers=HEADERS,
-                timeout=30,
-            )
-            if response.status_code == 200:
-                text: str = response.text
-                return text
-            logger.warning(
-                "zoopla_http_error",
-                status=response.status_code,
-                url=url,
-            )
-            return None
-        except Exception as e:
-            logger.error("zoopla_fetch_exception", error=str(e), url=url)
-            return None
+        return result[0] if result else None
 
     def _extract_next_data(self, html: str) -> ZooplaNextData | None:
         """Extract and validate listing data from Next.js page.
@@ -228,7 +222,13 @@ class ZooplaScraper(BaseScraper):
         script = soup.find("script", {"id": "__NEXT_DATA__"})
         if script and script.string:
             try:
-                return ZooplaNextData.model_validate_json(script.string)
+                data = ZooplaNextData.model_validate_json(script.string)
+                logger.debug(
+                    "zoopla_extract_success",
+                    method="__NEXT_DATA__",
+                    listings_count=len(data.get_listings()),
+                )
+                return data
             except (json.JSONDecodeError, ValidationError) as e:
                 logger.debug("zoopla_next_data_parse_failed", error=str(e))
 
@@ -237,6 +237,11 @@ class ZooplaScraper(BaseScraper):
             if script.string and "regularListingsFormatted" in script.string:
                 listings = self._extract_rsc_listings(script.string)
                 if listings:
+                    logger.debug(
+                        "zoopla_extract_success",
+                        method="RSC",
+                        listings_count=len(listings),
+                    )
                     # Wrap in the expected structure
                     return ZooplaNextData.model_validate(
                         {"props": {"pageProps": {"regularListingsFormatted": listings}}}

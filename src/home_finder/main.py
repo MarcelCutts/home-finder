@@ -57,6 +57,7 @@ async def scrape_all_platforms(
     include_let_agreed: bool = True,
     max_per_scraper: int | None = None,
     known_ids_by_source: dict[str, set[str]] | None = None,
+    proxy_url: str = "",
 ) -> list[Property]:
     """Scrape all platforms for matching properties.
 
@@ -80,7 +81,7 @@ async def scrape_all_platforms(
         OpenRentScraper(),
         RightmoveScraper(),
         ZooplaScraper(),
-        OnTheMarketScraper(),
+        OnTheMarketScraper(proxy_url=proxy_url),
     ]
 
     all_properties: list[Property] = []
@@ -190,6 +191,7 @@ async def _run_core_pipeline(
         include_let_agreed=settings.include_let_agreed,
         max_per_scraper=max_per_scraper,
         known_ids_by_source=known_ids_by_source,
+        proxy_url=settings.proxy_url,
     )
     logger.info("scraping_summary", total_found=len(all_properties))
 
@@ -301,7 +303,10 @@ async def _run_core_pipeline(
 
     # Step 5.5: Enrich with detail page data (gallery, floorplan, descriptions)
     logger.info("pipeline_started", phase="detail_enrichment")
-    detail_fetcher = DetailFetcher(max_gallery_images=settings.quality_filter_max_images)
+    detail_fetcher = DetailFetcher(
+        max_gallery_images=settings.quality_filter_max_images,
+        proxy_url=settings.proxy_url,
+    )
     try:
         merged_to_notify = await enrich_merged_properties(merged_to_notify, detail_fetcher)
     finally:
@@ -487,6 +492,7 @@ async def run_scrape_only(settings: Settings, *, max_per_scraper: int | None = N
         min_bathrooms=settings.min_bathrooms,
         include_let_agreed=settings.include_let_agreed,
         max_per_scraper=max_per_scraper,
+        proxy_url=settings.proxy_url,
     )
 
     print(f"\n{'=' * 60}")
@@ -614,10 +620,17 @@ def main() -> None:
         default=None,
         help="Limit properties per scraper (for faster dev/test runs)",
     )
+    parser.add_argument(
+        "--debug",
+        action="store_true",
+        help="Enable debug-level logging for troubleshooting",
+    )
     args = parser.parse_args()
 
     # Configure logging
-    configure_logging(json_output=False)
+    import logging
+
+    configure_logging(json_output=False, level=logging.DEBUG if args.debug else logging.INFO)
 
     try:
         settings = Settings()

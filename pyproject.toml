@@ -5,7 +5,7 @@ description = "Multi-platform London rental property scraper with commute filter
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
-    "crawlee[beautifulsoup]>=0.5",
+    "crawlee[beautifulsoup,playwright]>=1.3.2b4",
     "traveltimepy>=4.0",
     "aiogram>=3.4",
     "pydantic>=2.6",
