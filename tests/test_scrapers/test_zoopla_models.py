@@ -11,7 +11,6 @@ from home_finder.scrapers.zoopla_models import (
     ZooplaListing,
     ZooplaListingsAdapter,
     ZooplaListingUris,
-    ZooplaNextData,
     ZooplaPosition,
 )
 
@@ -347,52 +346,6 @@ class TestZooplaListing:
         assert listing.get_title() == "123 Main Street, London"
 
 
-class TestZooplaNextData:
-    """Tests for ZooplaNextData model."""
-
-    def test_parse_full_structure(self) -> None:
-        """Test parsing the full Next.js data structure."""
-        data = ZooplaNextData.model_validate_json("""
-        {
-            "props": {
-                "pageProps": {
-                    "regularListingsFormatted": [
-                        {"listingId": 1, "title": "First"},
-                        {"listingId": 2, "title": "Second"}
-                    ]
-                }
-            }
-        }
-        """)
-        listings = data.get_listings()
-        assert len(listings) == 2
-        assert listings[0].listing_id == 1
-        assert listings[1].listing_id == 2
-
-    def test_parse_empty_listings(self) -> None:
-        """Test parsing with empty listings array."""
-        data = ZooplaNextData.model_validate_json("""
-        {
-            "props": {
-                "pageProps": {
-                    "regularListingsFormatted": []
-                }
-            }
-        }
-        """)
-        assert data.get_listings() == []
-
-    def test_parse_missing_structure(self) -> None:
-        """Test parsing with missing nested structure."""
-        data = ZooplaNextData.model_validate_json('{"props": {}}')
-        assert data.get_listings() == []
-
-    def test_parse_minimal(self) -> None:
-        """Test parsing minimal valid JSON."""
-        data = ZooplaNextData.model_validate_json("{}")
-        assert data.get_listings() == []
-
-
 class TestZooplaListingsAdapter:
     """Tests for ZooplaListingsAdapter TypeAdapter."""
 
@@ -429,14 +382,21 @@ class TestZooplaModelIntegration:
     """Integration tests for Zoopla models with real fixture data."""
 
     def test_parse_fixture_data(self, fixtures_path: Path) -> None:
-        """Test parsing the actual fixture file."""
+        """Test parsing the actual fixture file with ZooplaListingsAdapter."""
         fixture_path = fixtures_path / "zoopla_nextdata.json"
         if not fixture_path.exists():
             pytest.skip("Fixture file not found")
 
-        json_content = fixture_path.read_text()
-        data = ZooplaNextData.model_validate_json(json_content)
-        listings = data.get_listings()
+        import json
+
+        data = json.loads(fixture_path.read_text())
+        raw_listings = (
+            data.get("props", {})
+            .get("pageProps", {})
+            .get("regularListingsFormatted", [])
+        )
+
+        listings = [ZooplaListing.model_validate(item) for item in raw_listings]
 
         assert len(listings) == 4
 

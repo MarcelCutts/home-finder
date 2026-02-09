@@ -165,37 +165,5 @@ class ZooplaListing(BaseModel):
         return int(match.group(1)) if match else None
 
 
-class ZooplaPageProps(BaseModel):
-    """Page props containing the listings."""
-
-    model_config = ConfigDict(extra="ignore")
-
-    regular_listings: list[ZooplaListing] = Field(
-        default_factory=list, validation_alias="regularListingsFormatted"
-    )
-
-
-class ZooplaProps(BaseModel):
-    """Props wrapper."""
-
-    model_config = ConfigDict(extra="ignore")
-
-    page_props: ZooplaPageProps = Field(
-        default_factory=ZooplaPageProps, validation_alias="pageProps"
-    )
-
-
-class ZooplaNextData(BaseModel):
-    """Root structure for Zoopla's Next.js JSON data."""
-
-    model_config = ConfigDict(extra="ignore")
-
-    props: ZooplaProps = Field(default_factory=ZooplaProps)
-
-    def get_listings(self) -> list[ZooplaListing]:
-        """Get all listings from the data."""
-        return self.props.page_props.regular_listings
-
-
 # TypeAdapter for parsing lists of listings directly (for RSC format)
 ZooplaListingsAdapter = TypeAdapter(list[ZooplaListing])

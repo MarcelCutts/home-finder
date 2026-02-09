@@ -201,9 +201,10 @@ class TestScraperUrlConstruction:
             min_bedrooms=1,
             max_bedrooms=2,
         )
-        # Should use hackney-london for London boroughs
-        assert "/hackney-london/" in url
+        # Should use hackney-london-borough for London boroughs (with q= param)
+        assert "/hackney-london-borough/" in url
         assert "to-rent" in url
+        assert "q=Hackney" in url
 
     def test_zoopla_url_for_outcode(self) -> None:
         """Test Zoopla URL construction for outcode search."""

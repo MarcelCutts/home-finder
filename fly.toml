@@ -10,3 +10,8 @@ primary_region = "lhr"
 
 [env]
   MALLOC_ARENA_MAX = "2"
+
+[[vm]]
+  memory = "1gb"
+  cpu_kind = "shared"
+  cpus = 1

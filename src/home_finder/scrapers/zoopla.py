@@ -1,30 +1,71 @@
-"""Zoopla property scraper using Playwright for browser-based rendering."""
+"""Zoopla property scraper using curl_cffi for TLS fingerprint impersonation."""
 
 from __future__ import annotations
 
+import asyncio
 import json
 import re
+import urllib.parse
+from typing import Any
 
 from bs4 import BeautifulSoup, Tag
-from crawlee.browsers import BrowserPool
-from crawlee.crawlers import PlaywrightCrawler, PlaywrightCrawlingContext
-from crawlee.storage_clients import MemoryStorageClient
+from curl_cffi.requests import AsyncSession
 from pydantic import HttpUrl, ValidationError
 
 from home_finder.logging import get_logger
 from home_finder.models import FurnishType, Property, PropertySource
 from home_finder.scrapers.base import BaseScraper
-from home_finder.scrapers.zoopla_models import (
-    ZooplaListing,
-    ZooplaListingsAdapter,
-    ZooplaNextData,
-)
+from home_finder.scrapers.location_utils import is_outcode
+from home_finder.scrapers.zoopla_models import ZooplaListing
 
 logger = get_logger(__name__)
 
+HEADERS = {
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept-Language": "en-GB,en;q=0.9",
+    "Accept-Encoding": "gzip, deflate, br",
+}
+
+# Known London borough slugs and their Zoopla query values.
+# Using the borough path format gives proper geographic boundaries.
+# Maps: slug -> (path_segment, q_param)
+BOROUGH_AREAS: dict[str, tuple[str, str]] = {
+    "hackney": ("hackney-london-borough", "Hackney (London Borough), London"),
+    "islington": ("islington-london-borough", "Islington (London Borough), London"),
+    "tower-hamlets": ("tower-hamlets-london-borough", "Tower Hamlets (London Borough), London"),
+    "camden": ("camden-london-borough", "Camden (London Borough), London"),
+    "lambeth": ("lambeth-london-borough", "Lambeth (London Borough), London"),
+    "southwark": ("southwark-london-borough", "Southwark (London Borough), London"),
+    "haringey": ("haringey-london-borough", "Haringey (London Borough), London"),
+    "lewisham": ("lewisham-london-borough", "Lewisham (London Borough), London"),
+    "newham": ("newham-london-borough", "Newham (London Borough), London"),
+    "waltham-forest": (
+        "waltham-forest-london-borough",
+        "Waltham Forest (London Borough), London",
+    ),
+    "greenwich": ("greenwich-london-borough", "Greenwich (London Borough), London"),
+    "barnet": ("barnet-london-borough", "Barnet (London Borough), London"),
+    "brent": ("brent-london-borough", "Brent (London Borough), London"),
+    "ealing": ("ealing-london-borough", "Ealing (London Borough), London"),
+    "enfield": ("enfield-london-borough", "Enfield (London Borough), London"),
+    "westminster": (
+        "city-of-westminster-london-borough",
+        "City of Westminster (London Borough), London",
+    ),
+    "kensington": (
+        "kensington-and-chelsea-london-borough",
+        "Kensington and Chelsea (London Borough), London",
+    ),
+    "hammersmith": (
+        "hammersmith-and-fulham-london-borough",
+        "Hammersmith and Fulham (London Borough), London",
+    ),
+    "wandsworth": ("wandsworth-london-borough", "Wandsworth (London Borough), London"),
+}
+
 
 class ZooplaScraper(BaseScraper):
-    """Scraper for Zoopla.co.uk listings using Playwright."""
+    """Scraper for Zoopla.co.uk listings using curl_cffi."""
 
     BASE_URL = "https://www.zoopla.co.uk"
 
@@ -32,27 +73,21 @@ class ZooplaScraper(BaseScraper):
     MAX_PAGES = 20
     PAGE_DELAY_SECONDS = 0.5
 
-    def __init__(self) -> None:
-        self._browser_pool: BrowserPool | None = None
+    def __init__(self, *, proxy_url: str = "") -> None:
+        self._session: AsyncSession | None = None  # type: ignore[type-arg]
+        self._proxy_url = proxy_url
 
-    async def _get_browser_pool(self) -> BrowserPool:
-        """Get or create a shared BrowserPool for all page fetches."""
-        if self._browser_pool is None:
-            self._browser_pool = BrowserPool.with_default_plugin(
-                headless=True,
-                browser_type="chromium",
-                browser_launch_options={
-                    "args": ["--disable-dev-shm-usage", "--no-sandbox"],
-                },
-            )
-            await self._browser_pool.__aenter__()
-        return self._browser_pool
+    async def _get_session(self) -> AsyncSession:  # type: ignore[type-arg]
+        """Get or create a reusable curl_cffi session."""
+        if self._session is None:
+            self._session = AsyncSession()
+        return self._session
 
     async def close(self) -> None:
-        """Close the browser pool."""
-        if self._browser_pool is not None:
-            await self._browser_pool.__aexit__(None, None, None)
-            self._browser_pool = None
+        """Close the curl_cffi session."""
+        if self._session is not None:
+            await self._session.close()
+            self._session = None
 
     @property
     def source(self) -> PropertySource:
@@ -73,66 +108,44 @@ class ZooplaScraper(BaseScraper):
         known_source_ids: set[str] | None = None,
     ) -> list[Property]:
         """Scrape Zoopla for matching properties (all pages)."""
-        import asyncio
-
         all_properties: list[Property] = []
         seen_ids: set[str] = set()
 
-        initial_url = self._build_search_url(
-            area=area,
-            min_price=min_price,
-            max_price=max_price,
-            min_bedrooms=min_bedrooms,
-            max_bedrooms=max_bedrooms,
-            furnish_types=furnish_types,
-            min_bathrooms=min_bathrooms,
-            include_let_agreed=include_let_agreed,
-        )
-
-        # Fetch page 1 to get the redirect URL (Zoopla redirects to a different URL format)
-        result = await self._fetch_page_with_url(initial_url)
-        if not result:
-            logger.warning("zoopla_fetch_failed", url=initial_url, page=1)
-            return []
-
-        html, final_url = result
-        # Use the redirect URL as base for pagination (strip any existing pn param)
-        base_url = re.sub(r"[&?]pn=\d+", "", final_url)
-
         for page in range(1, self.MAX_PAGES + 1):
-            if page > 1:
-                # Fetch subsequent pages using the redirect URL format
-                separator = "&" if "?" in base_url else "?"
-                url = f"{base_url}{separator}pn={page}"
-                result = await self._fetch_page_with_url(url)
-                if not result:
-                    logger.warning("zoopla_fetch_failed", url=url, page=page)
-                    break
-                html, _ = result
+            url = self._build_search_url(
+                area=area,
+                min_price=min_price,
+                max_price=max_price,
+                min_bedrooms=min_bedrooms,
+                max_bedrooms=max_bedrooms,
+                furnish_types=furnish_types,
+                min_bathrooms=min_bathrooms,
+                include_let_agreed=include_let_agreed,
+                page=page,
+            )
 
-            # Try JSON extraction first (more reliable for Next.js pages)
-            properties: list[Property] = []
-            next_data = self._extract_next_data(html)
-            if next_data:
-                properties = self._parse_next_data_properties(next_data)
-                logger.info(
-                    "scraped_zoopla_page",
-                    url=base_url,
-                    page=page,
-                    properties_found=len(properties),
-                    method="json",
-                )
-            else:
+            html = await self._fetch_page(url)
+            if not html:
+                logger.warning("zoopla_fetch_failed", url=url, page=page)
+                break
+
+            # Try RSC extraction first (primary method)
+            properties = self._parse_rsc_properties(html)
+            method = "rsc"
+
+            if not properties:
                 # Fallback to HTML parsing
                 soup = BeautifulSoup(html, "html.parser")
-                properties = self._parse_search_results(soup, base_url)
-                logger.info(
-                    "scraped_zoopla_page",
-                    url=base_url,
-                    page=page,
-                    properties_found=len(properties),
-                    method="html",
-                )
+                properties = self._parse_search_results(soup, url)
+                method = "html"
+
+            logger.info(
+                "scraped_zoopla_page",
+                url=url,
+                page=page,
+                properties_found=len(properties),
+                method=method,
+            )
 
             if not properties:
                 break
@@ -176,121 +189,149 @@ class ZooplaScraper(BaseScraper):
 
         return all_properties
 
-    async def _fetch_page_with_url(self, url: str) -> tuple[str, str] | None:
-        """Fetch page using Playwright and return (html, final_url)."""
-        pool = await self._get_browser_pool()
-        result: list[tuple[str, str]] = []
+    async def _fetch_page(self, url: str) -> str | None:
+        """Fetch page using curl_cffi with Chrome impersonation."""
+        session = await self._get_session()
+        kwargs: dict[str, object] = {
+            "impersonate": "chrome",
+            "headers": HEADERS,
+            "timeout": 30,
+        }
+        if self._proxy_url:
+            kwargs["proxy"] = self._proxy_url
 
-        crawler = PlaywrightCrawler(
-            browser_pool=pool,
-            max_requests_per_crawl=1,
-            storage_client=MemoryStorageClient(),
-            use_incognito_pages=True,
-        )
-
-        @crawler.router.default_handler
-        async def handler(context: PlaywrightCrawlingContext) -> None:
+        for attempt in range(3):
             try:
-                await context.page.wait_for_selector(
-                    '[data-testid="search-result"]',
-                    timeout=15000,
-                )
-            except Exception:
-                # No results or slow load — get whatever rendered
-                await context.page.wait_for_load_state("networkidle")
-            html = await context.page.content()
-            final_url = context.request.loaded_url or str(context.request.url)
-            result.append((html, final_url))
-
-        try:
-            await crawler.run([url])
-        except Exception as e:
-            logger.error("zoopla_fetch_exception", error=str(e), url=url)
-            return None
-
-        return result[0] if result else None
-
-    def _extract_next_data(self, html: str) -> ZooplaNextData | None:
-        """Extract and validate listing data from Next.js page.
-
-        Zoopla uses Next.js App Router with React Server Components,
-        so data is embedded in self.__next_f.push() calls rather than
-        the traditional __NEXT_DATA__ script tag.
-        """
-        # First try traditional __NEXT_DATA__ (older pages)
-        soup = BeautifulSoup(html, "html.parser")
-        script = soup.find("script", {"id": "__NEXT_DATA__"})
-        if script and script.string:
-            try:
-                data = ZooplaNextData.model_validate_json(script.string)
-                logger.debug(
-                    "zoopla_extract_success",
-                    method="__NEXT_DATA__",
-                    listings_count=len(data.get_listings()),
-                )
-                return data
-            except (json.JSONDecodeError, ValidationError) as e:
-                logger.debug("zoopla_next_data_parse_failed", error=str(e))
-
-        # Try RSC format - find script containing regularListingsFormatted
-        for script in soup.find_all("script"):
-            if script.string and "regularListingsFormatted" in script.string:
-                listings = self._extract_rsc_listings(script.string)
-                if listings:
+                response = await session.get(url, **kwargs)  # type: ignore[arg-type]
+                if response.status_code == 200:
+                    text: str = response.text
+                    return text
+                if response.status_code == 429:
+                    delay = 2.0 * (2**attempt)
                     logger.debug(
-                        "zoopla_extract_success",
-                        method="RSC",
-                        listings_count=len(listings),
+                        "zoopla_rate_limited",
+                        url=url,
+                        attempt=attempt + 1,
+                        delay=delay,
                     )
-                    # Wrap in the expected structure
-                    return ZooplaNextData.model_validate(
-                        {"props": {"pageProps": {"regularListingsFormatted": listings}}}
-                    )
+                    await asyncio.sleep(delay)
+                    continue
+                logger.warning(
+                    "zoopla_http_error",
+                    status=response.status_code,
+                    url=url,
+                )
+                return None
+            except Exception as e:
+                logger.error("zoopla_fetch_exception", error=str(e), url=url)
+                return None
 
         return None
 
-    def _extract_rsc_listings(self, script_content: str) -> list[ZooplaListing] | None:
-        """Extract listing data from React Server Components format.
+    def _extract_rsc_listings(self, html: str) -> list[ZooplaListing]:
+        """Extract listing data from React Server Components payload.
 
-        RSC data is JSON-encoded inside self.__next_f.push() calls.
-        The content uses escaped quotes that need to be unescaped.
+        The RSC format is: self.__next_f.push([1, "id:json_content"])
+        The second element is a string containing an RSC line ID followed by
+        a colon and then JSON content.
         """
-        try:
-            # Find the array between markers
-            start_marker = 'regularListingsFormatted\\":'
-            end_marker = ',\\"extendedListingsFormatted'
+        pattern = r'self\.__next_f\.push\(\s*\[(.*?)\]\s*\)'
+        matches = re.findall(pattern, html, re.DOTALL)
+        listings: list[ZooplaListing] = []
 
-            start_idx = script_content.find(start_marker)
-            if start_idx == -1:
-                return None
+        for match in matches:
+            if "regularListingsFormatted" not in match and "listingId" not in match:
+                continue
 
-            start_idx += len(start_marker)
-            end_idx = script_content.find(end_marker, start_idx)
-            if end_idx == -1:
-                return None
+            # Parse the push call arguments as a JSON array: [1, "id:content"]
+            try:
+                arr = json.loads(f"[{match}]")
+            except json.JSONDecodeError:
+                continue
 
-            listings_json_escaped = script_content[start_idx:end_idx]
+            if len(arr) < 2 or not isinstance(arr[1], str):
+                continue
 
-            # Unescape the JSON - content is inside a JS string literal
-            listings_json = listings_json_escaped.replace('\\"', '"').replace("\\\\", "\\")
+            payload = arr[1]
 
-            # Validate with Pydantic TypeAdapter
-            return ZooplaListingsAdapter.validate_json(listings_json)
+            # Split on first colon to separate RSC line ID from content
+            colon_idx = payload.find(":")
+            if colon_idx < 0:
+                continue
 
-        except (json.JSONDecodeError, ValidationError) as e:
-            logger.warning("zoopla_rsc_parse_failed", error=str(e))
+            rsc_content = payload[colon_idx + 1:]
 
-        return None
+            # The RSC content is a JSON array like ["$","$L7a",null,{props}]
+            try:
+                parsed = json.loads(rsc_content)
+            except json.JSONDecodeError:
+                continue
 
-    def _parse_next_data_properties(self, data: ZooplaNextData) -> list[Property]:
-        """Parse properties from validated Next.js JSON data."""
+            found = self._extract_listings_from_parsed(parsed)
+            listings.extend(found)
+
+        # Deduplicate by listing_id
+        seen: set[int] = set()
+        unique: list[ZooplaListing] = []
+        for listing in listings:
+            if listing.listing_id not in seen:
+                seen.add(listing.listing_id)
+                unique.append(listing)
+
+        return unique
+
+    def _extract_listings_from_parsed(
+        self, data: Any, depth: int = 0
+    ) -> list[ZooplaListing]:
+        """Recursively search a parsed JSON structure for listing data."""
+        if depth > 15:
+            return []
+
+        listings: list[ZooplaListing] = []
+
+        if isinstance(data, dict):
+            # Check for known container key
+            if "regularListingsFormatted" in data:
+                raw = data["regularListingsFormatted"]
+                if isinstance(raw, list):
+                    for item in raw:
+                        if isinstance(item, dict) and "listingId" in item:
+                            try:
+                                listings.append(ZooplaListing.model_validate(item))
+                            except ValidationError:
+                                continue
+
+            # Check if this dict is itself a listing
+            if "listingId" in data and not listings:
+                try:
+                    listings.append(ZooplaListing.model_validate(data))
+                except ValidationError:
+                    pass
+
+            # Recurse into values
+            if not listings:
+                for value in data.values():
+                    if isinstance(value, (dict, list)):
+                        listings.extend(
+                            self._extract_listings_from_parsed(value, depth + 1)
+                        )
+
+        elif isinstance(data, list):
+            for item in data:
+                listings.extend(
+                    self._extract_listings_from_parsed(item, depth + 1)
+                )
+
+        return listings
+
+    def _parse_rsc_properties(self, html: str) -> list[Property]:
+        """Parse properties from RSC payload in HTML."""
+        listings = self._extract_rsc_listings(html)
         properties: list[Property] = []
-
-        for listing in data.get_listings():
+        for listing in listings:
             prop = self._listing_to_property(listing)
             if prop:
                 properties.append(prop)
-
         return properties
 
     def _listing_to_property(self, listing: ZooplaListing) -> Property | None:
@@ -342,29 +383,6 @@ class ZooplaScraper(BaseScraper):
             longitude=longitude,
         )
 
-    # Zoopla uses "-london" suffix for London boroughs
-    LONDON_BOROUGH_SLUGS = {
-        "hackney": "hackney-london",
-        "islington": "islington-london",
-        "haringey": "haringey-london",
-        "tower-hamlets": "tower-hamlets-london",
-        "camden": "camden-london",
-        "westminster": "westminster-london",
-        "kensington": "kensington-and-chelsea-london",
-        "lambeth": "lambeth-london",
-        "southwark": "southwark-london",
-        "newham": "newham-london",
-        "waltham-forest": "waltham-forest-london",
-        "barnet": "barnet-london",
-        "brent": "brent-london",
-        "ealing": "ealing-london",
-        "enfield": "enfield-london",
-        "greenwich": "greenwich-london",
-        "hammersmith": "hammersmith-and-fulham-london",
-        "lewisham": "lewisham-london",
-        "wandsworth": "wandsworth-london",
-    }
-
     def _build_search_url(
         self,
         *,
@@ -376,46 +394,57 @@ class ZooplaScraper(BaseScraper):
         furnish_types: tuple[FurnishType, ...] = (),
         min_bathrooms: int = 0,
         include_let_agreed: bool = True,
+        page: int = 1,
     ) -> str:
-        """Build the Zoopla search URL with filters."""
-        # Normalize area name
-        area_slug = area.lower().replace(" ", "-")
+        """Build the Zoopla search URL with filters.
 
-        # Use London borough slug if available
-        area_slug = self.LONDON_BOROUGH_SLUGS.get(area_slug, area_slug)
+        Supports three area formats:
+        - Known borough slug (e.g. "hackney") -> /to-rent/property/hackney-london-borough/
+        - Outcode (e.g. "E8", "N17") -> /to-rent/property/e8/
+        - Anything else -> /to-rent/property/{area}/
+        """
+        area_lower = area.lower().strip()
 
-        params = [
-            f"beds_min={min_bedrooms}",
-            f"beds_max={max_bedrooms}",
-            f"price_min={min_price}",
-            f"price_max={max_price}",
-            "price_frequency=per_month",
-            "property_sub_type=flats",
-            "is_shared_accommodation=false",
-            "is_retirement_home=false",
-            "is_student_accommodation=false",
-            "results_sort=newest_listings",
-        ]
+        if area_lower in BOROUGH_AREAS:
+            path_seg, q_val = BOROUGH_AREAS[area_lower]
+        elif is_outcode(area):
+            path_seg = area_lower
+            q_val = area.upper()
+        else:
+            path_seg = area_lower.replace(" ", "-")
+            q_val = area
 
-        if furnish_types:
-            zoopla_values = {
-                FurnishType.FURNISHED: "furnished",
-                FurnishType.UNFURNISHED: "unfurnished",
-                FurnishType.PART_FURNISHED: "part_furnished",
-            }
-            ft_str = ",".join(zoopla_values[ft] for ft in furnish_types if ft in zoopla_values)
-            if ft_str:
-                params.append(f"furnished_state={ft_str}")
+        params: dict[str, str] = {
+            "q": q_val,
+            "beds_min": str(min_bedrooms),
+            "beds_max": str(max_bedrooms),
+            "price_min": str(min_price),
+            "price_max": str(max_price),
+            "price_frequency": "per_month",
+            "property_sub_type": "flats",
+            "is_shared_accommodation": "false",
+            "is_retirement_home": "false",
+            "is_student_accommodation": "false",
+            "results_sort": "newest_listings",
+            "search_source": "to-rent",
+        }
 
-        if min_bathrooms > 0:
-            params.append(f"bathrooms_min={min_bathrooms}")
+        # NOTE: furnished_state, bathrooms_min, and available_only are intentionally
+        # NOT passed as URL params. Zoopla's furnished_state filter excludes listings
+        # that lack furnishing metadata (the majority), returning "No results" even
+        # for areas with hundreds of listings. These are filtered client-side instead.
 
-        if not include_let_agreed:
-            params.append("available_only=true")
+        if page > 1:
+            params["pn"] = str(page)
 
-        return f"{self.BASE_URL}/to-rent/property/{area_slug}/?{'&'.join(params)}"
+        return (
+            f"{self.BASE_URL}/to-rent/property/{path_seg}/?"
+            f"{urllib.parse.urlencode(params)}"
+        )
 
-    def _parse_search_results(self, soup: BeautifulSoup, _base_url: str) -> list[Property]:
+    def _parse_search_results(
+        self, soup: BeautifulSoup, _base_url: str
+    ) -> list[Property]:
         """Parse property listings from search results page (HTML fallback)."""
         properties: list[Property] = []
 

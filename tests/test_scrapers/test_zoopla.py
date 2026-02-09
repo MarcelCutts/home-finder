@@ -1,5 +1,6 @@
 """Tests for Zoopla scraper."""
 
+import json
 from pathlib import Path
 
 import pytest
@@ -7,20 +8,13 @@ from bs4 import BeautifulSoup
 
 from home_finder.models import PropertySource
 from home_finder.scrapers.zoopla import ZooplaScraper
-from home_finder.scrapers.zoopla_models import ZooplaListing, ZooplaNextData
+from home_finder.scrapers.zoopla_models import ZooplaListing
 
 
 @pytest.fixture
 def zoopla_search_html(fixtures_path: Path) -> str:
     """Load Zoopla search results fixture."""
     return (fixtures_path / "zoopla_search.html").read_text()
-
-
-@pytest.fixture
-def zoopla_nextdata(fixtures_path: Path) -> ZooplaNextData:
-    """Load and parse Zoopla __NEXT_DATA__ JSON fixture."""
-    json_content = (fixtures_path / "zoopla_nextdata.json").read_text()
-    return ZooplaNextData.model_validate_json(json_content)
 
 
 @pytest.fixture
@@ -72,8 +66,22 @@ class TestZooplaScraper:
             min_bedrooms=1,
             max_bedrooms=2,
         )
-        # Zoopla requires "hackney-london" not just "hackney"
-        assert "hackney-london" in url
+        # Zoopla borough format uses "hackney-london-borough"
+        assert "hackney-london-borough" in url
+        # Must include q= parameter to prevent redirects
+        assert "q=Hackney" in url
+
+    def test_build_search_url_outcode(self, zoopla_scraper: ZooplaScraper) -> None:
+        """Test URL building with outcode area."""
+        url = zoopla_scraper._build_search_url(
+            area="E8",
+            min_price=1800,
+            max_price=2200,
+            min_bedrooms=1,
+            max_bedrooms=2,
+        )
+        assert "/e8/" in url
+        assert "q=E8" in url
 
     def test_build_search_url_non_london_area(self, zoopla_scraper: ZooplaScraper) -> None:
         """Test URL building with area not in London boroughs list."""
@@ -84,9 +92,44 @@ class TestZooplaScraper:
             min_bedrooms=1,
             max_bedrooms=2,
         )
-        # Should use the area as-is (not append -london)
+        # Should use the area as-is (not append -london-borough)
         assert "/manchester/" in url
-        assert "manchester-london" not in url
+        assert "hackney-london-borough" not in url
+
+    def test_build_search_url_has_search_source(self, zoopla_scraper: ZooplaScraper) -> None:
+        """Test URL includes search_source parameter."""
+        url = zoopla_scraper._build_search_url(
+            area="hackney",
+            min_price=1800,
+            max_price=2200,
+            min_bedrooms=1,
+            max_bedrooms=2,
+        )
+        assert "search_source=to-rent" in url
+
+    def test_build_search_url_pagination(self, zoopla_scraper: ZooplaScraper) -> None:
+        """Test URL building with page number."""
+        url = zoopla_scraper._build_search_url(
+            area="hackney",
+            min_price=1800,
+            max_price=2200,
+            min_bedrooms=1,
+            max_bedrooms=2,
+            page=3,
+        )
+        assert "pn=3" in url
+
+    def test_build_search_url_page_1_no_pn(self, zoopla_scraper: ZooplaScraper) -> None:
+        """Test that page 1 does not include pn parameter."""
+        url = zoopla_scraper._build_search_url(
+            area="hackney",
+            min_price=1800,
+            max_price=2200,
+            min_bedrooms=1,
+            max_bedrooms=2,
+            page=1,
+        )
+        assert "pn=" not in url
 
 
 class TestZooplaHtmlParser:
@@ -179,131 +222,127 @@ class TestZooplaHtmlParser:
         assert len(properties) == 0
 
 
-class TestZooplaJsonExtraction:
-    """Tests for Zoopla __NEXT_DATA__ JSON extraction."""
+class TestZooplaRscExtraction:
+    """Tests for Zoopla RSC payload extraction."""
 
-    def test_extract_next_data(self, zoopla_scraper: ZooplaScraper) -> None:
-        """Test extraction of __NEXT_DATA__ script content."""
-        json_data = '{"props":{"pageProps":{"regularListingsFormatted":[]}}}'
-        html = f"""
-        <html>
-        <head>
-            <script id="__NEXT_DATA__" type="application/json">{json_data}</script>
-        </head>
-        <body></body>
-        </html>
-        """
-        data = zoopla_scraper._extract_next_data(html)
-        assert data is not None
-        assert data.get_listings() == []
+    def test_extract_rsc_listings_with_regular_listings(
+        self, zoopla_scraper: ZooplaScraper
+    ) -> None:
+        """Test extraction from RSC payload containing regularListingsFormatted."""
+        # Build a realistic RSC payload
+        listings_data = [
+            {
+                "listingId": 123,
+                "price": "£1850 pcm",
+                "address": "Test Street",
+                "title": "1 bed flat",
+                "listingUris": {"detail": "/to-rent/details/123/"},
+                "features": [{"iconId": "bed", "content": 1}],
+            }
+        ]
+        rsc_json = json.dumps({"regularListingsFormatted": listings_data})
+        # Wrap in RSC push format: self.__next_f.push([1, "79:{json}"])
+        inner_str = f"79:{rsc_json}"
+        # The push array contains [1, "79:{json}"]
+        push_content = f'1,{json.dumps(inner_str)}'
+        html = f"<script>self.__next_f.push([{push_content}])</script>"
 
-    def test_extract_next_data_missing(self, zoopla_scraper: ZooplaScraper) -> None:
-        """Test extraction when __NEXT_DATA__ script is missing."""
-        html = "<html><head></head><body></body></html>"
-        data = zoopla_scraper._extract_next_data(html)
-        assert data is None
-
-    def test_extract_next_data_invalid_json(self, zoopla_scraper: ZooplaScraper) -> None:
-        """Test extraction with invalid JSON content."""
-        html = """
-        <html>
-        <head>
-            <script id="__NEXT_DATA__" type="application/json">not valid json</script>
-        </head>
-        <body></body>
-        </html>
-        """
-        data = zoopla_scraper._extract_next_data(html)
-        assert data is None
-
-    def test_extract_rsc_listings(self, zoopla_scraper: ZooplaScraper) -> None:
-        """Test extraction from React Server Components format."""
-        # Simulated RSC script content with escaped quotes
-        listing_json = (
-            '{\\"listingId\\":123,\\"price\\":\\"£1850 pcm\\",'
-            '\\"address\\":\\"Test Street\\",\\"title\\":\\"1 bed flat\\",'
-            '\\"listingUris\\":{\\"detail\\":\\"/to-rent/details/123/\\"},'
-            '\\"features\\":[{\\"iconId\\":\\"bed\\",\\"content\\":1}]}'
-        )
-        rsc_content = (
-            f'self.__next_f.push([1,"\\"regularListingsFormatted\\":'
-            f'[{listing_json}],\\"extendedListingsFormatted\\":[]"])'
-        )
-        listings = zoopla_scraper._extract_rsc_listings(rsc_content)
-        assert listings is not None
+        listings = zoopla_scraper._extract_rsc_listings(html)
         assert len(listings) == 1
         assert listings[0].listing_id == 123
 
-    def test_extract_rsc_listings_empty_array(self, zoopla_scraper: ZooplaScraper) -> None:
-        """Test extraction when RSC has empty listings."""
-        rsc_content = (
-            'self.__next_f.push([1,"\\"regularListingsFormatted\\":[],'
-            '\\"extendedListingsFormatted\\":[]"])'
-        )
-        listings = zoopla_scraper._extract_rsc_listings(rsc_content)
-        assert listings is not None
-        assert len(listings) == 0
-
-    def test_extract_rsc_listings_no_markers(self, zoopla_scraper: ZooplaScraper) -> None:
-        """Test extraction when RSC markers are missing."""
-        rsc_content = """self.__next_f.push([1,"some other content"])"""
-        listings = zoopla_scraper._extract_rsc_listings(rsc_content)
-        assert listings is None
-
-    def test_parse_next_data_properties(
-        self, zoopla_scraper: ZooplaScraper, zoopla_nextdata: ZooplaNextData
+    def test_extract_rsc_listings_with_listing_id(
+        self, zoopla_scraper: ZooplaScraper
     ) -> None:
-        """Test parsing properties from __NEXT_DATA__ JSON."""
-        properties = zoopla_scraper._parse_next_data_properties(zoopla_nextdata)
+        """Test extraction from RSC payload containing individual listings."""
+        listing_data = {
+            "listingId": 456,
+            "price": "£2000 pcm",
+            "address": "Another Street",
+            "title": "2 bed flat",
+            "listingUris": {"detail": "/to-rent/details/456/"},
+            "features": [{"iconId": "bed", "content": 2}],
+        }
+        rsc_json = json.dumps(listing_data)
+        inner_str = f"80:{rsc_json}"
+        push_content = f'1,{json.dumps(inner_str)}'
+        html = f"<script>self.__next_f.push([{push_content}])</script>"
 
-        assert len(properties) == 4
+        listings = zoopla_scraper._extract_rsc_listings(html)
+        assert len(listings) == 1
+        assert listings[0].listing_id == 456
 
-        # Check first property (1 bed, pcm price, with coordinates)
-        prop1 = next(p for p in properties if p.source_id == "67123456")
-        assert prop1.price_pcm == 1850
-        assert prop1.bedrooms == 1
-        assert "Victoria Park Road" in prop1.address
-        assert prop1.postcode == "E9 5NA"
-        assert "zoopla.co.uk/to-rent/details/67123456" in str(prop1.url)
-        assert prop1.image_url is not None
-        assert "lid.zoocdn.com" in str(prop1.image_url)
-        assert prop1.latitude == 51.5465
-        assert prop1.longitude == -0.0553
+    def test_extract_rsc_listings_empty_html(
+        self, zoopla_scraper: ZooplaScraper
+    ) -> None:
+        """Test extraction from HTML with no RSC data."""
+        html = "<html><head></head><body></body></html>"
+        listings = zoopla_scraper._extract_rsc_listings(html)
+        assert listings == []
 
-        # Check second property (2 bed)
-        prop2 = next(p for p in properties if p.source_id == "67234567")
-        assert prop2.price_pcm == 2100
-        assert prop2.bedrooms == 2
-        assert "Mare Street" in prop2.address
-        assert prop2.latitude == 51.5482
+    def test_extract_rsc_listings_no_listing_data(
+        self, zoopla_scraper: ZooplaScraper
+    ) -> None:
+        """Test extraction from RSC payload with no listing data."""
+        html = """<script>self.__next_f.push([1,"some other content"])</script>"""
+        listings = zoopla_scraper._extract_rsc_listings(html)
+        assert listings == []
 
-        # Check third property (studio)
-        prop3 = next(p for p in properties if p.source_id == "67345678")
-        assert prop3.price_pcm == 1600
-        assert prop3.bedrooms == 0
-        assert "Dalston Lane" in prop3.address
-
-        # Check fourth property (weekly price, no image/coords)
-        prop4 = next(p for p in properties if p.source_id == "67456789")
-        assert prop4.price_pcm == 1950  # £450 pw * 52 / 12
-        assert prop4.bedrooms == 1
-        assert prop4.image_url is None
-        assert prop4.latitude is None
-        assert prop4.longitude is None
-
-    def test_parse_next_data_empty_listings(self, zoopla_scraper: ZooplaScraper) -> None:
-        """Test parsing when regularListingsFormatted is empty."""
-        data = ZooplaNextData.model_validate(
-            {"props": {"pageProps": {"regularListingsFormatted": []}}}
+    def test_extract_rsc_listings_deduplicates(
+        self, zoopla_scraper: ZooplaScraper
+    ) -> None:
+        """Test that duplicate listings are removed."""
+        listing_data = {
+            "listingId": 789,
+            "price": "£1500 pcm",
+            "address": "Dup Street",
+            "title": "1 bed flat",
+            "listingUris": {"detail": "/to-rent/details/789/"},
+            "features": [{"iconId": "bed", "content": 1}],
+        }
+        rsc_json = json.dumps(listing_data)
+        inner_str = f"80:{rsc_json}"
+        push_content = f'1,{json.dumps(inner_str)}'
+        # Same listing appears twice
+        html = (
+            f"<script>self.__next_f.push([{push_content}])</script>"
+            f"<script>self.__next_f.push([{push_content}])</script>"
         )
-        properties = zoopla_scraper._parse_next_data_properties(data)
-        assert len(properties) == 0
 
-    def test_parse_next_data_missing_structure(self, zoopla_scraper: ZooplaScraper) -> None:
-        """Test parsing when expected JSON structure is missing."""
-        data = ZooplaNextData.model_validate({"props": {}})
-        properties = zoopla_scraper._parse_next_data_properties(data)
-        assert len(properties) == 0
+        listings = zoopla_scraper._extract_rsc_listings(html)
+        assert len(listings) == 1
+
+    def test_parse_rsc_properties(self, zoopla_scraper: ZooplaScraper) -> None:
+        """Test full RSC parsing pipeline to Property objects."""
+        listings_data = [
+            {
+                "listingId": 67123456,
+                "price": "£1,850 pcm",
+                "priceUnformatted": 1850,
+                "address": "Victoria Park Road, Hackney, London E9 5NA",
+                "title": "1 bed flat to rent",
+                "listingUris": {"detail": "/to-rent/details/67123456/"},
+                "features": [{"iconId": "bed", "content": 1}],
+                "image": {"src": "//lid.zoocdn.com/u/354/255/abc123.jpg"},
+                "pos": {"lat": 51.5465, "lng": -0.0553},
+            }
+        ]
+        rsc_json = json.dumps({"regularListingsFormatted": listings_data})
+        inner_str = f"79:{rsc_json}"
+        push_content = f'1,{json.dumps(inner_str)}'
+        html = f"<script>self.__next_f.push([{push_content}])</script>"
+
+        properties = zoopla_scraper._parse_rsc_properties(html)
+        assert len(properties) == 1
+
+        prop = properties[0]
+        assert prop.source_id == "67123456"
+        assert prop.price_pcm == 1850
+        assert prop.bedrooms == 1
+        assert "Victoria Park Road" in prop.address
+        assert prop.postcode == "E9 5NA"
+        assert prop.latitude == 51.5465
+        assert prop.longitude == -0.0553
 
     def test_listing_to_property_missing_url(self, zoopla_scraper: ZooplaScraper) -> None:
         """Test converting listing without URL returns None."""
