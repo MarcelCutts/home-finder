@@ -27,12 +27,6 @@ COPY pyproject.toml uv.lock README.md ./
 # Install dependencies only (not the project itself)
 RUN uv sync --frozen --no-dev --no-install-project
 
-# Install Camoufox Firefox browser + Firefox system dependencies
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends libgtk-3-0 libx11-xcb1 libasound2 && \
-    uv run python -m camoufox fetch && \
-    rm -rf /var/lib/apt/lists/*
-
 # Copy source code
 COPY src/ ./src/
 

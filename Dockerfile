@@ -5,8 +5,7 @@ COPY --from=ghcr.io/astral-sh/uv:0.6.6 /uv /uvx /bin/
 
 # Configure uv for production
 ENV UV_COMPILE_BYTECODE=1 \
-    UV_LINK_MODE=copy \
-    PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
+    UV_LINK_MODE=copy
 
 WORKDIR /app
 
@@ -15,12 +14,6 @@ COPY pyproject.toml uv.lock README.md ./
 
 # Install dependencies only (not the project itself)
 RUN uv sync --frozen --no-dev --no-install-project
-
-# Install Playwright Chromium + system dependencies
-RUN mkdir -p /ms-playwright && \
-    uv run playwright install chromium && \
-    uv run playwright install-deps chromium && \
-    rm -rf /var/lib/apt/lists/*
 
 # Copy source code
 COPY src/ ./src/
