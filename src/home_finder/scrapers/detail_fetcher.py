@@ -300,29 +300,71 @@ class DetailFetcher:
                     except (json.JSONDecodeError, TypeError):
                         continue
 
-            # Fallback: Extract directly from HTML (RSC/streaming pages)
+            # Fallback: Extract description from HTML <p id="detailed-desc"> tag
+            if not description:
+                desc_match = re.search(
+                    r'<p[^>]*id="detailed-desc"[^>]*>(.*?)</p>',
+                    html,
+                    re.DOTALL,
+                )
+                if desc_match:
+                    desc = re.sub(r"<[^>]+>", " ", desc_match.group(1))
+                    desc = re.sub(r"\s+", " ", desc).strip()
+                    if len(desc) > 20:
+                        description = desc
+
+            # Fallback: Extract from RSC payload caption/filename pairs
+            # Zoopla RSC stores images as escaped JSON: \"caption\":\"Room\",\"filename\":\"hash.jpg\"
             if not gallery_urls:
-                # Extract gallery images from zoocdn URLs (lid = listing image)
-                # Pattern: https://lid.zoocdn.com/u/{width}/{height}/{hash}.jpg
+                rsc_matches = re.findall(
+                    r'\\"caption\\":\\"([^\\]*)\\",\\"filename\\":\\"([a-f0-9]+\.(?:jpg|jpeg|png|webp))\\"',
+                    html,
+                    re.IGNORECASE,
+                )
+                seen_hashes: set[str] = set()
+                for caption, filename in rsc_matches:
+                    hash_part = filename.split(".")[0]
+                    if hash_part in seen_hashes:
+                        continue
+                    seen_hashes.add(hash_part)
+                    caption_lower = caption.lower()
+                    # Skip EPC rating graphs and floorplans — not gallery images
+                    if "epc" in caption_lower or "floorplan" in caption_lower:
+                        continue
+                    url = f"https://lid.zoocdn.com/u/1024/768/{filename}"
+                    gallery_urls.append(url)
+                    if len(gallery_urls) >= self._max_gallery_images:
+                        break
+
+            # Fallback: Extract full URLs from HTML (lid = listing image)
+            # Also runs if previous step found too few images (e.g. only a floorplan)
+            if len(gallery_urls) < 3:
+                # Collect hashes already in gallery to avoid duplicates
+                existing_hashes = {
+                    u.rsplit("/", 1)[-1].split(".")[0]
+                    for u in gallery_urls
+                }
                 img_matches = re.findall(
                     r"https://lid\.zoocdn\.com/u/(\d+)/(\d+)/([a-f0-9]+\.(?:jpg|jpeg|png|webp))",
                     html,
                     re.IGNORECASE,
                 )
-                # Deduplicate by hash and prefer larger images
-                seen_hashes: dict[str, tuple[int, str]] = {}
+                seen_url_hashes: dict[str, tuple[int, str]] = {}
                 for width, height, filename in img_matches:
                     hash_part = filename.split(".")[0]
+                    if hash_part in existing_hashes:
+                        continue
                     size = int(width) * int(height)
-                    if hash_part not in seen_hashes or size > seen_hashes[hash_part][0]:
-                        seen_hashes[hash_part] = (
+                    if hash_part not in seen_url_hashes or size > seen_url_hashes[hash_part][0]:
+                        seen_url_hashes[hash_part] = (
                             size,
                             f"https://lid.zoocdn.com/u/{width}/{height}/{filename}",
                         )
 
-                # Sort by size descending and take top images
-                sorted_imgs = sorted(seen_hashes.values(), key=lambda x: -x[0])
-                gallery_urls = [url for _, url in sorted_imgs[: self._max_gallery_images]]
+                sorted_imgs = sorted(seen_url_hashes.values(), key=lambda x: -x[0])
+                gallery_urls.extend(
+                    url for _, url in sorted_imgs[: self._max_gallery_images - len(gallery_urls)]
+                )
 
             # Extract floorplan if not found yet (lc = listing content for floorplans)
             # Only match image files - PDFs are not supported by Claude Vision API

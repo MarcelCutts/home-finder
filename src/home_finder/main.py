@@ -393,6 +393,11 @@ async def _save_properties(
         if final_merged.floorplan:
             await storage.save_property_images(final_merged.unique_id, [final_merged.floorplan])
 
+        # Save quality analysis
+        quality_analysis = result.quality_lookup.get(merged.unique_id)
+        if quality_analysis:
+            await storage.save_quality_analysis(merged.unique_id, quality_analysis)
+
 
 async def run_pipeline(settings: Settings, *, max_per_scraper: int | None = None) -> None:
     """Run the full scraping and notification pipeline.
@@ -407,6 +412,7 @@ async def run_pipeline(settings: Settings, *, max_per_scraper: int | None = None
     notifier = TelegramNotifier(
         bot_token=settings.telegram_bot_token.get_secret_value(),
         chat_id=settings.telegram_chat_id,
+        web_base_url=settings.web_base_url,
     )
 
     try:
@@ -621,6 +627,11 @@ def main() -> None:
         help="Limit properties per scraper (for faster dev/test runs)",
     )
     parser.add_argument(
+        "--serve",
+        action="store_true",
+        help="Start web server with background pipeline scheduler",
+    )
+    parser.add_argument(
         "--debug",
         action="store_true",
         help="Enable debug-level logging for troubleshooting",
@@ -654,7 +665,14 @@ def main() -> None:
         scrape_only=args.scrape_only,
     )
 
-    if args.scrape_only:
+    if args.serve:
+        import uvicorn
+
+        from home_finder.web.app import create_app
+
+        app = create_app(settings)
+        uvicorn.run(app, host=settings.web_host, port=settings.web_port, log_level="info")
+    elif args.scrape_only:
         asyncio.run(run_scrape_only(settings, max_per_scraper=args.max_per_scraper))
     elif args.dry_run:
         asyncio.run(run_dry_run(settings, max_per_scraper=args.max_per_scraper))

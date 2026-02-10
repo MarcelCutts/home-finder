@@ -1,0 +1,70 @@
+{% extends "base.html" %}
+
+{% block title %}Home Finder — Dashboard{% endblock %}
+
+{% block nav_info %}{{ total }} properties{% endblock %}
+
+{% block content %}
+<section class="filter-bar">
+    <form method="GET" action="/"
+          hx-get="/" hx-target="#results" hx-push-url="true" hx-indicator="#loading">
+        <div class="filter-row">
+            <select name="bedrooms" aria-label="Bedrooms">
+                <option value="">All beds</option>
+                {% for b in [1, 2, 3, 4] %}
+                <option value="{{ b }}" {% if bedrooms == b %}selected{% endif %}>{{ b }} bed</option>
+                {% endfor %}
+            </select>
+
+            <input type="number" name="min_price" placeholder="Min price" value="{{ min_price or '' }}" aria-label="Min price" step="50">
+            <input type="number" name="max_price" placeholder="Max price" value="{{ max_price or '' }}" aria-label="Max price" step="50">
+
+            <select name="area" aria-label="Area">
+                <option value="">All areas</option>
+                {% for a in search_areas %}
+                <option value="{{ a }}" {% if area and area|upper == a %}selected{% endif %}>{{ a }}</option>
+                {% endfor %}
+            </select>
+
+            <select name="min_rating" aria-label="Min rating">
+                <option value="">Any rating</option>
+                {% for r in [3, 4, 5] %}
+                <option value="{{ r }}" {% if min_rating == r %}selected{% endif %}>{{ r }}+ stars</option>
+                {% endfor %}
+            </select>
+
+            <select name="sort" aria-label="Sort">
+                <option value="newest" {% if sort == "newest" %}selected{% endif %}>Newest</option>
+                <option value="price_asc" {% if sort == "price_asc" %}selected{% endif %}>Price: Low</option>
+                <option value="price_desc" {% if sort == "price_desc" %}selected{% endif %}>Price: High</option>
+                <option value="rating_desc" {% if sort == "rating_desc" %}selected{% endif %}>Rating</option>
+            </select>
+
+            <button type="submit">Filter</button>
+        </div>
+    </form>
+</section>
+
+<div class="view-toggle" role="group">
+    <button class="view-toggle-btn active" data-view="grid" aria-label="Grid view" aria-pressed="true">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><rect x="1" y="1" width="6" height="6" rx="1"/><rect x="9" y="1" width="6" height="6" rx="1"/><rect x="1" y="9" width="6" height="6" rx="1"/><rect x="9" y="9" width="6" height="6" rx="1"/></svg>
+        Grid
+    </button>
+    <button class="view-toggle-btn" data-view="map" aria-label="Map view" aria-pressed="false">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 1C5.2 1 3 3.2 3 6c0 3.5 5 9 5 9s5-5.5 5-9c0-2.8-2.2-5-5-5zm0 7a2 2 0 110-4 2 2 0 010 4z"/></svg>
+        Map
+    </button>
+</div>
+
+<div id="loading" class="htmx-indicator">
+    <div class="loading-bar"></div>
+</div>
+
+<div id="results">
+    {% include "_results.html" %}
+</div>
+
+<div id="dashboard-map" hidden></div>
+
+<script>var propertiesMapData = {{ properties_json | safe }};</script>
+{% endblock %}

@@ -1,0 +1,124 @@
+{% if qa %}
+<section class="quality-section">
+    <h3>Quality Analysis</h3>
+
+    {% if qa.overall_rating %}
+    <div class="star-rating star-rating-large">
+        {% for i in range(1, 6) %}
+            {% if i <= qa.overall_rating %}
+                <span class="star filled">&#9733;</span>
+            {% else %}
+                <span class="star empty">&#9734;</span>
+            {% endif %}
+        {% endfor %}
+        <span class="rating-label">{{ qa.overall_rating }}/5</span>
+    </div>
+    {% endif %}
+
+    <blockquote>{{ qa.summary }}</blockquote>
+
+    {% if qa.condition_concerns %}
+    <div class="quality-alert
+        {% if qa.concern_severity == 'serious' %}badge-red
+        {% elif qa.concern_severity == 'moderate' %}badge-amber
+        {% else %}badge-green{% endif %}">
+        <strong>Condition Concerns ({{ qa.concern_severity or "unknown" }}):</strong>
+        {{ qa.condition.maintenance_concerns | join(", ") }}
+    </div>
+    {% endif %}
+
+    <div class="quality-grid">
+        <div class="quality-item">
+            <h4>Kitchen</h4>
+            <span class="badge
+                {% if qa.kitchen.overall_quality == 'modern' %}badge-green
+                {% elif qa.kitchen.overall_quality == 'decent' %}badge-amber
+                {% elif qa.kitchen.overall_quality == 'dated' %}badge-red
+                {% else %}badge-neutral{% endif %}">
+                {{ qa.kitchen.overall_quality | capitalize }}
+            </span>
+            {% if qa.kitchen.hob_type and qa.kitchen.hob_type != 'unknown' %}
+            <p>{{ qa.kitchen.hob_type | capitalize }} hob</p>
+            {% endif %}
+            <p>
+                {% if qa.kitchen.has_dishwasher %}Dishwasher{% endif %}
+                {% if qa.kitchen.has_dishwasher and qa.kitchen.has_washing_machine %} &middot; {% endif %}
+                {% if qa.kitchen.has_washing_machine %}Washing machine{% endif %}
+            </p>
+            {% if qa.kitchen.notes %}<p><small>{{ qa.kitchen.notes }}</small></p>{% endif %}
+        </div>
+
+        <div class="quality-item">
+            <h4>Condition</h4>
+            <span class="badge
+                {% if qa.condition.overall_condition in ('excellent', 'good') %}badge-green
+                {% elif qa.condition.overall_condition == 'fair' %}badge-amber
+                {% elif qa.condition.overall_condition == 'poor' %}badge-red
+                {% else %}badge-neutral{% endif %}">
+                {{ qa.condition.overall_condition | capitalize }}
+            </span>
+            {% if qa.condition.has_visible_damp %}<p>Visible damp</p>{% endif %}
+            {% if qa.condition.has_visible_mold %}<p>Visible mould</p>{% endif %}
+            {% if qa.condition.has_worn_fixtures %}<p>Worn fixtures</p>{% endif %}
+        </div>
+
+        <div class="quality-item">
+            <h4>Light &amp; Space</h4>
+            <span class="badge
+                {% if qa.light_space.natural_light in ('excellent', 'good') %}badge-green
+                {% elif qa.light_space.natural_light == 'fair' %}badge-amber
+                {% elif qa.light_space.natural_light == 'poor' %}badge-red
+                {% else %}badge-neutral{% endif %}">
+                Light: {{ qa.light_space.natural_light | capitalize }}
+            </span>
+            {% if qa.light_space.feels_spacious is not none %}
+            <p>{{ "Spacious" if qa.light_space.feels_spacious else "Compact" }}</p>
+            {% endif %}
+            {% if qa.light_space.ceiling_height %}
+            <p>Ceilings: {{ qa.light_space.ceiling_height }}</p>
+            {% endif %}
+            {% if qa.light_space.notes %}<p><small>{{ qa.light_space.notes }}</small></p>{% endif %}
+        </div>
+
+        <div class="quality-item">
+            <h4>Living Room</h4>
+            {% if qa.space.living_room_sqm %}
+            <span class="badge badge-neutral">~{{ "%.0f" | format(qa.space.living_room_sqm) }}m&sup2;</span>
+            {% endif %}
+            {% if qa.space.is_spacious_enough is not none %}
+            <p>{{ "Good for office + hosting" if qa.space.is_spacious_enough else "May be tight" }}</p>
+            {% endif %}
+        </div>
+    </div>
+
+    {% if qa.value %}
+    <div class="quality-value">
+        <h4>Value Assessment</h4>
+        {% if qa.value.rating %}
+        <span class="badge
+            {% if qa.value.rating == 'excellent' %}badge-green
+            {% elif qa.value.rating == 'good' %}badge-green
+            {% elif qa.value.rating == 'fair' %}badge-amber
+            {% else %}badge-red{% endif %}">
+            {{ qa.value.rating | capitalize }}
+        </span>
+        {% if qa.value.note %}<span>{{ qa.value.note }}</span>{% endif %}
+        {% endif %}
+        {% if qa.value.quality_adjusted_rating %}
+        <p>
+            <strong>Quality-adjusted:</strong>
+            <span class="badge
+                {% if qa.value.quality_adjusted_rating in ('excellent', 'good') %}badge-green
+                {% elif qa.value.quality_adjusted_rating == 'fair' %}badge-amber
+                {% else %}badge-red{% endif %}">
+                {{ qa.value.quality_adjusted_rating | capitalize }}
+            </span>
+            {% if qa.value.quality_adjusted_note %}
+            <span>{{ qa.value.quality_adjusted_note }}</span>
+            {% endif %}
+        </p>
+        {% endif %}
+    </div>
+    {% endif %}
+</section>
+{% endif %}

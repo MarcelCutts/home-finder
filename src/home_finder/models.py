@@ -16,6 +16,14 @@ class PropertySource(str, Enum):
     ONTHEMARKET = "onthemarket"
 
 
+SOURCE_NAMES: dict[str, str] = {
+    "openrent": "OpenRent",
+    "rightmove": "Rightmove",
+    "zoopla": "Zoopla",
+    "onthemarket": "OnTheMarket",
+}
+
+
 class FurnishType(str, Enum):
     """Furnishing type for property search filters."""
 

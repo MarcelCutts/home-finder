@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>{% block title %}Home Finder{% endblock %}</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css">
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+    <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css">
+    <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css">
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <nav class="container-fluid">
+        <ul>
+            <li><a href="/"><strong>Home Finder</strong></a></li>
+        </ul>
+        <ul>
+            <li>{% block nav_info %}{% endblock %}</li>
+        </ul>
+    </nav>
+
+    <main class="container-fluid">
+        {% block content %}{% endblock %}
+    </main>
+
+    <footer class="container-fluid">
+        <small>Home Finder — London Rental Property Dashboard</small>
+    </footer>
+
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
+    <script src="https://unpkg.com/htmx.org@2.0.4/dist/htmx.min.js"></script>
+    <script src="/static/app.js"></script>
+</body>
+</html>

@@ -105,6 +105,19 @@ class Settings(BaseSettings):
         description="HTTP/SOCKS5 proxy URL (e.g. socks5://user:pass@host:port)",
     )
 
+    # Web dashboard
+    web_base_url: str = Field(
+        default="",
+        description="Base URL for web dashboard (e.g. https://home-finder.fly.dev)",
+    )
+    web_port: int = Field(default=8000, description="Web server port")
+    web_host: str = Field(default="0.0.0.0", description="Web server host")
+    pipeline_interval_minutes: int = Field(
+        default=55,
+        ge=1,
+        description="Minutes between pipeline runs in serve mode",
+    )
+
     # Database
     database_path: str = Field(default="data/properties.db")
 

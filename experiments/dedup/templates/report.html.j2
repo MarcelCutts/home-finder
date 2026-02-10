@@ -1,0 +1,898 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<title>Dedup Labeling — {{ total_pairs }} pairs</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<style>
+  :root {
+    --bg: #0d1117;
+    --card: #161b22;
+    --border: #30363d;
+    --text: #c9d1d9;
+    --text-muted: #8b949e;
+    --accent: #58a6ff;
+    --match-green: #3fb950;
+    --nomatch-red: #f85149;
+    --uncertain-yellow: #d29922;
+    --diff-bg: #3d1e20;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, 'Segoe UI', sans-serif; background: var(--bg); color: var(--text); line-height: 1.5; }
+
+  /* ---------- Header ---------- */
+  .header { padding: 12px 24px; border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 16px; position: sticky; top: 0; background: var(--bg); z-index: 100; }
+  .header h1 { font-size: 18px; font-weight: 600; white-space: nowrap; }
+  .progress-bar { flex: 1; height: 6px; background: var(--border); border-radius: 3px; overflow: hidden; }
+  .progress-fill { height: 100%; background: var(--accent); transition: width 0.3s; }
+  .progress-text { font-size: 13px; color: var(--text-muted); white-space: nowrap; }
+  .btn { padding: 6px 14px; border-radius: 6px; border: 1px solid var(--border); background: var(--card); color: var(--text); cursor: pointer; font-size: 13px; }
+  .btn:hover { border-color: var(--accent); }
+  .btn-primary { background: var(--accent); color: #000; border-color: var(--accent); font-weight: 600; }
+
+  /* ---------- Stat Chips ---------- */
+  .stats { padding: 8px 24px; border-bottom: 1px solid var(--border); display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  .stat-chip { font-size: 12px; padding: 2px 10px; border-radius: 12px; border: 1px solid var(--border); color: var(--text-muted); }
+  .stat-chip.match { color: var(--match-green); border-color: var(--match-green); }
+  .stat-chip.no_match { color: var(--nomatch-red); border-color: var(--nomatch-red); }
+  .stat-chip.uncertain { color: var(--uncertain-yellow); border-color: var(--uncertain-yellow); }
+  .stat-chip.unlabeled { color: var(--text-muted); }
+
+  /* ---------- Controls ---------- */
+  .controls { padding: 8px 24px; border-bottom: 1px solid var(--border); display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+  .filter-btn { padding: 4px 10px; border-radius: 12px; border: 1px solid var(--border); background: transparent; color: var(--text-muted); cursor: pointer; font-size: 12px; }
+  .filter-btn.active { border-color: var(--accent); color: var(--accent); }
+  .controls select { background: var(--card); color: var(--text); border: 1px solid var(--border); border-radius: 4px; padding: 2px 6px; font-size: 12px; }
+
+  /* ---------- View Tabs ---------- */
+  .view-tabs { display: flex; gap: 0; }
+  .view-tab { padding: 4px 12px; border: 1px solid var(--border); background: transparent; color: var(--text-muted); cursor: pointer; font-size: 12px; }
+  .view-tab:first-child { border-radius: 6px 0 0 6px; }
+  .view-tab:last-child { border-radius: 0 6px 6px 0; }
+  .view-tab.active { background: var(--accent); color: #000; border-color: var(--accent); font-weight: 600; }
+
+  /* ---------- Focus View (single pair) ---------- */
+  .focus-view { padding: 16px 24px; }
+  .pair { border: 1px solid var(--border); border-radius: 8px; background: var(--card); }
+  .pair.labeled-match { border-left: 3px solid var(--match-green); }
+  .pair.labeled-no-match { border-left: 3px solid var(--nomatch-red); }
+  .pair.labeled-uncertain { border-left: 3px solid var(--uncertain-yellow); }
+
+  .pair-header { padding: 12px 16px; border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 12px; }
+  .pair-num { font-size: 13px; color: var(--text-muted); font-weight: 600; min-width: 40px; }
+  .pair-score { font-size: 14px; font-weight: 600; }
+  .pair-score.match { color: var(--match-green); }
+  .pair-score.no-match { color: var(--text-muted); }
+  .pair-block { font-size: 12px; color: var(--text-muted); margin-left: auto; }
+
+  .pair-body { display: grid; grid-template-columns: 1fr auto 1fr; gap: 0; }
+
+  .property-card { padding: 16px; }
+  .property-card .source { font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; padding: 2px 8px; border-radius: 4px; display: inline-block; margin-bottom: 8px; }
+  .property-card .source.rightmove { background: #1a3a1a; color: #3fb950; }
+  .property-card .source.zoopla { background: #1a2a3a; color: #58a6ff; }
+  .property-card .source.openrent { background: #3a2a1a; color: #d29922; }
+  .property-card .source.onthemarket { background: #2a1a3a; color: #bc8cff; }
+
+  .property-card .title { font-size: 14px; font-weight: 600; margin-bottom: 6px; }
+  .property-card .title a { color: var(--accent); text-decoration: none; }
+  .property-card .title a:hover { text-decoration: underline; }
+  .field { font-size: 13px; margin-bottom: 3px; display: flex; gap: 6px; }
+  .field-label { color: var(--text-muted); min-width: 70px; }
+  .field-value { color: var(--text); }
+  .field-value.diff { background: var(--diff-bg); padding: 0 4px; border-radius: 2px; }
+  .thumb { width: 120px; height: 80px; object-fit: cover; border-radius: 4px; margin-top: 8px; border: 1px solid var(--border); }
+  .desc-preview { font-size: 12px; color: var(--text-muted); margin-top: 8px; max-height: 60px; overflow: hidden; }
+
+  .signal-panel { padding: 16px 12px; border-left: 1px solid var(--border); border-right: 1px solid var(--border); min-width: 220px; }
+  .signal-panel h4 { font-size: 12px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 8px; }
+  .signal-row { display: flex; align-items: center; gap: 6px; margin-bottom: 4px; font-size: 12px; }
+  .signal-name { min-width: 100px; color: var(--text-muted); }
+  .signal-bar { flex: 1; height: 4px; background: var(--border); border-radius: 2px; overflow: hidden; }
+  .signal-bar-fill { height: 100%; border-radius: 2px; }
+  .signal-bar-fill.positive { background: var(--match-green); }
+  .signal-bar-fill.negative { background: var(--nomatch-red); }
+  .signal-bar-fill.zero { background: var(--border); }
+  .signal-value { min-width: 35px; text-align: right; font-family: monospace; font-size: 11px; }
+  .signal-detail { font-size: 10px; color: var(--text-muted); margin-left: 106px; margin-bottom: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 200px; }
+
+  .map-container { width: 100%; height: 120px; margin-top: 8px; border-radius: 4px; overflow: hidden; }
+  .map-container.hidden { display: none; }
+
+  /* ---------- Label Actions ---------- */
+  .label-row { padding: 12px 16px; border-top: 1px solid var(--border); display: flex; align-items: center; gap: 12px; }
+  .label-btn { padding: 8px 20px; border-radius: 6px; border: 2px solid var(--border); background: transparent; cursor: pointer; font-size: 14px; font-weight: 600; transition: all 0.15s; display: flex; align-items: center; gap: 8px; }
+  .label-btn:hover { transform: translateY(-1px); }
+  .label-btn.match-btn { color: var(--match-green); }
+  .label-btn.match-btn:hover, .label-btn.match-btn.active { background: var(--match-green); color: #000; border-color: var(--match-green); }
+  .label-btn.nomatch-btn { color: var(--nomatch-red); }
+  .label-btn.nomatch-btn:hover, .label-btn.nomatch-btn.active { background: var(--nomatch-red); color: #fff; border-color: var(--nomatch-red); }
+  .label-btn.uncertain-btn { color: var(--uncertain-yellow); }
+  .label-btn.uncertain-btn:hover, .label-btn.uncertain-btn.active { background: var(--uncertain-yellow); color: #000; border-color: var(--uncertain-yellow); }
+  .label-btn kbd { font-family: -apple-system, 'Segoe UI', sans-serif; font-size: 11px; padding: 1px 5px; border-radius: 3px; border: 1px solid currentColor; opacity: 0.6; }
+  .label-btn.flash { animation: flash-btn 0.2s ease-out; }
+  @keyframes flash-btn { 0% { transform: scale(1.05); } 100% { transform: scale(1); } }
+  .notes-input { flex: 1; background: var(--bg); border: 1px solid var(--border); border-radius: 4px; padding: 6px 10px; color: var(--text); font-size: 12px; }
+  .notes-input:focus { outline: none; border-color: var(--accent); }
+  .undo-btn { padding: 6px 12px; border-radius: 6px; border: 1px solid var(--border); background: transparent; color: var(--text-muted); cursor: pointer; font-size: 12px; }
+  .undo-btn:hover { color: var(--text); border-color: var(--text-muted); }
+  .undo-btn:disabled { opacity: 0.3; cursor: default; }
+
+  /* ---------- List View ---------- */
+  .list-view { display: none; }
+  .list-view.active { display: block; }
+  .focus-view.active { display: block; }
+  .focus-view { display: none; }
+
+  .list-container { height: calc(100vh - 140px); overflow-y: auto; }
+  .list-row { display: flex; align-items: center; gap: 12px; padding: 8px 24px; border-bottom: 1px solid var(--border); cursor: pointer; font-size: 13px; transition: background 0.1s; }
+  .list-row:hover { background: var(--card); }
+  .list-row.current { background: #1a2332; border-left: 3px solid var(--accent); }
+  .list-row .row-num { color: var(--text-muted); min-width: 50px; font-size: 12px; }
+  .list-row .row-score { min-width: 60px; font-weight: 600; font-size: 12px; }
+  .list-row .row-score.is-match { color: var(--match-green); }
+  .list-row .row-score.is-no-match { color: var(--text-muted); }
+  .list-row .row-sources { min-width: 180px; color: var(--text-muted); font-size: 11px; text-transform: uppercase; }
+  .list-row .row-address { flex: 1; color: var(--text); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .list-row .row-label { min-width: 80px; text-align: right; font-size: 11px; font-weight: 600; }
+  .list-row .row-label.match { color: var(--match-green); }
+  .list-row .row-label.no_match { color: var(--nomatch-red); }
+  .list-row .row-label.uncertain { color: var(--uncertain-yellow); }
+  .list-row .row-label.unlabeled { color: var(--text-muted); }
+
+  /* ---------- Navigation ---------- */
+  .nav-row { padding: 8px 24px; border-top: 1px solid var(--border); display: flex; align-items: center; gap: 12px; }
+  .nav-btn { padding: 6px 16px; border-radius: 6px; border: 1px solid var(--border); background: var(--card); color: var(--text); cursor: pointer; font-size: 13px; }
+  .nav-btn:hover { border-color: var(--accent); }
+  .nav-btn:disabled { opacity: 0.3; cursor: default; }
+  .nav-info { font-size: 12px; color: var(--text-muted); flex: 1; text-align: center; }
+
+  /* ---------- Empty state ---------- */
+  .empty-state { padding: 60px 24px; text-align: center; color: var(--text-muted); }
+  .empty-state h3 { font-size: 16px; margin-bottom: 8px; color: var(--text); }
+  .empty-state p { font-size: 13px; }
+
+  .hidden { display: none !important; }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1>Dedup Labeling</h1>
+  <div class="progress-bar"><div class="progress-fill" id="progressFill"></div></div>
+  <span class="progress-text" id="progressText">0 / {{ total_pairs }}</span>
+  <button class="btn" onclick="importLabels()">Import</button>
+  <button class="btn btn-primary" onclick="exportLabels()">Export</button>
+  <button class="btn" onclick="clearLabels()">Reset</button>
+</div>
+
+<div class="stats" id="stats">
+  <span class="stat-chip match" id="stat-match">Match: 0</span>
+  <span class="stat-chip no_match" id="stat-no_match">Not Match: 0</span>
+  <span class="stat-chip uncertain" id="stat-uncertain">Uncertain: 0</span>
+  <span class="stat-chip unlabeled" id="stat-unlabeled">Unlabeled: {{ total_pairs }}</span>
+</div>
+
+<div class="controls">
+  <div class="view-tabs">
+    <button class="view-tab active" data-view="focus" onclick="setView('focus')">Focus</button>
+    <button class="view-tab" data-view="list" onclick="setView('list')">List</button>
+  </div>
+  <span style="width: 1px; height: 20px; background: var(--border);"></span>
+  <span style="font-size: 12px; color: var(--text-muted);">Filter:</span>
+  <button class="filter-btn active" data-filter="all" onclick="setFilter('all')">All</button>
+  <button class="filter-btn" data-filter="unlabeled" onclick="setFilter('unlabeled')">Unlabeled</button>
+  <button class="filter-btn" data-filter="match" onclick="setFilter('match')">Match</button>
+  <button class="filter-btn" data-filter="no_match" onclick="setFilter('no_match')">No Match</button>
+  <button class="filter-btn" data-filter="uncertain" onclick="setFilter('uncertain')">Uncertain</button>
+  <span style="margin-left: auto; font-size: 12px; color: var(--text-muted);">
+    Sort:
+    <select id="sortSelect" onchange="applySort(this.value)">
+      <option value="hardest">Hardest first</option>
+      <option value="score_desc">Score desc</option>
+      <option value="score_asc">Score asc</option>
+      <option value="unlabeled">Unlabeled first</option>
+    </select>
+  </span>
+</div>
+
+<!-- Focus view: one pair at a time -->
+<div class="focus-view active" id="focusView">
+  <div id="pairContainer"></div>
+  <div class="nav-row">
+    <button class="nav-btn" id="prevBtn" onclick="navigate(-1)">&larr; Prev</button>
+    <span class="nav-info" id="navInfo"></span>
+    <button class="nav-btn" id="nextBtn" onclick="navigate(1)">Next &rarr;</button>
+  </div>
+</div>
+
+<!-- List view: virtual-scrolled rows -->
+<div class="list-view" id="listView">
+  <div class="list-container" id="listContainer"></div>
+</div>
+
+<!-- Hidden file input for import -->
+<input type="file" id="importInput" accept=".json" style="display:none" onchange="handleImportFile(event)">
+
+<script>
+// =========================================================================
+// Data
+// =========================================================================
+const ALL_PAIRS = {{ pairs_json }};
+const TOTAL = ALL_PAIRS.length;
+const MATCH_THRESHOLD = 55;
+
+// =========================================================================
+// State
+// =========================================================================
+let labels = {};          // { pairId: { label, notes, labeledAt } }
+let filteredIndices = [];  // Indices into ALL_PAIRS for current filter+sort
+let currentPos = 0;       // Position within filteredIndices
+let currentView = 'focus';
+let currentFilter = 'all';
+let currentSort = 'hardest';
+let undoStack = [];        // [{ pairId, prevLabel, prevNotes }]
+let leafletMap = null;
+let markersLayer = null;
+
+// =========================================================================
+// IndexedDB (with localStorage fallback)
+// =========================================================================
+const DB_NAME = 'dedup-labels';
+const DB_VERSION = 1;
+const STORE_NAME = 'labels';
+const LS_KEY = 'dedup_labels_v1';
+let db = null;
+
+async function initDB() {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open(DB_NAME, DB_VERSION);
+    req.onupgradeneeded = (e) => {
+      const d = e.target.result;
+      if (!d.objectStoreNames.contains(STORE_NAME)) {
+        d.createObjectStore(STORE_NAME, { keyPath: 'pairId' });
+      }
+    };
+    req.onsuccess = (e) => { db = e.target.result; resolve(); };
+    req.onerror = () => {
+      console.warn('IndexedDB unavailable, falling back to localStorage');
+      resolve();
+    };
+  });
+}
+
+async function loadAllLabels() {
+  if (db) {
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(STORE_NAME, 'readonly');
+      const store = tx.objectStore(STORE_NAME);
+      const req = store.getAll();
+      req.onsuccess = () => {
+        const result = {};
+        for (const item of req.result) {
+          result[item.pairId] = { label: item.label, notes: item.notes || '' };
+        }
+        resolve(result);
+      };
+      req.onerror = () => resolve({});
+    });
+  }
+  // localStorage fallback
+  try { return JSON.parse(localStorage.getItem(LS_KEY)) || {}; }
+  catch { return {}; }
+}
+
+async function saveLabel(pairId, label, notes) {
+  labels[pairId] = { label, notes: notes || '' };
+  if (db) {
+    return new Promise((resolve) => {
+      const tx = db.transaction(STORE_NAME, 'readwrite');
+      tx.objectStore(STORE_NAME).put({
+        pairId, label, notes: notes || '', labeledAt: Date.now()
+      });
+      tx.oncomplete = resolve;
+      tx.onerror = resolve;
+    });
+  }
+  // localStorage fallback
+  localStorage.setItem(LS_KEY, JSON.stringify(labels));
+}
+
+async function deleteLabel(pairId) {
+  delete labels[pairId];
+  if (db) {
+    return new Promise((resolve) => {
+      const tx = db.transaction(STORE_NAME, 'readwrite');
+      tx.objectStore(STORE_NAME).delete(pairId);
+      tx.oncomplete = resolve;
+      tx.onerror = resolve;
+    });
+  }
+  localStorage.setItem(LS_KEY, JSON.stringify(labels));
+}
+
+async function clearAllLabels() {
+  labels = {};
+  undoStack = [];
+  if (db) {
+    return new Promise((resolve) => {
+      const tx = db.transaction(STORE_NAME, 'readwrite');
+      tx.objectStore(STORE_NAME).clear();
+      tx.oncomplete = resolve;
+      tx.onerror = resolve;
+    });
+  }
+  localStorage.removeItem(LS_KEY);
+}
+
+async function bulkSaveLabels(labelsObj) {
+  labels = { ...labelsObj };
+  if (db) {
+    return new Promise((resolve) => {
+      const tx = db.transaction(STORE_NAME, 'readwrite');
+      const store = tx.objectStore(STORE_NAME);
+      for (const [pairId, data] of Object.entries(labelsObj)) {
+        store.put({ pairId, label: data.label, notes: data.notes || '', labeledAt: Date.now() });
+      }
+      tx.oncomplete = resolve;
+      tx.onerror = resolve;
+    });
+  }
+  localStorage.setItem(LS_KEY, JSON.stringify(labels));
+}
+
+// Migrate from localStorage to IndexedDB on first load
+async function migrateFromLocalStorage() {
+  if (!db) return;
+  try {
+    const old = JSON.parse(localStorage.getItem(LS_KEY));
+    if (old && Object.keys(old).length > 0) {
+      const existing = await loadAllLabels();
+      if (Object.keys(existing).length === 0) {
+        await bulkSaveLabels(old);
+        localStorage.removeItem(LS_KEY);
+        console.log(`Migrated ${Object.keys(old).length} labels from localStorage to IndexedDB`);
+      }
+    }
+  } catch {}
+}
+
+// =========================================================================
+// Escaping
+// =========================================================================
+function esc(s) {
+  if (!s) return '';
+  const d = document.createElement('div');
+  d.textContent = s;
+  return d.innerHTML;
+}
+
+// =========================================================================
+// Rendering: Focus View (single pair)
+// =========================================================================
+function renderPair(pair, globalIdx) {
+  const a = pair.property_a;
+  const b = pair.property_b;
+  const s = pair.scorer;
+  const lbl = labels[pair.pair_id];
+  const labelClass = lbl ? `labeled-${lbl.label.replace('_', '-')}` : '';
+  const priceDiff = a.price_pcm !== b.price_pcm;
+  const addrDiff = a.address !== b.address;
+  const pcDiff = a.postcode !== b.postcode;
+
+  let signalsHtml = '';
+  for (const [name, sig] of Object.entries(pair.signals)) {
+    const width = sig.fired ? Math.min(Math.abs(sig.value) * 100, 100) : 0;
+    const cls = sig.value > 0 ? 'positive' : (sig.value < 0 ? 'negative' : 'zero');
+    const valStr = sig.fired ? sig.value.toFixed(2) : '—';
+    signalsHtml += `<div class="signal-row">
+      <span class="signal-name">${esc(name)}</span>
+      <div class="signal-bar">${sig.fired ? `<div class="signal-bar-fill ${cls}" style="width:${width}%"></div>` : ''}</div>
+      <span class="signal-value">${valStr}</span>
+    </div>`;
+    if (sig.detail) {
+      signalsHtml += `<div class="signal-detail" title="${esc(sig.detail)}">${esc(sig.detail)}</div>`;
+    }
+  }
+
+  const hasCoords = a.latitude && a.longitude;
+
+  return `<div class="pair ${labelClass}" data-pair-id="${esc(pair.pair_id)}">
+    <div class="pair-header">
+      <span class="pair-num">#${globalIdx + 1}</span>
+      <span class="pair-score ${s.is_match ? 'match' : 'no-match'}">
+        ${s.score.toFixed(1)} pts (${s.signal_count} signals)${s.is_match ? ' → MATCH' : ''}
+      </span>
+      <span class="pair-block">${esc(pair.block)}</span>
+    </div>
+    <div class="pair-body">
+      ${renderPropertyCard(a, priceDiff, addrDiff, pcDiff)}
+      <div class="signal-panel">
+        <h4>Signals</h4>
+        ${signalsHtml}
+        <div class="map-container ${hasCoords ? '' : 'hidden'}" id="signal-map"></div>
+      </div>
+      ${renderPropertyCard(b, priceDiff, addrDiff, pcDiff)}
+    </div>
+    <div class="label-row">
+      <button class="label-btn match-btn ${lbl?.label === 'match' ? 'active' : ''}" onclick="doLabel('match')"><kbd>A</kbd> Match</button>
+      <button class="label-btn nomatch-btn ${lbl?.label === 'no_match' ? 'active' : ''}" onclick="doLabel('no_match')"><kbd>D</kbd> Not Match</button>
+      <button class="label-btn uncertain-btn ${lbl?.label === 'uncertain' ? 'active' : ''}" onclick="doLabel('uncertain')"><kbd>S</kbd> Uncertain</button>
+      <input type="text" class="notes-input" id="notesInput" placeholder="Notes (optional)" value="${esc(lbl?.notes || '')}" onchange="saveCurrentNotes()">
+      <button class="undo-btn" id="undoBtn" onclick="undoLast()" ${undoStack.length === 0 ? 'disabled' : ''}><kbd>Z</kbd> Undo</button>
+    </div>
+  </div>`;
+}
+
+function renderPropertyCard(prop, priceDiff, addrDiff, pcDiff) {
+  const isDiffPrice = priceDiff ? 'diff' : '';
+  const isDiffAddr = addrDiff ? 'diff' : '';
+  const isDiffPc = pcDiff ? 'diff' : '';
+  const imgHtml = prop.image_url
+    ? `<img class="thumb" src="${esc(prop.image_url)}" alt="" loading="lazy" onerror="this.style.display='none'">`
+    : '';
+  const descHtml = prop.description_preview
+    ? `<div class="desc-preview">${esc(prop.description_preview)}</div>`
+    : '';
+
+  return `<div class="property-card">
+    <span class="source ${esc(prop.source)}">${esc(prop.source)}</span>
+    <div class="title"><a href="${esc(prop.url)}" target="_blank">${esc(prop.title)}</a></div>
+    <div class="field"><span class="field-label">Price</span><span class="field-value ${isDiffPrice}">&pound;${prop.price_pcm}/mo</span></div>
+    <div class="field"><span class="field-label">Beds</span><span class="field-value">${prop.bedrooms}</span></div>
+    <div class="field"><span class="field-label">Address</span><span class="field-value ${isDiffAddr}">${esc(prop.address)}</span></div>
+    <div class="field"><span class="field-label">Postcode</span><span class="field-value ${isDiffPc}">${esc(prop.postcode) || '—'}</span></div>
+    ${imgHtml}
+    ${descHtml}
+  </div>`;
+}
+
+// =========================================================================
+// Leaflet Map (single reusable instance)
+// =========================================================================
+function updateMap(pair) {
+  const a = pair.property_a;
+  const b = pair.property_b;
+  const mapEl = document.getElementById('signal-map');
+  if (!mapEl) return;
+
+  const hasA = a.latitude && a.longitude;
+  const hasB = b.latitude && b.longitude;
+
+  if (!hasA && !hasB) {
+    mapEl.classList.add('hidden');
+    return;
+  }
+  mapEl.classList.remove('hidden');
+
+  if (!leafletMap) {
+    leafletMap = L.map('signal-map', { zoomControl: false, attributionControl: false });
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(leafletMap);
+    markersLayer = L.layerGroup().addTo(leafletMap);
+  }
+
+  markersLayer.clearLayers();
+
+  if (hasA) {
+    L.circleMarker([a.latitude, a.longitude], { radius: 6, color: '#3fb950', fillOpacity: 0.8 })
+      .addTo(markersLayer).bindPopup(`A: ${a.source}`);
+  }
+  if (hasB) {
+    L.circleMarker([b.latitude, b.longitude], { radius: 6, color: '#58a6ff', fillOpacity: 0.8 })
+      .addTo(markersLayer).bindPopup(`B: ${b.source}`);
+  }
+
+  if (hasA && hasB) {
+    const bounds = L.latLngBounds([[a.latitude, a.longitude], [b.latitude, b.longitude]]);
+    if (bounds.getNorthEast().equals(bounds.getSouthWest())) {
+      leafletMap.setView(bounds.getCenter(), 17);
+    } else {
+      leafletMap.fitBounds(bounds.pad(0.5));
+    }
+  } else if (hasA) {
+    leafletMap.setView([a.latitude, a.longitude], 16);
+  } else {
+    leafletMap.setView([b.latitude, b.longitude], 16);
+  }
+
+  // Leaflet needs a size recalc after DOM insertion
+  setTimeout(() => leafletMap.invalidateSize(), 50);
+}
+
+// =========================================================================
+// Rendering: List View (virtual scrolling)
+// =========================================================================
+const ROW_HEIGHT = 40;
+const OVERSCAN = 10;
+let lastRangeStart = -1;
+let lastRangeEnd = -1;
+
+function renderListView() {
+  const container = document.getElementById('listContainer');
+  container.innerHTML = `<div id="listSpacer" style="position:relative;height:${filteredIndices.length * ROW_HEIGHT}px">
+    <div id="listContent" style="position:absolute;top:0;width:100%"></div>
+  </div>`;
+  lastRangeStart = -1;
+  lastRangeEnd = -1;
+  onListScroll();
+}
+
+function onListScroll() {
+  const container = document.getElementById('listContainer');
+  const content = document.getElementById('listContent');
+  if (!container || !content) return;
+
+  const scrollTop = container.scrollTop;
+  const viewH = container.clientHeight;
+
+  const start = Math.max(0, Math.floor(scrollTop / ROW_HEIGHT) - OVERSCAN);
+  const end = Math.min(filteredIndices.length, Math.ceil((scrollTop + viewH) / ROW_HEIGHT) + OVERSCAN);
+
+  if (start === lastRangeStart && end === lastRangeEnd) return;
+  lastRangeStart = start;
+  lastRangeEnd = end;
+
+  content.style.top = `${start * ROW_HEIGHT}px`;
+  const frag = document.createDocumentFragment();
+
+  for (let i = start; i < end; i++) {
+    const pairIdx = filteredIndices[i];
+    const pair = ALL_PAIRS[pairIdx];
+    const lbl = labels[pair.pair_id];
+    const row = document.createElement('div');
+    row.className = `list-row${i === currentPos ? ' current' : ''}`;
+    row.style.height = `${ROW_HEIGHT}px`;
+    row.onclick = () => { currentPos = i; showCurrentPair(); setView('focus'); };
+
+    const labelText = lbl?.label || 'unlabeled';
+    const labelDisplay = lbl?.label ? lbl.label.replace('_', ' ') : '—';
+    const scoreClass = pair.scorer.is_match ? 'is-match' : 'is-no-match';
+
+    row.innerHTML = `
+      <span class="row-num">#${pairIdx + 1}</span>
+      <span class="row-score ${scoreClass}">${pair.scorer.score.toFixed(1)}</span>
+      <span class="row-sources">${esc(pair.property_a.source)} / ${esc(pair.property_b.source)}</span>
+      <span class="row-address">${esc(pair.property_a.address || pair.property_a.title)} — ${esc(pair.property_b.address || pair.property_b.title)}</span>
+      <span class="row-label ${labelText}">${labelDisplay}</span>`;
+    frag.appendChild(row);
+  }
+  content.replaceChildren(frag);
+}
+
+// =========================================================================
+// Filter & Sort
+// =========================================================================
+function applyFilterAndSort() {
+  // Filter
+  filteredIndices = [];
+  for (let i = 0; i < TOTAL; i++) {
+    const pair = ALL_PAIRS[i];
+    const lbl = labels[pair.pair_id]?.label;
+    if (currentFilter === 'all') { filteredIndices.push(i); continue; }
+    if (currentFilter === 'unlabeled' && !lbl) { filteredIndices.push(i); continue; }
+    if (lbl === currentFilter) { filteredIndices.push(i); continue; }
+  }
+
+  // Sort
+  filteredIndices.sort((ai, bi) => {
+    const a = ALL_PAIRS[ai];
+    const b = ALL_PAIRS[bi];
+    const scoreA = a.scorer.score;
+    const scoreB = b.scorer.score;
+    const lblA = labels[a.pair_id]?.label;
+    const lblB = labels[b.pair_id]?.label;
+
+    if (currentSort === 'score_desc') return scoreB - scoreA;
+    if (currentSort === 'score_asc') return scoreA - scoreB;
+    if (currentSort === 'hardest') return Math.abs(scoreA - MATCH_THRESHOLD) - Math.abs(scoreB - MATCH_THRESHOLD);
+    if (currentSort === 'unlabeled') {
+      const aVal = lblA ? 1 : 0;
+      const bVal = lblB ? 1 : 0;
+      if (aVal !== bVal) return aVal - bVal;
+      return Math.abs(scoreA - MATCH_THRESHOLD) - Math.abs(scoreB - MATCH_THRESHOLD);
+    }
+    return 0;
+  });
+}
+
+function setFilter(filter) {
+  currentFilter = filter;
+  document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+  document.querySelector(`[data-filter="${filter}"]`).classList.add('active');
+  currentPos = 0;
+  applyFilterAndSort();
+  refresh();
+}
+
+function applySort(mode) {
+  currentSort = mode;
+  applyFilterAndSort();
+  // Reset to first pair in new sort order so the user sees the effect
+  currentPos = 0;
+  refresh();
+}
+
+// =========================================================================
+// Views
+// =========================================================================
+function setView(view) {
+  currentView = view;
+  document.querySelectorAll('.view-tab').forEach(b => b.classList.remove('active'));
+  document.querySelector(`[data-view="${view}"]`).classList.add('active');
+
+  const focusEl = document.getElementById('focusView');
+  const listEl = document.getElementById('listView');
+
+  if (view === 'focus') {
+    focusEl.classList.add('active');
+    listEl.classList.remove('active');
+    showCurrentPair();
+  } else {
+    focusEl.classList.remove('active');
+    listEl.classList.add('active');
+    renderListView();
+    // Attach scroll listener
+    const lc = document.getElementById('listContainer');
+    lc.onscroll = onListScroll;
+  }
+}
+
+// =========================================================================
+// Navigation
+// =========================================================================
+function showCurrentPair() {
+  const container = document.getElementById('pairContainer');
+
+  if (filteredIndices.length === 0) {
+    container.innerHTML = `<div class="empty-state"><h3>No pairs</h3><p>No pairs match the current filter.</p></div>`;
+    document.getElementById('navInfo').textContent = '0 / 0';
+    return;
+  }
+
+  currentPos = Math.max(0, Math.min(currentPos, filteredIndices.length - 1));
+  const globalIdx = filteredIndices[currentPos];
+  const pair = ALL_PAIRS[globalIdx];
+
+  // Destroy old map reference so it gets recreated in the new DOM
+  if (leafletMap) {
+    leafletMap.remove();
+    leafletMap = null;
+    markersLayer = null;
+  }
+
+  container.innerHTML = renderPair(pair, globalIdx);
+  updateMap(pair);
+
+  document.getElementById('prevBtn').disabled = currentPos === 0;
+  document.getElementById('nextBtn').disabled = currentPos >= filteredIndices.length - 1;
+  document.getElementById('navInfo').textContent = `${currentPos + 1} / ${filteredIndices.length}`;
+}
+
+function navigate(delta) {
+  currentPos += delta;
+  showCurrentPair();
+}
+
+// =========================================================================
+// Labeling
+// =========================================================================
+async function doLabel(label) {
+  if (filteredIndices.length === 0) return;
+  const globalIdx = filteredIndices[currentPos];
+  const pair = ALL_PAIRS[globalIdx];
+  const prev = labels[pair.pair_id];
+  const notesEl = document.getElementById('notesInput');
+  const notes = notesEl ? notesEl.value : '';
+
+  // Push undo
+  undoStack.push({
+    pairId: pair.pair_id,
+    prevLabel: prev?.label || null,
+    prevNotes: prev?.notes || '',
+    pos: currentPos,
+    filterState: currentFilter,
+  });
+
+  // Flash the button
+  const btnMap = { match: '.match-btn', no_match: '.nomatch-btn', uncertain: '.uncertain-btn' };
+  const btn = document.querySelector(btnMap[label]);
+  if (btn) { btn.classList.add('flash'); setTimeout(() => btn.classList.remove('flash'), 200); }
+
+  await saveLabel(pair.pair_id, label, notes);
+  updateStats();
+
+  // Auto-advance to next (if in unlabeled filter, the current position may shift)
+  if (currentFilter === 'unlabeled') {
+    applyFilterAndSort();
+    currentPos = Math.min(currentPos, filteredIndices.length - 1);
+  } else if (currentPos < filteredIndices.length - 1) {
+    currentPos++;
+  }
+
+  showCurrentPair();
+}
+
+async function undoLast() {
+  if (undoStack.length === 0) return;
+  const entry = undoStack.pop();
+
+  if (entry.prevLabel) {
+    await saveLabel(entry.pairId, entry.prevLabel, entry.prevNotes);
+  } else {
+    await deleteLabel(entry.pairId);
+  }
+
+  // Restore position
+  if (entry.filterState !== currentFilter) {
+    currentFilter = entry.filterState;
+    document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+    document.querySelector(`[data-filter="${entry.filterState}"]`)?.classList.add('active');
+  }
+  applyFilterAndSort();
+  // Find the pair in the filtered list
+  const restoredPos = filteredIndices.findIndex(i => ALL_PAIRS[i].pair_id === entry.pairId);
+  currentPos = restoredPos >= 0 ? restoredPos : Math.min(entry.pos, filteredIndices.length - 1);
+
+  updateStats();
+  showCurrentPair();
+}
+
+async function saveCurrentNotes() {
+  if (filteredIndices.length === 0) return;
+  const pair = ALL_PAIRS[filteredIndices[currentPos]];
+  const notesEl = document.getElementById('notesInput');
+  if (!notesEl) return;
+  const lbl = labels[pair.pair_id];
+  if (lbl) {
+    await saveLabel(pair.pair_id, lbl.label, notesEl.value);
+  }
+}
+
+// =========================================================================
+// Stats
+// =========================================================================
+function updateStats() {
+  let match = 0, no_match = 0, uncertain = 0;
+  for (const data of Object.values(labels)) {
+    if (data.label === 'match') match++;
+    else if (data.label === 'no_match') no_match++;
+    else if (data.label === 'uncertain') uncertain++;
+  }
+  const labeled = match + no_match + uncertain;
+  const unlabeled = TOTAL - labeled;
+
+  document.getElementById('stat-match').textContent = `Match: ${match}`;
+  document.getElementById('stat-no_match').textContent = `Not Match: ${no_match}`;
+  document.getElementById('stat-uncertain').textContent = `Uncertain: ${uncertain}`;
+  document.getElementById('stat-unlabeled').textContent = `Unlabeled: ${unlabeled}`;
+
+  document.getElementById('progressFill').style.width = `${(labeled / TOTAL) * 100}%`;
+  document.getElementById('progressText').textContent = `${labeled} / ${TOTAL}`;
+
+  const undoBtn = document.getElementById('undoBtn');
+  if (undoBtn) undoBtn.disabled = undoStack.length === 0;
+}
+
+// =========================================================================
+// Import / Export
+// =========================================================================
+function exportLabels() {
+  const blob = new Blob([JSON.stringify(labels, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `dedup_labels_${new Date().toISOString().slice(0, 10)}.json`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+function importLabels() {
+  document.getElementById('importInput').click();
+}
+
+async function handleImportFile(event) {
+  const file = event.target.files[0];
+  if (!file) return;
+  try {
+    const text = await file.text();
+    const imported = JSON.parse(text);
+
+    // Support both raw format { pairId: {label, notes} } and wrapped format { labels: {...} }
+    const labelsObj = imported.labels || imported;
+    let count = 0;
+    for (const [pairId, data] of Object.entries(labelsObj)) {
+      if (data.label && ['match', 'no_match', 'uncertain'].includes(data.label)) {
+        count++;
+      }
+    }
+    if (!confirm(`Import ${count} labels? This will merge with existing labels.`)) return;
+
+    // Merge: imported labels override existing
+    const merged = { ...labels };
+    for (const [pairId, data] of Object.entries(labelsObj)) {
+      if (data.label && ['match', 'no_match', 'uncertain'].includes(data.label)) {
+        merged[pairId] = { label: data.label, notes: data.notes || '' };
+      }
+    }
+    await bulkSaveLabels(merged);
+    applyFilterAndSort();
+    updateStats();
+    refresh();
+  } catch (e) {
+    alert(`Import failed: ${e.message}`);
+  }
+  event.target.value = '';
+}
+
+function clearLabels() {
+  const count = Object.keys(labels).length;
+  if (!confirm(`Clear all ${count} labels? This cannot be undone.`)) return;
+  clearAllLabels().then(() => {
+    applyFilterAndSort();
+    updateStats();
+    refresh();
+  });
+}
+
+// =========================================================================
+// Keyboard Shortcuts
+// =========================================================================
+document.addEventListener('keydown', (e) => {
+  // Ignore when typing in inputs
+  if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+
+  // View-independent shortcuts
+  if ((e.metaKey || e.ctrlKey) && e.key === 'z') {
+    e.preventDefault();
+    undoLast();
+    return;
+  }
+
+  if (currentView === 'focus') {
+    switch (e.key) {
+      case 'a': case '1': doLabel('match'); break;
+      case 'd': case '2': doLabel('no_match'); break;
+      case 's': case '3': e.preventDefault(); doLabel('uncertain'); break;
+      case 'ArrowLeft': case 'k': navigate(-1); break;
+      case 'ArrowRight': case 'j': navigate(1); break;
+      case 'n': document.getElementById('notesInput')?.focus(); break;
+    }
+  }
+
+  // Tab between views
+  if (e.key === 'Tab' && !e.shiftKey && !e.metaKey && !e.ctrlKey) {
+    e.preventDefault();
+    setView(currentView === 'focus' ? 'list' : 'focus');
+  }
+});
+
+// =========================================================================
+// Refresh helper
+// =========================================================================
+function refresh() {
+  if (currentView === 'focus') {
+    showCurrentPair();
+  } else {
+    renderListView();
+  }
+}
+
+// =========================================================================
+// Init
+// =========================================================================
+async function init() {
+  await initDB();
+  await migrateFromLocalStorage();
+  labels = await loadAllLabels();
+  applyFilterAndSort();
+  updateStats();
+  showCurrentPair();
+}
+
+init();
+</script>
+</body>
+</html>

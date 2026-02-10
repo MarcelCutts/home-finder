@@ -1,0 +1,28 @@
+{% if properties %}
+<div class="card-grid">
+    {% for prop in properties %}
+        {% include "_property_card.html" %}
+    {% endfor %}
+</div>
+
+{% if total_pages > 1 %}
+<nav class="pagination">
+    {% if page > 1 %}
+    <a href="?page={{ page - 1 }}&sort={{ sort }}{% if min_price %}&min_price={{ min_price }}{% endif %}{% if max_price %}&max_price={{ max_price }}{% endif %}{% if bedrooms %}&bedrooms={{ bedrooms }}{% endif %}{% if min_rating %}&min_rating={{ min_rating }}{% endif %}{% if area %}&area={{ area }}{% endif %}"
+       hx-get="?page={{ page - 1 }}&sort={{ sort }}{% if min_price %}&min_price={{ min_price }}{% endif %}{% if max_price %}&max_price={{ max_price }}{% endif %}{% if bedrooms %}&bedrooms={{ bedrooms }}{% endif %}{% if min_rating %}&min_rating={{ min_rating }}{% endif %}{% if area %}&area={{ area }}{% endif %}"
+       hx-target="#results" hx-push-url="true" hx-indicator="#loading"
+       role="button" class="outline">Previous</a>
+    {% endif %}
+    <span>Page {{ page }} of {{ total_pages }}</span>
+    {% if page < total_pages %}
+    <a href="?page={{ page + 1 }}&sort={{ sort }}{% if min_price %}&min_price={{ min_price }}{% endif %}{% if max_price %}&max_price={{ max_price }}{% endif %}{% if bedrooms %}&bedrooms={{ bedrooms }}{% endif %}{% if min_rating %}&min_rating={{ min_rating }}{% endif %}{% if area %}&area={{ area }}{% endif %}"
+       hx-get="?page={{ page + 1 }}&sort={{ sort }}{% if min_price %}&min_price={{ min_price }}{% endif %}{% if max_price %}&max_price={{ max_price }}{% endif %}{% if bedrooms %}&bedrooms={{ bedrooms }}{% endif %}{% if min_rating %}&min_rating={{ min_rating }}{% endif %}{% if area %}&area={{ area }}{% endif %}"
+       hx-target="#results" hx-push-url="true" hx-indicator="#loading"
+       role="button" class="outline">Next</a>
+    {% endif %}
+</nav>
+{% endif %}
+
+{% else %}
+<p>No properties found matching your filters.</p>
+{% endif %}

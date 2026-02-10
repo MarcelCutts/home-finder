@@ -1,6 +1,6 @@
 # Home Finder
 
-Multi-platform London rental property scraper with commute filtering, AI quality analysis, and Telegram notifications.
+Multi-platform London rental property scraper with commute filtering, AI quality analysis, web dashboard, and Telegram notifications.
 
 ## Features
 
@@ -8,8 +8,8 @@ Multi-platform London rental property scraper with commute filtering, AI quality
 - **Cross-platform deduplication**: Weighted multi-signal matching merges the same property listed on different platforms
 - **Commute filtering**: Filter properties within X minutes of your destination using TravelTime API
 - **AI quality analysis**: Claude vision analyzes property images for condition, kitchen, space, and value
-- **Floorplan gating**: Optionally require properties to have floorplans before notifying
-- **Rich Telegram notifications**: Property cards with photos, star ratings, commute times, quality summaries, and direct links
+- **Web dashboard**: FastAPI-powered dashboard with HTMX live filtering, map view with MarkerCluster, property detail pages with area context, and lightbox gallery
+- **Rich Telegram notifications**: Property cards with photos, star ratings, commute times, quality summaries, and direct links (including web dashboard deep links)
 - **Detail enrichment**: Fetches gallery images, floorplans, and descriptions from property detail pages
 - **SQLite storage**: Track seen properties to only notify about new listings, with notification retry on failure
 
@@ -30,17 +30,63 @@ Multi-platform London rental property scraper with commute filtering, AI quality
 
 3. **Run**:
    ```bash
+   # One-shot pipeline (scrape + filter + notify)
    uv run home-finder
+
+   # Web dashboard with background pipeline
+   uv run home-finder --serve
    ```
 
 ### Run Modes
 
 ```bash
-uv run home-finder                    # Full pipeline with Telegram notifications
-uv run home-finder --dry-run          # Full pipeline, save to DB but no notifications
-uv run home-finder --scrape-only      # Just scrape and print (no filtering/storage)
+uv run home-finder                      # Full pipeline with Telegram notifications
+uv run home-finder --dry-run            # Full pipeline, save to DB but no notifications
+uv run home-finder --scrape-only        # Just scrape and print (no filtering/storage)
 uv run home-finder --max-per-scraper 5  # Limit results per scraper (for testing)
+uv run home-finder --serve              # Web dashboard + recurring pipeline scheduler
+uv run home-finder --debug              # Enable debug-level logging
 ```
+
+## Web Dashboard
+
+The `--serve` flag starts a FastAPI web server on port 8000 with a background pipeline scheduler that runs every 55 minutes (configurable via `HOME_FINDER_PIPELINE_INTERVAL_MINUTES`).
+
+### Dashboard Features
+
+- **Property grid**: Filterable, sortable card grid with pagination
+- **HTMX live filtering**: Filters update without full-page reload (progressive enhancement — works without JS too)
+- **Map view**: Toggle between grid and map. MarkerCluster groups nearby properties; markers are color-coded by quality rating (green 4-5, amber 3, red 1-2, grey unrated)
+- **Property detail pages**: Full gallery with lightbox (keyboard + touch/swipe navigation), floorplan, quality analysis breakdown, area context (rental benchmarks, council tax, crime rates, rent trends), and source links
+- **Quality summary on cards**: Condition severity badge and one-line AI summary on each card
+- **Telegram integration**: When `HOME_FINDER_WEB_BASE_URL` is set, Telegram notifications include a "Details" button linking to the web dashboard
+
+### Dashboard Configuration
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `HOME_FINDER_WEB_BASE_URL` | `""` | Public URL for the dashboard (enables Telegram deep links) |
+| `HOME_FINDER_WEB_PORT` | `8000` | Web server port |
+| `HOME_FINDER_WEB_HOST` | `0.0.0.0` | Web server bind address |
+| `HOME_FINDER_PIPELINE_INTERVAL_MINUTES` | `55` | Minutes between pipeline runs in serve mode |
+
+### Security
+
+The web dashboard is read-only (no forms that mutate state). Security measures include:
+
+- **XSS prevention**: All user-controlled content is escaped. Scraped descriptions use `| e | safe` in Jinja2. Leaflet popups use `textContent` instead of HTML injection.
+- **Security headers**: `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy: strict-origin-when-cross-origin`
+- **Input validation**: Query parameters are clamped to valid ranges; sort options are whitelisted
+- **Error handling**: Database errors render a user-friendly error page instead of raw tracebacks
+
+### Endpoints
+
+| Path | Description |
+|------|-------------|
+| `GET /` | Dashboard with filters (supports HTMX partial rendering) |
+| `GET /property/{unique_id}` | Property detail page |
+| `GET /health` | Health check (`{"status": "ok"}`) |
+| `GET /static/...` | Static assets (CSS, JS) |
 
 ## Configuration
 
@@ -72,6 +118,7 @@ Create a `.env` file with these settings (all use `HOME_FINDER_` prefix):
 - `HOME_FINDER_MAX_BEDROOMS`: Maximum bedrooms (default: 2)
 - `HOME_FINDER_DESTINATION_POSTCODE`: Your destination postcode (default: N1 5AA)
 - `HOME_FINDER_MAX_COMMUTE_MINUTES`: Maximum commute time in minutes (default: 30)
+- `HOME_FINDER_SEARCH_AREAS`: Comma-separated outcodes/boroughs (default: e3,e5,e9,e10,e15,e17,n15,n16,n17)
 
 ### Scraper Filters
 
@@ -123,7 +170,7 @@ src/home_finder/
 │   ├── base.py            # Abstract BaseScraper interface
 │   ├── openrent.py        # OpenRent (crawlee)
 │   ├── rightmove.py       # Rightmove (crawlee + typeahead API)
-│   ├── zoopla.py          # Zoopla (Playwright for Cloudflare bypass)
+│   ├── zoopla.py          # Zoopla (curl_cffi for Cloudflare bypass)
 │   ├── onthemarket.py     # OnTheMarket (curl_cffi)
 │   ├── zoopla_models.py   # Pydantic models for Zoopla JSON parsing
 │   ├── detail_fetcher.py  # Gallery/floorplan extraction from detail pages
@@ -136,6 +183,20 @@ src/home_finder/
 │   ├── detail_enrichment.py  # Enriches merged properties with images/descriptions
 │   ├── floorplan.py       # Floorplan analysis (legacy)
 │   └── quality.py         # Claude vision property quality analysis
+├── web/                   # Web dashboard (FastAPI)
+│   ├── app.py             # Application factory, lifespan, security middleware
+│   ├── routes.py          # Dashboard, detail, health check routes
+│   ├── templates/         # Jinja2 templates
+│   │   ├── base.html      # Base layout (Pico CSS + Leaflet + HTMX)
+│   │   ├── dashboard.html # Main dashboard page with filters + map toggle
+│   │   ├── detail.html    # Property detail page
+│   │   ├── error.html     # Error/404 page
+│   │   ├── _results.html  # HTMX partial (card grid + pagination)
+│   │   ├── _property_card.html  # Single property card component
+│   │   └── _quality_card.html   # Quality analysis breakdown component
+│   └── static/
+│       ├── app.js         # Lightbox, detail map, dashboard map, lazy loading
+│       └── style.css      # All custom styles
 ├── notifiers/
 │   └── telegram.py        # Rich Telegram notifications with quality cards
 ├── db/
@@ -143,17 +204,31 @@ src/home_finder/
 ├── utils/
 │   ├── address.py         # Address normalization for deduplication
 │   └── image_hash.py      # Perceptual image hashing
-├── models.py              # Pydantic models (Property, MergedProperty, etc.)
+├── models.py              # Pydantic models (Property, MergedProperty, SOURCE_NAMES, etc.)
 ├── config.py              # Settings management (pydantic-settings)
 ├── logging.py             # Structured logging (structlog)
 └── main.py                # Pipeline orchestration and CLI
+
+tests/
+├── test_db/               # Database storage tests
+│   ├── test_storage.py    # Core CRUD, notification tracking
+│   └── test_storage_quality.py  # Quality analysis, paginated queries, detail
+├── test_web/              # Web dashboard tests
+│   ├── test_app.py        # App factory, security headers, middleware
+│   └── test_routes.py     # Routes, filters, HTMX, XSS prevention
+├── test_filters/          # Filter tests (criteria, commute, dedup, quality, etc.)
+├── test_notifiers/
+│   ├── test_telegram.py   # Core notification formatting and sending
+│   └── test_telegram_web.py  # Web dashboard integration (inline keyboard, deep links)
+├── test_scrapers/         # Scraper tests per platform
+└── integration/           # Integration tests (pipeline, real scraping)
 ```
 
 ## Deployment
 
 ### Fly.io (recommended)
 
-Deploys to London (`lhr`) for UK IP, with supercronic for cron scheduling:
+Deploys to London (`lhr`) for UK IP. The `--serve` flag runs the web dashboard with a background pipeline scheduler:
 
 ```bash
 fly apps create home-finder
@@ -162,14 +237,20 @@ fly secrets set HOME_FINDER_TELEGRAM_BOT_TOKEN=xxx HOME_FINDER_TELEGRAM_CHAT_ID=
 fly deploy
 ```
 
+The `fly.toml` includes a health check on `/health` with a 30-second grace period (matching the pipeline initial delay).
+
 ### Docker (local)
 
 ```bash
-docker build -t home-finder .
-docker run --env-file .env -v ./data:/app/data home-finder
+docker build -f Dockerfile.fly -t home-finder .
+docker run --env-file .env -p 8000:8000 -v ./data:/app/data home-finder
 ```
 
-### systemd timer
+### One-shot mode (cron/systemd)
+
+For running the pipeline without the web server:
+
+**systemd timer:**
 
 Create `/etc/systemd/system/home-finder.service`:
 
@@ -208,7 +289,7 @@ Enable:
 sudo systemctl enable --now home-finder.timer
 ```
 
-### cron
+**cron:**
 
 ```bash
 */55 * * * * cd /path/to/home-finder && /path/to/uv run home-finder >> /var/log/home-finder.log 2>&1

@@ -691,7 +691,7 @@ class PropertyQualityFilter:
         """
         self._api_key = api_key
         self._max_images = max_images
-        self._client: "anthropic.AsyncAnthropic | None" = None
+        self._client: anthropic.AsyncAnthropic | None = None
 
     def _get_client(self) -> "anthropic.AsyncAnthropic":
         """Get or create the Anthropic client with optimized settings."""

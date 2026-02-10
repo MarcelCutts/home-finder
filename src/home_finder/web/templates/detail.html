@@ -1,0 +1,169 @@
+{% extends "base.html" %}
+
+{% block title %}{{ prop.title }} — Home Finder{% endblock %}
+
+{% block nav_info %}<a href="/">&larr; Dashboard</a>{% endblock %}
+
+{% block content %}
+<article>
+    {# Header #}
+    <header>
+        <hgroup>
+            <h1>{{ prop.title }}</h1>
+            <p>
+                {% if prop.quality_rating %}
+                <span class="star-rating star-rating-large">
+                    {% for i in range(1, 6) %}
+                        {% if i <= prop.quality_rating %}
+                            <span class="star filled">&#9733;</span>
+                        {% else %}
+                            <span class="star empty">&#9734;</span>
+                        {% endif %}
+                    {% endfor %}
+                </span>
+                {% endif %}
+
+                {% if prop.min_price and prop.max_price and prop.min_price != prop.max_price %}
+                <strong>&pound;{{ "{:,}".format(prop.min_price) }}-&pound;{{ "{:,}".format(prop.max_price) }}/mo</strong>
+                {% else %}
+                <strong>&pound;{{ "{:,}".format(prop.price_pcm) }}/mo</strong>
+                {% endif %}
+                &middot; {{ prop.bedrooms }} bed
+                &middot; {{ prop.address }}{% if prop.postcode %}, {{ prop.postcode }}{% endif %}
+                {% if prop.commute_minutes %}
+                &middot; {{ prop.commute_minutes }} min commute
+                    {% if prop.transport_mode == "cycling" %}&#128692;{% elif prop.transport_mode == "public_transport" %}&#128647;{% endif %}
+                {% endif %}
+            </p>
+        </hgroup>
+    </header>
+
+    {# Source links #}
+    <div class="source-links">
+        {% for source_key in prop.sources_list %}
+        {% set url = prop.source_urls_dict.get(source_key) %}
+        {% if url %}
+        <a href="{{ url }}" target="_blank" rel="noopener" role="button" class="outline">
+            {{ source_names.get(source_key, source_key) }}
+        </a>
+        {% else %}
+        <span role="button" class="outline secondary">{{ source_names.get(source_key, source_key) }}</span>
+        {% endif %}
+        {% endfor %}
+        {% if prop.latitude and prop.longitude %}
+        <a href="https://www.google.com/maps?q={{ prop.latitude }},{{ prop.longitude }}" target="_blank" rel="noopener" role="button" class="outline">
+            Map
+        </a>
+        {% endif %}
+    </div>
+
+    {# Floorplan #}
+    {% if prop.floorplan_images %}
+    <section>
+        <h3>Floorplan</h3>
+        <div class="floorplan-section">
+            {% for img in prop.floorplan_images %}
+            <img src="{{ img.url }}" alt="Floorplan" loading="lazy" class="floorplan-image" data-lightbox>
+            {% endfor %}
+        </div>
+    </section>
+    {% endif %}
+
+    {# Gallery #}
+    {% if prop.gallery_images %}
+    <section>
+        <h3>Gallery ({{ prop.gallery_images|length }} images)</h3>
+        <div class="gallery-grid">
+            {% for img in prop.gallery_images %}
+            <img src="{{ img.url }}" alt="Property photo {{ loop.index }}" loading="lazy" class="gallery-thumb" data-lightbox>
+            {% endfor %}
+        </div>
+    </section>
+    {% endif %}
+
+    {# Quality Analysis #}
+    {% set qa = prop.quality_analysis %}
+    {% include "_quality_card.html" %}
+
+    {# Description #}
+    {% if best_description %}
+    <section>
+        <h3>Description</h3>
+        <div class="description-text">{{ best_description | e | replace("\n", "<br>") | safe }}</div>
+    </section>
+    {% endif %}
+
+    {# Map #}
+    {% if prop.latitude and prop.longitude %}
+    <section>
+        <h3>Location</h3>
+        <div id="map" data-lat="{{ prop.latitude }}" data-lon="{{ prop.longitude }}" data-title="{{ prop.address }}"></div>
+    </section>
+    {% endif %}
+
+    {# Area Context #}
+    {% if area_context and area_context.description %}
+    <section>
+        <h3>Area: {{ outcode }}</h3>
+        <p>{{ area_context.description }}</p>
+
+        {% if area_context.benchmarks %}
+        <h4>Rental Benchmarks ({{ outcode }})</h4>
+        <table>
+            <thead><tr><th>Bedrooms</th><th>Average Rent</th></tr></thead>
+            <tbody>
+                {% for beds, rent in area_context.benchmarks.items() %}
+                <tr><td>{{ beds }} bed</td><td>&pound;{{ "{:,}".format(rent) }}/mo</td></tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        {% endif %}
+
+        <div class="area-details">
+            {% if area_context.borough and area_context.council_tax %}
+            <div>
+                <h4>Council Tax ({{ area_context.borough }})</h4>
+                <table>
+                    <thead><tr><th>Band</th><th>Monthly</th></tr></thead>
+                    <tbody>
+                        {% for band, amount in area_context.council_tax.items() %}
+                        <tr><td>{{ band }}</td><td>&pound;{{ amount }}/mo</td></tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% endif %}
+
+            {% if area_context.crime %}
+            <div>
+                <h4>Crime</h4>
+                <p>{{ area_context.crime.rate }}/1,000 residents ({{ area_context.crime.vs_london }} vs London avg)
+                    — <span class="badge
+                        {% if area_context.crime.risk in ('low', 'low-medium') %}badge-green
+                        {% elif area_context.crime.risk == 'medium' %}badge-amber
+                        {% else %}badge-red{% endif %}">{{ area_context.crime.risk }}</span>
+                </p>
+                {% if area_context.crime.note %}<p><small>{{ area_context.crime.note }}</small></p>{% endif %}
+            </div>
+            {% endif %}
+
+            {% if area_context.rent_trend %}
+            <div>
+                <h4>Rent Trend</h4>
+                <p>+{{ area_context.rent_trend.yoy_pct }}% YoY ({{ area_context.rent_trend.direction }})</p>
+            </div>
+            {% endif %}
+        </div>
+    </section>
+    {% endif %}
+</article>
+
+{# Lightbox overlay #}
+<div id="lightbox" class="lightbox" hidden>
+    <button class="lightbox-close" aria-label="Close">&times;</button>
+    <button class="lightbox-prev" aria-label="Previous">&lsaquo;</button>
+    <img class="lightbox-img" src="" alt="Full size">
+    <button class="lightbox-next" aria-label="Next">&rsaquo;</button>
+    <div class="lightbox-counter"></div>
+</div>
+{% endblock %}

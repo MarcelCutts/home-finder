@@ -3,18 +3,6 @@ FROM python:3.11-slim-bookworm
 # Install uv (pinned version for reproducibility)
 COPY --from=ghcr.io/astral-sh/uv:0.6.6 /uv /uvx /bin/
 
-# Install supercronic for cron scheduling
-ENV SUPERCRONIC_URL=https://github.com/aptible/supercronic/releases/download/v0.2.42/supercronic-linux-amd64 \
-    SUPERCRONIC=supercronic-linux-amd64 \
-    SUPERCRONIC_SHA1SUM=b444932b81583b7860849f59fdb921217572ece2
-RUN apt-get update && apt-get install -y --no-install-recommends curl \
-    && curl -fsSLO "$SUPERCRONIC_URL" \
-    && echo "${SUPERCRONIC_SHA1SUM}  ${SUPERCRONIC}" | sha1sum -c - \
-    && chmod +x "$SUPERCRONIC" \
-    && mv "$SUPERCRONIC" /usr/local/bin/supercronic \
-    && apt-get purge -y curl && apt-get autoremove -y \
-    && rm -rf /var/lib/apt/lists/*
-
 # Configure uv for production
 ENV UV_COMPILE_BYTECODE=1 \
     UV_LINK_MODE=copy
@@ -33,7 +21,8 @@ COPY src/ ./src/
 # Install the project
 RUN uv sync --frozen --no-dev
 
-COPY crontab ./crontab
 RUN mkdir -p /app/data
 
-CMD ["supercronic", "/app/crontab"]
+EXPOSE 8000
+
+CMD ["uv", "run", "home-finder", "--serve"]

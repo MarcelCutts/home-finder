@@ -7,20 +7,13 @@ from typing import TYPE_CHECKING
 
 from home_finder.filters.quality import PropertyQualityAnalysis
 from home_finder.logging import get_logger
-from home_finder.models import MergedProperty, Property, TransportMode
+from home_finder.models import SOURCE_NAMES, MergedProperty, Property, TransportMode
 
 if TYPE_CHECKING:
     from aiogram import Bot
     from aiogram.types import InlineKeyboardMarkup
 
 logger = get_logger(__name__)
-
-SOURCE_NAMES: dict[str, str] = {
-    "openrent": "OpenRent",
-    "rightmove": "Rightmove",
-    "zoopla": "Zoopla",
-    "onthemarket": "OnTheMarket",
-}
 
 
 def _format_star_rating(rating: int) -> str:
@@ -373,6 +366,7 @@ def format_merged_property_caption(
 
 def _build_inline_keyboard(
     merged: MergedProperty,
+    web_base_url: str = "",
 ) -> "InlineKeyboardMarkup":
     """Build an inline keyboard markup with source URL buttons and map button.
 
@@ -381,6 +375,16 @@ def _build_inline_keyboard(
     from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
     buttons: list[InlineKeyboardButton] = []
+
+    # Add web dashboard link if configured
+    if web_base_url:
+        base = web_base_url.rstrip("/")
+        buttons.append(
+            InlineKeyboardButton(
+                text="Details",
+                url=f"{base}/property/{merged.unique_id}",
+            )
+        )
 
     for source in merged.sources:
         name = SOURCE_NAMES.get(source.value, source.value)
@@ -426,16 +430,18 @@ def _get_best_image_url(merged: MergedProperty) -> str | None:
 class TelegramNotifier:
     """Send property notifications via Telegram."""
 
-    def __init__(self, *, bot_token: str, chat_id: int) -> None:
+    def __init__(self, *, bot_token: str, chat_id: int, web_base_url: str = "") -> None:
         """Initialize the notifier.
 
         Args:
             bot_token: Telegram bot token from @BotFather.
             chat_id: Chat ID to send notifications to.
+            web_base_url: Base URL for web dashboard (optional).
         """
         self.bot_token = bot_token
         self.chat_id = chat_id
-        self._bot: "Bot | None" = None
+        self.web_base_url = web_base_url.rstrip("/") if web_base_url else ""
+        self._bot: Bot | None = None
 
     def _get_bot(self) -> "Bot":
         """Get or create the bot instance."""
@@ -544,7 +550,7 @@ class TelegramNotifier:
         """
         try:
             bot = self._get_bot()
-            keyboard = _build_inline_keyboard(merged)
+            keyboard = _build_inline_keyboard(merged, web_base_url=self.web_base_url)
             image_url = _get_best_image_url(merged)
 
             sent_photo = False
