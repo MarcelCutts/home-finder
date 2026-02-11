@@ -1,10 +1,20 @@
 <article class="property-card">
     <a href="/property/{{ prop.unique_id }}" class="card-link">
-        {% if prop.image_url %}
-        <img src="{{ prop.image_url }}" alt="{{ prop.title }}" loading="lazy" class="card-image">
-        {% else %}
-        <div class="card-image card-image-placeholder">No image</div>
-        {% endif %}
+        <div class="card-image-wrapper">
+            {% if prop.image_url %}
+            <img src="{{ prop.image_url }}" alt="{{ prop.title }}" loading="lazy" class="card-image">
+            {% else %}
+            <div class="card-image card-image-placeholder">No image</div>
+            {% endif %}
+            <div class="card-overlay">
+                {% if prop.min_price and prop.max_price and prop.min_price != prop.max_price %}
+                <strong class="card-price">&pound;{{ "{:,}".format(prop.min_price) }}-&pound;{{ "{:,}".format(prop.max_price) }}/mo</strong>
+                {% else %}
+                <strong class="card-price">&pound;{{ "{:,}".format(prop.price_pcm) }}/mo</strong>
+                {% endif %}
+                <span class="badge badge-neutral">{{ prop.bedrooms }} bed</span>
+            </div>
+        </div>
         <div class="card-body">
             {% if prop.quality_rating %}
             <div class="star-rating">
@@ -17,15 +27,6 @@
                 {% endfor %}
             </div>
             {% endif %}
-
-            <div class="card-price-row">
-                {% if prop.min_price and prop.max_price and prop.min_price != prop.max_price %}
-                <strong class="card-price">&pound;{{ "{:,}".format(prop.min_price) }}-&pound;{{ "{:,}".format(prop.max_price) }}/mo</strong>
-                {% else %}
-                <strong class="card-price">&pound;{{ "{:,}".format(prop.price_pcm) }}/mo</strong>
-                {% endif %}
-                <span class="badge badge-neutral">{{ prop.bedrooms }} bed</span>
-            </div>
 
             <span class="card-title">{{ prop.title }}</span>
 

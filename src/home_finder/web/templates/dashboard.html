@@ -41,23 +41,23 @@
                 <option value="rating_desc" {% if sort == "rating_desc" %}selected{% endif %}>Rating</option>
             </select>
 
-            <button type="submit">Filter</button>
+            <button type="submit" class="secondary">Filter</button>
             <a href="/" role="button" class="outline secondary filter-reset"
                hx-get="/" hx-target="#results" hx-push-url="true" hx-indicator="#loading">Reset</a>
+
+            <div class="view-toggle" role="group">
+                <button type="button" class="view-toggle-btn active" data-view="grid" aria-label="Grid view" aria-pressed="true">
+                    <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><rect x="1" y="1" width="6" height="6" rx="1"/><rect x="9" y="1" width="6" height="6" rx="1"/><rect x="1" y="9" width="6" height="6" rx="1"/><rect x="9" y="9" width="6" height="6" rx="1"/></svg>
+                    Grid
+                </button>
+                <button type="button" class="view-toggle-btn" data-view="map" aria-label="Map view" aria-pressed="false">
+                    <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 1C5.2 1 3 3.2 3 6c0 3.5 5 9 5 9s5-5.5 5-9c0-2.8-2.2-5-5-5zm0 7a2 2 0 110-4 2 2 0 010 4z"/></svg>
+                    Map
+                </button>
+            </div>
         </div>
     </form>
 </section>
-
-<div class="view-toggle" role="group">
-    <button class="view-toggle-btn active" data-view="grid" aria-label="Grid view" aria-pressed="true">
-        <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><rect x="1" y="1" width="6" height="6" rx="1"/><rect x="9" y="1" width="6" height="6" rx="1"/><rect x="1" y="9" width="6" height="6" rx="1"/><rect x="9" y="9" width="6" height="6" rx="1"/></svg>
-        Grid
-    </button>
-    <button class="view-toggle-btn" data-view="map" aria-label="Map view" aria-pressed="false">
-        <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 1C5.2 1 3 3.2 3 6c0 3.5 5 9 5 9s5-5.5 5-9c0-2.8-2.2-5-5-5zm0 7a2 2 0 110-4 2 2 0 010 4z"/></svg>
-        Map
-    </button>
-</div>
 
 <div id="loading" class="htmx-indicator">
     <div class="loading-bar"></div>

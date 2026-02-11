@@ -153,7 +153,7 @@
 
     return L.divIcon({
       className: "rating-marker",
-      html: '<div style="background:' + color + ';width:12px;height:12px;border-radius:50%;border:2px solid #fff;box-shadow:0 1px 3px rgba(0,0,0,.4)"></div>',
+      html: '<div style="background:' + color + ';width:12px;height:12px;border-radius:50%;border:2px solid #1a1b23;box-shadow:0 1px 3px rgba(0,0,0,.4)"></div>',
       iconSize: [16, 16],
       iconAnchor: [8, 8],
       popupAnchor: [0, -10],
@@ -182,11 +182,11 @@
 
       // Build safe popup with DOM
       var popupDiv = document.createElement("div");
-      popupDiv.style.cssText = "font-size:13px;line-height:1.4";
+      popupDiv.style.cssText = "font-size:13px;line-height:1.4;color:#e2e2e8";
       var link = document.createElement("a");
       link.href = p.url;
       link.textContent = p.title;
-      link.style.fontWeight = "600";
+      link.style.cssText = "font-weight:600;color:#818cf8";
       popupDiv.appendChild(link);
       popupDiv.appendChild(document.createElement("br"));
       var info = document.createTextNode(
