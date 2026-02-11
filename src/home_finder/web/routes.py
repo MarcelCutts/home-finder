@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, Request
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
 
 from home_finder.db import PropertyStorage
@@ -20,6 +20,7 @@ from home_finder.filters.quality import (
 )
 from home_finder.logging import get_logger
 from home_finder.models import SOURCE_NAMES
+from home_finder.utils.image_cache import get_cache_dir, safe_dir_name, url_to_filename
 
 logger = get_logger(__name__)
 
@@ -36,6 +37,10 @@ def _get_storage(request: Request) -> PropertyStorage:
 def _get_search_areas(request: Request) -> list[str]:
     settings = request.app.state.settings
     return [a.upper() for a in settings.get_search_areas()]
+
+
+def _get_data_dir(request: Request) -> str:
+    return request.app.state.settings.data_dir  # type: ignore[no-any-return]
 
 
 def _extract_outcode(postcode: str | None) -> str | None:
@@ -139,6 +144,42 @@ async def dashboard(
     return templates.TemplateResponse("dashboard.html", context)
 
 
+_IMAGE_MEDIA_TYPES = {
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".png": "image/png",
+    ".gif": "image/gif",
+    ".webp": "image/webp",
+}
+
+
+@router.get("/images/{unique_id}/{filename}")
+async def serve_cached_image(request: Request, unique_id: str, filename: str) -> FileResponse:
+    """Serve a cached property image from disk.
+
+    Returns the image with immutable cache headers (images never change).
+    """
+    # Validate filename — no directory traversal
+    if ".." in filename or "/" in filename or "\\" in filename:
+        return JSONResponse({"error": "invalid filename"}, status_code=400)  # type: ignore[return-value]
+
+    data_dir = _get_data_dir(request)
+    image_path = get_cache_dir(data_dir, unique_id) / filename
+
+    if not image_path.is_file():
+        return JSONResponse({"error": "not found"}, status_code=404)  # type: ignore[return-value]
+
+    # Determine media type from extension
+    ext = image_path.suffix.lower()
+    media_type = _IMAGE_MEDIA_TYPES.get(ext, "image/jpeg")
+
+    return FileResponse(
+        image_path,
+        media_type=media_type,
+        headers={"Cache-Control": "public, max-age=31536000, immutable"},
+    )
+
+
 @router.get("/property/{unique_id}", response_class=HTMLResponse)
 async def property_detail(request: Request, unique_id: str) -> HTMLResponse:
     """Property detail page."""
@@ -174,6 +215,18 @@ async def property_detail(request: Request, unique_id: str) -> HTMLResponse:
             area_context["rent_trend"] = RENT_TRENDS.get(borough)
         area_context["crime"] = CRIME_RATES.get(outcode)
 
+    # Build URL mapping: original CDN URL -> local /images/ URL for cached images
+    image_url_map: dict[str, str] = {}
+    data_dir = _get_data_dir(request)
+    safe_id = safe_dir_name(unique_id)
+    for image_list_key in ("gallery_images", "floorplan_images"):
+        for idx, img in enumerate(prop.get(image_list_key, [])):
+            img_url = str(img.url)
+            fname = url_to_filename(img_url, img.image_type, idx)
+            cached = get_cache_dir(data_dir, unique_id) / fname
+            if cached.is_file():
+                image_url_map[img_url] = f"/images/{safe_id}/{fname}"
+
     # Get the longest description
     descriptions = prop.get("descriptions_dict", {})
     best_description = ""
@@ -193,5 +246,6 @@ async def property_detail(request: Request, unique_id: str) -> HTMLResponse:
             "area_context": area_context,
             "best_description": best_description,
             "source_names": SOURCE_NAMES,
+            "image_url_map": image_url_map,
         },
     )

@@ -1,16 +1,34 @@
 # Home Finder
 
+![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)
+![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)
+![Code style: ruff](https://img.shields.io/badge/code%20style-ruff-000000.svg)
+
 Multi-platform London rental property scraper with commute filtering, AI quality analysis, web dashboard, and Telegram notifications.
+
+## Table of Contents
+
+- [Features](#features)
+- [Quick Start](#quick-start)
+- [Web Dashboard](#web-dashboard)
+- [Configuration](#configuration)
+- [Getting API Keys](#getting-api-keys)
+- [Running Tests](#running-tests)
+- [Architecture](#architecture)
+- [Project Structure](#project-structure)
+- [Deployment](#deployment)
 
 ## Features
 
 - **Multi-platform scraping**: OpenRent, Rightmove, Zoopla, OnTheMarket
-- **Cross-platform deduplication**: Weighted multi-signal matching merges the same property listed on different platforms
+- **Cross-platform deduplication**: Graduated multi-signal scoring merges the same property listed on different platforms (two-phase: pre- and post-enrichment)
 - **Commute filtering**: Filter properties within X minutes of your destination using TravelTime API
 - **AI quality analysis**: Claude vision analyzes property images for condition, kitchen, space, and value
 - **Web dashboard**: FastAPI-powered dashboard with HTMX live filtering, map view with MarkerCluster, property detail pages with area context, and lightbox gallery
 - **Rich Telegram notifications**: Property cards with photos, star ratings, commute times, quality summaries, and direct links (including web dashboard deep links)
 - **Detail enrichment**: Fetches gallery images, floorplans, and descriptions from property detail pages
+- **Disk-based image caching**: Images cached locally for reliable display in dashboard and quality analysis
+- **Proxy support**: HTTP/SOCKS5 proxy for accessing geo-restricted sites from outside the UK
 - **SQLite storage**: Track seen properties to only notify about new listings, with notification retry on failure
 
 ## Quick Start
@@ -85,6 +103,7 @@ The web dashboard is read-only (no forms that mutate state). Security measures i
 |------|-------------|
 | `GET /` | Dashboard with filters (supports HTMX partial rendering) |
 | `GET /property/{unique_id}` | Property detail page |
+| `GET /images/{unique_id}/{filename}` | Cached property image (immutable cache headers) |
 | `GET /health` | Health check (`{"status": "ok"}`) |
 | `GET /static/...` | Static assets (CSS, JS) |
 
@@ -128,6 +147,7 @@ Create a `.env` file with these settings (all use `HOME_FINDER_` prefix):
 
 ### Other
 
+- `HOME_FINDER_PROXY_URL`: HTTP/SOCKS5 proxy URL for geo-restricted sites (e.g., `socks5://user:pass@host:port`)
 - `HOME_FINDER_DATABASE_PATH`: SQLite database path (default: data/properties.db)
 
 ## Getting API Keys
@@ -161,6 +181,40 @@ uv run pytest -k "test_openrent"      # Run tests matching pattern
 uv run pytest --cov=src               # Run with coverage
 uv run pytest -m slow                 # Run slow tests (real scraping)
 ```
+
+## Architecture
+
+### Pipeline Flow
+
+The full pipeline (`uv run home-finder`) executes these steps in order:
+
+1. **Retry Unsent** — Resend failed notifications from previous runs
+2. **Scrape** — All scrapers run against configured search areas
+3. **Criteria Filter** — Apply price/bedroom filters
+4. **Location Filter** — Validate postcodes match search areas (catches scraper leakage)
+5. **Wrap as MergedProperty** — Wrap each property as a single-source `MergedProperty`
+6. **New Property Filter** — Check SQLite DB to only process unseen properties
+7. **Commute Filter** — TravelTime API filters by travel time (if configured)
+8. **Detail Enrichment** — Fetch gallery images, floorplans, descriptions; cache images to disk
+9. **Post-Enrichment Dedup** — Cross-platform deduplication using enriched data (images, postcodes, coordinates)
+10. **Floorplan Gate** — Drop properties without floorplans (if enabled)
+11. **Quality Analysis** — Claude vision analyzes property images (if configured)
+12. **Save & Notify** — Store in DB, send Telegram notifications
+
+### Deduplication
+
+Cross-platform deduplication uses weighted multi-signal scoring:
+
+| Signal | Points |
+|--------|--------|
+| Image hash match | +40 |
+| Full postcode match | +40 |
+| Coordinates within 50m | +40 (graduated) |
+| Street name match | +20 |
+| Outcode match | +10 |
+| Price within 3% | +15 (graduated) |
+
+A match requires **60+ points** from **2+ signals**. Coordinates and price use graduated scoring (partial credit for near-matches). Cross-platform matching requires full postcodes to prevent false positives.
 
 ## Project Structure
 
@@ -203,6 +257,7 @@ src/home_finder/
 │   └── storage.py         # SQLite storage with notification tracking
 ├── utils/
 │   ├── address.py         # Address normalization for deduplication
+│   ├── image_cache.py     # Disk-based image caching for gallery/floorplan images
 │   └── image_hash.py      # Perceptual image hashing
 ├── models.py              # Pydantic models (Property, MergedProperty, SOURCE_NAMES, etc.)
 ├── config.py              # Settings management (pydantic-settings)
@@ -221,6 +276,7 @@ tests/
 │   ├── test_telegram.py   # Core notification formatting and sending
 │   └── test_telegram_web.py  # Web dashboard integration (inline keyboard, deep links)
 ├── test_scrapers/         # Scraper tests per platform
+├── test_utils/            # Utility tests (image cache, address normalization)
 └── integration/           # Integration tests (pipeline, real scraping)
 ```
 

@@ -8,6 +8,10 @@ from collections.abc import Generator
 from pathlib import Path
 
 import pytest
+import pytest_asyncio
+
+from home_finder.config import Settings
+from home_finder.db import PropertyStorage
 
 
 @pytest.fixture(autouse=True)
@@ -88,3 +92,29 @@ def set_crawlee_storage_dir(tmp_path: Path) -> Generator[None, None, None]:
         os.environ["CRAWLEE_STORAGE_DIR"] = old_value
     else:
         os.environ.pop("CRAWLEE_STORAGE_DIR", None)
+
+
+@pytest_asyncio.fixture
+async def in_memory_storage():
+    """In-memory SQLite storage for integration tests."""
+    storage = PropertyStorage(":memory:")
+    await storage.initialize()
+    yield storage
+    await storage.close()
+
+
+@pytest.fixture
+def test_settings():
+    """Settings configured for integration testing (no real APIs)."""
+    return Settings(
+        telegram_bot_token="fake:test-token",
+        telegram_chat_id=0,
+        database_path=":memory:",
+        search_areas="e8",
+        min_price=1500,
+        max_price=2500,
+        min_bedrooms=1,
+        max_bedrooms=2,
+        enable_quality_filter=False,
+        require_floorplan=False,
+    )

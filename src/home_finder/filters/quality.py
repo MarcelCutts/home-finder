@@ -2,12 +2,14 @@
 
 import asyncio
 import base64
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, get_args
 
 from pydantic import BaseModel, ConfigDict
 
 from home_finder.logging import get_logger
 from home_finder.models import MergedProperty
+from home_finder.utils.image_cache import read_image_bytes
 
 if TYPE_CHECKING:
     import anthropic
@@ -796,11 +798,14 @@ class PropertyQualityFilter:
             logger.warning("image_download_error", url=url, error=str(e))
             return None
 
-    async def _build_image_block(self, url: str) -> "ImageBlockParam | None":
-        """Build an image block, downloading as base64 if needed for anti-bot sites.
+    async def _build_image_block(
+        self, url: str, cached_path: Path | None = None
+    ) -> "ImageBlockParam | None":
+        """Build an image block, using disk cache or downloading as needed.
 
         Args:
             url: Image URL.
+            cached_path: Path to cached image on disk (if available).
 
         Returns:
             ImageBlockParam or None if image couldn't be loaded.
@@ -810,6 +815,21 @@ class PropertyQualityFilter:
             ImageBlockParam,
             URLImageSourceParam,
         )
+
+        # Try disk cache first — avoids all HTTP requests
+        if cached_path is not None:
+            data = read_image_bytes(cached_path)
+            if data is not None:
+                media_type = self._get_media_type(url)
+                image_data = base64.standard_b64encode(data).decode("utf-8")
+                return ImageBlockParam(
+                    type="image",
+                    source=Base64ImageSourceParam(
+                        type="base64",
+                        media_type=media_type,
+                        data=image_data,
+                    ),
+                )
 
         if self._needs_base64_download(url):
             result = await self._download_image_as_base64(url)
@@ -832,7 +852,10 @@ class PropertyQualityFilter:
             )
 
     async def analyze_merged_properties(
-        self, properties: list[MergedProperty]
+        self,
+        properties: list[MergedProperty],
+        *,
+        data_dir: str | None = None,
     ) -> list[tuple[MergedProperty, PropertyQualityAnalysis]]:
         """Analyze quality for pre-enriched merged properties.
 
@@ -841,6 +864,8 @@ class PropertyQualityFilter:
 
         Args:
             properties: Enriched merged properties to analyze.
+            data_dir: Data directory for image cache. When set, reads
+                cached images from disk instead of downloading.
 
         Returns:
             List of (merged_property, analysis) tuples.
@@ -877,6 +902,23 @@ class PropertyQualityFilter:
             gallery_urls = [str(img.url) for img in merged.images if img.image_type == "gallery"]
             floorplan_url = str(merged.floorplan.url) if merged.floorplan else None
 
+            # Resolve cached image paths (if data_dir is set)
+            gallery_cached: list[Path | None] = []
+            floorplan_cached: Path | None = None
+            if data_dir:
+                from home_finder.utils.image_cache import get_cached_image_path
+
+                for idx, g_url in enumerate(gallery_urls):
+                    p = get_cached_image_path(data_dir, merged.unique_id, g_url, "gallery", idx)
+                    gallery_cached.append(p if p.is_file() else None)
+                if floorplan_url:
+                    p = get_cached_image_path(
+                        data_dir, merged.unique_id, floorplan_url, "floorplan", 0
+                    )
+                    floorplan_cached = p if p.is_file() else None
+            else:
+                gallery_cached = [None] * len(gallery_urls)
+
             if not gallery_urls and not floorplan_url:
                 logger.info(
                     "no_images_for_analysis",
@@ -907,6 +949,8 @@ class PropertyQualityFilter:
                 council_tax_band_c=council_tax_c,
                 crime_summary=crime_summary,
                 rent_trend=rent_trend,
+                gallery_cached_paths=gallery_cached[: self._max_images],
+                floorplan_cached_path=floorplan_cached,
             )
 
             if analysis:
@@ -982,6 +1026,8 @@ class PropertyQualityFilter:
         council_tax_band_c: int | None = None,
         crime_summary: str | None = None,
         rent_trend: str | None = None,
+        gallery_cached_paths: list[Path | None] | None = None,
+        floorplan_cached_path: Path | None = None,
     ) -> PropertyQualityAnalysis | None:
         """Analyze a single property using Claude vision with structured outputs.
 
@@ -1025,8 +1071,10 @@ class PropertyQualityFilter:
 
         # Add gallery images with labels (up to max_images)
         gallery_num = 0
-        for url in gallery_urls[: self._max_images]:
-            image_block = await self._build_image_block(url)
+        cached_paths = gallery_cached_paths or [None] * len(gallery_urls)
+        for idx, url in enumerate(gallery_urls[: self._max_images]):
+            cached = cached_paths[idx] if idx < len(cached_paths) else None
+            image_block = await self._build_image_block(url, cached_path=cached)
             if image_block:
                 gallery_num += 1
                 content.append(TextBlockParam(type="text", text=f"Gallery image {gallery_num}:"))
@@ -1035,7 +1083,9 @@ class PropertyQualityFilter:
         # Add floorplan with label if available and is a supported image format
         # (PDFs are not supported by Claude Vision API)
         if floorplan_url and self._is_valid_image_url(floorplan_url):
-            floorplan_block = await self._build_image_block(floorplan_url)
+            floorplan_block = await self._build_image_block(
+                floorplan_url, cached_path=floorplan_cached_path
+            )
             if floorplan_block:
                 content.append(TextBlockParam(type="text", text="Floorplan:"))
                 content.append(floorplan_block)

@@ -63,7 +63,7 @@
         <h3>Floorplan</h3>
         <div class="floorplan-section">
             {% for img in prop.floorplan_images %}
-            <img src="{{ img.url }}" alt="Floorplan" loading="lazy" class="floorplan-image" data-lightbox>
+            <img src="{{ image_url_map.get(img.url|string, img.url) }}" alt="Floorplan" loading="lazy" class="floorplan-image" data-lightbox>
             {% endfor %}
         </div>
     </section>
@@ -75,7 +75,7 @@
         <h3>Gallery ({{ prop.gallery_images|length }} images)</h3>
         <div class="gallery-grid">
             {% for img in prop.gallery_images %}
-            <img src="{{ img.url }}" alt="Property photo {{ loop.index }}" loading="lazy" class="gallery-thumb" data-lightbox>
+            <img src="{{ image_url_map.get(img.url|string, img.url) }}" alt="Property photo {{ loop.index }}" loading="lazy" class="gallery-thumb" data-lightbox>
             {% endfor %}
         </div>
     </section>

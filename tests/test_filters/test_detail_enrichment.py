@@ -1,5 +1,6 @@
 """Tests for detail enrichment pipeline step."""
 
+from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
 from pydantic import HttpUrl
@@ -7,6 +8,7 @@ from pydantic import HttpUrl
 from home_finder.filters.detail_enrichment import enrich_merged_properties, filter_by_floorplan
 from home_finder.models import MergedProperty, Property, PropertyImage, PropertySource
 from home_finder.scrapers.detail_fetcher import DetailFetcher, DetailPageData
+from home_finder.utils.image_cache import get_cache_dir, save_image_bytes
 
 
 def _make_property(
@@ -150,6 +152,71 @@ class TestEnrichMergedProperties:
         enriched = result[0]
         assert enriched.floorplan is None
         assert len(enriched.images) == 0
+
+    async def test_skips_cached_property(self, tmp_path: Path) -> None:
+        """Should skip enrichment for properties with cached images on disk."""
+        merged = _make_merged()
+        data_dir = str(tmp_path)
+
+        # Pre-populate cache
+        cache_dir = get_cache_dir(data_dir, merged.unique_id)
+        cache_dir.mkdir(parents=True)
+        save_image_bytes(cache_dir / "gallery_000_abc12345.jpg", b"fake")
+
+        # Mock storage to return images from DB
+        gallery_img = PropertyImage(
+            url=HttpUrl("https://example.com/img1.jpg"),
+            source=PropertySource.RIGHTMOVE,
+            image_type="gallery",
+        )
+        floorplan_img = PropertyImage(
+            url=HttpUrl("https://example.com/floor.jpg"),
+            source=PropertySource.RIGHTMOVE,
+            image_type="floorplan",
+        )
+        mock_storage = AsyncMock()
+        mock_storage.get_property_images = AsyncMock(return_value=[gallery_img, floorplan_img])
+
+        fetcher = DetailFetcher()
+        mock_fetch = AsyncMock()
+        with patch.object(fetcher, "fetch_detail_page", mock_fetch):
+            result = await enrich_merged_properties(
+                [merged], fetcher, data_dir=data_dir, storage=mock_storage
+            )
+
+        # Should NOT have called fetch_detail_page
+        mock_fetch.assert_not_called()
+        # Should have loaded images from storage
+        assert len(result) == 1
+        assert len(result[0].images) == 1
+        assert result[0].floorplan is not None
+
+    async def test_caches_downloaded_images(self, tmp_path: Path) -> None:
+        """Should download and cache images when data_dir is set."""
+        merged = _make_merged()
+        data_dir = str(tmp_path)
+
+        detail_data = DetailPageData(
+            gallery_urls=["https://example.com/img1.jpg"],
+            floorplan_url="https://example.com/floor.jpg",
+        )
+
+        fetcher = DetailFetcher()
+        with (
+            patch.object(
+                fetcher, "fetch_detail_page", new_callable=AsyncMock, return_value=detail_data
+            ),
+            patch.object(
+                fetcher, "download_image_bytes", new_callable=AsyncMock, return_value=b"imgdata"
+            ),
+        ):
+            result = await enrich_merged_properties([merged], fetcher, data_dir=data_dir)
+
+        assert len(result) == 1
+        # Verify images were cached to disk
+        cache_dir = get_cache_dir(data_dir, merged.unique_id)
+        cached_files = list(cache_dir.iterdir())
+        assert len(cached_files) == 2  # 1 gallery + 1 floorplan
 
 
 class TestFilterByFloorplan:

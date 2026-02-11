@@ -34,6 +34,9 @@ def import_labels(
         merged: dict = {}
         for path in input_paths:
             data = json.loads(path.read_text())
+            # Unwrap nested format: {"labels": {...}} vs flat {pair_id: {...}}
+            if "labels" in data and isinstance(data["labels"], dict):
+                data = data["labels"]
             merged.update(data)
         raw_labels = merged
     else:

@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from enum import Enum
 
 from home_finder.logging import get_logger
-from home_finder.models import MergedProperty, Property, PropertySource
+from home_finder.models import MergedProperty, Property, PropertyImage, PropertySource
 from home_finder.utils.address import extract_outcode, normalize_street_name
 from home_finder.utils.image_hash import fetch_image_hashes_batch, hashes_match
 
@@ -30,8 +30,9 @@ SCORE_STREET_NAME = 20
 SCORE_OUTCODE = 10
 SCORE_PRICE = 15
 
-# Minimum score to consider a match
-MATCH_THRESHOLD = 55
+# Minimum score to consider a match (raised from 55 to account for graduated
+# scoring giving partial credit where binary gave 0)
+MATCH_THRESHOLD = 60
 
 # Minimum number of contributing signals (prevents single-signal false positives)
 MINIMUM_SIGNALS = 2
@@ -41,8 +42,8 @@ class MatchConfidence(Enum):
     """Confidence level of a property match."""
 
     HIGH = "high"  # >= 80 points, 3+ signals - very confident
-    MEDIUM = "medium"  # 55-79 points, 2+ signals - confident
-    LOW = "low"  # 40-54 points - potential match, needs review
+    MEDIUM = "medium"  # 60-79 points, 2+ signals - confident
+    LOW = "low"  # 40-59 points - potential match, needs review
     NONE = "none"  # < 40 points - no match
 
 
@@ -50,15 +51,15 @@ class MatchConfidence(Enum):
 class MatchScore:
     """Breakdown of match score between two properties."""
 
-    image_hash: int = 0
-    full_postcode: int = 0
-    coordinates: int = 0
-    street_name: int = 0
-    outcode: int = 0
-    price: int = 0
+    image_hash: float = 0.0
+    full_postcode: float = 0.0
+    coordinates: float = 0.0
+    street_name: float = 0.0
+    outcode: float = 0.0
+    price: float = 0.0
 
     @property
-    def total(self) -> int:
+    def total(self) -> float:
         return (
             self.image_hash
             + self.full_postcode
@@ -98,7 +99,7 @@ class MatchScore:
         """Whether this score constitutes a match."""
         return self.total >= MATCH_THRESHOLD and self.signal_count >= MINIMUM_SIGNALS
 
-    def to_dict(self) -> dict[str, int | str]:
+    def to_dict(self) -> dict[str, float | int | str]:
         """Convert to dict for logging."""
         return {
             "image_hash": self.image_hash,
@@ -187,6 +188,64 @@ def prices_match(price1: int, price2: int, tolerance: float = PRICE_TOLERANCE) -
     return diff / avg <= tolerance
 
 
+def graduated_coordinate_score(
+    prop1: Property, prop2: Property, max_meters: float = COORDINATE_DISTANCE_METERS
+) -> float:
+    """Graduated coordinate proximity score.
+
+    Returns 1.0 at 0m, 0.5 at max_meters (50m), 0.0 at 2*max_meters (100m+).
+
+    Args:
+        prop1: First property.
+        prop2: Second property.
+        max_meters: Reference distance for half-score.
+
+    Returns:
+        Score in [0.0, 1.0], or 0.0 if either property lacks coordinates.
+    """
+    if not (prop1.latitude and prop1.longitude and prop2.latitude and prop2.longitude):
+        return 0.0
+
+    distance = haversine_distance(prop1.latitude, prop1.longitude, prop2.latitude, prop2.longitude)
+
+    if distance <= max_meters:
+        return 1.0 - (distance / max_meters) * 0.5
+    elif distance <= max_meters * 2:
+        return 0.5 - ((distance - max_meters) / max_meters) * 0.5
+    else:
+        return 0.0
+
+
+def graduated_price_score(price1: int, price2: int, tolerance: float = PRICE_TOLERANCE) -> float:
+    """Graduated price proximity score.
+
+    Returns 1.0 at exact match, 0.5 at tolerance (3%), 0.0 at 2*tolerance (6%+).
+
+    Args:
+        price1: First price.
+        price2: Second price.
+        tolerance: Reference percentage for half-score.
+
+    Returns:
+        Score in [0.0, 1.0], or 0.0 if either price is zero.
+    """
+    if price1 == price2:
+        return 1.0
+    if price1 == 0 or price2 == 0:
+        return 0.0
+
+    diff = abs(price1 - price2)
+    avg = (price1 + price2) / 2
+    pct = diff / avg
+
+    if pct <= tolerance:
+        return 1.0 - (pct / tolerance) * 0.5
+    elif pct <= tolerance * 2:
+        return 0.5 - ((pct - tolerance) / tolerance) * 0.5
+    else:
+        return 0.0
+
+
 def calculate_match_score(
     prop1: Property,
     prop2: Property,
@@ -227,9 +286,10 @@ def calculate_match_score(
     ):
         score.full_postcode = SCORE_FULL_POSTCODE
 
-    # Coordinate proximity
-    if coordinates_match(prop1, prop2):
-        score.coordinates = SCORE_COORDINATES
+    # Coordinate proximity (graduated)
+    coord_value = graduated_coordinate_score(prop1, prop2)
+    if coord_value > 0:
+        score.coordinates = SCORE_COORDINATES * coord_value
 
     # Street name match
     street1 = normalize_street_name(prop1.address)
@@ -243,9 +303,10 @@ def calculate_match_score(
     if out1 and out2 and out1 == out2:
         score.outcode = SCORE_OUTCODE
 
-    # Price match
-    if prices_match(prop1.price_pcm, prop2.price_pcm):
-        score.price = SCORE_PRICE
+    # Price match (graduated)
+    price_value = graduated_price_score(prop1.price_pcm, prop2.price_pcm)
+    if price_value > 0:
+        score.price = SCORE_PRICE * price_value
 
     return score
 
@@ -529,6 +590,237 @@ class Deduplicator:
 
         return merged_results
 
+    def properties_to_merged(self, properties: list[Property]) -> list[MergedProperty]:
+        """Wrap each Property as a single-source MergedProperty.
+
+        Used to convert raw Properties for the enrichment pipeline before
+        cross-platform deduplication.
+
+        Args:
+            properties: List of properties to wrap.
+
+        Returns:
+            List of single-source MergedProperty objects.
+        """
+        # Dedupe by unique_id first (same source + same ID)
+        by_unique_id: dict[str, Property] = {}
+        for prop in properties:
+            if (
+                prop.unique_id not in by_unique_id
+                or prop.first_seen < by_unique_id[prop.unique_id].first_seen
+            ):
+                by_unique_id[prop.unique_id] = prop
+
+        return [self._single_to_merged(p) for p in by_unique_id.values()]
+
+    async def deduplicate_merged_async(
+        self,
+        merged_properties: list[MergedProperty],
+    ) -> list[MergedProperty]:
+        """Deduplicate enriched MergedProperty objects using weighted scoring.
+
+        This operates on already-enriched single-source MergedProperties
+        (after detail fetching), comparing their canonical properties and
+        combining enrichment data (images, descriptions, floorplans) when
+        merging duplicates.
+
+        Args:
+            merged_properties: Enriched single-source MergedProperty objects.
+
+        Returns:
+            List of merged properties with duplicates combined.
+        """
+        if not merged_properties:
+            return []
+
+        if not self.enable_cross_platform:
+            logger.info(
+                "deduplication_merge_complete",
+                original_count=len(merged_properties),
+                merged_count=len(merged_properties),
+                cross_platform=False,
+            )
+            return merged_properties
+
+        # Stage 1: Group by outcode + bedrooms (blocking for efficiency)
+        candidates_by_block: dict[str, list[MergedProperty]] = defaultdict(list)
+        no_outcode: list[MergedProperty] = []
+
+        for mp in merged_properties:
+            outcode = extract_outcode(mp.canonical.postcode)
+            if outcode:
+                block_key = f"{outcode}:{mp.canonical.bedrooms}"
+                candidates_by_block[block_key].append(mp)
+            else:
+                no_outcode.append(mp)
+
+        # Stage 2: Fetch image hashes for hero images
+        image_hashes: dict[str, str] = {}
+        if self.enable_image_hashing:
+            props_needing_hashes = [
+                mp.canonical
+                for candidates in candidates_by_block.values()
+                if len(candidates) > 1
+                for mp in candidates
+                if mp.canonical.image_url
+            ]
+            if props_needing_hashes:
+                image_hashes = await fetch_image_hashes_batch(props_needing_hashes)
+
+        # Stage 3: Score and merge within each block
+        merged_results: list[MergedProperty] = []
+
+        for block_key, candidates in candidates_by_block.items():
+            groups = self._group_merged_by_weighted_score(candidates, image_hashes)
+            for group in groups:
+                if len(group) == 1:
+                    merged_results.append(group[0])
+                else:
+                    merged_results.append(self._merge_merged_properties(group))
+                    logger.info(
+                        "enriched_properties_merged",
+                        block=block_key,
+                        source_count=len(group),
+                        sources=[
+                            s.value for mp in group for s in mp.sources
+                        ],
+                    )
+
+        # Add properties without outcode (can't cross-platform match)
+        merged_results.extend(no_outcode)
+
+        multi_source = sum(1 for m in merged_results if len(m.sources) > 1)
+        logger.info(
+            "deduplication_merge_complete",
+            original_count=len(merged_properties),
+            merged_count=len(merged_results),
+            multi_source_count=multi_source,
+            cross_platform=True,
+            image_hashing=self.enable_image_hashing,
+        )
+
+        return merged_results
+
+    def _group_merged_by_weighted_score(
+        self,
+        candidates: list[MergedProperty],
+        image_hashes: dict[str, str],
+    ) -> list[list[MergedProperty]]:
+        """Group MergedProperties by weighted match score on their canonicals.
+
+        Args:
+            candidates: MergedProperties in same outcode+bedrooms block.
+            image_hashes: Dict mapping unique_id to image hash.
+
+        Returns:
+            List of groups where each group contains matching properties.
+        """
+        if len(candidates) <= 1:
+            return [candidates] if candidates else []
+
+        # Union-find for transitive matching
+        parent: dict[int, int] = {i: i for i in range(len(candidates))}
+
+        def find(x: int) -> int:
+            if parent[x] != x:
+                parent[x] = find(parent[x])
+            return parent[x]
+
+        def union(x: int, y: int) -> None:
+            px, py = find(x), find(y)
+            if px != py:
+                parent[px] = py
+
+        for i in range(len(candidates)):
+            for j in range(i + 1, len(candidates)):
+                mp_i, mp_j = candidates[i], candidates[j]
+                prop_i, prop_j = mp_i.canonical, mp_j.canonical
+
+                score = calculate_match_score(prop_i, prop_j, image_hashes)
+
+                if score.total >= 40:
+                    logger.debug(
+                        "merged_match_score_calculated",
+                        prop1=prop_i.unique_id,
+                        prop2=prop_j.unique_id,
+                        score=score.to_dict(),
+                        is_match=score.is_match,
+                    )
+
+                if score.is_match and prop_i.source != prop_j.source:
+                    union(i, j)
+
+        groups_dict: dict[int, list[MergedProperty]] = defaultdict(list)
+        for i, mp in enumerate(candidates):
+            groups_dict[find(i)].append(mp)
+
+        return list(groups_dict.values())
+
+    def _merge_merged_properties(
+        self, merged_list: list[MergedProperty]
+    ) -> MergedProperty:
+        """Combine multiple enriched MergedProperty objects into one.
+
+        Merges sources, URLs, images, floorplans, and descriptions from
+        all input MergedProperties.
+
+        Args:
+            merged_list: MergedProperties to combine.
+
+        Returns:
+            Single MergedProperty with combined data from all inputs.
+        """
+        # Sort by canonical first_seen — earliest is the new canonical
+        sorted_mps = sorted(merged_list, key=lambda m: m.canonical.first_seen)
+        canonical = sorted_mps[0].canonical
+
+        # Combine sources and URLs (dedup by source)
+        all_sources: list[PropertySource] = []
+        all_source_urls = dict(sorted_mps[0].source_urls)
+        for src in sorted_mps[0].sources:
+            all_sources.append(src)
+        for mp in sorted_mps[1:]:
+            for src in mp.sources:
+                if src not in all_source_urls:
+                    all_sources.append(src)
+                    all_source_urls[src] = mp.source_urls[src]
+
+        # Combine descriptions
+        all_descriptions: dict[PropertySource, str] = {}
+        for mp in sorted_mps:
+            all_descriptions.update(mp.descriptions)
+
+        # Combine images (dedup by URL)
+        seen_image_urls: set[str] = set()
+        all_images: list[PropertyImage] = []
+        for mp in sorted_mps:
+            for img in mp.images:
+                url_str = str(img.url)
+                if url_str not in seen_image_urls:
+                    seen_image_urls.add(url_str)
+                    all_images.append(img)
+
+        # Pick first available floorplan
+        floorplan = None
+        for mp in sorted_mps:
+            if mp.floorplan:
+                floorplan = mp.floorplan
+                break
+
+        # Price range across all sources
+        prices = [mp.min_price for mp in sorted_mps] + [mp.max_price for mp in sorted_mps]
+
+        return MergedProperty(
+            canonical=canonical,
+            sources=tuple(all_sources),
+            source_urls=all_source_urls,
+            images=tuple(all_images),
+            floorplan=floorplan,
+            min_price=min(prices),
+            max_price=max(prices),
+            descriptions=all_descriptions,
+        )
+
     def _group_by_weighted_score(
         self,
         candidates: list[Property],
@@ -673,6 +965,10 @@ class Deduplicator:
         for i in range(len(candidates)):
             for j in range(i + 1, len(candidates)):
                 prop_i, prop_j = candidates[i], candidates[j]
+
+                # Only merge across different platforms
+                if prop_i.source == prop_j.source:
+                    continue
 
                 # Must have matching prices
                 if not prices_match(prop_i.price_pcm, prop_j.price_pcm):

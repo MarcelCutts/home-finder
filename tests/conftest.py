@@ -8,7 +8,22 @@ import pytest
 from hypothesis import HealthCheck, settings
 from pydantic import HttpUrl
 
-from home_finder.models import Property, PropertySource, SearchCriteria, TransportMode
+from home_finder.filters.quality import (
+    ConditionAnalysis,
+    KitchenAnalysis,
+    LightSpaceAnalysis,
+    PropertyQualityAnalysis,
+    SpaceAnalysis,
+    ValueAnalysis,
+)
+from home_finder.models import (
+    MergedProperty,
+    Property,
+    PropertyImage,
+    PropertySource,
+    SearchCriteria,
+    TransportMode,
+)
 
 # Hypothesis settings profiles for different environments
 settings.register_profile("fast", max_examples=10)
@@ -72,4 +87,108 @@ def default_search_criteria() -> SearchCriteria:
         destination_postcode="N1 5AA",
         max_commute_minutes=30,
         transport_modes=(TransportMode.CYCLING, TransportMode.PUBLIC_TRANSPORT),
+    )
+
+
+@pytest.fixture
+def enriched_merged_property() -> MergedProperty:
+    """MergedProperty with gallery, floorplan, descriptions, multi-source."""
+    openrent_url = HttpUrl("https://www.openrent.com/property/12345")
+    zoopla_url = HttpUrl("https://www.zoopla.co.uk/to-rent/details/99999")
+
+    canonical = Property(
+        source=PropertySource.OPENRENT,
+        source_id="12345",
+        url=openrent_url,
+        title="Spacious 2-bed flat in Hackney",
+        price_pcm=1800,
+        bedrooms=2,
+        address="123 Mare Street, Hackney, London",
+        postcode="E8 3RH",
+        latitude=51.5465,
+        longitude=-0.0553,
+        description="A lovely 2-bed flat with good transport links.",
+        first_seen=datetime(2025, 1, 15, 10, 30),
+    )
+
+    return MergedProperty(
+        canonical=canonical,
+        sources=(PropertySource.OPENRENT, PropertySource.ZOOPLA),
+        source_urls={
+            PropertySource.OPENRENT: openrent_url,
+            PropertySource.ZOOPLA: zoopla_url,
+        },
+        images=(
+            PropertyImage(
+                url=HttpUrl("https://example.com/img1.jpg"),
+                source=PropertySource.OPENRENT,
+                image_type="gallery",
+            ),
+            PropertyImage(
+                url=HttpUrl("https://example.com/img2.jpg"),
+                source=PropertySource.OPENRENT,
+                image_type="gallery",
+            ),
+            PropertyImage(
+                url=HttpUrl("https://example.com/img3.jpg"),
+                source=PropertySource.ZOOPLA,
+                image_type="gallery",
+            ),
+        ),
+        floorplan=PropertyImage(
+            url=HttpUrl("https://example.com/floorplan.jpg"),
+            source=PropertySource.ZOOPLA,
+            image_type="floorplan",
+        ),
+        min_price=1800,
+        max_price=1850,
+        descriptions={
+            PropertySource.OPENRENT: "A lovely 2-bed flat with good transport links.",
+            PropertySource.ZOOPLA: "Spacious two bedroom apartment near Mare Street.",
+        },
+    )
+
+
+@pytest.fixture
+def sample_quality_analysis() -> PropertyQualityAnalysis:
+    """Complete PropertyQualityAnalysis for notification/DB tests."""
+    return PropertyQualityAnalysis(
+        kitchen=KitchenAnalysis(
+            overall_quality="modern",
+            hob_type="gas",
+            has_dishwasher=True,
+            has_washing_machine=True,
+            notes="Modern integrated kitchen with gas hob",
+        ),
+        condition=ConditionAnalysis(
+            overall_condition="good",
+            has_visible_damp=False,
+            has_visible_mold=False,
+            has_worn_fixtures=False,
+            maintenance_concerns=[],
+            confidence="high",
+        ),
+        light_space=LightSpaceAnalysis(
+            natural_light="good",
+            window_sizes="medium",
+            feels_spacious=True,
+            ceiling_height="standard",
+            notes="Good natural light throughout",
+        ),
+        space=SpaceAnalysis(
+            living_room_sqm=22.0,
+            is_spacious_enough=True,
+            confidence="high",
+        ),
+        condition_concerns=False,
+        value=ValueAnalysis(
+            area_average=2350,
+            difference=-550,
+            rating="excellent",
+            note="£550 below E8 average",
+            quality_adjusted_rating="excellent",
+            quality_adjusted_note="Good condition at well below market rate",
+        ),
+        overall_rating=4,
+        summary="Bright, well-maintained flat with modern kitchen. Good for home office and hosting.",
     )

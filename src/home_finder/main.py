@@ -219,18 +219,14 @@ async def _run_core_pipeline(
         logger.info("no_properties_in_search_areas")
         return None
 
-    # Step 3: Deduplicate and merge cross-platform listings
-    logger.info("pipeline_started", phase="deduplication_merge")
+    # Step 3: Wrap as single-source MergedProperties for downstream pipeline
+    logger.info("pipeline_started", phase="wrap_merged")
     deduplicator = Deduplicator(
         enable_cross_platform=True,
         enable_image_hashing=settings.enable_image_hash_matching,
     )
-    merged_properties = await deduplicator.deduplicate_and_merge_async(filtered)
-    logger.info(
-        "deduplication_merge_summary",
-        merged_count=len(merged_properties),
-        multi_source_count=sum(1 for m in merged_properties if len(m.sources) > 1),
-    )
+    merged_properties = deduplicator.properties_to_merged(filtered)
+    logger.info("wrap_merged_summary", count=len(merged_properties))
 
     # Step 4: Filter to new properties only
     logger.info("pipeline_started", phase="new_property_filter")
@@ -308,7 +304,12 @@ async def _run_core_pipeline(
         proxy_url=settings.proxy_url,
     )
     try:
-        merged_to_notify = await enrich_merged_properties(merged_to_notify, detail_fetcher)
+        merged_to_notify = await enrich_merged_properties(
+            merged_to_notify,
+            detail_fetcher,
+            data_dir=settings.data_dir,
+            storage=storage,
+        )
     finally:
         await detail_fetcher.close()
 
@@ -319,7 +320,16 @@ async def _run_core_pipeline(
         with_images=sum(1 for m in merged_to_notify if m.images),
     )
 
-    # Step 5.6: Floorplan gate (if configured)
+    # Step 5.6: Deduplicate enriched properties across platforms
+    logger.info("pipeline_started", phase="deduplication_merge")
+    merged_to_notify = await deduplicator.deduplicate_merged_async(merged_to_notify)
+    logger.info(
+        "deduplication_merge_summary",
+        merged_count=len(merged_to_notify),
+        multi_source_count=sum(1 for m in merged_to_notify if len(m.sources) > 1),
+    )
+
+    # Step 5.7: Floorplan gate (if configured)
     if settings.require_floorplan:
         before_count = len(merged_to_notify)
         merged_to_notify = filter_by_floorplan(merged_to_notify)
@@ -345,7 +355,9 @@ async def _run_core_pipeline(
         )
 
         try:
-            quality_results = await quality_filter.analyze_merged_properties(merged_to_notify)
+            quality_results = await quality_filter.analyze_merged_properties(
+                merged_to_notify, data_dir=settings.data_dir
+            )
 
             for merged, analysis in quality_results:
                 quality_lookup[merged.unique_id] = analysis

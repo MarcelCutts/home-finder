@@ -566,6 +566,32 @@ class DetailFetcher:
             logger.warning("onthemarket_fetch_failed", property_id=prop.unique_id, error=str(e))
             return None
 
+    async def download_image_bytes(self, url: str) -> bytes | None:
+        """Download image bytes from a URL.
+
+        Uses curl_cffi for anti-bot CDNs (zoocdn.com, onthemarket.com),
+        httpx for everything else.
+
+        Args:
+            url: Image URL to download.
+
+        Returns:
+            Raw image bytes, or None if download failed.
+        """
+        try:
+            if "zoocdn.com" in url or "onthemarket.com" in url:
+                response = await self._curl_get_with_retry(url)
+                if response.status_code != 200:
+                    logger.debug("image_download_failed", url=url, status=response.status_code)
+                    return None
+                return response.content  # type: ignore[no-any-return]
+            else:
+                response = await self._httpx_get_with_retry(url)
+                return response.content
+        except Exception as e:
+            logger.debug("image_download_error", url=url, error=str(e))
+            return None
+
     async def close(self) -> None:
         """Close the HTTP clients."""
         if self._client:

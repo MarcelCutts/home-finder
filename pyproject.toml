@@ -29,6 +29,7 @@ dev = [
     "pytest-httpx>=0.35",
     "pytest-cov>=6.0",
     "hypothesis>=6.100",
+    "pytest-playwright>=0.6",
     "ruff>=0.8",
     "mypy>=1.13",
 ]
@@ -40,11 +41,13 @@ home-finder = "home_finder.main:main"
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 testpaths = ["tests"]
-addopts = "--tb=short -p no:cacheprovider -m 'not slow'"
+addopts = "--tb=short -p no:cacheprovider -m 'not slow and not browser'"
 markers = [
     "unit: Unit tests (fast, no I/O)",
     "integration: Integration tests (may use in-memory DB)",
     "slow: Slow tests (network, real scraping)",
+    "e2e: End-to-end tests combining multiple pipeline stages",
+    "browser: Browser-based E2E tests (requires Playwright)",
 ]
 
 [tool.ruff]

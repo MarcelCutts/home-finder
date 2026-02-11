@@ -1,5 +1,7 @@
 """Application configuration using pydantic-settings."""
 
+from pathlib import Path
+
 from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -120,6 +122,11 @@ class Settings(BaseSettings):
 
     # Database
     database_path: str = Field(default="data/properties.db")
+
+    @property
+    def data_dir(self) -> str:
+        """Return the directory containing the database (for image cache etc)."""
+        return str(Path(self.database_path).parent)
 
     def get_search_areas(self) -> list[str]:
         """Parse search_areas string into a list of area names."""

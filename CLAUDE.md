@@ -9,10 +9,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 uv sync --all-extras
 
 # Run the application
-uv run home-finder                    # Full pipeline with notifications
-uv run home-finder --dry-run          # Full pipeline, save to DB but no Telegram notifications
-uv run home-finder --scrape-only      # Just scrape and print (no filtering/storage/notifications)
+uv run home-finder                      # Full pipeline with Telegram notifications
+uv run home-finder --dry-run            # Full pipeline, save to DB but no notifications
+uv run home-finder --scrape-only        # Just scrape and print (no filtering/storage)
 uv run home-finder --max-per-scraper 5  # Limit results per scraper (for testing)
+uv run home-finder --serve              # Web dashboard + recurring pipeline scheduler
+uv run home-finder --debug              # Enable debug-level logging
 
 # Testing
 uv run pytest                         # Run all tests (slow tests excluded by default)
@@ -30,98 +32,38 @@ uv run mypy src                       # Type check (strict mode)
 
 ## Environment Setup
 
-Copy `.env.example` to `.env` and configure:
+See README.md for full configuration reference. All settings use `HOME_FINDER_` prefix. See `config.py` for field definitions.
 
-| Variable | Required | Description |
-|----------|----------|-------------|
-| `HOME_FINDER_TELEGRAM_BOT_TOKEN` | Yes | Bot token from @BotFather |
-| `HOME_FINDER_TELEGRAM_CHAT_ID` | Yes | Chat ID for notifications |
-| `HOME_FINDER_TRAVELTIME_APP_ID` | No | TravelTime API - enables commute filtering |
-| `HOME_FINDER_TRAVELTIME_API_KEY` | No | TravelTime API key |
-| `HOME_FINDER_ANTHROPIC_API_KEY` | No | Enables Claude vision quality analysis of property images |
+## Pipeline Flow (main.py)
 
-All settings use `HOME_FINDER_` prefix. See `config.py` for full list.
+1. **Retry Unsent** — Resend failed notifications from previous runs
+2. **Scrape** — All scrapers run against configured `SEARCH_AREAS`
+3. **Criteria Filter** — Price/bedroom filters from `SearchCriteria`
+4. **Location Filter** — Validate postcodes match search areas (catches scraper leakage)
+5. **Wrap as MergedProperty** — `Deduplicator.properties_to_merged()` wraps each Property as single-source
+6. **New Property Filter** — Check SQLite DB to only process unseen properties
+7. **Commute Filter** — TravelTime API (if configured); geocodes missing coordinates
+8. **Detail Enrichment** — Fetch gallery, floorplans, descriptions; cache images to disk
+9. **Post-Enrichment Dedup** — `deduplicate_merged_async()` merges cross-platform duplicates using enriched data
+10. **Floorplan Gate** — Drop properties without floorplans (if `require_floorplan=True`)
+11. **Quality Analysis** — Claude vision analyzes images (if configured)
+12. **Save & Notify** — Store in DB, send Telegram notifications
 
-## Architecture
+## Gotchas & Constraints
 
-This is an async Python application that scrapes London rental properties from multiple platforms, filters them by criteria and commute time, deduplicates across platforms, optionally analyzes quality with Claude vision, and sends Telegram notifications for new matches.
-
-### Pipeline Flow (main.py)
-
-1. **Retry Unsent** - Resend failed notifications from previous runs
-2. **Scrape** - All scrapers run against configured `SEARCH_AREAS` (outcodes: e3, e5, e9, e10, e15, e17, n15, n16, n17)
-3. **Criteria Filter** - Apply price/bedroom filters from `SearchCriteria`
-4. **Location Filter** - Validate postcodes match search areas (catches scraper leakage)
-5. **Deduplicate & Merge** - Weighted multi-signal matching across platforms, outputs `MergedProperty` list
-6. **New Property Filter** - Check SQLite DB to only process unseen properties
-7. **Commute Filter** - TravelTime API filters by travel time to destination (if configured). Geocodes properties missing coordinates.
-8. **Detail Enrichment** - Fetch gallery images, floorplans, and descriptions from property detail pages
-9. **Floorplan Gate** - Drop properties without floorplans (if `require_floorplan=True`)
-10. **Quality Analysis** - Claude vision analyzes images for condition, kitchen, space, and value (if Anthropic API key configured and `enable_quality_filter=True`)
-11. **Save & Notify** - Store in DB, send Telegram notifications with quality cards
-
-### Key Abstractions
-
-**Scrapers** (`src/home_finder/scrapers/`): Each platform implements `BaseScraper` with:
-- `source` property returning `PropertySource` enum
-- `scrape()` async method returning `list[Property]`
-- Parameters: price range, bedrooms, area, furnish_types, min_bathrooms, include_let_agreed, max_results
-
-**Filters** (`src/home_finder/filters/`):
-- `CriteriaFilter` - Price/bedroom filtering
-- `LocationFilter` - Borough/outcode validation with comprehensive London borough→outcode mapping
-- `CommuteFilter` - TravelTime API integration with class-level geocoding cache
-- `Deduplicator` - Weighted multi-signal cross-platform deduplication (see below)
-- `detail_enrichment.enrich_merged_properties()` - Fetches detail pages for gallery/floorplan/description
-- `PropertyQualityFilter` - Claude vision analysis of property images (see below)
-
-**Detail Fetcher** (`src/home_finder/scrapers/detail_fetcher.py`):
-- Fetches property detail pages for gallery/floorplan extraction
-- Uses `curl_cffi` for Zoopla/OnTheMarket (TLS fingerprinting), `httpx` for others
-- Per-platform extraction: Rightmove (`window.PAGE_MODEL` JSON), Zoopla (`__NEXT_DATA__` + regex fallback), OpenRent (PhotoSwipe lightbox), OnTheMarket (Redux state)
-- Returns `DetailPageData` with floorplan_url, gallery_urls, description, features
-
-**Utilities** (`src/home_finder/utils/`):
-- `address.py` - Address normalization (`normalize_street_name`, `extract_outcode`)
-- `image_hash.py` - Perceptual hashing for cross-platform image matching (pHash, Hamming distance threshold: 8)
-
-**Models** (`src/home_finder/models.py`): Pydantic models with validation:
-- `Property` - Immutable (frozen), validates coordinates are both present or both absent, postcode normalization
-- `MergedProperty` - Aggregates same property from multiple platforms with combined images, floorplan, descriptions, price range
-- `PropertyImage` - Image from listing (gallery or floorplan)
-- `SearchCriteria` - Validates price/bedroom ranges, transport modes
-- `CommuteResult`, `TrackedProperty` - Pipeline data structures
-
-**Config** (`src/home_finder/config.py`): `pydantic-settings` with `HOME_FINDER_` env prefix.
-
-**Database** (`src/home_finder/db/storage.py`): Async SQLite via aiosqlite:
-- `properties` table - Tracks all seen properties with notification status (pending/sent/failed), commute data, multi-source JSON fields
-- `property_images` table - Gallery and floorplan images per property (unique constraint on property+url)
-- Key methods: `save_merged_property()`, `filter_new_merged()`, `get_unsent_notifications()`, `save_property_images()`
-
-**Notifier** (`src/home_finder/notifiers/telegram.py`): Rich Telegram notifications via aiogram 3.x:
-- Photo cards with inline keyboard (source links + map button)
-- Quality analysis display: star rating, condition, kitchen, space, value assessment
-- Venue pins with coordinates
-- Fallback from photo to text if image send fails
-
-### HTTP Client Selection (IMPORTANT)
+### HTTP Client Selection
 
 **Scrapers MUST use the correct HTTP client to avoid 403 blocks:**
 
 | Component | HTTP Client | Reason |
 |-----------|-------------|--------|
-| Zoopla scraper | `crawlee.PlaywrightCrawler` + `BrowserPool` | Cloudflare JS challenges require real browser |
+| Zoopla scraper | `curl_cffi` with `impersonate="chrome"` | TLS fingerprinting bypasses Cloudflare |
 | OnTheMarket scraper | `curl_cffi` with `impersonate="chrome"` | TLS fingerprinting detection |
 | Rightmove scraper | `crawlee.BeautifulSoupCrawler` | Standard requests work |
 | OpenRent scraper | `crawlee.BeautifulSoupCrawler` | Standard requests work |
 | DetailFetcher (Zoopla/OTM) | `curl_cffi` with `impersonate="chrome"` | TLS fingerprinting on detail pages |
 | DetailFetcher (others) | `httpx.AsyncClient` | Standard requests work |
 | QualityFilter (Zoopla images) | `curl_cffi` with `impersonate="chrome"` | Anti-bot protection on CDN images |
-
-**Why Playwright for Zoopla?** Zoopla's Cloudflare protection now defeats `curl_cffi` TLS fingerprinting — serving JS challenges or empty shells where listings load client-side. The Zoopla scraper uses a shared `BrowserPool` (one Chromium process) with lightweight `PlaywrightCrawler` instances per page fetch.
-
-**Why curl_cffi?** OnTheMarket and detail fetchers use TLS fingerprinting to detect bots. `curl_cffi` impersonates Chrome's TLS fingerprint.
 
 ```python
 # Example: curl_cffi usage for anti-bot sites
@@ -131,94 +73,82 @@ async with AsyncSession() as session:
     response = await session.get(url, impersonate="chrome", headers=HEADERS, timeout=30)
 ```
 
-### Deduplication System
+### Deduplication
 
-The deduplicator uses weighted multi-signal scoring to match properties across platforms:
+- **Match threshold:** 60 points AND 2+ signals minimum (`MATCH_THRESHOLD`, `MINIMUM_SIGNALS`)
+- **Graduated scoring:** Coordinates and price use linear interpolation (full credit at exact match, 0.5x at threshold boundary, 0x at 2x threshold). See `graduated_coordinate_score()` and `graduated_price_score()`.
+- **Scoring weights:** image hash +40, full postcode +40, coordinates +40, street +20, outcode +10, price +15
+- **Conservative matching:** Cross-platform matching requires full postcodes (e.g., "E8 3RH" not just "E8"). Rightmove only provides outcodes, so won't cross-match until after enrichment.
+- **Two-phase dedup:** Pre-enrichment wraps as single-source (`properties_to_merged`), post-enrichment `deduplicate_merged_async()` merges cross-platform dupes with image/floorplan data.
 
-**Scoring (constants in `filters/deduplication.py`):**
-- Image hash match: +40 points
-- Full postcode match: +40 points
-- Coordinates within 50m: +40 points
-- Street name match: +20 points
-- Outcode match: +10 points
-- Price within 3%: +15 points
+### Image Caching
 
-**Match threshold:** 55 points AND 2+ signals minimum
+- Disk cache at `{data_dir}/image_cache/{safe_id}/` (see `utils/image_cache.py`)
+- Detail enrichment downloads and caches images during pipeline step 8
+- Quality analysis reads cached images from disk (avoids re-downloading)
+- Web dashboard serves cached images via `GET /images/{unique_id}/{filename}` with immutable cache headers
+- `image_url_map` in detail template maps original CDN URLs to local `/images/` URLs for cached images
 
-**Match confidence levels:** HIGH (≥80 points, 3+ signals), MEDIUM (55-79), LOW (40-54), NONE
+### Quality Analysis
 
-**Key methods:**
-- `deduplicate()` - Legacy behavior, discards duplicates
-- `deduplicate_and_merge()` - Sync, groups by full postcode + bedrooms
-- `deduplicate_and_merge_async()` - Async with image hashing support (used in main pipeline)
+- Uses claude-sonnet-4-5 (`claude-sonnet-4-5-20250929`) via Anthropic API
+- Rate limited: 1.5s delay between calls (Tier 1: 50 RPM)
+- Uses prompt caching (`cache_control: ephemeral`) for ~90% cost savings on system prompt
+- Zoopla CDN images downloaded via curl_cffi and sent as base64 (anti-bot); others sent as URL references
 
-**Conservative matching:** Cross-platform matching requires full postcodes (e.g., "E8 3RH" not just "E8") to prevent false positives. This is important because Rightmove only provides outcodes.
+### Proxy Support
 
-### Quality Analysis System
+- `proxy_url` config (e.g., `socks5://user:pass@host:port`) for geo-restricted sites
+- Passed to `OnTheMarketScraper` and `DetailFetcher`
 
-`PropertyQualityFilter` in `filters/quality.py` uses Claude vision (claude-sonnet-4-5-20250929) to analyze property images:
+## Architecture Pointers
 
-**Analyzes:**
-- Kitchen: hob type, dishwasher, washing machine, overall quality
-- Condition: damp, mold, worn fixtures, maintenance concerns with severity
-- Light/space: natural light, window sizes, spaciousness, ceiling height
-- Space: living room sqm estimate (2+ bed auto-passes — office in spare room)
-- Value: comparison against embedded rental benchmarks per outcode, quality-adjusted rating
-- Overall: 1-5 star rating and 2-3 sentence summary
+- **Scrapers** → `src/home_finder/scrapers/` — each implements `BaseScraper.scrape()`, see `base.py` for interface
+- **Filters** → `src/home_finder/filters/` — `CriteriaFilter`, `LocationFilter`, `CommuteFilter`, `Deduplicator`, `PropertyQualityFilter`
+- **Detail Fetcher** → `scrapers/detail_fetcher.py` — per-platform extraction (Rightmove: `PAGE_MODEL` JSON, Zoopla: RSC payload, OpenRent: PhotoSwipe, OTM: Redux state)
+- **Models** → `models.py` — `Property` (frozen), `MergedProperty`, `PropertyImage`, `SearchCriteria`, `SOURCE_NAMES`
+- **Config** → `config.py` — `pydantic-settings` with `HOME_FINDER_` prefix, key methods: `get_search_areas()`, `get_furnish_types()`, `get_search_criteria()`
+- **Database** → `db/storage.py` — async SQLite, `properties` + `property_images` tables, paginated queries with filters
+- **Notifier** → `notifiers/telegram.py` — aiogram 3.x, photo cards, quality display, venue pins, web dashboard deep links
+- **Image Cache** → `utils/image_cache.py` — disk-based, deterministic filenames from URL hash
+- **Address Utils** → `utils/address.py` — `normalize_street_name`, `extract_outcode`
 
-**Area context:** Embedded benchmarks and context for East London outcodes (E2, E3, E5, E8, E9, E10, E15, E17, N1, N15, N16, N17). Includes average rents by bedroom count, neighborhood character, transport links, council tax, crime rates, rent trends.
+## Web Dashboard Notes
 
-**Rate limiting:** 1.5s delay between calls (Tier 1: 50 RPM). Uses prompt caching (ephemeral cache_control) for ~90% cost savings on the system prompt.
+- **HTMX pattern:** Dashboard `GET /` checks `HX-Request` header — returns `_results.html` partial or full `dashboard.html`. Filter form uses `hx-get="/" hx-target="#results" hx-push-url="true"`.
+- **Image serving:** `GET /images/{unique_id}/{filename}` serves cached images with directory traversal protection and immutable cache headers.
+- **Security:** XSS: descriptions use `| e | replace("\n", "<br>") | safe` (escape first). Leaflet popups use `textContent`. All query params clamped; sort whitelisted against `VALID_SORT_OPTIONS`.
+- **Template variables:**
+  - Dashboard: `properties`, `properties_json`, `search_areas`, `source_names`, `total`, `page`, `total_pages`, `sort`, `min_price`, `max_price`, `bedrooms`, `min_rating`, `area`
+  - Detail: `prop`, `outcode`, `area_context`, `best_description`, `source_names`, `image_url_map`
+  - Property card `prop` dict: `unique_id`, `title`, `price_pcm`, `bedrooms`, `postcode`, `image_url`, `quality_rating`, `quality_concerns`, `quality_severity`, `quality_summary`, `sources_list`, `commute_minutes`, `transport_mode`, `min_price`, `max_price`, `latitude`, `longitude`
 
-**Image handling:** Downloads Zoopla CDN images via curl_cffi and sends as base64 (anti-bot protection). Other sites send as URL references.
+## Testing Patterns
 
-### Scraper Implementation Notes
-
-- Scrapers support both borough names (e.g., "hackney") and outcodes (e.g., "e8")
-- Use `location_utils.is_outcode()` to detect postcode vs borough
-- Rightmove uses region codes mapped via hardcoded dicts (`RIGHTMOVE_LOCATIONS`, `RIGHTMOVE_OUTCODES`) with async typeahead API fallback for unknown outcodes
-- All scrapers handle rate limiting with configurable page delays (0.5-2s)
-- All scrapers deduplicate within their own results (track seen IDs/URLs)
-- **New scrapers for anti-bot sites**: Use `curl_cffi` for TLS fingerprinting or `PlaywrightCrawler` for JS-challenge sites (see HTTP Client Selection above)
-
-**Data extraction patterns:**
-- Zoopla: Next.js — `__NEXT_DATA__` JSON or RSC format via `self.__next_f.push()` calls. Parsed with `zoopla_models.py` Pydantic models.
-- OnTheMarket: Next.js — `__NEXT_DATA__` with Redux state at `data.props.initialReduxState.results.list`
-- Rightmove: Crawlee + typeahead API for outcode → region code. Detail pages use `window.PAGE_MODEL` JSON.
-- OpenRent: JavaScript arrays (`PROPERTYIDS`, `prices`, `bedrooms`, `PROPERTYLISTLATITUDES`, `PROPERTYLISTLONGITUDES`) extracted via regex
-
-### Testing Patterns
-
-- Tests use `pytest-asyncio` with `asyncio_mode = "auto"`
+- `pytest-asyncio` with `asyncio_mode = "auto"`
 - Slow tests excluded by default (`-m 'not slow'`); run with `pytest -m slow`
 - Mock HTTP with `pytest-httpx` and `AsyncMock` for curl_cffi/TravelTime
 - Common fixtures in `tests/conftest.py`: `sample_property`, `sample_property_no_coords`, `default_search_criteria`
-- Use `Property.model_copy()` to create variations with specific field changes
-- Property-based testing with `hypothesis` (profiles: "fast" 10 examples, "ci" 200 examples)
-- Integration tests in `tests/integration/` have autouse fixtures to reset Crawlee global state and use temp storage dirs
-- Test structure mirrors source: `tests/test_scrapers/`, `tests/test_filters/`, `tests/test_notifiers/`, `tests/test_db/`
+- Use `Property.model_copy()` for variations; `hypothesis` for property-based testing
+- Integration tests in `tests/integration/` reset Crawlee global state with autouse fixtures
 
-### Configuration Flags
+**Test structure:**
+- `tests/test_scrapers/` — per-platform scraper tests
+- `tests/test_filters/` — criteria, commute, dedup, quality, location, floorplan
+- `tests/test_notifiers/` — core notifications + web dashboard integration
+- `tests/test_db/` — CRUD, notification tracking, quality analysis, paginated queries
+- `tests/test_web/` — app factory, routes, HTMX partials, XSS prevention
+- `tests/test_utils/` — image cache, address utils
+- `tests/integration/` — pipeline, real scraping (slow)
 
-Key feature flags in `config.py`:
+**Web test patterns:** FastAPI `TestClient` with in-memory SQLite. HTMX tests send `HX-Request: true` header. XSS tests save `<script>` in description, assert `&lt;script&gt;` in response.
+
+## Feature Flags
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `enable_quality_filter` | True | Enable Claude vision analysis of property images |
-| `require_floorplan` | True | Drop properties without floorplans before quality analysis |
-| `quality_filter_max_images` | 10 | Max gallery images to analyze per property (1-20) |
-| `enable_image_hash_matching` | False | Enable async perceptual image hash comparison for deduplication |
-
-### Deployment
-
-- **Docker**: `Dockerfile` uses python:3.11-slim-bookworm with uv 0.6.6, includes Playwright Chromium
-- **Fly.io** (primary): `fly.toml` + `Dockerfile.fly` deploy to London (`lhr`) with supercronic cron scheduling (`*/55 * * * *`). Persistent volume for SQLite at `/app/data`.
-- SQLite database stored at `data/properties.db` (mount as volume in Docker)
-
-**Fly.io setup:**
-```bash
-fly apps create home-finder
-fly volumes create home_finder_data --region lhr --size 1
-fly secrets set HOME_FINDER_TELEGRAM_BOT_TOKEN=xxx HOME_FINDER_TELEGRAM_CHAT_ID=xxx ...
-fly deploy
-```
+| `enable_quality_filter` | True | Enable Claude vision property analysis |
+| `require_floorplan` | True | Drop properties without floorplans |
+| `quality_filter_max_images` | 10 | Max gallery images to analyze (1-20) |
+| `enable_image_hash_matching` | False | Perceptual image hash for dedup |
+| `proxy_url` | `""` | HTTP/SOCKS5 proxy for geo-restricted sites |

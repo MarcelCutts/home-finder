@@ -1,0 +1,575 @@
+{
+  "created": "2026-02-10T22:43:49.728368",
+  "source_files": [
+    "../../dedupe.json",
+    "labels/labels_20260210_011725.json"
+  ],
+  "stats": {
+    "match": 48,
+    "no_match": 92,
+    "uncertain": 0,
+    "invalid": 0
+  },
+  "labels": {
+    "onthemarket:15595505||zoopla:72383448": {
+      "label": "match",
+      "notes": ""
+    },
+    "onthemarket:16623678||zoopla:72307794": {
+      "label": "no_match",
+      "notes": ""
+    },
+    "onthemarket:16623678||zoopla:72307843": {
+      "label": "no_match",
+      "notes": ""
+    },
+    "onthemarket:18058167||zoopla:71965393": {
+      "label": "no_match",
+      "notes": ""
+    },
+    "onthemarket:18317739||openrent:2760512": {
+      "label": "no_match",
+      "notes": ""
+    },
+    "onthemarket:18317739||zoopla:72229170": {
+      "label": "no_match",
+      "notes": ""
+    },
+    "onthemarket:18324512||zoopla:65395606": {
+      "label": "no_match",
+      "notes": ""
+    },
+    "onthemarket:18324603||rightmove:168978857": {
+      "label": "match",
+      "notes": ""
+    },
+    "onthemarket:18324603||zoopla:72097515": {
+      "label": "no_match",
+      "notes": ""
+    },
+    "onthemarket:18602595||openrent:2726051": {
+      "label": "no_match",
+      "notes": ""
+    },
+    "onthemarket:18602595||openrent:2757627": {
+      "label": "no_match",
+      "notes": ""
+    },
+    "onthemarket:18602595||openrent:2764106": {
+      "label": "no_match",
+      "notes": ""
+    },
+    "onthemarket:18616879||zoopla:72218543": {
+      "label": "no_match",
+      "notes": ""
+    },
+    "onthemarket:18628122||zoopla:72287647": {
+      "label": "no_match",
+      "notes": ""
+    },
+    "onthemarket:18654722||zoopla:72296077": {
+      "label": "no_match",
+      "notes": ""
+    },
+    "onthemarket:18654722||zoopla:72389384": {
+      "label": "no_match",
+      "notes": ""
+    },
+    "onthemarket:18669605||zoopla:72389398": {
+      "label": "no_match",
+      "notes": ""
+    },
+    "onthemarket:18670034||zoopla:71704717": {
+      "label": "no_match",
+      "notes": ""
+    },
+    "openrent:2691511||zoopla:66284597": {
+      "label": "no_match",
+      "notes": ""
+    },
+    "openrent:2697521||zoopla:72108662": {
+      "label": "no_match",
+      "notes": ""
+    },
+    "openrent:2697521||zoopla:72229170": {
+      "label": "no_match",
+      "notes": ""
+    },
+    "openrent:2730026||zoopla:72130169": {
+      "label": "match",
+      "notes": ""
+    },
+    "openrent:2747070||zoopla:71704717": {
+      "label": "no_match",
+      "notes": ""
+    },
+    "openrent:2760512||zoopla:71827074": {
+      "label": "no_match",
+      "notes": ""
+    },
+    "openrent:2771765||zoopla:72218543": {
+      "label": "no_match",
+      "notes": ""
+    },
+    "openrent:2774138||zoopla:62066652": {
+      "label": "no_match",
+      "notes": ""
+    },
+    "openrent:2780715||zoopla:72386043": {
+      "label": "no_match",
+      "notes": ""
+    },
+    "openrent:2787471||rightmove:87592428": {
+      "label": "match",
+      "notes": ""
+    },
+    "rightmove:168347648||zoopla:71595974": {
+      "label": "match",
+      "notes": ""
+    },
+    "rightmove:171353981||zoopla:72311124": {
+      "label": "match",
+      "notes": ""
+    },
+    "onthemarket:18616879||zoopla:72363405": {
+      "label": "no_match",
+      "notes": ""
+    },
+    "onthemarket:18616879||zoopla:72229412": {
+      "label": "no_match",
+      "notes": ""
+    },
+    "onthemarket:18545266||zoopla:45551677": {
+      "label": "no_match",
+      "notes": ""
+    },
+    "rightmove:172027106||zoopla:72383223": {
+      "label": "match",
+      "notes": ""
+    },
+    "onthemarket:18455488||zoopla:72157543": {
+      "label": "no_match",
+      "notes": ""
+    },
+    "openrent:2783115||zoopla:72276386": {
+      "label": "match",
+      "notes": ""
+    },
+    "rightmove:171979688||zoopla:72143211": {
+      "label": "no_match",
+      "notes": ""
+    },
+    "onthemarket:18669605||zoopla:72143211": {
+      "label": "no_match",
+      "notes": ""
+    },
+    "onthemarket:18559001||zoopla:72326971": {
+      "label": "no_match",
+      "notes": ""
+    },
+    "onthemarket:18628122||zoopla:65395606": {
+      "label": "no_match",
+      "notes": ""
+    },
+    "onthemarket:18628122||zoopla:71883117": {
+      "label": "no_match",
+      "notes": ""
+    },
+    "onthemarket:18455488||zoopla:63462593": {
+      "label": "no_match",
+      "notes": ""
+    },
+    "onthemarket:15595505||zoopla:72157543": {
+      "label": "no_match",
+      "notes": ""
+    },
+    "onthemarket:15595505||zoopla:62886225": {
+      "label": "no_match",
+      "notes": ""
+    },
+    "openrent:2255891||zoopla:70897462": {
+      "label": "match",
+      "notes": ""
+    },
+    "onthemarket:18616879||zoopla:72238689": {
+      "label": "no_match",
+      "notes": ""
+    },
+    "rightmove:170796335||zoopla:72097515": {
+      "label": "match",
+      "notes": ""
+    },
+    "onthemarket:18516124||openrent:2784220": {
+      "label": "no_match",
+      "notes": ""
+    },
+    "openrent:2784220||zoopla:72197661": {
+      "label": "no_match",
+      "notes": ""
+    },
+    "openrent:2748738||zoopla:72370295": {
+      "label": "match",
+      "notes": ""
+    },
+    "rightmove:171816233||zoopla:72338689": {
+      "label": "match",
+      "notes": ""
+    },
+    "onthemarket:18601387||zoopla:72292685": {
+      "label": "match",
+      "notes": ""
+    },
+    "onthemarket:18580078||zoopla:60086030": {
+      "label": "no_match",
+      "notes": ""
+    },
+    "rightmove:171353981||zoopla:72250667": {
+      "label": "match",
+      "notes": ""
+    },
+    "rightmove:171915281||zoopla:72359837": {
+      "label": "match",
+      "notes": ""
+    },
+    "onthemarket:18616879||rightmove:171647462": {
+      "label": "match",
+      "notes": ""
+    },
+    "onthemarket:18580078||zoopla:72381681": {
+      "label": "no_match",
+      "notes": ""
+    },
+    "onthemarket:18559001||rightmove:171353981": {
+      "label": "match",
+      "notes": ""
+    },
+    "rightmove:171910208||zoopla:72358793": {
+      "label": "match",
+      "notes": ""
+    },
+    "onthemarket:18632506||rightmove:171815270": {
+      "label": "match",
+      "notes": ""
+    },
+    "onthemarket:18439309||rightmove:170796335": {
+      "label": "match",
+      "notes": ""
+    },
+    "onthemarket:18676394||zoopla:72381681": {
+      "label": "match",
+      "notes": ""
+    },
+    "openrent:2731817||zoopla:72363405": {
+      "label": "no_match",
+      "notes": ""
+    },
+    "onthemarket:18670034||zoopla:72373857": {
+      "label": "match",
+      "notes": ""
+    },
+    "onthemarket:18616879||rightmove:150512429": {
+      "label": "no_match",
+      "notes": ""
+    },
+    "onthemarket:18601387||zoopla:72363405": {
+      "label": "no_match",
+      "notes": ""
+    },
+    "openrent:1434700||zoopla:72373857": {
+      "label": "no_match",
+      "notes": ""
+    },
+    "onthemarket:18670034||openrent:1434700": {
+      "label": "no_match",
+      "notes": ""
+    },
+    "onthemarket:18676394||rightmove:171843833": {
+      "label": "no_match",
+      "notes": ""
+    },
+    "onthemarket:18632506||rightmove:171843833": {
+      "label": "no_match",
+      "notes": ""
+    },
+    "onthemarket:18602595||rightmove:171910208": {
+      "label": "no_match",
+      "notes": ""
+    },
+    "onthemarket:18676394||rightmove:171815270": {
+      "label": "no_match",
+      "notes": ""
+    },
+    "onthemarket:18580078||rightmove:171910208": {
+      "label": "no_match",
+      "notes": ""
+    },
+    "onthemarket:18602595||zoopla:72358793": {
+      "label": "no_match",
+      "notes": ""
+    },
+    "onthemarket:18580078||zoopla:72358793": {
+      "label": "no_match",
+      "notes": ""
+    },
+    "openrent:1434700||zoopla:72353635": {
+      "label": "no_match",
+      "notes": ""
+    },
+    "rightmove:171915281||zoopla:72376587": {
+      "label": "no_match",
+      "notes": ""
+    },
+    "rightmove:169839524||zoopla:60397643": {
+      "label": "no_match",
+      "notes": ""
+    },
+    "openrent:2766121||rightmove:171910208": {
+      "label": "no_match",
+      "notes": ""
+    },
+    "openrent:2766121||zoopla:72358793": {
+      "label": "no_match",
+      "notes": ""
+    },
+    "onthemarket:18580078||openrent:2766121": {
+      "label": "no_match",
+      "notes": ""
+    },
+    "onthemarket:18439309||openrent:2726051": {
+      "label": "no_match",
+      "notes": ""
+    },
+    "onthemarket:18632506||openrent:2779564": {
+      "label": "match",
+      "notes": ""
+    },
+    "onthemarket:18439309||openrent:2594411": {
+      "label": "match",
+      "notes": ""
+    },
+    "openrent:2682343||zoopla:71722469": {
+      "label": "match",
+      "notes": ""
+    },
+    "openrent:2594411||zoopla:72097515": {
+      "label": "match",
+      "notes": ""
+    },
+    "onthemarket:18324603||openrent:2682343": {
+      "label": "match",
+      "notes": ""
+    },
+    "rightmove:150512429||zoopla:67888485": {
+      "label": "match",
+      "notes": ""
+    },
+    "rightmove:171647462||zoopla:72310945": {
+      "label": "match",
+      "notes": ""
+    },
+    "rightmove:171210584||zoopla:72218543": {
+      "label": "match",
+      "notes": ""
+    },
+    "rightmove:168978857||zoopla:71722469": {
+      "label": "match",
+      "notes": ""
+    },
+    "onthemarket:18009402||rightmove:87298998": {
+      "label": "match",
+      "notes": ""
+    },
+    "onthemarket:18651282||rightmove:171864680": {
+      "label": "match",
+      "notes": ""
+    },
+    "onthemarket:18324850||rightmove:168347648": {
+      "label": "match",
+      "notes": ""
+    },
+    "onthemarket:18675389||rightmove:172013156": {
+      "label": "match",
+      "notes": ""
+    },
+    "onthemarket:17346842||rightmove:171962819": {
+      "label": "match",
+      "notes": ""
+    },
+    "onthemarket:18519255||rightmove:171117410": {
+      "label": "match",
+      "notes": ""
+    },
+    "onthemarket:17346842||rightmove:171873137": {
+      "label": "match",
+      "notes": ""
+    },
+    "onthemarket:18649867||rightmove:171858815": {
+      "label": "match",
+      "notes": ""
+    },
+    "onthemarket:18422652||rightmove:170674421": {
+      "label": "match",
+      "notes": ""
+    },
+    "onthemarket:18669605||rightmove:171979688": {
+      "label": "match",
+      "notes": ""
+    },
+    "onthemarket:18590836||rightmove:171504215": {
+      "label": "match",
+      "notes": ""
+    },
+    "onthemarket:18058167||rightmove:168481682": {
+      "label": "match",
+      "notes": ""
+    },
+    "onthemarket:18530663||rightmove:171193829": {
+      "label": "match",
+      "notes": ""
+    },
+    "onthemarket:18406188||rightmove:170561261": {
+      "label": "match",
+      "notes": ""
+    },
+    "onthemarket:17563087||zoopla:72359837": {
+      "label": "match",
+      "notes": ""
+    },
+    "onthemarket:18616879||zoopla:70613142": {
+      "label": "no_match",
+      "notes": ""
+    },
+    "openrent:2786024||zoopla:72054829": {
+      "label": "match",
+      "notes": ""
+    },
+    "onthemarket:18009402||zoopla:62066652": {
+      "label": "no_match",
+      "notes": ""
+    },
+    "onthemarket:18676394||zoopla:45551677": {
+      "label": "no_match",
+      "notes": ""
+    },
+    "onthemarket:18545266||zoopla:72233783": {
+      "label": "match",
+      "notes": ""
+    },
+    "openrent:2744771||rightmove:171353981": {
+      "label": "no_match",
+      "notes": ""
+    },
+    "onthemarket:18559001||openrent:2744771": {
+      "label": "no_match",
+      "notes": ""
+    },
+    "onthemarket:18317739||rightmove:171965345": {
+      "label": "no_match",
+      "notes": ""
+    },
+    "onthemarket:18317739||rightmove:168447746": {
+      "label": "no_match",
+      "notes": ""
+    },
+    "onthemarket:18439309||zoopla:72373857": {
+      "label": "no_match",
+      "notes": ""
+    },
+    "rightmove:171843833||zoopla:72385232": {
+      "label": "no_match",
+      "notes": ""
+    },
+    "onthemarket:18676394||zoopla:72385232": {
+      "label": "no_match",
+      "notes": ""
+    },
+    "onthemarket:18632506||zoopla:72385232": {
+      "label": "no_match",
+      "notes": ""
+    },
+    "rightmove:171915281||zoopla:72375937": {
+      "label": "no_match",
+      "notes": ""
+    },
+    "onthemarket:18439309||zoopla:72375937": {
+      "label": "no_match",
+      "notes": ""
+    },
+    "rightmove:171843833||zoopla:72373857": {
+      "label": "no_match",
+      "notes": ""
+    },
+    "onthemarket:18670034||rightmove:171843833": {
+      "label": "no_match",
+      "notes": ""
+    },
+    "onthemarket:18632506||zoopla:72373857": {
+      "label": "no_match",
+      "notes": ""
+    },
+    "onthemarket:18670034||zoopla:72385232": {
+      "label": "no_match",
+      "notes": ""
+    },
+    "rightmove:171910208||zoopla:72385232": {
+      "label": "no_match",
+      "notes": ""
+    },
+    "onthemarket:18439309||zoopla:72376587": {
+      "label": "no_match",
+      "notes": ""
+    },
+    "onthemarket:18670034||zoopla:72375937": {
+      "label": "no_match",
+      "notes": ""
+    },
+    "onthemarket:18439309||rightmove:171843833": {
+      "label": "no_match",
+      "notes": ""
+    },
+    "onthemarket:18676394||rightmove:171910208": {
+      "label": "no_match",
+      "notes": ""
+    },
+    "onthemarket:18632506||rightmove:171910208": {
+      "label": "no_match",
+      "notes": ""
+    },
+    "onthemarket:18439309||zoopla:72385232": {
+      "label": "no_match",
+      "notes": ""
+    },
+    "openrent:1637379||rightmove:171353981": {
+      "label": "no_match",
+      "notes": ""
+    },
+    "onthemarket:18559001||openrent:1637379": {
+      "label": "no_match",
+      "notes": ""
+    },
+    "onthemarket:18559001||openrent:2738422": {
+      "label": "no_match",
+      "notes": ""
+    },
+    "openrent:2761415||rightmove:171353981": {
+      "label": "no_match",
+      "notes": ""
+    },
+    "onthemarket:18559001||openrent:2761415": {
+      "label": "no_match",
+      "notes": ""
+    },
+    "rightmove:171915281||zoopla:72385232": {
+      "label": "no_match",
+      "notes": ""
+    },
+    "rightmove:171915281||zoopla:72381681": {
+      "label": "no_match",
+      "notes": ""
+    },
+    "onthemarket:18676394||rightmove:171915281": {
+      "label": "no_match",
+      "notes": ""
+    }
+  }
+}
