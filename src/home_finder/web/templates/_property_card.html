@@ -1,66 +1,64 @@
 <article class="property-card">
-    <a href="/property/{{ prop.unique_id }}">
+    <a href="/property/{{ prop.unique_id }}" class="card-link">
         {% if prop.image_url %}
         <img src="{{ prop.image_url }}" alt="{{ prop.title }}" loading="lazy" class="card-image">
         {% else %}
         <div class="card-image card-image-placeholder">No image</div>
         {% endif %}
-    </a>
-    <div class="card-body">
-        {% if prop.quality_rating %}
-        <div class="star-rating">
-            {% for i in range(1, 6) %}
-                {% if i <= prop.quality_rating %}
-                    <span class="star filled">&#9733;</span>
+        <div class="card-body">
+            {% if prop.quality_rating %}
+            <div class="star-rating">
+                {% for i in range(1, 6) %}
+                    {% if i <= prop.quality_rating %}
+                        <span class="star filled">&#9733;</span>
+                    {% else %}
+                        <span class="star empty">&#9734;</span>
+                    {% endif %}
+                {% endfor %}
+            </div>
+            {% endif %}
+
+            <div class="card-price-row">
+                {% if prop.min_price and prop.max_price and prop.min_price != prop.max_price %}
+                <strong class="card-price">&pound;{{ "{:,}".format(prop.min_price) }}-&pound;{{ "{:,}".format(prop.max_price) }}/mo</strong>
                 {% else %}
-                    <span class="star empty">&#9734;</span>
+                <strong class="card-price">&pound;{{ "{:,}".format(prop.price_pcm) }}/mo</strong>
                 {% endif %}
-            {% endfor %}
-        </div>
-        {% endif %}
+                <span class="badge badge-neutral">{{ prop.bedrooms }} bed</span>
+            </div>
 
-        <div class="card-price-row">
-            {% if prop.min_price and prop.max_price and prop.min_price != prop.max_price %}
-            <strong>&pound;{{ "{:,}".format(prop.min_price) }}-&pound;{{ "{:,}".format(prop.max_price) }}/mo</strong>
-            {% else %}
-            <strong>&pound;{{ "{:,}".format(prop.price_pcm) }}/mo</strong>
+            <span class="card-title">{{ prop.title }}</span>
+
+            <div class="card-meta">
+                {% if prop.postcode %}
+                <small>{{ prop.postcode }}</small>
+                {% endif %}
+                {% if prop.commute_minutes %}
+                <small>{{ prop.commute_minutes }} min
+                    {% if prop.transport_mode == "cycling" %}&#128692;{% elif prop.transport_mode == "public_transport" %}&#128647;{% endif %}
+                </small>
+                {% endif %}
+            </div>
+
+            {% if prop.quality_concerns %}
+            <div class="card-condition">
+                <span class="badge {% if prop.quality_severity == 'serious' %}badge-red{% elif prop.quality_severity == 'moderate' %}badge-amber{% else %}badge-green{% endif %}">
+                    {{ prop.quality_severity or "minor" }}
+                </span>
+            </div>
             {% endif %}
-            <span class="badge badge-neutral">{{ prop.bedrooms }} bed</span>
-        </div>
 
-        <a href="/property/{{ prop.unique_id }}" class="card-title">{{ prop.title }}</a>
-
-        <div class="card-meta">
-            {% if prop.postcode %}
-            <small>{{ prop.postcode }}</small>
-            {% endif %}
-            {% if prop.commute_minutes %}
-            <small>{{ prop.commute_minutes }} min
-                {% if prop.transport_mode == "cycling" %}&#128692;{% elif prop.transport_mode == "public_transport" %}&#128647;{% endif %}
-            </small>
+            {% if prop.quality_summary %}
+            <div class="card-summary">
+                <small>{{ prop.quality_summary[:80] }}{% if prop.quality_summary|length > 80 %}&hellip;{% endif %}</small>
+            </div>
             {% endif %}
         </div>
-
-        {% if prop.quality_concerns %}
-        <div class="card-condition">
-            <span class="badge {% if prop.quality_severity == 'serious' %}badge-red{% elif prop.quality_severity == 'moderate' %}badge-amber{% else %}badge-green{% endif %}">
-                {{ prop.quality_severity or "minor" }}
-            </span>
-        </div>
-        {% endif %}
-
-        {% if prop.quality_summary %}
-        <div class="card-summary">
-            <small>{{ prop.quality_summary[:80] }}{% if prop.quality_summary|length > 80 %}&hellip;{% endif %}</small>
-        </div>
-        {% endif %}
-
-        {% if prop.sources_list|length > 1 %}
-        <div class="card-sources">
-            <small>
-                {% for s in prop.sources_list %}{{ source_names.get(s, s) }}{% if not loop.last %}, {% endif %}{% endfor %}
-            </small>
-        </div>
-        {% endif %}
+    </a>
+    <div class="card-sources">
+        {% for s in prop.sources_list %}
+        {% set badge = source_badges.get(s, {}) %}
+        <span class="source-badge" style="background-color: {{ badge.get('color', '#888') }}" title="{{ badge.get('name', s) }}">{{ badge.get('abbr', s[:1]|upper) }}</span>
+        {% endfor %}
     </div>
 </article>

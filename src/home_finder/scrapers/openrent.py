@@ -13,6 +13,13 @@ from home_finder.scrapers.base import BaseScraper
 
 logger = get_logger(__name__)
 
+# OpenRent mis-geocodes certain outcodes. Override with neighborhood slugs
+# that resolve to correct coordinates. E10 resolves to lng -0.567
+# (Buckinghamshire); "leyton" resolves correctly to lng -0.010.
+OUTCODE_SLUG_OVERRIDES: dict[str, str] = {
+    "e10": "leyton",
+}
+
 
 class OpenRentScraper(BaseScraper):
     """Scraper for OpenRent.co.uk listings."""
@@ -23,6 +30,9 @@ class OpenRentScraper(BaseScraper):
     RESULTS_PER_PAGE = 20
     MAX_PAGES = 20
     PAGE_DELAY_SECONDS = 2.0
+
+    # Search radius in km (appended as within= URL parameter)
+    SEARCH_RADIUS_KM = 2
 
     @property
     def source(self) -> PropertySource:
@@ -145,7 +155,8 @@ class OpenRentScraper(BaseScraper):
     ) -> str:
         """Build the OpenRent search URL with filters."""
         # OpenRent URL format: /properties-to-rent/{area}?filters...
-        area_slug = area.lower().replace(" ", "-")
+        area_lower = area.lower().replace(" ", "-")
+        area_slug = OUTCODE_SLUG_OVERRIDES.get(area_lower, area_lower)
         params = [
             f"prices_min={min_price}",
             f"prices_max={max_price}",
@@ -173,6 +184,7 @@ class OpenRentScraper(BaseScraper):
             params.append("isLive=true")
 
         params.append("sortType=3")
+        params.append(f"within={self.SEARCH_RADIUS_KM}")
 
         return f"{self.BASE_URL}/properties-to-rent/{area_slug}?{'&'.join(params)}"
 

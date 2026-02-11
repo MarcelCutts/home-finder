@@ -44,6 +44,32 @@ class TestOpenRentScraper:
         assert "prices_max=2200" in url
         assert "bedrooms_min=1" in url
         assert "bedrooms_max=2" in url
+        assert "within=2" in url
+
+    def test_build_search_url_overrides_e10(self, openrent_scraper: OpenRentScraper) -> None:
+        """Test that E10 outcode is replaced with 'leyton' slug to fix geocoding."""
+        url = openrent_scraper._build_search_url(
+            area="e10",
+            min_price=1800,
+            max_price=2200,
+            min_bedrooms=1,
+            max_bedrooms=2,
+        )
+        assert "/leyton?" in url
+        assert "/e10" not in url
+
+    def test_build_search_url_no_override_for_normal_areas(
+        self, openrent_scraper: OpenRentScraper
+    ) -> None:
+        """Test that non-overridden areas pass through unchanged."""
+        url = openrent_scraper._build_search_url(
+            area="e5",
+            min_price=1800,
+            max_price=2200,
+            min_bedrooms=1,
+            max_bedrooms=2,
+        )
+        assert "/e5?" in url
 
     def test_build_search_url_normalizes_area(self, openrent_scraper: OpenRentScraper) -> None:
         """Test that area names are normalized to URL-safe format."""

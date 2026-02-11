@@ -23,6 +23,13 @@ SOURCE_NAMES: dict[str, str] = {
     "onthemarket": "OnTheMarket",
 }
 
+SOURCE_BADGES: dict[str, dict[str, str]] = {
+    "openrent": {"abbr": "O", "color": "#00b4d8", "name": "OpenRent"},
+    "rightmove": {"abbr": "R", "color": "#00deb6", "name": "Rightmove"},
+    "zoopla": {"abbr": "Z", "color": "#8040bf", "name": "Zoopla"},
+    "onthemarket": {"abbr": "M", "color": "#e54b4b", "name": "OnTheMarket"},
+}
+
 
 class FurnishType(str, Enum):
     """Furnishing type for property search filters."""

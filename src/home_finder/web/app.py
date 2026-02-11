@@ -50,11 +50,12 @@ async def _pipeline_loop(settings: Settings, interval_minutes: int) -> None:
         await asyncio.sleep(interval_minutes * 60)
 
 
-def create_app(settings: Settings | None = None) -> FastAPI:
+def create_app(settings: Settings | None = None, *, run_pipeline: bool = True) -> FastAPI:
     """Create the FastAPI application.
 
     Args:
         settings: Application settings. Loaded from env if not provided.
+        run_pipeline: Whether to start the background pipeline scheduler.
     """
     if settings is None:
         settings = Settings()
@@ -71,14 +72,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         app.state.storage = storage
         app.state.settings = settings
 
-        # Start background pipeline scheduler
-        pipeline_task = asyncio.create_task(
-            _pipeline_loop(settings, settings.pipeline_interval_minutes)
-        )
-        logger.info(
-            "web_server_started",
-            pipeline_interval=settings.pipeline_interval_minutes,
-        )
+        if run_pipeline:
+            # Start background pipeline scheduler
+            pipeline_task = asyncio.create_task(
+                _pipeline_loop(settings, settings.pipeline_interval_minutes)
+            )
+            logger.info(
+                "web_server_started",
+                pipeline_interval=settings.pipeline_interval_minutes,
+            )
+        else:
+            logger.info("web_server_started", pipeline="disabled")
 
         yield
 

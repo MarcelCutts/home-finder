@@ -19,7 +19,7 @@ from home_finder.filters.quality import (
     RENTAL_BENCHMARKS,
 )
 from home_finder.logging import get_logger
-from home_finder.models import SOURCE_NAMES
+from home_finder.models import SOURCE_BADGES, SOURCE_NAMES
 from home_finder.utils.image_cache import get_cache_dir, safe_dir_name, url_to_filename
 
 logger = get_logger(__name__)
@@ -133,6 +133,7 @@ async def dashboard(
         "min_rating": min_rating,
         "area": area,
         "source_names": SOURCE_NAMES,
+        "source_badges": SOURCE_BADGES,
         "properties_json": properties_json,
         "search_areas": search_areas,
     }
@@ -246,6 +247,7 @@ async def property_detail(request: Request, unique_id: str) -> HTMLResponse:
             "area_context": area_context,
             "best_description": best_description,
             "source_names": SOURCE_NAMES,
+            "source_badges": SOURCE_BADGES,
             "image_url_map": image_url_map,
         },
     )

@@ -92,6 +92,7 @@ async def scrape_all_platforms(
                 known_ids_by_source.get(scraper.source.value) if known_ids_by_source else None
             )
             scraper_count = 0
+            scraper_seen_ids: set[str] = set()
             for i, area in enumerate(areas):
                 if max_per_scraper is not None and scraper_count >= max_per_scraper:
                     break
@@ -116,6 +117,19 @@ async def scrape_all_platforms(
                         max_results=remaining,
                         known_source_ids=scraper_known,
                     )
+                    # Cross-area dedup: remove properties already seen in other areas
+                    before_dedup = len(properties)
+                    properties = [
+                        p for p in properties if p.source_id not in scraper_seen_ids
+                    ]
+                    scraper_seen_ids.update(p.source_id for p in properties)
+                    if len(properties) < before_dedup:
+                        logger.info(
+                            "cross_area_dedup",
+                            platform=scraper.source.value,
+                            area=area,
+                            removed=before_dedup - len(properties),
+                        )
                     # Backfill outcode for properties missing postcode
                     if is_outcode(area):
                         outcode = area.upper()
@@ -644,6 +658,11 @@ def main() -> None:
         help="Start web server with background pipeline scheduler",
     )
     parser.add_argument(
+        "--no-pipeline",
+        action="store_true",
+        help="With --serve: start web server only, skip background pipeline",
+    )
+    parser.add_argument(
         "--debug",
         action="store_true",
         help="Enable debug-level logging for troubleshooting",
@@ -682,7 +701,7 @@ def main() -> None:
 
         from home_finder.web.app import create_app
 
-        app = create_app(settings)
+        app = create_app(settings, run_pipeline=not args.no_pipeline)
         uvicorn.run(app, host=settings.web_host, port=settings.web_port, log_level="info")
     elif args.scrape_only:
         asyncio.run(run_scrape_only(settings, max_per_scraper=args.max_per_scraper))

@@ -42,12 +42,17 @@
     <div class="source-links">
         {% for source_key in prop.sources_list %}
         {% set url = prop.source_urls_dict.get(source_key) %}
+        {% set badge = source_badges.get(source_key, {}) %}
         {% if url %}
         <a href="{{ url }}" target="_blank" rel="noopener" role="button" class="outline">
+            <span class="source-badge source-badge-inline" style="background-color: {{ badge.get('color', '#888') }}">{{ badge.get('abbr', source_key[:1]|upper) }}</span>
             {{ source_names.get(source_key, source_key) }}
         </a>
         {% else %}
-        <span role="button" class="outline secondary">{{ source_names.get(source_key, source_key) }}</span>
+        <span role="button" class="outline secondary">
+            <span class="source-badge source-badge-inline" style="background-color: {{ badge.get('color', '#888') }}">{{ badge.get('abbr', source_key[:1]|upper) }}</span>
+            {{ source_names.get(source_key, source_key) }}
+        </span>
         {% endif %}
         {% endfor %}
         {% if prop.latitude and prop.longitude %}
