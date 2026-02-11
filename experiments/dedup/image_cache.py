@@ -154,16 +154,11 @@ async def cache_snapshot(path: Path, *, max_images: int = 15) -> None:
             progress=f"{i + 1}/{len(properties)}",
         )
 
-        cached = await cache_property_images(
-            source, source_id, gallery_urls, max_images=max_images
-        )
+        cached = await cache_property_images(source, source_id, gallery_urls, max_images=max_images)
         total_downloaded += max(0, len(cached) - len(existing))
         total_skipped += len(existing)
 
-    print(
-        f"Cached {path.name}: {total_downloaded} downloaded, "
-        f"{total_skipped} already cached"
-    )
+    print(f"Cached {path.name}: {total_downloaded} downloaded, {total_skipped} already cached")
 
 
 async def main() -> None:

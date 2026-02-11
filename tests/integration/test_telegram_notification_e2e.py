@@ -3,21 +3,14 @@
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from pydantic import HttpUrl
 
-from home_finder.filters.quality import (
+from home_finder.models import (
     ConditionAnalysis,
     KitchenAnalysis,
     LightSpaceAnalysis,
+    MergedProperty,
     PropertyQualityAnalysis,
     SpaceAnalysis,
-    ValueAnalysis,
-)
-from home_finder.models import (
-    MergedProperty,
-    Property,
-    PropertyImage,
-    PropertySource,
     TransportMode,
 )
 from home_finder.notifiers.telegram import (

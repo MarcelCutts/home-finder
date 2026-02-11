@@ -113,20 +113,20 @@ class TestFullPipeline:
         assert len(filtered) == 3
         assert all(p.price_pcm <= 2200 for p in filtered)
 
-        # Step 2: Deduplicate
+        # Step 2: Deduplicate (async weighted scoring)
         deduplicator = Deduplicator(enable_cross_platform=True)
-        unique = deduplicator.deduplicate(filtered)
+        merged = await deduplicator.deduplicate_and_merge_async(filtered)
 
-        # OpenRent and Rightmove listings are same property
-        assert len(unique) == 2
+        # OpenRent and Rightmove listings are same property → merged
+        assert len(merged) == 2
 
         # Step 3: Filter to new only
-        new = await storage.filter_new(unique)
+        new = await storage.filter_new_merged(merged)
         assert len(new) == 2
 
         # Step 4: Save to storage
-        for prop in new:
-            await storage.save_property(prop)
+        for m in new:
+            await storage.save_merged_property(m)
 
         # Verify saved
         count = await storage.get_property_count()
@@ -142,15 +142,15 @@ class TestFullPipeline:
 
         # First run
         filtered = criteria_filter.filter_properties(mixed_properties)
-        unique = deduplicator.deduplicate(filtered)
-        new = await storage.filter_new(unique)
-        for prop in new:
-            await storage.save_property(prop)
+        merged = await deduplicator.deduplicate_and_merge_async(filtered)
+        new = await storage.filter_new_merged(merged)
+        for m in new:
+            await storage.save_merged_property(m)
 
         # Second run
         filtered2 = criteria_filter.filter_properties(mixed_properties)
-        unique2 = deduplicator.deduplicate(filtered2)
-        new2 = await storage.filter_new(unique2)
+        merged2 = await deduplicator.deduplicate_and_merge_async(filtered2)
+        new2 = await storage.filter_new_merged(merged2)
 
         # No new properties
         assert len(new2) == 0
@@ -246,12 +246,12 @@ class TestScraperToFilter:
         filtered = CriteriaFilter(criteria).filter_properties([original])
         assert len(filtered) == 1
 
-        # Through deduplicator
-        deduped = Deduplicator(enable_cross_platform=True).deduplicate(filtered)
-        assert len(deduped) == 1
+        # Through deduplicator (properties_to_merged wraps as single-source)
+        wrapped = Deduplicator(enable_cross_platform=True).properties_to_merged(filtered)
+        assert len(wrapped) == 1
 
-        # All data preserved
-        result = deduped[0]
+        # All data preserved on canonical
+        result = wrapped[0].canonical
         assert result.source == original.source
         assert result.source_id == original.source_id
         assert result.url == original.url
@@ -289,10 +289,10 @@ class TestFilterToStorage:
         ]
 
         deduplicator = Deduplicator(enable_cross_platform=True)
-        unique = deduplicator.deduplicate(props)
+        wrapped = deduplicator.properties_to_merged(props)
 
-        for prop in unique:
-            await storage.save_property(prop, commute_minutes=25)
+        for m in wrapped:
+            await storage.save_property(m.canonical, commute_minutes=25)
 
         # Retrieve and verify
         stored = await storage.get_property("rightmove:RM123")
@@ -348,10 +348,10 @@ class TestEdgeCases:
         filtered = criteria_filter.filter_properties([])
         assert len(filtered) == 0
 
-        unique = deduplicator.deduplicate(filtered)
-        assert len(unique) == 0
+        merged = await deduplicator.deduplicate_and_merge_async(filtered)
+        assert len(merged) == 0
 
-        new = await storage.filter_new(unique)
+        new = await storage.filter_new_merged(merged)
         assert len(new) == 0
 
     def test_all_properties_filtered_out(self, criteria: SearchCriteria) -> None:
@@ -373,7 +373,8 @@ class TestEdgeCases:
         filtered = CriteriaFilter(criteria).filter_properties(expensive_properties)
         assert len(filtered) == 0
 
-    def test_properties_without_postcode_not_cross_deduped(self) -> None:
+    @pytest.mark.asyncio
+    async def test_properties_without_postcode_not_cross_deduped(self) -> None:
         """Properties without postcodes are kept even if otherwise similar."""
         props = [
             Property(
@@ -398,6 +399,6 @@ class TestEdgeCases:
             ),
         ]
 
-        deduped = Deduplicator(enable_cross_platform=True).deduplicate(props)
+        deduped = await Deduplicator(enable_cross_platform=True).deduplicate_and_merge_async(props)
         # Without postcodes, can't confidently dedupe
         assert len(deduped) == 2

@@ -43,8 +43,14 @@ class TestSlimPairs:
             for side in ("property_a", "property_b"):
                 prop = pair[side]
                 for field in (
-                    "unique_id", "source", "title", "price_pcm", "bedrooms",
-                    "address", "postcode", "url",
+                    "unique_id",
+                    "source",
+                    "title",
+                    "price_pcm",
+                    "bedrooms",
+                    "address",
+                    "postcode",
+                    "url",
                 ):
                     assert field in prop, f"Missing {field} in {side}"
 
@@ -127,6 +133,7 @@ class TestXSSPrevention:
 # --------------------------------------------------------------------------- #
 # Helpers
 # --------------------------------------------------------------------------- #
+
 
 def _extract_pairs_json(html: str) -> list[dict]:
     """Extract the ALL_PAIRS JSON array from the HTML."""

@@ -9,12 +9,15 @@ from pydantic import HttpUrl
 
 from home_finder.db import PropertyStorage
 from home_finder.filters.quality import (
-    PropertyQualityAnalysis,
     PropertyQualityFilter,
-    ValueAnalysis,
     assess_value,
 )
-from home_finder.models import MergedProperty, Property, PropertyImage, PropertySource
+from home_finder.models import (
+    MergedProperty,
+    Property,
+    PropertyImage,
+    PropertySource,
+)
 
 
 def _make_property(
@@ -115,9 +118,7 @@ def _sample_tool_response() -> dict[str, Any]:
     }
 
 
-def _create_mock_response(
-    tool_input: dict[str, Any], stop_reason: str = "tool_use"
-) -> MagicMock:
+def _create_mock_response(tool_input: dict[str, Any], stop_reason: str = "tool_use") -> MagicMock:
     tool_block = ToolUseBlock(
         id="toolu_123",
         type="tool_use",
@@ -189,9 +190,7 @@ class TestQualityAnalysisIntegration:
         assert loaded.overall_rating == analysis.overall_rating
         assert loaded.summary == analysis.summary
 
-    async def test_analysis_roundtrip_through_detail(
-        self, in_memory_storage: PropertyStorage
-    ):
+    async def test_analysis_roundtrip_through_detail(self, in_memory_storage: PropertyStorage):
         """Analysis should be available through get_property_detail."""
         prop = _make_property()
         merged = _make_merged(prop)

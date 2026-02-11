@@ -92,9 +92,7 @@ class TestSaveAndReadImageBytes:
 
 class TestGetCachedImagePath:
     def test_returns_expected_path(self) -> None:
-        path = get_cached_image_path(
-            "/data", "zoopla:xyz", "https://cdn.com/img.jpg", "gallery", 2
-        )
+        path = get_cached_image_path("/data", "zoopla:xyz", "https://cdn.com/img.jpg", "gallery", 2)
         assert path.parent == Path("/data/image_cache/zoopla_xyz")
         assert path.name.startswith("gallery_002_")
         assert path.name.endswith(".jpg")

@@ -7,30 +7,26 @@ Requires: pytest-playwright, `uv run playwright install chromium`
 """
 
 import asyncio
-import json
 import threading
 import time
 from datetime import datetime
-from pathlib import Path
 
 import pytest
 
 from home_finder.config import Settings
 from home_finder.db import PropertyStorage
-from home_finder.filters.quality import (
+from home_finder.models import (
     ConditionAnalysis,
     KitchenAnalysis,
     LightSpaceAnalysis,
-    PropertyQualityAnalysis,
-    SpaceAnalysis,
-    ValueAnalysis,
-)
-from home_finder.models import (
     MergedProperty,
     Property,
     PropertyImage,
+    PropertyQualityAnalysis,
     PropertySource,
+    SpaceAnalysis,
     TransportMode,
+    ValueAnalysis,
 )
 
 # Port for test server — avoid conflicts with dev server
@@ -94,7 +90,12 @@ def _make_analyzed_property(
 ) -> tuple[MergedProperty, PropertyQualityAnalysis]:
     """Create a test property with quality analysis."""
     merged, _ = _make_test_property(
-        source_id, price, bedrooms, postcode, lat, lon,
+        source_id,
+        price,
+        bedrooms,
+        postcode,
+        lat,
+        lon,
         title=f"Analyzed {bedrooms} bed flat",
     )
 
@@ -112,8 +113,10 @@ def _make_analyzed_property(
         space=SpaceAnalysis(living_room_sqm=20.0, is_spacious_enough=True, confidence="high"),
         condition_concerns=False,
         value=ValueAnalysis(
-            area_average=2200, difference=price - 2200,
-            rating="good", note=f"£{abs(price - 2200)} {'below' if price < 2200 else 'above'} average",
+            area_average=2200,
+            difference=price - 2200,
+            rating="good",
+            note=f"£{abs(price - 2200)} {'below' if price < 2200 else 'above'} average",
         ),
         overall_rating=rating,
         summary=f"Well-maintained {bedrooms}-bed flat with modern kitchen and good light.",

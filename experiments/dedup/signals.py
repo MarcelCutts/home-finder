@@ -53,8 +53,7 @@ class SignalBundle:
 
     def to_dict(self) -> dict[str, dict]:
         return {
-            s.name: {"fired": s.fired, "value": s.value, "detail": s.detail}
-            for s in self.signals
+            s.name: {"fired": s.fired, "value": s.value, "detail": s.detail} for s in self.signals
         }
 
 
@@ -182,7 +181,9 @@ def signal_street_name(a: PropertyDict, b: PropertyDict) -> SignalResult:
     )
 
 
-def signal_price(a: PropertyDict, b: PropertyDict, tolerance: float = PRICE_TOLERANCE) -> SignalResult:
+def signal_price(
+    a: PropertyDict, b: PropertyDict, tolerance: float = PRICE_TOLERANCE
+) -> SignalResult:
     """Price proximity (symmetric percentage difference)."""
     price_a = a.get("price_pcm", 0)
     price_b = b.get("price_pcm", 0)
@@ -252,6 +253,7 @@ def signal_address_number(a: PropertyDict, b: PropertyDict) -> SignalResult:
     Same number = positive signal. Different number = anti-signal
     (different flats in same building).
     """
+
     def extract_numbers(address: str) -> set[str]:
         """Extract flat/house numbers from address."""
         addr = address.lower()
@@ -361,16 +363,25 @@ _RE_AGENT_MARKETING = re.compile(
     r".*$",
     re.IGNORECASE | re.DOTALL,
 )
-_RE_SOCIAL_MEDIA = re.compile(r"follow\s+us\s+on\s+(?:instagram|twitter|facebook)\S*\.?\s*", re.IGNORECASE)
-_RE_ILLUSTRATIVE = re.compile(r"all\s+images\s+are\s+for\s+illustrative\s+purposes\s+only\.?\s*", re.IGNORECASE)
+_RE_SOCIAL_MEDIA = re.compile(
+    r"follow\s+us\s+on\s+(?:instagram|twitter|facebook)\S*\.?\s*", re.IGNORECASE
+)
+_RE_ILLUSTRATIVE = re.compile(
+    r"all\s+images\s+are\s+for\s+illustrative\s+purposes\s+only\.?\s*", re.IGNORECASE
+)
 _RE_DEPOSIT_HOLDING = re.compile(
     r"(?:holding\s+)?deposit[:\s]*(?:equivalent\s+to\s+)?\d+\s*weeks?['\u2019]?\s*(?:rent)?[:\s]*£?[\d,]+\.?\d*\s*",
     re.IGNORECASE,
 )
 _RE_COUNCIL_TAX = re.compile(r"council\s*tax\s*(?:band)?[:\s]*[a-g]\b", re.IGNORECASE)
 _RE_EPC = re.compile(r"epc\s*(?:rating)?[:\s]*[a-g]\b", re.IGNORECASE)
-_RE_CMP = re.compile(r"client\s+money\s+protection\s*\(CMP\)\s*(?:provided\s+by)?[:\s]*\S*\.?\s*", re.IGNORECASE)
-_RE_OMBUDSMAN = re.compile(r"(?:the\s+)?property\s+ombudsman\s*(?:scheme)?[,:\s]*(?:membership\s*(?:no)?[:\s]*\S+)?\.?\s*", re.IGNORECASE)
+_RE_CMP = re.compile(
+    r"client\s+money\s+protection\s*\(CMP\)\s*(?:provided\s+by)?[:\s]*\S*\.?\s*", re.IGNORECASE
+)
+_RE_OMBUDSMAN = re.compile(
+    r"(?:the\s+)?property\s+ombudsman\s*(?:scheme)?[,:\s]*(?:membership\s*(?:no)?[:\s]*\S+)?\.?\s*",
+    re.IGNORECASE,
+)
 _RE_AGENT_DISCLAIMER = re.compile(
     r"(?:whilst|while)\s+\S+\s+uses?\s+reasonable\s+endeavours.*?(?:\n\n|$)",
     re.IGNORECASE | re.DOTALL,
@@ -380,9 +391,13 @@ _RE_PARTICULARS = re.compile(
     re.IGNORECASE | re.DOTALL,
 )
 _RE_CHINA_DESK = re.compile(r"our\s+china\s+desk\s+is\s+here\s+for\s+you[^.]*\.?\s*", re.IGNORECASE)
-_RE_PRICE_PCM = re.compile(r"£[\d,]+(?:\.\d{1,2})?\s*(?:per\s+(?:month|week|annum)|p[/.]?[cwm]|pcm)\b", re.IGNORECASE)
+_RE_PRICE_PCM = re.compile(
+    r"£[\d,]+(?:\.\d{1,2})?\s*(?:per\s+(?:month|week|annum)|p[/.]?[cwm]|pcm)\b", re.IGNORECASE
+)
 _RE_WEEKS_DEPOSIT = re.compile(r"\d+\s*weeks?\s*deposit[:\s]*£[\d,]+", re.IGNORECASE)
-_RE_AVAILABLE_FROM = re.compile(r"available\s+(?:from|to\s+rent\s+from)\s+\d{1,2}[/.-]\d{1,2}[/.-]\d{2,4}", re.IGNORECASE)
+_RE_AVAILABLE_FROM = re.compile(
+    r"available\s+(?:from|to\s+rent\s+from)\s+\d{1,2}[/.-]\d{1,2}[/.-]\d{2,4}", re.IGNORECASE
+)
 _RE_EMOJI = re.compile(
     "[\U0001f300-\U0001f9ff\U00002702-\U000027b0\U0000fe00-\U0000fe0f"
     "\U0000200d\U00002600-\U000026ff\U00002700-\U000027bf]+",
@@ -501,7 +516,9 @@ def signal_description_tfidf(
     desc_b = _get_description(b)
 
     if not desc_a or not desc_b:
-        return SignalResult("description_tfidf", fired=False, value=0.0, detail="missing description")
+        return SignalResult(
+            "description_tfidf", fired=False, value=0.0, detail="missing description"
+        )
 
     clean_a = extract_property_text(desc_a)
     clean_b = extract_property_text(desc_b)
@@ -516,7 +533,7 @@ def signal_description_tfidf(
 
     # Check substring containment (one description starts with the other)
     shorter, longer = (clean_a, clean_b) if len(clean_a) <= len(clean_b) else (clean_b, clean_a)
-    prefix_match = longer[:len(shorter)].lower() == shorter.lower()
+    prefix_match = longer[: len(shorter)].lower() == shorter.lower()
     if prefix_match:
         return SignalResult(
             "description_tfidf",
@@ -526,12 +543,14 @@ def signal_description_tfidf(
         )
 
     # Truncate both to shorter length to handle partial copy-paste
-    trunc_a = clean_a[:len(shorter)]
-    trunc_b = clean_b[:len(shorter)]
+    trunc_a = clean_a[: len(shorter)]
+    trunc_b = clean_b[: len(shorter)]
 
     if vectorizer is None:
         vectorizer = TfidfVectorizer(
-            stop_words="english", max_features=5000, ngram_range=(1, 2),
+            stop_words="english",
+            max_features=5000,
+            ngram_range=(1, 2),
         )
         tfidf = vectorizer.fit_transform([trunc_a, trunc_b])
     else:
@@ -584,7 +603,9 @@ def signal_description_semantic(
     desc_b = _get_description(b)
 
     if not desc_a or not desc_b:
-        return SignalResult("description_semantic", fired=False, value=0.0, detail="missing description")
+        return SignalResult(
+            "description_semantic", fired=False, value=0.0, detail="missing description"
+        )
 
     clean_a = extract_property_text(desc_a)
     clean_b = extract_property_text(desc_b)
@@ -746,22 +767,26 @@ def signal_gallery_images(a: PropertyDict, b: PropertyDict) -> SignalResult:
         hashes = []
         for h in raw:
             if h.get("phash") or h.get("whash") or h.get("crop_hash"):
-                hashes.append(ImageHashes(
-                    url=h.get("url", ""),
-                    phash=h.get("phash"),
-                    whash=h.get("whash"),
-                    crop_hash=h.get("crop_hash"),
-                ))
+                hashes.append(
+                    ImageHashes(
+                        url=h.get("url", ""),
+                        phash=h.get("phash"),
+                        whash=h.get("whash"),
+                        crop_hash=h.get("crop_hash"),
+                    )
+                )
         # Fall back to hero image hash when gallery is empty
         if not hashes:
             hero = prop.get("hero_hashes")
             if hero and (hero.get("phash") or hero.get("whash") or hero.get("crop_hash")):
-                hashes.append(ImageHashes(
-                    url=hero.get("url", ""),
-                    phash=hero.get("phash"),
-                    whash=hero.get("whash"),
-                    crop_hash=hero.get("crop_hash"),
-                ))
+                hashes.append(
+                    ImageHashes(
+                        url=hero.get("url", ""),
+                        phash=hero.get("phash"),
+                        whash=hero.get("whash"),
+                        crop_hash=hero.get("crop_hash"),
+                    )
+                )
         return hashes
 
     gallery_a = _load_gallery_hashes(a)

@@ -4,7 +4,7 @@ import contextlib
 import json
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, TypedDict, cast
 
 import aiosqlite
 
@@ -14,10 +14,55 @@ from home_finder.models import (
     NotificationStatus,
     Property,
     PropertyImage,
+    PropertyQualityAnalysis,
     PropertySource,
     TrackedProperty,
     TransportMode,
 )
+
+
+class PropertyListItem(TypedDict, total=False):
+    """Shape of dicts returned by get_properties_paginated.
+
+    Fields from the SQL join plus parsed JSON columns.
+    All fields marked total=False because dict(row) includes the full row.
+    """
+
+    unique_id: str
+    title: str
+    price_pcm: int
+    bedrooms: int
+    address: str
+    postcode: str | None
+    image_url: str | None
+    latitude: float | None
+    longitude: float | None
+    commute_minutes: int | None
+    transport_mode: str | None
+    min_price: int | None
+    max_price: int | None
+    # Quality analysis (from JOIN)
+    quality_rating: int | None
+    quality_concerns: bool | None
+    quality_severity: str | None
+    quality_summary: str
+    # Parsed JSON fields
+    sources_list: list[str]
+    source_urls_dict: dict[str, str]
+    descriptions_dict: dict[str, str]
+
+
+class PropertyDetailItem(PropertyListItem, total=False):
+    """Shape of dicts returned by get_property_detail.
+
+    Extends PropertyListItem with images and parsed quality analysis.
+    """
+
+    description: str | None
+    quality_analysis: PropertyQualityAnalysis | None
+    gallery_images: list[PropertyImage]
+    floorplan_images: list[PropertyImage]
+
 
 logger = get_logger(__name__)
 
@@ -540,7 +585,9 @@ class PropertyStorage:
             result.setdefault(source, set()).add(source_id)
         return result
 
-    async def save_quality_analysis(self, unique_id: str, analysis: Any) -> None:
+    async def save_quality_analysis(
+        self, unique_id: str, analysis: PropertyQualityAnalysis
+    ) -> None:
         """Save a quality analysis result for a property.
 
         Args:
@@ -579,7 +626,7 @@ class PropertyStorage:
         await conn.commit()
         logger.debug("quality_analysis_saved", unique_id=unique_id)
 
-    async def get_quality_analysis(self, unique_id: str) -> Any | None:
+    async def get_quality_analysis(self, unique_id: str) -> PropertyQualityAnalysis | None:
         """Get quality analysis for a property.
 
         Args:
@@ -588,8 +635,6 @@ class PropertyStorage:
         Returns:
             PropertyQualityAnalysis if found, None otherwise.
         """
-        from home_finder.filters.quality import PropertyQualityAnalysis
-
         conn = await self._get_connection()
         cursor = await conn.execute(
             "SELECT analysis_json FROM quality_analyses WHERE property_unique_id = ?",
@@ -611,7 +656,7 @@ class PropertyStorage:
         area: str | None = None,
         page: int = 1,
         per_page: int = 24,
-    ) -> tuple[list[dict[str, Any]], int]:
+    ) -> tuple[list[PropertyListItem], int]:
         """Get paginated properties with optional filters.
 
         Returns:
@@ -678,19 +723,10 @@ class PropertyStorage:
         )
         rows = await cursor.fetchall()
 
-        properties = []
+        properties: list[PropertyListItem] = []
         for row in rows:
             prop_dict = dict(row)
-            # Parse sources JSON
-            if prop_dict.get("sources"):
-                prop_dict["sources_list"] = json.loads(prop_dict["sources"])
-            else:
-                prop_dict["sources_list"] = [prop_dict.get("source", "")]
-            # Parse source_urls JSON
-            if prop_dict.get("source_urls"):
-                prop_dict["source_urls_dict"] = json.loads(prop_dict["source_urls"])
-            else:
-                prop_dict["source_urls_dict"] = {}
+            self._parse_json_fields(prop_dict)
             # Extract quality summary from analysis_json
             if prop_dict.get("analysis_json"):
                 try:
@@ -700,11 +736,11 @@ class PropertyStorage:
                     prop_dict["quality_summary"] = ""
             else:
                 prop_dict["quality_summary"] = ""
-            properties.append(prop_dict)
+            properties.append(cast(PropertyListItem, prop_dict))
 
         return properties, total
 
-    async def get_property_detail(self, unique_id: str) -> dict[str, Any] | None:
+    async def get_property_detail(self, unique_id: str) -> PropertyDetailItem | None:
         """Get full property detail including quality analysis and images.
 
         Args:
@@ -729,8 +765,37 @@ class PropertyStorage:
             return None
 
         prop_dict = dict(row)
+        self._parse_json_fields(prop_dict)
 
-        # Parse JSON fields
+        # Parse quality analysis
+        if prop_dict.get("analysis_json"):
+            prop_dict["quality_analysis"] = PropertyQualityAnalysis.model_validate_json(
+                prop_dict["analysis_json"]
+            )
+        else:
+            prop_dict["quality_analysis"] = None
+
+        # Get images
+        images = await self.get_property_images(unique_id)
+        prop_dict["gallery_images"] = [img for img in images if img.image_type == "gallery"]
+        prop_dict["floorplan_images"] = [img for img in images if img.image_type == "floorplan"]
+
+        return cast(PropertyDetailItem, prop_dict)
+
+    async def get_property_count(self) -> int:
+        """Get total number of tracked properties.
+
+        Returns:
+            Count of properties in database.
+        """
+        conn = await self._get_connection()
+        cursor = await conn.execute("SELECT COUNT(*) FROM properties")
+        row = await cursor.fetchone()
+        return row[0] if row else 0
+
+    @staticmethod
+    def _parse_json_fields(prop_dict: dict[str, Any]) -> None:
+        """Parse common JSON-encoded fields in a property dict (mutates in place)."""
         if prop_dict.get("sources"):
             prop_dict["sources_list"] = json.loads(prop_dict["sources"])
         else:
@@ -746,35 +811,7 @@ class PropertyStorage:
         else:
             prop_dict["descriptions_dict"] = {}
 
-        # Parse quality analysis
-        if prop_dict.get("analysis_json"):
-            from home_finder.filters.quality import PropertyQualityAnalysis
-
-            prop_dict["quality_analysis"] = PropertyQualityAnalysis.model_validate_json(
-                prop_dict["analysis_json"]
-            )
-        else:
-            prop_dict["quality_analysis"] = None
-
-        # Get images
-        images = await self.get_property_images(unique_id)
-        prop_dict["gallery_images"] = [img for img in images if img.image_type == "gallery"]
-        prop_dict["floorplan_images"] = [img for img in images if img.image_type == "floorplan"]
-
-        return prop_dict
-
-    async def get_property_count(self) -> int:
-        """Get total number of tracked properties.
-
-        Returns:
-            Count of properties in database.
-        """
-        conn = await self._get_connection()
-        cursor = await conn.execute("SELECT COUNT(*) FROM properties")
-        row = await cursor.fetchone()
-        return row[0] if row else 0
-
-    def _row_to_tracked_property(self, row: Any) -> TrackedProperty:
+    def _row_to_tracked_property(self, row: aiosqlite.Row) -> TrackedProperty:
         """Convert a database row to a TrackedProperty.
 
         Args:

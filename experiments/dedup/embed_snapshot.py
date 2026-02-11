@@ -96,11 +96,13 @@ def embed_snapshot(path: Path, *, max_images: int = 15) -> None:
         gallery_embeddings = []
         for j, emb in enumerate(embeddings):
             if np.any(emb != 0):  # Skip zero vectors (failed images)
-                gallery_embeddings.append({
-                    "index": j,
-                    "url": gallery_urls[j] if j < len(gallery_urls) else "",
-                    "embedding": embedding_to_base64(emb),
-                })
+                gallery_embeddings.append(
+                    {
+                        "index": j,
+                        "url": gallery_urls[j] if j < len(gallery_urls) else "",
+                        "embedding": embedding_to_base64(emb),
+                    }
+                )
 
         detail["gallery_embeddings"] = gallery_embeddings
         total_embedded += 1

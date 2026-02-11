@@ -10,6 +10,7 @@ from home_finder.logging import get_logger
 from home_finder.models import MergedProperty, Property, PropertyImage, PropertySource
 from home_finder.utils.address import extract_outcode, normalize_street_name
 from home_finder.utils.image_hash import fetch_image_hashes_batch, hashes_match
+from home_finder.utils.union_find import UnionFind
 
 logger = get_logger(__name__)
 
@@ -311,6 +312,25 @@ def calculate_match_score(
     return score
 
 
+def _dedupe_by_unique_id(properties: list[Property]) -> list[Property]:
+    """Deduplicate properties by unique_id, keeping earliest first_seen.
+
+    Args:
+        properties: List of properties, possibly with duplicate unique_ids.
+
+    Returns:
+        Deduplicated list keeping the earliest first_seen for each unique_id.
+    """
+    by_unique_id: dict[str, Property] = {}
+    for prop in properties:
+        if (
+            prop.unique_id not in by_unique_id
+            or prop.first_seen < by_unique_id[prop.unique_id].first_seen
+        ):
+            by_unique_id[prop.unique_id] = prop
+    return list(by_unique_id.values())
+
+
 class Deduplicator:
     """Deduplicate and optionally merge properties across platforms."""
 
@@ -330,158 +350,6 @@ class Deduplicator:
         """
         self.enable_cross_platform = enable_cross_platform
         self.enable_image_hashing = enable_image_hashing
-
-    def deduplicate(self, properties: list[Property]) -> list[Property]:
-        """Remove duplicate properties (original behavior, discards duplicates).
-
-        Args:
-            properties: List of properties to deduplicate.
-
-        Returns:
-            List of unique properties.
-        """
-        if not properties:
-            return []
-
-        # First pass: dedupe by unique_id (same source + same ID)
-        seen_unique_ids: dict[str, Property] = {}
-        for prop in properties:
-            if prop.unique_id in seen_unique_ids:
-                existing = seen_unique_ids[prop.unique_id]
-                # Keep the one seen first
-                if prop.first_seen < existing.first_seen:
-                    seen_unique_ids[prop.unique_id] = prop
-            else:
-                seen_unique_ids[prop.unique_id] = prop
-
-        unique_by_id = list(seen_unique_ids.values())
-
-        if not self.enable_cross_platform:
-            logger.info(
-                "deduplication_complete",
-                original_count=len(properties),
-                deduplicated_count=len(unique_by_id),
-                cross_platform=False,
-            )
-            return unique_by_id
-
-        # Second pass: cross-platform dedup based on postcode + price + bedrooms
-        seen_signatures: dict[str, Property] = {}
-        result: list[Property] = []
-
-        for prop in unique_by_id:
-            signature = self._get_cross_platform_signature_legacy(prop)
-
-            if signature is None:
-                # Can't generate signature (missing postcode), keep as unique
-                result.append(prop)
-                continue
-
-            if signature in seen_signatures:
-                existing = seen_signatures[signature]
-                # Keep the one seen first
-                if prop.first_seen < existing.first_seen:
-                    seen_signatures[signature] = prop
-                    # Replace in result
-                    result = [p for p in result if p.unique_id != existing.unique_id]
-                    result.append(prop)
-            else:
-                seen_signatures[signature] = prop
-                result.append(prop)
-
-        logger.info(
-            "deduplication_complete",
-            original_count=len(properties),
-            after_unique_id=len(unique_by_id),
-            deduplicated_count=len(result),
-            cross_platform=True,
-        )
-
-        return result
-
-    def deduplicate_and_merge(self, properties: list[Property]) -> list[MergedProperty]:
-        """Deduplicate and merge properties from multiple sources.
-
-        Unlike deduplicate(), this method preserves data from all sources
-        by creating MergedProperty objects that combine information.
-
-        Args:
-            properties: List of properties to deduplicate and merge.
-
-        Returns:
-            List of merged properties.
-        """
-        if not properties:
-            return []
-
-        # Stage 1: Dedupe by unique_id (same source + same ID)
-        by_unique_id: dict[str, Property] = {}
-        for prop in properties:
-            if (
-                prop.unique_id not in by_unique_id
-                or prop.first_seen < by_unique_id[prop.unique_id].first_seen
-            ):
-                by_unique_id[prop.unique_id] = prop
-
-        logger.debug(
-            "stage1_dedup_complete",
-            original_count=len(properties),
-            after_unique_id=len(by_unique_id),
-        )
-
-        if not self.enable_cross_platform:
-            # No cross-platform merging, wrap each as single-source MergedProperty
-            merged = [self._single_to_merged(p) for p in by_unique_id.values()]
-            logger.info(
-                "deduplication_merge_complete",
-                original_count=len(properties),
-                merged_count=len(merged),
-                cross_platform=False,
-            )
-            return merged
-
-        # Stage 2: Group potential cross-platform duplicates
-        # Key: (postcode, bedrooms), Value: list of properties
-        potential_matches: dict[str, list[Property]] = defaultdict(list)
-        no_signature: list[Property] = []
-
-        for prop in by_unique_id.values():
-            sig = self._get_cross_platform_signature(prop)
-            if sig:
-                potential_matches[sig].append(prop)
-            else:
-                no_signature.append(prop)
-
-        # Stage 3: Merge groups with matching prices and location confirmation
-        merged_results: list[MergedProperty] = []
-
-        for sig, candidates in potential_matches.items():
-            groups = self._group_by_price_and_location(candidates)
-            for group in groups:
-                if len(group) == 1:
-                    merged_results.append(self._single_to_merged(group[0]))
-                else:
-                    merged_results.append(self._merge_properties(group))
-                    logger.info(
-                        "properties_merged",
-                        signature=sig,
-                        source_count=len(group),
-                        sources=[p.source.value for p in group],
-                    )
-
-        # Add properties without signatures (no postcode)
-        for prop in no_signature:
-            merged_results.append(self._single_to_merged(prop))
-
-        logger.info(
-            "deduplication_merge_complete",
-            original_count=len(properties),
-            after_unique_id=len(by_unique_id),
-            merged_count=len(merged_results),
-            cross_platform=True,
-        )
-
-        return merged_results
 
     async def deduplicate_and_merge_async(
         self,
@@ -503,15 +371,7 @@ class Deduplicator:
             return []
 
         # Stage 1: Dedupe by unique_id (same source + same ID)
-        by_unique_id: dict[str, Property] = {}
-        for prop in properties:
-            if (
-                prop.unique_id not in by_unique_id
-                or prop.first_seen < by_unique_id[prop.unique_id].first_seen
-            ):
-                by_unique_id[prop.unique_id] = prop
-
-        unique_props = list(by_unique_id.values())
+        unique_props = _dedupe_by_unique_id(properties)
 
         logger.debug(
             "stage1_dedup_complete",
@@ -602,16 +462,7 @@ class Deduplicator:
         Returns:
             List of single-source MergedProperty objects.
         """
-        # Dedupe by unique_id first (same source + same ID)
-        by_unique_id: dict[str, Property] = {}
-        for prop in properties:
-            if (
-                prop.unique_id not in by_unique_id
-                or prop.first_seen < by_unique_id[prop.unique_id].first_seen
-            ):
-                by_unique_id[prop.unique_id] = prop
-
-        return [self._single_to_merged(p) for p in by_unique_id.values()]
+        return [self._single_to_merged(p) for p in _dedupe_by_unique_id(properties)]
 
     async def deduplicate_merged_async(
         self,
@@ -681,9 +532,7 @@ class Deduplicator:
                         "enriched_properties_merged",
                         block=block_key,
                         source_count=len(group),
-                        sources=[
-                            s.value for mp in group for s in mp.sources
-                        ],
+                        sources=[s.value for mp in group for s in mp.sources],
                     )
 
         # Add properties without outcode (can't cross-platform match)
@@ -718,18 +567,7 @@ class Deduplicator:
         if len(candidates) <= 1:
             return [candidates] if candidates else []
 
-        # Union-find for transitive matching
-        parent: dict[int, int] = {i: i for i in range(len(candidates))}
-
-        def find(x: int) -> int:
-            if parent[x] != x:
-                parent[x] = find(parent[x])
-            return parent[x]
-
-        def union(x: int, y: int) -> None:
-            px, py = find(x), find(y)
-            if px != py:
-                parent[px] = py
+        uf = UnionFind(len(candidates))
 
         for i in range(len(candidates)):
             for j in range(i + 1, len(candidates)):
@@ -748,17 +586,11 @@ class Deduplicator:
                     )
 
                 if score.is_match and prop_i.source != prop_j.source:
-                    union(i, j)
+                    uf.union(i, j)
 
-        groups_dict: dict[int, list[MergedProperty]] = defaultdict(list)
-        for i, mp in enumerate(candidates):
-            groups_dict[find(i)].append(mp)
+        return [[candidates[i] for i in members] for members in uf.groups().values()]
 
-        return list(groups_dict.values())
-
-    def _merge_merged_properties(
-        self, merged_list: list[MergedProperty]
-    ) -> MergedProperty:
+    def _merge_merged_properties(self, merged_list: list[MergedProperty]) -> MergedProperty:
         """Combine multiple enriched MergedProperty objects into one.
 
         Merges sources, URLs, images, floorplans, and descriptions from
@@ -840,18 +672,7 @@ class Deduplicator:
         if len(candidates) <= 1:
             return [candidates] if candidates else []
 
-        # Union-find for transitive matching
-        parent: dict[int, int] = {i: i for i in range(len(candidates))}
-
-        def find(x: int) -> int:
-            if parent[x] != x:
-                parent[x] = find(parent[x])
-            return parent[x]
-
-        def union(x: int, y: int) -> None:
-            px, py = find(x), find(y)
-            if px != py:
-                parent[px] = py
+        uf = UnionFind(len(candidates))
 
         # Compare all pairs and log scores
         for i in range(len(candidates)):
@@ -871,125 +692,10 @@ class Deduplicator:
                     )
 
                 if score.is_match and prop_i.source != prop_j.source:
-                    union(i, j)
+                    uf.union(i, j)
 
         # Build groups from union-find
-        groups_dict: dict[int, list[Property]] = defaultdict(list)
-        for i, prop in enumerate(candidates):
-            groups_dict[find(i)].append(prop)
-
-        return list(groups_dict.values())
-
-    def _get_cross_platform_signature_legacy(self, prop: Property) -> str | None:
-        """Generate a signature for cross-platform deduplication (legacy exact match).
-
-        Properties with the same postcode, price, and bedrooms are likely
-        the same listing on different platforms.
-
-        Args:
-            prop: Property to generate signature for.
-
-        Returns:
-            Signature string, or None if signature can't be generated.
-        """
-        if not prop.postcode:
-            return None
-
-        # Normalize postcode (uppercase, single space)
-        postcode = " ".join(prop.postcode.upper().split())
-
-        return f"{postcode}:{prop.price_pcm}:{prop.bedrooms}"
-
-    def _get_cross_platform_signature(self, prop: Property) -> str | None:
-        """Generate a signature for grouping potential duplicates.
-
-        CONSERVATIVE: Only generates signature if property has a FULL postcode
-        (e.g., "E3 4AB" not just "E3"). This prevents false merges in areas
-        where many similar properties exist.
-
-        Args:
-            prop: Property to generate signature for.
-
-        Returns:
-            Signature string, or None if signature can't be generated.
-        """
-        if not prop.postcode:
-            return None
-
-        # Normalize postcode (uppercase, single space)
-        postcode = " ".join(prop.postcode.upper().split())
-
-        # CONSERVATIVE: Only match on full postcodes to avoid false positives
-        # Properties with only outcode (e.g., "E3") won't be cross-platform matched
-        if not is_full_postcode(postcode):
-            logger.debug(
-                "skipping_cross_platform_match",
-                property_id=prop.unique_id,
-                postcode=postcode,
-                reason="partial_postcode",
-            )
-            return None
-
-        return f"{postcode}:{prop.bedrooms}"
-
-    def _group_by_price_and_location(self, candidates: list[Property]) -> list[list[Property]]:
-        """Group properties by similar prices AND location confirmation.
-
-        CONSERVATIVE: Requires price match AND either:
-        - Coordinates within 50m (high confidence), OR
-        - Same full postcode (moderate confidence, already filtered)
-
-        Args:
-            candidates: List of properties with same full postcode/bedrooms.
-
-        Returns:
-            List of groups where each group has matching prices and locations.
-        """
-        if len(candidates) <= 1:
-            return [candidates] if candidates else []
-
-        # Use union-find to group properties that match
-        parent: dict[int, int] = {i: i for i in range(len(candidates))}
-
-        def find(x: int) -> int:
-            if parent[x] != x:
-                parent[x] = find(parent[x])
-            return parent[x]
-
-        def union(x: int, y: int) -> None:
-            px, py = find(x), find(y)
-            if px != py:
-                parent[px] = py
-
-        # Compare all pairs
-        for i in range(len(candidates)):
-            for j in range(i + 1, len(candidates)):
-                prop_i, prop_j = candidates[i], candidates[j]
-
-                # Only merge across different platforms
-                if prop_i.source == prop_j.source:
-                    continue
-
-                # Must have matching prices
-                if not prices_match(prop_i.price_pcm, prop_j.price_pcm):
-                    continue
-
-                # If both have coordinates, require them to be close
-                if prop_i.latitude and prop_i.longitude and prop_j.latitude and prop_j.longitude:
-                    if coordinates_match(prop_i, prop_j):
-                        union(i, j)
-                    # else: coordinates don't match, don't merge even with same postcode
-                else:
-                    # No coordinates to verify - rely on full postcode match
-                    # (already filtered to only full postcodes)
-                    union(i, j)
-
-        # Build groups from union-find
-        groups_dict: dict[int, list[Property]] = defaultdict(list)
-        for i, prop in enumerate(candidates):
-            groups_dict[find(i)].append(prop)
-
-        return list(groups_dict.values())
+        return [[candidates[i] for i in members] for members in uf.groups().values()]
 
     def _single_to_merged(self, prop: Property) -> MergedProperty:
         """Wrap a single property as a MergedProperty.

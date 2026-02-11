@@ -10,14 +10,10 @@ from pydantic import HttpUrl
 from home_finder.logging import get_logger
 from home_finder.models import FurnishType, Property, PropertySource
 from home_finder.scrapers.base import BaseScraper
+from home_finder.scrapers.constants import BROWSER_HEADERS
+from home_finder.scrapers.parsing import extract_bedrooms, extract_postcode, extract_price
 
 logger = get_logger(__name__)
-
-HEADERS = {
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-    "Accept-Language": "en-GB,en;q=0.9",
-    "Accept-Encoding": "gzip, deflate, br",
-}
 
 
 class OnTheMarketScraper(BaseScraper):
@@ -145,7 +141,7 @@ class OnTheMarketScraper(BaseScraper):
             session = await self._get_session()
             kwargs: dict[str, object] = {
                 "impersonate": "chrome",
-                "headers": HEADERS,
+                "headers": BROWSER_HEADERS,
                 "timeout": 30,
             }
             if self._proxy_url:
@@ -219,7 +215,7 @@ class OnTheMarketScraper(BaseScraper):
 
         # Extract price
         price_text = listing.get("short-price", "")
-        price = self._extract_price(price_text)
+        price = extract_price(price_text)
         if price is None:
             return None
 
@@ -227,7 +223,7 @@ class OnTheMarketScraper(BaseScraper):
         bedrooms = listing.get("bedrooms")
         if bedrooms is None:
             title = listing.get("property-title", "")
-            bedrooms = self._extract_bedrooms(title)
+            bedrooms = extract_bedrooms(title)
         if bedrooms is None:
             return None
 
@@ -238,7 +234,7 @@ class OnTheMarketScraper(BaseScraper):
         title = listing.get("property-title", address)
 
         # Extract postcode
-        postcode = self._extract_postcode(address)
+        postcode = extract_postcode(address)
 
         # Extract image URL
         image_url: str | None = None
@@ -314,54 +310,3 @@ class OnTheMarketScraper(BaseScraper):
         # OnTheMarket has no bathroom count filter
 
         return f"{self.BASE_URL}/to-rent/property/{area_slug}/?{'&'.join(params)}"
-
-    def _extract_price(self, text: str) -> int | None:
-        """Extract monthly price from text."""
-        if not text:
-            return None
-
-        # Match price
-        match = re.search(r"£([\d,]+)", text)
-        if not match:
-            return None
-
-        price = int(match.group(1).replace(",", ""))
-
-        # Convert weekly to monthly if needed
-        if "pw" in text.lower():
-            price = int(price * 52 / 12)
-
-        return price
-
-    def _extract_bedrooms(self, text: str) -> int | None:
-        """Extract bedroom count from text."""
-        if not text:
-            return None
-
-        text_lower = text.lower()
-
-        # Handle studio
-        if "studio" in text_lower:
-            return 0
-
-        # Match "1 bed", "2 bedroom", etc.
-        match = re.search(r"(\d+)\s*bed(?:room)?s?", text_lower)
-        return int(match.group(1)) if match else None
-
-    def _extract_postcode(self, address: str) -> str | None:
-        """Extract UK postcode from address."""
-        if not address:
-            return None
-
-        # UK postcode pattern
-        match = re.search(
-            r"\b([A-Z]{1,2}\d{1,2}[A-Z]?)\s*(\d[A-Z]{2})?\b",
-            address.upper(),
-        )
-        if match:
-            outward = match.group(1)
-            inward = match.group(2)
-            if inward:
-                return f"{outward} {inward}"
-            return outward
-        return None

@@ -10,6 +10,21 @@ logger = get_logger(__name__)
 
 _IMAGE_CACHE_DIR = "image_cache"
 
+VALID_IMAGE_EXTENSIONS = (".jpg", ".jpeg", ".png", ".gif", ".webp")
+
+
+def is_valid_image_url(url: str) -> bool:
+    """Check if URL points to a supported image format (not PDF).
+
+    Args:
+        url: Image URL to check.
+
+    Returns:
+        True if the URL path ends with a supported image extension.
+    """
+    path = url.split("?")[0].lower()
+    return path.endswith(VALID_IMAGE_EXTENSIONS)
+
 
 def safe_dir_name(unique_id: str) -> str:
     """Convert a property unique_id to a filesystem-safe directory name.

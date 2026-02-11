@@ -5,11 +5,26 @@ import base64
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, get_args
 
-from pydantic import BaseModel, ConfigDict
-
+from home_finder.data.area_context import (
+    AREA_CONTEXT,
+    COUNCIL_TAX_MONTHLY,
+    CRIME_RATES,
+    DEFAULT_BENCHMARK,
+    OUTCODE_BOROUGH,
+    RENT_TRENDS,
+    RENTAL_BENCHMARKS,
+)
 from home_finder.logging import get_logger
-from home_finder.models import MergedProperty
-from home_finder.utils.image_cache import read_image_bytes
+from home_finder.models import (
+    ConditionAnalysis,
+    KitchenAnalysis,
+    LightSpaceAnalysis,
+    MergedProperty,
+    PropertyQualityAnalysis,
+    SpaceAnalysis,
+    ValueAnalysis,
+)
+from home_finder.utils.image_cache import is_valid_image_url, read_image_bytes
 
 if TYPE_CHECKING:
     import anthropic
@@ -21,9 +36,6 @@ logger = get_logger(__name__)
 ImageMediaType = Literal["image/jpeg", "image/png", "image/gif", "image/webp"]
 VALID_MEDIA_TYPES: tuple[str, ...] = get_args(ImageMediaType)
 
-# Valid image extensions (for URL filtering)
-VALID_IMAGE_EXTENSIONS = (".jpg", ".jpeg", ".png", ".gif", ".webp")
-
 # Rate limit settings for Tier 1
 # SDK handles retry automatically, we just need delay between calls
 DELAY_BETWEEN_CALLS = 1.5  # seconds (50 RPM = 1.2s minimum, add buffer)
@@ -31,242 +43,6 @@ DELAY_BETWEEN_CALLS = 1.5  # seconds (50 RPM = 1.2s minimum, add buffer)
 # SDK retry configuration
 MAX_RETRIES = 3
 REQUEST_TIMEOUT = 180.0  # 3 minutes for vision requests
-
-# Average monthly rents by outcode and bedroom count (£/month)
-# Based on Rightmove/Zoopla asking prices and ONS Private Rent data (Jan-Feb 2026)
-# Format: {outcode: {bedrooms: average_rent}}
-RENTAL_BENCHMARKS: dict[str, dict[int, int]] = {
-    # Hackney
-    "E2": {1: 1950, 2: 2400, 3: 3100},
-    "E5": {1: 1800, 2: 2200, 3: 2750},
-    "E8": {1: 1900, 2: 2350, 3: 3000},
-    "E9": {1: 1950, 2: 2400, 3: 2950},
-    "N16": {1: 1800, 2: 2300, 3: 2950},
-    # Islington
-    "N1": {1: 2100, 2: 2600, 3: 3400},
-    "N4": {1: 1800, 2: 2200, 3: 2850},
-    "N5": {1: 1900, 2: 2350, 3: 3050},
-    "N7": {1: 1850, 2: 2300, 3: 2950},
-    "N19": {1: 1750, 2: 2150, 3: 2800},
-    "EC1": {1: 2300, 2: 2900, 3: 3700},
-    # Haringey
-    "N6": {1: 1700, 2: 2100, 3: 2700},
-    "N8": {1: 1750, 2: 2150, 3: 2750},
-    "N10": {1: 1650, 2: 2050, 3: 2650},
-    "N11": {1: 1600, 2: 2000, 3: 2600},
-    "N15": {1: 1550, 2: 1850, 3: 2400},
-    "N17": {1: 1650, 2: 2000, 3: 2550},
-    "N22": {1: 1600, 2: 1950, 3: 2500},
-    # Tower Hamlets
-    "E1": {1: 2050, 2: 2550, 3: 3300},
-    "E3": {1: 1800, 2: 2150, 3: 2700},
-    "E14": {1: 2100, 2: 2600, 3: 3350},
-    # Newham
-    "E15": {1: 1950, 2: 2250, 3: 2800},
-    # Waltham Forest
-    "E10": {1: 1550, 2: 1750, 3: 2400},
-    "E11": {1: 1550, 2: 1900, 3: 2450},
-    "E17": {1: 1700, 2: 1850, 3: 2350},
-}
-
-# Default benchmark for unknown areas (East London average)
-DEFAULT_BENCHMARK: dict[int, int] = {1: 1750, 2: 2100, 3: 2650}
-
-# Area context for LLM quality analysis — concise renter-focused summaries per outcode
-# Injected into the quality analysis prompt to inform value-for-quality ratings
-AREA_CONTEXT: dict[str, str] = {
-    "E3": (
-        "Bow offers Zone 2 value near Victoria Park with District/H&C/Central line access. "
-        "Value pockets in Victorian conversions near Roman Road; Fish Island canalside commands "
-        "15-25% premiums. New-build developments (Bow Green, Fish Island Village) are pushing "
-        "average prices higher. Watch for A12 noise/pollution, variable estate quality, and "
-        "poor EPC ratings on cheap main-road offerings."
-    ),
-    "E5": (
-        "Clapton is 15-20% cheaper than neighbouring Dalston (E8) and Stoke Newington (N16) "
-        "with similar Victorian stock. Overground from Clapton/Homerton reaches Liverpool Street "
-        "in under 15 min. Best value in Upper Clapton near Stamford Hill; Chatsworth Road "
-        "artisan hub commands premiums. Clapton Park Estate 1970s blocks vary significantly in "
-        "quality. Liveable Neighbourhood bus gates (Aug 2025) cause congestion on boundary roads."
-    ),
-    "E9": (
-        "Hackney Wick commands premium rents due to Creative Enterprise Zone status and Olympic "
-        "Park proximity. Overground reaches Liverpool Street in 15 min. Value in older Homerton "
-        "stock; warehouse conversions and waterfront new-builds cost significantly more. Note: "
-        "Fish Island is technically Tower Hamlets (E3), not Hackney—different council tax. "
-        "Flood risk near canals and late-night venue noise affect some locations."
-    ),
-    "E10": (
-        "Leyton offers the best value—10% below Walthamstow and 15-25% below Stratford—with "
-        "Central Line access (12 min to Liverpool Street, 21 to Oxford Circus). Francis Road "
-        "area combines period character with good amenities; proximity to QE Olympic Park and "
-        "Hackney Marshes adds appeal. Flood risk near River Lea; High Road Leyton has higher "
-        "crime rates than borough average. Waltham Forest requires selective landlord licensing."
-    ),
-    "E15": (
-        "Stratford commands premium rents due to Elizabeth Line connectivity and Olympic legacy "
-        "regeneration—London's second-most connected transport hub. Value pockets in Victorian "
-        "terraces around Stratford Village and West Ham run 15-20% below purpose-built towers. "
-        "Avoid Carpenters Estate (facing demolition/regen uncertainty). New-build service charges "
-        "add £150-400/month; scrutinise ground rent terms. Flood risk near Stratford High Street."
-    ),
-    "E17": (
-        "Walthamstow shows dramatic price variation between premium Village area and affordable "
-        "Higham Hill/Wood Street pockets. Victoria Line reaches King's Cross in 15 minutes. "
-        "Build-to-Rent developments (e.g. The Eades) offer 8 weeks rent-free (~15% effective "
-        "discount)—factor incentives into comparisons. Waltham Forest operates borough-wide "
-        "selective landlord licensing. Marlowe Road estate flagged for intervention."
-    ),
-    "N15": (
-        "South Tottenham offers 15-20% savings versus neighbouring N16 with Victoria Line access "
-        "(Seven Sisters to King's Cross in ~15 min). Zone between Seven Sisters and South "
-        "Tottenham stations offers best balance of price and transport. Gradual gentrification "
-        "spillover from N16; new BTR developments (Vabel Lawrence, Apex Gardens) adding modern "
-        "stock. Markfield Road flood risk zone; Haringey crime rate 14% above London average "
-        "with violence/theft concentrating around transport hubs."
-    ),
-    "N16": (
-        "Stoke Newington commands 15-20% premiums over N15/N17 reflecting its village feel, "
-        "independent shops, and excellent schools. Church Street core has highest rents; prime "
-        "houses near Clissold Park reach £1,800/week. Value pockets near Hackney Downs and "
-        "Stamford Hill. Woodberry Down regeneration (5,500 homes by 2035) may ease supply. "
-        "Manor House tube (Piccadilly) nearby but no direct tube; above-average property crime."
-    ),
-    "N17": (
-        "Tottenham Hale has a stark two-tier market: Build-to-Rent developments (Heart of Hale, "
-        "Hale Village, The Gessner—£2,170-2,615 for 1-beds with gym/concierge) vs older "
-        "Victorian conversions at 20-30% less. Victoria Line reaches King's Cross in 12 min; "
-        "direct trains to Stansted. Northumberland Park area remains challenging. Higher crime "
-        "in Tottenham Hale ward; flood risk near waterways."
-    ),
-}
-
-
-# Borough for each search outcode (for council tax / rent trend lookup)
-OUTCODE_BOROUGH: dict[str, str] = {
-    "E3": "Tower Hamlets",
-    "E5": "Hackney",
-    "E9": "Hackney",
-    "E10": "Waltham Forest",
-    "E15": "Newham",
-    "E17": "Waltham Forest",
-    "N15": "Haringey",
-    "N16": "Hackney",
-    "N17": "Haringey",
-}
-
-# Council tax monthly £ by borough and band (2025-26)
-COUNCIL_TAX_MONTHLY: dict[str, dict[str, int]] = {
-    "Tower Hamlets": {"A": 97, "B": 114, "C": 130, "D": 146},
-    "Hackney": {"A": 109, "B": 127, "C": 146, "D": 164},
-    "Waltham Forest": {"A": 127, "B": 148, "C": 169, "D": 190},
-    "Newham": {"A": 96, "B": 112, "C": 128, "D": 144},
-    "Haringey": {"A": 123, "B": 143, "C": 164, "D": 184},
-}
-
-# Crime rate per 1,000 residents (London avg = 85)
-CRIME_RATES: dict[str, dict[str, Any]] = {
-    "E3": {"rate": 125, "vs_london": "+47%", "risk": "medium"},
-    "E5": {
-        "rate": 150,
-        "vs_london": "+76%",
-        "risk": "medium-high",
-        "note": "varies 47-354 within postcode",
-    },
-    "E9": {"rate": 165, "vs_london": "+94%", "risk": "medium-high"},
-    "E10": {
-        "rate": 110,
-        "vs_london": "+29%",
-        "risk": "medium",
-        "note": "High Road 264 vs residential 67",
-    },
-    "E15": {
-        "rate": 150,
-        "vs_london": "+76%",
-        "risk": "medium",
-        "note": "retail skews to 398",
-    },
-    "E17": {"rate": 95, "vs_london": "+12%", "risk": "low-medium"},
-    "N15": {"rate": 143, "vs_london": "+68%", "risk": "medium-high"},
-    "N16": {
-        "rate": 125,
-        "vs_london": "+47%",
-        "risk": "medium",
-        "note": "Church St 170 vs High St 82",
-    },
-    "N17": {"rate": 143, "vs_london": "+68%", "risk": "medium-high"},
-}
-
-# YoY rent trend by borough (applied to outcodes via OUTCODE_BOROUGH)
-RENT_TRENDS: dict[str, dict[str, Any]] = {
-    "Tower Hamlets": {"yoy_pct": 2.6, "direction": "rising"},
-    "Hackney": {"yoy_pct": 4.3, "direction": "rising"},
-    "Waltham Forest": {"yoy_pct": 2.8, "direction": "rising"},
-    "Newham": {"yoy_pct": 8.9, "direction": "rising strongly"},
-    "Haringey": {"yoy_pct": 4.7, "direction": "rising"},
-}
-
-
-class KitchenAnalysis(BaseModel):
-    """Analysis of kitchen amenities and condition."""
-
-    model_config = ConfigDict(frozen=True)
-
-    overall_quality: Literal["modern", "decent", "dated", "unknown"] = "unknown"
-    hob_type: Literal["gas", "electric", "induction", "unknown"] | None = None
-    has_dishwasher: bool | None = None
-    has_washing_machine: bool | None = None
-    notes: str = ""
-
-
-class ConditionAnalysis(BaseModel):
-    """Analysis of property condition."""
-
-    model_config = ConfigDict(frozen=True)
-
-    overall_condition: Literal["excellent", "good", "fair", "poor", "unknown"] = "unknown"
-    has_visible_damp: bool = False
-    has_visible_mold: bool = False
-    has_worn_fixtures: bool = False
-    maintenance_concerns: list[str] = []
-    confidence: Literal["high", "medium", "low"] = "medium"
-
-
-class LightSpaceAnalysis(BaseModel):
-    """Analysis of natural light and space feel."""
-
-    model_config = ConfigDict(frozen=True)
-
-    natural_light: Literal["excellent", "good", "fair", "poor", "unknown"] = "unknown"
-    window_sizes: Literal["large", "medium", "small"] | None = None
-    feels_spacious: bool | None = None  # None = unknown
-    ceiling_height: Literal["high", "standard", "low"] | None = None
-    notes: str = ""
-
-
-class SpaceAnalysis(BaseModel):
-    """Analysis of living room space (replaces FloorplanFilter logic)."""
-
-    model_config = ConfigDict(frozen=True)
-
-    living_room_sqm: float | None = None
-    is_spacious_enough: bool | None = None  # None = unknown
-    confidence: Literal["high", "medium", "low"] = "low"
-
-
-class ValueAnalysis(BaseModel):
-    """Value-for-money assessment based on local benchmarks."""
-
-    model_config = ConfigDict(frozen=True)
-
-    area_average: int | None = None
-    difference: int | None = None  # Negative = below average (good), positive = above
-    rating: Literal["excellent", "good", "fair", "poor"] | None = None
-    note: str = ""
-
-    # LLM-assessed value considering quality (set by Claude)
-    quality_adjusted_rating: Literal["excellent", "good", "fair", "poor"] | None = None
-    quality_adjusted_note: str = ""
 
 
 def assess_value(price_pcm: int, postcode: str | None, bedrooms: int) -> ValueAnalysis:
@@ -323,30 +99,6 @@ def assess_value(price_pcm: int, postcode: str | None, bedrooms: int) -> ValueAn
         rating=rating,
         note=note,
     )
-
-
-class PropertyQualityAnalysis(BaseModel):
-    """Complete quality analysis of a property."""
-
-    model_config = ConfigDict(frozen=True)
-
-    kitchen: KitchenAnalysis
-    condition: ConditionAnalysis
-    light_space: LightSpaceAnalysis
-    space: SpaceAnalysis
-
-    # Advisory flags (no auto-filtering)
-    condition_concerns: bool = False
-    concern_severity: Literal["minor", "moderate", "serious"] | None = None
-
-    # Value assessment (calculated, not from LLM)
-    value: ValueAnalysis | None = None
-
-    # Overall star rating (1-5, from LLM)
-    overall_rating: int | None = None
-
-    # For notifications
-    summary: str
 
 
 # System prompt for quality analysis - cached for cost savings
@@ -707,17 +459,6 @@ class PropertyQualityFilter:
                 timeout=httpx.Timeout(REQUEST_TIMEOUT),  # 3 min for vision requests
             )
         return self._client
-
-    @staticmethod
-    def _is_valid_image_url(url: str) -> bool:
-        """Check if URL points to a supported image format.
-
-        Claude Vision API only supports jpeg, png, gif, and webp.
-        PDFs and other formats will fail, so we filter them out.
-        """
-        # Extract path without query params
-        path = url.split("?")[0].lower()
-        return path.endswith(VALID_IMAGE_EXTENSIONS)
 
     @staticmethod
     def _needs_base64_download(url: str) -> bool:
@@ -1082,7 +823,7 @@ class PropertyQualityFilter:
 
         # Add floorplan with label if available and is a supported image format
         # (PDFs are not supported by Claude Vision API)
-        if floorplan_url and self._is_valid_image_url(floorplan_url):
+        if floorplan_url and is_valid_image_url(floorplan_url):
             floorplan_block = await self._build_image_block(
                 floorplan_url, cached_path=floorplan_cached_path
             )
@@ -1108,7 +849,7 @@ class PropertyQualityFilter:
         )
         content.append(TextBlockParam(type="text", text=user_prompt))
 
-        has_usable_floorplan = floorplan_url is not None and self._is_valid_image_url(floorplan_url)
+        has_usable_floorplan = floorplan_url is not None and is_valid_image_url(floorplan_url)
         logger.info(
             "analyzing_property",
             property_id=property_id,

@@ -178,7 +178,9 @@ def main() -> None:
     vectorizer = None
     if len(desc_texts) >= 2:
         vectorizer = TfidfVectorizer(
-            stop_words="english", max_features=5000, ngram_range=(1, 2),
+            stop_words="english",
+            max_features=5000,
+            ngram_range=(1, 2),
         )
         vectorizer.fit(desc_texts)
         print(f"  Fitted on {len(desc_texts)} descriptions, {len(vectorizer.vocabulary_)} features")
@@ -203,25 +205,30 @@ def main() -> None:
 
     for a, b, block_key in pairs:
         bundle = compute_all_signals(
-            a, b, vectorizer=vectorizer, description_embeddings=embeddings_dict,
+            a,
+            b,
+            vectorizer=vectorizer,
+            description_embeddings=embeddings_dict,
         )
         result = score_pair(a, b, config=config, bundle=bundle)
 
-        scored_pairs.append({
-            "pair_id": make_pair_id(a, b),
-            "block": block_key,
-            "property_a": property_summary(a),
-            "property_b": property_summary(b),
-            "raw_a": a,
-            "raw_b": b,
-            "scorer": {
-                "score": result.score,
-                "signal_count": result.signal_count,
-                "is_match": result.is_match,
-                "breakdown": result.breakdown,
-            },
-            "signals": bundle.to_dict(),
-        })
+        scored_pairs.append(
+            {
+                "pair_id": make_pair_id(a, b),
+                "block": block_key,
+                "property_a": property_summary(a),
+                "property_b": property_summary(b),
+                "raw_a": a,
+                "raw_b": b,
+                "scorer": {
+                    "score": result.score,
+                    "signal_count": result.signal_count,
+                    "is_match": result.is_match,
+                    "breakdown": result.breakdown,
+                },
+                "signals": bundle.to_dict(),
+            }
+        )
 
     # Sort
     if args.sort == "score_desc":

@@ -305,12 +305,14 @@ class TestRealFullPipeline:
         print(f"After criteria filter: {len(filtered)} properties")
 
         # Deduplicate
-        unique = Deduplicator(enable_cross_platform=True).deduplicate(filtered)
-        print(f"After deduplication: {len(unique)} unique properties")
+        deduplicator = Deduplicator(enable_cross_platform=True)
+        merged = await deduplicator.deduplicate_and_merge_async(filtered)
+        print(f"After deduplication: {len(merged)} unique properties")
 
         # Show sample results
         print("\n--- Sample Results ---")
-        for prop in unique[:5]:
+        for m in merged[:5]:
+            prop = m.canonical
             print(f"\n[{prop.source.value}] {prop.title}")
             print(f"  £{prop.price_pcm}/month | {prop.bedrooms} bed")
             print(f"  {prop.address}")
@@ -321,6 +323,6 @@ class TestRealFullPipeline:
         # Basic assertions
         assert isinstance(all_properties, list)
         assert isinstance(filtered, list)
-        assert isinstance(unique, list)
+        assert isinstance(merged, list)
         # Deduplicated should be <= filtered
-        assert len(unique) <= len(filtered)
+        assert len(merged) <= len(filtered)

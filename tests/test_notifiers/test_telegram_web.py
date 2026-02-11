@@ -42,9 +42,7 @@ def merged_property(sample_property: Property) -> MergedProperty:
 
 
 class TestBuildInlineKeyboardWithWebUrl:
-    def test_with_web_base_url_adds_details_button(
-        self, merged_property: MergedProperty
-    ) -> None:
+    def test_with_web_base_url_adds_details_button(self, merged_property: MergedProperty) -> None:
         keyboard = _build_inline_keyboard(
             merged_property, web_base_url="https://home-finder.fly.dev"
         )
@@ -54,9 +52,7 @@ class TestBuildInlineKeyboardWithWebUrl:
         assert "/property/" in all_buttons[0].url
         assert merged_property.unique_id in all_buttons[0].url
 
-    def test_without_web_base_url_no_details_button(
-        self, merged_property: MergedProperty
-    ) -> None:
+    def test_without_web_base_url_no_details_button(self, merged_property: MergedProperty) -> None:
         keyboard = _build_inline_keyboard(merged_property, web_base_url="")
         all_buttons = [btn for row in keyboard.inline_keyboard for btn in row]
         button_texts = [btn.text for btn in all_buttons]
@@ -73,9 +69,7 @@ class TestBuildInlineKeyboardWithWebUrl:
         assert "OpenRent" in button_texts
         assert "Zoopla" in button_texts
 
-    def test_web_base_url_trailing_slash_stripped(
-        self, merged_property: MergedProperty
-    ) -> None:
+    def test_web_base_url_trailing_slash_stripped(self, merged_property: MergedProperty) -> None:
         keyboard = _build_inline_keyboard(
             merged_property, web_base_url="https://home-finder.fly.dev/"
         )
@@ -83,9 +77,7 @@ class TestBuildInlineKeyboardWithWebUrl:
         # URL should not have double slashes
         assert "//property" not in all_buttons[0].url
 
-    def test_map_button_present_with_coords(
-        self, merged_property: MergedProperty
-    ) -> None:
+    def test_map_button_present_with_coords(self, merged_property: MergedProperty) -> None:
         keyboard = _build_inline_keyboard(merged_property)
         all_buttons = [btn for row in keyboard.inline_keyboard for btn in row]
         map_buttons = [btn for btn in all_buttons if "Map" in btn.text]
@@ -140,9 +132,7 @@ class TestTelegramNotifierWebBaseUrl:
         assert notifier.web_base_url == ""
 
     @pytest.mark.asyncio
-    async def test_send_merged_passes_web_base_url(
-        self, merged_property: MergedProperty
-    ) -> None:
+    async def test_send_merged_passes_web_base_url(self, merged_property: MergedProperty) -> None:
         notifier = TelegramNotifier(
             bot_token="123:ABC",
             chat_id=12345,

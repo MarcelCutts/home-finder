@@ -37,11 +37,7 @@ def _needs_patch(record: dict) -> bool:
 
 def _record_to_property(record: dict) -> Property:
     """Reconstruct a Property from a snapshot record (ignoring detail/hashes)."""
-    fields = {
-        k: record[k]
-        for k in Property.model_fields
-        if k in record and record[k] is not None
-    }
+    fields = {k: record[k] for k in Property.model_fields if k in record and record[k] is not None}
     return Property(**fields)
 
 

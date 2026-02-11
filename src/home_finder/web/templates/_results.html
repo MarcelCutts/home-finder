@@ -1,3 +1,5 @@
+{% macro page_url(target_page) %}?page={{ target_page }}&sort={{ sort }}{% if min_price %}&min_price={{ min_price }}{% endif %}{% if max_price %}&max_price={{ max_price }}{% endif %}{% if bedrooms %}&bedrooms={{ bedrooms }}{% endif %}{% if min_rating %}&min_rating={{ min_rating }}{% endif %}{% if area %}&area={{ area }}{% endif %}{% endmacro %}
+
 {% if properties %}
 <div class="card-grid">
     {% for prop in properties %}
@@ -8,15 +10,15 @@
 {% if total_pages > 1 %}
 <nav class="pagination">
     {% if page > 1 %}
-    <a href="?page={{ page - 1 }}&sort={{ sort }}{% if min_price %}&min_price={{ min_price }}{% endif %}{% if max_price %}&max_price={{ max_price }}{% endif %}{% if bedrooms %}&bedrooms={{ bedrooms }}{% endif %}{% if min_rating %}&min_rating={{ min_rating }}{% endif %}{% if area %}&area={{ area }}{% endif %}"
-       hx-get="?page={{ page - 1 }}&sort={{ sort }}{% if min_price %}&min_price={{ min_price }}{% endif %}{% if max_price %}&max_price={{ max_price }}{% endif %}{% if bedrooms %}&bedrooms={{ bedrooms }}{% endif %}{% if min_rating %}&min_rating={{ min_rating }}{% endif %}{% if area %}&area={{ area }}{% endif %}"
+    {% set prev_url = page_url(page - 1) %}
+    <a href="{{ prev_url }}" hx-get="{{ prev_url }}"
        hx-target="#results" hx-push-url="true" hx-indicator="#loading"
        role="button" class="outline">Previous</a>
     {% endif %}
     <span class="pagination-info">Page {{ page }} of {{ total_pages }}</span>
     {% if page < total_pages %}
-    <a href="?page={{ page + 1 }}&sort={{ sort }}{% if min_price %}&min_price={{ min_price }}{% endif %}{% if max_price %}&max_price={{ max_price }}{% endif %}{% if bedrooms %}&bedrooms={{ bedrooms }}{% endif %}{% if min_rating %}&min_rating={{ min_rating }}{% endif %}{% if area %}&area={{ area }}{% endif %}"
-       hx-get="?page={{ page + 1 }}&sort={{ sort }}{% if min_price %}&min_price={{ min_price }}{% endif %}{% if max_price %}&max_price={{ max_price }}{% endif %}{% if bedrooms %}&bedrooms={{ bedrooms }}{% endif %}{% if min_rating %}&min_rating={{ min_rating }}{% endif %}{% if area %}&area={{ area }}{% endif %}"
+    {% set next_url = page_url(page + 1) %}
+    <a href="{{ next_url }}" hx-get="{{ next_url }}"
        hx-target="#results" hx-push-url="true" hx-indicator="#loading"
        role="button" class="outline">Next</a>
     {% endif %}

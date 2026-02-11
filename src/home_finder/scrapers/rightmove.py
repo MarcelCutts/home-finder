@@ -13,6 +13,7 @@ from home_finder.logging import get_logger
 from home_finder.models import FurnishType, Property, PropertySource
 from home_finder.scrapers.base import BaseScraper
 from home_finder.scrapers.location_utils import is_outcode
+from home_finder.scrapers.parsing import extract_bedrooms, extract_postcode, extract_price
 
 logger = get_logger(__name__)
 
@@ -447,7 +448,7 @@ class RightmoveScraper(BaseScraper):
 
         if bedrooms is None:
             # Try extracting from title
-            bedrooms = self._extract_bedrooms(title)
+            bedrooms = extract_bedrooms(title)
 
         if bedrooms is None:
             # Try from property details lozenge (old structure)
@@ -488,12 +489,12 @@ class RightmoveScraper(BaseScraper):
                 price_elem = card.find(class_=re.compile(r"[Pp]rice"))
             price_text = price_elem.get_text(strip=True) if price_elem else ""
 
-        price = self._extract_price(price_text)
+        price = extract_price(price_text)
         if price is None:
             return None
 
         # Extract postcode
-        postcode = self._extract_postcode(address)
+        postcode = extract_postcode(address)
 
         # Extract image URL
         img = card.find("img")
@@ -519,59 +520,3 @@ class RightmoveScraper(BaseScraper):
         """Extract property ID from URL."""
         match = re.search(r"/properties/(\d+)", url)
         return match.group(1) if match else None
-
-    def _extract_price(self, text: str) -> int | None:
-        """Extract monthly price from text.
-
-        Handles both pcm (per calendar month) and pw (per week) formats.
-        """
-        if not text:
-            return None
-
-        # Match price with optional thousand separator
-        match = re.search(r"£([\d,]+)", text)
-        if not match:
-            return None
-
-        price = int(match.group(1).replace(",", ""))
-
-        # Convert weekly to monthly if needed
-        if "pw" in text.lower():
-            price = int(price * 52 / 12)
-
-        return price
-
-    def _extract_bedrooms(self, text: str) -> int | None:
-        """Extract bedroom count from text."""
-        if not text:
-            return None
-
-        text_lower = text.lower()
-
-        # Handle studio
-        if "studio" in text_lower:
-            return 0
-
-        # Match "1 bedroom", "2 bed", etc.
-        match = re.search(r"(\d+)\s*bed(?:room)?s?", text_lower)
-        return int(match.group(1)) if match else None
-
-    def _extract_postcode(self, address: str) -> str | None:
-        """Extract UK postcode from address."""
-        if not address:
-            return None
-
-        # UK postcode pattern: area code + optional district + space + sector + unit
-        # E.g., "E8", "E8 3RH", "N1 2AA", "SW1A 1AA"
-        # Try full postcode first
-        match = re.search(
-            r"\b([A-Z]{1,2}\d{1,2}[A-Z]?)\s*(\d[A-Z]{2})?\b",
-            address.upper(),
-        )
-        if match:
-            outward = match.group(1)
-            inward = match.group(2)
-            if inward:
-                return f"{outward} {inward}"
-            return outward
-        return None

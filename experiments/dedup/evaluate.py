@@ -123,14 +123,16 @@ def load_labeled_pairs(
         raw_a = pair.get("raw_a", pair["property_a"])
         raw_b = pair.get("raw_b", pair["property_b"])
 
-        result.append(LabeledPair(
-            pair_id=pair_id,
-            raw_a=raw_a,
-            raw_b=raw_b,
-            summary_a=pair["property_a"],
-            summary_b=pair["property_b"],
-            label=label,
-        ))
+        result.append(
+            LabeledPair(
+                pair_id=pair_id,
+                raw_a=raw_a,
+                raw_b=raw_b,
+                summary_a=pair["property_a"],
+                summary_b=pair["property_b"],
+                label=label,
+            )
+        )
 
     if skipped:
         print(f"Skipped {skipped} uncertain labels")
@@ -176,7 +178,9 @@ def _build_corpus_state(
     vectorizer = None
     if len(desc_texts) >= 2:
         vectorizer = TfidfVectorizer(
-            stop_words="english", max_features=5000, ngram_range=(1, 2),
+            stop_words="english",
+            max_features=5000,
+            ngram_range=(1, 2),
         )
         vectorizer.fit(desc_texts)
 
@@ -217,7 +221,8 @@ def evaluate(
 
     for lp in labeled_pairs:
         bundle = compute_all_signals(
-            lp.raw_a, lp.raw_b,
+            lp.raw_a,
+            lp.raw_b,
             vectorizer=vectorizer,
             description_embeddings=description_embeddings,
         )
@@ -352,7 +357,9 @@ def sweep_thresholds(
     print("\n" + "=" * 60)
     print("THRESHOLD SWEEP")
     print("=" * 60)
-    print(f"  {'Threshold':>10} {'Prec':>7} {'Rec':>7} {'F1':>7} {'F0.5':>7} {'TP':>5} {'FP':>5} {'FN':>5}")
+    print(
+        f"  {'Threshold':>10} {'Prec':>7} {'Rec':>7} {'F1':>7} {'F0.5':>7} {'TP':>5} {'FP':>5} {'FN':>5}"
+    )
     print(f"  {'-' * 58}")
 
     best_f05 = 0.0
@@ -361,7 +368,8 @@ def sweep_thresholds(
     for threshold in range(20, 120, 5):
         config = dataclasses.replace(base_config, match_threshold=float(threshold))
         metrics, _, _ = evaluate(
-            labeled_pairs, config,
+            labeled_pairs,
+            config,
             vectorizer=vectorizer,
             description_embeddings=description_embeddings,
         )
@@ -439,7 +447,8 @@ def main() -> None:
     print(f"  Embeddings: {len(description_embeddings)} properties")
 
     metrics, signal_stats, errors = evaluate(
-        labeled_pairs, config,
+        labeled_pairs,
+        config,
         vectorizer=vectorizer,
         description_embeddings=description_embeddings,
     )
@@ -450,7 +459,8 @@ def main() -> None:
 
     if args.sweep:
         sweep_thresholds(
-            labeled_pairs, config,
+            labeled_pairs,
+            config,
             vectorizer=vectorizer,
             description_embeddings=description_embeddings,
         )

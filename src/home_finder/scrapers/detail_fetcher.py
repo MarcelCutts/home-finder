@@ -340,10 +340,7 @@ class DetailFetcher:
             # Also runs if previous step found too few images (e.g. only a floorplan)
             if len(gallery_urls) < 3:
                 # Collect hashes already in gallery to avoid duplicates
-                existing_hashes = {
-                    u.rsplit("/", 1)[-1].split(".")[0]
-                    for u in gallery_urls
-                }
+                existing_hashes = {u.rsplit("/", 1)[-1].split(".")[0] for u in gallery_urls}
                 img_matches = re.findall(
                     r"https://lid\.zoocdn\.com/u/(\d+)/(\d+)/([a-f0-9]+\.(?:jpg|jpeg|png|webp))",
                     html,

@@ -9,16 +9,22 @@ from pydantic import HttpUrl, ValidationError
 
 from home_finder.filters.quality import (
     QUALITY_ANALYSIS_TOOL,
+    PropertyQualityFilter,
+    assess_value,
+)
+from home_finder.models import (
     ConditionAnalysis,
     KitchenAnalysis,
     LightSpaceAnalysis,
+    MergedProperty,
+    Property,
+    PropertyImage,
     PropertyQualityAnalysis,
-    PropertyQualityFilter,
+    PropertySource,
     SpaceAnalysis,
     ValueAnalysis,
-    assess_value,
 )
-from home_finder.models import MergedProperty, Property, PropertyImage, PropertySource
+from home_finder.utils.image_cache import is_valid_image_url
 
 
 class TestKitchenAnalysis:
@@ -507,7 +513,7 @@ class TestPropertyQualityFilter:
             "https://example.com/image.jpg?w=800",  # With query params
         ]
         for url in valid_urls:
-            assert PropertyQualityFilter._is_valid_image_url(url), f"Should accept {url}"
+            assert is_valid_image_url(url), f"Should accept {url}"
 
     def test_is_valid_image_url_rejects_pdfs(self) -> None:
         """Should reject PDF URLs (not supported by Claude Vision API)."""
@@ -517,7 +523,7 @@ class TestPropertyQualityFilter:
             "https://example.com/doc.pdf?download=true",
         ]
         for url in pdf_urls:
-            assert not PropertyQualityFilter._is_valid_image_url(url), f"Should reject {url}"
+            assert not is_valid_image_url(url), f"Should reject {url}"
 
     async def test_creates_minimal_analysis_when_no_images(self, sample_property: Property) -> None:
         """Should create minimal analysis when no images available."""

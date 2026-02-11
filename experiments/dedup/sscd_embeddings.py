@@ -30,9 +30,7 @@ logger = get_logger(__name__)
 
 MODEL_DIR = Path(__file__).parent / "data" / "models"
 MODEL_FILENAME = "sscd_disc_mixup.torchscript.pt"
-MODEL_URL = (
-    "https://dl.fbaipublicfiles.com/sscd-copy-detection/sscd_disc_mixup.torchscript.pt"
-)
+MODEL_URL = "https://dl.fbaipublicfiles.com/sscd-copy-detection/sscd_disc_mixup.torchscript.pt"
 
 # SSCD input: 288x288 (as per the paper), ImageNet normalization
 SSCD_INPUT_SIZE = 288
@@ -58,8 +56,7 @@ def _ensure_torch():
         _transforms = transforms
     except ImportError as e:
         raise ImportError(
-            "SSCD embeddings require torch and torchvision. "
-            "Install with: uv sync --extra sscd"
+            "SSCD embeddings require torch and torchvision. Install with: uv sync --extra sscd"
         ) from e
 
 
@@ -99,11 +96,13 @@ def _get_model():
 def _get_transform():
     """Build the SSCD preprocessing transform."""
     _ensure_torch()
-    return _transforms.Compose([
-        _transforms.Resize((SSCD_INPUT_SIZE, SSCD_INPUT_SIZE)),
-        _transforms.ToTensor(),
-        _transforms.Normalize(mean=IMAGENET_MEAN, std=IMAGENET_STD),
-    ])
+    return _transforms.Compose(
+        [
+            _transforms.Resize((SSCD_INPUT_SIZE, SSCD_INPUT_SIZE)),
+            _transforms.ToTensor(),
+            _transforms.Normalize(mean=IMAGENET_MEAN, std=IMAGENET_STD),
+        ]
+    )
 
 
 def _preprocess_image(image: Image.Image):

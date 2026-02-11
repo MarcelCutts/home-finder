@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from pydantic import HttpUrl
 
-from home_finder.filters.commute import CommuteFilter, CommuteResult
+from home_finder.filters.commute import CommuteFilter
 from home_finder.models import MergedProperty, Property, PropertySource, TransportMode
 
 
@@ -87,13 +87,15 @@ class TestCommuteFilterIntegration:
         ]
 
         # 3 within limit (travel_time <= 30 min = 1800s), 2 outside
-        time_filter_response = _mock_time_filter_response([
-            {"id": "openrent:1", "travel_time": 900},   # 15 min - within
-            {"id": "openrent:2", "travel_time": 1200},  # 20 min - within
-            {"id": "openrent:3", "travel_time": 1500},  # 25 min - within
-            {"id": "openrent:4", "travel_time": 2400},  # 40 min - outside
-            {"id": "openrent:5", "travel_time": 3000},  # 50 min - outside
-        ])
+        time_filter_response = _mock_time_filter_response(
+            [
+                {"id": "openrent:1", "travel_time": 900},  # 15 min - within
+                {"id": "openrent:2", "travel_time": 1200},  # 20 min - within
+                {"id": "openrent:3", "travel_time": 1500},  # 25 min - within
+                {"id": "openrent:4", "travel_time": 2400},  # 40 min - outside
+                {"id": "openrent:5", "travel_time": 3000},  # 50 min - outside
+            ]
+        )
         geocode_resp = _mock_geocoding_response(51.5350, -0.0900)
 
         commute_filter = CommuteFilter(
@@ -173,12 +175,16 @@ class TestCommuteFilterIntegration:
         """Best travel time across modes should be selected."""
         props = [_make_property("30", "E8 3RH", 51.5465, -0.0553)]
 
-        cycling_resp = _mock_time_filter_response([
-            {"id": "openrent:30", "travel_time": 1200},  # 20 min cycling
-        ])
-        pt_resp = _mock_time_filter_response([
-            {"id": "openrent:30", "travel_time": 900},  # 15 min PT (better)
-        ])
+        cycling_resp = _mock_time_filter_response(
+            [
+                {"id": "openrent:30", "travel_time": 1200},  # 20 min cycling
+            ]
+        )
+        pt_resp = _mock_time_filter_response(
+            [
+                {"id": "openrent:30", "travel_time": 900},  # 15 min PT (better)
+            ]
+        )
         geocode_resp = _mock_geocoding_response(51.5350, -0.0900)
 
         commute_filter = CommuteFilter(

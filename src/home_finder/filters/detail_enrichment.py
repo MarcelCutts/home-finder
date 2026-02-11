@@ -13,6 +13,7 @@ from home_finder.scrapers.detail_fetcher import DetailFetcher
 from home_finder.utils.image_cache import (
     get_cached_image_path,
     is_property_cached,
+    is_valid_image_url,
     save_image_bytes,
 )
 
@@ -20,14 +21,6 @@ if TYPE_CHECKING:
     from home_finder.db import PropertyStorage
 
 logger = get_logger(__name__)
-
-VALID_IMAGE_EXTENSIONS = (".jpg", ".jpeg", ".png", ".gif", ".webp")
-
-
-def _is_valid_image_url(url: str) -> bool:
-    """Check if URL points to a supported image format (not PDF)."""
-    path = url.split("?")[0].lower()
-    return path.endswith(VALID_IMAGE_EXTENSIONS)
 
 
 _ENRICHMENT_CONCURRENCY = 5
@@ -86,7 +79,7 @@ async def _enrich_single(
                 if (
                     detail_data.floorplan_url
                     and not floorplan_image
-                    and _is_valid_image_url(detail_data.floorplan_url)
+                    and is_valid_image_url(detail_data.floorplan_url)
                 ):
                     floorplan_image = PropertyImage(
                         url=HttpUrl(detail_data.floorplan_url),
@@ -200,9 +193,7 @@ async def enrich_merged_properties(
             to_enrich.append(merged)
 
     semaphore = asyncio.Semaphore(_ENRICHMENT_CONCURRENCY)
-    tasks = [
-        _enrich_single(merged, detail_fetcher, semaphore, data_dir) for merged in to_enrich
-    ]
+    tasks = [_enrich_single(merged, detail_fetcher, semaphore, data_dir) for merged in to_enrich]
     enriched = list(await asyncio.gather(*tasks))
 
     return cached_results + enriched

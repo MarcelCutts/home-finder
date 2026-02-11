@@ -69,10 +69,7 @@ class TestEnrichmentPipelineE2E:
 
         # Descriptions come from detail pages — check if any got populated
         # (original canonical descriptions are separate from enriched descriptions)
-        has_data = any(
-            m.images or m.floorplan or m.descriptions
-            for m in enriched
-        )
+        has_data = any(m.images or m.floorplan or m.descriptions for m in enriched)
         # At least some enrichment should have happened
         # (soft check — don't fail on transient issues)
         if not has_data:

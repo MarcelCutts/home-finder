@@ -12,13 +12,18 @@ from home_finder.filters import (
     CriteriaFilter,
     Deduplicator,
     LocationFilter,
-    PropertyQualityAnalysis,
     PropertyQualityFilter,
     enrich_merged_properties,
     filter_by_floorplan,
 )
 from home_finder.logging import configure_logging, get_logger
-from home_finder.models import FurnishType, MergedProperty, Property, TransportMode
+from home_finder.models import (
+    FurnishType,
+    MergedProperty,
+    Property,
+    PropertyQualityAnalysis,
+    TransportMode,
+)
 from home_finder.notifiers import TelegramNotifier
 from home_finder.scrapers import (
     OnTheMarketScraper,
@@ -30,19 +35,6 @@ from home_finder.scrapers.detail_fetcher import DetailFetcher
 from home_finder.scrapers.location_utils import is_outcode
 
 logger = get_logger(__name__)
-
-# Default search areas (used as fallback if Settings.search_areas is empty)
-_DEFAULT_SEARCH_AREAS = [
-    "e3",
-    "e5",
-    "e9",
-    "e10",
-    "e15",
-    "e17",
-    "n15",
-    "n16",
-    "n17",
-]
 
 
 async def scrape_all_platforms(
@@ -66,7 +58,7 @@ async def scrape_all_platforms(
         max_price: Maximum monthly rent.
         min_bedrooms: Minimum bedrooms.
         max_bedrooms: Maximum bedrooms.
-        search_areas: Areas to search (boroughs or outcodes). Defaults to _DEFAULT_SEARCH_AREAS.
+        search_areas: Areas to search (boroughs or outcodes).
         furnish_types: Furnishing types to include.
         min_bathrooms: Minimum number of bathrooms.
         include_let_agreed: Whether to include already-let properties.
@@ -76,7 +68,10 @@ async def scrape_all_platforms(
     Returns:
         Combined list of properties from all platforms.
     """
-    areas = search_areas or _DEFAULT_SEARCH_AREAS
+    areas = search_areas or []
+    if not areas:
+        logger.warning("no_search_areas_configured")
+        return []
     scrapers = [
         OpenRentScraper(),
         RightmoveScraper(),
@@ -119,9 +114,7 @@ async def scrape_all_platforms(
                     )
                     # Cross-area dedup: remove properties already seen in other areas
                     before_dedup = len(properties)
-                    properties = [
-                        p for p in properties if p.source_id not in scraper_seen_ids
-                    ]
+                    properties = [p for p in properties if p.source_id not in scraper_seen_ids]
                     scraper_seen_ids.update(p.source_id for p in properties)
                     if len(properties) < before_dedup:
                         logger.info(
@@ -170,6 +163,24 @@ class PipelineResult:
     commute_lookup: dict[str, tuple[int, TransportMode]] = field(default_factory=dict)
     quality_lookup: dict[str, PropertyQualityAnalysis] = field(default_factory=dict)
     analyzed_merged: dict[str, MergedProperty] = field(default_factory=dict)
+
+    def resolve(
+        self, merged: MergedProperty
+    ) -> tuple[MergedProperty, int | None, TransportMode | None, PropertyQualityAnalysis | None]:
+        """Resolve final merged property, commute info, and quality analysis.
+
+        Args:
+            merged: The MergedProperty to resolve.
+
+        Returns:
+            Tuple of (final_merged, commute_minutes, transport_mode, quality_analysis).
+        """
+        final_merged = self.analyzed_merged.get(merged.unique_id, merged)
+        commute_info = self.commute_lookup.get(merged.canonical.unique_id)
+        commute_minutes = commute_info[0] if commute_info else None
+        transport_mode = commute_info[1] if commute_info else None
+        quality_analysis = self.quality_lookup.get(merged.unique_id)
+        return final_merged, commute_minutes, transport_mode, quality_analysis
 
 
 async def _run_core_pipeline(
@@ -402,11 +413,7 @@ async def _save_properties(
 ) -> None:
     """Save pipeline results to the database."""
     for merged in result.merged_to_notify:
-        final_merged = result.analyzed_merged.get(merged.unique_id, merged)
-
-        commute_info = result.commute_lookup.get(merged.canonical.unique_id)
-        commute_minutes = commute_info[0] if commute_info else None
-        transport_mode = commute_info[1] if commute_info else None
+        final_merged, commute_minutes, transport_mode, quality_analysis = result.resolve(merged)
 
         await storage.save_merged_property(
             final_merged,
@@ -419,8 +426,6 @@ async def _save_properties(
         if final_merged.floorplan:
             await storage.save_property_images(final_merged.unique_id, [final_merged.floorplan])
 
-        # Save quality analysis
-        quality_analysis = result.quality_lookup.get(merged.unique_id)
         if quality_analysis:
             await storage.save_quality_analysis(merged.unique_id, quality_analysis)
 
@@ -475,12 +480,7 @@ async def run_pipeline(settings: Settings, *, max_per_scraper: int | None = None
         await _save_properties(result, storage)
 
         for merged in result.merged_to_notify:
-            final_merged = result.analyzed_merged.get(merged.unique_id, merged)
-
-            commute_info = result.commute_lookup.get(merged.canonical.unique_id)
-            commute_minutes = commute_info[0] if commute_info else None
-            transport_mode = commute_info[1] if commute_info else None
-            quality_analysis = result.quality_lookup.get(merged.unique_id)
+            final_merged, commute_minutes, transport_mode, quality_analysis = result.resolve(merged)
 
             success = await notifier.send_merged_property_notification(
                 final_merged,
@@ -573,13 +573,8 @@ async def run_dry_run(settings: Settings, *, max_per_scraper: int | None = None)
         print(f"{'=' * 60}\n")
 
         for merged in result.merged_to_notify:
-            final_merged = result.analyzed_merged.get(merged.unique_id, merged)
+            final_merged, commute_minutes, transport_mode, quality_analysis = result.resolve(merged)
             prop = final_merged.canonical
-
-            commute_info = result.commute_lookup.get(prop.unique_id)
-            commute_minutes = commute_info[0] if commute_info else None
-            transport_mode = commute_info[1] if commute_info else None
-            quality_analysis = result.quality_lookup.get(merged.unique_id)
 
             source_str = ", ".join(s.value for s in final_merged.sources)
             print(f"[{source_str}] {prop.title}")

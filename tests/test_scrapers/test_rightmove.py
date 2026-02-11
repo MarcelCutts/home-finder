@@ -9,6 +9,7 @@ from bs4 import BeautifulSoup
 from pytest_httpx import HTTPXMock
 
 from home_finder.models import PropertySource
+from home_finder.scrapers.parsing import extract_bedrooms, extract_postcode, extract_price
 from home_finder.scrapers.rightmove import (
     RightmoveScraper,
     _outcode_cache,
@@ -182,11 +183,9 @@ class TestRightmoveParser:
             ("£500 pw", 2166),  # Weekly to monthly (500*52/12)
         ],
     )
-    def test_extract_price(
-        self, rightmove_scraper: RightmoveScraper, text: str, expected: int
-    ) -> None:
+    def test_extract_price(self, text: str, expected: int) -> None:
         """Test price extraction from text."""
-        assert rightmove_scraper._extract_price(text) == expected
+        assert extract_price(text) == expected
 
     @pytest.mark.parametrize(
         "text",
@@ -196,9 +195,9 @@ class TestRightmoveParser:
             "POA",
         ],
     )
-    def test_extract_price_invalid(self, rightmove_scraper: RightmoveScraper, text: str) -> None:
+    def test_extract_price_invalid(self, text: str) -> None:
         """Test price extraction with invalid text."""
-        assert rightmove_scraper._extract_price(text) is None
+        assert extract_price(text) is None
 
     @pytest.mark.parametrize(
         ("title", "expected"),
@@ -209,11 +208,9 @@ class TestRightmoveParser:
             ("3 bed house", 3),
         ],
     )
-    def test_extract_bedrooms(
-        self, rightmove_scraper: RightmoveScraper, title: str, expected: int
-    ) -> None:
+    def test_extract_bedrooms(self, title: str, expected: int) -> None:
         """Test bedroom extraction from title."""
-        assert rightmove_scraper._extract_bedrooms(title) == expected
+        assert extract_bedrooms(title) == expected
 
     @pytest.mark.parametrize(
         "title",
@@ -222,11 +219,9 @@ class TestRightmoveParser:
             "",
         ],
     )
-    def test_extract_bedrooms_no_match(
-        self, rightmove_scraper: RightmoveScraper, title: str
-    ) -> None:
+    def test_extract_bedrooms_no_match(self, title: str) -> None:
         """Test bedroom extraction with no bedroom info."""
-        assert rightmove_scraper._extract_bedrooms(title) is None
+        assert extract_bedrooms(title) is None
 
     @pytest.mark.parametrize(
         ("address", "expected"),
@@ -236,11 +231,9 @@ class TestRightmoveParser:
             ("Islington N1 2AA", "N1 2AA"),
         ],
     )
-    def test_extract_postcode(
-        self, rightmove_scraper: RightmoveScraper, address: str, expected: str
-    ) -> None:
+    def test_extract_postcode(self, address: str, expected: str) -> None:
         """Test postcode extraction from address."""
-        assert rightmove_scraper._extract_postcode(address) == expected
+        assert extract_postcode(address) == expected
 
     @pytest.mark.parametrize(
         "address",
@@ -249,11 +242,9 @@ class TestRightmoveParser:
             "",
         ],
     )
-    def test_extract_postcode_no_match(
-        self, rightmove_scraper: RightmoveScraper, address: str
-    ) -> None:
+    def test_extract_postcode_no_match(self, address: str) -> None:
         """Test postcode extraction with no postcode."""
-        assert rightmove_scraper._extract_postcode(address) is None
+        assert extract_postcode(address) is None
 
     def test_parse_empty_results(self, rightmove_scraper: RightmoveScraper) -> None:
         """Test parsing page with no results."""

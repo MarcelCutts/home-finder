@@ -9,6 +9,7 @@ import re
 
 from home_finder.logging import get_logger
 from home_finder.models import Property
+from home_finder.utils.address import extract_outcode
 
 logger = get_logger(__name__)
 
@@ -205,23 +206,6 @@ OUTCODE_ALIASES: dict[str, str] = {
     "richmond upon thames": "richmond-thames",
     "city of london": "city-of-london",
 }
-
-
-def extract_outcode(postcode: str | None) -> str | None:
-    """Extract the outcode (first part) from a UK postcode.
-
-    Args:
-        postcode: Full or partial UK postcode.
-
-    Returns:
-        The outcode portion (e.g., "E8" from "E8 3RH"), or None.
-    """
-    if not postcode:
-        return None
-
-    # Match outcode pattern: 1-2 letters + 1-2 digits + optional letter
-    match = re.match(r"^([A-Z]{1,2}\d{1,2}[A-Z]?)", postcode.upper().strip())
-    return match.group(1) if match else None
 
 
 def normalize_area(area: str) -> str:

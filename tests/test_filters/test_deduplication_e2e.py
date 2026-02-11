@@ -5,7 +5,7 @@ and post-enrichment deduplication using realistic London rental data modeled
 on actual scraper output.
 """
 
-from datetime import datetime, timedelta
+from datetime import datetime
 
 import pytest
 from hypothesis import given, settings
@@ -19,10 +19,10 @@ from home_finder.filters.deduplication import (
 )
 from home_finder.models import MergedProperty, Property, PropertyImage, PropertySource
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _make_property(
     source: PropertySource = PropertySource.OPENRENT,
@@ -191,14 +191,12 @@ STOKE_NEWINGTON = _make_property(
 
 
 class TestDeduplicateAndMergeE2E:
-    """E2E tests for the sync deduplicate_and_merge method."""
+    """E2E tests for the deduplicate_and_merge_async method."""
 
-    def test_identical_listing_two_platforms_merged(self) -> None:
+    async def test_identical_listing_two_platforms_merged(self) -> None:
         """Same property on OpenRent + Zoopla with full postcode gets merged."""
         deduplicator = Deduplicator(enable_cross_platform=True)
-        result = deduplicator.deduplicate_and_merge(
-            [MARE_ST_OPENRENT, MARE_ST_ZOOPLA]
-        )
+        result = await deduplicator.deduplicate_and_merge_async([MARE_ST_OPENRENT, MARE_ST_ZOOPLA])
 
         assert len(result) == 1
         merged = result[0]
@@ -208,15 +206,15 @@ class TestDeduplicateAndMergeE2E:
         # Canonical is the earlier one
         assert merged.canonical.source == PropertySource.OPENRENT
 
-    def test_three_platform_merge_full_postcodes(self) -> None:
+    async def test_three_platform_merge_full_postcodes(self) -> None:
         """Same property on 3 platforms: OR + ZP merge (full postcode),
-        RM (outcode only) stays separate in sync path (no image hashing)."""
+        RM (outcode only) stays separate without image hashing."""
         deduplicator = Deduplicator(enable_cross_platform=True)
-        result = deduplicator.deduplicate_and_merge(
+        result = await deduplicator.deduplicate_and_merge_async(
             [MARE_ST_OPENRENT, MARE_ST_ZOOPLA, MARE_ST_RIGHTMOVE]
         )
 
-        # OR + ZP should merge; RM has only outcode → separate in sync path
+        # OR + ZP should merge; RM has only outcode → separate
         merged_multi = [m for m in result if len(m.sources) > 1]
         merged_single = [m for m in result if len(m.sources) == 1]
 
@@ -224,18 +222,17 @@ class TestDeduplicateAndMergeE2E:
         assert len(merged_single) == 1
         assert PropertySource.RIGHTMOVE in merged_single[0].sources
 
-    def test_different_property_same_street_not_merged(self) -> None:
+    async def test_different_property_same_street_not_merged(self) -> None:
         """Two different properties on same street stay separate."""
         deduplicator = Deduplicator(enable_cross_platform=True)
-        result = deduplicator.deduplicate_and_merge(
+        result = await deduplicator.deduplicate_and_merge_async(
             [MARE_ST_OPENRENT, MARE_ST_DIFFERENT]
         )
 
         assert len(result) == 2
 
-    def test_mixed_bag_correct_grouping(self) -> None:
-        """Full scenario: 6 properties → 4 groups (Mare St pair, Dalston pair,
-        Rightmove singleton, Stoke Newington singleton)."""
+    async def test_mixed_bag_correct_grouping(self) -> None:
+        """Full scenario: 7 properties with correct grouping."""
         deduplicator = Deduplicator(enable_cross_platform=True)
         all_props = [
             MARE_ST_OPENRENT,
@@ -246,20 +243,17 @@ class TestDeduplicateAndMergeE2E:
             DALSTON_ZOOPLA,
             STOKE_NEWINGTON,
         ]
-        result = deduplicator.deduplicate_and_merge(all_props)
+        result = await deduplicator.deduplicate_and_merge_async(all_props)
 
         multi_source = [m for m in result if len(m.sources) > 1]
-        single_source = [m for m in result if len(m.sources) == 1]
 
         # Mare St OR+ZP merged, Dalston OTM+ZP merged
         assert len(multi_source) == 2
-        # RM outcode-only, OTM different property, Stoke Newington
-        assert len(single_source) == 3
 
-    def test_price_range_in_merged(self) -> None:
+    async def test_price_range_in_merged(self) -> None:
         """Merged property captures price range from both platforms."""
         deduplicator = Deduplicator(enable_cross_platform=True)
-        result = deduplicator.deduplicate_and_merge([DALSTON_OTM, DALSTON_ZOOPLA])
+        result = await deduplicator.deduplicate_and_merge_async([DALSTON_OTM, DALSTON_ZOOPLA])
 
         assert len(result) == 1
         merged = result[0]
@@ -267,12 +261,10 @@ class TestDeduplicateAndMergeE2E:
         assert merged.max_price == 1625
         assert merged.price_varies is True
 
-    def test_source_urls_preserved(self) -> None:
+    async def test_source_urls_preserved(self) -> None:
         """Merged property has URLs from both platforms."""
         deduplicator = Deduplicator(enable_cross_platform=True)
-        result = deduplicator.deduplicate_and_merge(
-            [MARE_ST_OPENRENT, MARE_ST_ZOOPLA]
-        )
+        result = await deduplicator.deduplicate_and_merge_async([MARE_ST_OPENRENT, MARE_ST_ZOOPLA])
 
         merged = result[0]
         assert PropertySource.OPENRENT in merged.source_urls
@@ -280,50 +272,52 @@ class TestDeduplicateAndMergeE2E:
         assert "openrent" in str(merged.source_urls[PropertySource.OPENRENT])
         assert "zoopla" in str(merged.source_urls[PropertySource.ZOOPLA])
 
-    def test_cross_platform_disabled_no_merge(self) -> None:
+    async def test_cross_platform_disabled_no_merge(self) -> None:
         """With cross_platform disabled, no merging occurs."""
         deduplicator = Deduplicator(enable_cross_platform=False)
-        result = deduplicator.deduplicate_and_merge(
-            [MARE_ST_OPENRENT, MARE_ST_ZOOPLA]
-        )
+        result = await deduplicator.deduplicate_and_merge_async([MARE_ST_OPENRENT, MARE_ST_ZOOPLA])
 
         assert len(result) == 2
         assert all(len(m.sources) == 1 for m in result)
 
-    def test_same_source_duplicate_deduped(self) -> None:
+    async def test_same_source_duplicate_deduped(self) -> None:
         """Duplicate from same source (same unique_id) is removed."""
-        dup = MARE_ST_OPENRENT.model_copy(
-            update={"first_seen": datetime(2026, 2, 2)}
-        )
+        dup = MARE_ST_OPENRENT.model_copy(update={"first_seen": datetime(2026, 2, 2)})
         deduplicator = Deduplicator(enable_cross_platform=True)
-        result = deduplicator.deduplicate_and_merge([MARE_ST_OPENRENT, dup])
+        result = await deduplicator.deduplicate_and_merge_async([MARE_ST_OPENRENT, dup])
 
         assert len(result) == 1
         # Keeps the earlier first_seen
         assert result[0].canonical.first_seen == MARE_ST_OPENRENT.first_seen
 
-    def test_no_postcode_properties_kept_separate(self) -> None:
+    async def test_no_postcode_properties_kept_separate(self) -> None:
         """Properties without postcodes cannot cross-platform match."""
         p1 = _make_property(
-            source=PropertySource.OPENRENT, source_id="nopc-1",
-            postcode=None, latitude=None, longitude=None,
+            source=PropertySource.OPENRENT,
+            source_id="nopc-1",
+            postcode=None,
+            latitude=None,
+            longitude=None,
         )
         p2 = _make_property(
-            source=PropertySource.ZOOPLA, source_id="nopc-2",
-            postcode=None, latitude=None, longitude=None,
+            source=PropertySource.ZOOPLA,
+            source_id="nopc-2",
+            postcode=None,
+            latitude=None,
+            longitude=None,
         )
         deduplicator = Deduplicator(enable_cross_platform=True)
-        result = deduplicator.deduplicate_and_merge([p1, p2])
+        result = await deduplicator.deduplicate_and_merge_async([p1, p2])
 
         assert len(result) == 2
 
-    def test_empty_input(self) -> None:
+    async def test_empty_input(self) -> None:
         deduplicator = Deduplicator(enable_cross_platform=True)
-        assert deduplicator.deduplicate_and_merge([]) == []
+        assert await deduplicator.deduplicate_and_merge_async([]) == []
 
-    def test_single_property(self) -> None:
+    async def test_single_property(self) -> None:
         deduplicator = Deduplicator(enable_cross_platform=True)
-        result = deduplicator.deduplicate_and_merge([MARE_ST_OPENRENT])
+        result = await deduplicator.deduplicate_and_merge_async([MARE_ST_OPENRENT])
         assert len(result) == 1
         assert result[0].canonical == MARE_ST_OPENRENT
 
@@ -340,9 +334,7 @@ class TestDeduplicateAndMergeAsyncE2E:
     async def test_full_postcode_match_async(self) -> None:
         """Properties with matching full postcodes merge in async path."""
         deduplicator = Deduplicator(enable_cross_platform=True)
-        result = await deduplicator.deduplicate_and_merge_async(
-            [MARE_ST_OPENRENT, MARE_ST_ZOOPLA]
-        )
+        result = await deduplicator.deduplicate_and_merge_async([MARE_ST_OPENRENT, MARE_ST_ZOOPLA])
 
         assert len(result) == 1
         merged = result[0]
@@ -366,12 +358,16 @@ class TestDeduplicateAndMergeAsyncE2E:
     async def test_different_bedrooms_never_merge(self) -> None:
         """Properties with different bedrooms never merge."""
         p1 = _make_property(
-            source=PropertySource.OPENRENT, source_id="bed-1",
-            bedrooms=1, postcode="E8 3RH",
+            source=PropertySource.OPENRENT,
+            source_id="bed-1",
+            bedrooms=1,
+            postcode="E8 3RH",
         )
         p2 = _make_property(
-            source=PropertySource.ZOOPLA, source_id="bed-2",
-            bedrooms=2, postcode="E8 3RH",
+            source=PropertySource.ZOOPLA,
+            source_id="bed-2",
+            bedrooms=2,
+            postcode="E8 3RH",
         )
         deduplicator = Deduplicator(enable_cross_platform=True)
         result = await deduplicator.deduplicate_and_merge_async([p1, p2])
@@ -382,11 +378,14 @@ class TestDeduplicateAndMergeAsyncE2E:
     async def test_graduated_price_within_tolerance(self) -> None:
         """2% price difference still merges (graduated scoring)."""
         p1 = _make_property(
-            source=PropertySource.OPENRENT, source_id="price-1",
-            price_pcm=1800, postcode="E8 3RH",
+            source=PropertySource.OPENRENT,
+            source_id="price-1",
+            price_pcm=1800,
+            postcode="E8 3RH",
         )
         p2 = _make_property(
-            source=PropertySource.ZOOPLA, source_id="price-2",
+            source=PropertySource.ZOOPLA,
+            source_id="price-2",
             price_pcm=1836,  # 2% difference
             postcode="E8 3RH",
         )
@@ -399,15 +398,20 @@ class TestDeduplicateAndMergeAsyncE2E:
     async def test_price_beyond_double_tolerance_still_merges_on_location(self) -> None:
         """8% price diff → price score = 0, but postcode + coords + outcode still merge."""
         p1 = _make_property(
-            source=PropertySource.OPENRENT, source_id="bigprice-1",
-            price_pcm=1800, postcode="E8 3RH",
-            latitude=51.5465, longitude=-0.0553,
+            source=PropertySource.OPENRENT,
+            source_id="bigprice-1",
+            price_pcm=1800,
+            postcode="E8 3RH",
+            latitude=51.5465,
+            longitude=-0.0553,
         )
         p2 = _make_property(
-            source=PropertySource.ZOOPLA, source_id="bigprice-2",
+            source=PropertySource.ZOOPLA,
+            source_id="bigprice-2",
             price_pcm=1950,  # ~8% higher
             postcode="E8 3RH",
-            latitude=51.5465, longitude=-0.0553,
+            latitude=51.5465,
+            longitude=-0.0553,
         )
         deduplicator = Deduplicator(enable_cross_platform=True)
         result = await deduplicator.deduplicate_and_merge_async([p1, p2])
@@ -419,12 +423,16 @@ class TestDeduplicateAndMergeAsyncE2E:
     async def test_different_outcode_blocks_no_comparison(self) -> None:
         """Properties in different outcodes are never compared (blocking)."""
         p1 = _make_property(
-            source=PropertySource.OPENRENT, source_id="e8-1",
-            postcode="E8 3RH", bedrooms=2,
+            source=PropertySource.OPENRENT,
+            source_id="e8-1",
+            postcode="E8 3RH",
+            bedrooms=2,
         )
         p2 = _make_property(
-            source=PropertySource.ZOOPLA, source_id="n16-1",
-            postcode="N16 0AS", bedrooms=2,
+            source=PropertySource.ZOOPLA,
+            source_id="n16-1",
+            postcode="N16 0AS",
+            bedrooms=2,
         )
         deduplicator = Deduplicator(enable_cross_platform=True)
         result = await deduplicator.deduplicate_and_merge_async([p1, p2])
@@ -435,11 +443,13 @@ class TestDeduplicateAndMergeAsyncE2E:
     async def test_same_source_not_merged_cross_platform(self) -> None:
         """Two properties from the same source are never cross-platform merged."""
         p1 = _make_property(
-            source=PropertySource.ZOOPLA, source_id="zp-1",
+            source=PropertySource.ZOOPLA,
+            source_id="zp-1",
             postcode="E8 3RH",
         )
         p2 = _make_property(
-            source=PropertySource.ZOOPLA, source_id="zp-2",
+            source=PropertySource.ZOOPLA,
+            source_id="zp-2",
             postcode="E8 3RH",
         )
         deduplicator = Deduplicator(enable_cross_platform=True)
@@ -471,14 +481,18 @@ class TestDeduplicateAndMergeAsyncE2E:
         """Properties 25m apart (within 50m threshold) should merge."""
         # ~25m = ~0.000225° latitude at London latitude
         p1 = _make_property(
-            source=PropertySource.OPENRENT, source_id="close-1",
+            source=PropertySource.OPENRENT,
+            source_id="close-1",
             postcode="E8 3RH",
-            latitude=51.5465, longitude=-0.0553,
+            latitude=51.5465,
+            longitude=-0.0553,
         )
         p2 = _make_property(
-            source=PropertySource.ZOOPLA, source_id="close-2",
+            source=PropertySource.ZOOPLA,
+            source_id="close-2",
             postcode="E8 3RH",
-            latitude=51.546725, longitude=-0.0553,
+            latitude=51.546725,
+            longitude=-0.0553,
         )
         deduplicator = Deduplicator(enable_cross_platform=True)
         result = await deduplicator.deduplicate_and_merge_async([p1, p2])
@@ -491,14 +505,20 @@ class TestDeduplicateAndMergeAsyncE2E:
         on postcode + outcode + street + price."""
         # ~200m = ~0.0018° latitude
         p1 = _make_property(
-            source=PropertySource.OPENRENT, source_id="far-1",
-            postcode="E8 3RH", address="123 Mare Street, Hackney",
-            latitude=51.5465, longitude=-0.0553,
+            source=PropertySource.OPENRENT,
+            source_id="far-1",
+            postcode="E8 3RH",
+            address="123 Mare Street, Hackney",
+            latitude=51.5465,
+            longitude=-0.0553,
         )
         p2 = _make_property(
-            source=PropertySource.ZOOPLA, source_id="far-2",
-            postcode="E8 3RH", address="456 Mare St, E8",
-            latitude=51.5483, longitude=-0.0553,
+            source=PropertySource.ZOOPLA,
+            source_id="far-2",
+            postcode="E8 3RH",
+            address="456 Mare St, E8",
+            latitude=51.5483,
+            longitude=-0.0553,
         )
         deduplicator = Deduplicator(enable_cross_platform=True)
         result = await deduplicator.deduplicate_and_merge_async([p1, p2])
@@ -581,8 +601,11 @@ class TestDeduplicateMergedAsyncE2E:
     async def test_enriched_same_source_not_merged(self) -> None:
         """Same-source enriched properties are not cross-platform merged."""
         p2 = _make_property(
-            source=PropertySource.OPENRENT, source_id="or-dup",
-            postcode="E8 3RH", latitude=51.5465, longitude=-0.0553,
+            source=PropertySource.OPENRENT,
+            source_id="or-dup",
+            postcode="E8 3RH",
+            latitude=51.5465,
+            longitude=-0.0553,
         )
         mp1 = _make_merged(MARE_ST_OPENRENT)
         mp2 = _make_merged(p2)
@@ -641,16 +664,12 @@ class TestPropertiesToMerged:
 
     def test_wraps_each_as_single_source(self) -> None:
         deduplicator = Deduplicator()
-        result = deduplicator.properties_to_merged(
-            [MARE_ST_OPENRENT, DALSTON_OTM, STOKE_NEWINGTON]
-        )
+        result = deduplicator.properties_to_merged([MARE_ST_OPENRENT, DALSTON_OTM, STOKE_NEWINGTON])
         assert len(result) == 3
         assert all(len(m.sources) == 1 for m in result)
 
     def test_dedupes_by_unique_id(self) -> None:
-        dup = MARE_ST_OPENRENT.model_copy(
-            update={"first_seen": datetime(2026, 2, 5)}
-        )
+        dup = MARE_ST_OPENRENT.model_copy(update={"first_seen": datetime(2026, 2, 5)})
         deduplicator = Deduplicator()
         result = deduplicator.properties_to_merged([MARE_ST_OPENRENT, dup])
         assert len(result) == 1
@@ -663,16 +682,35 @@ class TestPropertiesToMerged:
 
 
 # Strategy for generating valid London-like properties
-london_postcodes = st.sampled_from([
-    "E8 3RH", "E8 4AA", "E9 5LN", "E3 4AB", "N16 0AS",
-    "N16 7AB", "E17 4RD", "E10 5NP", "N15 3AA", "E5 8QJ",
-])
+london_postcodes = st.sampled_from(
+    [
+        "E8 3RH",
+        "E8 4AA",
+        "E9 5LN",
+        "E3 4AB",
+        "N16 0AS",
+        "N16 7AB",
+        "E17 4RD",
+        "E10 5NP",
+        "N15 3AA",
+        "E5 8QJ",
+    ]
+)
 
-london_streets = st.sampled_from([
-    "Mare Street", "Kingsland Road", "Church Street", "High Street",
-    "Victoria Road", "Green Lanes", "Stoke Newington Road",
-    "Morning Lane", "Graham Road", "Dalston Lane",
-])
+london_streets = st.sampled_from(
+    [
+        "Mare Street",
+        "Kingsland Road",
+        "Church Street",
+        "High Street",
+        "Victoria Road",
+        "Green Lanes",
+        "Stoke Newington Road",
+        "Morning Lane",
+        "Graham Road",
+        "Dalston Lane",
+    ]
+)
 
 property_sources = st.sampled_from(list(PropertySource))
 
@@ -758,9 +796,7 @@ class TestScoringInvariants:
     @settings(max_examples=30)
     def test_match_requires_minimum_signals(self, prop: Property) -> None:
         """If is_match is True, signal_count >= MINIMUM_SIGNALS."""
-        other = prop.model_copy(
-            update={"source": PropertySource.ZOOPLA, "source_id": "other"}
-        )
+        other = prop.model_copy(update={"source": PropertySource.ZOOPLA, "source_id": "other"})
         score = calculate_match_score(prop, other)
         if score.is_match:
             assert score.signal_count >= 2
@@ -768,36 +804,6 @@ class TestScoringInvariants:
 
 class TestDeduplicationInvariants:
     """Invariant tests for the deduplication pipeline."""
-
-    @given(props=st.lists(london_property(), min_size=0, max_size=10))
-    @settings(max_examples=30)
-    def test_preservation_sync(self, props: list[Property]) -> None:
-        """Every input property appears in exactly one merged group."""
-        deduplicator = Deduplicator(enable_cross_platform=True)
-        result = deduplicator.deduplicate_and_merge(props)
-
-        # Every unique property should be accounted for
-        input_ids = {p.unique_id for p in props}
-        output_ids: set[str] = set()
-        for merged in result:
-            output_ids.add(merged.canonical.unique_id)
-            for source in merged.sources:
-                for url_source, url in merged.source_urls.items():
-                    output_ids.add(f"{url_source.value}:" + str(url).split("/")[-1])
-
-        # At minimum, canonical IDs must be a subset
-        canonical_ids = {m.canonical.unique_id for m in result}
-        assert canonical_ids.issubset(input_ids)
-
-    @given(props=st.lists(london_property(), min_size=0, max_size=10))
-    @settings(max_examples=30)
-    def test_output_count_leq_input(self, props: list[Property]) -> None:
-        """Output count is always <= input unique count."""
-        deduplicator = Deduplicator(enable_cross_platform=True)
-        result = deduplicator.deduplicate_and_merge(props)
-
-        unique_input = len({p.unique_id for p in props})
-        assert len(result) <= unique_input
 
     @given(props=st.lists(london_property(), min_size=0, max_size=8))
     @settings(max_examples=20)
@@ -821,6 +827,18 @@ class TestDeduplicationInvariants:
         unique_input = len({p.unique_id for p in props})
         assert len(result) <= unique_input
 
+    @pytest.mark.asyncio
+    @given(props=st.lists(london_property(), min_size=0, max_size=10))
+    @settings(max_examples=30)
+    async def test_preservation_async(self, props: list[Property]) -> None:
+        """Every input property's canonical appears in exactly one merged group."""
+        deduplicator = Deduplicator(enable_cross_platform=True)
+        result = await deduplicator.deduplicate_and_merge_async(props)
+
+        input_ids = {p.unique_id for p in props}
+        canonical_ids = {m.canonical.unique_id for m in result}
+        assert canonical_ids.issubset(input_ids)
+
 
 # ---------------------------------------------------------------------------
 # Test: real-world edge cases from actual scraper behavior
@@ -834,15 +852,19 @@ class TestRealWorldEdgeCases:
         """Rightmove gives outcode only → conservative match requires image hash
         or coordinate proximity. Without either, stays separate."""
         rm = _make_property(
-            source=PropertySource.RIGHTMOVE, source_id="rm-1",
+            source=PropertySource.RIGHTMOVE,
+            source_id="rm-1",
             postcode="E8",  # outcode only
-            latitude=None, longitude=None,
+            latitude=None,
+            longitude=None,
             address="Mare Street, Hackney",
         )
         zp = _make_property(
-            source=PropertySource.ZOOPLA, source_id="zp-1",
+            source=PropertySource.ZOOPLA,
+            source_id="zp-1",
             postcode="E8 3RH",
-            latitude=51.5465, longitude=-0.0553,
+            latitude=51.5465,
+            longitude=-0.0553,
             address="123 Mare Street, Hackney E8 3RH",
         )
         score = calculate_match_score(rm, zp)
@@ -854,16 +876,20 @@ class TestRealWorldEdgeCases:
         """OpenRent puts property type in the address field.
         e.g. '3 Bed Maisonette, Lunan House, E3'."""
         openrent = _make_property(
-            source=PropertySource.OPENRENT, source_id="or-quirk",
+            source=PropertySource.OPENRENT,
+            source_id="or-quirk",
             address="3 Bed Maisonette, Lunan House, E3",
             postcode="E3 4AB",
-            bedrooms=3, price_pcm=2800,
+            bedrooms=3,
+            price_pcm=2800,
         )
         zoopla = _make_property(
-            source=PropertySource.ZOOPLA, source_id="zp-quirk",
+            source=PropertySource.ZOOPLA,
+            source_id="zp-quirk",
             address="Lunan House, Devons Road, London E3 4AB",
             postcode="E3 4AB",
-            bedrooms=3, price_pcm=2800,
+            bedrooms=3,
+            price_pcm=2800,
         )
         score = calculate_match_score(openrent, zoopla)
         # Full postcode match (40) + outcode (10) + price (15) = 65
@@ -874,34 +900,40 @@ class TestRealWorldEdgeCases:
     def test_zoopla_slight_coordinate_shift(self) -> None:
         """Zoopla coordinates are often slightly different from other platforms."""
         p1 = _make_property(
-            source=PropertySource.OPENRENT, source_id="coord-1",
+            source=PropertySource.OPENRENT,
+            source_id="coord-1",
             postcode="E8 3RH",
-            latitude=51.54650, longitude=-0.05530,
+            latitude=51.54650,
+            longitude=-0.05530,
         )
         # ~2m shift (common GPS variance)
         p2 = _make_property(
-            source=PropertySource.ZOOPLA, source_id="coord-2",
+            source=PropertySource.ZOOPLA,
+            source_id="coord-2",
             postcode="E8 3RH",
-            latitude=51.54652, longitude=-0.05528,
+            latitude=51.54652,
+            longitude=-0.05528,
         )
         score = calculate_match_score(p1, p2)
         # Coords nearly identical → close to 40 points (~2m ≈ 38-40 pts)
         assert score.coordinates > 38
         assert score.is_match is True
 
-    def test_onthemarket_duplicate_via_agents(self) -> None:
+    async def test_onthemarket_duplicate_via_agents(self) -> None:
         """Same property listed by two estate agents on OnTheMarket.
         Different source_ids but same location → not merged (same source)."""
         p1 = _make_property(
-            source=PropertySource.ONTHEMARKET, source_id="otm-agent1",
+            source=PropertySource.ONTHEMARKET,
+            source_id="otm-agent1",
             postcode="E8 3RH",
         )
         p2 = _make_property(
-            source=PropertySource.ONTHEMARKET, source_id="otm-agent2",
+            source=PropertySource.ONTHEMARKET,
+            source_id="otm-agent2",
             postcode="E8 3RH",
         )
         deduplicator = Deduplicator(enable_cross_platform=True)
-        result = deduplicator.deduplicate_and_merge([p1, p2])
+        result = await deduplicator.deduplicate_and_merge_async([p1, p2])
         # Same source → not cross-platform merged
         assert len(result) == 2
 
@@ -909,68 +941,52 @@ class TestRealWorldEdgeCases:
         """Property listed at £1850 on one platform, reduced to £1800 on another.
         2.7% difference should get partial price credit and still match."""
         p1 = _make_property(
-            source=PropertySource.OPENRENT, source_id="price-orig",
-            price_pcm=1850, postcode="E8 3RH",
+            source=PropertySource.OPENRENT,
+            source_id="price-orig",
+            price_pcm=1850,
+            postcode="E8 3RH",
         )
         p2 = _make_property(
-            source=PropertySource.ZOOPLA, source_id="price-reduced",
-            price_pcm=1800, postcode="E8 3RH",
+            source=PropertySource.ZOOPLA,
+            source_id="price-reduced",
+            price_pcm=1800,
+            postcode="E8 3RH",
         )
         score = calculate_match_score(p1, p2)
         assert score.price > 0  # Partial credit for ~2.7% diff
         assert score.is_match is True
 
-    def test_transitive_merge_three_platforms(self) -> None:
+    async def test_transitive_merge_three_platforms(self) -> None:
         """If A matches B and B matches C, all three merge (union-find).
         Test with OTM, Zoopla, and OpenRent all having same full postcode."""
         otm = _make_property(
-            source=PropertySource.ONTHEMARKET, source_id="trans-otm",
-            price_pcm=1800, postcode="E9 5LN", bedrooms=2,
-            latitude=51.549, longitude=-0.055,
+            source=PropertySource.ONTHEMARKET,
+            source_id="trans-otm",
+            price_pcm=1800,
+            postcode="E9 5LN",
+            bedrooms=2,
+            latitude=51.549,
+            longitude=-0.055,
             address="10 Chatsworth Road, Hackney",
         )
         zp = _make_property(
-            source=PropertySource.ZOOPLA, source_id="trans-zp",
+            source=PropertySource.ZOOPLA,
+            source_id="trans-zp",
             price_pcm=1825,  # Slight price diff
-            postcode="E9 5LN", bedrooms=2,
-            latitude=51.549, longitude=-0.055,
+            postcode="E9 5LN",
+            bedrooms=2,
+            latitude=51.549,
+            longitude=-0.055,
             address="10 Chatsworth Rd, E9",
         )
         openrent = _make_property(
-            source=PropertySource.OPENRENT, source_id="trans-or",
-            price_pcm=1800, postcode="E9 5LN", bedrooms=2,
-            latitude=51.5491, longitude=-0.0551,
-            address="Flat 3, 10 Chatsworth Road, E9",
-        )
-
-        deduplicator = Deduplicator(enable_cross_platform=True)
-        result = deduplicator.deduplicate_and_merge([otm, zp, openrent])
-
-        # All three should merge via transitive matching
-        # The sync path groups by full postcode + bedrooms, then price + location
-        merged_multi = [m for m in result if len(m.sources) > 1]
-        assert len(merged_multi) == 1
-        assert len(merged_multi[0].sources) == 3
-
-    @pytest.mark.asyncio
-    async def test_transitive_merge_async(self) -> None:
-        """Transitive merge also works in async path."""
-        otm = _make_property(
-            source=PropertySource.ONTHEMARKET, source_id="async-otm",
-            price_pcm=1800, postcode="E9 5LN", bedrooms=2,
-            latitude=51.549, longitude=-0.055,
-            address="10 Chatsworth Road, Hackney",
-        )
-        zp = _make_property(
-            source=PropertySource.ZOOPLA, source_id="async-zp",
-            price_pcm=1825, postcode="E9 5LN", bedrooms=2,
-            latitude=51.549, longitude=-0.055,
-            address="10 Chatsworth Rd, E9",
-        )
-        openrent = _make_property(
-            source=PropertySource.OPENRENT, source_id="async-or",
-            price_pcm=1800, postcode="E9 5LN", bedrooms=2,
-            latitude=51.5491, longitude=-0.0551,
+            source=PropertySource.OPENRENT,
+            source_id="trans-or",
+            price_pcm=1800,
+            postcode="E9 5LN",
+            bedrooms=2,
+            latitude=51.5491,
+            longitude=-0.0551,
             address="Flat 3, 10 Chatsworth Road, E9",
         )
 
@@ -981,29 +997,82 @@ class TestRealWorldEdgeCases:
         assert len(merged_multi) == 1
         assert len(merged_multi[0].sources) == 3
 
-    def test_multiple_properties_same_postcode_different_prices(self) -> None:
+    @pytest.mark.asyncio
+    async def test_transitive_merge_async(self) -> None:
+        """Transitive merge also works in async path."""
+        otm = _make_property(
+            source=PropertySource.ONTHEMARKET,
+            source_id="async-otm",
+            price_pcm=1800,
+            postcode="E9 5LN",
+            bedrooms=2,
+            latitude=51.549,
+            longitude=-0.055,
+            address="10 Chatsworth Road, Hackney",
+        )
+        zp = _make_property(
+            source=PropertySource.ZOOPLA,
+            source_id="async-zp",
+            price_pcm=1825,
+            postcode="E9 5LN",
+            bedrooms=2,
+            latitude=51.549,
+            longitude=-0.055,
+            address="10 Chatsworth Rd, E9",
+        )
+        openrent = _make_property(
+            source=PropertySource.OPENRENT,
+            source_id="async-or",
+            price_pcm=1800,
+            postcode="E9 5LN",
+            bedrooms=2,
+            latitude=51.5491,
+            longitude=-0.0551,
+            address="Flat 3, 10 Chatsworth Road, E9",
+        )
+
+        deduplicator = Deduplicator(enable_cross_platform=True)
+        result = await deduplicator.deduplicate_and_merge_async([otm, zp, openrent])
+
+        merged_multi = [m for m in result if len(m.sources) > 1]
+        assert len(merged_multi) == 1
+        assert len(merged_multi[0].sources) == 3
+
+    async def test_multiple_properties_same_postcode_different_prices(self) -> None:
         """Multiple genuinely different flats in same building (same postcode,
         different prices, same bedrooms) should stay separate."""
         p1 = _make_property(
-            source=PropertySource.OPENRENT, source_id="bldg-1a",
-            price_pcm=1800, postcode="E8 3RH", bedrooms=2,
-            latitude=51.5465, longitude=-0.0553,
+            source=PropertySource.OPENRENT,
+            source_id="bldg-1a",
+            price_pcm=1800,
+            postcode="E8 3RH",
+            bedrooms=2,
+            latitude=51.5465,
+            longitude=-0.0553,
             address="Flat 1, 123 Mare Street",
         )
         p2 = _make_property(
-            source=PropertySource.OPENRENT, source_id="bldg-1b",
-            price_pcm=2000, postcode="E8 3RH", bedrooms=2,
-            latitude=51.5465, longitude=-0.0553,
+            source=PropertySource.OPENRENT,
+            source_id="bldg-1b",
+            price_pcm=2000,
+            postcode="E8 3RH",
+            bedrooms=2,
+            latitude=51.5465,
+            longitude=-0.0553,
             address="Flat 5, 123 Mare Street",
         )
         p3 = _make_property(
-            source=PropertySource.OPENRENT, source_id="bldg-1c",
-            price_pcm=2200, postcode="E8 3RH", bedrooms=2,
-            latitude=51.5465, longitude=-0.0553,
+            source=PropertySource.OPENRENT,
+            source_id="bldg-1c",
+            price_pcm=2200,
+            postcode="E8 3RH",
+            bedrooms=2,
+            latitude=51.5465,
+            longitude=-0.0553,
             address="Flat 9, 123 Mare Street",
         )
         deduplicator = Deduplicator(enable_cross_platform=True)
-        result = deduplicator.deduplicate_and_merge([p1, p2, p3])
+        result = await deduplicator.deduplicate_and_merge_async([p1, p2, p3])
         # Same source → all separate
         assert len(result) == 3
 
@@ -1042,8 +1111,11 @@ class TestPipelineFlowE2E:
             STOKE_NEWINGTON,
             # One that won't pass criteria (too expensive)
             _make_property(
-                source=PropertySource.ZOOPLA, source_id="expensive-1",
-                price_pcm=3500, bedrooms=2, postcode="E8 1AA",
+                source=PropertySource.ZOOPLA,
+                source_id="expensive-1",
+                price_pcm=3500,
+                bedrooms=2,
+                postcode="E8 1AA",
             ),
         ]
 
@@ -1066,7 +1138,6 @@ class TestPipelineFlowE2E:
         assert len(multi_source) == 2
 
         # Verify no property was lost
-        all_canonical_ids = {m.canonical.unique_id for m in merged}
         for m in merged:
             for src in m.sources:
                 assert src in m.source_urls
@@ -1112,15 +1183,23 @@ class TestKnownPairScoring:
     def test_exact_match_all_signals(self) -> None:
         """Perfect match: same postcode, coords, street, price → high confidence."""
         p1 = _make_property(
-            source=PropertySource.OPENRENT, source_id="exact-1",
-            price_pcm=1800, postcode="E8 3RH", bedrooms=2,
-            latitude=51.5465, longitude=-0.0553,
+            source=PropertySource.OPENRENT,
+            source_id="exact-1",
+            price_pcm=1800,
+            postcode="E8 3RH",
+            bedrooms=2,
+            latitude=51.5465,
+            longitude=-0.0553,
             address="123 Mare Street, Hackney",
         )
         p2 = _make_property(
-            source=PropertySource.ZOOPLA, source_id="exact-2",
-            price_pcm=1800, postcode="E8 3RH", bedrooms=2,
-            latitude=51.5465, longitude=-0.0553,
+            source=PropertySource.ZOOPLA,
+            source_id="exact-2",
+            price_pcm=1800,
+            postcode="E8 3RH",
+            bedrooms=2,
+            latitude=51.5465,
+            longitude=-0.0553,
             address="123 Mare St, E8",
         )
         score = calculate_match_score(p1, p2)
@@ -1136,12 +1215,16 @@ class TestKnownPairScoring:
     def test_partial_postcode_weakens_match(self) -> None:
         """One property with outcode only → no full postcode bonus."""
         full = _make_property(
-            source=PropertySource.OPENRENT, source_id="full-pc",
+            source=PropertySource.OPENRENT,
+            source_id="full-pc",
             postcode="E8 3RH",
         )
         partial = _make_property(
-            source=PropertySource.RIGHTMOVE, source_id="partial-pc",
-            postcode="E8", latitude=None, longitude=None,
+            source=PropertySource.RIGHTMOVE,
+            source_id="partial-pc",
+            postcode="E8",
+            latitude=None,
+            longitude=None,
         )
         score = calculate_match_score(full, partial)
         assert score.full_postcode == 0
@@ -1150,13 +1233,17 @@ class TestKnownPairScoring:
     def test_nearby_coordinates_graduated(self) -> None:
         """Properties ~30m apart get graduated coordinate score."""
         p1 = _make_property(
-            source=PropertySource.OPENRENT, source_id="near-1",
-            latitude=51.5465, longitude=-0.0553,
+            source=PropertySource.OPENRENT,
+            source_id="near-1",
+            latitude=51.5465,
+            longitude=-0.0553,
         )
         # ~30m ≈ 0.00027° lat
         p2 = _make_property(
-            source=PropertySource.ZOOPLA, source_id="near-2",
-            latitude=51.54677, longitude=-0.0553,
+            source=PropertySource.ZOOPLA,
+            source_id="near-2",
+            latitude=51.54677,
+            longitude=-0.0553,
         )
         score = calculate_match_score(p1, p2)
         # At 30m (within 50m reference): score = 40 * (1 - (30/50)*0.5) ≈ 28

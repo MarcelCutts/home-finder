@@ -52,7 +52,11 @@ def _get_progress(page: Page) -> tuple[int, int]:
 def _active_label_buttons(page: Page) -> list[str]:
     """Return list of currently active label button types."""
     active = []
-    for cls, name in [(".match-btn", "match"), (".nomatch-btn", "no_match"), (".uncertain-btn", "uncertain")]:
+    for cls, name in [
+        (".match-btn", "match"),
+        (".nomatch-btn", "no_match"),
+        (".uncertain-btn", "uncertain"),
+    ]:
         btn = page.locator(f".label-btn{cls}.active")
         if btn.count() > 0:
             active.append(name)
@@ -131,7 +135,6 @@ class TestFocusViewRendering:
 
 
 class TestFocusNavigation:
-
     def test_next_button_advances(self, page: Page, report_html: Path):
         page.goto(f"file://{report_html}")
         _clear_indexeddb(page)
@@ -196,7 +199,6 @@ class TestFocusNavigation:
 
 
 class TestLabeling:
-
     def test_click_match_button(self, page: Page, report_html: Path):
         page.goto(f"file://{report_html}")
         _clear_indexeddb(page)
@@ -370,7 +372,6 @@ class TestLabeling:
 
 
 class TestUndo:
-
     def test_undo_reverts_label(self, page: Page, report_html: Path):
         page.goto(f"file://{report_html}")
         _clear_indexeddb(page)
@@ -529,7 +530,6 @@ class TestSort:
 
 
 class TestFilter:
-
     def test_filter_all_shows_all_pairs(self, page: Page, report_html: Path):
         page.goto(f"file://{report_html}")
         _clear_indexeddb(page)
@@ -612,7 +612,6 @@ class TestFilter:
 
 
 class TestStats:
-
     def test_initial_progress_zero(self, page: Page, report_html: Path):
         page.goto(f"file://{report_html}")
         _clear_indexeddb(page)
@@ -675,7 +674,6 @@ class TestStats:
 
 
 class TestListView:
-
     def test_switch_to_list_view(self, page: Page, report_html: Path):
         page.goto(f"file://{report_html}")
         _clear_indexeddb(page)
@@ -759,7 +757,6 @@ class TestListView:
 
 
 class TestImportExport:
-
     def test_export_creates_json(self, page: Page, report_html: Path, tmp_path: Path):
         page.goto(f"file://{report_html}")
         _clear_indexeddb(page)
@@ -811,7 +808,6 @@ class TestImportExport:
 
 
 class TestPersistence:
-
     def test_labels_survive_reload(self, page: Page, report_html: Path):
         page.goto(f"file://{report_html}")
         _clear_indexeddb(page)
@@ -861,7 +857,6 @@ class TestPersistence:
 
 
 class TestEdgeCases:
-
     def test_rapid_keyboard_labeling(self, page: Page, report_html: Path):
         """Rapid keyboard presses should not drop labels."""
         page.goto(f"file://{report_html}")

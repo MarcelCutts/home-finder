@@ -20,10 +20,7 @@ DEFAULT_OUTPUT = Path(__file__).parent / "reports" / "labeling_report.html"
 
 def _slim_pairs(pairs: list[dict]) -> list[dict]:
     """Strip raw_a/raw_b from pairs — they're huge and not needed for labeling."""
-    return [
-        {k: v for k, v in p.items() if k not in ("raw_a", "raw_b")}
-        for p in pairs
-    ]
+    return [{k: v for k, v in p.items() if k not in ("raw_a", "raw_b")} for p in pairs]
 
 
 def render_report(candidates_path: Path, output_path: Path) -> None:

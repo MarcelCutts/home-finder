@@ -8,18 +8,9 @@ from pydantic import HttpUrl
 
 from home_finder.config import Settings
 from home_finder.db import PropertyStorage
-from home_finder.filters.quality import (
-    ConditionAnalysis,
-    KitchenAnalysis,
-    LightSpaceAnalysis,
-    PropertyQualityAnalysis,
-    SpaceAnalysis,
-)
-from home_finder.main import PipelineResult, _run_core_pipeline, _save_properties
+from home_finder.main import _run_core_pipeline, _save_properties
 from home_finder.models import (
-    MergedProperty,
     Property,
-    PropertyImage,
     PropertySource,
     TransportMode,
 )
@@ -176,12 +167,8 @@ class TestFullPipelineE2E:
             MockFetcher.return_value = mock_fetcher_instance
 
             mock_commute_instance = MagicMock()
-            mock_commute_instance.filter_properties = AsyncMock(
-                return_value=mock_commute_results
-            )
-            mock_commute_instance.geocode_properties = AsyncMock(
-                side_effect=lambda merged: merged
-            )
+            mock_commute_instance.filter_properties = AsyncMock(return_value=mock_commute_results)
+            mock_commute_instance.geocode_properties = AsyncMock(side_effect=lambda merged: merged)
             MockCommuteFilter.return_value = mock_commute_instance
 
             result = await _run_core_pipeline(settings_with_commute, storage)
@@ -220,15 +207,27 @@ class TestFullPipelineE2E:
         # Create properties that should match (same postcode, bedrooms, close price)
         props = [
             _make_property(
-                PropertySource.OPENRENT, "500", price=1900, postcode="E8 3RH",
-                lat=51.5465, lon=-0.0553,
+                PropertySource.OPENRENT,
+                "500",
+                price=1900,
+                postcode="E8 3RH",
+                lat=51.5465,
+                lon=-0.0553,
             ),
             _make_property(
-                PropertySource.ZOOPLA, "501", price=1900, postcode="E8 3RH",
-                lat=51.5465, lon=-0.0553,
+                PropertySource.ZOOPLA,
+                "501",
+                price=1900,
+                postcode="E8 3RH",
+                lat=51.5465,
+                lon=-0.0553,
             ),
             _make_property(
-                PropertySource.OPENRENT, "502", price=2100, bedrooms=2, postcode="E8 4AB",
+                PropertySource.OPENRENT,
+                "502",
+                price=2100,
+                bedrooms=2,
+                postcode="E8 4AB",
             ),
         ]
 

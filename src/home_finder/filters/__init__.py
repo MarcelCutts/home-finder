@@ -11,7 +11,6 @@ if TYPE_CHECKING:
         enrich_merged_properties,
         filter_by_floorplan,
     )
-    from home_finder.filters.floorplan import FloorplanAnalysis, FloorplanFilter  # noqa: F401
     from home_finder.filters.location import LocationFilter  # noqa: F401
     from home_finder.filters.quality import (  # noqa: F401
         PropertyQualityAnalysis,
@@ -26,8 +25,6 @@ __all__ = [
     "Deduplicator",
     "enrich_merged_properties",
     "filter_by_floorplan",
-    "FloorplanAnalysis",
-    "FloorplanFilter",
     "LocationFilter",
     "PropertyQualityAnalysis",
     "PropertyQualityFilter",
@@ -41,8 +38,6 @@ _LAZY_IMPORTS: dict[str, tuple[str, str]] = {
     "Deduplicator": (".deduplication", "Deduplicator"),
     "enrich_merged_properties": (".detail_enrichment", "enrich_merged_properties"),
     "filter_by_floorplan": (".detail_enrichment", "filter_by_floorplan"),
-    "FloorplanAnalysis": (".floorplan", "FloorplanAnalysis"),
-    "FloorplanFilter": (".floorplan", "FloorplanFilter"),
     "LocationFilter": (".location", "LocationFilter"),
     "PropertyQualityAnalysis": (".quality", "PropertyQualityAnalysis"),
     "PropertyQualityFilter": (".quality", "PropertyQualityFilter"),

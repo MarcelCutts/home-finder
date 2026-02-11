@@ -7,6 +7,7 @@ import pytest
 from bs4 import BeautifulSoup
 
 from home_finder.models import PropertySource
+from home_finder.scrapers.parsing import extract_bedrooms, extract_postcode, extract_price
 from home_finder.scrapers.zoopla import ZooplaScraper
 from home_finder.scrapers.zoopla_models import ZooplaListing
 
@@ -177,34 +178,32 @@ class TestZooplaHtmlParser:
         prop_id = zoopla_scraper._extract_property_id(url)
         assert prop_id is None
 
-    def test_extract_price(self, zoopla_scraper: ZooplaScraper) -> None:
+    def test_extract_price(self) -> None:
         """Test price extraction from text."""
-        assert zoopla_scraper._extract_price("£2,300 pcm") == 2300
-        assert zoopla_scraper._extract_price("£1,950 pcm") == 1950
-        assert zoopla_scraper._extract_price("£500 pw") == 2166  # Weekly to monthly
+        assert extract_price("£2,300 pcm") == 2300
+        assert extract_price("£1,950 pcm") == 1950
+        assert extract_price("£500 pw") == 2166  # Weekly to monthly
 
-    def test_extract_price_invalid(self, zoopla_scraper: ZooplaScraper) -> None:
+    def test_extract_price_invalid(self) -> None:
         """Test price extraction with invalid text."""
-        assert zoopla_scraper._extract_price("POA") is None
-        assert zoopla_scraper._extract_price("") is None
+        assert extract_price("POA") is None
+        assert extract_price("") is None
 
-    def test_extract_bedrooms(self, zoopla_scraper: ZooplaScraper) -> None:
+    def test_extract_bedrooms(self) -> None:
         """Test bedroom extraction from title."""
-        assert zoopla_scraper._extract_bedrooms("1 bed flat to rent") == 1
-        assert zoopla_scraper._extract_bedrooms("2 bed apartment to rent") == 2
-        assert zoopla_scraper._extract_bedrooms("Studio to rent") == 0
-        assert zoopla_scraper._extract_bedrooms("3 bedroom house") == 3
+        assert extract_bedrooms("1 bed flat to rent") == 1
+        assert extract_bedrooms("2 bed apartment to rent") == 2
+        assert extract_bedrooms("Studio to rent") == 0
+        assert extract_bedrooms("3 bedroom house") == 3
 
-    def test_extract_bedrooms_no_match(self, zoopla_scraper: ZooplaScraper) -> None:
+    def test_extract_bedrooms_no_match(self) -> None:
         """Test bedroom extraction with no bedroom info."""
-        assert zoopla_scraper._extract_bedrooms("Flat to rent") is None
+        assert extract_bedrooms("Flat to rent") is None
 
-    def test_extract_postcode(self, zoopla_scraper: ZooplaScraper) -> None:
+    def test_extract_postcode(self) -> None:
         """Test postcode extraction from address."""
-        assert (
-            zoopla_scraper._extract_postcode("Wayland Avenue, Hackney, London E8 3RH") == "E8 3RH"
-        )
-        assert zoopla_scraper._extract_postcode("Some Street, N1") == "N1"
+        assert extract_postcode("Wayland Avenue, Hackney, London E8 3RH") == "E8 3RH"
+        assert extract_postcode("Some Street, N1") == "N1"
 
     def test_parse_empty_results(self, zoopla_scraper: ZooplaScraper) -> None:
         """Test parsing page with no results."""

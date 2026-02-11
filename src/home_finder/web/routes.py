@@ -5,12 +5,11 @@ import math
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Depends, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
 
-from home_finder.db import PropertyStorage
-from home_finder.filters.quality import (
+from home_finder.data.area_context import (
     AREA_CONTEXT,
     COUNCIL_TAX_MONTHLY,
     CRIME_RATES,
@@ -18,8 +17,10 @@ from home_finder.filters.quality import (
     RENT_TRENDS,
     RENTAL_BENCHMARKS,
 )
+from home_finder.db import PropertyStorage
 from home_finder.logging import get_logger
-from home_finder.models import SOURCE_BADGES, SOURCE_NAMES
+from home_finder.models import SOURCE_BADGES, SOURCE_NAMES, PropertyImage
+from home_finder.utils.address import extract_outcode
 from home_finder.utils.image_cache import get_cache_dir, safe_dir_name, url_to_filename
 
 logger = get_logger(__name__)
@@ -30,24 +31,20 @@ templates = Jinja2Templates(directory=Path(__file__).parent / "templates")
 VALID_SORT_OPTIONS = {"newest", "price_asc", "price_desc", "rating_desc"}
 
 
-def _get_storage(request: Request) -> PropertyStorage:
+def get_storage(request: Request) -> PropertyStorage:
+    """Dependency: get the PropertyStorage from app state."""
     return request.app.state.storage  # type: ignore[no-any-return]
 
 
-def _get_search_areas(request: Request) -> list[str]:
+def get_search_areas(request: Request) -> list[str]:
+    """Dependency: get uppercased search areas from app settings."""
     settings = request.app.state.settings
     return [a.upper() for a in settings.get_search_areas()]
 
 
-def _get_data_dir(request: Request) -> str:
+def get_data_dir(request: Request) -> str:
+    """Dependency: get the data directory from app settings."""
     return request.app.state.settings.data_dir  # type: ignore[no-any-return]
-
-
-def _extract_outcode(postcode: str | None) -> str | None:
-    if not postcode:
-        return None
-    parts = postcode.strip().upper().split()
-    return parts[0] if parts else None
 
 
 @router.get("/health")
@@ -59,6 +56,8 @@ async def health_check() -> JSONResponse:
 @router.get("/", response_class=HTMLResponse)
 async def dashboard(
     request: Request,
+    storage: PropertyStorage = Depends(get_storage),
+    search_areas: list[str] = Depends(get_search_areas),
     sort: str = "newest",
     min_price: int | None = None,
     max_price: int | None = None,
@@ -76,7 +75,6 @@ async def dashboard(
     if bedrooms is not None:
         bedrooms = max(0, min(10, bedrooms))
 
-    storage = _get_storage(request)
     per_page = 24
 
     try:
@@ -118,8 +116,6 @@ async def dashboard(
         ]
     )
 
-    search_areas = _get_search_areas(request)
-
     context: dict[str, Any] = {
         "request": request,
         "properties": properties,
@@ -155,7 +151,9 @@ _IMAGE_MEDIA_TYPES = {
 
 
 @router.get("/images/{unique_id}/{filename}")
-async def serve_cached_image(request: Request, unique_id: str, filename: str) -> FileResponse:
+async def serve_cached_image(
+    unique_id: str, filename: str, data_dir: str = Depends(get_data_dir)
+) -> FileResponse:
     """Serve a cached property image from disk.
 
     Returns the image with immutable cache headers (images never change).
@@ -164,7 +162,6 @@ async def serve_cached_image(request: Request, unique_id: str, filename: str) ->
     if ".." in filename or "/" in filename or "\\" in filename:
         return JSONResponse({"error": "invalid filename"}, status_code=400)  # type: ignore[return-value]
 
-    data_dir = _get_data_dir(request)
     image_path = get_cache_dir(data_dir, unique_id) / filename
 
     if not image_path.is_file():
@@ -182,10 +179,13 @@ async def serve_cached_image(request: Request, unique_id: str, filename: str) ->
 
 
 @router.get("/property/{unique_id}", response_class=HTMLResponse)
-async def property_detail(request: Request, unique_id: str) -> HTMLResponse:
+async def property_detail(
+    request: Request,
+    unique_id: str,
+    storage: PropertyStorage = Depends(get_storage),
+    data_dir: str = Depends(get_data_dir),
+) -> HTMLResponse:
     """Property detail page."""
-    storage = _get_storage(request)
-
     try:
         prop = await storage.get_property_detail(unique_id)
     except Exception:
@@ -204,7 +204,7 @@ async def property_detail(request: Request, unique_id: str) -> HTMLResponse:
         )
 
     # Extract outcode for area context
-    outcode = _extract_outcode(prop.get("postcode"))
+    outcode = extract_outcode(prop.get("postcode"))
     area_context: dict[str, Any] = {}
     if outcode:
         area_context["description"] = AREA_CONTEXT.get(outcode)
@@ -218,25 +218,27 @@ async def property_detail(request: Request, unique_id: str) -> HTMLResponse:
 
     # Build URL mapping: original CDN URL -> local /images/ URL for cached images
     image_url_map: dict[str, str] = {}
-    data_dir = _get_data_dir(request)
     safe_id = safe_dir_name(unique_id)
-    for image_list_key in ("gallery_images", "floorplan_images"):
-        for idx, img in enumerate(prop.get(image_list_key, [])):
-            img_url = str(img.url)
-            fname = url_to_filename(img_url, img.image_type, idx)
-            cached = get_cache_dir(data_dir, unique_id) / fname
-            if cached.is_file():
-                image_url_map[img_url] = f"/images/{safe_id}/{fname}"
+    all_images: list[PropertyImage] = [
+        *prop.get("gallery_images", []),
+        *prop.get("floorplan_images", []),
+    ]
+    for idx, img in enumerate(all_images):
+        img_url = str(img.url)
+        fname = url_to_filename(img_url, img.image_type, idx)
+        cached = get_cache_dir(data_dir, unique_id) / fname
+        if cached.is_file():
+            image_url_map[img_url] = f"/images/{safe_id}/{fname}"
 
     # Get the longest description
-    descriptions = prop.get("descriptions_dict", {})
+    descriptions: dict[str, str] = prop.get("descriptions_dict", {})
     best_description = ""
     for desc in descriptions.values():
         if desc and len(desc) > len(best_description):
             best_description = desc
     # Fall back to canonical description
     if not best_description and prop.get("description"):
-        best_description = prop["description"]
+        best_description = prop.get("description") or ""
 
     return templates.TemplateResponse(
         "detail.html",

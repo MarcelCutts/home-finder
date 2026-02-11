@@ -23,7 +23,7 @@ logger = get_logger(__name__)
 
 # Hamming distance thresholds (64-bit hashes)
 PHASH_THRESHOLD = 10  # pHash: good at compression, looser than production's 8
-WHASH_THRESHOLD = 6   # wHash: tighter — modern interiors cause false positives at 10
+WHASH_THRESHOLD = 6  # wHash: tighter — modern interiors cause false positives at 10
 CROP_HASH_THRESHOLD = 6  # crop_resistant_hash: handles up to ~50% crop
 
 # Domains that need curl_cffi for anti-bot bypass

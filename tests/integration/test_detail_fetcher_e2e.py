@@ -5,11 +5,9 @@ If a platform returns 0 results or detail pages are unavailable,
 the test skips rather than fails.
 """
 
-import asyncio
-
 import pytest
 
-from home_finder.models import Property, PropertySource
+from home_finder.models import Property
 from home_finder.scrapers import (
     OnTheMarketScraper,
     OpenRentScraper,
@@ -27,9 +25,12 @@ class TestRightmoveDetailFetcher:
         scraper = RightmoveScraper()
         try:
             results = await scraper.scrape(
-                min_price=1800, max_price=2200,
-                min_bedrooms=1, max_bedrooms=2,
-                area="e8", max_results=3,
+                min_price=1800,
+                max_price=2200,
+                min_bedrooms=1,
+                max_bedrooms=2,
+                area="e8",
+                max_results=3,
             )
         finally:
             await scraper.close()
@@ -98,9 +99,12 @@ class TestZooplaDetailFetcher:
         scraper = ZooplaScraper()
         try:
             results = await scraper.scrape(
-                min_price=1800, max_price=2200,
-                min_bedrooms=1, max_bedrooms=2,
-                area="e8", max_results=3,
+                min_price=1800,
+                max_price=2200,
+                min_bedrooms=1,
+                max_bedrooms=2,
+                area="e8",
+                max_results=3,
             )
         finally:
             await scraper.close()
@@ -170,9 +174,12 @@ class TestOpenRentDetailFetcher:
         scraper = OpenRentScraper()
         try:
             results = await scraper.scrape(
-                min_price=1800, max_price=2200,
-                min_bedrooms=1, max_bedrooms=2,
-                area="e8", max_results=3,
+                min_price=1800,
+                max_price=2200,
+                min_bedrooms=1,
+                max_bedrooms=2,
+                area="e8",
+                max_results=3,
             )
         finally:
             await scraper.close()
@@ -242,9 +249,12 @@ class TestOnTheMarketDetailFetcher:
         scraper = OnTheMarketScraper()
         try:
             results = await scraper.scrape(
-                min_price=1800, max_price=2200,
-                min_bedrooms=1, max_bedrooms=2,
-                area="e8", max_results=3,
+                min_price=1800,
+                max_price=2200,
+                min_bedrooms=1,
+                max_bedrooms=2,
+                area="e8",
+                max_results=3,
             )
         finally:
             await scraper.close()

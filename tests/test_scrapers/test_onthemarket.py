@@ -8,6 +8,7 @@ import pytest
 
 from home_finder.models import PropertySource
 from home_finder.scrapers.onthemarket import OnTheMarketScraper
+from home_finder.scrapers.parsing import extract_bedrooms, extract_postcode, extract_price
 
 
 @pytest.fixture
@@ -215,33 +216,30 @@ class TestOnTheMarketParser:
         assert prop is not None
         assert prop.source_id == "99999999"
 
-    def test_extract_price(self, onthemarket_scraper: OnTheMarketScraper) -> None:
+    def test_extract_price(self) -> None:
         """Test price extraction from text."""
-        assert onthemarket_scraper._extract_price("£2,300 pcm") == 2300
-        assert onthemarket_scraper._extract_price("£1,950 pcm") == 1950
-        assert onthemarket_scraper._extract_price("£500 pw") == 2166
+        assert extract_price("£2,300 pcm") == 2300
+        assert extract_price("£1,950 pcm") == 1950
+        assert extract_price("£500 pw") == 2166
 
-    def test_extract_price_invalid(self, onthemarket_scraper: OnTheMarketScraper) -> None:
+    def test_extract_price_invalid(self) -> None:
         """Test price extraction with invalid text."""
-        assert onthemarket_scraper._extract_price("POA") is None
-        assert onthemarket_scraper._extract_price("") is None
+        assert extract_price("POA") is None
+        assert extract_price("") is None
 
-    def test_extract_bedrooms(self, onthemarket_scraper: OnTheMarketScraper) -> None:
+    def test_extract_bedrooms(self) -> None:
         """Test bedroom extraction from title."""
-        assert onthemarket_scraper._extract_bedrooms("1 bedroom flat to rent") == 1
-        assert onthemarket_scraper._extract_bedrooms("2 bedroom apartment to rent") == 2
-        assert onthemarket_scraper._extract_bedrooms("Studio to rent") == 0
+        assert extract_bedrooms("1 bedroom flat to rent") == 1
+        assert extract_bedrooms("2 bedroom apartment to rent") == 2
+        assert extract_bedrooms("Studio to rent") == 0
 
-    def test_extract_bedrooms_no_match(self, onthemarket_scraper: OnTheMarketScraper) -> None:
+    def test_extract_bedrooms_no_match(self) -> None:
         """Test bedroom extraction with no bedroom info."""
-        assert onthemarket_scraper._extract_bedrooms("Flat to rent") is None
+        assert extract_bedrooms("Flat to rent") is None
 
-    def test_extract_postcode(self, onthemarket_scraper: OnTheMarketScraper) -> None:
+    def test_extract_postcode(self) -> None:
         """Test postcode extraction from address."""
-        assert (
-            onthemarket_scraper._extract_postcode("Wayland Avenue, Hackney, London E8 3RH")
-            == "E8 3RH"
-        )
+        assert extract_postcode("Wayland Avenue, Hackney, London E8 3RH") == "E8 3RH"
 
     def test_parse_empty_results(self, onthemarket_scraper: OnTheMarketScraper) -> None:
         """Test parsing page with no results."""

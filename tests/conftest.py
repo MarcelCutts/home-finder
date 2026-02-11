@@ -8,21 +8,19 @@ import pytest
 from hypothesis import HealthCheck, settings
 from pydantic import HttpUrl
 
-from home_finder.filters.quality import (
+from home_finder.models import (
     ConditionAnalysis,
     KitchenAnalysis,
     LightSpaceAnalysis,
-    PropertyQualityAnalysis,
-    SpaceAnalysis,
-    ValueAnalysis,
-)
-from home_finder.models import (
     MergedProperty,
     Property,
     PropertyImage,
+    PropertyQualityAnalysis,
     PropertySource,
     SearchCriteria,
+    SpaceAnalysis,
     TransportMode,
+    ValueAnalysis,
 )
 
 # Hypothesis settings profiles for different environments

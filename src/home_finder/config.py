@@ -60,12 +60,6 @@ class Settings(BaseSettings):
         description="Drop properties without floorplans before quality analysis",
     )
 
-    # Deprecated: use enable_quality_filter instead
-    enable_floorplan_filter: bool = Field(
-        default=True,
-        description="DEPRECATED: Use enable_quality_filter instead",
-    )
-
     # Deduplication
     enable_image_hash_matching: bool = Field(
         default=False,

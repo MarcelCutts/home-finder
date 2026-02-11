@@ -25,7 +25,10 @@ logger = get_logger(__name__)
 
 
 async def hash_snapshot(
-    path: Path, *, max_images: int = 15, rehash: bool = False,
+    path: Path,
+    *,
+    max_images: int = 15,
+    rehash: bool = False,
 ) -> None:
     """Add image hashes to all properties in a snapshot file.
 
@@ -60,9 +63,7 @@ async def hash_snapshot(
             # Check if already hashed — skip known URLs
             existing_hashes = detail.get("gallery_hashes") or []
             existing_urls = {h["url"] for h in existing_hashes}
-            urls_to_hash = [
-                u for u in gallery_urls[:max_images] if u not in existing_urls
-            ]
+            urls_to_hash = [u for u in gallery_urls[:max_images] if u not in existing_urls]
 
         if not urls_to_hash:
             already_hashed += len(gallery_urls[:max_images])
@@ -83,12 +84,14 @@ async def hash_snapshot(
         # Build new hash entries
         new_hashes = []
         for h in results:
-            new_hashes.append({
-                "url": h.url,
-                "phash": h.phash,
-                "whash": h.whash,
-                "crop_hash": h.crop_hash,
-            })
+            new_hashes.append(
+                {
+                    "url": h.url,
+                    "phash": h.phash,
+                    "whash": h.whash,
+                    "crop_hash": h.crop_hash,
+                }
+            )
             newly_hashed += 1
 
         failed += len(urls_to_hash) - len(results)

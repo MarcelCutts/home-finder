@@ -171,10 +171,7 @@ async def main() -> None:
     # Filter to search areas (OpenRent/OTM return radius-based results)
     allowed_outcodes = {oc.upper() for oc in search_areas}
     before = len(properties)
-    properties = [
-        p for p in properties
-        if extract_outcode(p.postcode) in allowed_outcodes
-    ]
+    properties = [p for p in properties if extract_outcode(p.postcode) in allowed_outcodes]
     if len(properties) < before:
         logger.info(
             "outcode_filtered",
@@ -196,6 +193,7 @@ async def main() -> None:
     # Hash gallery images if requested
     if args.hash_images and not args.no_details:
         from hash_snapshot import hash_snapshot
+
         logger.info("hashing_gallery_images")
         await hash_snapshot(path)
     elif args.hash_images and args.no_details:
@@ -205,6 +203,7 @@ async def main() -> None:
     needs_cache = (args.cache_images or args.embed_images) and not args.no_details
     if needs_cache:
         from image_cache import cache_snapshot
+
         logger.info("caching_gallery_images")
         await cache_snapshot(path)
     elif (args.cache_images or args.embed_images) and args.no_details:
@@ -217,6 +216,7 @@ async def main() -> None:
     if args.embed_images and not args.no_details:
         try:
             from embed_snapshot import embed_snapshot
+
             logger.info("computing_sscd_embeddings")
             embed_snapshot(path)
         except ImportError:
@@ -238,7 +238,9 @@ async def main() -> None:
     if details:
         with_desc = sum(1 for d in details.values() if d.description)
         with_gallery = sum(1 for d in details.values() if d.gallery_urls)
-        print(f"Details fetched: {len(details)} ({with_desc} with description, {with_gallery} with gallery)")
+        print(
+            f"Details fetched: {len(details)} ({with_desc} with description, {with_gallery} with gallery)"
+        )
 
 
 if __name__ == "__main__":

@@ -370,9 +370,7 @@ class TestGraduatedScoring:
             longitude=-0.05,
         )
         # ~50m away (approx 0.00045° lat at 51.5°)
-        prop2 = prop1.model_copy(
-            update={"source_id": "2", "latitude": 51.50045}
-        )
+        prop2 = prop1.model_copy(update={"source_id": "2", "latitude": 51.50045})
         score = graduated_coordinate_score(prop1, prop2)
         assert 0.45 < score < 0.55
 
@@ -390,9 +388,7 @@ class TestGraduatedScoring:
             longitude=-0.05,
         )
         # ~150m away
-        prop2 = prop1.model_copy(
-            update={"source_id": "2", "latitude": 51.5014}
-        )
+        prop2 = prop1.model_copy(update={"source_id": "2", "latitude": 51.5014})
         assert graduated_coordinate_score(prop1, prop2) == 0.0
 
     def test_coordinate_missing(self) -> None:
@@ -408,9 +404,7 @@ class TestGraduatedScoring:
             latitude=51.5,
             longitude=-0.05,
         )
-        prop2 = prop1.model_copy(
-            update={"source_id": "2", "latitude": None, "longitude": None}
-        )
+        prop2 = prop1.model_copy(update={"source_id": "2", "latitude": None, "longitude": None})
         assert graduated_coordinate_score(prop1, prop2) == 0.0
 
     def test_price_exact(self) -> None:

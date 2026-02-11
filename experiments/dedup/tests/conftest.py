@@ -114,7 +114,9 @@ def _make_pair(
         "outcode": _make_signal(True, 1.0, "E3 vs E3"),
         "coordinates": _make_signal(lat_a is not None, 1.0, "0m"),
         "street_name": _make_signal(address_a == address_b, 1.0 if address_a == address_b else 0.0),
-        "price": _make_signal(True, 1.0 if price_a == price_b else 0.5, f"£{price_a} vs £{price_b}"),
+        "price": _make_signal(
+            True, 1.0 if price_a == price_b else 0.5, f"£{price_a} vs £{price_b}"
+        ),
         "fuzzy_address": _make_signal(False, 0.0),
         "address_number": _make_signal(False, 0.0),
         "title_similarity": _make_signal(False, 0.0),
@@ -129,15 +131,40 @@ def _make_pair(
 
 # Five pairs with distinct scores for sort testing
 TEST_PAIRS = [
-    _make_pair(0, score=80.0, signal_count=3, is_match=True),           # high match
-    _make_pair(1, score=55.0, signal_count=2, is_match=False,           # near threshold
-               price_a=1500, price_b=1800),
-    _make_pair(2, score=20.0, signal_count=1, is_match=False,           # low score
-               postcode_b="E3 4BB", address_b="2 Other St"),
-    _make_pair(3, score=95.0, signal_count=4, is_match=True,            # highest match
-               source_a="rightmove"),
-    _make_pair(4, score=45.0, signal_count=2, is_match=False,           # mid-low
-               lat_a=None, lon_a=None, lat_b=None, lon_b=None),         # no coords
+    _make_pair(0, score=80.0, signal_count=3, is_match=True),  # high match
+    _make_pair(
+        1,
+        score=55.0,
+        signal_count=2,
+        is_match=False,  # near threshold
+        price_a=1500,
+        price_b=1800,
+    ),
+    _make_pair(
+        2,
+        score=20.0,
+        signal_count=1,
+        is_match=False,  # low score
+        postcode_b="E3 4BB",
+        address_b="2 Other St",
+    ),
+    _make_pair(
+        3,
+        score=95.0,
+        signal_count=4,
+        is_match=True,  # highest match
+        source_a="rightmove",
+    ),
+    _make_pair(
+        4,
+        score=45.0,
+        signal_count=2,
+        is_match=False,  # mid-low
+        lat_a=None,
+        lon_a=None,
+        lat_b=None,
+        lon_b=None,
+    ),  # no coords
 ]
 
 

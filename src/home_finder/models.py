@@ -1,8 +1,8 @@
 """Pydantic models for properties and search criteria."""
 
-from datetime import datetime
+from datetime import UTC, datetime
 from enum import Enum
-from typing import Literal, Self
+from typing import Final, Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, HttpUrl, field_validator, model_validator
 
@@ -15,13 +15,21 @@ class PropertySource(str, Enum):
     OPENRENT = "openrent"
     ONTHEMARKET = "onthemarket"
 
+    @property
+    def display_name(self) -> str:
+        """Human-readable display name for this source."""
+        return _SOURCE_DISPLAY_NAMES[self.value]
 
-SOURCE_NAMES: dict[str, str] = {
+
+_SOURCE_DISPLAY_NAMES: dict[str, str] = {
     "openrent": "OpenRent",
     "rightmove": "Rightmove",
     "zoopla": "Zoopla",
     "onthemarket": "OnTheMarket",
 }
+
+SOURCE_NAMES: Final[dict[str, str]] = {s.value: s.display_name for s in PropertySource}
+assert set(SOURCE_NAMES) == {s.value for s in PropertySource}
 
 SOURCE_BADGES: dict[str, dict[str, str]] = {
     "openrent": {"abbr": "O", "color": "#00b4d8", "name": "OpenRent"},
@@ -67,7 +75,7 @@ class Property(BaseModel):
     image_url: HttpUrl | None = None
     image_hash: str | None = None  # Perceptual hash of main listing image
     available_from: datetime | None = None
-    first_seen: datetime = Field(default_factory=datetime.now)
+    first_seen: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
     @field_validator("postcode")
     @classmethod
@@ -131,18 +139,6 @@ class SearchCriteria(BaseModel):
             self.min_price <= prop.price_pcm <= self.max_price
             and self.min_bedrooms <= prop.bedrooms <= self.max_bedrooms
         )
-
-
-class CommuteResult(BaseModel):
-    """Result of a commute time calculation."""
-
-    model_config = ConfigDict(frozen=True)
-
-    property_id: str
-    destination_postcode: str
-    travel_time_minutes: int
-    transport_mode: TransportMode
-    within_limit: bool
 
 
 class NotificationStatus(str, Enum):
@@ -213,3 +209,94 @@ class MergedProperty(BaseModel):
     def price_varies(self) -> bool:
         """Whether the price differs across platforms."""
         return self.min_price != self.max_price
+
+
+# ---------------------------------------------------------------------------
+# Quality analysis models (used by filters, storage, notifiers, web routes)
+# ---------------------------------------------------------------------------
+
+
+class KitchenAnalysis(BaseModel):
+    """Analysis of kitchen amenities and condition."""
+
+    model_config = ConfigDict(frozen=True)
+
+    overall_quality: Literal["modern", "decent", "dated", "unknown"] = "unknown"
+    hob_type: Literal["gas", "electric", "induction", "unknown"] | None = None
+    has_dishwasher: bool | None = None
+    has_washing_machine: bool | None = None
+    notes: str = ""
+
+
+class ConditionAnalysis(BaseModel):
+    """Analysis of property condition."""
+
+    model_config = ConfigDict(frozen=True)
+
+    overall_condition: Literal["excellent", "good", "fair", "poor", "unknown"] = "unknown"
+    has_visible_damp: bool = False
+    has_visible_mold: bool = False
+    has_worn_fixtures: bool = False
+    maintenance_concerns: list[str] = []
+    confidence: Literal["high", "medium", "low"] = "medium"
+
+
+class LightSpaceAnalysis(BaseModel):
+    """Analysis of natural light and space feel."""
+
+    model_config = ConfigDict(frozen=True)
+
+    natural_light: Literal["excellent", "good", "fair", "poor", "unknown"] = "unknown"
+    window_sizes: Literal["large", "medium", "small"] | None = None
+    feels_spacious: bool | None = None  # None = unknown
+    ceiling_height: Literal["high", "standard", "low"] | None = None
+    notes: str = ""
+
+
+class SpaceAnalysis(BaseModel):
+    """Analysis of living room space (replaces FloorplanFilter logic)."""
+
+    model_config = ConfigDict(frozen=True)
+
+    living_room_sqm: float | None = None
+    is_spacious_enough: bool | None = None  # None = unknown
+    confidence: Literal["high", "medium", "low"] = "low"
+
+
+class ValueAnalysis(BaseModel):
+    """Value-for-money assessment based on local benchmarks."""
+
+    model_config = ConfigDict(frozen=True)
+
+    area_average: int | None = None
+    difference: int | None = None  # Negative = below average (good), positive = above
+    rating: Literal["excellent", "good", "fair", "poor"] | None = None
+    note: str = ""
+
+    # LLM-assessed value considering quality (set by Claude)
+    quality_adjusted_rating: Literal["excellent", "good", "fair", "poor"] | None = None
+    quality_adjusted_note: str = ""
+
+
+class PropertyQualityAnalysis(BaseModel):
+    """Complete quality analysis of a property."""
+
+    model_config = ConfigDict(frozen=True)
+
+    kitchen: KitchenAnalysis
+    condition: ConditionAnalysis
+    light_space: LightSpaceAnalysis
+    space: SpaceAnalysis
+
+    # Advisory flags (no auto-filtering)
+    condition_concerns: bool = False
+    concern_severity: Literal["minor", "moderate", "serious"] | None = None
+
+    # Value assessment (calculated, not from LLM)
+    value: ValueAnalysis | None = None
+
+    # Overall star rating (1-5, from LLM)
+    overall_rating: int | None = None
+
+    # For notifications
+    summary: str
