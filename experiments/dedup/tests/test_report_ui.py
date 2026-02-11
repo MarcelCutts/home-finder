@@ -11,9 +11,7 @@ import json
 import re
 from pathlib import Path
 
-import pytest
-from playwright.sync_api import Page, expect
-
+from playwright.sync_api import Page
 
 # --------------------------------------------------------------------------- #
 # Helpers

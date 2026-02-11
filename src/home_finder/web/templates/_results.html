@@ -37,3 +37,9 @@
        hx-get="/" hx-target="#results" hx-push-url="true" hx-indicator="#loading">Reset filters</a>
 </div>
 {% endif %}
+
+<script>
+if (typeof window._updateMapData === "function") {
+    window._updateMapData({{ properties_json | safe }});
+}
+</script>

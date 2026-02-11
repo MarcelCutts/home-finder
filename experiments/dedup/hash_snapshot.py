@@ -17,9 +17,9 @@ import json
 import logging
 from pathlib import Path
 
-from home_finder.logging import configure_logging, get_logger
-
 from image_hashing import hash_gallery
+
+from home_finder.logging import configure_logging, get_logger
 
 logger = get_logger(__name__)
 

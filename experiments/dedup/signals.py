@@ -7,7 +7,6 @@ a float in [0, 1] representing match strength, or None if the signal can't fire.
 from __future__ import annotations
 
 import base64
-import math
 import re
 from dataclasses import dataclass, field
 
@@ -759,7 +758,7 @@ def signal_gallery_images(a: PropertyDict, b: PropertyDict) -> SignalResult:
       2 matches → 0.85 (strong evidence)
       3+ matches → 1.0  (very high confidence)
     """
-    from image_hashing import ImageHashes, hashes_match, count_gallery_matches
+    from image_hashing import ImageHashes, count_gallery_matches
 
     def _load_gallery_hashes(prop: PropertyDict) -> list[ImageHashes]:
         detail = prop.get("detail", {}) or {}

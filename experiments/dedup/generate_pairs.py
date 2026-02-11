@@ -12,10 +12,10 @@ import sys
 from collections import defaultdict
 from pathlib import Path
 
-from home_finder.utils.address import extract_outcode
-
-from scorer import ScorerConfig, score_pair, PRODUCTION_CONFIG
+from scorer import PRODUCTION_CONFIG, score_pair
 from signals import compute_all_signals
+
+from home_finder.utils.address import extract_outcode
 
 
 def load_snapshot(path: Path) -> list[dict]:
@@ -161,8 +161,8 @@ def main() -> None:
         sys.exit(0)
 
     # Pre-compute corpus-level TF-IDF vectorizer and sentence embeddings
+    from signals import _get_description, _prop_uid, extract_property_text
     from sklearn.feature_extraction.text import TfidfVectorizer
-    from signals import extract_property_text, _get_description, _prop_uid
 
     print("Fitting corpus-level TF-IDF vectorizer...")
     desc_texts = []

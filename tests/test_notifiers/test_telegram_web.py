@@ -42,15 +42,23 @@ def merged_property(sample_property: Property) -> MergedProperty:
 
 
 class TestBuildInlineKeyboardWithWebUrl:
-    def test_with_web_base_url_adds_details_button(self, merged_property: MergedProperty) -> None:
+    def test_with_https_url_uses_webapp_button(self, merged_property: MergedProperty) -> None:
         keyboard = _build_inline_keyboard(
             merged_property, web_base_url="https://home-finder.fly.dev"
         )
-        # First button should be "Details"
+        # First button should be "Details" as a WebApp button
         all_buttons = [btn for row in keyboard.inline_keyboard for btn in row]
         assert all_buttons[0].text == "Details"
+        assert all_buttons[0].web_app is not None
+        assert "/property/" in all_buttons[0].web_app.url
+        assert merged_property.unique_id in all_buttons[0].web_app.url
+
+    def test_with_http_url_uses_regular_link(self, merged_property: MergedProperty) -> None:
+        keyboard = _build_inline_keyboard(merged_property, web_base_url="http://localhost:8000")
+        all_buttons = [btn for row in keyboard.inline_keyboard for btn in row]
+        assert all_buttons[0].text == "Details"
+        assert all_buttons[0].web_app is None
         assert "/property/" in all_buttons[0].url
-        assert merged_property.unique_id in all_buttons[0].url
 
     def test_without_web_base_url_no_details_button(self, merged_property: MergedProperty) -> None:
         keyboard = _build_inline_keyboard(merged_property, web_base_url="")
@@ -75,7 +83,7 @@ class TestBuildInlineKeyboardWithWebUrl:
         )
         all_buttons = [btn for row in keyboard.inline_keyboard for btn in row]
         # URL should not have double slashes
-        assert "//property" not in all_buttons[0].url
+        assert "//property" not in all_buttons[0].web_app.url
 
     def test_map_button_present_with_coords(self, merged_property: MergedProperty) -> None:
         keyboard = _build_inline_keyboard(merged_property)

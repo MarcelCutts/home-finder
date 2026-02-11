@@ -84,7 +84,7 @@ nav.container-fluid li {
     font-size: 0.85rem;
 }
 
-/* View toggle (inline in filter row) */
+/* View toggle (inline in filter row) — 3-button group */
 .view-toggle {
     display: inline-flex;
     gap: 0;
@@ -107,6 +107,10 @@ nav.container-fluid li {
 }
 .view-toggle-btn:first-child {
     border-radius: 4px 0 0 4px;
+}
+.view-toggle-btn:nth-child(2) {
+    border-left: none;
+    border-radius: 0;
 }
 .view-toggle-btn:last-child {
     border-radius: 0 4px 4px 0;
@@ -459,6 +463,120 @@ nav.container-fluid li {
     border: none !important;
 }
 
+/* ===== Price pill markers ===== */
+.price-pill-marker {
+    background: transparent !important;
+    border: none !important;
+}
+.price-pill {
+    background: var(--bg-elevated, #1e1f28);
+    color: var(--text, #e2e2e8);
+    border: 1px solid var(--border, #26272f);
+    border-radius: 20px;
+    padding: 0.15rem 0.5rem;
+    font-size: 0.75rem;
+    font-weight: 600;
+    white-space: nowrap;
+    cursor: pointer;
+    transition: transform 0.15s, background 0.15s, border-color 0.15s, color 0.15s;
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.3);
+}
+.price-pill:hover {
+    transform: scale(1.08);
+    border-color: var(--accent, #6366f1);
+}
+.price-pill.highlighted,
+.price-pill.active {
+    background: var(--accent, #6366f1);
+    color: #fff;
+    border-color: var(--accent, #6366f1);
+}
+
+/* ===== Dark MarkerCluster overrides ===== */
+.marker-cluster div {
+    background: var(--bg-elevated, #1e1f28);
+    color: var(--text, #e2e2e8);
+    border-radius: 20px;
+    font-size: 0.75rem;
+    font-weight: 600;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+.marker-cluster {
+    background: transparent !important;
+}
+.marker-cluster-small div { border: 2px solid var(--accent, #6366f1); }
+.marker-cluster-medium div { border: 2px solid var(--accent-hover, #818cf8); }
+.marker-cluster-large div { border: 2px solid var(--star, #f5a623); }
+
+/* ===== Rich map popup ===== */
+.map-popup { width: 240px; }
+.map-popup-img {
+    width: calc(100% + 40px);
+    margin: -15px -20px 8px -20px;
+    height: 120px;
+    object-fit: cover;
+    border-radius: 6px 6px 0 0;
+    display: block;
+}
+.map-popup-title {
+    display: block;
+    font-weight: 600;
+    font-size: 0.85rem;
+    color: var(--accent-hover, #818cf8);
+    text-decoration: none;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    margin-bottom: 4px;
+}
+.map-popup-title:hover { text-decoration: underline; }
+.map-popup-meta {
+    font-size: 0.8rem;
+    color: var(--text-muted, #8b8d98);
+    line-height: 1.4;
+}
+.map-popup-meta strong {
+    color: var(--text, #e2e2e8);
+}
+.map-popup-stars {
+    color: var(--star, #f5a623);
+    font-size: 0.85rem;
+    margin-top: 2px;
+}
+.leaflet-popup-content {
+    margin: 15px 20px;
+}
+
+/* ===== Split view layout ===== */
+.split-container.split-active {
+    display: flex;
+    height: calc(100vh - 160px);
+}
+.split-active #results {
+    flex: 0 0 45%;
+    overflow-y: auto;
+    border-right: 1px solid var(--border, #26272f);
+    padding-right: 0.5rem;
+}
+.split-active #results .card-grid {
+    grid-template-columns: 1fr;
+}
+.split-active #dashboard-map {
+    flex: 1;
+    height: 100% !important;
+    min-height: unset;
+    margin-bottom: 0;
+    border-radius: 0;
+}
+
+/* ===== Highlighted card (hover sync) ===== */
+.property-card.card-highlighted {
+    border-color: var(--accent, #6366f1);
+    box-shadow: 0 0 12px rgba(99, 102, 241, 0.25);
+}
+
 /* Leaflet popup dark mode */
 .leaflet-popup-content-wrapper {
     background: var(--bg-elevated, #1e1f28);
@@ -533,5 +651,25 @@ nav.container-fluid li {
     #dashboard-map {
         height: calc(100vh - 260px);
         min-height: 300px;
+    }
+    /* Split view: stack vertically on mobile */
+    .split-container.split-active {
+        flex-direction: column;
+        height: auto;
+    }
+    .split-active #results {
+        flex: none;
+        height: 50vh;
+        border-right: none;
+        border-bottom: 1px solid var(--border, #26272f);
+        padding-right: 0;
+    }
+    .split-active #dashboard-map {
+        height: 50vh !important;
+    }
+}
+@media (max-width: 480px) {
+    .view-toggle-btn[data-view="split"] {
+        display: none;
     }
 }

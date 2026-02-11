@@ -12,7 +12,6 @@ from pathlib import Path
 
 from jinja2 import Environment, FileSystemLoader
 
-
 TEMPLATES_DIR = Path(__file__).parent / "templates"
 DEFAULT_INPUT = Path(__file__).parent / "data" / "candidates.json"
 DEFAULT_OUTPUT = Path(__file__).parent / "reports" / "labeling_report.html"

@@ -24,6 +24,7 @@ from home_finder.notifiers.telegram import (
     TelegramNotifier,
     _format_star_rating,
     _get_best_image_url,
+    _get_gallery_urls,
     format_merged_property_caption,
     format_property_message,
 )
@@ -447,3 +448,147 @@ class TestTelegramNotifier:
             await notifier.send_merged_property_notification(merged)
 
         mock_bot.send_venue.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_send_merged_media_group_for_many_images(self, sample_property: Property) -> None:
+        """Test that send_media_group is used when 3+ gallery images available."""
+        images = tuple(
+            PropertyImage(
+                url=HttpUrl(f"https://example.com/img{i}.jpg"),
+                source=PropertySource.OPENRENT,
+                image_type="gallery",
+            )
+            for i in range(5)
+        )
+        merged = MergedProperty(
+            canonical=sample_property,
+            sources=(PropertySource.OPENRENT,),
+            source_urls={PropertySource.OPENRENT: sample_property.url},
+            images=images,
+            min_price=1900,
+            max_price=1900,
+        )
+        notifier = TelegramNotifier(bot_token="123456:ABC-DEF", chat_id=12345678)
+        mock_bot = AsyncMock()
+        mock_bot.send_media_group = AsyncMock(return_value=[MagicMock(message_id=1)])
+        mock_bot.send_message = AsyncMock(return_value=MagicMock(message_id=2))
+        mock_bot.send_venue = AsyncMock(return_value=MagicMock(message_id=3))
+
+        with patch.object(notifier, "_get_bot", return_value=mock_bot):
+            result = await notifier.send_merged_property_notification(merged)
+
+        assert result is True
+        mock_bot.send_media_group.assert_called_once()
+        # Follow-up message with inline keyboard buttons
+        mock_bot.send_message.assert_called_once()
+        assert "reply_markup" in mock_bot.send_message.call_args[1]
+        # send_photo should NOT be called (media group used instead)
+        mock_bot.send_photo.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_send_merged_single_photo_for_few_images(self, sample_property: Property) -> None:
+        """Test that send_photo is used when only 1-2 gallery images available."""
+        images = (
+            PropertyImage(
+                url=HttpUrl("https://example.com/img1.jpg"),
+                source=PropertySource.OPENRENT,
+                image_type="gallery",
+            ),
+        )
+        merged = MergedProperty(
+            canonical=sample_property,
+            sources=(PropertySource.OPENRENT,),
+            source_urls={PropertySource.OPENRENT: sample_property.url},
+            images=images,
+            min_price=1900,
+            max_price=1900,
+        )
+        notifier = TelegramNotifier(bot_token="123456:ABC-DEF", chat_id=12345678)
+        mock_bot = AsyncMock()
+        mock_bot.send_photo = AsyncMock(return_value=MagicMock(message_id=1))
+        mock_bot.send_venue = AsyncMock(return_value=MagicMock(message_id=2))
+
+        with patch.object(notifier, "_get_bot", return_value=mock_bot):
+            result = await notifier.send_merged_property_notification(merged)
+
+        assert result is True
+        mock_bot.send_photo.assert_called_once()
+        mock_bot.send_media_group.assert_not_called()
+
+
+class TestGetGalleryUrls:
+    """Tests for _get_gallery_urls."""
+
+    def test_returns_gallery_images(self, sample_property: Property) -> None:
+        images = tuple(
+            PropertyImage(
+                url=HttpUrl(f"https://example.com/img{i}.jpg"),
+                source=PropertySource.OPENRENT,
+                image_type="gallery",
+            )
+            for i in range(3)
+        )
+        merged = MergedProperty(
+            canonical=sample_property,
+            sources=(PropertySource.OPENRENT,),
+            source_urls={PropertySource.OPENRENT: sample_property.url},
+            images=images,
+            min_price=1900,
+            max_price=1900,
+        )
+        urls = _get_gallery_urls(merged)
+        assert len(urls) == 3
+        assert all("example.com" in u for u in urls)
+
+    def test_limits_to_max_images(self, sample_property: Property) -> None:
+        images = tuple(
+            PropertyImage(
+                url=HttpUrl(f"https://example.com/img{i}.jpg"),
+                source=PropertySource.OPENRENT,
+                image_type="gallery",
+            )
+            for i in range(15)
+        )
+        merged = MergedProperty(
+            canonical=sample_property,
+            sources=(PropertySource.OPENRENT,),
+            source_urls={PropertySource.OPENRENT: sample_property.url},
+            images=images,
+            min_price=1900,
+            max_price=1900,
+        )
+        urls = _get_gallery_urls(merged, max_images=10)
+        assert len(urls) == 10
+
+    def test_skips_non_gallery_images(self, sample_property: Property) -> None:
+        images = (
+            PropertyImage(
+                url=HttpUrl("https://example.com/floor.jpg"),
+                source=PropertySource.OPENRENT,
+                image_type="floorplan",
+            ),
+        )
+        merged = MergedProperty(
+            canonical=sample_property.model_copy(update={"image_url": None}),
+            sources=(PropertySource.OPENRENT,),
+            source_urls={PropertySource.OPENRENT: sample_property.url},
+            images=images,
+            min_price=1900,
+            max_price=1900,
+        )
+        urls = _get_gallery_urls(merged)
+        assert urls == []
+
+    def test_falls_back_to_canonical_image(self, sample_property: Property) -> None:
+        prop_with_img = sample_property.model_copy(
+            update={"image_url": HttpUrl("https://example.com/thumb.jpg")}
+        )
+        merged = MergedProperty(
+            canonical=prop_with_img,
+            sources=(PropertySource.OPENRENT,),
+            source_urls={PropertySource.OPENRENT: prop_with_img.url},
+            min_price=1900,
+            max_price=1900,
+        )
+        urls = _get_gallery_urls(merged)
+        assert urls == ["https://example.com/thumb.jpg"]

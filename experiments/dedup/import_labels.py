@@ -11,7 +11,6 @@ import json
 from datetime import datetime
 from pathlib import Path
 
-
 LABELS_DIR = Path(__file__).parent / "labels"
 
 

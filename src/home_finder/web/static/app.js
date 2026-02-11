@@ -125,39 +125,130 @@
   if (isNaN(lat) || isNaN(lon)) return;
 
   var map = L.map("map").setView([lat, lon], 15);
-  L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
-    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
-    maxZoom: 19,
+  L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png", {
+    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/">CARTO</a>',
+    subdomains: "abcd",
+    maxZoom: 20,
   }).addTo(map);
   var popupDiv = document.createElement("div");
   popupDiv.textContent = title;
   L.marker([lat, lon]).addTo(map).bindPopup(popupDiv).openPopup();
 })();
 
-// Dashboard map with MarkerCluster + grid/map toggle
+// Dashboard map with MarkerCluster + grid/split/map toggle + hover sync
 (function () {
   var mapEl = document.getElementById("dashboard-map");
   var resultsEl = document.getElementById("results");
+  var splitContainer = document.getElementById("split-container");
   if (!mapEl || !resultsEl) return;
 
   var toggleBtns = document.querySelectorAll(".view-toggle-btn");
   var dashMap = null;
+  var cluster = null;
   var mapInitialized = false;
+  var markersByPropertyId = {};
 
-  function createMarkerIcon(rating) {
-    var color;
-    if (rating >= 4) color = "#28a745";
-    else if (rating === 3) color = "#ffc107";
-    else if (rating && rating < 3) color = "#dc3545";
-    else color = "#8c8c8c";
-
+  function createPricePillIcon(price, id) {
+    var formatted = "\u00A3" + Number(price).toLocaleString();
     return L.divIcon({
-      className: "rating-marker",
-      html: '<div style="background:' + color + ';width:12px;height:12px;border-radius:50%;border:2px solid #1a1b23;box-shadow:0 1px 3px rgba(0,0,0,.4)"></div>',
-      iconSize: [16, 16],
-      iconAnchor: [8, 8],
-      popupAnchor: [0, -10],
+      className: "price-pill-marker",
+      html: '<div class="price-pill" data-property-id="' + id + '">' + formatted + "</div>",
+      iconSize: null,
+      iconAnchor: [30, 15],
+      popupAnchor: [0, -18],
     });
+  }
+
+  function buildRichPopup(p) {
+    var container = document.createElement("div");
+    container.className = "map-popup";
+
+    if (p.image_url) {
+      var img = document.createElement("img");
+      img.className = "map-popup-img";
+      img.src = p.image_url;
+      img.alt = p.title;
+      container.appendChild(img);
+    }
+
+    var title = document.createElement("a");
+    title.className = "map-popup-title";
+    title.href = p.url;
+    title.textContent = p.title;
+    container.appendChild(title);
+
+    var meta = document.createElement("div");
+    meta.className = "map-popup-meta";
+    var price = document.createElement("strong");
+    price.textContent = "\u00A3" + Number(p.price).toLocaleString() + "/mo";
+    meta.appendChild(price);
+    meta.appendChild(document.createTextNode(" \u00B7 " + p.bedrooms + " bed"));
+    if (p.postcode) {
+      meta.appendChild(document.createTextNode(" \u00B7 " + p.postcode));
+    }
+    container.appendChild(meta);
+
+    if (p.rating) {
+      var stars = document.createElement("div");
+      stars.className = "map-popup-stars";
+      for (var i = 0; i < 5; i++) {
+        stars.appendChild(document.createTextNode(i < p.rating ? "\u2605" : "\u2606"));
+      }
+      container.appendChild(stars);
+    }
+
+    return container;
+  }
+
+  function attachMarkerEvents(marker, p) {
+    marker.on("mouseover", function () {
+      var card = resultsEl.querySelector('.property-card[data-property-id="' + p.id + '"]');
+      if (card) {
+        card.classList.add("card-highlighted");
+        card.scrollIntoView({ behavior: "smooth", block: "nearest" });
+      }
+    });
+    marker.on("mouseout", function () {
+      var card = resultsEl.querySelector('.property-card[data-property-id="' + p.id + '"]');
+      if (card) card.classList.remove("card-highlighted");
+    });
+    marker.on("click", function () {
+      var card = resultsEl.querySelector('.property-card[data-property-id="' + p.id + '"]');
+      if (card) {
+        card.scrollIntoView({ behavior: "smooth", block: "center" });
+        card.classList.add("card-highlighted");
+        setTimeout(function () { card.classList.remove("card-highlighted"); }, 2000);
+      }
+    });
+    marker.on("popupopen", function () {
+      var pill = mapEl.querySelector('.price-pill[data-property-id="' + p.id + '"]');
+      if (pill) pill.classList.add("active");
+    });
+    marker.on("popupclose", function () {
+      var pill = mapEl.querySelector('.price-pill[data-property-id="' + p.id + '"]');
+      if (pill) pill.classList.remove("active");
+    });
+  }
+
+  function buildMarkers(data) {
+    if (cluster) dashMap.removeLayer(cluster);
+    cluster = L.markerClusterGroup({ maxClusterRadius: 40 });
+    markersByPropertyId = {};
+
+    for (var i = 0; i < data.length; i++) {
+      var p = data[i];
+      var icon = createPricePillIcon(p.price, p.id);
+      var marker = L.marker([p.lat, p.lon], { icon: icon });
+      marker.bindPopup(buildRichPopup(p), { maxWidth: 280, minWidth: 220 });
+      attachMarkerEvents(marker, p);
+      cluster.addLayer(marker);
+      markersByPropertyId[p.id] = marker;
+    }
+
+    dashMap.addLayer(cluster);
+    if (data.length > 0) {
+      dashMap.fitBounds(cluster.getBounds().pad(0.1));
+    }
   }
 
   function initMap() {
@@ -168,41 +259,41 @@
     if (data.length === 0) return;
 
     dashMap = L.map("dashboard-map").setView([51.545, -0.055], 13);
-    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
-      attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
-      maxZoom: 19,
+    L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png", {
+      attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/">CARTO</a>',
+      subdomains: "abcd",
+      maxZoom: 20,
     }).addTo(dashMap);
 
-    var cluster = L.markerClusterGroup({ maxClusterRadius: 40 });
-
-    for (var i = 0; i < data.length; i++) {
-      var p = data[i];
-      var icon = createMarkerIcon(p.rating);
-      var marker = L.marker([p.lat, p.lon], { icon: icon });
-
-      // Build safe popup with DOM
-      var popupDiv = document.createElement("div");
-      popupDiv.style.cssText = "font-size:13px;line-height:1.4;color:#e2e2e8";
-      var link = document.createElement("a");
-      link.href = p.url;
-      link.textContent = p.title;
-      link.style.cssText = "font-weight:600;color:#818cf8";
-      popupDiv.appendChild(link);
-      popupDiv.appendChild(document.createElement("br"));
-      var info = document.createTextNode(
-        "\u00A3" + p.price.toLocaleString() + "/mo \u00B7 " + p.bedrooms + " bed"
-        + (p.rating ? " \u00B7 " + p.rating + "\u2605" : "")
-      );
-      popupDiv.appendChild(info);
-
-      marker.bindPopup(popupDiv);
-      cluster.addLayer(marker);
-    }
-
-    dashMap.addLayer(cluster);
-    dashMap.fitBounds(cluster.getBounds().pad(0.1));
+    buildMarkers(data);
   }
 
+  // Card → Marker hover sync (event delegation)
+  resultsEl.addEventListener("mouseenter", function (e) {
+    var card = e.target.closest(".property-card[data-property-id]");
+    if (!card) return;
+    var id = card.dataset.propertyId;
+    var pill = mapEl.querySelector('.price-pill[data-property-id="' + id + '"]');
+    if (pill) pill.classList.add("highlighted");
+  }, true);
+
+  resultsEl.addEventListener("mouseleave", function (e) {
+    var card = e.target.closest(".property-card[data-property-id]");
+    if (!card) return;
+    var id = card.dataset.propertyId;
+    var pill = mapEl.querySelector('.price-pill[data-property-id="' + id + '"]');
+    if (pill) pill.classList.remove("highlighted");
+  }, true);
+
+  // HTMX map data sync
+  window._updateMapData = function (data) {
+    window.propertiesMapData = data;
+    if (dashMap && cluster) {
+      buildMarkers(data);
+    }
+  };
+
+  // View toggle: grid / split / map
   toggleBtns.forEach(function (btn) {
     btn.addEventListener("click", function () {
       var view = btn.dataset.view;
@@ -214,14 +305,30 @@
       btn.classList.add("active");
       btn.setAttribute("aria-pressed", "true");
 
-      if (view === "map") {
+      if (view === "grid") {
+        if (splitContainer) splitContainer.classList.remove("split-active");
+        resultsEl.hidden = false;
+        mapEl.hidden = true;
+      } else if (view === "split") {
+        var data = window.propertiesMapData || [];
+        if (data.length === 0) {
+          // No map data — fall back to grid-like display
+          if (splitContainer) splitContainer.classList.remove("split-active");
+          resultsEl.hidden = false;
+          mapEl.hidden = true;
+          return;
+        }
+        if (splitContainer) splitContainer.classList.add("split-active");
+        resultsEl.hidden = false;
+        mapEl.hidden = false;
+        initMap();
+        if (dashMap) dashMap.invalidateSize();
+      } else if (view === "map") {
+        if (splitContainer) splitContainer.classList.remove("split-active");
         resultsEl.hidden = true;
         mapEl.hidden = false;
         initMap();
         if (dashMap) dashMap.invalidateSize();
-      } else {
-        mapEl.hidden = true;
-        resultsEl.hidden = false;
       }
     });
   });

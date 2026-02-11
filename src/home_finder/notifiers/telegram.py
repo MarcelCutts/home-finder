@@ -347,21 +347,27 @@ def _build_inline_keyboard(
 ) -> "InlineKeyboardMarkup":
     """Build an inline keyboard markup with source URL buttons and map button.
 
-    Returns a dict suitable for passing as reply_markup to aiogram.
+    If web_base_url uses HTTPS, the "Details" button opens inside Telegram
+    as a Mini App (WebApp). Otherwise it opens in the external browser.
     """
-    from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+    from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo
 
     buttons: list[InlineKeyboardButton] = []
 
     # Add web dashboard link if configured
     if web_base_url:
         base = web_base_url.rstrip("/")
-        buttons.append(
-            InlineKeyboardButton(
-                text="Details",
-                url=f"{base}/property/{merged.unique_id}",
+        detail_url = f"{base}/property/{merged.unique_id}"
+        if base.startswith("https://"):
+            # Open inside Telegram as a Mini App
+            buttons.append(
+                InlineKeyboardButton(
+                    text="Details",
+                    web_app=WebAppInfo(url=detail_url),
+                )
             )
-        )
+        else:
+            buttons.append(InlineKeyboardButton(text="Details", url=detail_url))
 
     for source in merged.sources:
         name = SOURCE_NAMES.get(source.value, source.value)
@@ -387,6 +393,24 @@ def _build_inline_keyboard(
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
+def _get_gallery_urls(merged: MergedProperty, max_images: int = 10) -> list[str]:
+    """Return gallery image URLs for a merged property.
+
+    Returns up to max_images gallery URLs (Telegram media group limit is 10).
+    Prefers enriched gallery images, falls back to canonical image_url.
+    """
+    urls: list[str] = []
+    for img in merged.images:
+        if img.image_type == "gallery":
+            urls.append(str(img.url))
+            if len(urls) >= max_images:
+                break
+    # Fall back to canonical image_url from search results
+    if not urls and merged.canonical.image_url:
+        urls.append(str(merged.canonical.image_url))
+    return urls
+
+
 def _get_best_image_url(merged: MergedProperty) -> str | None:
     """Return the best image URL for photo notifications.
 
@@ -394,14 +418,8 @@ def _get_best_image_url(merged: MergedProperty) -> str | None:
     (search result thumbnails), since some sites serve thumbnails that Telegram
     cannot fetch.
     """
-    # Prefer enriched gallery images (reliable CDN URLs)
-    for img in merged.images:
-        if img.image_type == "gallery":
-            return str(img.url)
-    # Fall back to canonical image_url from search results
-    if merged.canonical.image_url:
-        return str(merged.canonical.image_url)
-    return None
+    urls = _get_gallery_urls(merged, max_images=1)
+    return urls[0] if urls else None
 
 
 class TelegramNotifier:
@@ -528,10 +546,10 @@ class TelegramNotifier:
         try:
             bot = self._get_bot()
             keyboard = _build_inline_keyboard(merged, web_base_url=self.web_base_url)
-            image_url = _get_best_image_url(merged)
+            gallery_urls = _get_gallery_urls(merged)
 
             sent_photo = False
-            if image_url:
+            if gallery_urls:
                 caption = format_merged_property_caption(
                     merged,
                     commute_minutes=commute_minutes,
@@ -539,18 +557,24 @@ class TelegramNotifier:
                     quality_analysis=quality_analysis,
                 )
                 try:
-                    await bot.send_photo(
-                        chat_id=self.chat_id,
-                        photo=image_url,
-                        caption=caption,
-                        reply_markup=keyboard,
-                    )
-                    sent_photo = True
+                    if len(gallery_urls) >= 3:
+                        # Send media group for rich galleries
+                        sent_photo = await self._send_media_group(
+                            gallery_urls, caption=caption, keyboard=keyboard
+                        )
+                    else:
+                        await bot.send_photo(
+                            chat_id=self.chat_id,
+                            photo=gallery_urls[0],
+                            caption=caption,
+                            reply_markup=keyboard,
+                        )
+                        sent_photo = True
                 except Exception as photo_err:
                     logger.warning(
                         "send_photo_failed_falling_back_to_text",
                         property_id=merged.unique_id,
-                        image_url=image_url,
+                        image_url=gallery_urls[0] if gallery_urls else None,
                         error=str(photo_err),
                     )
 
@@ -583,7 +607,7 @@ class TelegramNotifier:
                 property_id=merged.unique_id,
                 chat_id=self.chat_id,
                 sources=[s.value for s in merged.sources],
-                has_image=image_url is not None,
+                has_image=bool(gallery_urls),
             )
             return True
         except Exception as e:
@@ -593,6 +617,49 @@ class TelegramNotifier:
                 error=str(e),
             )
             return False
+
+    async def _send_media_group(
+        self,
+        image_urls: list[str],
+        *,
+        caption: str,
+        keyboard: "InlineKeyboardMarkup",
+    ) -> bool:
+        """Send a media group (album) of images with caption on the first photo.
+
+        After the album, sends a follow-up text message with the inline keyboard
+        (Telegram media groups don't support inline keyboards directly).
+
+        Args:
+            image_urls: List of image URLs (up to 10).
+            caption: Caption for the first photo.
+            keyboard: Inline keyboard to send in follow-up message.
+
+        Returns:
+            True if the media group was sent successfully.
+        """
+        from aiogram.types import InputMediaPhoto
+
+        media = [
+            InputMediaPhoto(
+                media=url,
+                caption=caption if i == 0 else None,
+                parse_mode="HTML" if i == 0 else None,
+            )
+            for i, url in enumerate(image_urls[:10])
+        ]
+
+        bot = self._get_bot()
+        await bot.send_media_group(chat_id=self.chat_id, media=media)
+
+        # Media groups don't support inline keyboards, so send a follow-up
+        # message with the buttons
+        await bot.send_message(
+            chat_id=self.chat_id,
+            text="👆 View links for this property:",
+            reply_markup=keyboard,
+        )
+        return True
 
     async def send_batch_notifications(
         self,

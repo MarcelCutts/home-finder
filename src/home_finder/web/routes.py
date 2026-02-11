@@ -103,6 +103,7 @@ async def dashboard(
     properties_json = json.dumps(
         [
             {
+                "id": p["unique_id"],
                 "lat": p["latitude"],
                 "lon": p["longitude"],
                 "price": p["price_pcm"],
@@ -110,6 +111,8 @@ async def dashboard(
                 "rating": p.get("quality_rating"),
                 "title": p["title"],
                 "url": f"/property/{p['unique_id']}",
+                "image_url": p.get("image_url"),
+                "postcode": p.get("postcode"),
             }
             for p in properties
             if p.get("latitude") and p.get("longitude")

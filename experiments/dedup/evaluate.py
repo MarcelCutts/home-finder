@@ -12,7 +12,7 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-from scorer import ScorerConfig, score_pair, PRODUCTION_CONFIG
+from scorer import PRODUCTION_CONFIG, ScorerConfig, score_pair
 from signals import compute_all_signals
 
 
@@ -154,8 +154,8 @@ def _build_corpus_state(
     labeled_pairs: list[LabeledPair],
 ) -> tuple["TfidfVectorizer | None", dict]:
     """Build corpus-level TF-IDF vectorizer and sentence embeddings from labeled pairs."""
+    from signals import _get_description, _prop_uid, extract_property_text
     from sklearn.feature_extraction.text import TfidfVectorizer
-    from signals import extract_property_text, _get_description, _prop_uid
 
     # Collect unique properties
     seen_uids: dict[str, dict] = {}
@@ -212,8 +212,6 @@ def evaluate(
     Returns:
         (EvalMetrics, signal stats dict, list of error cases)
     """
-    from scorer import ScorerResult
-    from signals import SignalBundle
 
     metrics = EvalMetrics()
     signal_stats: dict[str, SignalFiringStats] = {}
@@ -280,7 +278,7 @@ def print_results(
     print()
 
     print("Confusion Matrix:")
-    print(f"                  Predicted Match    Predicted No Match")
+    print("                  Predicted Match    Predicted No Match")
     print(f"  Actual Match        {metrics.tp:>4} (TP)          {metrics.fn:>4} (FN)")
     print(f"  Actual No Match     {metrics.fp:>4} (FP)          {metrics.tn:>4} (TN)")
     print()
@@ -337,7 +335,7 @@ def _print_error_case(e: ErrorCase) -> None:
     print(f"  [{b['source']}] {b['address']}")
     print(f"    {b['postcode'] or '—':12s}  £{b['price_pcm']}  {b['bedrooms']}bed")
     print(f"  Score: {e.result.score:.1f} ({e.result.signal_count} signals)")
-    print(f"  Signals:")
+    print("  Signals:")
     for sig in e.bundle.signals:
         if not sig.fired:
             continue

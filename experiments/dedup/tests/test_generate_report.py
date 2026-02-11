@@ -3,8 +3,6 @@
 import json
 from pathlib import Path
 
-import pytest
-
 
 class TestSlimPairs:
     """The report should strip heavy fields and keep only what the UI needs."""
@@ -79,7 +77,7 @@ class TestReportStructure:
         html = report_html.read_text()
         pairs = _extract_pairs_json(html)
         # TOTAL const should match
-        assert f"const TOTAL = ALL_PAIRS.length;" in html
+        assert "const TOTAL = ALL_PAIRS.length;" in html
         assert len(pairs) == 5
 
     def test_no_jinja_artifacts(self, report_html: Path):
@@ -103,8 +101,8 @@ class TestXSSPrevention:
 
     def test_xss_in_title(self, tmp_path: Path):
         """Script tags in property titles should be escaped client-side."""
-        from generate_report import render_report
         from conftest import _make_pair
+        from generate_report import render_report
 
         evil_pair = _make_pair(0, score=50, signal_count=1, is_match=False)
         evil_pair["property_a"]["title"] = '<script>alert("xss")</script>'

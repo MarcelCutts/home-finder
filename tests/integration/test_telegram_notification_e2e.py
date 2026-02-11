@@ -29,15 +29,16 @@ class TestTelegramNotificationE2E:
         enriched_merged_property: MergedProperty,
         sample_quality_analysis: PropertyQualityAnalysis,
     ):
-        """send_photo called with caption containing star rating, price, postcode, quality summary."""
+        """Media group sent with caption containing star rating, price, postcode."""
         notifier = TelegramNotifier(
             bot_token="fake:test-token",
             chat_id=12345,
             web_base_url="http://localhost:8000",
         )
         mock_bot = AsyncMock()
-        mock_bot.send_photo = AsyncMock(return_value=MagicMock(message_id=1))
-        mock_bot.send_venue = AsyncMock(return_value=MagicMock(message_id=2))
+        mock_bot.send_media_group = AsyncMock(return_value=[MagicMock(message_id=1)])
+        mock_bot.send_message = AsyncMock(return_value=MagicMock(message_id=2))
+        mock_bot.send_venue = AsyncMock(return_value=MagicMock(message_id=3))
 
         with patch.object(notifier, "_get_bot", return_value=mock_bot):
             result = await notifier.send_merged_property_notification(
@@ -48,12 +49,19 @@ class TestTelegramNotificationE2E:
             )
 
         assert result is True
-        mock_bot.send_photo.assert_called_once()
-        caption = mock_bot.send_photo.call_args[1]["caption"]
+        # 3 gallery images → media group (not single send_photo)
+        mock_bot.send_media_group.assert_called_once()
+        media = mock_bot.send_media_group.call_args[1]["media"]
+        assert len(media) == 3
+        # Caption on first photo
+        caption = media[0].caption
         assert "⭐⭐⭐⭐☆" in caption  # 4-star rating
         assert "£" in caption
         assert "E8 3RH" in caption
         assert "15 min" in caption
+
+        # Follow-up message with inline keyboard
+        mock_bot.send_message.assert_called_once()
 
         # Venue should be sent with coordinates
         mock_bot.send_venue.assert_called_once()
@@ -86,8 +94,9 @@ class TestTelegramNotificationE2E:
             web_base_url="http://localhost:8000",
         )
         mock_bot = AsyncMock()
-        mock_bot.send_photo = AsyncMock(return_value=MagicMock(message_id=1))
-        mock_bot.send_venue = AsyncMock(return_value=MagicMock(message_id=2))
+        mock_bot.send_media_group = AsyncMock(return_value=[MagicMock(message_id=1)])
+        mock_bot.send_message = AsyncMock(return_value=MagicMock(message_id=2))
+        mock_bot.send_venue = AsyncMock(return_value=MagicMock(message_id=3))
 
         with patch.object(notifier_with_web, "_get_bot", return_value=mock_bot):
             await notifier_with_web.send_merged_property_notification(
@@ -95,7 +104,8 @@ class TestTelegramNotificationE2E:
                 quality_analysis=sample_quality_analysis,
             )
 
-        reply_markup = mock_bot.send_photo.call_args[1]["reply_markup"]
+        # Keyboard is in the follow-up message (media groups don't support keyboards)
+        reply_markup = mock_bot.send_message.call_args[1]["reply_markup"]
         all_buttons = [btn for row in reply_markup.inline_keyboard for btn in row]
         button_texts = [btn.text for btn in all_buttons]
 
@@ -110,8 +120,9 @@ class TestTelegramNotificationE2E:
             chat_id=12345,
         )
         mock_bot2 = AsyncMock()
-        mock_bot2.send_photo = AsyncMock(return_value=MagicMock(message_id=1))
-        mock_bot2.send_venue = AsyncMock(return_value=MagicMock(message_id=2))
+        mock_bot2.send_media_group = AsyncMock(return_value=[MagicMock(message_id=1)])
+        mock_bot2.send_message = AsyncMock(return_value=MagicMock(message_id=2))
+        mock_bot2.send_venue = AsyncMock(return_value=MagicMock(message_id=3))
 
         with patch.object(notifier_no_web, "_get_bot", return_value=mock_bot2):
             await notifier_no_web.send_merged_property_notification(
@@ -119,7 +130,7 @@ class TestTelegramNotificationE2E:
                 quality_analysis=sample_quality_analysis,
             )
 
-        reply_markup2 = mock_bot2.send_photo.call_args[1]["reply_markup"]
+        reply_markup2 = mock_bot2.send_message.call_args[1]["reply_markup"]
         all_buttons2 = [btn for row in reply_markup2.inline_keyboard for btn in row]
         button_texts2 = [btn.text for btn in all_buttons2]
         assert "Details" not in button_texts2
@@ -157,13 +168,13 @@ class TestTelegramNotificationE2E:
         self,
         enriched_merged_property: MergedProperty,
     ):
-        """When send_photo fails, should fallback to send_message."""
+        """When send_media_group fails, should fallback to send_message."""
         notifier = TelegramNotifier(
             bot_token="fake:test-token",
             chat_id=12345,
         )
         mock_bot = AsyncMock()
-        mock_bot.send_photo = AsyncMock(side_effect=Exception("Photo send failed"))
+        mock_bot.send_media_group = AsyncMock(side_effect=Exception("Media group failed"))
         mock_bot.send_message = AsyncMock(return_value=MagicMock(message_id=1))
         mock_bot.send_venue = AsyncMock(return_value=MagicMock(message_id=2))
 

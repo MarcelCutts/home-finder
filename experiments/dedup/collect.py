@@ -18,8 +18,8 @@ from pathlib import Path
 
 from home_finder.config import Settings
 from home_finder.logging import configure_logging, get_logger
-from home_finder.models import Property
 from home_finder.main import scrape_all_platforms
+from home_finder.models import Property
 from home_finder.scrapers.detail_fetcher import DetailFetcher, DetailPageData
 from home_finder.utils.address import extract_outcode
 

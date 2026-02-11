@@ -3,9 +3,9 @@
 Wraps signal functions with configurable weights and thresholds.
 """
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
-from signals import SignalBundle, compute_all_signals, PropertyDict
+from signals import PropertyDict, SignalBundle, compute_all_signals
 
 
 @dataclass
