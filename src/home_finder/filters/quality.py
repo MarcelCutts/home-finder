@@ -331,7 +331,6 @@ Always use the property_evaluation tool to return your assessment."""
 VISUAL_ANALYSIS_TOOL: Final[dict[str, Any]] = {
     "name": "property_visual_analysis",
     "description": "Return visual property quality analysis results from images",
-    "strict": True,
     "input_schema": {
         "type": "object",
         "properties": {
@@ -1560,6 +1559,24 @@ class PropertyQualityFilter:
             property_id=property_id,
             has_eval=bool(eval_data),
         )
+
+        # ── Clean up string fields (Claude sometimes wraps in {"..."}) ──
+        def _clean_str(val: Any) -> Any:
+            if isinstance(val, str):
+                s = val.strip()
+                if s.startswith('{"') and s.endswith('"}'):
+                    s = s[2:-2]
+                return s
+            return val
+
+        def _clean_dict(d: dict[str, Any]) -> dict[str, Any]:
+            return {
+                k: _clean_str(v) if isinstance(v, str) else v
+                for k, v in d.items()
+            }
+
+        visual_data = _clean_dict(visual_data)
+        eval_data = _clean_dict(eval_data)
 
         # ── Merge both phases into PropertyQualityAnalysis ─────────────
 

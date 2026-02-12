@@ -143,9 +143,9 @@ class TestToolSchema:
         service_charge = eval_schema["listing_extraction"]["properties"]["service_charge_pcm"]
         assert "anyOf" in service_charge
 
-    def test_strict_mode_enabled_on_both_tools(self) -> None:
-        """Strict mode should be enabled on both tool schemas."""
-        assert VISUAL_ANALYSIS_TOOL.get("strict") is True
+    def test_strict_mode_on_tools(self) -> None:
+        """Phase 1 is non-strict (too large for grammar); Phase 2 is strict."""
+        assert "strict" not in VISUAL_ANALYSIS_TOOL
         assert EVALUATION_TOOL.get("strict") is True
 
     def test_visual_tool_does_not_contain_evaluation_fields(self) -> None:
