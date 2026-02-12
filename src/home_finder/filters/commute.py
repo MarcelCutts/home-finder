@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, ClassVar
+from typing import TYPE_CHECKING, ClassVar, assert_never
 
 from pydantic import BaseModel, ConfigDict
 
@@ -121,8 +121,10 @@ class CommuteFilter:
             transportation = Cycling()
         elif transport_mode == TransportMode.DRIVING:
             transportation = Driving()
-        else:
+        elif transport_mode == TransportMode.WALKING:
             transportation = Walking()
+        else:
+            assert_never(transport_mode)
 
         try:
             # Create fresh client for this operation - don't cache because

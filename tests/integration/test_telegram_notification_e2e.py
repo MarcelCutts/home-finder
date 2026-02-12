@@ -144,7 +144,7 @@ class TestTelegramNotificationE2E:
             kitchen=KitchenAnalysis(notes="Dated kitchen"),
             condition=ConditionAnalysis(
                 overall_condition="fair",
-                has_visible_damp=True,
+                has_visible_damp="yes",
                 maintenance_concerns=["Damp near bathroom window", "Worn carpet in hallway"],
                 confidence="high",
             ),

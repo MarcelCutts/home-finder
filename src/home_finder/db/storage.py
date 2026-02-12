@@ -50,6 +50,14 @@ class PropertyListItem(TypedDict, total=False):
     sources_list: list[str]
     source_urls_dict: dict[str, str]
     descriptions_dict: dict[str, str]
+    # Value rating from analysis
+    value_rating: str | None
+    # Extended quality fields (from analysis_json)
+    highlights: list[str] | None
+    lowlights: list[str] | None
+    property_type: str | None
+    one_line: str | None
+    epc_rating: str | None
 
 
 class PropertyDetailItem(PropertyListItem, total=False):
@@ -196,6 +204,32 @@ class PropertyStorage:
         ]:
             with contextlib.suppress(Exception):
                 await conn.execute(f"ALTER TABLE properties ADD COLUMN {column} {col_type}")
+
+        # Migrate: add denormalized quality columns
+        for column, col_type in [
+            ("epc_rating", "TEXT"),
+            ("has_outdoor_space", "BOOLEAN"),
+            ("red_flag_count", "INTEGER"),
+        ]:
+            with contextlib.suppress(Exception):
+                await conn.execute(f"ALTER TABLE quality_analyses ADD COLUMN {column} {col_type}")
+
+        # Migrate: fix one_line fields that were stored as JSON objects
+        # instead of plain strings (LLM wrapping bug).
+        # Wrapped in suppress() because json_extract/json_type throw on any
+        # row with malformed analysis_json, and the Pydantic unwrap_one_line
+        # validator already handles this at read time.
+        with contextlib.suppress(Exception):
+            await conn.execute("""
+                UPDATE quality_analyses
+                SET analysis_json = json_set(
+                    analysis_json,
+                    '$.one_line',
+                    json_extract(json_extract(analysis_json, '$.one_line'), '$.one_line')
+                )
+                WHERE json_valid(analysis_json)
+                  AND json_type(json_extract(analysis_json, '$.one_line')) = 'object'
+            """)
 
         await conn.commit()
 
@@ -595,24 +629,52 @@ class PropertyStorage:
             analysis: PropertyQualityAnalysis instance.
         """
         conn = await self._get_connection()
-        analysis_json = analysis.model_dump_json()
+
+        # Use model_dump(mode="json") + json.dumps() instead of model_dump_json()
+        # to guarantee valid JSON. Pydantic's Rust serializer can produce invalid
+        # JSON for edge cases (e.g. NaN floats), while json.dumps() is strict.
+        try:
+            analysis_json = json.dumps(analysis.model_dump(mode="json"))
+        except (ValueError, TypeError) as e:
+            logger.error("analysis_json_serialization_failed", unique_id=unique_id, error=str(e))
+            return
 
         # Denormalize key fields for SQL filtering
         overall_rating = analysis.overall_rating
         condition_concerns = analysis.condition_concerns
         concern_severity = analysis.concern_severity
 
+        # Extract denormalized fields from new analysis dimensions
+        epc_rating = analysis.listing_extraction.epc_rating if analysis.listing_extraction else None
+        has_outdoor_space = None
+        if analysis.outdoor_space:
+            has_outdoor_space = any(
+                [
+                    analysis.outdoor_space.has_balcony,
+                    analysis.outdoor_space.has_garden,
+                    analysis.outdoor_space.has_terrace,
+                    analysis.outdoor_space.has_shared_garden,
+                ]
+            )
+        red_flag_count = (
+            analysis.listing_red_flags.red_flag_count if analysis.listing_red_flags else None
+        )
+
         await conn.execute(
             """
             INSERT INTO quality_analyses (
                 property_unique_id, analysis_json, overall_rating,
-                condition_concerns, concern_severity, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?)
+                condition_concerns, concern_severity, epc_rating,
+                has_outdoor_space, red_flag_count, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(property_unique_id) DO UPDATE SET
                 analysis_json = excluded.analysis_json,
                 overall_rating = excluded.overall_rating,
                 condition_concerns = excluded.condition_concerns,
-                concern_severity = excluded.concern_severity
+                concern_severity = excluded.concern_severity,
+                epc_rating = excluded.epc_rating,
+                has_outdoor_space = excluded.has_outdoor_space,
+                red_flag_count = excluded.red_flag_count
             """,
             (
                 unique_id,
@@ -620,6 +682,9 @@ class PropertyStorage:
                 overall_rating,
                 condition_concerns,
                 concern_severity,
+                epc_rating,
+                has_outdoor_space,
+                red_flag_count,
                 datetime.now(UTC).isoformat(),
             ),
         )
@@ -727,15 +792,38 @@ class PropertyStorage:
         for row in rows:
             prop_dict = dict(row)
             self._parse_json_fields(prop_dict)
-            # Extract quality summary from analysis_json
+            # Extract quality fields from analysis_json
             if prop_dict.get("analysis_json"):
                 try:
                     analysis = json.loads(prop_dict["analysis_json"])
                     prop_dict["quality_summary"] = analysis.get("summary", "")
+                    value = analysis.get("value") or {}
+                    prop_dict["value_rating"] = value.get("quality_adjusted_rating") or value.get(
+                        "rating"
+                    )
+                    # Extended quality fields for card display
+                    prop_dict["highlights"] = analysis.get("highlights")
+                    prop_dict["lowlights"] = analysis.get("lowlights")
+                    prop_dict["one_line"] = analysis.get("one_line")
+                    listing_ext = analysis.get("listing_extraction") or {}
+                    prop_dict["property_type"] = listing_ext.get("property_type")
+                    prop_dict["epc_rating"] = listing_ext.get("epc_rating")
                 except (json.JSONDecodeError, TypeError):
                     prop_dict["quality_summary"] = ""
+                    prop_dict["value_rating"] = None
+                    prop_dict["highlights"] = None
+                    prop_dict["lowlights"] = None
+                    prop_dict["one_line"] = None
+                    prop_dict["property_type"] = None
+                    prop_dict["epc_rating"] = None
             else:
                 prop_dict["quality_summary"] = ""
+                prop_dict["value_rating"] = None
+                prop_dict["highlights"] = None
+                prop_dict["lowlights"] = None
+                prop_dict["one_line"] = None
+                prop_dict["property_type"] = None
+                prop_dict["epc_rating"] = None
             properties.append(cast(PropertyListItem, prop_dict))
 
         return properties, total

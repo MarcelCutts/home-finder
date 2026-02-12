@@ -5,6 +5,7 @@ import contextlib
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
+from typing import Final
 
 from fastapi import FastAPI, Request, Response
 from fastapi.staticfiles import StaticFiles
@@ -16,9 +17,9 @@ from home_finder.logging import configure_logging, get_logger
 
 logger = get_logger(__name__)
 
-WEB_DIR = Path(__file__).parent
+WEB_DIR: Final = Path(__file__).parent
 
-PIPELINE_INITIAL_DELAY_SECONDS = 30
+PIPELINE_INITIAL_DELAY_SECONDS: Final = 30
 
 
 class SecurityHeadersMiddleware(BaseHTTPMiddleware):

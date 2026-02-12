@@ -5,6 +5,7 @@ import re
 from collections import defaultdict
 from dataclasses import dataclass
 from enum import Enum
+from typing import Final
 
 from home_finder.logging import get_logger
 from home_finder.models import MergedProperty, Property, PropertyImage, PropertySource
@@ -15,28 +16,30 @@ from home_finder.utils.union_find import UnionFind
 logger = get_logger(__name__)
 
 # Price tolerance for fuzzy matching (3% - tighter than before)
-PRICE_TOLERANCE = 0.03
+PRICE_TOLERANCE: Final = 0.03
 
 # Maximum distance in meters for coordinate-based matching
-COORDINATE_DISTANCE_METERS = 50
+COORDINATE_DISTANCE_METERS: Final = 50
 
 # Regex to detect full UK postcodes (outcode + incode)
-FULL_POSTCODE_PATTERN = re.compile(r"^[A-Z]{1,2}[0-9][0-9A-Z]?\s+[0-9][A-Z]{2}$", re.IGNORECASE)
+FULL_POSTCODE_PATTERN: Final = re.compile(
+    r"^[A-Z]{1,2}[0-9][0-9A-Z]?\s+[0-9][A-Z]{2}$", re.IGNORECASE
+)
 
 # Weighted scoring constants
-SCORE_IMAGE_HASH = 40
-SCORE_FULL_POSTCODE = 40
-SCORE_COORDINATES = 40
-SCORE_STREET_NAME = 20
-SCORE_OUTCODE = 10
-SCORE_PRICE = 15
+SCORE_IMAGE_HASH: Final = 40
+SCORE_FULL_POSTCODE: Final = 40
+SCORE_COORDINATES: Final = 40
+SCORE_STREET_NAME: Final = 20
+SCORE_OUTCODE: Final = 10
+SCORE_PRICE: Final = 15
 
 # Minimum score to consider a match (raised from 55 to account for graduated
 # scoring giving partial credit where binary gave 0)
-MATCH_THRESHOLD = 60
+MATCH_THRESHOLD: Final = 60
 
 # Minimum number of contributing signals (prevents single-signal false positives)
-MINIMUM_SIGNALS = 2
+MINIMUM_SIGNALS: Final = 2
 
 
 class MatchConfidence(Enum):

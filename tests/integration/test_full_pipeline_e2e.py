@@ -8,7 +8,7 @@ from pydantic import HttpUrl
 
 from home_finder.config import Settings
 from home_finder.db import PropertyStorage
-from home_finder.main import _run_core_pipeline, _save_properties
+from home_finder.main import _run_pre_analysis_pipeline, _save_one
 from home_finder.models import (
     Property,
     PropertySource,
@@ -58,7 +58,7 @@ def _make_synthetic_properties() -> list[Property]:
 
 @pytest.mark.e2e
 class TestFullPipelineE2E:
-    """Test _run_core_pipeline with mocked external APIs."""
+    """Test _run_pre_analysis_pipeline with mocked external APIs."""
 
     async def test_pipeline_scrape_through_save(self, test_settings: Settings):
         """Pipeline should execute all stages and save properties to DB."""
@@ -86,18 +86,20 @@ class TestFullPipelineE2E:
             mock_fetcher_instance.close = AsyncMock()
             MockFetcher.return_value = mock_fetcher_instance
 
-            result = await _run_core_pipeline(test_settings, storage)
+            result = await _run_pre_analysis_pipeline(test_settings, storage)
 
         assert result is not None
-        assert len(result.merged_to_notify) > 0
+        assert len(result.merged_to_process) > 0
 
         # Save to DB
-        await _save_properties(result, storage)
+        for merged in result.merged_to_process:
+            commute_info = result.commute_lookup.get(merged.canonical.unique_id)
+            await _save_one(merged, commute_info, None, storage)
 
         # Verify properties are in DB
         count = await storage.get_property_count()
         assert count > 0
-        assert count == len(result.merged_to_notify)
+        assert count == len(result.merged_to_process)
 
         await storage.close()
 
@@ -171,13 +173,13 @@ class TestFullPipelineE2E:
             mock_commute_instance.geocode_properties = AsyncMock(side_effect=lambda merged: merged)
             MockCommuteFilter.return_value = mock_commute_instance
 
-            result = await _run_core_pipeline(settings_with_commute, storage)
+            result = await _run_pre_analysis_pipeline(settings_with_commute, storage)
 
         # Only the within_limit property should be in the result
         assert result is not None
         within_ids = {r.property_id for r in mock_commute_results if r.within_limit}
         # At least the one within limit should be in the results
-        assert len(result.merged_to_notify) >= 1
+        assert len(result.merged_to_process) >= 1
         # Commute lookup should only contain properties within limit
         for uid in result.commute_lookup:
             assert uid in within_ids
@@ -194,7 +196,7 @@ class TestFullPipelineE2E:
             new_callable=AsyncMock,
             return_value=[],
         ):
-            result = await _run_core_pipeline(test_settings, storage)
+            result = await _run_pre_analysis_pipeline(test_settings, storage)
 
         assert result is None
         await storage.close()
@@ -250,11 +252,11 @@ class TestFullPipelineE2E:
             mock_fetcher_instance.close = AsyncMock()
             MockFetcher.return_value = mock_fetcher_instance
 
-            result = await _run_core_pipeline(test_settings, storage)
+            result = await _run_pre_analysis_pipeline(test_settings, storage)
 
         assert result is not None
         # 3 input props, but 2 should merge → result should be <= 3
         # (first two have same postcode+bedrooms+price+coords, should merge)
-        assert len(result.merged_to_notify) <= len(props)
+        assert len(result.merged_to_process) <= len(props)
 
         await storage.close()

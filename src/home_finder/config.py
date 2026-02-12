@@ -50,7 +50,7 @@ class Settings(BaseSettings):
         description="Enable property quality analysis using Claude vision",
     )
     quality_filter_max_images: int = Field(
-        default=10,
+        default=20,
         ge=1,
         le=20,
         description="Maximum number of gallery images to analyze per property",
@@ -58,6 +58,16 @@ class Settings(BaseSettings):
     require_floorplan: bool = Field(
         default=True,
         description="Drop properties without floorplans before quality analysis",
+    )
+    enable_extended_thinking: bool = Field(
+        default=True,
+        description="Enable extended thinking for deeper quality analysis",
+    )
+    thinking_budget_tokens: int = Field(
+        default=10000,
+        ge=1024,
+        le=32000,
+        description="Token budget for extended thinking",
     )
 
     # Deduplication

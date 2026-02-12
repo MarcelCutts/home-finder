@@ -1,3 +1,45 @@
+// Filter form: strip empty params, auto-apply selects, chip removal
+(function () {
+  // Strip empty-string params before HTMX sends request
+  document.addEventListener("htmx:configRequest", function (e) {
+    var params = e.detail.parameters;
+    var keys = Object.keys(params);
+    for (var i = 0; i < keys.length; i++) {
+      if (params[keys[i]] === "") {
+        delete params[keys[i]];
+      }
+    }
+    // Reset to page 1 when filter form triggers (not pagination links)
+    var trigger = e.detail.elt;
+    if (trigger && trigger.closest && trigger.closest(".filter-form")) {
+      delete params["page"];
+    }
+  });
+
+  // Auto-apply: submit form on <select> change
+  document.addEventListener("change", function (e) {
+    if (e.target.tagName !== "SELECT") return;
+    var form = e.target.closest(".filter-form");
+    if (form) {
+      htmx.trigger(form, "submit");
+    }
+  });
+
+  // Chip removal: clear field and re-submit
+  document.addEventListener("click", function (e) {
+    var btn = e.target.closest(".filter-chip-remove[data-filter-key]");
+    if (!btn) return;
+    var key = btn.dataset.filterKey;
+    var form = document.querySelector(".filter-form");
+    if (!form) return;
+    var field = form.querySelector('[name="' + key + '"]');
+    if (field) {
+      field.value = "";
+    }
+    htmx.trigger(form, "submit");
+  });
+})();
+
 // Lightbox with focus trapping, touch/swipe, event delegation, and preloading
 (function () {
   var lightbox = document.getElementById("lightbox");
@@ -124,15 +166,48 @@
 
   if (isNaN(lat) || isNaN(lon)) return;
 
-  var map = L.map("map").setView([lat, lon], 15);
+  var map = L.map("map", {
+    scrollWheelZoom: false,
+    zoomControl: false,
+    boxZoom: false,
+  }).setView([lat, lon], 15);
+
   L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png", {
     attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/">CARTO</a>',
     subdomains: "abcd",
     maxZoom: 20,
   }).addTo(map);
-  var popupDiv = document.createElement("div");
-  popupDiv.textContent = title;
-  L.marker([lat, lon]).addTo(map).bindPopup(popupDiv).openPopup();
+
+  L.control.zoom({ position: "bottomright" }).addTo(map);
+
+  // Subtle area radius
+  L.circle([lat, lon], {
+    radius: 500,
+    color: "#8b5cf6",
+    fillColor: "#8b5cf6",
+    fillOpacity: 0.04,
+    weight: 1,
+    opacity: 0.15,
+    interactive: false,
+  }).addTo(map);
+
+  // Custom accent pin marker with pulse
+  var markerIcon = L.divIcon({
+    className: "detail-marker",
+    html: '<div class="detail-marker-pin"></div><div class="detail-marker-pulse"></div>',
+    iconSize: [30, 42],
+    iconAnchor: [15, 42],
+    popupAnchor: [0, -36],
+  });
+
+  L.marker([lat, lon], { icon: markerIcon, alt: title })
+    .addTo(map)
+    .bindTooltip(title, {
+      permanent: true,
+      direction: "top",
+      offset: [0, -42],
+      className: "detail-tooltip",
+    });
 })();
 
 // Dashboard map with MarkerCluster + grid/split/map toggle + hover sync
@@ -167,34 +242,71 @@
       var img = document.createElement("img");
       img.className = "map-popup-img";
       img.src = p.image_url;
-      img.alt = p.title;
+      img.alt = p.bedrooms + " bed \u2014 " + (p.postcode || "Property");
       container.appendChild(img);
     }
 
+    var titleText = p.bedrooms + " bed \u2014 " + (p.postcode || "Property");
     var title = document.createElement("a");
     title.className = "map-popup-title";
     title.href = p.url;
-    title.textContent = p.title;
+    title.textContent = titleText;
     container.appendChild(title);
 
     var meta = document.createElement("div");
     meta.className = "map-popup-meta";
     var price = document.createElement("strong");
-    price.textContent = "\u00A3" + Number(p.price).toLocaleString() + "/mo";
+    price.textContent = "\u00A3" + Number(p.price).toLocaleString();
     meta.appendChild(price);
-    meta.appendChild(document.createTextNode(" \u00B7 " + p.bedrooms + " bed"));
-    if (p.postcode) {
-      meta.appendChild(document.createTextNode(" \u00B7 " + p.postcode));
-    }
+    meta.appendChild(document.createTextNode(" pcm"));
     container.appendChild(meta);
 
+    // Dot rating
     if (p.rating) {
-      var stars = document.createElement("div");
-      stars.className = "map-popup-stars";
-      for (var i = 0; i < 5; i++) {
-        stars.appendChild(document.createTextNode(i < p.rating ? "\u2605" : "\u2606"));
+      var dots = document.createElement("span");
+      dots.className = "quality-dots quality-dots-" + p.rating;
+      dots.style.marginTop = "4px";
+      dots.style.display = "inline-block";
+      var dotsHtml = p.rating + "/5 ";
+      for (var d = 1; d <= 5; d++) {
+        dotsHtml += '<span class="dot ' + (d <= p.rating ? "filled" : "empty") + '">\u25CF</span>';
       }
-      container.appendChild(stars);
+      dots.innerHTML = dotsHtml;
+      container.appendChild(dots);
+    }
+
+    // One-line tagline
+    if (p.one_line) {
+      var tagline = document.createElement("div");
+      tagline.className = "map-popup-meta";
+      tagline.style.marginTop = "4px";
+      tagline.textContent = p.one_line;
+      container.appendChild(tagline);
+    }
+
+    // Commute pill
+    if (p.commute_minutes) {
+      var pill = document.createElement("span");
+      pill.className = "commute-pill";
+      if (p.commute_minutes <= 15) pill.className += " commute-green";
+      else if (p.commute_minutes <= 30) pill.className += " commute-indigo";
+      else if (p.commute_minutes <= 45) pill.className += " commute-amber";
+      else pill.className += " commute-red";
+      pill.textContent = p.commute_minutes + " min";
+      pill.style.marginTop = "6px";
+      pill.style.display = "inline-block";
+      container.appendChild(pill);
+    }
+
+    // Value badge
+    if (p.value_rating) {
+      var badge = document.createElement("span");
+      badge.className = "value-badge value-" + p.value_rating;
+      badge.textContent = p.value_rating;
+      badge.style.marginTop = "4px";
+      badge.style.marginLeft = p.commute_minutes ? "4px" : "0";
+      badge.style.display = "inline-block";
+      container.appendChild(badge);
     }
 
     return container;
@@ -334,6 +446,92 @@
   });
 })();
 
+// Section navigation: sticky shadow + active link highlighting
+(function () {
+  var nav = document.getElementById("section-nav");
+  if (!nav) return;
+
+  var links = nav.querySelectorAll(".section-nav-links a");
+  var sections = [];
+  links.forEach(function (link) {
+    var id = link.getAttribute("href").slice(1);
+    var section = document.getElementById(id);
+    if (section) sections.push({ el: section, link: link });
+  });
+  if (sections.length === 0) return;
+
+  // Highlight active section link via IntersectionObserver
+  var observer = new IntersectionObserver(function (entries) {
+    entries.forEach(function (entry) {
+      if (entry.isIntersecting) {
+        links.forEach(function (l) { l.classList.remove("active"); });
+        for (var i = 0; i < sections.length; i++) {
+          if (sections[i].el === entry.target) {
+            sections[i].link.classList.add("active");
+            break;
+          }
+        }
+      }
+    });
+  }, { rootMargin: "-20% 0px -70% 0px" });
+
+  sections.forEach(function (s) { observer.observe(s.el); });
+
+  // Smooth scroll on click
+  links.forEach(function (link) {
+    link.addEventListener("click", function (e) {
+      e.preventDefault();
+      var id = link.getAttribute("href").slice(1);
+      var target = document.getElementById(id);
+      if (target) target.scrollIntoView({ behavior: "smooth" });
+    });
+  });
+
+  // Toggle sticky shadow on scroll
+  var lastScrollY = 0;
+  window.addEventListener("scroll", function () {
+    var y = window.scrollY;
+    if (y > 100 && lastScrollY <= 100) nav.classList.add("sticky");
+    else if (y <= 100 && lastScrollY > 100) nav.classList.remove("sticky");
+    lastScrollY = y;
+  }, { passive: true });
+})();
+
+// Description expand/collapse
+(function () {
+  var text = document.getElementById("description-text");
+  var btn = document.getElementById("description-toggle");
+  if (!text || !btn) return;
+
+  // Show button only if content overflows
+  requestAnimationFrame(function () {
+    if (text.scrollHeight > text.clientHeight + 10) {
+      btn.hidden = false;
+    }
+  });
+
+  btn.addEventListener("click", function () {
+    var expanded = text.classList.toggle("expanded");
+    btn.textContent = expanded ? "Show less" : "Read more";
+  });
+})();
+
+// Gallery "+N more" overlay handler
+(function () {
+  var overlay = document.querySelector("[data-gallery-more]");
+  if (!overlay) return;
+
+  overlay.addEventListener("click", function (e) {
+    e.stopPropagation();
+    var images = Array.from(document.querySelectorAll("[data-lightbox]"));
+    var startIndex = parseInt(overlay.dataset.galleryMore, 10);
+    // Open lightbox at the first hidden image index
+    if (startIndex >= 0 && startIndex < images.length) {
+      images[startIndex].click();
+    }
+  });
+})();
+
 // Lazy loading with IntersectionObserver
 (function () {
   var lazyImages = document.querySelectorAll("img[loading=lazy]");
@@ -353,4 +551,21 @@
   });
 
   lazyImages.forEach(function (img) { observer.observe(img); });
+})();
+
+// Benchmark bar fill animation
+(function () {
+  var bars = document.querySelectorAll(".benchmark-fill");
+  if (!("IntersectionObserver" in window) || bars.length === 0) return;
+
+  var observer = new IntersectionObserver(function (entries) {
+    entries.forEach(function (entry) {
+      if (entry.isIntersecting) {
+        entry.target.classList.add("animate");
+        observer.unobserve(entry.target);
+      }
+    });
+  }, { threshold: 0.3 });
+
+  bars.forEach(function (bar) { observer.observe(bar); });
 })();

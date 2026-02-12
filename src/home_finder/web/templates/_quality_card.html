@@ -1,34 +1,29 @@
 {% if qa %}
-<section class="quality-section">
+<section id="section-quality" class="detail-section quality-section">
     <h3>Quality Analysis</h3>
 
+    {# Hero rating — dominant visual element for this section #}
     {% if qa.overall_rating %}
-    <div class="star-rating star-rating-large">
-        {% for i in range(1, 6) %}
-            {% if i <= qa.overall_rating %}
-                <span class="star filled">&#9733;</span>
-            {% else %}
-                <span class="star empty">&#9734;</span>
-            {% endif %}
-        {% endfor %}
-        <span class="rating-label">{{ qa.overall_rating }}/5</span>
+    <div class="quality-rating-hero">
+        <span class="quality-rating-number">{{ qa.overall_rating }}<small>/5</small></span>
+        <div class="quality-rating-stars">
+            <div class="star-rating">
+                {% for i in range(1, 6) %}
+                    {% if i <= qa.overall_rating %}
+                        <span class="star filled">&#9733;</span>
+                    {% else %}
+                        <span class="star empty">&#9734;</span>
+                    {% endif %}
+                {% endfor %}
+            </div>
+            <span class="quality-rating-label">Overall quality rating</span>
+        </div>
     </div>
     {% endif %}
 
-    <blockquote>{{ qa.summary }}</blockquote>
-
-    {% if qa.condition_concerns %}
-    <div class="quality-alert
-        {% if qa.concern_severity == 'serious' %}badge-red
-        {% elif qa.concern_severity == 'moderate' %}badge-amber
-        {% else %}badge-green{% endif %}">
-        <strong>Condition Concerns ({{ qa.concern_severity or "unknown" }}):</strong>
-        {{ qa.condition.maintenance_concerns | join(", ") }}
-    </div>
-    {% endif %}
-
+    {# Room-by-room grid #}
     <div class="quality-grid">
-        <div class="quality-item">
+        <div class="quality-item {% if qa.kitchen.overall_quality == 'modern' %}quality-item-excellent{% elif qa.kitchen.overall_quality == 'decent' %}quality-item-fair{% elif qa.kitchen.overall_quality == 'dated' %}quality-item-poor{% else %}quality-item-neutral{% endif %}">
             <h4>Kitchen</h4>
             <span class="badge
                 {% if qa.kitchen.overall_quality == 'modern' %}badge-green
@@ -42,13 +37,34 @@
             {% endif %}
             <p>
                 {% if qa.kitchen.has_dishwasher %}Dishwasher{% endif %}
-                {% if qa.kitchen.has_dishwasher and qa.kitchen.has_washing_machine %} &middot; {% endif %}
-                {% if qa.kitchen.has_washing_machine %}Washing machine{% endif %}
+                {% if qa.kitchen.has_dishwasher and qa.kitchen.has_washing_machine == 'yes' %} &middot; {% endif %}
+                {% if qa.kitchen.has_washing_machine == 'yes' %}Washing machine{% endif %}
             </p>
             {% if qa.kitchen.notes %}<p><small>{{ qa.kitchen.notes }}</small></p>{% endif %}
         </div>
 
-        <div class="quality-item">
+        {% if qa.bathroom %}
+        <div class="quality-item {% if qa.bathroom.overall_condition == 'modern' %}quality-item-excellent{% elif qa.bathroom.overall_condition == 'decent' %}quality-item-fair{% elif qa.bathroom.overall_condition == 'dated' %}quality-item-poor{% else %}quality-item-neutral{% endif %}">
+            <h4>Bathroom</h4>
+            <span class="badge
+                {% if qa.bathroom.overall_condition == 'modern' %}badge-green
+                {% elif qa.bathroom.overall_condition == 'decent' %}badge-amber
+                {% elif qa.bathroom.overall_condition == 'dated' %}badge-red
+                {% else %}badge-neutral{% endif %}">
+                {{ qa.bathroom.overall_condition | capitalize }}
+            </span>
+            {% if qa.bathroom.has_bathtub is not none %}
+            <p>{{ "Bathtub" if qa.bathroom.has_bathtub else "No bathtub" }}</p>
+            {% endif %}
+            {% if qa.bathroom.shower_type and qa.bathroom.shower_type not in ('unknown', 'none') %}
+            <p>{{ qa.bathroom.shower_type | replace("_", " ") | capitalize }} shower</p>
+            {% endif %}
+            {% if qa.bathroom.is_ensuite == 'yes' %}<p>Ensuite</p>{% endif %}
+            {% if qa.bathroom.notes %}<p><small>{{ qa.bathroom.notes }}</small></p>{% endif %}
+        </div>
+        {% endif %}
+
+        <div class="quality-item {% if qa.condition.overall_condition in ('excellent', 'good') %}quality-item-excellent{% elif qa.condition.overall_condition == 'fair' %}quality-item-fair{% elif qa.condition.overall_condition == 'poor' %}quality-item-poor{% else %}quality-item-neutral{% endif %}">
             <h4>Condition</h4>
             <span class="badge
                 {% if qa.condition.overall_condition in ('excellent', 'good') %}badge-green
@@ -57,12 +73,12 @@
                 {% else %}badge-neutral{% endif %}">
                 {{ qa.condition.overall_condition | capitalize }}
             </span>
-            {% if qa.condition.has_visible_damp %}<p>Visible damp</p>{% endif %}
-            {% if qa.condition.has_visible_mold %}<p>Visible mould</p>{% endif %}
+            {% if qa.condition.has_visible_damp == 'yes' %}<p>Visible damp</p>{% endif %}
+            {% if qa.condition.has_visible_mold == 'yes' %}<p>Visible mould</p>{% endif %}
             {% if qa.condition.has_worn_fixtures %}<p>Worn fixtures</p>{% endif %}
         </div>
 
-        <div class="quality-item">
+        <div class="quality-item {% if qa.light_space.natural_light in ('excellent', 'good') %}quality-item-excellent{% elif qa.light_space.natural_light == 'fair' %}quality-item-fair{% elif qa.light_space.natural_light == 'poor' %}quality-item-poor{% else %}quality-item-neutral{% endif %}">
             <h4>Light &amp; Space</h4>
             <span class="badge
                 {% if qa.light_space.natural_light in ('excellent', 'good') %}badge-green
@@ -74,13 +90,13 @@
             {% if qa.light_space.feels_spacious is not none %}
             <p>{{ "Spacious" if qa.light_space.feels_spacious else "Compact" }}</p>
             {% endif %}
-            {% if qa.light_space.ceiling_height %}
+            {% if qa.light_space.ceiling_height and qa.light_space.ceiling_height != 'unknown' %}
             <p>Ceilings: {{ qa.light_space.ceiling_height }}</p>
             {% endif %}
             {% if qa.light_space.notes %}<p><small>{{ qa.light_space.notes }}</small></p>{% endif %}
         </div>
 
-        <div class="quality-item">
+        <div class="quality-item quality-item-neutral">
             <h4>Living Room</h4>
             {% if qa.space.living_room_sqm %}
             <span class="badge badge-neutral">~{{ "%.0f" | format(qa.space.living_room_sqm) }}m&sup2;</span>
@@ -89,36 +105,169 @@
             <p>{{ "Good for office + hosting" if qa.space.is_spacious_enough else "May be tight" }}</p>
             {% endif %}
         </div>
+
+        {% if qa.bedroom %}
+        <div class="quality-item quality-item-neutral">
+            <h4>Bedroom</h4>
+            {% if qa.bedroom.primary_is_double != 'unknown' %}
+            <p>{{ "Double bed fits" if qa.bedroom.primary_is_double == 'yes' else "Single only" }}</p>
+            {% endif %}
+            {% if qa.bedroom.has_built_in_wardrobe %}<p>Built-in wardrobe</p>{% endif %}
+            {% if qa.bedroom.can_fit_desk != 'unknown' %}
+            <p>{{ "Desk fits" if qa.bedroom.can_fit_desk == 'yes' else "No desk space" }}</p>
+            {% endif %}
+            {% if qa.bedroom.notes %}<p><small>{{ qa.bedroom.notes }}</small></p>{% endif %}
+        </div>
+        {% endif %}
+
+        {% if qa.outdoor_space %}
+        {% set outdoor_items = [] %}
+        {% if qa.outdoor_space.has_balcony %}{% set _ = outdoor_items.append("Balcony") %}{% endif %}
+        {% if qa.outdoor_space.has_garden %}{% set _ = outdoor_items.append("Garden") %}{% endif %}
+        {% if qa.outdoor_space.has_terrace %}{% set _ = outdoor_items.append("Terrace") %}{% endif %}
+        {% if qa.outdoor_space.has_shared_garden %}{% set _ = outdoor_items.append("Shared garden") %}{% endif %}
+        <div class="quality-item {% if outdoor_items %}quality-item-excellent{% else %}quality-item-poor{% endif %}">
+            <h4>Outdoor Space</h4>
+            {% if outdoor_items %}
+            <span class="badge badge-green">{{ outdoor_items | join(", ") }}</span>
+            {% else %}
+            <span class="badge badge-neutral">None</span>
+            {% endif %}
+            {% if qa.outdoor_space.notes %}<p><small>{{ qa.outdoor_space.notes }}</small></p>{% endif %}
+        </div>
+        {% endif %}
+
+        {% if qa.storage %}
+        <div class="quality-item {% if qa.storage.storage_rating == 'good' %}quality-item-excellent{% elif qa.storage.storage_rating == 'adequate' %}quality-item-fair{% elif qa.storage.storage_rating == 'poor' %}quality-item-poor{% else %}quality-item-neutral{% endif %}">
+            <h4>Storage</h4>
+            <span class="badge
+                {% if qa.storage.storage_rating == 'good' %}badge-green
+                {% elif qa.storage.storage_rating == 'adequate' %}badge-amber
+                {% elif qa.storage.storage_rating == 'poor' %}badge-red
+                {% else %}badge-neutral{% endif %}">
+                {{ qa.storage.storage_rating | capitalize }}
+            </span>
+            {% if qa.storage.has_built_in_wardrobes %}<p>Built-in wardrobes</p>{% endif %}
+            {% if qa.storage.has_hallway_cupboard %}<p>Hallway cupboard</p>{% endif %}
+        </div>
+        {% endif %}
+
+        {% if qa.flooring_noise %}
+        <div class="quality-item quality-item-neutral">
+            <h4>Flooring &amp; Noise</h4>
+            {% if qa.flooring_noise.primary_flooring != 'unknown' %}
+            <p>{{ qa.flooring_noise.primary_flooring | capitalize }}</p>
+            {% endif %}
+            {% if qa.flooring_noise.has_double_glazing == 'yes' %}
+            <p>Double glazed</p>
+            {% elif qa.flooring_noise.has_double_glazing == 'no' %}
+            <p>Single glazing</p>
+            {% endif %}
+            {% if qa.flooring_noise.noise_indicators %}
+            <p><small>{{ qa.flooring_noise.noise_indicators | join(", ") }}</small></p>
+            {% endif %}
+            {% if qa.flooring_noise.notes %}<p><small>{{ qa.flooring_noise.notes }}</small></p>{% endif %}
+        </div>
+        {% endif %}
     </div>
 
-    {% if qa.value %}
-    <div class="quality-value">
-        <h4>Value Assessment</h4>
-        {% if qa.value.rating %}
-        <span class="badge
-            {% if qa.value.rating == 'excellent' %}badge-green
-            {% elif qa.value.rating == 'good' %}badge-green
-            {% elif qa.value.rating == 'fair' %}badge-amber
-            {% else %}badge-red{% endif %}">
-            {{ qa.value.rating | capitalize }}
-        </span>
-        {% if qa.value.note %}<span>{{ qa.value.note }}</span>{% endif %}
-        {% endif %}
-        {% if qa.value.quality_adjusted_rating %}
-        <p>
-            <strong>Quality-adjusted:</strong>
-            <span class="badge
-                {% if qa.value.quality_adjusted_rating in ('excellent', 'good') %}badge-green
-                {% elif qa.value.quality_adjusted_rating == 'fair' %}badge-amber
-                {% else %}badge-red{% endif %}">
-                {{ qa.value.quality_adjusted_rating | capitalize }}
-            </span>
-            {% if qa.value.quality_adjusted_note %}
-            <span>{{ qa.value.quality_adjusted_note }}</span>
+    {# Listing Details — lightweight key-value grid (visual hierarchy: secondary) #}
+    {% if qa.listing_extraction %}
+    {% set le = qa.listing_extraction %}
+    {% set has_listing_data = (le.epc_rating and le.epc_rating != 'unknown') or le.service_charge_pcm or le.deposit_weeks is not none or le.bills_included != 'unknown' or le.pets_allowed != 'unknown' or (le.parking and le.parking != 'unknown') or (le.council_tax_band and le.council_tax_band != 'unknown') or (le.property_type and le.property_type != 'unknown') or (le.furnished_status and le.furnished_status != 'unknown') %}
+    {% if has_listing_data %}
+    <div class="listing-details-section">
+        <h4 class="section-subhead">Listing Details</h4>
+        <div class="listing-kv-grid">
+            {% if le.property_type and le.property_type != 'unknown' %}
+            <div class="listing-kv-item"><span class="listing-kv-label">Type</span><span class="listing-kv-value">{{ le.property_type | replace("_", " ") | title }}</span></div>
             {% endif %}
-        </p>
+            {% if le.epc_rating and le.epc_rating != 'unknown' %}
+            <div class="listing-kv-item"><span class="listing-kv-label">EPC</span><span class="listing-kv-value">Band {{ le.epc_rating }}</span></div>
+            {% endif %}
+            {% if le.service_charge_pcm %}
+            <div class="listing-kv-item"><span class="listing-kv-label">Service Charge</span><span class="listing-kv-value">&pound;{{ le.service_charge_pcm }}/mo</span></div>
+            {% endif %}
+            {% if le.deposit_weeks is not none %}
+            <div class="listing-kv-item"><span class="listing-kv-label">Deposit</span><span class="listing-kv-value">{{ le.deposit_weeks }} weeks</span></div>
+            {% endif %}
+            {% if le.bills_included == 'yes' %}
+            <div class="listing-kv-item"><span class="listing-kv-label">Bills</span><span class="listing-kv-value">Included</span></div>
+            {% elif le.bills_included == 'no' %}
+            <div class="listing-kv-item"><span class="listing-kv-label">Bills</span><span class="listing-kv-value">Not included</span></div>
+            {% endif %}
+            {% if le.pets_allowed == 'yes' %}
+            <div class="listing-kv-item"><span class="listing-kv-label">Pets</span><span class="listing-kv-value">Allowed</span></div>
+            {% elif le.pets_allowed == 'no' %}
+            <div class="listing-kv-item"><span class="listing-kv-label">Pets</span><span class="listing-kv-value">Not allowed</span></div>
+            {% endif %}
+            {% if le.parking and le.parking != 'unknown' %}
+            <div class="listing-kv-item"><span class="listing-kv-label">Parking</span><span class="listing-kv-value">{{ le.parking | capitalize }}</span></div>
+            {% endif %}
+            {% if le.council_tax_band and le.council_tax_band != 'unknown' %}
+            <div class="listing-kv-item"><span class="listing-kv-label">Council Tax</span><span class="listing-kv-value">Band {{ le.council_tax_band }}</span></div>
+            {% endif %}
+            {% if le.furnished_status and le.furnished_status != 'unknown' %}
+            <div class="listing-kv-item"><span class="listing-kv-label">Furnished</span><span class="listing-kv-value">{{ le.furnished_status | replace("_", " ") | capitalize }}</span></div>
+            {% endif %}
+        </div>
+    </div>
+    {% endif %}
+    {% endif %}
+
+    {# Viewing Checklist — collapsible groups (progressive disclosure) #}
+    {% if qa.viewing_notes %}
+    {% set vn = qa.viewing_notes %}
+    {% if vn.check_items or vn.questions_for_agent or vn.deal_breaker_tests %}
+    <div class="listing-details-section">
+        <h4 class="section-subhead">Viewing Checklist</h4>
+        {% if vn.check_items %}
+        <div class="viewing-checklist-group">
+            <div class="viewing-group-header" onclick="this.nextElementSibling.classList.toggle('open');this.querySelector('.viewing-group-toggle').classList.toggle('expanded')">
+                <h4>Things to Check</h4>
+                <span class="viewing-group-toggle">&#9660;</span>
+            </div>
+            <div class="viewing-group-body open">
+                <ul class="viewing-checklist">
+                {% for item in vn.check_items %}
+                    <li>{{ item }}</li>
+                {% endfor %}
+                </ul>
+            </div>
+        </div>
+        {% endif %}
+        {% if vn.questions_for_agent %}
+        <div class="viewing-checklist-group">
+            <div class="viewing-group-header" onclick="this.nextElementSibling.classList.toggle('open');this.querySelector('.viewing-group-toggle').classList.toggle('expanded')">
+                <h4>Ask the Agent</h4>
+                <span class="viewing-group-toggle">&#9660;</span>
+            </div>
+            <div class="viewing-group-body open">
+                <ul class="viewing-checklist">
+                {% for q in vn.questions_for_agent %}
+                    <li>{{ q }}</li>
+                {% endfor %}
+                </ul>
+            </div>
+        </div>
+        {% endif %}
+        {% if vn.deal_breaker_tests %}
+        <div class="viewing-checklist-group">
+            <div class="viewing-group-header" onclick="this.nextElementSibling.classList.toggle('open');this.querySelector('.viewing-group-toggle').classList.toggle('expanded')">
+                <h4>Quick Tests</h4>
+                <span class="viewing-group-toggle">&#9660;</span>
+            </div>
+            <div class="viewing-group-body open">
+                <ul class="viewing-checklist">
+                {% for t in vn.deal_breaker_tests %}
+                    <li>{{ t }}</li>
+                {% endfor %}
+                </ul>
+            </div>
+        </div>
         {% endif %}
     </div>
+    {% endif %}
     {% endif %}
 </section>
 {% endif %}

@@ -3,7 +3,7 @@
 import asyncio
 import html
 import urllib.parse
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Final
 
 from home_finder.logging import get_logger
 from home_finder.models import (
@@ -20,7 +20,7 @@ if TYPE_CHECKING:
 
 logger = get_logger(__name__)
 
-TRANSPORT_MODE_EMOJI: dict[TransportMode, str] = {
+TRANSPORT_MODE_EMOJI: Final[dict[TransportMode, str]] = {
     TransportMode.CYCLING: "🚴",
     TransportMode.PUBLIC_TRANSPORT: "🚇",
     TransportMode.DRIVING: "🚗",
@@ -46,7 +46,7 @@ def _format_kitchen_info(analysis: PropertyQualityAnalysis) -> str:
 
     if kitchen.has_dishwasher is True:
         items.append("Dishwasher")
-    if kitchen.has_washing_machine is True:
+    if kitchen.has_washing_machine == "yes":
         items.append("Washer")
 
     quality_str = ""
@@ -61,7 +61,8 @@ def _format_kitchen_info(analysis: PropertyQualityAnalysis) -> str:
 def _format_light_space_info(analysis: PropertyQualityAnalysis) -> str:
     """Format light/space analysis for display."""
     light = analysis.light_space
-    parts = [f"Light: {light.natural_light.capitalize()}"]
+    light_label = "N/A" if light.natural_light == "unknown" else light.natural_light.capitalize()
+    parts = [f"Light: {light_label}"]
     if light.feels_spacious is True:
         parts.append("Feels spacious")
     elif light.feels_spacious is False:
@@ -165,6 +166,57 @@ def _format_header_lines(
     return lines
 
 
+def _format_bathroom_info(analysis: PropertyQualityAnalysis) -> str | None:
+    """Format bathroom analysis for display."""
+    if not analysis.bathroom:
+        return None
+    bathroom = analysis.bathroom
+    parts = [bathroom.overall_condition.capitalize()]
+    if bathroom.has_bathtub is True:
+        parts.append("bathtub")
+    if bathroom.shower_type and bathroom.shower_type not in ("unknown", "none"):
+        parts.append(f"{bathroom.shower_type.replace('_', ' ')} shower")
+    if bathroom.is_ensuite == "yes":
+        parts.append("ensuite")
+    return ", ".join(parts)
+
+
+def _format_outdoor_info(analysis: PropertyQualityAnalysis) -> str | None:
+    """Format outdoor space analysis for display."""
+    if not analysis.outdoor_space:
+        return None
+    os = analysis.outdoor_space
+    items = []
+    if os.has_balcony:
+        items.append("Balcony")
+    if os.has_garden:
+        items.append("Garden")
+    if os.has_terrace:
+        items.append("Terrace")
+    if os.has_shared_garden:
+        items.append("Shared garden")
+    return ", ".join(items) if items else None
+
+
+def _format_listing_extraction_info(analysis: PropertyQualityAnalysis) -> str | None:
+    """Format key listing data for display."""
+    if not analysis.listing_extraction:
+        return None
+    le = analysis.listing_extraction
+    parts = []
+    if le.epc_rating and le.epc_rating != "unknown":
+        parts.append(f"EPC {le.epc_rating}")
+    if le.service_charge_pcm:
+        parts.append(f"+£{le.service_charge_pcm}/mo service charge")
+    if le.pets_allowed == "yes":
+        parts.append("Pets OK")
+    elif le.pets_allowed == "no":
+        parts.append("No pets")
+    if le.bills_included == "yes":
+        parts.append("Bills incl.")
+    return " · ".join(parts) if parts else None
+
+
 def _format_quality_block(
     analysis: PropertyQualityAnalysis,
     *,
@@ -176,6 +228,7 @@ def _format_quality_block(
         analysis: Quality analysis to format.
         full: If True, include kitchen/light/space/condition details.
               If False, only include concerns, summary (italic), and value.
+              Critical alerts (bad EPC, red flags) always shown.
     """
     lines: list[str] = []
 
@@ -188,11 +241,45 @@ def _format_quality_block(
     if full:
         lines.append(f"<blockquote>{html.escape(analysis.summary)}</blockquote>")
         lines.append(f"🍳 {_format_kitchen_info(analysis)}")
+
+        bathroom_info = _format_bathroom_info(analysis)
+        if bathroom_info:
+            lines.append(f"🚿 {bathroom_info}")
+
         lines.append(f"💡 {_format_light_space_info(analysis)}")
         lines.append(f"📐 {_format_space_info(analysis)}")
         lines.append(f"🔧 {analysis.condition.overall_condition}")
+
+        outdoor_info = _format_outdoor_info(analysis)
+        if outdoor_info:
+            lines.append(f"🌿 {outdoor_info}")
+
+        listing_info = _format_listing_extraction_info(analysis)
+        if listing_info:
+            lines.append(f"📋 {listing_info}")
+
+        if analysis.listing_red_flags and analysis.listing_red_flags.red_flag_count > 0:
+            rf = analysis.listing_red_flags
+            rf_parts = []
+            if rf.missing_room_photos:
+                rf_parts.append(f"No photos of: {', '.join(rf.missing_room_photos)}")
+            if rf.too_few_photos:
+                rf_parts.append("Too few photos")
+            if rf_parts:
+                lines.append(f"🚩 {' · '.join(rf_parts)}")
+
     else:
         lines.append(f"<i>{html.escape(analysis.summary)}</i>")
+
+        # Critical alerts even in condensed captions
+        if analysis.listing_extraction and analysis.listing_extraction.epc_rating in (
+            "E",
+            "F",
+            "G",
+        ):
+            lines.append(f"⚠️ EPC {analysis.listing_extraction.epc_rating}")
+        if analysis.listing_red_flags and analysis.listing_red_flags.red_flag_count >= 2:
+            lines.append(f"🚩 {analysis.listing_red_flags.red_flag_count} red flags")
 
     value_info = _format_value_info(analysis)
     if value_info:

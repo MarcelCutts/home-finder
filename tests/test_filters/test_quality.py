@@ -8,9 +8,11 @@ from anthropic.types import ToolUseBlock
 from pydantic import HttpUrl, ValidationError
 
 from home_finder.filters.quality import (
-    QUALITY_ANALYSIS_TOOL,
+    EVALUATION_TOOL,
+    VISUAL_ANALYSIS_TOOL,
     PropertyQualityFilter,
     assess_value,
+    build_evaluation_prompt,
 )
 from home_finder.models import (
     ConditionAnalysis,
@@ -55,62 +57,122 @@ class TestKitchenAnalysis:
 
 
 class TestToolSchema:
-    """Tests for QUALITY_ANALYSIS_TOOL schema structure."""
+    """Tests for VISUAL_ANALYSIS_TOOL and EVALUATION_TOOL schema structure."""
 
-    def test_uses_anyof_for_nullable_enum_fields(self) -> None:
-        """Should use anyOf pattern for nullable enum fields (strict mode compatibility)."""
-        input_schema = QUALITY_ANALYSIS_TOOL["input_schema"]
-        schema = input_schema["properties"]
+    def test_uses_plain_types_for_boolean_and_enum_fields(self) -> None:
+        """Strict mode: boolean and enum fields use plain types (no anyOf)."""
+        visual_schema = VISUAL_ANALYSIS_TOOL["input_schema"]["properties"]
 
-        # Kitchen hob_type should use anyOf
-        hob_type = schema["kitchen"]["properties"]["hob_type"]
-        assert "anyOf" in hob_type
-        assert {"type": "null"} in hob_type["anyOf"]
-        enum_option = next(o for o in hob_type["anyOf"] if o.get("type") == "string")
-        assert "enum" in enum_option
-        assert "gas" in enum_option["enum"]
+        # Kitchen hob_type should be plain enum (no anyOf)
+        hob_type = visual_schema["kitchen"]["properties"]["hob_type"]
+        assert "anyOf" not in hob_type
+        assert hob_type["type"] == "string"
+        assert "unknown" in hob_type["enum"]
 
-        # Light space window_sizes should use anyOf
-        window_sizes = schema["light_space"]["properties"]["window_sizes"]
-        assert "anyOf" in window_sizes
-        assert {"type": "null"} in window_sizes["anyOf"]
+        # Kitchen booleans should be plain boolean
+        assert visual_schema["kitchen"]["properties"]["has_dishwasher"] == {"type": "boolean"}
 
-        # Light space ceiling_height should use anyOf
-        ceiling_height = schema["light_space"]["properties"]["ceiling_height"]
-        assert "anyOf" in ceiling_height
-        assert {"type": "null"} in ceiling_height["anyOf"]
+        # Light space window_sizes should be plain enum with "unknown" sentinel
+        window_sizes = visual_schema["light_space"]["properties"]["window_sizes"]
+        assert "anyOf" not in window_sizes
+        assert "unknown" in window_sizes["enum"]
 
-        # Concern severity should use anyOf
-        concern_severity = schema["concern_severity"]
-        assert "anyOf" in concern_severity
-        assert {"type": "null"} in concern_severity["anyOf"]
+        # Concern severity should be plain enum with "none" sentinel
+        concern_severity = visual_schema["concern_severity"]
+        assert "anyOf" not in concern_severity
+        assert "none" in concern_severity["enum"]
 
-    def test_uses_anyof_for_nullable_primitive_fields(self) -> None:
-        """Should use anyOf pattern for nullable boolean/number fields."""
-        input_schema = QUALITY_ANALYSIS_TOOL["input_schema"]
-        schema = input_schema["properties"]
+    def test_tristate_fields_use_string_enum(self) -> None:
+        """High-impact fields should use string enum yes/no/unknown."""
+        visual_schema = VISUAL_ANALYSIS_TOOL["input_schema"]["properties"]
+        eval_schema = EVALUATION_TOOL["input_schema"]["properties"]
+        expected_enum = ["yes", "no", "unknown"]
 
-        # Kitchen has_dishwasher should use anyOf
-        has_dishwasher = schema["kitchen"]["properties"]["has_dishwasher"]
-        assert "anyOf" in has_dishwasher
-        assert {"type": "boolean"} in has_dishwasher["anyOf"]
-        assert {"type": "null"} in has_dishwasher["anyOf"]
+        # condition.has_visible_damp and has_visible_mold (Phase 1)
+        condition_props = visual_schema["condition"]["properties"]
+        assert condition_props["has_visible_damp"]["type"] == "string"
+        assert condition_props["has_visible_damp"]["enum"] == expected_enum
+        assert condition_props["has_visible_mold"]["type"] == "string"
+        assert condition_props["has_visible_mold"]["enum"] == expected_enum
 
-        # Space living_room_sqm should use anyOf
-        living_room_sqm = schema["space"]["properties"]["living_room_sqm"]
+        # flooring_noise.has_double_glazing (Phase 1)
+        fn_props = visual_schema["flooring_noise"]["properties"]
+        assert fn_props["has_double_glazing"]["type"] == "string"
+        assert fn_props["has_double_glazing"]["enum"] == expected_enum
+
+        # listing_extraction.bills_included and pets_allowed (Phase 2)
+        le_props = eval_schema["listing_extraction"]["properties"]
+        assert le_props["bills_included"]["type"] == "string"
+        assert le_props["bills_included"]["enum"] == expected_enum
+        assert le_props["pets_allowed"]["type"] == "string"
+        assert le_props["pets_allowed"]["enum"] == expected_enum
+
+        # kitchen.has_washing_machine (Phase 1)
+        kitchen_props = visual_schema["kitchen"]["properties"]
+        assert kitchen_props["has_washing_machine"]["type"] == "string"
+        assert kitchen_props["has_washing_machine"]["enum"] == expected_enum
+
+        # bathroom.is_ensuite (Phase 1)
+        bath_props = visual_schema["bathroom"]["properties"]
+        assert bath_props["is_ensuite"]["type"] == "string"
+        assert bath_props["is_ensuite"]["enum"] == expected_enum
+
+        # bedroom.primary_is_double and can_fit_desk (Phase 1)
+        bed_props = visual_schema["bedroom"]["properties"]
+        assert bed_props["primary_is_double"]["type"] == "string"
+        assert bed_props["primary_is_double"]["enum"] == expected_enum
+        assert bed_props["can_fit_desk"]["type"] == "string"
+        assert bed_props["can_fit_desk"]["enum"] == expected_enum
+
+    def test_keeps_anyof_for_nullable_numeric_fields(self) -> None:
+        """Strict mode: only numeric fields retain anyOf for null."""
+        visual_schema = VISUAL_ANALYSIS_TOOL["input_schema"]["properties"]
+        eval_schema = EVALUATION_TOOL["input_schema"]["properties"]
+
+        # Space living_room_sqm should still use anyOf (numeric) — Phase 1
+        living_room_sqm = visual_schema["space"]["properties"]["living_room_sqm"]
         assert "anyOf" in living_room_sqm
         assert {"type": "number"} in living_room_sqm["anyOf"]
         assert {"type": "null"} in living_room_sqm["anyOf"]
 
-        # Space is_spacious_enough should use anyOf
-        is_spacious = schema["space"]["properties"]["is_spacious_enough"]
-        assert "anyOf" in is_spacious
-        assert {"type": "boolean"} in is_spacious["anyOf"]
-        assert {"type": "null"} in is_spacious["anyOf"]
+        # Space is_spacious_enough should now be plain boolean
+        is_spacious = visual_schema["space"]["properties"]["is_spacious_enough"]
+        assert is_spacious["type"] == "boolean"
 
-    def test_schema_has_strict_mode_enabled(self) -> None:
-        """Should have strict mode enabled for guaranteed schema compliance."""
-        assert QUALITY_ANALYSIS_TOOL["strict"] is True
+        # listing_extraction.service_charge_pcm should use anyOf — Phase 2
+        service_charge = eval_schema["listing_extraction"]["properties"]["service_charge_pcm"]
+        assert "anyOf" in service_charge
+
+    def test_strict_mode_enabled_on_both_tools(self) -> None:
+        """Strict mode should be enabled on both tool schemas."""
+        assert VISUAL_ANALYSIS_TOOL.get("strict") is True
+        assert EVALUATION_TOOL.get("strict") is True
+
+    def test_visual_tool_does_not_contain_evaluation_fields(self) -> None:
+        """Visual analysis tool should not contain Phase 2 fields."""
+        visual_props = VISUAL_ANALYSIS_TOOL["input_schema"]["properties"]
+        visual_required = VISUAL_ANALYSIS_TOOL["input_schema"]["required"]
+
+        assert "listing_extraction" not in visual_props
+        assert "viewing_notes" not in visual_props
+        assert "highlights" not in visual_props
+        assert "lowlights" not in visual_props
+        assert "one_line" not in visual_props
+        assert "value_for_quality" not in visual_props
+
+        assert "listing_extraction" not in visual_required
+        assert "value_for_quality" not in visual_required
+
+    def test_evaluation_tool_does_not_contain_visual_fields(self) -> None:
+        """Evaluation tool should not contain Phase 1 fields."""
+        eval_props = EVALUATION_TOOL["input_schema"]["properties"]
+
+        assert "kitchen" not in eval_props
+        assert "condition" not in eval_props
+        assert "light_space" not in eval_props
+        assert "space" not in eval_props
+        assert "bathroom" not in eval_props
+        assert "overall_rating" not in eval_props
 
 
 class TestConditionAnalysis:
@@ -120,20 +182,20 @@ class TestConditionAnalysis:
         """Should create analysis with condition concerns."""
         analysis = ConditionAnalysis(
             overall_condition="fair",
-            has_visible_damp=True,
-            has_visible_mold=False,
+            has_visible_damp="yes",
+            has_visible_mold="no",
             has_worn_fixtures=True,
             maintenance_concerns=["Damp near window", "Dated bathroom"],
             confidence="high",
         )
         assert analysis.overall_condition == "fair"
-        assert analysis.has_visible_damp is True
+        assert analysis.has_visible_damp == "yes"
         assert len(analysis.maintenance_concerns) == 2
 
     def test_minimal_analysis(self) -> None:
         """Should create analysis with defaults."""
         analysis = ConditionAnalysis(overall_condition="good")
-        assert analysis.has_visible_damp is False
+        assert analysis.has_visible_damp == "unknown"
         assert analysis.maintenance_concerns == []
         assert analysis.confidence == "medium"
 
@@ -260,7 +322,7 @@ class TestPropertyQualityAnalysis:
             kitchen=KitchenAnalysis(overall_quality="modern", hob_type="gas"),
             condition=ConditionAnalysis(
                 overall_condition="good",
-                has_visible_damp=False,
+                has_visible_damp="no",
                 maintenance_concerns=[],
             ),
             light_space=LightSpaceAnalysis(
@@ -284,8 +346,8 @@ class TestPropertyQualityAnalysis:
             kitchen=KitchenAnalysis(),
             condition=ConditionAnalysis(
                 overall_condition="poor",
-                has_visible_damp=True,
-                has_visible_mold=True,
+                has_visible_damp="yes",
+                has_visible_mold="yes",
                 maintenance_concerns=["Significant damp", "Mold in bathroom"],
             ),
             light_space=LightSpaceAnalysis(
@@ -400,61 +462,20 @@ def one_bed_merged_property(one_bed_property: Property) -> MergedProperty:
 
 
 @pytest.fixture
-def sample_tool_response_with_nulls() -> dict[str, Any]:
-    """Sample tool response with nullable fields set to null."""
-    return {
-        "kitchen": {
-            "overall_quality": "unknown",
-            "hob_type": None,
-            "has_dishwasher": None,
-            "has_washing_machine": None,
-            "notes": "Kitchen not visible in images",
-        },
-        "condition": {
-            "overall_condition": "unknown",
-            "has_visible_damp": False,
-            "has_visible_mold": False,
-            "has_worn_fixtures": False,
-            "maintenance_concerns": [],
-            "confidence": "low",
-        },
-        "light_space": {
-            "natural_light": "unknown",
-            "window_sizes": None,
-            "feels_spacious": None,
-            "ceiling_height": None,
-            "notes": "Limited photos available",
-        },
-        "space": {
-            "living_room_sqm": None,
-            "is_spacious_enough": None,
-            "confidence": "low",
-        },
-        "value_for_quality": {
-            "rating": "fair",
-            "reasoning": "Cannot assess quality from available images",
-        },
-        "condition_concerns": False,
-        "concern_severity": None,
-        "summary": "Limited visibility - cannot fully assess property condition.",
-    }
-
-
-@pytest.fixture
-def sample_tool_response() -> dict[str, Any]:
-    """Sample structured tool response from Claude."""
+def sample_visual_response() -> dict[str, Any]:
+    """Sample Phase 1 visual analysis response from Claude."""
     return {
         "kitchen": {
             "overall_quality": "modern",
             "hob_type": "gas",
             "has_dishwasher": True,
-            "has_washing_machine": True,
+            "has_washing_machine": "yes",
             "notes": "Modern integrated kitchen",
         },
         "condition": {
             "overall_condition": "good",
-            "has_visible_damp": False,
-            "has_visible_mold": False,
+            "has_visible_damp": "no",
+            "has_visible_mold": "no",
             "has_worn_fixtures": False,
             "maintenance_concerns": [],
             "confidence": "high",
@@ -471,22 +492,145 @@ def sample_tool_response() -> dict[str, Any]:
             "is_spacious_enough": True,
             "confidence": "high",
         },
-        "value_for_quality": {
-            "rating": "good",
-            "reasoning": "Well-maintained property at reasonable price",
+        "bathroom": {
+            "overall_condition": "modern",
+            "has_bathtub": True,
+            "shower_type": "overhead",
+            "is_ensuite": "no",
+            "notes": "Clean and modern",
         },
+        "bedroom": {
+            "primary_is_double": "yes",
+            "has_built_in_wardrobe": True,
+            "can_fit_desk": "yes",
+            "notes": "Good-sized double bedroom",
+        },
+        "outdoor_space": {
+            "has_balcony": False,
+            "has_garden": False,
+            "has_terrace": False,
+            "has_shared_garden": True,
+            "notes": "Shared communal garden",
+        },
+        "storage": {
+            "has_built_in_wardrobes": True,
+            "has_hallway_cupboard": False,
+            "storage_rating": "adequate",
+        },
+        "flooring_noise": {
+            "primary_flooring": "hardwood",
+            "has_double_glazing": "yes",
+            "noise_indicators": [],
+            "notes": "Quiet street",
+        },
+        "listing_red_flags": {
+            "missing_room_photos": [],
+            "too_few_photos": False,
+            "selective_angles": False,
+            "description_concerns": [],
+            "red_flag_count": 0,
+        },
+        "overall_rating": 4,
         "condition_concerns": False,
-        "concern_severity": None,
+        "concern_severity": "none",
         "summary": "Well-maintained flat with modern kitchen. Living room suits home office.",
     }
 
 
-def create_mock_response(tool_input: dict[str, Any], stop_reason: str = "tool_use") -> MagicMock:
+@pytest.fixture
+def sample_evaluation_response() -> dict[str, Any]:
+    """Sample Phase 2 evaluation response from Claude."""
+    return {
+        "listing_extraction": {
+            "epc_rating": "C",
+            "service_charge_pcm": None,
+            "deposit_weeks": 5,
+            "bills_included": "no",
+            "pets_allowed": "unknown",
+            "parking": "street",
+            "council_tax_band": "C",
+            "property_type": "victorian",
+            "furnished_status": "furnished",
+        },
+        "value_for_quality": {
+            "rating": "good",
+            "reasoning": "Well-maintained property at reasonable price",
+        },
+        "viewing_notes": {
+            "check_items": ["Check water pressure", "Inspect windows"],
+            "questions_for_agent": ["Any upcoming rent increases?"],
+            "deal_breaker_tests": ["Test hot water"],
+        },
+        "highlights": ["Gas hob", "Modern kitchen", "Good light"],
+        "lowlights": ["No balcony"],
+        "one_line": "Well-maintained flat with modern kitchen and good natural light",
+    }
+
+
+@pytest.fixture
+def sample_visual_response_with_nulls() -> dict[str, Any]:
+    """Sample Phase 1 response with nullable fields set to null."""
+    return {
+        "kitchen": {
+            "overall_quality": "unknown",
+            "hob_type": None,
+            "has_dishwasher": None,
+            "has_washing_machine": "unknown",
+            "notes": "Kitchen not visible in images",
+        },
+        "condition": {
+            "overall_condition": "unknown",
+            "has_visible_damp": "unknown",
+            "has_visible_mold": "unknown",
+            "has_worn_fixtures": False,
+            "maintenance_concerns": [],
+            "confidence": "low",
+        },
+        "light_space": {
+            "natural_light": "unknown",
+            "window_sizes": None,
+            "feels_spacious": None,
+            "ceiling_height": None,
+            "notes": "Limited photos available",
+        },
+        "space": {
+            "living_room_sqm": None,
+            "is_spacious_enough": None,
+            "confidence": "low",
+        },
+        "overall_rating": 3,
+        "condition_concerns": False,
+        "concern_severity": None,
+        "summary": "Limited visibility - cannot fully assess property condition.",
+    }
+
+
+@pytest.fixture
+def sample_evaluation_response_with_nulls() -> dict[str, Any]:
+    """Sample Phase 2 response with minimal data."""
+    return {
+        "listing_extraction": None,
+        "value_for_quality": {
+            "rating": "fair",
+            "reasoning": "Cannot assess quality from available images",
+        },
+        "viewing_notes": None,
+        "highlights": [],
+        "lowlights": [],
+        "one_line": "Property with limited visibility for assessment",
+    }
+
+
+def create_mock_response(
+    tool_input: dict[str, Any],
+    stop_reason: str = "tool_use",
+    tool_name: str = "property_visual_analysis",
+) -> MagicMock:
     """Create a mock API response with tool use block."""
     tool_block = ToolUseBlock(
         id="toolu_123",
         type="tool_use",
-        name="property_quality_analysis",
+        name=tool_name,
         input=tool_input,
     )
     mock_response = MagicMock()
@@ -496,6 +640,16 @@ def create_mock_response(tool_input: dict[str, Any], stop_reason: str = "tool_us
     mock_response.usage.cache_read_input_tokens = 0
     mock_response.usage.cache_creation_input_tokens = 0
     return mock_response
+
+
+def _make_two_phase_mock(
+    visual_response: dict[str, Any],
+    eval_response: dict[str, Any],
+) -> AsyncMock:
+    """Create an AsyncMock that returns Phase 1 then Phase 2 responses."""
+    mock_visual = create_mock_response(visual_response, tool_name="property_visual_analysis")
+    mock_eval = create_mock_response(eval_response, tool_name="property_evaluation")
+    return AsyncMock(side_effect=[mock_visual, mock_eval])
 
 
 class TestPropertyQualityFilter:
@@ -549,14 +703,15 @@ class TestPropertyQualityFilter:
     async def test_analyzes_property_with_images(
         self,
         sample_merged_property: MergedProperty,
-        sample_tool_response: dict[str, Any],
+        sample_visual_response: dict[str, Any],
+        sample_evaluation_response: dict[str, Any],
     ) -> None:
-        """Should analyze property with gallery images using structured outputs."""
-        mock_response = create_mock_response(sample_tool_response)
-
+        """Should analyze property with gallery images using two-phase structured outputs."""
         quality_filter = PropertyQualityFilter(api_key="test-key")
         quality_filter._client = MagicMock()
-        quality_filter._client.messages.create = AsyncMock(return_value=mock_response)
+        quality_filter._client.messages.create = _make_two_phase_mock(
+            sample_visual_response, sample_evaluation_response
+        )
 
         results = await quality_filter.analyze_merged_properties([sample_merged_property])
 
@@ -568,34 +723,57 @@ class TestPropertyQualityFilter:
         assert analysis.light_space.natural_light == "excellent"
         assert analysis.space.living_room_sqm == 22
 
+    async def test_unwraps_one_line_wrapped_in_object(
+        self,
+        sample_merged_property: MergedProperty,
+        sample_visual_response: dict[str, Any],
+        sample_evaluation_response: dict[str, Any],
+    ) -> None:
+        """Pydantic validator unwraps one_line stored as dict (DB backward compat)."""
+        # Simulate old DB data where one_line was stored as {"one_line": "text"}
+        sample_evaluation_response["one_line"] = {"one_line": "Bright flat with balcony"}
+
+        quality_filter = PropertyQualityFilter(api_key="test-key")
+        quality_filter._client = MagicMock()
+        quality_filter._client.messages.create = _make_two_phase_mock(
+            sample_visual_response, sample_evaluation_response
+        )
+
+        results = await quality_filter.analyze_merged_properties([sample_merged_property])
+
+        _, analysis = results[0]
+        assert analysis.one_line == "Bright flat with balcony"
+
     async def test_overrides_space_for_two_plus_beds(
         self,
         sample_merged_property: MergedProperty,
+        sample_evaluation_response: dict[str, Any],
     ) -> None:
         """Should override space assessment for 2+ bedroom properties."""
         # Response says not spacious enough, but 2-bed should override
-        tool_response = {
+        visual_response = {
             "kitchen": {"notes": ""},
             "condition": {
                 "overall_condition": "good",
-                "has_visible_damp": False,
-                "has_visible_mold": False,
+                "has_visible_damp": "no",
+                "has_visible_mold": "no",
                 "has_worn_fixtures": False,
                 "maintenance_concerns": [],
                 "confidence": "high",
             },
             "light_space": {"natural_light": "good", "feels_spacious": True, "notes": ""},
             "space": {"living_room_sqm": 15, "is_spacious_enough": False, "confidence": "high"},
-            "value_for_quality": {"rating": "good", "reasoning": "Fair price"},
+            "overall_rating": 3,
             "condition_concerns": False,
-            "concern_severity": None,
+            "concern_severity": "none",
             "summary": "Compact living room",
         }
-        mock_response = create_mock_response(tool_response)
 
         quality_filter = PropertyQualityFilter(api_key="test-key")
         quality_filter._client = MagicMock()
-        quality_filter._client.messages.create = AsyncMock(return_value=mock_response)
+        quality_filter._client.messages.create = _make_two_phase_mock(
+            visual_response, sample_evaluation_response
+        )
 
         results = await quality_filter.analyze_merged_properties([sample_merged_property])
 
@@ -607,30 +785,32 @@ class TestPropertyQualityFilter:
     async def test_does_not_override_space_for_one_bed(
         self,
         one_bed_merged_property: MergedProperty,
+        sample_evaluation_response: dict[str, Any],
     ) -> None:
         """Should NOT override space assessment for 1-bed properties."""
-        tool_response = {
+        visual_response = {
             "kitchen": {"notes": ""},
             "condition": {
                 "overall_condition": "good",
-                "has_visible_damp": False,
-                "has_visible_mold": False,
+                "has_visible_damp": "no",
+                "has_visible_mold": "no",
                 "has_worn_fixtures": False,
                 "maintenance_concerns": [],
                 "confidence": "high",
             },
             "light_space": {"natural_light": "good", "feels_spacious": True, "notes": ""},
             "space": {"living_room_sqm": 15, "is_spacious_enough": False, "confidence": "high"},
-            "value_for_quality": {"rating": "good", "reasoning": "Fair price"},
+            "overall_rating": 3,
             "condition_concerns": False,
-            "concern_severity": None,
+            "concern_severity": "none",
             "summary": "Compact living room",
         }
-        mock_response = create_mock_response(tool_response)
 
         quality_filter = PropertyQualityFilter(api_key="test-key")
         quality_filter._client = MagicMock()
-        quality_filter._client.messages.create = AsyncMock(return_value=mock_response)
+        quality_filter._client.messages.create = _make_two_phase_mock(
+            visual_response, sample_evaluation_response
+        )
 
         results = await quality_filter.analyze_merged_properties([one_bed_merged_property])
 
@@ -642,7 +822,7 @@ class TestPropertyQualityFilter:
         self,
         sample_merged_property: MergedProperty,
     ) -> None:
-        """Should return minimal analysis on LLM failure."""
+        """Should return minimal analysis on Phase 1 LLM failure."""
         quality_filter = PropertyQualityFilter(api_key="test-key")
         quality_filter._client = MagicMock()
         quality_filter._client.messages.create = AsyncMock(side_effect=Exception("API error"))
@@ -672,25 +852,26 @@ class TestPropertyQualityFilter:
         _, analysis = results[0]
         assert "No images available" in analysis.summary
 
-    async def test_includes_all_images_in_api_call(
+    async def test_includes_all_images_in_phase1_call(
         self,
         sample_merged_property: MergedProperty,
-        sample_tool_response: dict[str, Any],
+        sample_visual_response: dict[str, Any],
+        sample_evaluation_response: dict[str, Any],
     ) -> None:
-        """Should include gallery images and floorplan in API call."""
-        mock_response = create_mock_response(sample_tool_response)
-
+        """Should include gallery images and floorplan in Phase 1 API call."""
         quality_filter = PropertyQualityFilter(api_key="test-key", max_images=10)
         quality_filter._client = MagicMock()
-        quality_filter._client.messages.create = AsyncMock(return_value=mock_response)
+        quality_filter._client.messages.create = _make_two_phase_mock(
+            sample_visual_response, sample_evaluation_response
+        )
 
         await quality_filter.analyze_merged_properties([sample_merged_property])
 
-        # Check the API call
-        call_args = quality_filter._client.messages.create.call_args
+        # Check the Phase 1 API call (first call)
+        call_args = quality_filter._client.messages.create.call_args_list[0]
         content = call_args.kwargs["messages"][0]["content"]
 
-        # With image labels: 3 gallery × (label + image) + 1 floorplan × (label + image) + 1 text = 9
+        # 3 gallery × (label + image) + 1 floorplan × (label + image) + 1 text = 9
         assert len(content) == 9
         assert content[0]["type"] == "text"  # "Gallery image 1:"
         assert content[1]["type"] == "image"
@@ -701,7 +882,8 @@ class TestPropertyQualityFilter:
     async def test_respects_max_images_limit(
         self,
         sample_property: Property,
-        sample_tool_response: dict[str, Any],
+        sample_visual_response: dict[str, Any],
+        sample_evaluation_response: dict[str, Any],
     ) -> None:
         """Should respect max_images configuration."""
         # Create merged property with 20 gallery images
@@ -725,20 +907,22 @@ class TestPropertyQualityFilter:
             min_price=sample_property.price_pcm,
             max_price=sample_property.price_pcm,
         )
-        mock_response = create_mock_response(sample_tool_response)
 
         quality_filter = PropertyQualityFilter(api_key="test-key", max_images=5)
         quality_filter._client = MagicMock()
-        quality_filter._client.messages.create = AsyncMock(return_value=mock_response)
+        quality_filter._client.messages.create = _make_two_phase_mock(
+            sample_visual_response, sample_evaluation_response
+        )
 
         await quality_filter.analyze_merged_properties([many_images_merged])
 
-        call_args = quality_filter._client.messages.create.call_args
+        call_args = quality_filter._client.messages.create.call_args_list[0]
         content = call_args.kwargs["messages"][0]["content"]
 
-        # With labels: 5 gallery × (label + image) + 1 floorplan × (label + image) + 1 text = 13
+        # With floorplan present, gallery is capped to max_images-1=4
+        # So: 4 gallery + 1 floorplan = 5 total images (stays within max_images)
         image_blocks = [c for c in content if c.get("type") == "image"]
-        assert len(image_blocks) == 6  # 5 gallery + 1 floorplan
+        assert len(image_blocks) == 5  # 4 gallery + 1 floorplan
         label_blocks = [
             c
             for c in content
@@ -746,75 +930,94 @@ class TestPropertyQualityFilter:
             and "image" in c.get("text", "").lower()
             or "Floorplan" in c.get("text", "")
         ]
-        assert len(label_blocks) >= 5  # at least 5 gallery labels
+        assert len(label_blocks) >= 4  # at least 4 gallery labels
 
     async def test_uses_tool_choice_for_structured_output(
         self,
         sample_merged_property: MergedProperty,
-        sample_tool_response: dict[str, Any],
+        sample_visual_response: dict[str, Any],
+        sample_evaluation_response: dict[str, Any],
     ) -> None:
-        """Should use tool_choice to force structured output."""
-        mock_response = create_mock_response(sample_tool_response)
-
+        """Phase 1 uses auto tool_choice with thinking; Phase 2 uses forced tool."""
         quality_filter = PropertyQualityFilter(api_key="test-key")
         quality_filter._client = MagicMock()
-        quality_filter._client.messages.create = AsyncMock(return_value=mock_response)
+        quality_filter._client.messages.create = _make_two_phase_mock(
+            sample_visual_response, sample_evaluation_response
+        )
 
         await quality_filter.analyze_merged_properties([sample_merged_property])
 
-        call_args = quality_filter._client.messages.create.call_args
+        calls = quality_filter._client.messages.create.call_args_list
+        assert len(calls) == 2
 
-        # Verify tool_choice forces the property_quality_analysis tool
-        assert call_args.kwargs["tool_choice"] == {
-            "type": "tool",
-            "name": "property_quality_analysis",
+        # Phase 1: auto tool_choice with extended thinking
+        phase1_kwargs = calls[0].kwargs
+        assert phase1_kwargs["tool_choice"] == {"type": "auto"}
+        assert phase1_kwargs["thinking"] == {
+            "type": "enabled",
+            "budget_tokens": 10000,
         }
+        assert len(phase1_kwargs["tools"]) == 1
+        assert phase1_kwargs["tools"][0]["name"] == "property_visual_analysis"
 
-        # Verify tools include our schema with strict mode
-        tools = call_args.kwargs["tools"]
-        assert len(tools) == 1
-        assert tools[0]["name"] == "property_quality_analysis"
-        assert tools[0]["strict"] is True
+        # Phase 2: forced tool choice, no extended thinking
+        phase2_kwargs = calls[1].kwargs
+        assert phase2_kwargs["tool_choice"] == {
+            "type": "tool",
+            "name": "property_evaluation",
+        }
+        assert "thinking" not in phase2_kwargs
+        assert len(phase2_kwargs["tools"]) == 1
+        assert phase2_kwargs["tools"][0]["name"] == "property_evaluation"
 
     async def test_uses_cached_system_prompt(
         self,
         sample_merged_property: MergedProperty,
-        sample_tool_response: dict[str, Any],
+        sample_visual_response: dict[str, Any],
+        sample_evaluation_response: dict[str, Any],
     ) -> None:
         """Should use system prompt with cache_control for cost savings."""
-        mock_response = create_mock_response(sample_tool_response)
-
         quality_filter = PropertyQualityFilter(api_key="test-key")
         quality_filter._client = MagicMock()
-        quality_filter._client.messages.create = AsyncMock(return_value=mock_response)
+        quality_filter._client.messages.create = _make_two_phase_mock(
+            sample_visual_response, sample_evaluation_response
+        )
 
         await quality_filter.analyze_merged_properties([sample_merged_property])
 
-        call_args = quality_filter._client.messages.create.call_args
+        calls = quality_filter._client.messages.create.call_args_list
 
-        # Verify system prompt uses cache_control
-        system = call_args.kwargs["system"]
-        assert len(system) == 1
-        assert system[0]["type"] == "text"
-        assert system[0]["cache_control"] == {"type": "ephemeral"}
-        assert "expert London rental property analyst" in system[0]["text"]
+        # Phase 1 system prompt
+        system1 = calls[0].kwargs["system"]
+        assert len(system1) == 1
+        assert system1[0]["type"] == "text"
+        assert system1[0]["cache_control"] == {"type": "ephemeral"}
+        assert "expert London rental property analyst" in system1[0]["text"]
+
+        # Phase 2 system prompt
+        system2 = calls[1].kwargs["system"]
+        assert len(system2) == 1
+        assert system2[0]["type"] == "text"
+        assert system2[0]["cache_control"] == {"type": "ephemeral"}
+        assert "expert London rental property evaluator" in system2[0]["text"]
 
     async def test_extracts_value_for_quality_from_tool_response(
         self,
         sample_merged_property: MergedProperty,
-        sample_tool_response: dict[str, Any],
+        sample_visual_response: dict[str, Any],
+        sample_evaluation_response: dict[str, Any],
     ) -> None:
-        """Should extract quality-adjusted value rating from tool response."""
-        mock_response = create_mock_response(sample_tool_response)
-
+        """Should extract quality-adjusted value rating from Phase 2 response."""
         quality_filter = PropertyQualityFilter(api_key="test-key")
         quality_filter._client = MagicMock()
-        quality_filter._client.messages.create = AsyncMock(return_value=mock_response)
+        quality_filter._client.messages.create = _make_two_phase_mock(
+            sample_visual_response, sample_evaluation_response
+        )
 
         results = await quality_filter.analyze_merged_properties([sample_merged_property])
 
         _, analysis = results[0]
-        # value.quality_adjusted_rating comes from the tool response
+        # value.quality_adjusted_rating comes from Phase 2
         assert analysis.value is not None
         assert analysis.value.quality_adjusted_rating == "good"
         assert "Well-maintained" in analysis.value.quality_adjusted_note
@@ -822,15 +1025,20 @@ class TestPropertyQualityFilter:
     async def test_handles_end_turn_with_tool_use(
         self,
         sample_merged_property: MergedProperty,
-        sample_tool_response: dict[str, Any],
+        sample_visual_response: dict[str, Any],
+        sample_evaluation_response: dict[str, Any],
     ) -> None:
         """Should handle end_turn stop_reason when tool_use block is present."""
-        # Some responses come with end_turn but still have tool_use
-        mock_response = create_mock_response(sample_tool_response, stop_reason="end_turn")
+        mock_visual = create_mock_response(
+            sample_visual_response, stop_reason="end_turn", tool_name="property_visual_analysis"
+        )
+        mock_eval = create_mock_response(
+            sample_evaluation_response, tool_name="property_evaluation"
+        )
 
         quality_filter = PropertyQualityFilter(api_key="test-key")
         quality_filter._client = MagicMock()
-        quality_filter._client.messages.create = AsyncMock(return_value=mock_response)
+        quality_filter._client.messages.create = AsyncMock(side_effect=[mock_visual, mock_eval])
 
         results = await quality_filter.analyze_merged_properties([sample_merged_property])
 
@@ -842,7 +1050,8 @@ class TestPropertyQualityFilter:
     async def test_includes_description_in_prompt(
         self,
         sample_property: Property,
-        sample_tool_response: dict[str, Any],
+        sample_visual_response: dict[str, Any],
+        sample_evaluation_response: dict[str, Any],
     ) -> None:
         """Should include listing description in the user prompt."""
         # Create merged property with description populated
@@ -868,15 +1077,16 @@ class TestPropertyQualityFilter:
                 PropertySource.RIGHTMOVE: "Spacious flat with modern kitchen and gas hob."
             },
         )
-        mock_response = create_mock_response(sample_tool_response)
 
         quality_filter = PropertyQualityFilter(api_key="test-key")
         quality_filter._client = MagicMock()
-        quality_filter._client.messages.create = AsyncMock(return_value=mock_response)
+        quality_filter._client.messages.create = _make_two_phase_mock(
+            sample_visual_response, sample_evaluation_response
+        )
 
         await quality_filter.analyze_merged_properties([merged])
 
-        call_args = quality_filter._client.messages.create.call_args
+        call_args = quality_filter._client.messages.create.call_args_list[0]
         content = call_args.kwargs["messages"][0]["content"]
 
         # Find the text block with the user prompt (last text block, after image labels)
@@ -890,15 +1100,16 @@ class TestPropertyQualityFilter:
     async def test_handles_nullable_fields_in_response(
         self,
         one_bed_merged_property: MergedProperty,
-        sample_tool_response_with_nulls: dict[str, Any],
+        sample_visual_response_with_nulls: dict[str, Any],
+        sample_evaluation_response_with_nulls: dict[str, Any],
     ) -> None:
         """Should handle null values for optional fields in tool response."""
-        mock_response = create_mock_response(sample_tool_response_with_nulls)
-
         # Use 1-bed property to avoid space override for 2+ beds
         quality_filter = PropertyQualityFilter(api_key="test-key")
         quality_filter._client = MagicMock()
-        quality_filter._client.messages.create = AsyncMock(return_value=mock_response)
+        quality_filter._client.messages.create = _make_two_phase_mock(
+            sample_visual_response_with_nulls, sample_evaluation_response_with_nulls
+        )
 
         results = await quality_filter.analyze_merged_properties([one_bed_merged_property])
 
@@ -909,14 +1120,285 @@ class TestPropertyQualityFilter:
         assert analysis.kitchen.overall_quality == "unknown"
         assert analysis.kitchen.hob_type is None
         assert analysis.kitchen.has_dishwasher is None
-        assert analysis.kitchen.has_washing_machine is None
+        assert analysis.kitchen.has_washing_machine == "unknown"
 
-        assert analysis.light_space.window_sizes is None
+        assert analysis.light_space.window_sizes == "unknown"
         assert analysis.light_space.feels_spacious is None
-        assert analysis.light_space.ceiling_height is None
+        assert analysis.light_space.ceiling_height == "unknown"
 
         assert analysis.space.living_room_sqm is None
         assert analysis.space.is_spacious_enough is None
         assert analysis.space.confidence == "low"
 
-        assert analysis.concern_severity is None
+        assert analysis.concern_severity == "none"
+
+    async def test_phase1_output_passed_to_phase2(
+        self,
+        sample_merged_property: MergedProperty,
+        sample_visual_response: dict[str, Any],
+        sample_evaluation_response: dict[str, Any],
+    ) -> None:
+        """Phase 1 JSON output should appear in Phase 2 prompt."""
+        quality_filter = PropertyQualityFilter(api_key="test-key")
+        quality_filter._client = MagicMock()
+        quality_filter._client.messages.create = _make_two_phase_mock(
+            sample_visual_response, sample_evaluation_response
+        )
+
+        await quality_filter.analyze_merged_properties([sample_merged_property])
+
+        calls = quality_filter._client.messages.create.call_args_list
+        assert len(calls) == 2
+
+        # Phase 2 prompt should contain Phase 1 output in <visual_analysis> tags
+        phase2_content = calls[1].kwargs["messages"][0]["content"]
+        assert "<visual_analysis>" in phase2_content
+        assert '"overall_quality": "modern"' in phase2_content
+        assert "</visual_analysis>" in phase2_content
+
+    async def test_phase2_failure_returns_partial_analysis(
+        self,
+        sample_merged_property: MergedProperty,
+        sample_visual_response: dict[str, Any],
+    ) -> None:
+        """Phase 2 failure should return partial analysis with visual data only."""
+        mock_visual = create_mock_response(
+            sample_visual_response, tool_name="property_visual_analysis"
+        )
+
+        quality_filter = PropertyQualityFilter(api_key="test-key")
+        quality_filter._client = MagicMock()
+        # Phase 1 succeeds, Phase 2 raises
+        quality_filter._client.messages.create = AsyncMock(
+            side_effect=[mock_visual, Exception("Phase 2 API error")]
+        )
+
+        results = await quality_filter.analyze_merged_properties([sample_merged_property])
+
+        assert len(results) == 1
+        _, analysis = results[0]
+        # Visual data should be present
+        assert analysis.kitchen.overall_quality == "modern"
+        assert analysis.condition.overall_condition == "good"
+        assert analysis.summary == (
+            "Well-maintained flat with modern kitchen."
+            " Living room suits home office."
+        )
+        # Evaluation data should be absent/default
+        assert analysis.listing_extraction is None
+        assert analysis.viewing_notes is None
+        assert analysis.highlights is None
+        assert analysis.lowlights is None
+        assert analysis.one_line is None
+
+    async def test_phase2_no_images_in_call(
+        self,
+        sample_merged_property: MergedProperty,
+        sample_visual_response: dict[str, Any],
+        sample_evaluation_response: dict[str, Any],
+    ) -> None:
+        """Phase 2 should be text-only (no images)."""
+        quality_filter = PropertyQualityFilter(api_key="test-key")
+        quality_filter._client = MagicMock()
+        quality_filter._client.messages.create = _make_two_phase_mock(
+            sample_visual_response, sample_evaluation_response
+        )
+
+        await quality_filter.analyze_merged_properties([sample_merged_property])
+
+        calls = quality_filter._client.messages.create.call_args_list
+
+        # Phase 2 content is a string (text-only), not a list of content blocks
+        phase2_content = calls[1].kwargs["messages"][0]["content"]
+        assert isinstance(phase2_content, str)
+
+
+class TestBuildEvaluationPrompt:
+    """Tests for the build_evaluation_prompt function."""
+
+    def test_includes_visual_data(self) -> None:
+        """Should include Phase 1 visual data in XML tags."""
+        visual_data = {"kitchen": {"overall_quality": "modern"}}
+        prompt = build_evaluation_prompt(
+            visual_data=visual_data,
+            price_pcm=1800,
+            bedrooms=1,
+            area_average=1900,
+        )
+        assert "<visual_analysis>" in prompt
+        assert '"overall_quality": "modern"' in prompt
+        assert "</visual_analysis>" in prompt
+
+    def test_includes_property_context(self) -> None:
+        """Should include price and bedroom context."""
+        prompt = build_evaluation_prompt(
+            visual_data={},
+            price_pcm=1800,
+            bedrooms=2,
+            area_average=1900,
+        )
+        assert "£1,800/month" in prompt
+        assert "Bedrooms: 2" in prompt
+        assert "£1,900/month" in prompt
+
+    def test_includes_description(self) -> None:
+        """Should include listing description."""
+        prompt = build_evaluation_prompt(
+            visual_data={},
+            description="Lovely flat with garden",
+            price_pcm=1800,
+            bedrooms=1,
+            area_average=1900,
+        )
+        assert "<listing_description>" in prompt
+        assert "Lovely flat with garden" in prompt
+
+    def test_includes_area_context(self) -> None:
+        """Should include area context when outcode provided."""
+        prompt = build_evaluation_prompt(
+            visual_data={},
+            price_pcm=1800,
+            bedrooms=1,
+            area_average=1900,
+            area_context="Trendy East London area",
+            outcode="E8",
+        )
+        assert '<area_context outcode="E8">' in prompt
+        assert "Trendy East London area" in prompt
+
+    def test_ends_with_tool_instruction(self) -> None:
+        """Should end with instruction to use evaluation tool."""
+        prompt = build_evaluation_prompt(
+            visual_data={},
+            price_pcm=1800,
+            bedrooms=1,
+            area_average=1900,
+        )
+        assert "property_evaluation tool" in prompt
+
+
+class TestAnalyzeSingleMerged:
+    """Tests for analyze_single_merged method."""
+
+    async def test_with_images_returns_analysis(
+        self,
+        sample_merged_property: MergedProperty,
+        sample_visual_response: dict[str, Any],
+        sample_evaluation_response: dict[str, Any],
+    ) -> None:
+        """Should return (merged, analysis) when images are present."""
+        quality_filter = PropertyQualityFilter(api_key="test-key")
+        quality_filter._client = MagicMock()
+        quality_filter._client.messages.create = _make_two_phase_mock(
+            sample_visual_response, sample_evaluation_response
+        )
+
+        merged, analysis = await quality_filter.analyze_single_merged(sample_merged_property)
+
+        assert merged is sample_merged_property
+        assert analysis.kitchen.overall_quality == "modern"
+        assert analysis.condition.overall_condition == "good"
+        assert analysis.summary == (
+            "Well-maintained flat with modern kitchen."
+            " Living room suits home office."
+        )
+
+    async def test_without_images_returns_minimal(
+        self,
+        sample_property: Property,
+    ) -> None:
+        """Should return minimal analysis when no images available."""
+        merged = MergedProperty(
+            canonical=sample_property,
+            sources=(sample_property.source,),
+            source_urls={sample_property.source: sample_property.url},
+            images=(),
+            floorplan=None,
+            min_price=sample_property.price_pcm,
+            max_price=sample_property.price_pcm,
+        )
+
+        quality_filter = PropertyQualityFilter(api_key="test-key")
+        result_merged, analysis = await quality_filter.analyze_single_merged(merged)
+
+        assert result_merged is merged
+        assert "No images available" in analysis.summary
+        assert analysis.space.confidence == "low"
+
+    async def test_api_failure_returns_minimal(
+        self,
+        sample_merged_property: MergedProperty,
+    ) -> None:
+        """Should return minimal analysis on API failure (no raise)."""
+        quality_filter = PropertyQualityFilter(api_key="test-key")
+        quality_filter._client = MagicMock()
+        quality_filter._client.messages.create = AsyncMock(side_effect=Exception("API error"))
+
+        merged, analysis = await quality_filter.analyze_single_merged(sample_merged_property)
+
+        assert merged is sample_merged_property
+        assert "No images available" in analysis.summary
+        assert analysis.space.confidence == "low"
+
+
+class TestBackwardCompatValidators:
+    """Test that bool/None values are coerced to tri-state strings."""
+
+    def test_condition_damp_bool_coercion(self) -> None:
+        """True→'yes', False→'no', None→'unknown' for damp/mold."""
+        assert ConditionAnalysis(has_visible_damp=True).has_visible_damp == "yes"  # type: ignore[arg-type]
+        assert ConditionAnalysis(has_visible_damp=False).has_visible_damp == "no"  # type: ignore[arg-type]
+        assert ConditionAnalysis(has_visible_damp=None).has_visible_damp == "unknown"  # type: ignore[arg-type]
+        assert ConditionAnalysis(has_visible_mold=True).has_visible_mold == "yes"  # type: ignore[arg-type]
+        assert ConditionAnalysis(has_visible_mold=False).has_visible_mold == "no"  # type: ignore[arg-type]
+        assert ConditionAnalysis(has_visible_mold=None).has_visible_mold == "unknown"  # type: ignore[arg-type]
+
+    def test_condition_string_passthrough(self) -> None:
+        """String values should pass through unchanged."""
+        assert ConditionAnalysis(has_visible_damp="yes").has_visible_damp == "yes"
+        assert ConditionAnalysis(has_visible_damp="no").has_visible_damp == "no"
+        assert ConditionAnalysis(has_visible_damp="unknown").has_visible_damp == "unknown"
+
+    def test_flooring_glazing_bool_coercion(self) -> None:
+        """True→'yes', False→'no', None→'unknown' for double glazing."""
+        from home_finder.models import FlooringNoiseAnalysis
+
+        assert FlooringNoiseAnalysis(has_double_glazing=True).has_double_glazing == "yes"  # type: ignore[arg-type]
+        assert FlooringNoiseAnalysis(has_double_glazing=False).has_double_glazing == "no"  # type: ignore[arg-type]
+        assert FlooringNoiseAnalysis(has_double_glazing=None).has_double_glazing == "unknown"  # type: ignore[arg-type]
+
+    def test_listing_extraction_bool_coercion(self) -> None:
+        """True→'yes', False→'no', None→'unknown' for bills/pets."""
+        from home_finder.models import ListingExtraction
+
+        assert ListingExtraction(bills_included=True).bills_included == "yes"  # type: ignore[arg-type]
+        assert ListingExtraction(bills_included=False).bills_included == "no"  # type: ignore[arg-type]
+        assert ListingExtraction(bills_included=None).bills_included == "unknown"  # type: ignore[arg-type]
+        assert ListingExtraction(pets_allowed=True).pets_allowed == "yes"  # type: ignore[arg-type]
+        assert ListingExtraction(pets_allowed=False).pets_allowed == "no"  # type: ignore[arg-type]
+        assert ListingExtraction(pets_allowed=None).pets_allowed == "unknown"  # type: ignore[arg-type]
+
+    def test_kitchen_washing_machine_bool_coercion(self) -> None:
+        """True→'yes', False→'no', None→'unknown' for washing machine."""
+        assert KitchenAnalysis(has_washing_machine=True).has_washing_machine == "yes"  # type: ignore[arg-type]
+        assert KitchenAnalysis(has_washing_machine=False).has_washing_machine == "no"  # type: ignore[arg-type]
+        assert KitchenAnalysis(has_washing_machine=None).has_washing_machine == "unknown"  # type: ignore[arg-type]
+
+    def test_bathroom_ensuite_bool_coercion(self) -> None:
+        """True→'yes', False→'no', None→'unknown' for ensuite."""
+        from home_finder.models import BathroomAnalysis
+
+        assert BathroomAnalysis(is_ensuite=True).is_ensuite == "yes"  # type: ignore[arg-type]
+        assert BathroomAnalysis(is_ensuite=False).is_ensuite == "no"  # type: ignore[arg-type]
+        assert BathroomAnalysis(is_ensuite=None).is_ensuite == "unknown"  # type: ignore[arg-type]
+
+    def test_bedroom_tristate_bool_coercion(self) -> None:
+        """True→'yes', False→'no', None→'unknown' for bedroom tri-state fields."""
+        from home_finder.models import BedroomAnalysis
+
+        assert BedroomAnalysis(primary_is_double=True).primary_is_double == "yes"  # type: ignore[arg-type]
+        assert BedroomAnalysis(primary_is_double=False).primary_is_double == "no"  # type: ignore[arg-type]
+        assert BedroomAnalysis(primary_is_double=None).primary_is_double == "unknown"  # type: ignore[arg-type]
+        assert BedroomAnalysis(can_fit_desk=True).can_fit_desk == "yes"  # type: ignore[arg-type]
+        assert BedroomAnalysis(can_fit_desk=False).can_fit_desk == "no"  # type: ignore[arg-type]
+        assert BedroomAnalysis(can_fit_desk=None).can_fit_desk == "unknown"  # type: ignore[arg-type]

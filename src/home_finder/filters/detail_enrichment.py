@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Final
 
 from pydantic import HttpUrl
 
@@ -23,7 +23,7 @@ if TYPE_CHECKING:
 logger = get_logger(__name__)
 
 
-_ENRICHMENT_CONCURRENCY = 5
+_ENRICHMENT_CONCURRENCY: Final = 5
 
 
 async def _enrich_single(

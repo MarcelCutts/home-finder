@@ -6,6 +6,7 @@ outside the intended geographic boundaries.
 """
 
 import re
+from typing import Final
 
 from home_finder.logging import get_logger
 from home_finder.models import Property
@@ -15,7 +16,7 @@ logger = get_logger(__name__)
 
 # Mapping of London boroughs to their valid outcodes
 # This is used to validate that properties are in the expected area
-BOROUGH_OUTCODES: dict[str, set[str]] = {
+BOROUGH_OUTCODES: Final[dict[str, set[str]]] = {
     # Central London
     "city-of-london": {"EC1", "EC2", "EC3", "EC4"},
     "westminster": {
@@ -195,7 +196,7 @@ BOROUGH_OUTCODES: dict[str, set[str]] = {
 }
 
 # Outcode aliases for flexible matching
-OUTCODE_ALIASES: dict[str, str] = {
+OUTCODE_ALIASES: Final[dict[str, str]] = {
     # Common variations
     "tower hamlets": "tower-hamlets",
     "waltham forest": "waltham-forest",

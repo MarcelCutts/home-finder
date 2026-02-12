@@ -154,7 +154,7 @@ class TestSaveAndGetQualityAnalysis:
             condition=ConditionAnalysis(
                 overall_condition="fair",
                 confidence="high",
-                has_visible_damp=True,
+                has_visible_damp="yes",
                 maintenance_concerns=["damp patch in bathroom"],
             ),
             light_space=sample_analysis.light_space,
@@ -170,6 +170,78 @@ class TestSaveAndGetQualityAnalysis:
         assert result is not None
         assert result.overall_rating == 3
         assert result.condition_concerns is True
+
+
+    @pytest.mark.asyncio
+    async def test_migration_fixes_wrapped_one_line(
+        self,
+        prop_a: Property,
+    ) -> None:
+        """DB migration should unwrap one_line stored as JSON object."""
+        # Use a fresh storage to insert bad data before migration
+        storage = PropertyStorage(":memory:")
+        conn = await storage._get_connection()
+        # Create minimal schema without running full initialize()
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS properties (
+                unique_id TEXT PRIMARY KEY, source TEXT NOT NULL,
+                source_id TEXT NOT NULL, url TEXT NOT NULL,
+                title TEXT NOT NULL, price_pcm INTEGER NOT NULL,
+                bedrooms INTEGER NOT NULL, address TEXT NOT NULL,
+                postcode TEXT, latitude REAL, longitude REAL,
+                description TEXT, image_url TEXT, available_from TEXT,
+                first_seen TEXT NOT NULL, commute_minutes INTEGER,
+                transport_mode TEXT,
+                notification_status TEXT NOT NULL DEFAULT 'pending',
+                notified_at TEXT, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                sources TEXT, source_urls TEXT, min_price INTEGER, max_price INTEGER
+            )
+        """)
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS property_images (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                property_unique_id TEXT NOT NULL, source TEXT NOT NULL,
+                url TEXT NOT NULL, image_type TEXT NOT NULL,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS quality_analyses (
+                property_unique_id TEXT PRIMARY KEY,
+                analysis_json TEXT NOT NULL, overall_rating INTEGER,
+                condition_concerns BOOLEAN DEFAULT 0, concern_severity TEXT,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        await conn.commit()
+
+        # Save property, then manually insert bad analysis_json
+        await storage.save_property(prop_a)
+        bad_json = '{"one_line": {"one_line": "Bright flat"}, "summary": "Good", "condition_concerns": false, "kitchen": {"overall_quality": "modern", "notes": ""}, "condition": {"overall_condition": "good", "has_visible_damp": false, "has_visible_mold": false, "has_worn_fixtures": false, "maintenance_concerns": [], "confidence": "high"}, "light_space": {"natural_light": "good", "notes": ""}, "space": {"confidence": "low"}}'
+        await conn.execute(
+            "INSERT INTO quality_analyses (property_unique_id, analysis_json, created_at) VALUES (?, ?, '2026-01-01')",
+            (prop_a.unique_id, bad_json),
+        )
+        await conn.commit()
+
+        # Verify it's bad
+        cursor = await conn.execute(
+            "SELECT json_type(json_extract(analysis_json, '$.one_line')) FROM quality_analyses"
+        )
+        row = await cursor.fetchone()
+        assert row[0] == "object"
+
+        # Run initialize() which includes the migration
+        await storage.initialize()
+
+        # Verify it's fixed
+        cursor = await conn.execute(
+            "SELECT json_extract(analysis_json, '$.one_line') FROM quality_analyses"
+        )
+        row = await cursor.fetchone()
+        assert row[0] == "Bright flat"
+
+        await storage.close()
 
 
 class TestGetPropertiesPaginated:
@@ -341,6 +413,60 @@ class TestGetPropertiesPaginated:
 
         props, _ = await storage.get_properties_paginated()
         assert props[0]["quality_summary"] == ""
+
+    @pytest.mark.asyncio
+    async def test_value_rating_extracted(
+        self,
+        storage: PropertyStorage,
+        prop_a: Property,
+        merged_a: MergedProperty,
+        sample_analysis: PropertyQualityAnalysis,
+    ) -> None:
+        await storage.save_merged_property(merged_a)
+        await storage.save_quality_analysis(prop_a.unique_id, sample_analysis)
+
+        props, _ = await storage.get_properties_paginated()
+        assert len(props) == 1
+        assert props[0]["value_rating"] == "excellent"
+
+    @pytest.mark.asyncio
+    async def test_value_rating_none_when_no_analysis(
+        self, storage: PropertyStorage, merged_a: MergedProperty
+    ) -> None:
+        await storage.save_merged_property(merged_a)
+
+        props, _ = await storage.get_properties_paginated()
+        assert props[0]["value_rating"] is None
+
+    @pytest.mark.asyncio
+    async def test_value_rating_quality_adjusted_preferred(
+        self,
+        storage: PropertyStorage,
+        prop_a: Property,
+        merged_a: MergedProperty,
+    ) -> None:
+        """quality_adjusted_rating should be preferred over rating."""
+        analysis = PropertyQualityAnalysis(
+            kitchen=KitchenAnalysis(overall_quality="modern", hob_type="gas", has_dishwasher=True),
+            condition=ConditionAnalysis(overall_condition="good", confidence="high"),
+            light_space=LightSpaceAnalysis(natural_light="good", feels_spacious=True),
+            space=SpaceAnalysis(living_room_sqm=18.0, is_spacious_enough=True, confidence="high"),
+            value=ValueAnalysis(
+                area_average=2200,
+                difference=-300,
+                rating="excellent",
+                note="Below avg",
+                quality_adjusted_rating="good",
+                quality_adjusted_note="Adjusted",
+            ),
+            overall_rating=4,
+            summary="Test.",
+        )
+        await storage.save_merged_property(merged_a)
+        await storage.save_quality_analysis(prop_a.unique_id, analysis)
+
+        props, _ = await storage.get_properties_paginated()
+        assert props[0]["value_rating"] == "good"
 
     @pytest.mark.asyncio
     async def test_invalid_sort_falls_back(

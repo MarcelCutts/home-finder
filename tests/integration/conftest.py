@@ -4,7 +4,7 @@ Handles Crawlee state isolation between tests to prevent event loop conflicts.
 """
 
 import os
-from collections.abc import Generator
+from collections.abc import AsyncGenerator, Generator
 from pathlib import Path
 
 import pytest
@@ -95,7 +95,7 @@ def set_crawlee_storage_dir(tmp_path: Path) -> Generator[None, None, None]:
 
 
 @pytest_asyncio.fixture
-async def in_memory_storage():
+async def in_memory_storage() -> AsyncGenerator[PropertyStorage, None]:
     """In-memory SQLite storage for integration tests."""
     storage = PropertyStorage(":memory:")
     await storage.initialize()
@@ -104,7 +104,7 @@ async def in_memory_storage():
 
 
 @pytest.fixture
-def test_settings():
+def test_settings() -> Settings:
     """Settings configured for integration testing (no real APIs)."""
     return Settings(
         telegram_bot_token="fake:test-token",

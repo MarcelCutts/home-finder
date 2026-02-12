@@ -103,8 +103,8 @@ def _make_analyzed_property(
         kitchen=KitchenAnalysis(overall_quality="modern", hob_type="gas", notes="Good kitchen"),
         condition=ConditionAnalysis(
             overall_condition="good",
-            has_visible_damp=False,
-            has_visible_mold=False,
+            has_visible_damp="no",
+            has_visible_mold="no",
             has_worn_fixtures=False,
             maintenance_concerns=[],
             confidence="high",

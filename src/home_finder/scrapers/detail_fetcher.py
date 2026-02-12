@@ -4,7 +4,7 @@ import asyncio
 import json
 import re
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, assert_never
 
 import httpx
 from curl_cffi.requests import AsyncSession
@@ -148,7 +148,8 @@ class DetailFetcher:
                 return await self._fetch_openrent(prop)
             case PropertySource.ONTHEMARKET:
                 return await self._fetch_onthemarket(prop)
-        return None
+            case _ as unreachable:
+                assert_never(unreachable)
 
     async def _fetch_rightmove(self, prop: Property) -> DetailPageData | None:
         """Extract floorplan and gallery URLs from Rightmove detail page."""

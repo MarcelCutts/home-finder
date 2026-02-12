@@ -77,20 +77,20 @@ def _make_merged(
     )
 
 
-def _sample_tool_response() -> dict[str, Any]:
-    """Realistic tool response from Claude."""
+def _sample_visual_response() -> dict[str, Any]:
+    """Realistic Phase 1 visual analysis response from Claude."""
     return {
         "kitchen": {
             "overall_quality": "modern",
             "hob_type": "gas",
             "has_dishwasher": True,
-            "has_washing_machine": True,
+            "has_washing_machine": "yes",
             "notes": "Modern integrated kitchen with gas hob",
         },
         "condition": {
             "overall_condition": "good",
-            "has_visible_damp": False,
-            "has_visible_mold": False,
+            "has_visible_damp": "no",
+            "has_visible_mold": "no",
             "has_worn_fixtures": False,
             "maintenance_concerns": [],
             "confidence": "high",
@@ -107,22 +107,89 @@ def _sample_tool_response() -> dict[str, Any]:
             "is_spacious_enough": True,
             "confidence": "high",
         },
-        "value_for_quality": {
-            "rating": "good",
-            "reasoning": "Well-maintained at reasonable price for E8",
+        "bathroom": {
+            "overall_condition": "modern",
+            "has_bathtub": True,
+            "shower_type": "overhead",
+            "is_ensuite": "no",
+            "notes": "Clean and modern",
+        },
+        "bedroom": {
+            "primary_is_double": "yes",
+            "has_built_in_wardrobe": True,
+            "can_fit_desk": "yes",
+            "notes": "Good-sized double bedroom",
+        },
+        "outdoor_space": {
+            "has_balcony": False,
+            "has_garden": False,
+            "has_terrace": False,
+            "has_shared_garden": True,
+            "notes": "Shared communal garden",
+        },
+        "storage": {
+            "has_built_in_wardrobes": True,
+            "has_hallway_cupboard": False,
+            "storage_rating": "adequate",
+        },
+        "flooring_noise": {
+            "primary_flooring": "hardwood",
+            "has_double_glazing": "yes",
+            "noise_indicators": [],
+            "notes": "Quiet street",
+        },
+        "listing_red_flags": {
+            "missing_room_photos": [],
+            "too_few_photos": False,
+            "selective_angles": False,
+            "description_concerns": [],
+            "red_flag_count": 0,
         },
         "overall_rating": 4,
         "condition_concerns": False,
-        "concern_severity": None,
+        "concern_severity": "none",
         "summary": "Bright flat with modern kitchen and good natural light.",
     }
 
 
-def _create_mock_response(tool_input: dict[str, Any], stop_reason: str = "tool_use") -> MagicMock:
+def _sample_evaluation_response() -> dict[str, Any]:
+    """Realistic Phase 2 evaluation response from Claude."""
+    return {
+        "listing_extraction": {
+            "epc_rating": "C",
+            "service_charge_pcm": None,
+            "deposit_weeks": 5,
+            "bills_included": "no",
+            "pets_allowed": "unknown",
+            "parking": "street",
+            "council_tax_band": "C",
+            "property_type": "victorian",
+            "furnished_status": "furnished",
+        },
+        "value_for_quality": {
+            "rating": "good",
+            "reasoning": "Well-maintained at reasonable price for E8",
+        },
+        "viewing_notes": {
+            "check_items": ["Check water pressure", "Inspect windows"],
+            "questions_for_agent": ["Any upcoming rent increases?"],
+            "deal_breaker_tests": ["Test hot water"],
+        },
+        "highlights": ["Gas hob", "Modern kitchen", "Good light"],
+        "lowlights": ["No balcony"],
+        "one_line": "Bright Victorian flat with modern kitchen in E8",
+    }
+
+
+def _create_mock_response(
+    tool_input: dict[str, Any],
+    stop_reason: str = "tool_use",
+    tool_name: str = "property_visual_analysis",
+) -> MagicMock:
     tool_block = ToolUseBlock(
         id="toolu_123",
         type="tool_use",
-        name="property_quality_analysis",
+        name=tool_name,
         input=tool_input,
     )
     mock_response = MagicMock()
@@ -134,21 +201,29 @@ def _create_mock_response(tool_input: dict[str, Any], stop_reason: str = "tool_u
     return mock_response
 
 
+def _make_two_phase_mock() -> AsyncMock:
+    """Create mock that returns Phase 1 then Phase 2 responses."""
+    mock_visual = _create_mock_response(
+        _sample_visual_response(), tool_name="property_visual_analysis"
+    )
+    mock_eval = _create_mock_response(
+        _sample_evaluation_response(), tool_name="property_evaluation"
+    )
+    return AsyncMock(side_effect=[mock_visual, mock_eval])
+
+
 @pytest.mark.integration
 class TestQualityAnalysisIntegration:
     """Test quality analysis with mocked Anthropic API and real DB."""
 
     async def test_analyze_parses_tool_response(self):
-        """Tool use response should be parsed into PropertyQualityAnalysis."""
+        """Two-phase tool use response should be parsed into PropertyQualityAnalysis."""
         prop = _make_property()
         merged = _make_merged(prop)
 
-        tool_data = _sample_tool_response()
-        mock_response = _create_mock_response(tool_data)
-
         quality_filter = PropertyQualityFilter(api_key="test-key")
         quality_filter._client = MagicMock()
-        quality_filter._client.messages.create = AsyncMock(return_value=mock_response)
+        quality_filter._client.messages.create = _make_two_phase_mock()
 
         results = await quality_filter.analyze_merged_properties([merged])
 
@@ -163,18 +238,21 @@ class TestQualityAnalysisIntegration:
         assert analysis.overall_rating == 4
         assert analysis.condition_concerns is False
         assert "Bright flat" in analysis.summary
+        # Phase 2 fields
+        assert analysis.listing_extraction is not None
+        assert analysis.listing_extraction.epc_rating == "C"
+        assert analysis.highlights is not None
+        assert "Gas hob" in analysis.highlights
+        assert analysis.one_line is not None
 
     async def test_analysis_stored_in_db(self, in_memory_storage: PropertyStorage):
         """Analysis should roundtrip through the database."""
         prop = _make_property()
         merged = _make_merged(prop)
 
-        tool_data = _sample_tool_response()
-        mock_response = _create_mock_response(tool_data)
-
         quality_filter = PropertyQualityFilter(api_key="test-key")
         quality_filter._client = MagicMock()
-        quality_filter._client.messages.create = AsyncMock(return_value=mock_response)
+        quality_filter._client.messages.create = _make_two_phase_mock()
 
         results = await quality_filter.analyze_merged_properties([merged])
         _, analysis = results[0]
@@ -195,12 +273,9 @@ class TestQualityAnalysisIntegration:
         prop = _make_property()
         merged = _make_merged(prop)
 
-        tool_data = _sample_tool_response()
-        mock_response = _create_mock_response(tool_data)
-
         quality_filter = PropertyQualityFilter(api_key="test-key")
         quality_filter._client = MagicMock()
-        quality_filter._client.messages.create = AsyncMock(return_value=mock_response)
+        quality_filter._client.messages.create = _make_two_phase_mock()
 
         results = await quality_filter.analyze_merged_properties([merged])
         _, analysis = results[0]
@@ -219,15 +294,18 @@ class TestQualityAnalysisIntegration:
         prop = _make_property(bedrooms=2)
         merged = _make_merged(prop)
 
-        tool_data = _sample_tool_response()
-        tool_data["space"]["is_spacious_enough"] = False  # Claude says not spacious
-        tool_data["space"]["living_room_sqm"] = 15
+        visual_data = _sample_visual_response()
+        visual_data["space"]["is_spacious_enough"] = False  # Claude says not spacious
+        visual_data["space"]["living_room_sqm"] = 15
 
-        mock_response = _create_mock_response(tool_data)
+        mock_visual = _create_mock_response(visual_data, tool_name="property_visual_analysis")
+        mock_eval = _create_mock_response(
+            _sample_evaluation_response(), tool_name="property_evaluation"
+        )
 
         quality_filter = PropertyQualityFilter(api_key="test-key")
         quality_filter._client = MagicMock()
-        quality_filter._client.messages.create = AsyncMock(return_value=mock_response)
+        quality_filter._client.messages.create = AsyncMock(side_effect=[mock_visual, mock_eval])
 
         results = await quality_filter.analyze_merged_properties([merged])
         _, analysis = results[0]
@@ -272,12 +350,9 @@ class TestQualityAnalysisIntegration:
             max_price=prop.price_pcm,
         )
 
-        tool_data = _sample_tool_response()
-        mock_response = _create_mock_response(tool_data)
-
         quality_filter = PropertyQualityFilter(api_key="test-key")
         quality_filter._client = MagicMock()
-        quality_filter._client.messages.create = AsyncMock(return_value=mock_response)
+        quality_filter._client.messages.create = _make_two_phase_mock()
 
         # Mock the curl_cffi download
         mock_curl_resp = MagicMock()
@@ -296,13 +371,39 @@ class TestQualityAnalysisIntegration:
 
         assert len(results) == 1
         # Verify the API was called (image was processed)
-        quality_filter._client.messages.create.assert_called_once()
-        call_args = quality_filter._client.messages.create.call_args
+        quality_filter._client.messages.create.assert_called()
+        # Phase 1 call should have base64 image
+        call_args = quality_filter._client.messages.create.call_args_list[0]
         content = call_args.kwargs["messages"][0]["content"]
-        # Should have base64 image block
         image_blocks = [c for c in content if c.get("type") == "image"]
         assert len(image_blocks) == 1
         assert image_blocks[0]["source"]["type"] == "base64"
+
+    async def test_phase2_failure_still_returns_analysis(self):
+        """Phase 2 failure should still return analysis with visual data."""
+        prop = _make_property()
+        merged = _make_merged(prop)
+
+        mock_visual = _create_mock_response(
+            _sample_visual_response(), tool_name="property_visual_analysis"
+        )
+
+        quality_filter = PropertyQualityFilter(api_key="test-key")
+        quality_filter._client = MagicMock()
+        quality_filter._client.messages.create = AsyncMock(
+            side_effect=[mock_visual, Exception("Phase 2 timeout")]
+        )
+
+        results = await quality_filter.analyze_merged_properties([merged])
+
+        assert len(results) == 1
+        _, analysis = results[0]
+        # Visual data present
+        assert analysis.kitchen.overall_quality == "modern"
+        assert analysis.overall_rating == 4
+        # Evaluation data absent
+        assert analysis.listing_extraction is None
+        assert analysis.highlights is None
 
     def test_value_assessment(self):
         """Value assessment should rate correctly against benchmarks."""

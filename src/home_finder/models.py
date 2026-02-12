@@ -1,13 +1,14 @@
 """Pydantic models for properties and search criteria."""
 
+import json
 from datetime import UTC, datetime
-from enum import Enum
-from typing import Final, Literal, Self
+from enum import StrEnum
+from typing import Any, Final, Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, HttpUrl, field_validator, model_validator
 
 
-class PropertySource(str, Enum):
+class PropertySource(StrEnum):
     """Supported property listing platforms."""
 
     RIGHTMOVE = "rightmove"
@@ -21,7 +22,7 @@ class PropertySource(str, Enum):
         return _SOURCE_DISPLAY_NAMES[self.value]
 
 
-_SOURCE_DISPLAY_NAMES: dict[str, str] = {
+_SOURCE_DISPLAY_NAMES: Final[dict[str, str]] = {
     "openrent": "OpenRent",
     "rightmove": "Rightmove",
     "zoopla": "Zoopla",
@@ -31,7 +32,7 @@ _SOURCE_DISPLAY_NAMES: dict[str, str] = {
 SOURCE_NAMES: Final[dict[str, str]] = {s.value: s.display_name for s in PropertySource}
 assert set(SOURCE_NAMES) == {s.value for s in PropertySource}
 
-SOURCE_BADGES: dict[str, dict[str, str]] = {
+SOURCE_BADGES: Final[dict[str, dict[str, str]]] = {
     "openrent": {"abbr": "O", "color": "#00b4d8", "name": "OpenRent"},
     "rightmove": {"abbr": "R", "color": "#00deb6", "name": "Rightmove"},
     "zoopla": {"abbr": "Z", "color": "#8040bf", "name": "Zoopla"},
@@ -39,7 +40,7 @@ SOURCE_BADGES: dict[str, dict[str, str]] = {
 }
 
 
-class FurnishType(str, Enum):
+class FurnishType(StrEnum):
     """Furnishing type for property search filters."""
 
     FURNISHED = "furnished"
@@ -47,7 +48,7 @@ class FurnishType(str, Enum):
     PART_FURNISHED = "part_furnished"
 
 
-class TransportMode(str, Enum):
+class TransportMode(StrEnum):
     """Transport modes for commute filtering."""
 
     CYCLING = "cycling"
@@ -141,7 +142,7 @@ class SearchCriteria(BaseModel):
         )
 
 
-class NotificationStatus(str, Enum):
+class NotificationStatus(StrEnum):
     """Status of property notification."""
 
     PENDING = "pending"
@@ -216,6 +217,20 @@ class MergedProperty(BaseModel):
 # ---------------------------------------------------------------------------
 
 
+class PropertyType(StrEnum):
+    """Property stock type."""
+
+    VICTORIAN = "victorian"
+    EDWARDIAN = "edwardian"
+    GEORGIAN = "georgian"
+    NEW_BUILD = "new_build"
+    PURPOSE_BUILT = "purpose_built"
+    WAREHOUSE = "warehouse"
+    EX_COUNCIL = "ex_council"
+    PERIOD_CONVERSION = "period_conversion"
+    UNKNOWN = "unknown"
+
+
 class KitchenAnalysis(BaseModel):
     """Analysis of kitchen amenities and condition."""
 
@@ -224,8 +239,20 @@ class KitchenAnalysis(BaseModel):
     overall_quality: Literal["modern", "decent", "dated", "unknown"] = "unknown"
     hob_type: Literal["gas", "electric", "induction", "unknown"] | None = None
     has_dishwasher: bool | None = None
-    has_washing_machine: bool | None = None
+    has_washing_machine: Literal["yes", "no", "unknown"] = "unknown"
     notes: str = ""
+
+    @field_validator("has_washing_machine", mode="before")
+    @classmethod
+    def coerce_bool_to_tristate(cls, v: Any) -> Any:
+        """Coerce bool/None to tri-state for backward compat with old DB data."""
+        if v is True:
+            return "yes"
+        if v is False:
+            return "no"
+        if v is None:
+            return "unknown"
+        return v
 
 
 class ConditionAnalysis(BaseModel):
@@ -234,11 +261,29 @@ class ConditionAnalysis(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     overall_condition: Literal["excellent", "good", "fair", "poor", "unknown"] = "unknown"
-    has_visible_damp: bool = False
-    has_visible_mold: bool = False
+    has_visible_damp: Literal["yes", "no", "unknown"] = "unknown"
+    has_visible_mold: Literal["yes", "no", "unknown"] = "unknown"
     has_worn_fixtures: bool = False
     maintenance_concerns: list[str] = []
     confidence: Literal["high", "medium", "low"] = "medium"
+
+    @field_validator("has_visible_damp", "has_visible_mold", mode="before")
+    @classmethod
+    def coerce_bool_to_tristate(cls, v: Any) -> Any:
+        """Coerce bool/None to tri-state for backward compat with old DB data."""
+        if v is True:
+            return "yes"
+        if v is False:
+            return "no"
+        if v is None:
+            return "unknown"
+        return v
+
+    @field_validator("has_worn_fixtures", mode="before")
+    @classmethod
+    def coerce_none_to_false(cls, v: Any) -> Any:
+        """Coerce None to False for backward compat with old DB data."""
+        return False if v is None else v
 
 
 class LightSpaceAnalysis(BaseModel):
@@ -247,10 +292,16 @@ class LightSpaceAnalysis(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     natural_light: Literal["excellent", "good", "fair", "poor", "unknown"] = "unknown"
-    window_sizes: Literal["large", "medium", "small"] | None = None
+    window_sizes: Literal["large", "medium", "small", "unknown"] | None = None
     feels_spacious: bool | None = None  # None = unknown
-    ceiling_height: Literal["high", "standard", "low"] | None = None
+    ceiling_height: Literal["high", "standard", "low", "unknown"] | None = None
     notes: str = ""
+
+    @field_validator("window_sizes", "ceiling_height", mode="before")
+    @classmethod
+    def coerce_none_to_unknown(cls, v: Any) -> Any:
+        """Coerce None to 'unknown' for backward compat with old DB data."""
+        return "unknown" if v is None else v
 
 
 class SpaceAnalysis(BaseModel):
@@ -278,6 +329,172 @@ class ValueAnalysis(BaseModel):
     quality_adjusted_note: str = ""
 
 
+class BathroomAnalysis(BaseModel):
+    """Analysis of bathroom amenities and condition."""
+
+    model_config = ConfigDict(frozen=True)
+
+    overall_condition: Literal["modern", "decent", "dated", "unknown"] = "unknown"
+    has_bathtub: bool | None = None
+    shower_type: Literal["overhead", "separate_cubicle", "electric", "none", "unknown"] | None = (
+        None
+    )
+    is_ensuite: Literal["yes", "no", "unknown"] = "unknown"
+    notes: str = ""
+
+    @field_validator("is_ensuite", mode="before")
+    @classmethod
+    def coerce_bool_to_tristate(cls, v: Any) -> Any:
+        """Coerce bool/None to tri-state for backward compat with old DB data."""
+        if v is True:
+            return "yes"
+        if v is False:
+            return "no"
+        if v is None:
+            return "unknown"
+        return v
+
+
+class BedroomAnalysis(BaseModel):
+    """Analysis of bedroom space and fittings."""
+
+    model_config = ConfigDict(frozen=True)
+
+    primary_is_double: Literal["yes", "no", "unknown"] = "unknown"
+    has_built_in_wardrobe: bool | None = None
+    can_fit_desk: Literal["yes", "no", "unknown"] = "unknown"
+    notes: str = ""
+
+    @field_validator("primary_is_double", "can_fit_desk", mode="before")
+    @classmethod
+    def coerce_bool_to_tristate(cls, v: Any) -> Any:
+        """Coerce bool/None to tri-state for backward compat with old DB data."""
+        if v is True:
+            return "yes"
+        if v is False:
+            return "no"
+        if v is None:
+            return "unknown"
+        return v
+
+
+class OutdoorSpaceAnalysis(BaseModel):
+    """Analysis of outdoor space availability."""
+
+    model_config = ConfigDict(frozen=True)
+
+    has_balcony: bool = False
+    has_garden: bool = False
+    has_terrace: bool = False
+    has_shared_garden: bool = False
+    notes: str = ""
+
+    @field_validator(
+        "has_balcony", "has_garden", "has_terrace", "has_shared_garden", mode="before"
+    )
+    @classmethod
+    def coerce_none_to_false(cls, v: Any) -> Any:
+        """Coerce None to False for backward compat with old DB data."""
+        return False if v is None else v
+
+
+class StorageAnalysis(BaseModel):
+    """Analysis of storage provision."""
+
+    model_config = ConfigDict(frozen=True)
+
+    has_built_in_wardrobes: bool | None = None
+    has_hallway_cupboard: bool | None = None
+    storage_rating: Literal["good", "adequate", "poor", "unknown"] = "unknown"
+
+
+class FlooringNoiseAnalysis(BaseModel):
+    """Analysis of flooring type and noise indicators."""
+
+    model_config = ConfigDict(frozen=True)
+
+    primary_flooring: Literal["hardwood", "laminate", "carpet", "tile", "mixed", "unknown"] = (
+        "unknown"
+    )
+    has_double_glazing: Literal["yes", "no", "unknown"] = "unknown"
+    noise_indicators: list[str] = []
+    notes: str = ""
+
+    @field_validator("has_double_glazing", mode="before")
+    @classmethod
+    def coerce_bool_to_tristate(cls, v: Any) -> Any:
+        """Coerce bool/None to tri-state for backward compat with old DB data."""
+        if v is True:
+            return "yes"
+        if v is False:
+            return "no"
+        if v is None:
+            return "unknown"
+        return v
+
+
+class ListingExtraction(BaseModel):
+    """Structured data extracted from the listing description."""
+
+    model_config = ConfigDict(frozen=True)
+
+    epc_rating: Literal["A", "B", "C", "D", "E", "F", "G", "unknown"] | None = None
+    service_charge_pcm: int | None = None
+    deposit_weeks: int | None = None
+    bills_included: Literal["yes", "no", "unknown"] = "unknown"
+    pets_allowed: Literal["yes", "no", "unknown"] = "unknown"
+    parking: Literal["dedicated", "street", "none", "unknown"] | None = None
+    council_tax_band: Literal["A", "B", "C", "D", "E", "F", "G", "H", "unknown"] | None = None
+    property_type: PropertyType = PropertyType.UNKNOWN
+    furnished_status: Literal["furnished", "unfurnished", "part_furnished", "unknown"] | None = None
+
+    @field_validator("epc_rating", "council_tax_band", mode="before")
+    @classmethod
+    def coerce_none_to_unknown(cls, v: Any) -> Any:
+        """Coerce None to 'unknown' for backward compat with old DB data."""
+        return "unknown" if v is None else v
+
+    @field_validator("bills_included", "pets_allowed", mode="before")
+    @classmethod
+    def coerce_bool_to_tristate(cls, v: Any) -> Any:
+        """Coerce bool/None to tri-state for backward compat with old DB data."""
+        if v is True:
+            return "yes"
+        if v is False:
+            return "no"
+        if v is None:
+            return "unknown"
+        return v
+
+
+class ListingRedFlags(BaseModel):
+    """Red flags identified from the listing."""
+
+    model_config = ConfigDict(frozen=True)
+
+    missing_room_photos: list[str] = []
+    too_few_photos: bool = False
+    selective_angles: bool = False
+    description_concerns: list[str] = []
+    red_flag_count: int = 0
+
+    @field_validator("too_few_photos", "selective_angles", mode="before")
+    @classmethod
+    def coerce_none_to_false(cls, v: Any) -> Any:
+        """Coerce None to False for backward compat with old DB data."""
+        return False if v is None else v
+
+
+class ViewingNotes(BaseModel):
+    """Property-specific viewing preparation notes."""
+
+    model_config = ConfigDict(frozen=True)
+
+    check_items: list[str] = []
+    questions_for_agent: list[str] = []
+    deal_breaker_tests: list[str] = []
+
+
 class PropertyQualityAnalysis(BaseModel):
     """Complete quality analysis of a property."""
 
@@ -288,9 +505,45 @@ class PropertyQualityAnalysis(BaseModel):
     light_space: LightSpaceAnalysis
     space: SpaceAnalysis
 
+    # New analysis dimensions (optional for backward compat with existing DB rows)
+    bathroom: BathroomAnalysis | None = None
+    bedroom: BedroomAnalysis | None = None
+    outdoor_space: OutdoorSpaceAnalysis | None = None
+    storage: StorageAnalysis | None = None
+    flooring_noise: FlooringNoiseAnalysis | None = None
+    listing_extraction: ListingExtraction | None = None
+    listing_red_flags: ListingRedFlags | None = None
+    viewing_notes: ViewingNotes | None = None
+
+    # Card display fields (optional for backward compat)
+    highlights: list[str] | None = None
+    lowlights: list[str] | None = None
+    one_line: str | None = None
+
+    @field_validator("one_line", mode="before")
+    @classmethod
+    def unwrap_one_line(cls, v: Any) -> Any:
+        """Unwrap one_line if stored as dict or JSON string like {"one_line": "text"}."""
+        if isinstance(v, dict) and "one_line" in v:
+            return v["one_line"]
+        if isinstance(v, str) and v.startswith("{"):
+            try:
+                parsed = json.loads(v)
+                if isinstance(parsed, dict) and "one_line" in parsed:
+                    return parsed["one_line"]
+            except (json.JSONDecodeError, TypeError):
+                pass
+        return v
+
     # Advisory flags (no auto-filtering)
     condition_concerns: bool = False
-    concern_severity: Literal["minor", "moderate", "serious"] | None = None
+    concern_severity: Literal["minor", "moderate", "serious", "none"] | None = None
+
+    @field_validator("concern_severity", mode="before")
+    @classmethod
+    def coerce_none_severity(cls, v: Any) -> Any:
+        """Coerce None to 'none' for backward compat with old DB data."""
+        return "none" if v is None else v
 
     # Value assessment (calculated, not from LLM)
     value: ValueAnalysis | None = None

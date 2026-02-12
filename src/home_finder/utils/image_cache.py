@@ -3,14 +3,15 @@
 import hashlib
 import re
 from pathlib import Path
+from typing import Final
 
 from home_finder.logging import get_logger
 
 logger = get_logger(__name__)
 
-_IMAGE_CACHE_DIR = "image_cache"
+_IMAGE_CACHE_DIR: Final = "image_cache"
 
-VALID_IMAGE_EXTENSIONS = (".jpg", ".jpeg", ".png", ".gif", ".webp")
+VALID_IMAGE_EXTENSIONS: Final = (".jpg", ".jpeg", ".png", ".gif", ".webp")
 
 
 def is_valid_image_url(url: str) -> bool:

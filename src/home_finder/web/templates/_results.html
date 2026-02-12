@@ -1,9 +1,24 @@
 {% macro page_url(target_page) %}?page={{ target_page }}&sort={{ sort }}{% if min_price %}&min_price={{ min_price }}{% endif %}{% if max_price %}&max_price={{ max_price }}{% endif %}{% if bedrooms %}&bedrooms={{ bedrooms }}{% endif %}{% if min_rating %}&min_rating={{ min_rating }}{% endif %}{% if area %}&area={{ area }}{% endif %}{% endmacro %}
 
+<div class="sr-only" aria-live="polite">{{ total }} propert{{ "y" if total == 1 else "ies" }} found</div>
+
+{% if active_filters %}
+<div class="filter-chips-row">
+    {% for f in active_filters %}
+    <span class="filter-chip">
+        {{ f.label }}
+        <button type="button" class="filter-chip-remove" data-filter-key="{{ f.key }}" aria-label="Remove {{ f.label }} filter">&times;</button>
+    </span>
+    {% endfor %}
+</div>
+{% endif %}
+
 {% if properties %}
 <div class="card-grid">
     {% for prop in properties %}
+        <div class="card-entrance" style="--card-index: {{ loop.index0 }}">
         {% include "_property_card.html" %}
+        </div>
     {% endfor %}
 </div>
 
