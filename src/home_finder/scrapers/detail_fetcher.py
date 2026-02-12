@@ -315,7 +315,8 @@ class DetailFetcher:
                         description = desc
 
             # Fallback: Extract from RSC payload caption/filename pairs
-            # Zoopla RSC stores images as escaped JSON: \"caption\":\"Room\",\"filename\":\"hash.jpg\"
+            # Zoopla RSC stores images as escaped JSON:
+            #   \"caption\":\"Room\",\"filename\":\"hash.jpg\"
             if not gallery_urls:
                 rsc_matches = re.findall(
                     r'\\"caption\\":\\"([^\\]*)\\",\\"filename\\":\\"([a-f0-9]+\.(?:jpg|jpeg|png|webp))\\"',

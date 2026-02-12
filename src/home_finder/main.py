@@ -3,6 +3,7 @@
 import argparse
 import asyncio
 import sys
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Final
 
@@ -33,7 +34,7 @@ from home_finder.scrapers import (
     ZooplaScraper,
 )
 from home_finder.scrapers.detail_fetcher import DetailFetcher
-from home_finder.scrapers.location_utils import is_outcode
+from home_finder.utils.address import is_outcode
 
 logger = get_logger(__name__)
 
@@ -440,6 +441,78 @@ async def _save_one(
         await storage.save_quality_analysis(merged.unique_id, quality_analysis)
 
 
+# Type alias for the per-property callback in quality analysis
+_CommInfo = tuple[int, TransportMode] | None
+_OnResult = Callable[
+    [MergedProperty, _CommInfo, PropertyQualityAnalysis | None],
+    Awaitable[None],
+]
+
+
+async def _run_quality_and_save(
+    pre: PreAnalysisResult,
+    settings: Settings,
+    storage: PropertyStorage,
+    on_result: _OnResult,
+) -> int:
+    """Run quality analysis, save each property, and invoke callback.
+
+    Args:
+        pre: Pre-analysis pipeline result.
+        settings: Application settings.
+        storage: Database storage.
+        on_result: Async callback invoked after each property is saved.
+
+    Returns:
+        Number of properties processed.
+    """
+    use_quality = settings.anthropic_api_key.get_secret_value() and settings.enable_quality_filter
+    quality_filter: PropertyQualityFilter | None = None
+    if use_quality:
+        quality_filter = PropertyQualityFilter(
+            api_key=settings.anthropic_api_key.get_secret_value(),
+            max_images=settings.quality_filter_max_images,
+            enable_extended_thinking=settings.enable_extended_thinking,
+            thinking_budget_tokens=settings.thinking_budget_tokens,
+        )
+    else:
+        logger.info("skipping_quality_analysis", reason="not_configured")
+
+    semaphore = asyncio.Semaphore(_QUALITY_CONCURRENCY)
+    count = 0
+
+    try:
+
+        async def _analyze_one(
+            merged: MergedProperty,
+        ) -> tuple[MergedProperty, PropertyQualityAnalysis | None]:
+            async with semaphore:
+                if quality_filter:
+                    return await quality_filter.analyze_single_merged(
+                        merged, data_dir=settings.data_dir
+                    )
+                return merged, None
+
+        tasks = [asyncio.create_task(_analyze_one(m)) for m in pre.merged_to_process]
+
+        for coro in asyncio.as_completed(tasks):
+            try:
+                merged, quality_analysis = await coro
+            except Exception:
+                logger.error("property_processing_failed", exc_info=True)
+                continue
+
+            commute_info = pre.commute_lookup.get(merged.canonical.unique_id)
+            await _save_one(merged, commute_info, quality_analysis, storage)
+            await on_result(merged, commute_info, quality_analysis)
+            count += 1
+    finally:
+        if quality_filter:
+            await quality_filter.close()
+
+    return count
+
+
 async def run_pipeline(settings: Settings, *, max_per_scraper: int | None = None) -> None:
     """Run the full scraping and notification pipeline.
 
@@ -483,75 +556,35 @@ async def run_pipeline(settings: Settings, *, max_per_scraper: int | None = None
         if pre is None:
             return
 
-        # Concurrent quality analysis + streaming save/notify
         logger.info(
             "pipeline_started",
             phase="quality_analysis_and_notify",
             count=len(pre.merged_to_process),
         )
 
-        use_quality = (
-            settings.anthropic_api_key.get_secret_value() and settings.enable_quality_filter
-        )
-        quality_filter: PropertyQualityFilter | None = None
-        if use_quality:
-            quality_filter = PropertyQualityFilter(
-                api_key=settings.anthropic_api_key.get_secret_value(),
-                max_images=settings.quality_filter_max_images,
-                enable_extended_thinking=settings.enable_extended_thinking,
-                thinking_budget_tokens=settings.thinking_budget_tokens,
+        async def _notify(
+            merged: MergedProperty,
+            commute_info: _CommInfo,
+            quality_analysis: PropertyQualityAnalysis | None,
+        ) -> None:
+            commute_minutes = commute_info[0] if commute_info else None
+            transport_mode = commute_info[1] if commute_info else None
+
+            success = await notifier.send_merged_property_notification(
+                merged,
+                commute_minutes=commute_minutes,
+                transport_mode=transport_mode,
+                quality_analysis=quality_analysis,
             )
-        else:
-            logger.info("skipping_quality_analysis", reason="not_configured")
 
-        semaphore = asyncio.Semaphore(_QUALITY_CONCURRENCY)
-        notified_count = 0
+            if success:
+                await storage.mark_notified(merged.unique_id)
+            else:
+                await storage.mark_notification_failed(merged.unique_id)
 
-        try:
+            await asyncio.sleep(1)  # Telegram rate limit
 
-            async def _analyze_one(
-                merged: MergedProperty,
-            ) -> tuple[MergedProperty, PropertyQualityAnalysis | None]:
-                async with semaphore:
-                    if quality_filter:
-                        return await quality_filter.analyze_single_merged(
-                            merged, data_dir=settings.data_dir
-                        )
-                    return merged, None
-
-            tasks = [asyncio.create_task(_analyze_one(m)) for m in pre.merged_to_process]
-
-            for coro in asyncio.as_completed(tasks):
-                try:
-                    merged, quality_analysis = await coro
-                except Exception:
-                    logger.error("property_processing_failed", exc_info=True)
-                    continue
-
-                commute_info = pre.commute_lookup.get(merged.canonical.unique_id)
-                await _save_one(merged, commute_info, quality_analysis, storage)
-
-                commute_minutes = commute_info[0] if commute_info else None
-                transport_mode = commute_info[1] if commute_info else None
-
-                success = await notifier.send_merged_property_notification(
-                    merged,
-                    commute_minutes=commute_minutes,
-                    transport_mode=transport_mode,
-                    quality_analysis=quality_analysis,
-                )
-
-                if success:
-                    await storage.mark_notified(merged.unique_id)
-                else:
-                    await storage.mark_notification_failed(merged.unique_id)
-
-                notified_count += 1
-                await asyncio.sleep(1)  # Telegram rate limit
-        finally:
-            if quality_filter:
-                await quality_filter.close()
-
+        notified_count = await _run_quality_and_save(pre, settings, storage, _notify)
         logger.info("pipeline_complete", notified=notified_count)
 
     finally:
@@ -613,7 +646,6 @@ async def run_dry_run(settings: Settings, *, max_per_scraper: int | None = None)
             print("\nNo new properties to report.")
             return
 
-        # Concurrent quality analysis + save
         logger.info(
             "pipeline_started",
             phase="quality_analysis_and_save",
@@ -621,54 +653,17 @@ async def run_dry_run(settings: Settings, *, max_per_scraper: int | None = None)
             dry_run=True,
         )
 
-        use_quality = (
-            settings.anthropic_api_key.get_secret_value() and settings.enable_quality_filter
-        )
-        quality_filter: PropertyQualityFilter | None = None
-        if use_quality:
-            quality_filter = PropertyQualityFilter(
-                api_key=settings.anthropic_api_key.get_secret_value(),
-                max_images=settings.quality_filter_max_images,
-                enable_extended_thinking=settings.enable_extended_thinking,
-                thinking_budget_tokens=settings.thinking_budget_tokens,
-            )
-        else:
-            logger.info("skipping_quality_analysis", reason="not_configured")
-
-        semaphore = asyncio.Semaphore(_QUALITY_CONCURRENCY)
-
         # Accumulate results for summary printout
-        processed: list[
-            tuple[MergedProperty, tuple[int, TransportMode] | None, PropertyQualityAnalysis | None]
-        ] = []
+        processed: list[tuple[MergedProperty, _CommInfo, PropertyQualityAnalysis | None]] = []
 
-        try:
+        async def _accumulate(
+            merged: MergedProperty,
+            commute_info: _CommInfo,
+            quality_analysis: PropertyQualityAnalysis | None,
+        ) -> None:
+            processed.append((merged, commute_info, quality_analysis))
 
-            async def _analyze_one(
-                merged: MergedProperty,
-            ) -> tuple[MergedProperty, PropertyQualityAnalysis | None]:
-                async with semaphore:
-                    if quality_filter:
-                        return await quality_filter.analyze_single_merged(
-                            merged, data_dir=settings.data_dir
-                        )
-                    return merged, None
-
-            tasks = [asyncio.create_task(_analyze_one(m)) for m in pre.merged_to_process]
-
-            for coro in asyncio.as_completed(tasks):
-                try:
-                    merged, quality_analysis = await coro
-                except Exception:
-                    logger.error("property_processing_failed", exc_info=True)
-                    continue
-
-                commute_info = pre.commute_lookup.get(merged.canonical.unique_id)
-                await _save_one(merged, commute_info, quality_analysis, storage)
-                processed.append((merged, commute_info, quality_analysis))
-        finally:
-            if quality_filter:
-                await quality_filter.close()
+        saved_count = await _run_quality_and_save(pre, settings, storage, _accumulate)
 
         # Print summary
         print(f"\n{'=' * 60}")
@@ -724,7 +719,7 @@ async def run_dry_run(settings: Settings, *, max_per_scraper: int | None = None)
             print(f"  URL: {prop.url}")
             print()
 
-        logger.info("dry_run_complete", saved=len(processed))
+        logger.info("dry_run_complete", saved=saved_count)
 
     finally:
         await storage.close()

@@ -7,6 +7,31 @@ from typing import Any, Final, Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, HttpUrl, field_validator, model_validator
 
+# ---------------------------------------------------------------------------
+# Shared field validators for backward compat with old DB data
+# ---------------------------------------------------------------------------
+
+
+def _coerce_bool_to_tristate(v: Any) -> Any:
+    """Coerce bool/None to tri-state string for backward compat with old DB data."""
+    if v is True:
+        return "yes"
+    if v is False:
+        return "no"
+    if v is None:
+        return "unknown"
+    return v
+
+
+def _coerce_none_to_false(v: Any) -> Any:
+    """Coerce None to False for backward compat with old DB data."""
+    return False if v is None else v
+
+
+def _coerce_none_to_unknown(v: Any) -> Any:
+    """Coerce None to 'unknown' for backward compat with old DB data."""
+    return "unknown" if v is None else v
+
 
 class PropertySource(StrEnum):
     """Supported property listing platforms."""
@@ -19,25 +44,18 @@ class PropertySource(StrEnum):
     @property
     def display_name(self) -> str:
         """Human-readable display name for this source."""
-        return _SOURCE_DISPLAY_NAMES[self.value]
+        return _SOURCE_META[self.value]["name"]
 
 
-_SOURCE_DISPLAY_NAMES: Final[dict[str, str]] = {
-    "openrent": "OpenRent",
-    "rightmove": "Rightmove",
-    "zoopla": "Zoopla",
-    "onthemarket": "OnTheMarket",
+_SOURCE_META: Final[dict[str, dict[str, str]]] = {
+    "openrent": {"name": "OpenRent", "abbr": "O", "color": "#00b4d8"},
+    "rightmove": {"name": "Rightmove", "abbr": "R", "color": "#00deb6"},
+    "zoopla": {"name": "Zoopla", "abbr": "Z", "color": "#8040bf"},
+    "onthemarket": {"name": "OnTheMarket", "abbr": "M", "color": "#e54b4b"},
 }
 
-SOURCE_NAMES: Final[dict[str, str]] = {s.value: s.display_name for s in PropertySource}
-assert set(SOURCE_NAMES) == {s.value for s in PropertySource}
-
-SOURCE_BADGES: Final[dict[str, dict[str, str]]] = {
-    "openrent": {"abbr": "O", "color": "#00b4d8", "name": "OpenRent"},
-    "rightmove": {"abbr": "R", "color": "#00deb6", "name": "Rightmove"},
-    "zoopla": {"abbr": "Z", "color": "#8040bf", "name": "Zoopla"},
-    "onthemarket": {"abbr": "M", "color": "#e54b4b", "name": "OnTheMarket"},
-}
+SOURCE_NAMES: Final[dict[str, str]] = {k: v["name"] for k, v in _SOURCE_META.items()}
+SOURCE_BADGES: Final[dict[str, dict[str, str]]] = _SOURCE_META
 
 
 class FurnishType(StrEnum):
@@ -245,14 +263,7 @@ class KitchenAnalysis(BaseModel):
     @field_validator("has_washing_machine", mode="before")
     @classmethod
     def coerce_bool_to_tristate(cls, v: Any) -> Any:
-        """Coerce bool/None to tri-state for backward compat with old DB data."""
-        if v is True:
-            return "yes"
-        if v is False:
-            return "no"
-        if v is None:
-            return "unknown"
-        return v
+        return _coerce_bool_to_tristate(v)
 
 
 class ConditionAnalysis(BaseModel):
@@ -270,20 +281,12 @@ class ConditionAnalysis(BaseModel):
     @field_validator("has_visible_damp", "has_visible_mold", mode="before")
     @classmethod
     def coerce_bool_to_tristate(cls, v: Any) -> Any:
-        """Coerce bool/None to tri-state for backward compat with old DB data."""
-        if v is True:
-            return "yes"
-        if v is False:
-            return "no"
-        if v is None:
-            return "unknown"
-        return v
+        return _coerce_bool_to_tristate(v)
 
     @field_validator("has_worn_fixtures", mode="before")
     @classmethod
     def coerce_none_to_false(cls, v: Any) -> Any:
-        """Coerce None to False for backward compat with old DB data."""
-        return False if v is None else v
+        return _coerce_none_to_false(v)
 
 
 class LightSpaceAnalysis(BaseModel):
@@ -300,8 +303,7 @@ class LightSpaceAnalysis(BaseModel):
     @field_validator("window_sizes", "ceiling_height", mode="before")
     @classmethod
     def coerce_none_to_unknown(cls, v: Any) -> Any:
-        """Coerce None to 'unknown' for backward compat with old DB data."""
-        return "unknown" if v is None else v
+        return _coerce_none_to_unknown(v)
 
 
 class SpaceAnalysis(BaseModel):
@@ -345,14 +347,7 @@ class BathroomAnalysis(BaseModel):
     @field_validator("is_ensuite", mode="before")
     @classmethod
     def coerce_bool_to_tristate(cls, v: Any) -> Any:
-        """Coerce bool/None to tri-state for backward compat with old DB data."""
-        if v is True:
-            return "yes"
-        if v is False:
-            return "no"
-        if v is None:
-            return "unknown"
-        return v
+        return _coerce_bool_to_tristate(v)
 
 
 class BedroomAnalysis(BaseModel):
@@ -368,14 +363,7 @@ class BedroomAnalysis(BaseModel):
     @field_validator("primary_is_double", "can_fit_desk", mode="before")
     @classmethod
     def coerce_bool_to_tristate(cls, v: Any) -> Any:
-        """Coerce bool/None to tri-state for backward compat with old DB data."""
-        if v is True:
-            return "yes"
-        if v is False:
-            return "no"
-        if v is None:
-            return "unknown"
-        return v
+        return _coerce_bool_to_tristate(v)
 
 
 class OutdoorSpaceAnalysis(BaseModel):
@@ -389,13 +377,10 @@ class OutdoorSpaceAnalysis(BaseModel):
     has_shared_garden: bool = False
     notes: str = ""
 
-    @field_validator(
-        "has_balcony", "has_garden", "has_terrace", "has_shared_garden", mode="before"
-    )
+    @field_validator("has_balcony", "has_garden", "has_terrace", "has_shared_garden", mode="before")
     @classmethod
     def coerce_none_to_false(cls, v: Any) -> Any:
-        """Coerce None to False for backward compat with old DB data."""
-        return False if v is None else v
+        return _coerce_none_to_false(v)
 
 
 class StorageAnalysis(BaseModel):
@@ -423,14 +408,7 @@ class FlooringNoiseAnalysis(BaseModel):
     @field_validator("has_double_glazing", mode="before")
     @classmethod
     def coerce_bool_to_tristate(cls, v: Any) -> Any:
-        """Coerce bool/None to tri-state for backward compat with old DB data."""
-        if v is True:
-            return "yes"
-        if v is False:
-            return "no"
-        if v is None:
-            return "unknown"
-        return v
+        return _coerce_bool_to_tristate(v)
 
 
 class ListingExtraction(BaseModel):
@@ -451,20 +429,12 @@ class ListingExtraction(BaseModel):
     @field_validator("epc_rating", "council_tax_band", mode="before")
     @classmethod
     def coerce_none_to_unknown(cls, v: Any) -> Any:
-        """Coerce None to 'unknown' for backward compat with old DB data."""
-        return "unknown" if v is None else v
+        return _coerce_none_to_unknown(v)
 
     @field_validator("bills_included", "pets_allowed", mode="before")
     @classmethod
     def coerce_bool_to_tristate(cls, v: Any) -> Any:
-        """Coerce bool/None to tri-state for backward compat with old DB data."""
-        if v is True:
-            return "yes"
-        if v is False:
-            return "no"
-        if v is None:
-            return "unknown"
-        return v
+        return _coerce_bool_to_tristate(v)
 
 
 class ListingRedFlags(BaseModel):
@@ -481,8 +451,7 @@ class ListingRedFlags(BaseModel):
     @field_validator("too_few_photos", "selective_angles", mode="before")
     @classmethod
     def coerce_none_to_false(cls, v: Any) -> Any:
-        """Coerce None to False for backward compat with old DB data."""
-        return False if v is None else v
+        return _coerce_none_to_false(v)
 
 
 class ViewingNotes(BaseModel):

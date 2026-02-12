@@ -1181,8 +1181,7 @@ class TestPropertyQualityFilter:
         assert analysis.kitchen.overall_quality == "modern"
         assert analysis.condition.overall_condition == "good"
         assert analysis.summary == (
-            "Well-maintained flat with modern kitchen."
-            " Living room suits home office."
+            "Well-maintained flat with modern kitchen. Living room suits home office."
         )
         # Evaluation data should be absent/default
         assert analysis.listing_extraction is None
@@ -1299,8 +1298,7 @@ class TestAnalyzeSingleMerged:
         assert analysis.kitchen.overall_quality == "modern"
         assert analysis.condition.overall_condition == "good"
         assert analysis.summary == (
-            "Well-maintained flat with modern kitchen."
-            " Living room suits home office."
+            "Well-maintained flat with modern kitchen. Living room suits home office."
         )
 
     async def test_without_images_returns_minimal(

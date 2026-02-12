@@ -707,7 +707,7 @@ class TestFilterChips:
         await storage.save_merged_property(merged_a)
         resp = client.get("/?bedrooms=1&min_price=1500&area=E8")
         assert resp.status_code == 200
-        assert '1 bed' in resp.text
+        assert "1 bed" in resp.text
         assert 'data-filter-key="min_price"' in resp.text
         assert 'data-filter-key="area"' in resp.text
 

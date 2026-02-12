@@ -5,7 +5,7 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from home_finder.scrapers.zoopla_models import (
+from home_finder.scrapers.zoopla import (
     ZooplaFeature,
     ZooplaImage,
     ZooplaListing,

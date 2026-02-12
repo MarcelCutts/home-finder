@@ -725,9 +725,15 @@ class TelegramNotifier:
         Returns:
             True if the media group was sent successfully.
         """
-        from aiogram.types import InputMediaPhoto
+        from aiogram.types import (
+            InputMediaAudio,
+            InputMediaDocument,
+            InputMediaPhoto,
+            InputMediaVideo,
+        )
 
-        media = [
+        MediaType = InputMediaAudio | InputMediaDocument | InputMediaPhoto | InputMediaVideo
+        media: list[MediaType] = [
             InputMediaPhoto(
                 media=url,
                 caption=caption if i == 0 else None,

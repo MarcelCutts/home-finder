@@ -23,7 +23,7 @@ Multi-platform London rental property scraper with commute filtering, AI quality
 - **Multi-platform scraping**: OpenRent, Rightmove, Zoopla, OnTheMarket
 - **Cross-platform deduplication**: Graduated multi-signal scoring merges the same property listed on different platforms (two-phase: pre- and post-enrichment)
 - **Commute filtering**: Filter properties within X minutes of your destination using TravelTime API
-- **AI quality analysis**: Claude vision analyzes property images for condition, kitchen, space, and value
+- **AI quality analysis**: Two-phase Claude vision analysis — Phase 1 observes images (kitchen, condition, space, light), Phase 2 evaluates value, generates viewing notes, and curates highlights
 - **Web dashboard**: FastAPI-powered dashboard with HTMX live filtering, map view with MarkerCluster, property detail pages with area context, and lightbox gallery
 - **Rich Telegram notifications**: Property cards with photos, star ratings, commute times, quality summaries, and direct links (including web dashboard deep links)
 - **Detail enrichment**: Fetches gallery images, floorplans, and descriptions from property detail pages
@@ -170,7 +170,7 @@ Create a `.env` file with these settings (all use `HOME_FINDER_` prefix):
 
 1. Get an API key at https://console.anthropic.com/
 2. Add to your `.env` as `HOME_FINDER_ANTHROPIC_API_KEY`
-3. Enables AI-powered property quality analysis using Claude vision
+3. Enables two-phase AI property quality analysis using Claude vision (~$0.05-0.07/property)
 
 ## Running Tests
 
@@ -198,7 +198,7 @@ The full pipeline (`uv run home-finder`) executes these steps in order:
 8. **Detail Enrichment** — Fetch gallery images, floorplans, descriptions; cache images to disk
 9. **Post-Enrichment Dedup** — Cross-platform deduplication using enriched data (images, postcodes, coordinates)
 10. **Floorplan Gate** — Drop properties without floorplans (if enabled)
-11. **Quality Analysis** — Claude vision analyzes property images (if configured)
+11. **Quality Analysis** — Two-phase Claude vision analysis: Phase 1 (visual observations from images), Phase 2 (evaluation using Phase 1 output + listing text)
 12. **Save & Notify** — Store in DB, send Telegram notifications
 
 ### Deduplication
@@ -236,7 +236,8 @@ src/home_finder/
 │   ├── location.py        # Location validation (catches scraper leakage)
 │   ├── detail_enrichment.py  # Enriches merged properties with images/descriptions
 │   ├── floorplan.py       # Floorplan analysis (legacy)
-│   └── quality.py         # Claude vision property quality analysis
+│   ├── quality.py         # Two-phase Claude vision quality analysis (schemas, API calls, merging)
+│   └── quality_prompts.py # System prompts and user prompt builders for quality analysis
 ├── web/                   # Web dashboard (FastAPI)
 │   ├── app.py             # Application factory, lifespan, security middleware
 │   ├── routes.py          # Dashboard, detail, health check routes

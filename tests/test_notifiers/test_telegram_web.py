@@ -1,6 +1,5 @@
 """Tests for Telegram notifier web dashboard integration."""
 
-from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -10,83 +9,60 @@ from home_finder.models import MergedProperty, Property, PropertySource
 from home_finder.notifiers.telegram import TelegramNotifier, _build_inline_keyboard
 
 
-@pytest.fixture
-def sample_property() -> Property:
-    return Property(
-        source=PropertySource.OPENRENT,
-        source_id="12345",
-        url=HttpUrl("https://openrent.com/property/12345"),
-        title="1 Bed Flat",
-        price_pcm=1900,
-        bedrooms=1,
-        address="123 Mare Street",
-        postcode="E8 3RH",
-        latitude=51.5465,
-        longitude=-0.0553,
-        first_seen=datetime(2025, 1, 20),
-    )
-
-
-@pytest.fixture
-def merged_property(sample_property: Property) -> MergedProperty:
-    return MergedProperty(
-        canonical=sample_property,
-        sources=(PropertySource.OPENRENT, PropertySource.ZOOPLA),
-        source_urls={
-            PropertySource.OPENRENT: sample_property.url,
-            PropertySource.ZOOPLA: HttpUrl("https://zoopla.co.uk/99999"),
-        },
-        min_price=1850,
-        max_price=1900,
-    )
-
-
 class TestBuildInlineKeyboardWithWebUrl:
-    def test_with_https_url_uses_webapp_button(self, merged_property: MergedProperty) -> None:
+    def test_with_https_url_uses_webapp_button(
+        self, sample_merged_property: MergedProperty
+    ) -> None:
         keyboard = _build_inline_keyboard(
-            merged_property, web_base_url="https://home-finder.fly.dev"
+            sample_merged_property, web_base_url="https://home-finder.fly.dev"
         )
         # First button should be "Details" as a WebApp button
         all_buttons = [btn for row in keyboard.inline_keyboard for btn in row]
         assert all_buttons[0].text == "Details"
         assert all_buttons[0].web_app is not None
         assert "/property/" in all_buttons[0].web_app.url
-        assert merged_property.unique_id in all_buttons[0].web_app.url
+        assert sample_merged_property.unique_id in all_buttons[0].web_app.url
 
-    def test_with_http_url_uses_regular_link(self, merged_property: MergedProperty) -> None:
-        keyboard = _build_inline_keyboard(merged_property, web_base_url="http://localhost:8000")
+    def test_with_http_url_uses_regular_link(self, sample_merged_property: MergedProperty) -> None:
+        keyboard = _build_inline_keyboard(
+            sample_merged_property, web_base_url="http://localhost:8000"
+        )
         all_buttons = [btn for row in keyboard.inline_keyboard for btn in row]
         assert all_buttons[0].text == "Details"
         assert all_buttons[0].web_app is None
         assert "/property/" in all_buttons[0].url
 
-    def test_without_web_base_url_no_details_button(self, merged_property: MergedProperty) -> None:
-        keyboard = _build_inline_keyboard(merged_property, web_base_url="")
+    def test_without_web_base_url_no_details_button(
+        self, sample_merged_property: MergedProperty
+    ) -> None:
+        keyboard = _build_inline_keyboard(sample_merged_property, web_base_url="")
         all_buttons = [btn for row in keyboard.inline_keyboard for btn in row]
         button_texts = [btn.text for btn in all_buttons]
         assert "Details" not in button_texts
 
     def test_with_web_base_url_still_has_source_buttons(
-        self, merged_property: MergedProperty
+        self, sample_merged_property: MergedProperty
     ) -> None:
         keyboard = _build_inline_keyboard(
-            merged_property, web_base_url="https://home-finder.fly.dev"
+            sample_merged_property, web_base_url="https://home-finder.fly.dev"
         )
         all_buttons = [btn for row in keyboard.inline_keyboard for btn in row]
         button_texts = [btn.text for btn in all_buttons]
         assert "OpenRent" in button_texts
         assert "Zoopla" in button_texts
 
-    def test_web_base_url_trailing_slash_stripped(self, merged_property: MergedProperty) -> None:
+    def test_web_base_url_trailing_slash_stripped(
+        self, sample_merged_property: MergedProperty
+    ) -> None:
         keyboard = _build_inline_keyboard(
-            merged_property, web_base_url="https://home-finder.fly.dev/"
+            sample_merged_property, web_base_url="https://home-finder.fly.dev/"
         )
         all_buttons = [btn for row in keyboard.inline_keyboard for btn in row]
         # URL should not have double slashes
         assert "//property" not in all_buttons[0].web_app.url
 
-    def test_map_button_present_with_coords(self, merged_property: MergedProperty) -> None:
-        keyboard = _build_inline_keyboard(merged_property)
+    def test_map_button_present_with_coords(self, sample_merged_property: MergedProperty) -> None:
+        keyboard = _build_inline_keyboard(sample_merged_property)
         all_buttons = [btn for row in keyboard.inline_keyboard for btn in row]
         map_buttons = [btn for btn in all_buttons if "Map" in btn.text]
         assert len(map_buttons) == 1
@@ -140,7 +116,9 @@ class TestTelegramNotifierWebBaseUrl:
         assert notifier.web_base_url == ""
 
     @pytest.mark.asyncio
-    async def test_send_merged_passes_web_base_url(self, merged_property: MergedProperty) -> None:
+    async def test_send_merged_passes_web_base_url(
+        self, sample_merged_property: MergedProperty
+    ) -> None:
         notifier = TelegramNotifier(
             bot_token="123:ABC",
             chat_id=12345,
@@ -151,7 +129,7 @@ class TestTelegramNotifierWebBaseUrl:
         mock_bot.send_venue = AsyncMock(return_value=MagicMock(message_id=2))
 
         with patch.object(notifier, "_get_bot", return_value=mock_bot):
-            result = await notifier.send_merged_property_notification(merged_property)
+            result = await notifier.send_merged_property_notification(sample_merged_property)
 
         assert result is True
         # The keyboard should have been built with web_base_url

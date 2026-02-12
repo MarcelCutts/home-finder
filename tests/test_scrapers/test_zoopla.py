@@ -8,8 +8,7 @@ from bs4 import BeautifulSoup
 
 from home_finder.models import PropertySource
 from home_finder.scrapers.parsing import extract_bedrooms, extract_postcode, extract_price
-from home_finder.scrapers.zoopla import ZooplaScraper
-from home_finder.scrapers.zoopla_models import ZooplaListing
+from home_finder.scrapers.zoopla import ZooplaListing, ZooplaScraper
 
 
 @pytest.fixture

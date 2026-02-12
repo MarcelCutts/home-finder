@@ -16,11 +16,11 @@ import pytest
 from pydantic import HttpUrl
 
 from home_finder.models import Property, PropertySource
-from home_finder.scrapers.location_utils import is_outcode
 from home_finder.scrapers.onthemarket import OnTheMarketScraper
 from home_finder.scrapers.openrent import OpenRentScraper
 from home_finder.scrapers.rightmove import RightmoveScraper
 from home_finder.scrapers.zoopla import ZooplaScraper
+from home_finder.utils.address import is_outcode
 
 # Target search areas from main.py
 SEARCH_AREAS = [

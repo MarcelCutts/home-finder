@@ -3,9 +3,10 @@
 import math
 import re
 from collections import defaultdict
+from collections.abc import Callable
 from dataclasses import dataclass
 from enum import Enum
-from typing import Final
+from typing import Final, TypeVar
 
 from home_finder.logging import get_logger
 from home_finder.models import MergedProperty, Property, PropertyImage, PropertySource
@@ -40,6 +41,8 @@ MATCH_THRESHOLD: Final = 60
 
 # Minimum number of contributing signals (prevents single-signal false positives)
 MINIMUM_SIGNALS: Final = 2
+
+_T = TypeVar("_T")
 
 
 class MatchConfidence(Enum):
@@ -382,76 +385,20 @@ class Deduplicator:
             after_unique_id=len(unique_props),
         )
 
-        if not self.enable_cross_platform:
-            merged = [self._single_to_merged(p) for p in unique_props]
-            logger.info(
-                "deduplication_merge_complete",
-                original_count=len(properties),
-                merged_count=len(merged),
-                cross_platform=False,
-            )
-            return merged
-
-        # Stage 2: Group by outcode + bedrooms (blocking for efficiency)
-        # This reduces O(n²) comparisons to smaller groups
-        candidates_by_block: dict[str, list[Property]] = defaultdict(list)
-        no_outcode: list[Property] = []
-
-        for prop in unique_props:
-            outcode = extract_outcode(prop.postcode)
-            if outcode:
-                block_key = f"{outcode}:{prop.bedrooms}"
-                candidates_by_block[block_key].append(prop)
-            else:
-                no_outcode.append(prop)
-
-        # Stage 3: Fetch image hashes for blocks with multiple candidates
-        image_hashes: dict[str, str] = {}
-        if self.enable_image_hashing:
-            # Only fetch for properties in blocks that need comparison
-            props_needing_hashes = [
-                p
-                for candidates in candidates_by_block.values()
-                if len(candidates) > 1
-                for p in candidates
-                if p.image_url
-            ]
-            if props_needing_hashes:
-                image_hashes = await fetch_image_hashes_batch(props_needing_hashes)
-
-        # Stage 4: Score and merge within each block
-        merged_results: list[MergedProperty] = []
-
-        for block_key, candidates in candidates_by_block.items():
-            groups = self._group_by_weighted_score(candidates, image_hashes)
-            for group in groups:
-                if len(group) == 1:
-                    merged_results.append(self._single_to_merged(group[0]))
-                else:
-                    merged_results.append(self._merge_properties(group))
-                    logger.info(
-                        "properties_merged",
-                        block=block_key,
-                        source_count=len(group),
-                        sources=[p.source.value for p in group],
-                        unique_ids=[p.unique_id for p in group],
-                    )
-
-        # Add properties without outcode (can't cross-platform match)
-        for prop in no_outcode:
-            merged_results.append(self._single_to_merged(prop))
+        # Wrap as single-source MergedProperties, then use unified dedup
+        merged = [self._single_to_merged(p) for p in unique_props]
+        result = await self._deduplicate_merged_items(merged)
 
         logger.info(
             "deduplication_merge_complete",
             original_count=len(properties),
             after_unique_id=len(unique_props),
-            merged_count=len(merged_results),
-            cross_platform=True,
+            merged_count=len(result),
+            cross_platform=self.enable_cross_platform,
             image_hashing=self.enable_image_hashing,
-            image_hashes_fetched=len(image_hashes),
         )
 
-        return merged_results
+        return result
 
     def properties_to_merged(self, properties: list[Property]) -> list[MergedProperty]:
         """Wrap each Property as a single-source MergedProperty.
@@ -487,20 +434,40 @@ class Deduplicator:
         if not merged_properties:
             return []
 
-        if not self.enable_cross_platform:
-            logger.info(
-                "deduplication_merge_complete",
-                original_count=len(merged_properties),
-                merged_count=len(merged_properties),
-                cross_platform=False,
-            )
-            return merged_properties
+        result = await self._deduplicate_merged_items(merged_properties)
 
-        # Stage 1: Group by outcode + bedrooms (blocking for efficiency)
+        multi_source = sum(1 for m in result if len(m.sources) > 1)
+        logger.info(
+            "deduplication_merge_complete",
+            original_count=len(merged_properties),
+            merged_count=len(result),
+            multi_source_count=multi_source,
+            cross_platform=self.enable_cross_platform,
+            image_hashing=self.enable_image_hashing,
+        )
+
+        return result
+
+    async def _deduplicate_merged_items(
+        self,
+        items: list[MergedProperty],
+    ) -> list[MergedProperty]:
+        """Core dedup: block by outcode+bedrooms, score canonical properties, merge groups.
+
+        Args:
+            items: MergedProperty objects to deduplicate.
+
+        Returns:
+            Deduplicated list with cross-platform matches merged.
+        """
+        if not self.enable_cross_platform:
+            return items
+
+        # Group by outcode + bedrooms (blocking for efficiency)
         candidates_by_block: dict[str, list[MergedProperty]] = defaultdict(list)
         no_outcode: list[MergedProperty] = []
 
-        for mp in merged_properties:
+        for mp in items:
             outcode = extract_outcode(mp.canonical.postcode)
             if outcode:
                 block_key = f"{outcode}:{mp.canonical.bedrooms}"
@@ -508,7 +475,7 @@ class Deduplicator:
             else:
                 no_outcode.append(mp)
 
-        # Stage 2: Fetch image hashes for hero images
+        # Fetch image hashes for hero images
         image_hashes: dict[str, str] = {}
         if self.enable_image_hashing:
             props_needing_hashes = [
@@ -521,77 +488,29 @@ class Deduplicator:
             if props_needing_hashes:
                 image_hashes = await fetch_image_hashes_batch(props_needing_hashes)
 
-        # Stage 3: Score and merge within each block
-        merged_results: list[MergedProperty] = []
+        # Score and merge within each block
+        results: list[MergedProperty] = []
 
         for block_key, candidates in candidates_by_block.items():
-            groups = self._group_merged_by_weighted_score(candidates, image_hashes)
+            groups = _group_items_by_weighted_score(
+                candidates, lambda mp: mp.canonical, image_hashes
+            )
             for group in groups:
                 if len(group) == 1:
-                    merged_results.append(group[0])
+                    results.append(group[0])
                 else:
-                    merged_results.append(self._merge_merged_properties(group))
+                    results.append(self._merge_merged_properties(group))
                     logger.info(
-                        "enriched_properties_merged",
+                        "properties_merged",
                         block=block_key,
                         source_count=len(group),
                         sources=[s.value for mp in group for s in mp.sources],
                     )
 
         # Add properties without outcode (can't cross-platform match)
-        merged_results.extend(no_outcode)
+        results.extend(no_outcode)
 
-        multi_source = sum(1 for m in merged_results if len(m.sources) > 1)
-        logger.info(
-            "deduplication_merge_complete",
-            original_count=len(merged_properties),
-            merged_count=len(merged_results),
-            multi_source_count=multi_source,
-            cross_platform=True,
-            image_hashing=self.enable_image_hashing,
-        )
-
-        return merged_results
-
-    def _group_merged_by_weighted_score(
-        self,
-        candidates: list[MergedProperty],
-        image_hashes: dict[str, str],
-    ) -> list[list[MergedProperty]]:
-        """Group MergedProperties by weighted match score on their canonicals.
-
-        Args:
-            candidates: MergedProperties in same outcode+bedrooms block.
-            image_hashes: Dict mapping unique_id to image hash.
-
-        Returns:
-            List of groups where each group contains matching properties.
-        """
-        if len(candidates) <= 1:
-            return [candidates] if candidates else []
-
-        uf = UnionFind(len(candidates))
-
-        for i in range(len(candidates)):
-            for j in range(i + 1, len(candidates)):
-                mp_i, mp_j = candidates[i], candidates[j]
-                prop_i, prop_j = mp_i.canonical, mp_j.canonical
-
-                score = calculate_match_score(prop_i, prop_j, image_hashes)
-
-                if score.total >= 40:
-                    logger.debug(
-                        "merged_match_score_calculated",
-                        prop1=prop_i.unique_id,
-                        prop2=prop_j.unique_id,
-                        score=score.to_dict(),
-                        is_match=score.is_match,
-                    )
-
-                if score.is_match and prop_i.source != prop_j.source:
-                    uf.union(i, j)
-
-        return [[candidates[i] for i in members] for members in uf.groups().values()]
+        return results
 
     def _merge_merged_properties(self, merged_list: list[MergedProperty]) -> MergedProperty:
         """Combine multiple enriched MergedProperty objects into one.
@@ -656,50 +575,6 @@ class Deduplicator:
             descriptions=all_descriptions,
         )
 
-    def _group_by_weighted_score(
-        self,
-        candidates: list[Property],
-        image_hashes: dict[str, str],
-    ) -> list[list[Property]]:
-        """Group properties by weighted match score.
-
-        Uses union-find to transitively group matching properties.
-
-        Args:
-            candidates: Properties in same outcode+bedrooms block.
-            image_hashes: Dict mapping unique_id to image hash.
-
-        Returns:
-            List of groups where each group contains matching properties.
-        """
-        if len(candidates) <= 1:
-            return [candidates] if candidates else []
-
-        uf = UnionFind(len(candidates))
-
-        # Compare all pairs and log scores
-        for i in range(len(candidates)):
-            for j in range(i + 1, len(candidates)):
-                prop_i, prop_j = candidates[i], candidates[j]
-
-                score = calculate_match_score(prop_i, prop_j, image_hashes)
-
-                # Log all non-trivial scores for tuning
-                if score.total >= 40:
-                    logger.debug(
-                        "match_score_calculated",
-                        prop1=prop_i.unique_id,
-                        prop2=prop_j.unique_id,
-                        score=score.to_dict(),
-                        is_match=score.is_match,
-                    )
-
-                if score.is_match and prop_i.source != prop_j.source:
-                    uf.union(i, j)
-
-        # Build groups from union-find
-        return [[candidates[i] for i in members] for members in uf.groups().values()]
-
     def _single_to_merged(self, prop: Property) -> MergedProperty:
         """Wrap a single property as a MergedProperty.
 
@@ -724,41 +599,44 @@ class Deduplicator:
             descriptions=descriptions,
         )
 
-    def _merge_properties(self, props: list[Property]) -> MergedProperty:
-        """Merge multiple properties into one.
 
-        Args:
-            props: Properties to merge (should be same listing on different platforms).
+def _group_items_by_weighted_score(
+    items: list[_T],
+    get_prop: Callable[[_T], Property],
+    image_hashes: dict[str, str],
+) -> list[list[_T]]:
+    """Group items by weighted match score using union-find.
 
-        Returns:
-            Combined MergedProperty.
-        """
-        # Sort by first_seen - earliest is canonical
-        sorted_props = sorted(props, key=lambda p: p.first_seen)
-        canonical = sorted_props[0]
+    Args:
+        items: Items to group (Property or MergedProperty).
+        get_prop: Accessor to get the Property from each item.
+        image_hashes: Dict mapping unique_id to image hash.
 
-        # Collect all sources and URLs
-        sources = tuple(p.source for p in sorted_props)
-        source_urls = {p.source: p.url for p in sorted_props}
+    Returns:
+        List of groups where each group contains matching items.
+    """
+    if len(items) <= 1:
+        return [items] if items else []
 
-        # Collect all descriptions
-        descriptions: dict[PropertySource, str] = {}
-        for p in sorted_props:
-            if p.description:
-                descriptions[p.source] = p.description
+    uf = UnionFind(len(items))
 
-        # Calculate price range
-        prices = [p.price_pcm for p in sorted_props]
-        min_price = min(prices)
-        max_price = max(prices)
+    for i in range(len(items)):
+        for j in range(i + 1, len(items)):
+            prop_i = get_prop(items[i])
+            prop_j = get_prop(items[j])
 
-        return MergedProperty(
-            canonical=canonical,
-            sources=sources,
-            source_urls=source_urls,
-            images=(),  # Populated later by quality filter
-            floorplan=None,  # Populated later by quality filter
-            min_price=min_price,
-            max_price=max_price,
-            descriptions=descriptions,
-        )
+            score = calculate_match_score(prop_i, prop_j, image_hashes)
+
+            if score.total >= 40:
+                logger.debug(
+                    "match_score_calculated",
+                    prop1=prop_i.unique_id,
+                    prop2=prop_j.unique_id,
+                    score=score.to_dict(),
+                    is_match=score.is_match,
+                )
+
+            if score.is_match and prop_i.source != prop_j.source:
+                uf.union(i, j)
+
+    return [[items[i] for i in members] for members in uf.groups().values()]

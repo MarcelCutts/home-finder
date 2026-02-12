@@ -171,7 +171,6 @@ class TestSaveAndGetQualityAnalysis:
         assert result.overall_rating == 3
         assert result.condition_concerns is True
 
-
     @pytest.mark.asyncio
     async def test_migration_fixes_wrapped_one_line(
         self,
@@ -217,9 +216,19 @@ class TestSaveAndGetQualityAnalysis:
 
         # Save property, then manually insert bad analysis_json
         await storage.save_property(prop_a)
-        bad_json = '{"one_line": {"one_line": "Bright flat"}, "summary": "Good", "condition_concerns": false, "kitchen": {"overall_quality": "modern", "notes": ""}, "condition": {"overall_condition": "good", "has_visible_damp": false, "has_visible_mold": false, "has_worn_fixtures": false, "maintenance_concerns": [], "confidence": "high"}, "light_space": {"natural_light": "good", "notes": ""}, "space": {"confidence": "low"}}'
+        bad_json = (
+            '{"one_line": {"one_line": "Bright flat"}, "summary": "Good",'
+            ' "condition_concerns": false, "kitchen": {"overall_quality": "modern",'
+            ' "notes": ""}, "condition": {"overall_condition": "good",'
+            ' "has_visible_damp": false, "has_visible_mold": false,'
+            ' "has_worn_fixtures": false, "maintenance_concerns": [],'
+            ' "confidence": "high"}, "light_space": {"natural_light": "good",'
+            ' "notes": ""}, "space": {"confidence": "low"}}'
+        )
         await conn.execute(
-            "INSERT INTO quality_analyses (property_unique_id, analysis_json, created_at) VALUES (?, ?, '2026-01-01')",
+            "INSERT INTO quality_analyses"
+            " (property_unique_id, analysis_json, created_at)"
+            " VALUES (?, ?, '2026-01-01')",
             (prop_a.unique_id, bad_json),
         )
         await conn.commit()

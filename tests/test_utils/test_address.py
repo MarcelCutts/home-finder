@@ -1,8 +1,8 @@
-"""Tests for location utilities."""
+"""Tests for address utilities including outcode detection."""
 
 import pytest
 
-from home_finder.scrapers.location_utils import is_outcode
+from home_finder.utils.address import is_outcode
 
 
 class TestIsOutcode:

@@ -12,8 +12,8 @@ from pydantic import HttpUrl
 from home_finder.logging import get_logger
 from home_finder.models import FurnishType, Property, PropertySource
 from home_finder.scrapers.base import BaseScraper
-from home_finder.scrapers.location_utils import is_outcode
 from home_finder.scrapers.parsing import extract_bedrooms, extract_postcode, extract_price
+from home_finder.utils.address import is_outcode
 
 logger = get_logger(__name__)
 

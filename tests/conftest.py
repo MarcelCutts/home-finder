@@ -188,5 +188,7 @@ def sample_quality_analysis() -> PropertyQualityAnalysis:
             quality_adjusted_note="Good condition at well below market rate",
         ),
         overall_rating=4,
-        summary="Bright, well-maintained flat with modern kitchen. Good for home office and hosting.",
+        summary=(
+            "Bright, well-maintained flat with modern kitchen. Good for home office and hosting."
+        ),
     )

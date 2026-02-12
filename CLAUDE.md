@@ -92,8 +92,16 @@ async with AsyncSession() as session:
 ### Quality Analysis
 
 - Uses claude-sonnet-4-5 (`claude-sonnet-4-5-20250929`) via Anthropic API
-- Rate limited: 1.5s delay between calls (Tier 1: 50 RPM)
+- **Two-phase chained analysis** (perception → evaluation):
+  - **Phase 1 (Visual)**: Images + listing text → structured observations (kitchen, condition, space, etc.). Uses extended thinking, `tool_choice: auto`. Non-strict (schema exceeds Anthropic's grammar complexity limit).
+  - **Phase 2 (Evaluation)**: Phase 1 JSON + listing text (no images) → value assessment, viewing notes, highlights, one-liner. Uses forced tool choice, `strict: true`.
+- Tool schemas auto-generated from Pydantic models (`_VisualAnalysisResponse`, `_EvaluationResponse`) via `_build_tool_schema()` in `quality.py`; prompts in `quality_prompts.py`
+- Phase 1 output feeds Phase 2 via `build_evaluation_prompt()` (wraps Phase 1 JSON in `<visual_analysis>` XML tags)
+- Graceful degradation: Phase 1 fails → `None`; Phase 2 fails → partial analysis with visual data only
+- Post-processing strips `{"..."}` artifacts from string fields (Claude sometimes wraps text in JSON-like braces even with strict mode)
+- Rate limited: 0.2s delay between calls (Tier 2: 1,000 RPM)
 - Uses prompt caching (`cache_control: ephemeral`) for ~90% cost savings on system prompt
+- ~$0.05-0.07/property (Phase 1 ~$0.04-0.06 multimodal + thinking, Phase 2 ~$0.005-0.01 text-only)
 - Zoopla CDN images downloaded via curl_cffi and sent as base64 (anti-bot); others sent as URL references
 
 ### Proxy Support
@@ -104,7 +112,7 @@ async with AsyncSession() as session:
 ## Architecture Pointers
 
 - **Scrapers** → `src/home_finder/scrapers/` — each implements `BaseScraper.scrape()`, see `base.py` for interface
-- **Filters** → `src/home_finder/filters/` — `CriteriaFilter`, `LocationFilter`, `CommuteFilter`, `Deduplicator`, `PropertyQualityFilter`
+- **Filters** → `src/home_finder/filters/` — `CriteriaFilter`, `LocationFilter`, `CommuteFilter`, `Deduplicator`, `PropertyQualityFilter` (two-phase: `quality.py` + `quality_prompts.py`)
 - **Detail Fetcher** → `scrapers/detail_fetcher.py` — per-platform extraction (Rightmove: `PAGE_MODEL` JSON, Zoopla: RSC payload, OpenRent: PhotoSwipe, OTM: Redux state)
 - **Models** → `models.py` — `Property` (frozen), `MergedProperty`, `PropertyImage`, `SearchCriteria`, `SOURCE_NAMES`
 - **Config** → `config.py` — `pydantic-settings` with `HOME_FINDER_` prefix, key methods: `get_search_areas()`, `get_furnish_types()`, `get_search_criteria()`

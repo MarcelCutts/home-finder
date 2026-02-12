@@ -1,0 +1,21 @@
+{# Reusable UI macros for property templates #}
+
+{% macro quality_badge(value, green_values, amber_values, red_values) %}
+<span class="badge {% if value in green_values %}badge-green{% elif value in amber_values %}badge-amber{% elif value in red_values %}badge-red{% else %}badge-neutral{% endif %}">{{ caller() }}</span>
+{% endmacro %}
+
+{% macro quality_item_class(value, excellent_values, fair_values, poor_values) %}quality-item{% if value in excellent_values %}-excellent{% elif value in fair_values %}-fair{% elif value in poor_values %}-poor{% else %}-neutral{% endif %}{% endmacro %}
+
+{% macro commute_pill(minutes) %}
+{% if minutes is not none and minutes %}
+{% if minutes <= 15 %}
+<span class="commute-pill commute-green">{{ minutes }} min</span>
+{% elif minutes <= 30 %}
+<span class="commute-pill commute-indigo">{{ minutes }} min</span>
+{% elif minutes <= 45 %}
+<span class="commute-pill commute-amber">{{ minutes }} min</span>
+{% else %}
+<span class="commute-pill commute-red">{{ minutes }} min</span>
+{% endif %}
+{% endif %}
+{% endmacro %}

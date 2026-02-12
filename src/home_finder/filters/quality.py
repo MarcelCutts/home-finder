@@ -2,12 +2,10 @@
 
 import asyncio
 import base64
-import json
-from io import BytesIO
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Final, Literal, TypeAlias, TypeGuard, get_args
+from typing import TYPE_CHECKING, Any, Final, Literal
 
-from PIL import Image
+from pydantic import BaseModel, ConfigDict, Field
 
 from home_finder.data.area_context import (
     AREA_CONTEXT,
@@ -20,39 +18,30 @@ from home_finder.data.area_context import (
 )
 from home_finder.logging import get_logger
 from home_finder.models import (
-    BathroomAnalysis,
-    BedroomAnalysis,
     ConditionAnalysis,
-    FlooringNoiseAnalysis,
     KitchenAnalysis,
     LightSpaceAnalysis,
-    ListingExtraction,
-    ListingRedFlags,
     MergedProperty,
-    OutdoorSpaceAnalysis,
     PropertyQualityAnalysis,
     SpaceAnalysis,
-    StorageAnalysis,
     ValueAnalysis,
-    ViewingNotes,
 )
 from home_finder.utils.image_cache import is_valid_image_url, read_image_bytes
+from home_finder.utils.image_processing import (
+    ImageMediaType,
+)
+from home_finder.utils.image_processing import (
+    is_valid_media_type as _is_valid_media_type,
+)
+from home_finder.utils.image_processing import (
+    resize_image_bytes as _resize_image_bytes,
+)
 
 if TYPE_CHECKING:
     import anthropic
     from anthropic.types import ImageBlockParam
 
 logger = get_logger(__name__)
-
-# Valid media types for Claude vision API
-ImageMediaType: TypeAlias = Literal["image/jpeg", "image/png", "image/gif", "image/webp"]
-VALID_MEDIA_TYPES: Final[tuple[str, ...]] = get_args(ImageMediaType)
-
-
-def _is_valid_media_type(value: str) -> TypeGuard[ImageMediaType]:
-    """Check if a string is a valid image media type for Claude vision API."""
-    return value in VALID_MEDIA_TYPES
-
 
 # Rate limit settings for Tier 2 (1,000 RPM)
 # SDK handles retry automatically, we just need a small delay to avoid bursts
@@ -61,30 +50,6 @@ DELAY_BETWEEN_CALLS: Final = 0.2  # seconds (1000 RPM = 0.06s minimum, add buffe
 # SDK retry configuration
 MAX_RETRIES: Final = 3
 REQUEST_TIMEOUT: Final = 180.0  # 3 minutes for vision requests
-
-# Anthropic recommends ≤1568px on longest edge for optimal performance.
-# Also well under the 2000px hard limit for requests with >20 images.
-MAX_IMAGE_DIMENSION: Final = 1568
-
-
-def _resize_image_bytes(data: bytes, max_dim: int = MAX_IMAGE_DIMENSION) -> bytes:
-    """Downscale image so longest edge <= max_dim. Returns original bytes if already small."""
-    try:
-        img = Image.open(BytesIO(data))
-        w, h = img.size
-        if w <= max_dim and h <= max_dim:
-            return data
-        scale = max_dim / max(w, h)
-        new_size = (int(w * scale), int(h * scale))
-        # Preserve format before resize (resize clears it)
-        fmt = img.format or "JPEG"
-        img = img.resize(new_size, Image.LANCZOS)
-        buf = BytesIO()
-        img.save(buf, format=fmt, quality=85)
-        return buf.getvalue()
-    except Exception:
-        # If Pillow can't parse the image, return original bytes unchanged
-        return data
 
 
 def assess_value(price_pcm: int, postcode: str | None, bedrooms: int) -> ValueAnalysis:
@@ -143,749 +108,241 @@ def assess_value(price_pcm: int, postcode: str | None, bedrooms: int) -> ValueAn
     )
 
 
-# System prompt for Phase 1: Visual analysis - cached for cost savings
-VISUAL_ANALYSIS_SYSTEM_PROMPT: Final = """\
-You are an expert London rental property analyst with perfect vision \
-and meticulous attention to detail.
+from home_finder.filters.quality_prompts import (  # noqa: E402
+    EVALUATION_SYSTEM_PROMPT,
+    VISUAL_ANALYSIS_SYSTEM_PROMPT,
+    build_evaluation_prompt,
+    build_user_prompt,
+)
 
-Your task is to observe and assess property quality from images and \
-cross-reference with listing text. A separate evaluation step will \
-handle value assessment, viewing preparation, and curation — focus \
-purely on what you can see and verify.
-
-When you cannot determine something from the images, use the appropriate \
-sentinel value: "unknown" for enum/string fields, false for boolean fields, \
-"none" for concern_severity when there are no concerns. \
-For has_visible_damp, has_visible_mold, has_double_glazing, \
-has_washing_machine, is_ensuite, primary_is_double, and \
-can_fit_desk use "yes"/"no"/"unknown" — these are tri-state string fields. \
-Do not guess — a confident "unknown" is more useful than a wrong answer.
-
-<task>
-Analyze property images (gallery photos and optional floorplan) together with \
-listing text to produce a structured visual quality assessment. Cross-reference \
-what you see in the images with the listing description — it often mentions \
-"new kitchen", "gas hob", "recently refurbished" that confirm or clarify \
-what's in the photos.
-</task>
-
-<stock_types>
-First, identify the property type — this fundamentally affects expected pricing \
-and what condition issues to look for:
-- Victorian/Edwardian conversion: Period features, high ceilings, sash windows. \
-Baseline East London stock. Watch for awkward subdivisions, original single \
-glazing, rising damp, uneven floors.
-- Purpose-built new-build / Build-to-Rent: Clean lines, uniform finish, large \
-windows. Commands 15-30% premium but check for small rooms, thin partition \
-walls, developer-grade finishes that wear quickly.
-- Warehouse/industrial conversion: High ceilings, exposed brick, large windows. \
-Premium pricing (especially E9 canalside). Watch for draughts, echo/noise, \
-damp from inadequate conversion.
-- Ex-council / post-war estate: Concrete construction, uniform exteriors, \
-communal corridors. Should be 20-40% below area average. Communal area \
-quality signals management standards.
-- Georgian terrace: Grand proportions, original features. Premium stock.
-</stock_types>
-
-<listing_signals>
-Scan the description for cost and quality signals to cross-reference with images:
-- EPC rating: Band D-G = £50-150/month higher energy bills
-- "Service charge" amount: Add to headline rent for true monthly cost
-- "Rent-free weeks" or move-in incentives: Calculate effective monthly discount
-- "Selective licensing" or licence number: Compliant landlord (positive)
-- "Ground rent" or leasehold terms: Check for escalation clauses
-- Proximity to active construction/regeneration: Short-term noise but \
-potential rent increases (relevant in E9, E15, N17)
-</listing_signals>
-
-<analysis_steps>
-1. Kitchen Quality: Modern (new units, integrated appliances, good worktops) \
-vs Dated (old-fashioned units, worn surfaces, mismatched appliances). Note hob \
-type if visible/mentioned. Check listing for "new kitchen", "recently fitted".
-
-2. Property Condition: Look for damp (water stains, peeling paint near \
-windows/ceilings), mold (dark patches in corners/bathrooms), worn fixtures \
-(dated bathroom fittings, tired carpets, scuffed walls). Check stock-type-specific \
-issues. Cross-reference listing mentions of "refurbished", "newly decorated".
-
-3. Natural Light & Space: Window sizes, brightness, spacious vs cramped feel, \
-ceiling heights if visible.
-
-4. Living Room Size: From floorplan if included, estimate sqm. Target: fits a \
-home office AND hosts 8+ people (~20-25 sqm minimum).
-
-5. Overall Summary: 1-2 sentences — property character and what it's like to \
-live here. Don't restate condition concerns (they're listed separately).
-
-6. Overall Rating: 1-5 stars for rental desirability.
-
-7. Bathroom: Condition, bathtub presence, shower type (overhead, separate \
-cubicle, electric), ensuite. Cross-ref "wet room", "new bathroom", \
-"recently refurbished bathroom" in description.
-
-8. Bedroom: Can primary bedroom fit a double bed + wardrobe + desk? Check \
-floorplan room labels and dimensions. "Double room" claims are often dubious.
-
-9. Storage: Built-in wardrobes, hallway cupboard, airing cupboard. London \
-flats are notoriously storage-poor — flag when absent.
-
-10. Outdoor Space: Balcony, garden, terrace, shared garden from photos or \
-description. Premium London feature worth noting.
-
-11. Flooring & Noise: Floor type (hardwood, laminate, carpet), double glazing \
-presence, road-facing rooms, railway/traffic proximity indicators.
-
-12. Red Flags: Missing room photos (no bathroom/kitchen photos), too few \
-photos total (<4), selective angles hiding issues, description gaps or \
-concerning language.
-</analysis_steps>
-
-<rating_criteria>
-Overall rating (1-5 stars):
-  5 = Exceptional: Modern/refurbished to high standard, excellent light/space, \
-no concerns, good or excellent value. Rare find.
-  4 = Good: Well-maintained, comfortable, minor issues at most. Fair or better value.
-  3 = Acceptable: Liveable but with notable trade-offs (dated kitchen, limited \
-light, average condition). Price should reflect this.
-  2 = Below average: Multiple issues (poor condition, cramped, dated throughout). \
-Only worth it if significantly below market.
-  1 = Avoid: Serious problems (damp/mold, very poor condition, major red flags).
-</rating_criteria>
-
-<output_rules>
-Each output field appears in a different section of the notification. Avoid \
-restating information across fields:
-- maintenance_concerns: Specific condition issues (shown in ⚠️ section)
-- summary: Property character, layout, standout features (shown in blockquote)
-If a fact belongs in one field, don't repeat it in another.
-</output_rules>
-
-Always use the property_visual_analysis tool to return your assessment."""
+# ── Response models for tool schema generation ──────────────────────────
+# These define the strict schemas sent to the Anthropic API. They differ from
+# the storage models (models.py) which allow None/defaults for backward compat.
+_Forbid = ConfigDict(extra="forbid")
 
 
-# System prompt for Phase 2: Evaluation - cached for cost savings
-EVALUATION_SYSTEM_PROMPT: Final = """\
-You are an expert London rental property evaluator. You have been given \
-structured visual analysis observations from a detailed property inspection. \
-Your job is to evaluate, synthesize, and prepare actionable information.
+class _VisualAnalysisResponse(BaseModel):
+    """Phase 1 tool response: visual observations from property images."""
 
-When you cannot determine something from the available data, use the appropriate \
-sentinel value: "unknown" for enum/string fields. \
-For bills_included and pets_allowed use "yes"/"no"/"unknown" — these are \
-tri-state string fields. Only extract what is explicitly stated in the listing.
+    model_config = _Forbid
 
-<task>
-Given visual analysis observations and listing text, produce:
-1. Structured data extraction from the listing description
-2. Value-for-quality assessment grounded in the visual observations
-3. Property-specific viewing preparation notes
-4. Curated highlights and lowlights from the structured observations
-5. A one-line property tagline
-</task>
+    class Kitchen(BaseModel):
+        model_config = _Forbid
+        overall_quality: Literal["modern", "decent", "dated", "unknown"] = Field(
+            description="Overall kitchen quality/age assessment"
+        )
+        hob_type: Literal["gas", "electric", "induction", "unknown"] = Field(
+            description="Type of hob if visible or mentioned"
+        )
+        has_dishwasher: bool
+        has_washing_machine: Literal["yes", "no", "unknown"]
+        notes: str = Field(description="Notable kitchen features or concerns")
 
-<evaluation_steps>
-1. Listing Data Extraction: Mine the description for EPC rating, service \
-charge, deposit weeks, bills included, pets allowed, parking, council tax \
-band, property type, furnished status. Only extract what is explicitly stated.
+    class Condition(BaseModel):
+        model_config = _Forbid
+        overall_condition: Literal["excellent", "good", "fair", "poor", "unknown"]
+        has_visible_damp: Literal["yes", "no", "unknown"]
+        has_visible_mold: Literal["yes", "no", "unknown"]
+        has_worn_fixtures: bool
+        maintenance_concerns: list[str] = Field(description="List of specific maintenance concerns")
+        confidence: Literal["high", "medium", "low"]
 
-2. Value Assessment: Consider stock type (new-build at +15-30% is expected, \
-Victorian at +15% is overpriced, ex-council at average is poor value). Factor \
-area context, true monthly cost (council tax, service charges, EPC costs, \
-rent-free incentives), crime context, and rent trend trajectory. Ground your \
-reasoning in the visual observations — reference specific findings like \
-"modern kitchen" or "dated bathroom" to justify the rating. Your reasoning \
-should focus on price-side factors — don't restate condition details.
+    class LightSpace(BaseModel):
+        model_config = _Forbid
+        natural_light: Literal["excellent", "good", "fair", "poor", "unknown"]
+        window_sizes: Literal["large", "medium", "small", "unknown"]
+        feels_spacious: bool = Field(description="Whether the property feels spacious")
+        ceiling_height: Literal["high", "standard", "low", "unknown"]
+        notes: str
 
-3. Viewing Notes: Generate property-specific items to check during a viewing, \
-questions for the letting agent, and quick deal-breaker tests. Base these on \
-the visual analysis findings — if damp was flagged as unknown, suggest \
-checking for it; if maintenance concerns were noted, suggest inspecting those \
-areas. Be specific, not generic.
+    class Space(BaseModel):
+        model_config = _Forbid
+        living_room_sqm: float | None = Field(
+            description="Estimated living room size in sqm from floorplan"
+        )
+        is_spacious_enough: bool = Field(description="True if can fit office AND host 8+ people")
+        confidence: Literal["high", "medium", "low"]
 
-4. Highlights: Review all visual analysis sub-models and pick 3-5 most notable \
-positive features as 1-3 word tags (e.g. "Gas hob", "Balcony", "High ceilings", \
-"New bathroom", "Pets allowed"). Do NOT include EPC rating here.
+    class Bathroom(BaseModel):
+        model_config = _Forbid
+        overall_condition: Literal["modern", "decent", "dated", "unknown"]
+        has_bathtub: bool
+        shower_type: Literal["overhead", "separate_cubicle", "electric", "none", "unknown"]
+        is_ensuite: Literal["yes", "no", "unknown"]
+        notes: str
 
-5. Lowlights: Review all visual analysis sub-models and pick 1-3 most notable \
-concerns or gaps as 1-3 word tags (e.g. "No dishwasher", "Street noise", \
-"Small bedroom").
+    class Bedroom(BaseModel):
+        model_config = _Forbid
+        primary_is_double: Literal["yes", "no", "unknown"]
+        has_built_in_wardrobe: bool
+        can_fit_desk: Literal["yes", "no", "unknown"]
+        notes: str
 
-6. One-liner: 6-12 word tagline capturing the property's character \
-(e.g. "Bright Victorian flat with period features and a modern kitchen"). \
-Synthesize from the visual observations.
-</evaluation_steps>
+    class OutdoorSpace(BaseModel):
+        model_config = _Forbid
+        has_balcony: bool
+        has_garden: bool
+        has_terrace: bool
+        has_shared_garden: bool
+        notes: str
 
-<value_rating_criteria>
-Value-for-quality rating:
-  excellent = Quality clearly exceeds what this price normally buys in the area.
-  good = Fair deal — quality matches or slightly exceeds the price point.
-  fair = Typical for the price — no standout value, no major overpay.
-  poor = Overpriced relative to quality/condition. Renter is overpaying.
-</value_rating_criteria>
+    class Storage(BaseModel):
+        model_config = _Forbid
+        has_built_in_wardrobes: bool
+        has_hallway_cupboard: bool
+        storage_rating: Literal["good", "adequate", "poor", "unknown"]
 
-Always use the property_evaluation tool to return your assessment."""
+    class FlooringNoise(BaseModel):
+        model_config = _Forbid
+        primary_flooring: Literal["hardwood", "laminate", "carpet", "tile", "mixed", "unknown"]
+        has_double_glazing: Literal["yes", "no", "unknown"]
+        noise_indicators: list[str]
+        notes: str
 
+    class RedFlags(BaseModel):
+        model_config = _Forbid
+        missing_room_photos: list[str] = Field(
+            description="Rooms not shown in photos (e.g. 'bathroom', 'kitchen')"
+        )
+        too_few_photos: bool
+        selective_angles: bool
+        description_concerns: list[str]
+        red_flag_count: int = Field(description="Total number of red flags identified")
 
-# Phase 1 tool schema: Visual analysis (perceptual observations)
-# strict: true ensures schema-compliant responses (no null for bool fields, etc.)
-VISUAL_ANALYSIS_TOOL: Final[dict[str, Any]] = {
-    "name": "property_visual_analysis",
-    "description": "Return visual property quality analysis results from images",
-    "input_schema": {
-        "type": "object",
-        "properties": {
-            "kitchen": {
-                "type": "object",
-                "properties": {
-                    "overall_quality": {
-                        "type": "string",
-                        "enum": ["modern", "decent", "dated", "unknown"],
-                        "description": "Overall kitchen quality/age assessment",
-                    },
-                    "hob_type": {
-                        "type": "string",
-                        "enum": ["gas", "electric", "induction", "unknown"],
-                        "description": "Type of hob if visible or mentioned",
-                    },
-                    "has_dishwasher": {"type": "boolean"},
-                    "has_washing_machine": {
-                        "type": "string",
-                        "enum": ["yes", "no", "unknown"],
-                    },
-                    "notes": {
-                        "type": "string",
-                        "description": "Notable kitchen features or concerns",
-                    },
-                },
-                "required": [
-                    "overall_quality",
-                    "hob_type",
-                    "has_dishwasher",
-                    "has_washing_machine",
-                    "notes",
-                ],
-                "additionalProperties": False,
-            },
-            "condition": {
-                "type": "object",
-                "properties": {
-                    "overall_condition": {
-                        "type": "string",
-                        "enum": ["excellent", "good", "fair", "poor", "unknown"],
-                    },
-                    "has_visible_damp": {
-                        "type": "string",
-                        "enum": ["yes", "no", "unknown"],
-                    },
-                    "has_visible_mold": {
-                        "type": "string",
-                        "enum": ["yes", "no", "unknown"],
-                    },
-                    "has_worn_fixtures": {"type": "boolean"},
-                    "maintenance_concerns": {
-                        "type": "array",
-                        "items": {"type": "string"},
-                        "description": "List of specific maintenance concerns",
-                    },
-                    "confidence": {"type": "string", "enum": ["high", "medium", "low"]},
-                },
-                "required": [
-                    "overall_condition",
-                    "has_visible_damp",
-                    "has_visible_mold",
-                    "has_worn_fixtures",
-                    "maintenance_concerns",
-                    "confidence",
-                ],
-                "additionalProperties": False,
-            },
-            "light_space": {
-                "type": "object",
-                "properties": {
-                    "natural_light": {
-                        "type": "string",
-                        "enum": ["excellent", "good", "fair", "poor", "unknown"],
-                    },
-                    "window_sizes": {
-                        "type": "string",
-                        "enum": ["large", "medium", "small", "unknown"],
-                    },
-                    "feels_spacious": {
-                        "type": "boolean",
-                        "description": "Whether the property feels spacious",
-                    },
-                    "ceiling_height": {
-                        "type": "string",
-                        "enum": ["high", "standard", "low", "unknown"],
-                    },
-                    "notes": {"type": "string"},
-                },
-                "required": [
-                    "natural_light",
-                    "window_sizes",
-                    "feels_spacious",
-                    "ceiling_height",
-                    "notes",
-                ],
-                "additionalProperties": False,
-            },
-            "space": {
-                "type": "object",
-                "properties": {
-                    "living_room_sqm": {
-                        "anyOf": [{"type": "number"}, {"type": "null"}],
-                        "description": "Estimated living room size in sqm from floorplan",
-                    },
-                    "is_spacious_enough": {
-                        "type": "boolean",
-                        "description": "True if can fit office AND host 8+ people",
-                    },
-                    "confidence": {"type": "string", "enum": ["high", "medium", "low"]},
-                },
-                "required": ["living_room_sqm", "is_spacious_enough", "confidence"],
-                "additionalProperties": False,
-            },
-            "bathroom": {
-                "type": "object",
-                "properties": {
-                    "overall_condition": {
-                        "type": "string",
-                        "enum": ["modern", "decent", "dated", "unknown"],
-                    },
-                    "has_bathtub": {"type": "boolean"},
-                    "shower_type": {
-                        "type": "string",
-                        "enum": [
-                            "overhead",
-                            "separate_cubicle",
-                            "electric",
-                            "none",
-                            "unknown",
-                        ],
-                    },
-                    "is_ensuite": {
-                        "type": "string",
-                        "enum": ["yes", "no", "unknown"],
-                    },
-                    "notes": {"type": "string"},
-                },
-                "required": [
-                    "overall_condition",
-                    "has_bathtub",
-                    "shower_type",
-                    "is_ensuite",
-                    "notes",
-                ],
-                "additionalProperties": False,
-            },
-            "bedroom": {
-                "type": "object",
-                "properties": {
-                    "primary_is_double": {
-                        "type": "string",
-                        "enum": ["yes", "no", "unknown"],
-                    },
-                    "has_built_in_wardrobe": {"type": "boolean"},
-                    "can_fit_desk": {
-                        "type": "string",
-                        "enum": ["yes", "no", "unknown"],
-                    },
-                    "notes": {"type": "string"},
-                },
-                "required": [
-                    "primary_is_double",
-                    "has_built_in_wardrobe",
-                    "can_fit_desk",
-                    "notes",
-                ],
-                "additionalProperties": False,
-            },
-            "outdoor_space": {
-                "type": "object",
-                "properties": {
-                    "has_balcony": {"type": "boolean"},
-                    "has_garden": {"type": "boolean"},
-                    "has_terrace": {"type": "boolean"},
-                    "has_shared_garden": {"type": "boolean"},
-                    "notes": {"type": "string"},
-                },
-                "required": [
-                    "has_balcony",
-                    "has_garden",
-                    "has_terrace",
-                    "has_shared_garden",
-                    "notes",
-                ],
-                "additionalProperties": False,
-            },
-            "storage": {
-                "type": "object",
-                "properties": {
-                    "has_built_in_wardrobes": {"type": "boolean"},
-                    "has_hallway_cupboard": {"type": "boolean"},
-                    "storage_rating": {
-                        "type": "string",
-                        "enum": ["good", "adequate", "poor", "unknown"],
-                    },
-                },
-                "required": [
-                    "has_built_in_wardrobes",
-                    "has_hallway_cupboard",
-                    "storage_rating",
-                ],
-                "additionalProperties": False,
-            },
-            "flooring_noise": {
-                "type": "object",
-                "properties": {
-                    "primary_flooring": {
-                        "type": "string",
-                        "enum": [
-                            "hardwood",
-                            "laminate",
-                            "carpet",
-                            "tile",
-                            "mixed",
-                            "unknown",
-                        ],
-                    },
-                    "has_double_glazing": {
-                        "type": "string",
-                        "enum": ["yes", "no", "unknown"],
-                    },
-                    "noise_indicators": {
-                        "type": "array",
-                        "items": {"type": "string"},
-                    },
-                    "notes": {"type": "string"},
-                },
-                "required": [
-                    "primary_flooring",
-                    "has_double_glazing",
-                    "noise_indicators",
-                    "notes",
-                ],
-                "additionalProperties": False,
-            },
-            "listing_red_flags": {
-                "type": "object",
-                "properties": {
-                    "missing_room_photos": {
-                        "type": "array",
-                        "items": {"type": "string"},
-                        "description": "Rooms not shown in photos (e.g. 'bathroom', 'kitchen')",
-                    },
-                    "too_few_photos": {"type": "boolean"},
-                    "selective_angles": {"type": "boolean"},
-                    "description_concerns": {
-                        "type": "array",
-                        "items": {"type": "string"},
-                    },
-                    "red_flag_count": {
-                        "type": "integer",
-                        "description": "Total number of red flags identified",
-                    },
-                },
-                "required": [
-                    "missing_room_photos",
-                    "too_few_photos",
-                    "selective_angles",
-                    "description_concerns",
-                    "red_flag_count",
-                ],
-                "additionalProperties": False,
-            },
-            "overall_rating": {
-                "type": "integer",
-                "description": "Overall 1-5 star rating for rental desirability (1=worst, 5=best)",
-            },
-            "condition_concerns": {
-                "type": "boolean",
-                "description": "True if any significant condition issues found",
-            },
-            "concern_severity": {
-                "type": "string",
-                "enum": ["minor", "moderate", "serious", "none"],
-            },
-            "summary": {
-                "type": "string",
-                "description": (
-                    "1-2 sentence property overview for notification. Focus on what "
-                    "it's like to live here: character, standout features, layout feel. "
-                    "Do NOT restate condition concerns (already listed separately)."
-                ),
-            },
-        },
-        "required": [
-            "kitchen",
-            "condition",
-            "light_space",
-            "space",
-            "bathroom",
-            "bedroom",
-            "outdoor_space",
-            "storage",
-            "flooring_noise",
-            "listing_red_flags",
-            "overall_rating",
-            "condition_concerns",
-            "concern_severity",
-            "summary",
-        ],
-        "additionalProperties": False,
-    },
-}
+    kitchen: Kitchen
+    condition: Condition
+    light_space: LightSpace
+    space: Space
+    bathroom: Bathroom
+    bedroom: Bedroom
+    outdoor_space: OutdoorSpace
+    storage: Storage
+    flooring_noise: FlooringNoise
+    listing_red_flags: RedFlags
+    overall_rating: int = Field(
+        description="Overall 1-5 star rating for rental desirability (1=worst, 5=best)"
+    )
+    condition_concerns: bool = Field(description="True if any significant condition issues found")
+    concern_severity: Literal["minor", "moderate", "serious", "none"]
+    summary: str = Field(
+        description=(
+            "1-2 sentence property overview for notification. Focus on what "
+            "it's like to live here: character, standout features, layout feel. "
+            "Do NOT restate condition concerns (already listed separately)."
+        ),
+    )
 
 
-# Phase 2 tool schema: Evaluation (synthesis and text extraction)
-EVALUATION_TOOL: Final[dict[str, Any]] = {
-    "name": "property_evaluation",
-    "description": "Return property evaluation based on visual analysis observations",
-    "strict": True,
-    "input_schema": {
-        "type": "object",
-        "properties": {
-            "listing_extraction": {
-                "type": "object",
-                "properties": {
-                    "epc_rating": {
-                        "type": "string",
-                        "enum": ["A", "B", "C", "D", "E", "F", "G", "unknown"],
-                    },
-                    "service_charge_pcm": {
-                        "anyOf": [{"type": "integer"}, {"type": "null"}],
-                    },
-                    "deposit_weeks": {
-                        "anyOf": [{"type": "integer"}, {"type": "null"}],
-                    },
-                    "bills_included": {
-                        "type": "string",
-                        "enum": ["yes", "no", "unknown"],
-                    },
-                    "pets_allowed": {
-                        "type": "string",
-                        "enum": ["yes", "no", "unknown"],
-                    },
-                    "parking": {
-                        "type": "string",
-                        "enum": ["dedicated", "street", "none", "unknown"],
-                    },
-                    "council_tax_band": {
-                        "type": "string",
-                        "enum": ["A", "B", "C", "D", "E", "F", "G", "H", "unknown"],
-                    },
-                    "property_type": {
-                        "type": "string",
-                        "enum": [
-                            "victorian",
-                            "edwardian",
-                            "georgian",
-                            "new_build",
-                            "purpose_built",
-                            "warehouse",
-                            "ex_council",
-                            "period_conversion",
-                            "unknown",
-                        ],
-                    },
-                    "furnished_status": {
-                        "type": "string",
-                        "enum": [
-                            "furnished",
-                            "unfurnished",
-                            "part_furnished",
-                            "unknown",
-                        ],
-                    },
-                },
-                "required": [
-                    "epc_rating",
-                    "service_charge_pcm",
-                    "deposit_weeks",
-                    "bills_included",
-                    "pets_allowed",
-                    "parking",
-                    "council_tax_band",
-                    "property_type",
-                    "furnished_status",
-                ],
-                "additionalProperties": False,
-            },
-            "viewing_notes": {
-                "type": "object",
-                "properties": {
-                    "check_items": {
-                        "type": "array",
-                        "items": {"type": "string"},
-                        "description": "Property-specific things to inspect during viewing",
-                    },
-                    "questions_for_agent": {
-                        "type": "array",
-                        "items": {"type": "string"},
-                        "description": "Questions to ask the letting agent",
-                    },
-                    "deal_breaker_tests": {
-                        "type": "array",
-                        "items": {"type": "string"},
-                        "description": "Quick tests to determine deal-breakers",
-                    },
-                },
-                "required": ["check_items", "questions_for_agent", "deal_breaker_tests"],
-                "additionalProperties": False,
-            },
-            "highlights": {
-                "type": "array",
-                "items": {"type": "string"},
-                "description": "Top 3-5 positive features as 1-3 word tags",
-            },
-            "lowlights": {
-                "type": "array",
-                "items": {"type": "string"},
-                "description": "Top 1-3 concerns as 1-3 word tags",
-            },
-            "one_line": {
-                "type": "string",
-                "description": "6-12 word tagline capturing the property's character",
-            },
-            "value_for_quality": {
-                "type": "object",
-                "properties": {
-                    "rating": {
-                        "type": "string",
-                        "enum": ["excellent", "good", "fair", "poor"],
-                        "description": "Value rating considering quality vs price",
-                    },
-                    "reasoning": {
-                        "type": "string",
-                        "description": (
-                            "Value justification: why this price is or isn't fair for "
-                            "what you get. Focus on price factors: stock type "
-                            "premium/discount, true monthly cost, area rent trajectory, "
-                            "service charges, incentives. Reference condition only as "
-                            "'condition justifies/doesn't justify price' — don't "
-                            "restate specific issues."
-                        ),
-                    },
-                },
-                "required": ["rating", "reasoning"],
-                "additionalProperties": False,
-            },
-        },
-        "required": [
-            "listing_extraction",
-            "viewing_notes",
-            "highlights",
-            "lowlights",
-            "one_line",
-            "value_for_quality",
-        ],
-        "additionalProperties": False,
-    },
-}
+class _EvaluationResponse(BaseModel):
+    """Phase 2 tool response: evaluation and synthesis."""
+
+    model_config = _Forbid
+
+    class ListingExtraction(BaseModel):
+        model_config = _Forbid
+        epc_rating: Literal["A", "B", "C", "D", "E", "F", "G", "unknown"]
+        service_charge_pcm: int | None
+        deposit_weeks: int | None
+        bills_included: Literal["yes", "no", "unknown"]
+        pets_allowed: Literal["yes", "no", "unknown"]
+        parking: Literal["dedicated", "street", "none", "unknown"]
+        council_tax_band: Literal["A", "B", "C", "D", "E", "F", "G", "H", "unknown"]
+        property_type: Literal[
+            "victorian",
+            "edwardian",
+            "georgian",
+            "new_build",
+            "purpose_built",
+            "warehouse",
+            "ex_council",
+            "period_conversion",
+            "unknown",
+        ]
+        furnished_status: Literal["furnished", "unfurnished", "part_furnished", "unknown"]
+
+    class ViewingNotes(BaseModel):
+        model_config = _Forbid
+        check_items: list[str] = Field(
+            description="Property-specific things to inspect during viewing"
+        )
+        questions_for_agent: list[str] = Field(description="Questions to ask the letting agent")
+        deal_breaker_tests: list[str] = Field(description="Quick tests to determine deal-breakers")
+
+    class ValueForQuality(BaseModel):
+        model_config = _Forbid
+        rating: Literal["excellent", "good", "fair", "poor"] = Field(
+            description="Value rating considering quality vs price"
+        )
+        reasoning: str = Field(
+            description=(
+                "Value justification: why this price is or isn't fair for "
+                "what you get. Focus on price factors: stock type "
+                "premium/discount, true monthly cost, area rent trajectory, "
+                "service charges, incentives. Reference condition only as "
+                "'condition justifies/doesn't justify price' — don't "
+                "restate specific issues."
+            ),
+        )
+
+    listing_extraction: ListingExtraction
+    viewing_notes: ViewingNotes
+    highlights: list[str] = Field(description="Top 3-5 positive features as 1-3 word tags")
+    lowlights: list[str] = Field(description="Top 1-3 concerns as 1-3 word tags")
+    one_line: str = Field(description="6-12 word tagline capturing the property's character")
+    value_for_quality: ValueForQuality
 
 
-def build_user_prompt(
-    price_pcm: int,
-    bedrooms: int,
-    area_average: int,
-    description: str | None = None,
-    features: list[str] | None = None,
-    area_context: str | None = None,
-    outcode: str | None = None,
-    council_tax_band_c: int | None = None,
-    crime_summary: str | None = None,
-    rent_trend: str | None = None,
-) -> str:
-    """Build the user prompt with property-specific context."""
-    diff = price_pcm - area_average
-    if diff < -50:
-        price_comparison = f"£{abs(diff)} below"
-    elif diff > 50:
-        price_comparison = f"£{diff} above"
-    else:
-        price_comparison = "at"
+def _inline_refs(schema: dict[str, Any]) -> dict[str, Any]:
+    """Resolve $ref/$defs in a Pydantic JSON schema and strip title fields."""
+    defs = schema.pop("$defs", {})
 
-    prompt = f"<property>\nPrice: £{price_pcm:,}/month | Bedrooms: {bedrooms}"
-    prompt += f" | Area avg: £{area_average:,}/month ({price_comparison})"
-    if council_tax_band_c:
-        true_cost = price_pcm + council_tax_band_c
-        prompt += f"\nCouncil tax (Band C est.): £{council_tax_band_c}/month"
-        prompt += f" → True monthly cost: ~£{true_cost:,}"
-    prompt += "\n</property>"
+    def _resolve(node: Any) -> Any:
+        if isinstance(node, dict):
+            if "$ref" in node:
+                ref_name = node["$ref"].rsplit("/", 1)[-1]
+                return _resolve(dict(defs[ref_name]))
+            return {k: _resolve(v) for k, v in node.items() if k != "title"}
+        if isinstance(node, list):
+            return [_resolve(item) for item in node]
+        return node
 
-    if area_context and outcode:
-        prompt += f'\n\n<area_context outcode="{outcode}">\n{area_context}'
-        if crime_summary:
-            prompt += f"\nCrime: {crime_summary}"
-        if rent_trend:
-            prompt += f"\nRent trend: {rent_trend}"
-        prompt += "\n</area_context>"
-
-    if features:
-        prompt += "\n\n<listing_features>\n"
-        prompt += "\n".join(f"- {f}" for f in features[:15])
-        prompt += "\n</listing_features>"
-
-    if description:
-        desc = description[:3000] + "..." if len(description) > 3000 else description
-        prompt += f"\n\n<listing_description>\n{desc}\n</listing_description>"
-
-    prompt += "\n\nProvide your visual quality assessment using the "
-    prompt += "property_visual_analysis tool."
-
-    return prompt
+    result: dict[str, Any] = _resolve(schema)
+    result.pop("title", None)
+    return result
 
 
-def build_evaluation_prompt(
+def _build_tool_schema(
+    name: str,
+    description: str,
+    model: type[BaseModel],
     *,
-    visual_data: dict[str, Any],
-    description: str | None = None,
-    price_pcm: int,
-    bedrooms: int,
-    area_average: int,
-    area_context: str | None = None,
-    outcode: str | None = None,
-    council_tax_band_c: int | None = None,
-    crime_summary: str | None = None,
-    rent_trend: str | None = None,
-) -> str:
-    """Build the Phase 2 evaluation prompt with Phase 1 output and property context."""
-    prompt = "<visual_analysis>\n"
-    prompt += json.dumps(visual_data, indent=2)
-    prompt += "\n</visual_analysis>"
+    strict: bool = False,
+) -> dict[str, Any]:
+    """Build an Anthropic tool schema from a Pydantic model class."""
+    schema = _inline_refs(model.model_json_schema())
+    schema.pop("description", None)  # Strip Pydantic docstring
+    tool: dict[str, Any] = {
+        "name": name,
+        "description": description,
+        "input_schema": schema,
+    }
+    if strict:
+        tool["strict"] = True
+    return tool
 
-    diff = price_pcm - area_average
-    if diff < -50:
-        price_comparison = f"£{abs(diff)} below"
-    elif diff > 50:
-        price_comparison = f"£{diff} above"
-    else:
-        price_comparison = "at"
 
-    prompt += f"\n\n<property>\nPrice: £{price_pcm:,}/month | Bedrooms: {bedrooms}"
-    prompt += f" | Area avg: £{area_average:,}/month ({price_comparison})"
-    if council_tax_band_c:
-        true_cost = price_pcm + council_tax_band_c
-        prompt += f"\nCouncil tax (Band C est.): £{council_tax_band_c}/month"
-        prompt += f" → True monthly cost: ~£{true_cost:,}"
-    prompt += "\n</property>"
+VISUAL_ANALYSIS_TOOL: Final[dict[str, Any]] = _build_tool_schema(
+    "property_visual_analysis",
+    "Return visual property quality analysis results from images",
+    _VisualAnalysisResponse,
+)
 
-    if area_context and outcode:
-        prompt += f'\n\n<area_context outcode="{outcode}">\n{area_context}'
-        if crime_summary:
-            prompt += f"\nCrime: {crime_summary}"
-        if rent_trend:
-            prompt += f"\nRent trend: {rent_trend}"
-        prompt += "\n</area_context>"
-
-    if description:
-        desc = description[:3000] + "..." if len(description) > 3000 else description
-        prompt += f"\n\n<listing_description>\n{desc}\n</listing_description>"
-
-    prompt += "\n\nBased on the visual analysis observations above, provide your "
-    prompt += "evaluation using the property_evaluation tool."
-
-    return prompt
+EVALUATION_TOOL: Final[dict[str, Any]] = _build_tool_schema(
+    "property_evaluation",
+    "Return property evaluation based on visual analysis observations",
+    _EvaluationResponse,
+    strict=True,
+)
 
 
 class PropertyQualityFilter:
@@ -1086,9 +543,7 @@ class PropertyQualityFilter:
         outcode: str | None = None
         if prop.postcode:
             outcode = (
-                prop.postcode.split()[0].upper()
-                if " " in prop.postcode
-                else prop.postcode.upper()
+                prop.postcode.split()[0].upper() if " " in prop.postcode else prop.postcode.upper()
             )
         area_context = AREA_CONTEXT.get(outcode) if outcode else None
 
@@ -1118,9 +573,7 @@ class PropertyQualityFilter:
                 p = get_cached_image_path(data_dir, merged.unique_id, g_url, "gallery", idx)
                 gallery_cached.append(p if p.is_file() else None)
             if floorplan_url:
-                p = get_cached_image_path(
-                    data_dir, merged.unique_id, floorplan_url, "floorplan", 0
-                )
+                p = get_cached_image_path(data_dir, merged.unique_id, floorplan_url, "floorplan", 0)
                 floorplan_cached = p if p.is_file() else None
         else:
             gallery_cached = [None] * len(gallery_urls)
@@ -1570,10 +1023,7 @@ class PropertyQualityFilter:
             return val
 
         def _clean_dict(d: dict[str, Any]) -> dict[str, Any]:
-            return {
-                k: _clean_str(v) if isinstance(v, str) else v
-                for k, v in d.items()
-            }
+            return {k: _clean_str(v) if isinstance(v, str) else v for k, v in d.items()}
 
         visual_data = _clean_dict(visual_data)
         eval_data = _clean_dict(eval_data)
@@ -1593,72 +1043,10 @@ class PropertyQualityFilter:
 
         # Build the full analysis (with validation error handling)
         try:
-            # Parse Phase 1 sub-models
-            bathroom = (
-                BathroomAnalysis(**visual_data["bathroom"])
-                if visual_data.get("bathroom")
-                else None
-            )
-            bedroom = (
-                BedroomAnalysis(**visual_data["bedroom"])
-                if visual_data.get("bedroom")
-                else None
-            )
-            outdoor_space = (
-                OutdoorSpaceAnalysis(**visual_data["outdoor_space"])
-                if visual_data.get("outdoor_space")
-                else None
-            )
-            storage_analysis = (
-                StorageAnalysis(**visual_data["storage"])
-                if visual_data.get("storage")
-                else None
-            )
-            flooring_noise = (
-                FlooringNoiseAnalysis(**visual_data["flooring_noise"])
-                if visual_data.get("flooring_noise")
-                else None
-            )
-            listing_red_flags = (
-                ListingRedFlags(**visual_data["listing_red_flags"])
-                if visual_data.get("listing_red_flags")
-                else None
-            )
-
-            # Parse Phase 2 sub-models
-            listing_extraction = (
-                ListingExtraction(**eval_data["listing_extraction"])
-                if eval_data.get("listing_extraction")
-                else None
-            )
-            viewing_notes = (
-                ViewingNotes(**eval_data["viewing_notes"])
-                if eval_data.get("viewing_notes")
-                else None
-            )
-
-            analysis = PropertyQualityAnalysis(
-                kitchen=KitchenAnalysis(**visual_data.get("kitchen", {})),
-                condition=ConditionAnalysis(**visual_data.get("condition", {})),
-                light_space=LightSpaceAnalysis(**visual_data.get("light_space", {})),
-                space=SpaceAnalysis(**visual_data.get("space", {})),
-                bathroom=bathroom,
-                bedroom=bedroom,
-                outdoor_space=outdoor_space,
-                storage=storage_analysis,
-                flooring_noise=flooring_noise,
-                listing_extraction=listing_extraction,
-                listing_red_flags=listing_red_flags,
-                viewing_notes=viewing_notes,
-                highlights=eval_data.get("highlights"),
-                lowlights=eval_data.get("lowlights"),
-                one_line=eval_data.get("one_line"),
-                condition_concerns=visual_data.get("condition_concerns", False),
-                concern_severity=visual_data.get("concern_severity"),
-                value=value,
-                overall_rating=visual_data.get("overall_rating"),
-                summary=visual_data.get("summary", "Analysis completed"),
-            )
+            # Merge both phases and let Pydantic coerce nested dicts → models
+            merged_data = {**visual_data, **eval_data, "value": value}
+            merged_data.setdefault("summary", "Analysis completed")
+            analysis = PropertyQualityAnalysis.model_validate(merged_data)
         except Exception as e:
             logger.warning(
                 "analysis_validation_failed",
@@ -1670,31 +1058,14 @@ class PropertyQualityFilter:
         # For 2+ bed properties, override space assessment
         # (office can go in spare room)
         if bedrooms >= 2 and not analysis.space.is_spacious_enough:
-            analysis = PropertyQualityAnalysis(
-                kitchen=analysis.kitchen,
-                condition=analysis.condition,
-                light_space=analysis.light_space,
-                space=SpaceAnalysis(
-                    living_room_sqm=analysis.space.living_room_sqm,
-                    is_spacious_enough=True,
-                    confidence="high",
-                ),
-                bathroom=analysis.bathroom,
-                bedroom=analysis.bedroom,
-                outdoor_space=analysis.outdoor_space,
-                storage=analysis.storage,
-                flooring_noise=analysis.flooring_noise,
-                listing_extraction=analysis.listing_extraction,
-                listing_red_flags=analysis.listing_red_flags,
-                viewing_notes=analysis.viewing_notes,
-                highlights=analysis.highlights,
-                lowlights=analysis.lowlights,
-                one_line=analysis.one_line,
-                condition_concerns=analysis.condition_concerns,
-                concern_severity=analysis.concern_severity,
-                value=analysis.value,
-                overall_rating=analysis.overall_rating,
-                summary=analysis.summary,
+            analysis = analysis.model_copy(
+                update={
+                    "space": SpaceAnalysis(
+                        living_room_sqm=analysis.space.living_room_sqm,
+                        is_spacious_enough=True,
+                        confidence="high",
+                    ),
+                },
             )
 
         return analysis

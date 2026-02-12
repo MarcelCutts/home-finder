@@ -1,3 +1,4 @@
+{% from "_macros.html" import commute_pill %}
 <article class="property-card" data-property-id="{{ prop.unique_id }}">
     <a href="/property/{{ prop.unique_id }}" class="card-link">
         <div class="card-image-wrapper">
@@ -28,17 +29,7 @@
                     {% if prop.postcode %}
                     <span class="card-postcode">{{ prop.postcode }}</span>
                     {% endif %}
-                    {% if prop.commute_minutes is not none and prop.commute_minutes %}
-                    {% if prop.commute_minutes <= 15 %}
-                    <span class="commute-pill commute-green">{{ prop.commute_minutes }} min</span>
-                    {% elif prop.commute_minutes <= 30 %}
-                    <span class="commute-pill commute-indigo">{{ prop.commute_minutes }} min</span>
-                    {% elif prop.commute_minutes <= 45 %}
-                    <span class="commute-pill commute-amber">{{ prop.commute_minutes }} min</span>
-                    {% else %}
-                    <span class="commute-pill commute-red">{{ prop.commute_minutes }} min</span>
-                    {% endif %}
-                    {% endif %}
+                    {{ commute_pill(prop.commute_minutes) }}
                 </div>
                 {% if prop.first_seen %}
                 <span class="card-age">{{ prop.first_seen | listing_age }}</span>

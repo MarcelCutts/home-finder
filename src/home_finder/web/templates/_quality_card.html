@@ -1,3 +1,4 @@
+{% from "_macros.html" import quality_badge, quality_item_class %}
 {% if qa %}
 <section id="section-quality" class="detail-section quality-section">
     <h3>Quality Analysis</h3>
@@ -23,15 +24,9 @@
 
     {# Room-by-room grid #}
     <div class="quality-grid">
-        <div class="quality-item {% if qa.kitchen.overall_quality == 'modern' %}quality-item-excellent{% elif qa.kitchen.overall_quality == 'decent' %}quality-item-fair{% elif qa.kitchen.overall_quality == 'dated' %}quality-item-poor{% else %}quality-item-neutral{% endif %}">
+        <div class="{{ quality_item_class(qa.kitchen.overall_quality, ['modern'], ['decent'], ['dated']) }}">
             <h4>Kitchen</h4>
-            <span class="badge
-                {% if qa.kitchen.overall_quality == 'modern' %}badge-green
-                {% elif qa.kitchen.overall_quality == 'decent' %}badge-amber
-                {% elif qa.kitchen.overall_quality == 'dated' %}badge-red
-                {% else %}badge-neutral{% endif %}">
-                {{ qa.kitchen.overall_quality | capitalize }}
-            </span>
+            {% call quality_badge(qa.kitchen.overall_quality, ['modern'], ['decent'], ['dated']) %}{{ qa.kitchen.overall_quality | capitalize }}{% endcall %}
             {% if qa.kitchen.hob_type and qa.kitchen.hob_type != 'unknown' %}
             <p>{{ qa.kitchen.hob_type | capitalize }} hob</p>
             {% endif %}
@@ -44,15 +39,9 @@
         </div>
 
         {% if qa.bathroom %}
-        <div class="quality-item {% if qa.bathroom.overall_condition == 'modern' %}quality-item-excellent{% elif qa.bathroom.overall_condition == 'decent' %}quality-item-fair{% elif qa.bathroom.overall_condition == 'dated' %}quality-item-poor{% else %}quality-item-neutral{% endif %}">
+        <div class="{{ quality_item_class(qa.bathroom.overall_condition, ['modern'], ['decent'], ['dated']) }}">
             <h4>Bathroom</h4>
-            <span class="badge
-                {% if qa.bathroom.overall_condition == 'modern' %}badge-green
-                {% elif qa.bathroom.overall_condition == 'decent' %}badge-amber
-                {% elif qa.bathroom.overall_condition == 'dated' %}badge-red
-                {% else %}badge-neutral{% endif %}">
-                {{ qa.bathroom.overall_condition | capitalize }}
-            </span>
+            {% call quality_badge(qa.bathroom.overall_condition, ['modern'], ['decent'], ['dated']) %}{{ qa.bathroom.overall_condition | capitalize }}{% endcall %}
             {% if qa.bathroom.has_bathtub is not none %}
             <p>{{ "Bathtub" if qa.bathroom.has_bathtub else "No bathtub" }}</p>
             {% endif %}
@@ -64,29 +53,17 @@
         </div>
         {% endif %}
 
-        <div class="quality-item {% if qa.condition.overall_condition in ('excellent', 'good') %}quality-item-excellent{% elif qa.condition.overall_condition == 'fair' %}quality-item-fair{% elif qa.condition.overall_condition == 'poor' %}quality-item-poor{% else %}quality-item-neutral{% endif %}">
+        <div class="{{ quality_item_class(qa.condition.overall_condition, ['excellent', 'good'], ['fair'], ['poor']) }}">
             <h4>Condition</h4>
-            <span class="badge
-                {% if qa.condition.overall_condition in ('excellent', 'good') %}badge-green
-                {% elif qa.condition.overall_condition == 'fair' %}badge-amber
-                {% elif qa.condition.overall_condition == 'poor' %}badge-red
-                {% else %}badge-neutral{% endif %}">
-                {{ qa.condition.overall_condition | capitalize }}
-            </span>
+            {% call quality_badge(qa.condition.overall_condition, ['excellent', 'good'], ['fair'], ['poor']) %}{{ qa.condition.overall_condition | capitalize }}{% endcall %}
             {% if qa.condition.has_visible_damp == 'yes' %}<p>Visible damp</p>{% endif %}
             {% if qa.condition.has_visible_mold == 'yes' %}<p>Visible mould</p>{% endif %}
             {% if qa.condition.has_worn_fixtures %}<p>Worn fixtures</p>{% endif %}
         </div>
 
-        <div class="quality-item {% if qa.light_space.natural_light in ('excellent', 'good') %}quality-item-excellent{% elif qa.light_space.natural_light == 'fair' %}quality-item-fair{% elif qa.light_space.natural_light == 'poor' %}quality-item-poor{% else %}quality-item-neutral{% endif %}">
+        <div class="{{ quality_item_class(qa.light_space.natural_light, ['excellent', 'good'], ['fair'], ['poor']) }}">
             <h4>Light &amp; Space</h4>
-            <span class="badge
-                {% if qa.light_space.natural_light in ('excellent', 'good') %}badge-green
-                {% elif qa.light_space.natural_light == 'fair' %}badge-amber
-                {% elif qa.light_space.natural_light == 'poor' %}badge-red
-                {% else %}badge-neutral{% endif %}">
-                Light: {{ qa.light_space.natural_light | capitalize }}
-            </span>
+            {% call quality_badge(qa.light_space.natural_light, ['excellent', 'good'], ['fair'], ['poor']) %}Light: {{ qa.light_space.natural_light | capitalize }}{% endcall %}
             {% if qa.light_space.feels_spacious is not none %}
             <p>{{ "Spacious" if qa.light_space.feels_spacious else "Compact" }}</p>
             {% endif %}
@@ -138,15 +115,9 @@
         {% endif %}
 
         {% if qa.storage %}
-        <div class="quality-item {% if qa.storage.storage_rating == 'good' %}quality-item-excellent{% elif qa.storage.storage_rating == 'adequate' %}quality-item-fair{% elif qa.storage.storage_rating == 'poor' %}quality-item-poor{% else %}quality-item-neutral{% endif %}">
+        <div class="{{ quality_item_class(qa.storage.storage_rating, ['good'], ['adequate'], ['poor']) }}">
             <h4>Storage</h4>
-            <span class="badge
-                {% if qa.storage.storage_rating == 'good' %}badge-green
-                {% elif qa.storage.storage_rating == 'adequate' %}badge-amber
-                {% elif qa.storage.storage_rating == 'poor' %}badge-red
-                {% else %}badge-neutral{% endif %}">
-                {{ qa.storage.storage_rating | capitalize }}
-            </span>
+            {% call quality_badge(qa.storage.storage_rating, ['good'], ['adequate'], ['poor']) %}{{ qa.storage.storage_rating | capitalize }}{% endcall %}
             {% if qa.storage.has_built_in_wardrobes %}<p>Built-in wardrobes</p>{% endif %}
             {% if qa.storage.has_hallway_cupboard %}<p>Hallway cupboard</p>{% endif %}
         </div>
