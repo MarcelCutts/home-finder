@@ -39,6 +39,7 @@
     --value-poor-text: #fca5a5;
 
     /* Pico overrides */
+    --pico-font-family: var(--font-body);
     --pico-background-color: var(--bg);
     --pico-color: var(--text);
     --pico-card-background-color: var(--bg-card);
@@ -769,11 +770,11 @@ nav.container-fluid li {
 .floorplan-section { text-align: center; }
 .floorplan-frame {
     display: inline-block;
-    background: #f0f0f4;
+    background: var(--bg-elevated);
     border-radius: 12px;
     padding: 1.5rem 2rem;
     max-width: 100%;
-    box-shadow: 0 2px 12px rgba(0, 0, 0, 0.08);
+    box-shadow: inset 0 0 0 1px var(--border), 0 2px 12px rgba(0, 0, 0, 0.15);
 }
 .floorplan-image {
     max-width: 100%;
@@ -1175,6 +1176,8 @@ nav.container-fluid li {
     max-height: 200px;
     overflow: hidden;
     line-height: 1.6;
+    font-size: 0.9rem;
+    color: var(--text-muted);
     transition: max-height 0.3s ease;
 }
 .description-text:not(.expanded)::after {
@@ -1219,6 +1222,47 @@ nav.container-fluid li {
     font-size: 0.95rem;
     margin-bottom: 0.75rem;
     color: var(--text);
+}
+
+/* Crime section */
+.area-details h4 .badge {
+    vertical-align: middle;
+    font-size: 0.72rem;
+    margin-left: 0.35rem;
+}
+.crime-rate {
+    font-family: var(--font-heading);
+    font-size: 1.15rem;
+    font-weight: 700;
+    color: var(--text);
+    margin-bottom: 0.25rem;
+}
+.crime-rate small {
+    font-size: 0.72rem;
+    font-weight: 500;
+    color: var(--text-dim);
+}
+.crime-context {
+    font-size: 0.82rem;
+    color: var(--text-muted);
+    line-height: 1.5;
+    margin-bottom: 0.35rem;
+}
+.crime-note {
+    font-size: 0.82rem;
+    color: var(--text-muted);
+    line-height: 1.5;
+    padding: 0.4rem 0.65rem;
+    background: var(--bg-elevated);
+    border-radius: 6px;
+    border-left: 2px solid var(--accent);
+    margin-bottom: 0.35rem;
+}
+.crime-explainer {
+    font-size: 0.72rem;
+    color: var(--text-dim);
+    line-height: 1.5;
+    margin: 0;
 }
 
 /* ===== Benchmark bars ===== */
@@ -1272,10 +1316,7 @@ nav.container-fluid li {
     font-weight: 700;
 }
 
-/* ===== Description ===== */
-.description-text {
-    max-height: 400px;
-    overflow-y: auto;
+.area-description {
     line-height: 1.7;
     font-size: 0.9rem;
     color: var(--text-muted);
@@ -1358,13 +1399,15 @@ nav.container-fluid li {
 }
 
 /* Dark zoom controls (detail map) */
-#map .leaflet-control-zoom {
+#map .leaflet-control-zoom,
+#dashboard-map .leaflet-control-zoom {
     border: 1px solid var(--border, #1e1e24) !important;
     border-radius: 8px !important;
     overflow: hidden;
     box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3) !important;
 }
-#map .leaflet-control-zoom a {
+#map .leaflet-control-zoom a,
+#dashboard-map .leaflet-control-zoom a {
     background: var(--bg-elevated, #1c1c21) !important;
     color: var(--text-muted, #8b8b96) !important;
     width: 32px !important;
@@ -1373,10 +1416,27 @@ nav.container-fluid li {
     font-size: 16px !important;
     border-color: var(--border, #1e1e24) !important;
     transition: background 0.15s, color 0.15s;
+    /* Reset Pico CSS overrides on <a> tags */
+    display: block !important;
+    text-align: center !important;
+    text-decoration: none !important;
+    padding: 0 !important;
 }
-#map .leaflet-control-zoom a:hover {
+#map .leaflet-control-zoom a:hover,
+#dashboard-map .leaflet-control-zoom a:hover {
     background: var(--bg-card-hover, #19191d) !important;
     color: var(--text, #e4e4e9) !important;
+}
+
+/* Dark Leaflet attribution */
+.leaflet-control-attribution {
+    background: rgba(28, 28, 33, 0.85) !important;
+    color: var(--text-dim, #55555f) !important;
+    font-size: 0.65rem;
+    backdrop-filter: blur(4px);
+}
+.leaflet-control-attribution a {
+    color: var(--text-muted, #8b8b96) !important;
 }
 
 /* ===== Dashboard map ===== */
@@ -1582,42 +1642,10 @@ nav.container-fluid li {
     margin-bottom: 0.75rem;
 }
 
-/* ===== Quality overall rating hero ===== */
-.quality-rating-hero {
-    display: flex;
-    align-items: center;
-    gap: 1rem;
-    padding: 1.25rem 1.5rem;
-    background: var(--bg-card);
-    border: 1px solid var(--border);
-    border-radius: 12px;
-    margin-bottom: 1.5rem;
-}
-.quality-rating-number {
-    font-family: var(--font-heading);
-    font-size: 2.5rem;
-    font-weight: 800;
-    letter-spacing: -0.04em;
-    line-height: 1;
-    color: var(--text);
-}
-.quality-rating-number small {
-    font-size: 1rem;
-    color: var(--text-dim);
-    font-weight: 500;
-}
-.quality-rating-stars {
-    display: flex;
-    flex-direction: column;
-    gap: 0.25rem;
-}
-.quality-rating-stars .star-rating .star {
-    font-size: 1.35rem;
-}
-.quality-rating-label {
-    font-size: 0.78rem;
-    color: var(--text-muted);
-    font-weight: 500;
+/* ===== Quality section heading with inline stars ===== */
+.quality-section h3 .star-rating {
+    margin-left: 0.25rem;
+    vertical-align: baseline;
 }
 
 /* ===== Listing details as inline key-value grid ===== */

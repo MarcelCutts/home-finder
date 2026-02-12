@@ -1,0 +1,103 @@
+{% from "_macros.html" import commute_pill %}
+<article class="property-card" data-property-id="{{ prop.unique_id }}">
+    <a href="/property/{{ prop.unique_id }}" class="card-link">
+        <div class="card-image-wrapper">
+            {% if prop.image_url %}
+            <img src="{{ prop.image_url }}" alt="{{ prop.bedrooms }} bed — {{ prop.postcode or 'Property' }}" loading="lazy" class="card-image">
+            {% else %}
+            <div class="card-image card-image-placeholder">No image</div>
+            {% endif %}
+            <div class="card-overlay">
+                {% if prop.min_price and prop.max_price and prop.min_price != prop.max_price %}
+                <div class="card-price-group">
+                    <strong class="card-price">&pound;{{ "{:,}".format(prop.min_price) }}&ndash;{{ "{:,}".format(prop.max_price) }}</strong>
+                    <span class="card-price-label">pcm</span>
+                </div>
+                {% else %}
+                <div class="card-price-group">
+                    <strong class="card-price">&pound;{{ "{:,}".format(prop.price_pcm) }}</strong>
+                    <span class="card-price-label">pcm</span>
+                </div>
+                {% endif %}
+                <span class="badge badge-neutral">{{ prop.bedrooms }} bed</span>
+            </div>
+        </div>
+        <div class="card-body">
+            {# Meta row: postcode | commute pill | listing age #}
+            <div class="card-meta">
+                <div class="card-meta-left">
+                    {% if prop.postcode %}
+                    <span class="card-postcode">{{ prop.postcode }}</span>
+                    {% endif %}
+                    {{ commute_pill(prop.commute_minutes) }}
+                </div>
+                {% if prop.first_seen %}
+                <span class="card-age">{{ prop.first_seen | listing_age }}</span>
+                {% endif %}
+            </div>
+
+            {# Rating + property type row #}
+            {% if prop.quality_rating or prop.property_type %}
+            <div class="card-rating-row">
+                {% if prop.property_type and prop.property_type != 'unknown' %}
+                <span class="property-type-badge">{{ prop.property_type | replace("_", " ") | title }}</span>
+                {% endif %}
+                {% if prop.quality_rating %}
+                <span class="quality-dots quality-dots-{{ prop.quality_rating }}">
+                    {{ prop.quality_rating }}/5
+                    {% for i in range(1, 6) %}{% if i <= prop.quality_rating %}<span class="dot filled">&#9679;</span>{% else %}<span class="dot empty">&#9679;</span>{% endif %}{% endfor %}
+                </span>
+                {% endif %}
+            </div>
+            {% endif %}
+
+            {# AI summary text (2-line clamp) #}
+            {% if prop.quality_summary %}
+            <p class="card-summary">{{ prop.quality_summary }}</p>
+            {% endif %}
+
+            {# Highlight + lowlight chips #}
+            {% set has_positive = prop.highlights or (prop.epc_rating and prop.epc_rating != 'unknown') or prop.value_rating %}
+            {% set has_negative = prop.quality_concerns or prop.lowlights %}
+            {% if has_positive or has_negative %}
+            <div class="card-tags">
+                {% if has_positive %}
+                <div class="card-chips">
+                    {% if prop.highlights %}
+                    {% for tag in prop.highlights[:4] %}
+                    {% if not (prop.epc_rating and prop.epc_rating != 'unknown' and tag[:3] | upper == "EPC") %}
+                    <span class="highlight-chip highlight-positive">{{ tag }}</span>
+                    {% endif %}
+                    {% endfor %}
+                    {% endif %}
+                    {% if prop.epc_rating and prop.epc_rating != 'unknown' %}
+                    <span class="highlight-chip highlight-neutral">EPC {{ prop.epc_rating }}</span>
+                    {% endif %}
+                    {% if prop.value_rating %}
+                    <span class="highlight-chip highlight-value-{{ prop.value_rating }}">{{ prop.value_rating }} value</span>
+                    {% endif %}
+                </div>
+                {% endif %}
+                {% if has_negative %}
+                <div class="card-chips card-chips-negative">
+                    {% if prop.lowlights %}
+                    {% for tag in prop.lowlights[:3] %}
+                    <span class="highlight-chip highlight-negative">{{ tag }}</span>
+                    {% endfor %}
+                    {% endif %}
+                    {% if prop.quality_concerns %}
+                    <span class="condition-badge condition-{{ prop.quality_severity if prop.quality_severity in ('minor', 'moderate', 'serious') else 'minor' }}">{%- if prop.quality_severity == 'serious' -%}⚠ Serious concerns{%- elif prop.quality_severity == 'moderate' -%}⚠ Moderate concerns{%- else -%}Minor concerns{%- endif -%}</span>
+                    {% endif %}
+                </div>
+                {% endif %}
+            </div>
+            {% endif %}
+        </div>
+    </a>
+    <div class="card-sources">
+        {% for s in prop.sources_list %}
+        {% set badge = source_badges.get(s, {}) %}
+        <span class="source-badge" style="background-color: {{ badge.get('color', '#888') }}" title="{{ badge.get('name', s) }}">{{ badge.get('abbr', s[:1]|upper) }}</span>
+        {% endfor %}
+    </div>
+</article>

@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "_macros.html" import commute_pill %}
 
 {% block title %}{{ prop.title }} — Home Finder{% endblock %}
 
@@ -75,16 +76,7 @@
                     {% endfor %}
                 </span>
                 {% endif %}
-                {% if prop.commute_minutes %}
-                <span class="commute-pill
-                    {% if prop.commute_minutes <= 15 %}commute-green
-                    {% elif prop.commute_minutes <= 30 %}commute-indigo
-                    {% elif prop.commute_minutes <= 45 %}commute-amber
-                    {% else %}commute-red{% endif %}">
-                    {{ prop.commute_minutes }} min
-                    {% if prop.transport_mode == "cycling" %}&#128692;{% elif prop.transport_mode == "public_transport" %}&#128647;{% endif %}
-                </span>
-                {% endif %}
+                {{ commute_pill(prop.commute_minutes, prop.transport_mode) }}
             </div>
         </div>
     </div>
@@ -229,7 +221,7 @@
     {% if area_context and area_context.description %}
     <section id="section-area" class="detail-section">
         <h3>Area: {{ outcode }}</h3>
-        <p class="description-text" style="max-height:none;overflow:visible">{{ area_context.description }}</p>
+        <p class="area-description">{{ area_context.description }}</p>
 
         {% if area_context.benchmarks %}
         <h4 class="section-subhead">Rental Benchmarks ({{ outcode }})</h4>
@@ -265,14 +257,21 @@
 
             {% if area_context.crime %}
             <div>
-                <h4>Crime</h4>
-                <p>{{ area_context.crime.rate }}/1,000 residents ({{ area_context.crime.vs_london }} vs London avg)
-                    — <span class="badge
+                <h4>Crime
+                    <span class="badge
                         {% if area_context.crime.risk in ('low', 'low-medium') %}badge-green
                         {% elif area_context.crime.risk == 'medium' %}badge-amber
                         {% else %}badge-red{% endif %}">{{ area_context.crime.risk }}</span>
-                </p>
-                {% if area_context.crime.note %}<p><small>{{ area_context.crime.note }}</small></p>{% endif %}
+                </h4>
+                <p class="crime-rate">{{ area_context.crime.rate }} <small>crimes per 1,000 residents/yr</small></p>
+                <p class="crime-context">{{ area_context.crime.vs_london }} vs London avg (~85).
+                    {% if area_context.crime.rate <= 80 %}Quieter than most of London.
+                    {% elif area_context.crime.rate <= 110 %}Typical for London.
+                    {% elif area_context.crime.rate <= 150 %}Above average — often driven by nearby high streets or transport hubs rather than residential crime.
+                    {% else %}Well above average — check <a href="https://data.police.uk" target="_blank" rel="noopener">data.police.uk</a> for a street-level breakdown.
+                    {% endif %}</p>
+                {% if area_context.crime.note %}<p class="crime-note">{{ area_context.crime.note }}</p>{% endif %}
+                <p class="crime-explainer">Stats include all recorded crime (shoplifting, anti-social behaviour, etc.), not just residential. <a href="https://data.police.uk" target="_blank" rel="noopener">Street-level map&nbsp;&#8599;</a></p>
             </div>
             {% endif %}
 

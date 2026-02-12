@@ -1,0 +1,98 @@
+"""Tests for image cache utilities."""
+
+from pathlib import Path
+
+from home_finder.utils.image_cache import (
+    get_cache_dir,
+    get_cached_image_path,
+    is_property_cached,
+    read_image_bytes,
+    safe_dir_name,
+    save_image_bytes,
+    url_to_filename,
+)
+
+
+class TestSafeDirName:
+    def test_colon_replaced(self) -> None:
+        assert safe_dir_name("openrent:12345") == "openrent_12345"
+
+    def test_no_special_chars(self) -> None:
+        assert safe_dir_name("simple_name") == "simple_name"
+
+    def test_multiple_special_chars(self) -> None:
+        assert safe_dir_name("a:b/c\\d") == "a_b_c_d"
+
+
+class TestGetCacheDir:
+    def test_returns_expected_path(self) -> None:
+        result = get_cache_dir("/data", "openrent:12345")
+        assert result == Path("/data/image_cache/openrent_12345")
+
+
+class TestUrlToFilename:
+    def test_gallery_with_jpg(self) -> None:
+        name = url_to_filename("https://example.com/img.jpg", "gallery", 3)
+        assert name.startswith("gallery_003_")
+        assert name.endswith(".jpg")
+
+    def test_floorplan_with_png(self) -> None:
+        name = url_to_filename("https://example.com/floor.png", "floorplan", 0)
+        assert name.startswith("floorplan_000_")
+        assert name.endswith(".png")
+
+    def test_webp_extension(self) -> None:
+        name = url_to_filename("https://example.com/photo.webp", "gallery", 1)
+        assert name.endswith(".webp")
+
+    def test_no_extension_defaults_to_jpg(self) -> None:
+        name = url_to_filename("https://example.com/image", "gallery", 0)
+        assert name.endswith(".jpg")
+
+    def test_deterministic(self) -> None:
+        url = "https://example.com/img.jpg"
+        assert url_to_filename(url, "gallery", 0) == url_to_filename(url, "gallery", 0)
+
+    def test_different_urls_different_names(self) -> None:
+        name1 = url_to_filename("https://example.com/a.jpg", "gallery", 0)
+        name2 = url_to_filename("https://example.com/b.jpg", "gallery", 0)
+        assert name1 != name2
+
+    def test_query_params_ignored_for_extension(self) -> None:
+        name = url_to_filename("https://example.com/img.png?w=100", "gallery", 0)
+        assert name.endswith(".png")
+
+
+class TestIsPropertyCached:
+    def test_false_when_no_dir(self, tmp_path: Path) -> None:
+        assert not is_property_cached(str(tmp_path), "openrent:999")
+
+    def test_false_when_dir_empty(self, tmp_path: Path) -> None:
+        cache_dir = get_cache_dir(str(tmp_path), "openrent:999")
+        cache_dir.mkdir(parents=True)
+        assert not is_property_cached(str(tmp_path), "openrent:999")
+
+    def test_true_when_files_present(self, tmp_path: Path) -> None:
+        cache_dir = get_cache_dir(str(tmp_path), "openrent:999")
+        cache_dir.mkdir(parents=True)
+        (cache_dir / "gallery_000_abc12345.jpg").write_bytes(b"fake image")
+        assert is_property_cached(str(tmp_path), "openrent:999")
+
+
+class TestSaveAndReadImageBytes:
+    def test_round_trip(self, tmp_path: Path) -> None:
+        path = tmp_path / "sub" / "image.jpg"
+        data = b"\xff\xd8\xff\xe0fake jpeg data"
+        save_image_bytes(path, data)
+        assert read_image_bytes(path) == data
+
+    def test_read_nonexistent_returns_none(self, tmp_path: Path) -> None:
+        assert read_image_bytes(tmp_path / "missing.jpg") is None
+
+
+class TestGetCachedImagePath:
+    def test_returns_expected_path(self) -> None:
+        path = get_cached_image_path("/data", "zoopla:xyz", "https://cdn.com/img.jpg", "gallery", 2)
+        assert path.parent == Path("/data/image_cache/zoopla_xyz")
+        assert path.name.startswith("gallery_002_")
+        assert path.name.endswith(".jpg")

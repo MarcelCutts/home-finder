@@ -1,0 +1,290 @@
+{% extends "base.html" %}
+{% from "_macros.html" import commute_pill %}
+
+{% block title %}{{ prop.title }} — Home Finder{% endblock %}
+
+{% block nav_info %}<a href="/">&larr; Dashboard</a>{% endblock %}
+
+{% block content %}
+{% set qa = prop.quality_analysis %}
+<article>
+    {# Hero Gallery — visual anchor, full-bleed #}
+    {% if prop.gallery_images %}
+    {% set gallery = prop.gallery_images %}
+    {% set hero_count = [gallery|length, 5] | min %}
+    <div class="hero-gallery">
+        <div class="hero-main">
+            <img src="{{ image_url_map.get(gallery[0].url|string, gallery[0].url) }}" alt="{{ prop.title }}" loading="eager" data-lightbox>
+        </div>
+        {% if gallery|length > 1 %}
+        <div class="hero-thumbs">
+            {% for img in gallery[1:hero_count] %}
+            <div class="hero-thumb">
+                <img src="{{ image_url_map.get(img.url|string, img.url) }}" alt="Property photo {{ loop.index + 1 }}" loading="eager" data-lightbox>
+                {% if loop.last and gallery|length > hero_count %}
+                <div class="hero-more-overlay" data-gallery-more="{{ hero_count }}">+{{ gallery|length - hero_count }} more</div>
+                {% endif %}
+            </div>
+            {% endfor %}
+        </div>
+        {% endif %}
+        <div class="hero-photo-count">{{ gallery|length }} photos</div>
+    </div>
+    {# Hidden images for lightbox navigation #}
+    {% for img in gallery[hero_count:] %}
+    <img src="{{ image_url_map.get(img.url|string, img.url) }}" alt="Property photo {{ hero_count + loop.index }}" data-lightbox hidden>
+    {% endfor %}
+    {% endif %}
+
+    {# Header — Price is dominant (largest element), title secondary, meta tertiary #}
+    <div class="detail-header">
+        <div class="detail-header-row">
+            <h1>{{ prop.title }}</h1>
+            <p class="key-price">
+                {% if prop.min_price and prop.max_price and prop.min_price != prop.max_price %}
+                &pound;{{ "{:,}".format(prop.min_price) }}&ndash;{{ "{:,}".format(prop.max_price) }}
+                {% else %}
+                &pound;{{ "{:,}".format(prop.price_pcm) }}
+                {% endif %}
+                <span class="key-price-label">/mo</span>
+            </p>
+        </div>
+        <div class="detail-header-row">
+            <p class="detail-meta">
+                {{ prop.bedrooms }} bed &middot; {{ prop.address }}{% if prop.postcode %}, {{ prop.postcode }}{% endif %}
+                {%- for source_key in prop.sources_list -%}
+                {%- set url = prop.source_urls_dict.get(source_key) -%}
+                {%- if url %}
+                <span class="meta-sep">&middot;</span>
+                <a href="{{ url }}" target="_blank" rel="noopener" class="meta-link">{{ source_names.get(source_key, source_key) }}&nbsp;&#8599;</a>
+                {%- endif -%}
+                {%- endfor -%}
+                {%- if prop.latitude and prop.longitude %}
+                <span class="meta-sep">&middot;</span>
+                <a href="https://www.google.com/maps?q={{ prop.latitude }},{{ prop.longitude }}" target="_blank" rel="noopener" class="meta-link meta-link-dim">Map&nbsp;&#8599;</a>
+                {%- endif %}
+            </p>
+            <div class="detail-header-meta">
+                {% if prop.quality_rating %}
+                <span class="star-rating">
+                    {% for i in range(1, 6) %}
+                        {% if i <= prop.quality_rating %}
+                            <span class="star filled">&#9733;</span>
+                        {% else %}
+                            <span class="star empty">&#9734;</span>
+                        {% endif %}
+                    {% endfor %}
+                </span>
+                {% endif %}
+                {{ commute_pill(prop.commute_minutes, prop.transport_mode) }}
+            </div>
+        </div>
+    </div>
+
+    {# Section Navigation — sticky anchor bar #}
+    <nav class="section-nav" id="section-nav">
+        <ul class="section-nav-links">
+            {% if qa %}<li><a href="#section-overview">Overview</a></li>{% endif %}
+            {% if qa %}<li><a href="#section-quality">Quality</a></li>{% endif %}
+            {% if prop.floorplan_images %}<li><a href="#section-floorplan">Floorplan</a></li>{% endif %}
+            {% if best_description %}<li><a href="#section-description">Description</a></li>{% endif %}
+            {% if prop.latitude and prop.longitude %}<li><a href="#section-location">Location</a></li>{% endif %}
+            {% if area_context and area_context.description %}<li><a href="#section-area">Area</a></li>{% endif %}
+        </ul>
+    </nav>
+
+    {# 1. Overview — the "executive summary" #}
+    {% if qa %}
+    <section id="section-overview" class="detail-section">
+        <h3>Overview</h3>
+
+        {% if qa.one_line %}
+        <p class="overview-tagline">{{ qa.one_line.one_line if qa.one_line is mapping else qa.one_line }}</p>
+        {% endif %}
+
+        <blockquote>{{ qa.summary }}</blockquote>
+
+        {% if qa.highlights or qa.lowlights %}
+        <div class="overview-chips">
+            {% if qa.highlights %}
+            {% for tag in qa.highlights %}
+            {% if not (qa.listing_extraction and qa.listing_extraction.epc_rating and qa.listing_extraction.epc_rating != 'unknown' and tag[:3] | upper == "EPC") %}
+            <span class="highlight-chip highlight-positive">{{ tag }}</span>
+            {% endif %}
+            {% endfor %}
+            {% endif %}
+            {% if qa.lowlights %}
+            {% for tag in qa.lowlights %}
+            <span class="highlight-chip highlight-negative">{{ tag }}</span>
+            {% endfor %}
+            {% endif %}
+        </div>
+        {% endif %}
+
+        {% if qa.value %}
+        <div class="overview-card value-assessment-card">
+            <h4>Value Assessment</h4>
+            {% if qa.value.rating %}
+            <div class="value-row">
+                <span class="value-row-label">Market value</span>
+                <span class="badge
+                    {% if qa.value.rating in ('excellent', 'good') %}badge-green
+                    {% elif qa.value.rating == 'fair' %}badge-amber
+                    {% else %}badge-red{% endif %}">
+                    {{ qa.value.rating | capitalize }}
+                </span>
+                {% if qa.value.note %}<span class="value-row-note">{{ qa.value.note }}</span>{% endif %}
+            </div>
+            {% endif %}
+            {% if qa.value.quality_adjusted_rating %}
+            <div class="value-row">
+                <span class="value-row-label">Quality-adjusted</span>
+                <span class="badge
+                    {% if qa.value.quality_adjusted_rating in ('excellent', 'good') %}badge-green
+                    {% elif qa.value.quality_adjusted_rating == 'fair' %}badge-amber
+                    {% else %}badge-red{% endif %}">
+                    {{ qa.value.quality_adjusted_rating | capitalize }}
+                </span>
+            </div>
+            {% if qa.value.quality_adjusted_note %}
+            <p class="value-detail-note">{{ qa.value.quality_adjusted_note }}</p>
+            {% endif %}
+            {% endif %}
+        </div>
+        {% endif %}
+
+        {% if qa.condition_concerns %}
+        <div class="quality-alert
+            {% if qa.concern_severity == 'serious' %}alert-red
+            {% elif qa.concern_severity == 'moderate' %}alert-amber
+            {% else %}alert-green{% endif %}">
+            <strong>Condition Concerns ({{ qa.concern_severity or "unknown" }}):</strong>
+            <p>{{ qa.condition.maintenance_concerns | join(", ") }}</p>
+        </div>
+        {% endif %}
+
+        {% if qa.listing_red_flags and qa.listing_red_flags.red_flag_count > 0 %}
+        <div class="quality-alert alert-amber">
+            <strong>Listing Red Flags ({{ qa.listing_red_flags.red_flag_count }}):</strong>
+            {% if qa.listing_red_flags.too_few_photos %}<p>Too few photos</p>{% endif %}
+            {% if qa.listing_red_flags.selective_angles %}<p>Selective camera angles</p>{% endif %}
+            {% if qa.listing_red_flags.missing_room_photos %}
+            <p>No photos of: {{ qa.listing_red_flags.missing_room_photos | join(", ") }}</p>
+            {% endif %}
+            {% if qa.listing_red_flags.description_concerns %}
+            {% for concern in qa.listing_red_flags.description_concerns %}
+            <p>{{ concern }}</p>
+            {% endfor %}
+            {% endif %}
+        </div>
+        {% endif %}
+    </section>
+    {% endif %}
+
+    {# 2. Quality Analysis — room-by-room breakdown #}
+    {% include "_quality_card.html" %}
+
+    {# 3. Floorplan — spatial understanding #}
+    {% if prop.floorplan_images %}
+    <section id="section-floorplan" class="detail-section">
+        <h3>Floorplan</h3>
+        <div class="floorplan-section">
+            {% for img in prop.floorplan_images %}
+            <div class="floorplan-frame">
+                <img src="{{ image_url_map.get(img.url|string, img.url) }}" alt="Floorplan" loading="lazy" class="floorplan-image" data-lightbox>
+            </div>
+            {% endfor %}
+        </div>
+    </section>
+    {% endif %}
+
+    {# 4. Description — agent copy, lower priority #}
+    {% if best_description %}
+    <section id="section-description" class="detail-section">
+        <h3>Description</h3>
+        <div class="description-container">
+            <div class="description-text" id="description-text">{{ best_description | e | replace("\n", "<br>") | safe }}</div>
+            <button class="description-toggle" id="description-toggle" hidden>Read more</button>
+        </div>
+    </section>
+    {% endif %}
+
+    {# 5. Location Map #}
+    {% if prop.latitude and prop.longitude %}
+    <section id="section-location" class="detail-section">
+        <h3>Location</h3>
+        <div id="map" data-lat="{{ prop.latitude }}" data-lon="{{ prop.longitude }}" data-title="{{ prop.address }}" role="application" aria-label="Map showing property location at {{ prop.address }}"></div>
+    </section>
+    {% endif %}
+
+    {# 6. Area Context — supplementary info #}
+    {% if area_context and area_context.description %}
+    <section id="section-area" class="detail-section">
+        <h3>Area: {{ outcode }}</h3>
+        <p class="area-description">{{ area_context.description }}</p>
+
+        {% if area_context.benchmarks %}
+        <h4 class="section-subhead">Rental Benchmarks ({{ outcode }})</h4>
+        {% set max_rent = area_context.benchmarks.values() | max %}
+        <div class="benchmark-list">
+            {% for beds, rent in area_context.benchmarks.items() %}
+            {% set pct = (rent / max_rent * 100) | round | int %}
+            <div class="benchmark-row{% if beds == prop.bedrooms %} benchmark-current{% endif %}">
+                <span class="benchmark-label">{{ beds }} bed</span>
+                <div class="benchmark-track">
+                    <div class="benchmark-fill" style="--bar-pct: {{ pct }}%"></div>
+                </div>
+                <span class="benchmark-value">&pound;{{ "{:,}".format(rent) }}/mo</span>
+            </div>
+            {% endfor %}
+        </div>
+        {% endif %}
+
+        <div class="area-details">
+            {% if area_context.borough and area_context.council_tax %}
+            <div>
+                <h4>Council Tax ({{ area_context.borough }})</h4>
+                <table>
+                    <thead><tr><th>Band</th><th>Monthly</th></tr></thead>
+                    <tbody>
+                        {% for band, amount in area_context.council_tax.items() %}
+                        <tr><td>{{ band }}</td><td>&pound;{{ amount }}/mo</td></tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% endif %}
+
+            {% if area_context.crime %}
+            <div>
+                <h4>Crime</h4>
+                <p>{{ area_context.crime.rate }}/1,000 residents ({{ area_context.crime.vs_london }} vs London avg)
+                    — <span class="badge
+                        {% if area_context.crime.risk in ('low', 'low-medium') %}badge-green
+                        {% elif area_context.crime.risk == 'medium' %}badge-amber
+                        {% else %}badge-red{% endif %}">{{ area_context.crime.risk }}</span>
+                </p>
+                {% if area_context.crime.note %}<p><small>{{ area_context.crime.note }}</small></p>{% endif %}
+            </div>
+            {% endif %}
+
+            {% if area_context.rent_trend %}
+            <div>
+                <h4>Rent Trend</h4>
+                <p>+{{ area_context.rent_trend.yoy_pct }}% YoY ({{ area_context.rent_trend.direction }})</p>
+            </div>
+            {% endif %}
+        </div>
+    </section>
+    {% endif %}
+</article>
+
+{# Lightbox overlay #}
+<div id="lightbox" class="lightbox" hidden>
+    <button class="lightbox-close" aria-label="Close">&times;</button>
+    <button class="lightbox-prev" aria-label="Previous">&lsaquo;</button>
+    <img class="lightbox-img" src="" alt="Full size">
+    <button class="lightbox-next" aria-label="Next">&rsaquo;</button>
+    <div class="lightbox-counter"></div>
+</div>
+{% endblock %}
