@@ -329,14 +329,70 @@ async def _run_pre_analysis_pipeline(
         with_images=sum(1 for m in merged_to_notify if m.images),
     )
 
-    # Step 5.6: Deduplicate enriched properties across platforms
+    # Step 5.6: Cross-platform dedup (including DB anchors for cross-run detection)
     logger.info("pipeline_started", phase="deduplication_merge")
-    merged_to_notify = await deduplicator.deduplicate_merged_async(merged_to_notify)
+
+    # Load recent DB properties as dedup anchors so that a property appearing
+    # on platform B today can be matched against platform A stored last week.
+    db_anchors = await storage.get_recent_properties_for_dedup(days=30)
+    logger.info(
+        "loaded_dedup_anchors",
+        anchor_count=len(db_anchors),
+    )
+
+    # Map each anchor's source URLs to its DB unique_id so we can detect
+    # merges even when the deduplicator picks a different canonical.
+    anchor_url_to_id: dict[str, str] = {}
+    anchor_by_id: dict[str, MergedProperty] = {}
+    for anchor in db_anchors:
+        anchor_by_id[anchor.canonical.unique_id] = anchor
+        for url in anchor.source_urls.values():
+            anchor_url_to_id[str(url)] = anchor.canonical.unique_id
+
+    # Combine new properties with DB anchors for dedup comparison
+    combined_for_dedup = merged_to_notify + db_anchors
+    dedup_results = await deduplicator.deduplicate_merged_async(combined_for_dedup)
+
+    # Split: anchors that gained new sources vs genuinely new properties
+    genuinely_new: list[MergedProperty] = []
+    anchors_updated = 0
+    for merged in dedup_results:
+        # Check if this result involves any DB anchor (by URL match)
+        matched_anchor_id: str | None = None
+        for url in merged.source_urls.values():
+            aid = anchor_url_to_id.get(str(url))
+            if aid is not None:
+                matched_anchor_id = aid
+                break
+
+        if matched_anchor_id is not None:
+            original_anchor = anchor_by_id[matched_anchor_id]
+            if set(merged.sources) != set(original_anchor.sources):
+                await storage.update_merged_sources(matched_anchor_id, merged)
+                anchors_updated += 1
+                logger.info(
+                    "cross_run_duplicate_detected",
+                    anchor_id=matched_anchor_id,
+                    new_sources=[s.value for s in merged.sources],
+                    original_sources=[s.value for s in original_anchor.sources],
+                )
+        else:
+            genuinely_new.append(merged)
+
     logger.info(
         "deduplication_merge_summary",
-        merged_count=len(merged_to_notify),
-        multi_source_count=sum(1 for m in merged_to_notify if len(m.sources) > 1),
+        dedup_input=len(combined_for_dedup),
+        dedup_output=len(dedup_results),
+        genuinely_new=len(genuinely_new),
+        anchors_updated=anchors_updated,
+        multi_source_count=sum(1 for m in genuinely_new if len(m.sources) > 1),
     )
+
+    merged_to_notify = genuinely_new
+
+    if not merged_to_notify:
+        logger.info("no_new_properties_after_cross_run_dedup")
+        return None
 
     # Step 5.7: Floorplan gate (if configured)
     if settings.require_floorplan:

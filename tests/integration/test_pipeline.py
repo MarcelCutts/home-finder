@@ -10,7 +10,7 @@ from pydantic import HttpUrl
 from home_finder.db import PropertyStorage
 from home_finder.filters.criteria import CriteriaFilter
 from home_finder.filters.deduplication import Deduplicator
-from home_finder.models import Property, PropertySource, SearchCriteria
+from home_finder.models import MergedProperty, Property, PropertySource, SearchCriteria
 
 
 @pytest_asyncio.fixture
@@ -331,6 +331,113 @@ class TestFilterToStorage:
             tracked = await storage.get_property(unique_id)
             assert tracked is not None
             assert tracked.property.source == source
+
+
+@pytest.mark.integration
+class TestCrossPlatformPipeline:
+    """Test cross-platform dedup across pipeline re-runs."""
+
+    @pytest.mark.asyncio
+    async def test_pipeline_rerun_cross_platform_no_duplicate_notification(
+        self, storage: PropertyStorage, criteria: SearchCriteria
+    ) -> None:
+        """Run 1: OpenRent property saved. Run 2: same flat on Zoopla → no new record."""
+        deduplicator = Deduplicator(enable_cross_platform=True)
+
+        # Run 1: OpenRent property scraped, filtered, stored
+        openrent_prop = Property(
+            source=PropertySource.OPENRENT,
+            source_id="OR-cross-1",
+            url=HttpUrl("https://openrent.com/OR-cross-1"),
+            title="2-bed in Hackney",
+            price_pcm=2000,
+            bedrooms=2,
+            address="Flat 4, 123 Mare Street, Hackney",
+            postcode="E8 3RH",
+            latitude=51.5465,
+            longitude=-0.0553,
+            first_seen=datetime(2026, 2, 1, 10, 0),
+        )
+        wrapped_run1 = deduplicator.properties_to_merged([openrent_prop])
+        new_run1 = await storage.filter_new_merged(wrapped_run1)
+        assert len(new_run1) == 1
+
+        for m in new_run1:
+            await storage.save_merged_property(m)
+        await storage.mark_notified(openrent_prop.unique_id)
+
+        count_after_run1 = await storage.get_property_count()
+        assert count_after_run1 == 1
+
+        # Run 2: Same flat appears on Zoopla (different unique_id)
+        zoopla_prop = Property(
+            source=PropertySource.ZOOPLA,
+            source_id="ZP-cross-1",
+            url=HttpUrl("https://zoopla.co.uk/ZP-cross-1"),
+            title="2 bed flat in Mare Street",
+            price_pcm=1950,
+            bedrooms=2,
+            address="123 Mare Street, Hackney E8 3RH",
+            postcode="E8 3RH",
+            latitude=51.54652,
+            longitude=-0.05528,
+            first_seen=datetime(2026, 2, 8, 14, 0),
+        )
+        wrapped_run2 = deduplicator.properties_to_merged([zoopla_prop])
+        new_run2 = await storage.filter_new_merged(wrapped_run2)
+        # Zoopla listing passes filter_new_merged (different unique_id)
+        assert len(new_run2) == 1
+
+        # Cross-run dedup: load anchors and combine
+        db_anchors = await storage.get_recent_properties_for_dedup(days=30)
+
+        # Build URL → anchor mapping (same logic as main.py)
+        anchor_url_to_id: dict[str, str] = {}
+        anchor_by_id: dict[str, MergedProperty] = {}
+        for anchor in db_anchors:
+            anchor_by_id[anchor.canonical.unique_id] = anchor
+            for url in anchor.source_urls.values():
+                anchor_url_to_id[str(url)] = anchor.canonical.unique_id
+
+        combined = new_run2 + db_anchors
+        dedup_results = await deduplicator.deduplicate_merged_async(combined)
+
+        genuinely_new: list[MergedProperty] = []
+        for merged in dedup_results:
+            matched_anchor_id: str | None = None
+            for url in merged.source_urls.values():
+                aid = anchor_url_to_id.get(str(url))
+                if aid is not None:
+                    matched_anchor_id = aid
+                    break
+            if matched_anchor_id is not None:
+                original = anchor_by_id[matched_anchor_id]
+                if set(merged.sources) != set(original.sources):
+                    await storage.update_merged_sources(matched_anchor_id, merged)
+            else:
+                genuinely_new.append(merged)
+
+        # No genuinely new properties — Zoopla was absorbed into OpenRent anchor
+        assert len(genuinely_new) == 0
+
+        # DB still has only 1 record
+        count_after_run2 = await storage.get_property_count()
+        assert count_after_run2 == 1
+
+        # But the record now has 2 sources
+        import json
+
+        conn = await storage._get_connection()
+        cursor = await conn.execute(
+            "SELECT sources, notification_status FROM properties WHERE unique_id = ?",
+            (openrent_prop.unique_id,),
+        )
+        row = await cursor.fetchone()
+        sources = json.loads(row["sources"])
+        assert "openrent" in sources
+        assert "zoopla" in sources
+        # Notification status unchanged
+        assert row["notification_status"] == "sent"
 
 
 @pytest.mark.integration

@@ -1248,3 +1248,81 @@ class TestKnownPairScoring:
         score = calculate_match_score(p1, p2)
         # At 30m (within 50m reference): score = 40 * (1 - (30/50)*0.5) ≈ 28
         assert 25 < score.coordinates < 40
+
+
+# ---------------------------------------------------------------------------
+# Test: dedup with DB anchors (cross-run scenario)
+# ---------------------------------------------------------------------------
+
+
+class TestDedupWithDbAnchors:
+    """Test deduplicate_merged_async when DB anchors are mixed in."""
+
+    @pytest.mark.asyncio
+    async def test_dedup_with_db_anchors_mixed_batch(self) -> None:
+        """Batch of 5 new properties + 3 DB anchors: 1 new matches 1 anchor."""
+        deduplicator = Deduplicator(enable_cross_platform=True)
+
+        # 3 "DB anchors" (already stored in a prior run)
+        anchor1 = _make_merged(MARE_ST_OPENRENT)  # Will match new_prop1 below
+        anchor2 = _make_merged(DALSTON_OTM)
+        anchor3 = _make_merged(STOKE_NEWINGTON)
+        anchors = [anchor1, anchor2, anchor3]
+        anchor_ids = {a.canonical.unique_id for a in anchors}
+
+        # 5 "new" properties from current scrape
+        new_prop1 = _make_merged(MARE_ST_ZOOPLA)  # Same flat as anchor1
+        new_prop2 = _make_merged(
+            _make_property(
+                source=PropertySource.ZOOPLA,
+                source_id="new-zp-1",
+                price_pcm=1700,
+                bedrooms=1,
+                postcode="N16 0AS",
+                latitude=51.5615,
+                longitude=-0.0765,
+                address="10 Church Street, N16",
+            )
+        )
+        new_prop3 = _make_merged(
+            _make_property(
+                source=PropertySource.OPENRENT,
+                source_id="new-or-1",
+                price_pcm=2500,
+                bedrooms=3,
+                postcode="E9 5LN",
+                latitude=51.549,
+                longitude=-0.055,
+                address="50 Chatsworth Road, E9",
+            )
+        )
+        new_prop4 = _make_merged(
+            _make_property(
+                source=PropertySource.ONTHEMARKET,
+                source_id="new-otm-1",
+                price_pcm=1400,
+                bedrooms=1,
+                postcode="E5 8QJ",
+                latitude=51.555,
+                longitude=-0.062,
+                address="20 Clapton Common, E5",
+            )
+        )
+        new_prop5 = _make_merged(MARE_ST_DIFFERENT)  # Different property on same street
+
+        new_props = [new_prop1, new_prop2, new_prop3, new_prop4, new_prop5]
+
+        # Combine and dedup
+        combined = new_props + anchors
+        dedup_results = await deduplicator.deduplicate_merged_async(combined)
+
+        # Split
+        genuinely_new = [m for m in dedup_results if m.canonical.unique_id not in anchor_ids]
+        updated_anchors = [
+            m for m in dedup_results if m.canonical.unique_id in anchor_ids and len(m.sources) > 1
+        ]
+
+        # new_prop1 (MARE_ST_ZOOPLA) should have been absorbed into anchor1 (MARE_ST_OPENRENT)
+        assert len(genuinely_new) == 4, f"Expected 4 genuinely new, got {len(genuinely_new)}"
+        assert len(updated_anchors) == 1, "One anchor should have gained a new source"
+        assert PropertySource.ZOOPLA in updated_anchors[0].sources

@@ -1,6 +1,8 @@
 """Tests for property storage with SQLite."""
 
+import json
 from collections.abc import AsyncGenerator
+from datetime import datetime, timedelta
 
 import pytest
 import pytest_asyncio
@@ -8,8 +10,10 @@ from pydantic import HttpUrl
 
 from home_finder.db.storage import PropertyStorage
 from home_finder.models import (
+    MergedProperty,
     NotificationStatus,
     Property,
+    PropertyImage,
     PropertySource,
     TransportMode,
 )
@@ -303,3 +307,367 @@ class TestPropertyStorage:
         statuses = {u.notification_status for u in unsent}
         assert NotificationStatus.PENDING in statuses
         assert NotificationStatus.FAILED in statuses
+
+
+class TestGetRecentPropertiesForDedup:
+    """Tests for get_recent_properties_for_dedup."""
+
+    @pytest.mark.asyncio
+    async def test_returns_recent_properties_as_merged(self, storage: PropertyStorage) -> None:
+        """Properties within the lookback window are returned as MergedProperty."""
+        prop = Property(
+            source=PropertySource.OPENRENT,
+            source_id="dedup-1",
+            url=HttpUrl("https://openrent.com/dedup-1"),
+            title="Test flat",
+            price_pcm=2000,
+            bedrooms=2,
+            address="123 Mare Street",
+            postcode="E8 3RH",
+            latitude=51.5465,
+            longitude=-0.0553,
+        )
+        merged = MergedProperty(
+            canonical=prop,
+            sources=(PropertySource.OPENRENT,),
+            source_urls={PropertySource.OPENRENT: prop.url},
+            images=(),
+            floorplan=None,
+            min_price=2000,
+            max_price=2000,
+            descriptions={PropertySource.OPENRENT: "Nice flat"},
+        )
+        await storage.save_merged_property(merged)
+
+        # Save some images
+        images = [
+            PropertyImage(
+                url=HttpUrl("https://example.com/img1.jpg"),
+                source=PropertySource.OPENRENT,
+                image_type="gallery",
+            ),
+            PropertyImage(
+                url=HttpUrl("https://example.com/floor.jpg"),
+                source=PropertySource.OPENRENT,
+                image_type="floorplan",
+            ),
+        ]
+        await storage.save_property_images(prop.unique_id, images)
+
+        results = await storage.get_recent_properties_for_dedup(days=7)
+        assert len(results) == 1
+        result = results[0]
+        assert result.canonical.unique_id == prop.unique_id
+        assert result.min_price == 2000
+        assert result.max_price == 2000
+        assert len(result.images) == 1  # gallery only
+        assert result.floorplan is not None
+
+    @pytest.mark.asyncio
+    async def test_excludes_old_properties(self, storage: PropertyStorage) -> None:
+        """Properties older than the lookback window are excluded."""
+        from datetime import UTC
+
+        old_prop = Property(
+            source=PropertySource.OPENRENT,
+            source_id="old-1",
+            url=HttpUrl("https://openrent.com/old-1"),
+            title="Old flat",
+            price_pcm=1500,
+            bedrooms=1,
+            address="Old Address",
+            first_seen=datetime.now(UTC) - timedelta(days=60),
+        )
+        await storage.save_property(old_prop)
+
+        recent_prop = Property(
+            source=PropertySource.ZOOPLA,
+            source_id="recent-1",
+            url=HttpUrl("https://zoopla.co.uk/recent-1"),
+            title="Recent flat",
+            price_pcm=1800,
+            bedrooms=1,
+            address="Recent Address",
+            postcode="E8 1AA",
+        )
+        await storage.save_property(recent_prop)
+
+        results = await storage.get_recent_properties_for_dedup(days=7)
+        assert len(results) == 1
+        assert results[0].canonical.source_id == "recent-1"
+
+    @pytest.mark.asyncio
+    async def test_reconstructs_multi_source_data(self, storage: PropertyStorage) -> None:
+        """Multi-source properties from DB are correctly reconstructed."""
+        prop = Property(
+            source=PropertySource.OPENRENT,
+            source_id="multi-1",
+            url=HttpUrl("https://openrent.com/multi-1"),
+            title="Multi-source flat",
+            price_pcm=2000,
+            bedrooms=2,
+            address="123 Mare Street",
+            postcode="E8 3RH",
+        )
+        merged = MergedProperty(
+            canonical=prop,
+            sources=(PropertySource.OPENRENT, PropertySource.ZOOPLA),
+            source_urls={
+                PropertySource.OPENRENT: prop.url,
+                PropertySource.ZOOPLA: HttpUrl("https://zoopla.co.uk/z-1"),
+            },
+            images=(),
+            floorplan=None,
+            min_price=1950,
+            max_price=2000,
+            descriptions={
+                PropertySource.OPENRENT: "OR desc",
+                PropertySource.ZOOPLA: "ZP desc",
+            },
+        )
+        await storage.save_merged_property(merged)
+
+        results = await storage.get_recent_properties_for_dedup(days=7)
+        assert len(results) == 1
+        result = results[0]
+        assert len(result.sources) == 2
+        assert PropertySource.OPENRENT in result.sources
+        assert PropertySource.ZOOPLA in result.sources
+        assert result.min_price == 1950
+        assert result.max_price == 2000
+        assert PropertySource.OPENRENT in result.descriptions
+        assert PropertySource.ZOOPLA in result.descriptions
+
+
+class TestUpdateMergedSources:
+    """Tests for update_merged_sources."""
+
+    @pytest.mark.asyncio
+    async def test_preserves_notification_status(self, storage: PropertyStorage) -> None:
+        """notification_status remains 'sent' after source update."""
+        prop = Property(
+            source=PropertySource.OPENRENT,
+            source_id="notify-1",
+            url=HttpUrl("https://openrent.com/notify-1"),
+            title="Notified flat",
+            price_pcm=2000,
+            bedrooms=2,
+            address="123 Mare Street",
+            postcode="E8 3RH",
+        )
+        merged = MergedProperty(
+            canonical=prop,
+            sources=(PropertySource.OPENRENT,),
+            source_urls={PropertySource.OPENRENT: prop.url},
+            images=(),
+            floorplan=None,
+            min_price=2000,
+            max_price=2000,
+            descriptions={},
+        )
+        await storage.save_merged_property(merged)
+        await storage.mark_notified(prop.unique_id)
+
+        # Update with new source
+        updated = MergedProperty(
+            canonical=prop,
+            sources=(PropertySource.OPENRENT, PropertySource.ZOOPLA),
+            source_urls={
+                PropertySource.OPENRENT: prop.url,
+                PropertySource.ZOOPLA: HttpUrl("https://zoopla.co.uk/z-1"),
+            },
+            images=(),
+            floorplan=None,
+            min_price=1950,
+            max_price=2000,
+            descriptions={PropertySource.ZOOPLA: "ZP desc"},
+        )
+        await storage.update_merged_sources(prop.unique_id, updated)
+
+        tracked = await storage.get_property(prop.unique_id)
+        assert tracked is not None
+        assert tracked.notification_status == NotificationStatus.SENT
+
+    @pytest.mark.asyncio
+    async def test_expands_price_range(self, storage: PropertyStorage) -> None:
+        """Price range is expanded when new source has different price."""
+        prop = Property(
+            source=PropertySource.OPENRENT,
+            source_id="price-1",
+            url=HttpUrl("https://openrent.com/price-1"),
+            title="Price test flat",
+            price_pcm=2000,
+            bedrooms=2,
+            address="123 Mare Street",
+            postcode="E8 3RH",
+        )
+        merged = MergedProperty(
+            canonical=prop,
+            sources=(PropertySource.OPENRENT,),
+            source_urls={PropertySource.OPENRENT: prop.url},
+            images=(),
+            floorplan=None,
+            min_price=2000,
+            max_price=2000,
+            descriptions={},
+        )
+        await storage.save_merged_property(merged)
+
+        updated = MergedProperty(
+            canonical=prop,
+            sources=(PropertySource.OPENRENT, PropertySource.ZOOPLA),
+            source_urls={
+                PropertySource.OPENRENT: prop.url,
+                PropertySource.ZOOPLA: HttpUrl("https://zoopla.co.uk/z-1"),
+            },
+            images=(),
+            floorplan=None,
+            min_price=1950,
+            max_price=2000,
+            descriptions={},
+        )
+        await storage.update_merged_sources(prop.unique_id, updated)
+
+        conn = await storage._get_connection()
+        cursor = await conn.execute(
+            "SELECT min_price, max_price FROM properties WHERE unique_id = ?",
+            (prop.unique_id,),
+        )
+        row = await cursor.fetchone()
+        assert row["min_price"] == 1950
+        assert row["max_price"] == 2000
+
+    @pytest.mark.asyncio
+    async def test_adds_new_sources_and_urls(self, storage: PropertyStorage) -> None:
+        """Sources and source_urls are merged correctly."""
+        prop = Property(
+            source=PropertySource.OPENRENT,
+            source_id="src-1",
+            url=HttpUrl("https://openrent.com/src-1"),
+            title="Source test flat",
+            price_pcm=2000,
+            bedrooms=2,
+            address="123 Mare Street",
+            postcode="E8 3RH",
+        )
+        merged = MergedProperty(
+            canonical=prop,
+            sources=(PropertySource.OPENRENT,),
+            source_urls={PropertySource.OPENRENT: prop.url},
+            images=(),
+            floorplan=None,
+            min_price=2000,
+            max_price=2000,
+            descriptions={PropertySource.OPENRENT: "OR desc"},
+        )
+        await storage.save_merged_property(merged)
+
+        updated = MergedProperty(
+            canonical=prop,
+            sources=(PropertySource.OPENRENT, PropertySource.ZOOPLA),
+            source_urls={
+                PropertySource.OPENRENT: prop.url,
+                PropertySource.ZOOPLA: HttpUrl("https://zoopla.co.uk/z-1"),
+            },
+            images=(),
+            floorplan=None,
+            min_price=2000,
+            max_price=2000,
+            descriptions={
+                PropertySource.OPENRENT: "OR desc",
+                PropertySource.ZOOPLA: "ZP desc",
+            },
+        )
+        await storage.update_merged_sources(prop.unique_id, updated)
+
+        conn = await storage._get_connection()
+        cursor = await conn.execute(
+            "SELECT sources, source_urls, descriptions_json FROM properties WHERE unique_id = ?",
+            (prop.unique_id,),
+        )
+        row = await cursor.fetchone()
+        sources = json.loads(row["sources"])
+        source_urls = json.loads(row["source_urls"])
+        descriptions = json.loads(row["descriptions_json"])
+
+        assert "openrent" in sources
+        assert "zoopla" in sources
+        assert "openrent" in source_urls
+        assert "zoopla" in source_urls
+        assert descriptions["openrent"] == "OR desc"
+        assert descriptions["zoopla"] == "ZP desc"
+
+    @pytest.mark.asyncio
+    async def test_saves_new_images(self, storage: PropertyStorage) -> None:
+        """Images from the new source are saved to property_images."""
+        prop = Property(
+            source=PropertySource.OPENRENT,
+            source_id="img-1",
+            url=HttpUrl("https://openrent.com/img-1"),
+            title="Image test flat",
+            price_pcm=2000,
+            bedrooms=2,
+            address="123 Mare Street",
+            postcode="E8 3RH",
+        )
+        merged = MergedProperty(
+            canonical=prop,
+            sources=(PropertySource.OPENRENT,),
+            source_urls={PropertySource.OPENRENT: prop.url},
+            images=(),
+            floorplan=None,
+            min_price=2000,
+            max_price=2000,
+            descriptions={},
+        )
+        await storage.save_merged_property(merged)
+
+        # Update with new source that has images
+        new_img = PropertyImage(
+            url=HttpUrl("https://zoopla.co.uk/img-new.jpg"),
+            source=PropertySource.ZOOPLA,
+            image_type="gallery",
+        )
+        updated = MergedProperty(
+            canonical=prop,
+            sources=(PropertySource.OPENRENT, PropertySource.ZOOPLA),
+            source_urls={
+                PropertySource.OPENRENT: prop.url,
+                PropertySource.ZOOPLA: HttpUrl("https://zoopla.co.uk/z-1"),
+            },
+            images=(new_img,),
+            floorplan=None,
+            min_price=2000,
+            max_price=2000,
+            descriptions={},
+        )
+        await storage.update_merged_sources(prop.unique_id, updated)
+
+        images = await storage.get_property_images(prop.unique_id)
+        assert len(images) == 1
+        assert str(images[0].url) == "https://zoopla.co.uk/img-new.jpg"
+
+    @pytest.mark.asyncio
+    async def test_nonexistent_property_is_noop(self, storage: PropertyStorage) -> None:
+        """Updating a non-existent property does nothing (no error)."""
+        prop = Property(
+            source=PropertySource.OPENRENT,
+            source_id="ghost-1",
+            url=HttpUrl("https://openrent.com/ghost-1"),
+            title="Ghost flat",
+            price_pcm=2000,
+            bedrooms=2,
+            address="Nowhere",
+        )
+        merged = MergedProperty(
+            canonical=prop,
+            sources=(PropertySource.OPENRENT,),
+            source_urls={PropertySource.OPENRENT: prop.url},
+            images=(),
+            floorplan=None,
+            min_price=2000,
+            max_price=2000,
+            descriptions={},
+        )
+        # Should not raise
+        await storage.update_merged_sources("nonexistent:999", merged)

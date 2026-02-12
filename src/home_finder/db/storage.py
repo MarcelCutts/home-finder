@@ -2,11 +2,12 @@
 
 import contextlib
 import json
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any, TypedDict, cast
+from typing import Any, Final, TypedDict, cast
 
 import aiosqlite
+from pydantic import HttpUrl
 
 from home_finder.logging import get_logger
 from home_finder.models import (
@@ -19,6 +20,9 @@ from home_finder.models import (
     TrackedProperty,
     TransportMode,
 )
+
+# Default lookback window for cross-platform dedup anchors
+_DEDUP_LOOKBACK_DAYS: Final = 30
 
 
 class PropertyListItem(TypedDict, total=False):
@@ -461,6 +465,178 @@ class PropertyStorage:
         """
         seen = await self._get_seen_ids([m.canonical.unique_id for m in properties])
         return [m for m in properties if m.canonical.unique_id not in seen]
+
+    async def get_recent_properties_for_dedup(
+        self, days: int = _DEDUP_LOOKBACK_DAYS
+    ) -> list[MergedProperty]:
+        """Load recent DB properties as MergedProperty objects for dedup anchoring.
+
+        Used to detect cross-platform duplicates across pipeline runs: new
+        properties from platform B can be matched against existing DB records
+        from platform A.
+
+        Args:
+            days: Lookback window in days (default 30).
+
+        Returns:
+            List of MergedProperty objects reconstructed from DB rows.
+        """
+        conn = await self._get_connection()
+        cutoff = (datetime.now(UTC) - timedelta(days=days)).isoformat()
+
+        cursor = await conn.execute(
+            """
+            SELECT * FROM properties
+            WHERE first_seen >= ?
+            ORDER BY first_seen DESC
+            """,
+            (cutoff,),
+        )
+        rows = await cursor.fetchall()
+
+        results: list[MergedProperty] = []
+        for row in rows:
+            prop = self._row_to_tracked_property(row).property
+
+            # Parse multi-source fields from DB
+            sources_list: list[PropertySource] = []
+            source_urls: dict[PropertySource, HttpUrl] = {}
+            descriptions: dict[PropertySource, str] = {}
+
+            if row["sources"]:
+                for s in json.loads(row["sources"]):
+                    sources_list.append(PropertySource(s))
+            else:
+                sources_list.append(prop.source)
+
+            if row["source_urls"]:
+                for s, url in json.loads(row["source_urls"]).items():
+                    source_urls[PropertySource(s)] = HttpUrl(url)
+            else:
+                source_urls[prop.source] = prop.url
+
+            if row["descriptions_json"]:
+                for s, desc in json.loads(row["descriptions_json"]).items():
+                    descriptions[PropertySource(s)] = desc
+
+            # Load images for this property
+            images = await self.get_property_images(prop.unique_id)
+            gallery = tuple(img for img in images if img.image_type == "gallery")
+            floorplan_img = next((img for img in images if img.image_type == "floorplan"), None)
+
+            min_price = row["min_price"] if row["min_price"] is not None else prop.price_pcm
+            max_price = row["max_price"] if row["max_price"] is not None else prop.price_pcm
+
+            results.append(
+                MergedProperty(
+                    canonical=prop,
+                    sources=tuple(sources_list),
+                    source_urls=source_urls,
+                    images=gallery,
+                    floorplan=floorplan_img,
+                    min_price=min_price,
+                    max_price=max_price,
+                    descriptions=descriptions,
+                )
+            )
+
+        logger.debug(
+            "loaded_dedup_anchors",
+            count=len(results),
+            days=days,
+        )
+        return results
+
+    async def update_merged_sources(
+        self,
+        existing_unique_id: str,
+        merged: MergedProperty,
+    ) -> None:
+        """Update an existing DB property with additional sources.
+
+        Merges sources, source_urls, descriptions, and price range from a
+        newly-matched MergedProperty into the existing record. Does NOT
+        touch first_seen, notification_status, quality analysis, or commute data.
+
+        Args:
+            existing_unique_id: The unique_id of the existing DB record.
+            merged: The MergedProperty containing combined source data.
+        """
+        conn = await self._get_connection()
+
+        # Read current DB state
+        cursor = await conn.execute(
+            "SELECT sources, source_urls, descriptions_json, min_price, max_price, price_pcm "
+            "FROM properties WHERE unique_id = ?",
+            (existing_unique_id,),
+        )
+        row = await cursor.fetchone()
+        if row is None:
+            logger.warning("update_merged_sources_not_found", unique_id=existing_unique_id)
+            return
+
+        # Merge sources
+        existing_sources: list[str] = json.loads(row["sources"]) if row["sources"] else []
+        existing_source_urls: dict[str, str] = (
+            json.loads(row["source_urls"]) if row["source_urls"] else {}
+        )
+        existing_descriptions: dict[str, str] = (
+            json.loads(row["descriptions_json"]) if row["descriptions_json"] else {}
+        )
+
+        for src in merged.sources:
+            if src.value not in existing_sources:
+                existing_sources.append(src.value)
+            if src in merged.source_urls:
+                existing_source_urls[src.value] = str(merged.source_urls[src])
+            if src in merged.descriptions:
+                existing_descriptions[src.value] = merged.descriptions[src]
+
+        # Expand price range
+        db_min = row["min_price"] if row["min_price"] is not None else row["price_pcm"]
+        db_max = row["max_price"] if row["max_price"] is not None else row["price_pcm"]
+        new_min = min(db_min, merged.min_price)
+        new_max = max(db_max, merged.max_price)
+
+        sources_json = json.dumps(existing_sources)
+        source_urls_json = json.dumps(existing_source_urls)
+        descriptions_json = json.dumps(existing_descriptions) if existing_descriptions else None
+
+        await conn.execute(
+            """
+            UPDATE properties SET
+                sources = ?,
+                source_urls = ?,
+                descriptions_json = ?,
+                min_price = ?,
+                max_price = ?
+            WHERE unique_id = ?
+            """,
+            (
+                sources_json,
+                source_urls_json,
+                descriptions_json,
+                new_min,
+                new_max,
+                existing_unique_id,
+            ),
+        )
+        await conn.commit()
+
+        # Save any new images from the merged property
+        new_images = list(merged.images)
+        if merged.floorplan:
+            new_images.append(merged.floorplan)
+        if new_images:
+            await self.save_property_images(existing_unique_id, new_images)
+
+        logger.info(
+            "merged_sources_updated",
+            unique_id=existing_unique_id,
+            sources=existing_sources,
+            min_price=new_min,
+            max_price=new_max,
+        )
 
     async def save_merged_property(
         self,

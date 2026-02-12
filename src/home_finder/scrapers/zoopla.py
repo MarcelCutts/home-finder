@@ -60,6 +60,12 @@ BOROUGH_AREAS: dict[str, tuple[str, str]] = {
 }
 
 
+_SHARED_ACCOMMODATION_PATTERNS = re.compile(
+    r"flat\s*share|house\s*share|room\s+(?:in|to)\s+rent|shared\s+(?:flat|house|accommodation)",
+    re.IGNORECASE,
+)
+
+
 class ZooplaScraper(BaseScraper):
     """Scraper for Zoopla.co.uk listings using curl_cffi."""
 
@@ -347,6 +353,10 @@ class ZooplaScraper(BaseScraper):
         address = listing.get_address()
         title = listing.get_title()
 
+        # Skip shared accommodation listings
+        if _SHARED_ACCOMMODATION_PATTERNS.search(title):
+            return None
+
         # Extract postcode from address
         postcode = extract_postcode(address)
 
@@ -478,6 +488,10 @@ class ZooplaScraper(BaseScraper):
         if not title:
             title_elem = card.find("h2")
             title = title_elem.get_text(strip=True) if title_elem else ""
+
+        # Skip shared accommodation listings
+        if _SHARED_ACCOMMODATION_PATTERNS.search(title):
+            return None
 
         # Extract bedrooms from title
         bedrooms = extract_bedrooms(title)
