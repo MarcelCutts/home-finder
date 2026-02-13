@@ -499,6 +499,65 @@ class TestFilterBehavior:
         expect(page.locator("#modal-count")).to_have_text("5")
         assert page.get_by_label("Hob type").input_value() == ""
 
+    # -- Group 2b: Modal Count Accuracy --
+
+    def test_modal_count_area_filter(self, server_url, page):
+        """Modal count is accurate with area filter active."""
+        # E8 has properties 1001, 1002
+        page.goto(f"{server_url}/?area=E8")
+        page.locator("#open-filters-btn").click()
+        expect(page.locator("#modal-count")).to_have_text("2")
+
+    def test_modal_count_bedrooms_filter(self, server_url, page):
+        """Modal count is accurate with bedrooms filter active."""
+        # 2-bed: properties 1002, 1004
+        page.goto(f"{server_url}/?bedrooms=2")
+        page.locator("#open-filters-btn").click()
+        expect(page.locator("#modal-count")).to_have_text("2")
+
+    def test_modal_count_combined_filters(self, server_url, page):
+        """Modal count is accurate with primary + modal filters combined."""
+        # bedrooms=1 + area=E8 = property 1001 only
+        page.goto(f"{server_url}/?bedrooms=1&area=E8")
+        page.locator("#open-filters-btn").click()
+        expect(page.locator("#modal-count")).to_have_text("1")
+
+        # Adding hob_type=gas should narrow to 0 (1001 has no quality analysis)
+        page.get_by_label("Hob type").select_option("gas")
+        expect(page.locator("#modal-count")).to_have_text("0")
+
+    def test_modal_reset_then_apply_delivers_all_results(self, server_url, page):
+        """Reset all followed by Apply returns the full unfiltered result set."""
+        page.goto(f"{server_url}/?bedrooms=1&hob_type=gas")
+        nav_count = page.locator("nav #nav-count")
+        expect(nav_count).to_contain_text("1 propert")
+
+        page.locator("#open-filters-btn").click()
+        page.get_by_role("button", name="Reset all").click()
+        expect(page.locator("#modal-count")).to_have_text("5")
+
+        page.locator(".filter-modal-apply").click()
+
+        expect(page.locator("#filter-modal")).not_to_be_visible()
+        expect(nav_count).to_contain_text("5 properties")
+        assert "bedrooms=" not in page.url
+        assert "hob_type=" not in page.url
+
+    def test_modal_reset_clears_primary_field_values(self, server_url, page):
+        """Reset all clears select/radio values for primary filters."""
+        page.goto(f"{server_url}/?area=E8&bedrooms=1")
+        page.locator("#open-filters-btn").click()
+
+        # Verify the primary fields have filter values pre-selected
+        assert page.get_by_label("Area", exact=True).input_value() == "E8"
+        assert page.locator("input[name='bedrooms'][value='1']").is_checked()
+
+        page.get_by_role("button", name="Reset all").click()
+
+        # Primary fields should be cleared
+        assert page.get_by_label("Area", exact=True).input_value() == ""
+        assert page.locator("input[name='bedrooms'][value='']").is_checked()
+
     # -- Group 3: Empty State & Filter Chips --
 
     def test_empty_state_when_no_results(self, server_url, page):

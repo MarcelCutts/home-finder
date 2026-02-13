@@ -167,8 +167,12 @@ class TestTelegramNotificationE2E:
     async def test_photo_fallback_to_text(
         self,
         enriched_merged_property: MergedProperty,
+        sample_quality_analysis: PropertyQualityAnalysis,
     ):
-        """When send_media_group fails, should fallback to send_message."""
+        """When send_media_group fails, should fallback to send_message.
+
+        Album path requires high-rated (>=4) quality analysis + 3+ images.
+        """
         notifier = TelegramNotifier(
             bot_token="fake:test-token",
             chat_id=12345,
@@ -181,6 +185,7 @@ class TestTelegramNotificationE2E:
         with patch.object(notifier, "_get_bot", return_value=mock_bot):
             result = await notifier.send_merged_property_notification(
                 enriched_merged_property,
+                quality_analysis=sample_quality_analysis,  # rating=4 to trigger album
             )
 
         assert result is True

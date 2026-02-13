@@ -108,8 +108,8 @@ def _format_value_info(
 
     # Emoji based on rating
     emoji_map = {
-        "excellent": "💎",
-        "good": "💎",
+        "excellent": "📊",
+        "good": "📊",
         "fair": "📊",
         "poor": "⚠️",
     }
@@ -160,29 +160,51 @@ def _format_header_lines(
     price_varies: bool = False,
     min_price: int = 0,
     max_price: int = 0,
+    brief: bool = False,
 ) -> list[str]:
-    """Build common header lines: title, rating+price, address, commute."""
-    lines = [f"🏠 <b>{html.escape(title)}</b>", ""]
+    """Build common header lines: title, rating+price, location, commute.
+
+    Args:
+        brief: If True, use postcode only and merge commute into location line.
+               Used for captions (1024 char limit). Full mode shows full address.
+    """
+    lines = [f"<b>{html.escape(title)}</b>", ""]
 
     # Merge star rating with price/beds on one line for density
     info_parts: list[str] = []
     if overall_rating is not None:
         info_parts.append(_format_star_rating(overall_rating))
     if price_varies:
-        info_parts.append(f"💰 £{min_price:,}-£{max_price:,}/mo")
+        info_parts.append(f"£{min_price:,}-£{max_price:,}/mo")
     else:
-        info_parts.append(f"💰 £{price_pcm:,}/mo")
-    info_parts.append(f"🛏 {bedrooms} bed")
+        info_parts.append(f"£{price_pcm:,}/mo")
+    info_parts.append(f"{bedrooms} bed")
     lines.append(" · ".join(info_parts))
 
-    escaped_address = html.escape(address)
     escaped_postcode = html.escape(postcode)
-    location = f"{escaped_address}, {escaped_postcode}" if postcode else escaped_address
-    lines.append(f"📍 {location}")
 
-    if commute_minutes is not None:
-        emoji = f"{TRANSPORT_MODE_EMOJI.get(transport_mode, '')} " if transport_mode else ""
-        lines.append(f"{emoji}{commute_minutes} min")
+    if brief:
+        # Caption mode: postcode + commute on one compact line
+        location_parts: list[str] = []
+        if escaped_postcode:
+            location_parts.append(f"📍 {escaped_postcode}")
+        if commute_minutes is not None:
+            mode_emoji = TRANSPORT_MODE_EMOJI.get(transport_mode, "") if transport_mode else ""
+            if mode_emoji:
+                location_parts.append(f"{mode_emoji} {commute_minutes} min")
+            else:
+                location_parts.append(f"{commute_minutes} min")
+        if location_parts:
+            lines.append(" · ".join(location_parts))
+    else:
+        # Full mode: full address, commute on separate line
+        escaped_address = html.escape(address)
+        location = f"{escaped_address}, {escaped_postcode}" if postcode else escaped_address
+        lines.append(f"📍 {location}")
+        if commute_minutes is not None:
+            mode_emoji = TRANSPORT_MODE_EMOJI.get(transport_mode, "") if transport_mode else ""
+            prefix = f"{mode_emoji} " if mode_emoji else ""
+            lines.append(f"{prefix}{commute_minutes} min")
 
     return lines
 
@@ -259,96 +281,63 @@ def _format_viewing_notes(analysis: PropertyQualityAnalysis) -> list[str]:
     return lines
 
 
-def _format_quality_block(
-    analysis: PropertyQualityAnalysis,
-    *,
-    full: bool = True,
-) -> list[str]:
-    """Build quality analysis lines.
+def _format_quality_block(analysis: PropertyQualityAnalysis) -> list[str]:
+    """Build full quality analysis lines for text messages.
 
-    Args:
-        analysis: Quality analysis to format.
-        full: If True, include kitchen/light/space/condition details.
-              If False, only include concerns, summary (italic), and value.
-              Critical alerts (bad EPC, red flags) always shown.
+    Used by format_property_message and format_merged_property_message
+    (text fallback). Uses text labels instead of emoji for detail sections
+    to reduce emoji density.
     """
     lines: list[str] = []
 
     if analysis.condition_concerns:
         concerns_text = ", ".join(html.escape(c) for c in analysis.condition.maintenance_concerns)
-        lines.append(f"⚠️ <b>Concerns:</b> {concerns_text}")
+        lines.append(f"⚠️ Concerns: {concerns_text}")
 
     lines.append("")
+    lines.append(f"<blockquote expandable>{html.escape(analysis.summary)}</blockquote>")
 
-    if full:
-        lines.append(f"<blockquote expandable>{html.escape(analysis.summary)}</blockquote>")
+    if analysis.highlights:
+        chips = " · ".join(html.escape(h) for h in analysis.highlights[:5])
+        lines.append(f"✅ {chips}")
+    if analysis.lowlights:
+        chips = " · ".join(html.escape(lo) for lo in analysis.lowlights[:5])
+        lines.append(f"⛔ {chips}")
 
-        # Highlight/lowlight chip lines
-        if analysis.highlights:
-            chips = " · ".join(html.escape(h) for h in analysis.highlights[:5])
-            lines.append(f"✅ {chips}")
-        if analysis.lowlights:
-            chips = " · ".join(html.escape(lo) for lo in analysis.lowlights[:5])
-            lines.append(f"⛔ {chips}")
+    lines.append(f"Kitchen: {_format_kitchen_info(analysis)}")
 
-        lines.append(f"🍳 {_format_kitchen_info(analysis)}")
+    bathroom_info = _format_bathroom_info(analysis)
+    if bathroom_info:
+        lines.append(f"Bathroom: {bathroom_info}")
 
-        bathroom_info = _format_bathroom_info(analysis)
-        if bathroom_info:
-            lines.append(f"🚿 {bathroom_info}")
+    lines.append(f"Light: {_format_light_space_info(analysis)}")
+    lines.append(f"Space: {_format_space_info(analysis)}")
+    lines.append(f"Condition: {analysis.condition.overall_condition}")
 
-        lines.append(f"💡 {_format_light_space_info(analysis)}")
-        lines.append(f"📐 {_format_space_info(analysis)}")
-        lines.append(f"🔧 {analysis.condition.overall_condition}")
+    outdoor_info = _format_outdoor_info(analysis)
+    if outdoor_info:
+        lines.append(f"Outdoor: {outdoor_info}")
 
-        outdoor_info = _format_outdoor_info(analysis)
-        if outdoor_info:
-            lines.append(f"🌿 {outdoor_info}")
+    listing_info = _format_listing_extraction_info(analysis)
+    if listing_info:
+        lines.append(f"Listing: {listing_info}")
 
-        listing_info = _format_listing_extraction_info(analysis)
-        if listing_info:
-            lines.append(f"📋 {listing_info}")
+    if analysis.listing_red_flags and analysis.listing_red_flags.red_flag_count > 0:
+        rf = analysis.listing_red_flags
+        rf_parts = []
+        if rf.missing_room_photos:
+            rf_parts.append(f"No photos of: {', '.join(rf.missing_room_photos)}")
+        if rf.too_few_photos:
+            rf_parts.append("Too few photos")
+        if rf_parts:
+            lines.append(f"⚠️ {' · '.join(rf_parts)}")
 
-        if analysis.listing_red_flags and analysis.listing_red_flags.red_flag_count > 0:
-            rf = analysis.listing_red_flags
-            rf_parts = []
-            if rf.missing_room_photos:
-                rf_parts.append(f"No photos of: {', '.join(rf.missing_room_photos)}")
-            if rf.too_few_photos:
-                rf_parts.append("Too few photos")
-            if rf_parts:
-                lines.append(f"🚩 {' · '.join(rf_parts)}")
+    viewing_lines = _format_viewing_notes(analysis)
+    if viewing_lines:
+        lines.append("")
+        lines.extend(viewing_lines)
 
-        # Viewing notes
-        viewing_lines = _format_viewing_notes(analysis)
-        if viewing_lines:
-            lines.append("")
-            lines.extend(viewing_lines)
-
-    else:
-        # Use one_line if available, fall back to summary
-        display_text = analysis.one_line or analysis.summary
-        lines.append(f"<i>{html.escape(display_text)}</i>")
-
-        # Highlight/lowlight chip lines
-        if analysis.highlights:
-            chips = " · ".join(html.escape(h) for h in analysis.highlights[:4])
-            lines.append(f"✅ {chips}")
-        if analysis.lowlights:
-            chips = " · ".join(html.escape(lo) for lo in analysis.lowlights[:4])
-            lines.append(f"⛔ {chips}")
-
-        # Critical alerts even in condensed captions
-        if analysis.listing_extraction and analysis.listing_extraction.epc_rating in (
-            "E",
-            "F",
-            "G",
-        ):
-            lines.append(f"⚠️ EPC {analysis.listing_extraction.epc_rating}")
-        if analysis.listing_red_flags and analysis.listing_red_flags.red_flag_count >= 2:
-            lines.append(f"🚩 {analysis.listing_red_flags.red_flag_count} red flags")
-
-    value_info = _format_value_info(analysis, brief=not full)
+    value_info = _format_value_info(analysis)
     if value_info:
         lines.append(value_info)
 
@@ -385,7 +374,7 @@ def format_property_message(
     )
 
     if quality_analysis:
-        lines.extend(_format_quality_block(quality_analysis, full=True))
+        lines.extend(_format_quality_block(quality_analysis))
 
     source_name = SOURCE_NAMES.get(prop.source.value, prop.source.value)
     lines.append(f"\n🔗 {source_name}")
@@ -429,7 +418,7 @@ def format_merged_property_message(
     )
 
     if quality_analysis:
-        lines.extend(_format_quality_block(quality_analysis, full=True))
+        lines.extend(_format_quality_block(quality_analysis))
 
     # Image count and floorplan
     if merged.images or merged.floorplan:
@@ -467,11 +456,18 @@ def format_merged_property_caption(
 ) -> str:
     """Format a condensed caption for send_photo (1024 char limit).
 
-    Includes title, star rating, price, beds, address, commute, summary, value.
-    Source links are omitted (they go in inline keyboard buttons).
+    Builds incrementally in priority order, dropping lower-priority sections
+    if they would exceed the limit. No lowlights (those are on the web dashboard).
+    Source links go in inline keyboard buttons.
+
+    Sections (priority order):
+    1. Title + rating/price/beds + location/commute (always)
+    2. AI one-liner (if available)
+    3. Highlights + critical alerts (if available)
+    4. Value note (lowest priority)
     """
     prop = merged.canonical
-    lines = _format_header_lines(
+    header_lines = _format_header_lines(
         title=prop.title,
         price_pcm=prop.price_pcm,
         bedrooms=prop.bedrooms,
@@ -483,79 +479,71 @@ def format_merged_property_caption(
         price_varies=merged.price_varies,
         min_price=merged.min_price,
         max_price=merged.max_price,
+        brief=True,
     )
 
-    if quality_analysis:
-        lines.extend(_format_quality_block(quality_analysis, full=False))
+    sections: list[str] = ["\n".join(header_lines)]
 
-    caption = "\n".join(lines)
-    # Telegram caption limit is 1024 chars
-    if len(caption) > 1024:
-        caption = caption[:1021] + "..."
-    return caption
+    if quality_analysis:
+        # Section 2: AI one-liner
+        display_text = quality_analysis.one_line or quality_analysis.summary
+        if display_text:
+            sections.append(html.escape(display_text))
+
+        # Section 3: Highlights + critical alerts
+        alert_lines: list[str] = []
+        if quality_analysis.highlights:
+            chips = " · ".join(html.escape(h) for h in quality_analysis.highlights[:4])
+            alert_lines.append(f"✅ {chips}")
+        if quality_analysis.condition_concerns:
+            concerns = ", ".join(
+                html.escape(c) for c in quality_analysis.condition.maintenance_concerns
+            )
+            alert_lines.append(f"⚠️ {concerns}")
+        if (
+            quality_analysis.listing_extraction
+            and quality_analysis.listing_extraction.epc_rating in ("E", "F", "G")
+        ):
+            alert_lines.append(f"⚠️ EPC {quality_analysis.listing_extraction.epc_rating}")
+        if (
+            quality_analysis.listing_red_flags
+            and quality_analysis.listing_red_flags.red_flag_count >= 2
+        ):
+            alert_lines.append(
+                f"⚠️ {quality_analysis.listing_red_flags.red_flag_count} red flags"
+            )
+        if alert_lines:
+            sections.append("\n".join(alert_lines))
+
+        # Section 4: Value note (lowest priority)
+        value_info = _format_value_info(quality_analysis, brief=True)
+        if value_info:
+            sections.append(value_info)
+
+    # Assemble incrementally: each section separated by blank line
+    result = sections[0]
+    for section in sections[1:]:
+        candidate = result + "\n\n" + section
+        if len(candidate) > 1024:
+            break
+        result = candidate
+
+    return result
 
 
 def _format_followup_detail(
     quality_analysis: PropertyQualityAnalysis | None = None,
 ) -> str:
-    """Format non-redundant detail for media group follow-up message.
+    """Format minimal follow-up text for album keyboard message.
 
-    Complements the condensed caption (which shows title, price, address,
-    one-line summary, highlights/lowlights, and brief value) by providing
-    only the detailed breakdown, viewing notes, and full value commentary.
-    No title/price/address repetition.
+    Only includes viewing notes (actionable items for viewings).
+    All other detail is available on the web dashboard via the Details button.
     """
     if not quality_analysis:
         return ""
 
-    analysis = quality_analysis
-    lines: list[str] = []
-
-    if analysis.condition_concerns:
-        concerns_text = ", ".join(html.escape(c) for c in analysis.condition.maintenance_concerns)
-        lines.append(f"⚠️ <b>Concerns:</b> {concerns_text}")
-
-    lines.append(f"🍳 {_format_kitchen_info(analysis)}")
-
-    bathroom_info = _format_bathroom_info(analysis)
-    if bathroom_info:
-        lines.append(f"🚿 {bathroom_info}")
-
-    lines.append(f"💡 {_format_light_space_info(analysis)}")
-    lines.append(f"📐 {_format_space_info(analysis)}")
-    lines.append(f"🔧 {analysis.condition.overall_condition}")
-
-    outdoor_info = _format_outdoor_info(analysis)
-    if outdoor_info:
-        lines.append(f"🌿 {outdoor_info}")
-
-    listing_info = _format_listing_extraction_info(analysis)
-    if listing_info:
-        lines.append(f"📋 {listing_info}")
-
-    if analysis.listing_red_flags and analysis.listing_red_flags.red_flag_count > 0:
-        rf = analysis.listing_red_flags
-        rf_parts = []
-        if rf.missing_room_photos:
-            rf_parts.append(f"No photos of: {', '.join(rf.missing_room_photos)}")
-        if rf.too_few_photos:
-            rf_parts.append("Too few photos")
-        if rf_parts:
-            lines.append(f"🚩 {' · '.join(rf_parts)}")
-
-    # Viewing notes
-    viewing_lines = _format_viewing_notes(analysis)
-    if viewing_lines:
-        lines.append("")
-        lines.extend(viewing_lines)
-
-    # Full value commentary in expandable blockquote (caption only has the brief line)
-    if analysis.value and analysis.value.quality_adjusted_note:
-        lines.append("")
-        escaped_note = html.escape(analysis.value.quality_adjusted_note)
-        lines.append(f"<blockquote expandable>{escaped_note}</blockquote>")
-
-    return "\n".join(lines)
+    lines = _format_viewing_notes(quality_analysis)
+    return "\n".join(lines) if lines else ""
 
 
 def _build_inline_keyboard(
@@ -750,9 +738,9 @@ class TelegramNotifier:
     ) -> bool:
         """Send a merged property notification with photo, inline keyboard, and venue.
 
-        If an image is available, sends as a photo with condensed caption and
-        inline keyboard buttons. Otherwise falls back to a text message.
-        If coordinates are available, follows up with a venue pin.
+        Notification format adapts based on quality rating:
+        - Rating >= 4: album (if 3+ images) + venue pin (message sprawl justified)
+        - Rating < 4 or unknown: single photo + no venue pin (compact triage)
 
         Automatically retries on Telegram flood control (429) up to 2 times,
         sleeping for the duration Telegram specifies.
@@ -768,6 +756,12 @@ class TelegramNotifier:
         """
         from aiogram.exceptions import TelegramRetryAfter
 
+        is_high_rated = (
+            quality_analysis is not None
+            and quality_analysis.overall_rating is not None
+            and quality_analysis.overall_rating >= 4
+        )
+
         try:
             bot = self._get_bot()
             keyboard = _build_inline_keyboard(merged, web_base_url=self.web_base_url)
@@ -782,8 +776,8 @@ class TelegramNotifier:
                     quality_analysis=quality_analysis,
                 )
                 try:
-                    if len(gallery_urls) >= 3:
-                        # Complementary detail only (no title/price/address repetition)
+                    if is_high_rated and len(gallery_urls) >= 3:
+                        # High-rated: album with viewing notes follow-up
                         followup_text = _format_followup_detail(
                             quality_analysis=quality_analysis,
                         )
@@ -794,6 +788,7 @@ class TelegramNotifier:
                             followup_text=followup_text,
                         )
                     else:
+                        # Single hero image with caption + keyboard
                         await bot.send_photo(
                             chat_id=self.chat_id,
                             photo=gallery_urls[0],
@@ -824,9 +819,13 @@ class TelegramNotifier:
                     reply_markup=keyboard,
                 )
 
-            # Send venue pin if coordinates available
+            # Venue pin only for high-rated properties (reduces message sprawl)
             prop = merged.canonical
-            if prop.latitude is not None and prop.longitude is not None:
+            if (
+                is_high_rated
+                and prop.latitude is not None
+                and prop.longitude is not None
+            ):
                 await bot.send_venue(
                     chat_id=self.chat_id,
                     latitude=prop.latitude,
@@ -913,7 +912,7 @@ class TelegramNotifier:
 
         # Media groups don't support inline keyboards, so send a follow-up
         # message with full analysis + buttons
-        text = followup_text if followup_text else "👆 View links for this property:"
+        text = followup_text if followup_text else "Tap Details for full analysis 👆"
         await bot.send_message(
             chat_id=self.chat_id,
             text=text,
