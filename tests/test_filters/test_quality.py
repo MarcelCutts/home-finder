@@ -10,7 +10,9 @@ from pydantic import HttpUrl, ValidationError
 from home_finder.filters.quality import (
     EVALUATION_TOOL,
     VISUAL_ANALYSIS_TOOL,
+    APIUnavailableError,
     PropertyQualityFilter,
+    _CIRCUIT_BREAKER_THRESHOLD,
     assess_value,
     build_evaluation_prompt,
 )
@@ -1659,3 +1661,174 @@ class TestNewFieldsPipelineFlow:
         assert analysis.flooring_noise.hosting_noise_risk == "low"
         assert analysis.listing_extraction is not None
         assert analysis.listing_extraction.broadband_type == "fttp"
+
+
+class TestCircuitBreaker:
+    """Tests for API circuit breaker in PropertyQualityFilter."""
+
+    async def test_circuit_opens_after_consecutive_failures(
+        self,
+        sample_merged_property: MergedProperty,
+    ) -> None:
+        """Circuit should open after _CIRCUIT_BREAKER_THRESHOLD consecutive API failures."""
+        from anthropic import APIConnectionError
+
+        quality_filter = PropertyQualityFilter(api_key="test-key")
+        quality_filter._client = MagicMock()
+        quality_filter._client.messages.create = AsyncMock(
+            side_effect=APIConnectionError(request=MagicMock())
+        )
+
+        assert not quality_filter._circuit_open
+
+        for i in range(_CIRCUIT_BREAKER_THRESHOLD):
+            with pytest.raises(APIUnavailableError):
+                await quality_filter.analyze_single_merged(sample_merged_property)
+
+        assert quality_filter._circuit_open
+        assert quality_filter._consecutive_api_failures == _CIRCUIT_BREAKER_THRESHOLD
+
+    async def test_circuit_open_raises_immediately(
+        self,
+        sample_merged_property: MergedProperty,
+    ) -> None:
+        """When circuit is open, should raise APIUnavailableError without calling API."""
+        quality_filter = PropertyQualityFilter(api_key="test-key")
+        quality_filter._circuit_open = True
+        quality_filter._client = MagicMock()
+        quality_filter._client.messages.create = AsyncMock()
+
+        with pytest.raises(APIUnavailableError):
+            await quality_filter.analyze_single_merged(sample_merged_property)
+
+        # Should NOT have called the API
+        quality_filter._client.messages.create.assert_not_called()
+
+    async def test_success_resets_failure_counter(
+        self,
+        sample_merged_property: MergedProperty,
+        sample_visual_response: dict[str, Any],
+        sample_evaluation_response: dict[str, Any],
+    ) -> None:
+        """Successful API call should reset the consecutive failure counter."""
+        from anthropic import APIConnectionError
+
+        quality_filter = PropertyQualityFilter(api_key="test-key")
+        quality_filter._client = MagicMock()
+
+        # First: fail twice (below threshold)
+        quality_filter._client.messages.create = AsyncMock(
+            side_effect=APIConnectionError(request=MagicMock())
+        )
+        for _ in range(_CIRCUIT_BREAKER_THRESHOLD - 1):
+            with pytest.raises(APIUnavailableError):
+                await quality_filter.analyze_single_merged(sample_merged_property)
+
+        assert quality_filter._consecutive_api_failures == _CIRCUIT_BREAKER_THRESHOLD - 1
+        assert not quality_filter._circuit_open
+
+        # Then: succeed — counter should reset
+        quality_filter._client.messages.create = _make_two_phase_mock(
+            sample_visual_response, sample_evaluation_response
+        )
+        await quality_filter.analyze_single_merged(sample_merged_property)
+
+        assert quality_filter._consecutive_api_failures == 0
+        assert not quality_filter._circuit_open
+
+    async def test_rate_limit_error_trips_circuit(
+        self,
+        sample_merged_property: MergedProperty,
+    ) -> None:
+        """RateLimitError should count toward circuit breaker."""
+        from anthropic import RateLimitError
+
+        mock_response = MagicMock()
+        mock_response.status_code = 429
+        mock_response.headers = {}
+        quality_filter = PropertyQualityFilter(api_key="test-key")
+        quality_filter._client = MagicMock()
+        quality_filter._client.messages.create = AsyncMock(
+            side_effect=RateLimitError(
+                message="rate limited",
+                response=mock_response,
+                body=None,
+            )
+        )
+
+        for _ in range(_CIRCUIT_BREAKER_THRESHOLD):
+            with pytest.raises(APIUnavailableError):
+                await quality_filter.analyze_single_merged(sample_merged_property)
+
+        assert quality_filter._circuit_open
+
+    async def test_internal_server_error_trips_circuit(
+        self,
+        sample_merged_property: MergedProperty,
+    ) -> None:
+        """InternalServerError should count toward circuit breaker."""
+        from anthropic import InternalServerError
+
+        mock_response = MagicMock()
+        mock_response.status_code = 500
+        mock_response.headers = {}
+        quality_filter = PropertyQualityFilter(api_key="test-key")
+        quality_filter._client = MagicMock()
+        quality_filter._client.messages.create = AsyncMock(
+            side_effect=InternalServerError(
+                message="server error",
+                response=mock_response,
+                body=None,
+            )
+        )
+
+        for _ in range(_CIRCUIT_BREAKER_THRESHOLD):
+            with pytest.raises(APIUnavailableError):
+                await quality_filter.analyze_single_merged(sample_merged_property)
+
+        assert quality_filter._circuit_open
+
+    async def test_bad_request_does_not_trip_circuit(
+        self,
+        sample_merged_property: MergedProperty,
+    ) -> None:
+        """BadRequestError should NOT count toward circuit breaker."""
+        from anthropic import BadRequestError
+
+        mock_response = MagicMock()
+        mock_response.status_code = 400
+        mock_response.headers = {}
+        quality_filter = PropertyQualityFilter(api_key="test-key")
+        quality_filter._client = MagicMock()
+        quality_filter._client.messages.create = AsyncMock(
+            side_effect=BadRequestError(
+                message="bad request",
+                response=mock_response,
+                body=None,
+            )
+        )
+
+        # Exceed threshold — circuit should NOT open (BadRequestError is request-specific)
+        for _ in range(_CIRCUIT_BREAKER_THRESHOLD + 1):
+            merged, analysis = await quality_filter.analyze_single_merged(sample_merged_property)
+            assert "No images available" in analysis.summary
+
+        assert not quality_filter._circuit_open
+        assert quality_filter._consecutive_api_failures == 0
+
+    async def test_generic_exception_does_not_trip_circuit(
+        self,
+        sample_merged_property: MergedProperty,
+    ) -> None:
+        """Generic exceptions should NOT count toward circuit breaker."""
+        quality_filter = PropertyQualityFilter(api_key="test-key")
+        quality_filter._client = MagicMock()
+        quality_filter._client.messages.create = AsyncMock(
+            side_effect=ValueError("unexpected error")
+        )
+
+        for _ in range(_CIRCUIT_BREAKER_THRESHOLD + 1):
+            merged, analysis = await quality_filter.analyze_single_merged(sample_merged_property)
+            assert "No images available" in analysis.summary
+
+        assert not quality_filter._circuit_open

@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Final
 from pydantic import HttpUrl
 
 from home_finder.logging import get_logger
-from home_finder.models import MergedProperty, Property, PropertyImage
+from home_finder.models import MergedProperty, Property, PropertyImage, PropertySource
 from home_finder.scrapers.detail_fetcher import DetailFetcher
 from home_finder.utils.image_cache import (
     get_cached_image_path,
@@ -216,13 +216,26 @@ async def enrich_merged_properties(
     return result
 
 
+# Sources that don't support dedicated floorplan images — landlords upload
+# photos into a single gallery with no floorplan distinction.
+_FLOORPLAN_EXEMPT_SOURCES: frozenset[PropertySource] = frozenset({PropertySource.OPENRENT})
+
+
 def filter_by_floorplan(properties: list[MergedProperty]) -> list[MergedProperty]:
     """Drop properties that have no valid image-format floorplan.
+
+    Properties exclusively from sources that lack a dedicated floorplan
+    section (e.g. OpenRent) are exempt — they pass through even without
+    a detected floorplan.
 
     Args:
         properties: Enriched MergedProperty list.
 
     Returns:
-        Properties that have a floorplan.
+        Properties that have a floorplan or are exempt.
     """
-    return [p for p in properties if p.floorplan is not None]
+    return [
+        p
+        for p in properties
+        if p.floorplan is not None or set(p.sources).issubset(_FLOORPLAN_EXEMPT_SOURCES)
+    ]

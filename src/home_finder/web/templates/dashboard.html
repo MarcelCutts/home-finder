@@ -218,7 +218,7 @@
             </div>
             <footer class="filter-modal-footer">
                 <button type="button" class="filter-modal-reset outline secondary">Reset all</button>
-                <button type="submit" class="filter-modal-apply">Show <span id="modal-count" hx-get="/count" hx-trigger="filterChange from:closest dialog delay:300ms" hx-include="closest form">{{ total }}</span> properties</button>
+                <button type="button" class="filter-modal-apply">Show <span id="modal-count" hx-get="/count" hx-trigger="filterChange from:closest dialog delay:300ms" hx-include="closest form" hx-target="this" hx-push-url="false" hx-indicator="">{{ total }}</span> properties</button>
             </footer>
         </dialog>
     </form>

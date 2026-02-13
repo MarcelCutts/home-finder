@@ -7,6 +7,10 @@ primary_region = "lhr"
 [mounts]
   source = "home_finder_data"
   destination = "/app/data"
+  initial_size = "1gb"
+  auto_extend_size_threshold = 80
+  auto_extend_size_increment = "1gb"
+  auto_extend_size_limit = "5gb"
 
 [env]
   MALLOC_ARENA_MAX = "2"
@@ -14,7 +18,7 @@ primary_region = "lhr"
 [http_service]
   internal_port = 8000
   force_https = true
-  auto_stop_machines = false
+  auto_stop_machines = "off"
   auto_start_machines = true
   min_machines_running = 1
 

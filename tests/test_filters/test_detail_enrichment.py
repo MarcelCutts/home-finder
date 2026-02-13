@@ -263,6 +263,28 @@ class TestFilterByFloorplan:
         result = filter_by_floorplan(props)
         assert len(result) == 0
 
+    def test_exempts_openrent_only_properties(self) -> None:
+        """OpenRent-only properties should pass without a floorplan."""
+        openrent_prop = _make_merged(
+            canonical=_make_property(source=PropertySource.OPENRENT, source_id="111"),
+            sources=(PropertySource.OPENRENT,),
+        )
+        rightmove_no_fp = _make_merged(
+            canonical=_make_property(source=PropertySource.RIGHTMOVE, source_id="222"),
+        )
+        result = filter_by_floorplan([openrent_prop, rightmove_no_fp])
+        assert len(result) == 1
+        assert result[0].canonical.source == PropertySource.OPENRENT
+
+    def test_mixed_source_with_openrent_still_requires_floorplan(self) -> None:
+        """Properties on OpenRent + another platform should still need a floorplan."""
+        mixed = _make_merged(
+            canonical=_make_property(source=PropertySource.OPENRENT, source_id="333"),
+            sources=(PropertySource.OPENRENT, PropertySource.ZOOPLA),
+        )
+        result = filter_by_floorplan([mixed])
+        assert len(result) == 0
+
     def test_handles_empty_input(self) -> None:
         """Should handle empty input list."""
         result = filter_by_floorplan([])

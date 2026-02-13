@@ -25,6 +25,10 @@ htmlcov/
 !README.md
 CLAUDE.md
 
+# Mutation testing
+mutants/
+mutmut_config.py
+
 # Build artifacts
 dist/
 *.egg-info/

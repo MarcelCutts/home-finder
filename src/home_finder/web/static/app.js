@@ -1,4 +1,4 @@
-// Filter form: strip empty params, auto-apply selects, chip removal
+// Filter form: strip empty params, chip removal, explicit apply
 (function () {
   // Strip empty-string params before HTMX sends request
   document.addEventListener("htmx:configRequest", function (e) {
@@ -16,25 +16,15 @@
     }
   });
 
-  // Auto-apply: submit form on <select> or radio change (not inside dialog)
+  // Inside modal: dispatch filterChange for live count update (no form submit)
   document.addEventListener("change", function (e) {
-    var tag = e.target.tagName;
-    var type = (e.target.type || "").toLowerCase();
     var inDialog = e.target.closest("dialog");
     if (inDialog) {
-      // Inside modal: dispatch filterChange for live count
       inDialog.dispatchEvent(new CustomEvent("filterChange", { bubbles: true }));
-      return;
-    }
-    if (tag === "SELECT" || (tag === "INPUT" && type === "radio")) {
-      var form = e.target.closest(".filter-form");
-      if (form) {
-        htmx.trigger(form, "submit");
-      }
     }
   });
 
-  // Chip removal: clear field and re-submit
+  // Chip removal: clear field and submit
   document.addEventListener("click", function (e) {
     var btn = e.target.closest(".filter-chip-remove[data-filter-key]");
     if (!btn) return;
@@ -64,7 +54,7 @@
     htmx.trigger(form, "submit");
   });
 
-  // Filter modal: open, close, reset
+  // Filter modal: open, close, reset, apply
   var dialog = document.getElementById("filter-modal");
   var openBtn = document.getElementById("open-filters-btn");
   if (dialog && openBtn) {
@@ -78,6 +68,7 @@
     });
 
     dialog.querySelector(".filter-modal-reset").addEventListener("click", function () {
+      var form = document.querySelector(".filter-form");
       // Clear all selects and checkboxes inside the dialog
       var selects = dialog.querySelectorAll("select");
       for (var i = 0; i < selects.length; i++) selects[i].value = "";
@@ -91,20 +82,29 @@
       for (var k = 0; k < mobileInputs.length; k++) mobileInputs[k].value = "";
       var mobileSelects = dialog.querySelectorAll('.mobile-primary-section select');
       for (var l = 0; l < mobileSelects.length; l++) mobileSelects[l].value = "";
+      // Also reset desktop primary filters
+      if (form) {
+        var deskBeds = form.querySelector('input[name="bedrooms"][value=""]');
+        if (deskBeds) deskBeds.checked = true;
+        var deskArea = form.querySelector('select[name="area"]');
+        if (deskArea) deskArea.value = "";
+        var deskRating = form.querySelector('select[name="min_rating"]');
+        if (deskRating) deskRating.value = "";
+        var deskMinP = form.querySelector('input[name="min_price"]');
+        if (deskMinP) deskMinP.value = "";
+        var deskMaxP = form.querySelector('input[name="max_price"]');
+        if (deskMaxP) deskMaxP.value = "";
+      }
       dialog.dispatchEvent(new CustomEvent("filterChange", { bubbles: true }));
     });
 
-    // Apply closes dialog and syncs values from mobile to desktop
+    // Apply: sync mobile values, close dialog, then submit form
     dialog.querySelector(".filter-modal-apply").addEventListener("click", function (e) {
+      e.preventDefault();
       syncFromMobile();
       dialog.close();
-    });
-
-    // Close modal after HTMX swap completes (apply was clicked)
-    document.addEventListener("htmx:afterRequest", function (e) {
-      if (dialog.open && e.detail.elt && e.detail.elt.closest && e.detail.elt.closest(".filter-form")) {
-        dialog.close();
-      }
+      var form = document.querySelector(".filter-form");
+      if (form) htmx.trigger(form, "submit");
     });
   }
 

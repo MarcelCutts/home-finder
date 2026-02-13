@@ -12,6 +12,7 @@ import time
 from datetime import datetime
 
 import pytest
+from playwright.sync_api import expect
 
 from home_finder.config import Settings
 from home_finder.db import PropertyStorage
@@ -372,3 +373,168 @@ class TestResponsiveBrowser:
         body_scroll_width = page.evaluate("document.body.scrollWidth")
         viewport_width = page.evaluate("window.innerWidth")
         assert body_scroll_width <= viewport_width + 5  # 5px tolerance
+
+
+@pytest.mark.browser
+class TestFilterBehavior:
+    """Test filter interaction: no auto-apply, modal lifecycle, chips."""
+
+    # -- Group 1: No Auto-Apply --
+
+    def test_select_change_does_not_auto_apply(self, server_url, page):
+        """Changing a select should NOT auto-submit the form."""
+        page.goto(server_url)
+        nav_count = page.locator("nav #nav-count")
+        expect(nav_count).to_contain_text("5 properties")
+
+        requests: list[str] = []
+        page.on("request", lambda req: requests.append(req.url))
+
+        page.get_by_label("Area", exact=True).select_option("E8")
+        page.wait_for_timeout(800)
+
+        # No main-page HTMX request should have fired
+        htmx_requests = [r for r in requests if "127.0.0.1" in r and "/count" not in r]
+        assert not htmx_requests, f"Unexpected requests: {htmx_requests}"
+        expect(nav_count).to_contain_text("5 properties")
+
+    def test_bedrooms_radio_does_not_auto_apply(self, server_url, page):
+        """Clicking a bedrooms radio should NOT auto-submit."""
+        page.goto(server_url)
+        nav_count = page.locator("nav #nav-count")
+        expect(nav_count).to_contain_text("5 properties")
+
+        requests: list[str] = []
+        page.on("request", lambda req: requests.append(req.url))
+
+        page.locator("label[for='beds-2']").click()
+        page.wait_for_timeout(800)
+
+        htmx_requests = [r for r in requests if "127.0.0.1" in r and "/count" not in r]
+        assert not htmx_requests, f"Unexpected requests: {htmx_requests}"
+        expect(nav_count).to_contain_text("5 properties")
+
+    def test_apply_button_submits_and_updates(self, server_url, page):
+        """Clicking Apply submits filters and updates results."""
+        page.goto(server_url)
+        page.get_by_label("Area", exact=True).select_option("E5")
+
+        with page.expect_response(lambda r: "127.0.0.1" in r.url and "area=E5" in r.url):
+            page.get_by_role("button", name="Apply").click()
+
+        expect(page.locator("nav #nav-count")).to_contain_text("1 propert")
+        assert "area=E5" in page.url
+
+    # -- Group 2: Filter Modal Lifecycle --
+
+    def test_modal_opens(self, server_url, page):
+        """Clicking Filters button opens the dialog."""
+        page.goto(server_url)
+        page.locator("#open-filters-btn").click()
+        expect(page.locator("#filter-modal")).to_be_visible()
+
+    def test_modal_stays_open_on_filter_change(self, server_url, page):
+        """Changing a filter inside the modal should NOT close it."""
+        page.goto(server_url)
+        page.locator("#open-filters-btn").click()
+        expect(page.locator("#filter-modal")).to_be_visible()
+
+        page.get_by_label("Hob type").select_option("gas")
+        # Wait for /count HTMX request to complete
+        page.wait_for_timeout(1000)
+        expect(page.locator("#filter-modal")).to_be_visible()
+
+    def test_modal_count_updates_on_filter_change(self, server_url, page):
+        """Modal count updates live when filters change."""
+        page.goto(server_url)
+        page.locator("#open-filters-btn").click()
+        expect(page.locator("#modal-count")).to_have_text("5")
+
+        page.get_by_label("Hob type").select_option("gas")
+        # Auto-retries until count updates via /count endpoint
+        expect(page.locator("#modal-count")).to_have_text("2")
+
+    def test_modal_apply_closes_and_filters(self, server_url, page):
+        """Modal Apply closes dialog and applies filters."""
+        page.goto(server_url)
+        page.locator("#open-filters-btn").click()
+        page.get_by_label("Hob type").select_option("gas")
+        expect(page.locator("#modal-count")).to_have_text("2")
+
+        page.locator(".filter-modal-apply").click()
+
+        expect(page.locator("#filter-modal")).not_to_be_visible()
+        expect(page.locator("nav #nav-count")).to_contain_text("2 propert")
+        assert "hob_type=gas" in page.url
+
+    def test_modal_close_without_applying(self, server_url, page):
+        """Closing modal without Apply should not change results."""
+        page.goto(server_url)
+        nav_count = page.locator("nav #nav-count")
+        expect(nav_count).to_contain_text("5 properties")
+
+        page.locator("#open-filters-btn").click()
+        page.get_by_label("Hob type").select_option("gas")
+        expect(page.locator("#modal-count")).to_have_text("2")
+
+        page.get_by_role("button", name="Close filters").click()
+
+        expect(page.locator("#filter-modal")).not_to_be_visible()
+        expect(nav_count).to_contain_text("5 properties")
+
+    def test_modal_reset_all(self, server_url, page):
+        """Reset all clears both modal and primary filters."""
+        # Start with an active bedrooms filter
+        page.goto(f"{server_url}/?bedrooms=1")
+        nav_count = page.locator("nav #nav-count")
+        expect(nav_count).to_contain_text("3 propert")
+
+        page.locator("#open-filters-btn").click()
+        page.get_by_label("Hob type").select_option("gas")
+        expect(page.locator("#modal-count")).to_have_text("1")
+
+        page.get_by_role("button", name="Reset all").click()
+
+        # Count should reflect all filters cleared (including bedrooms)
+        expect(page.locator("#modal-count")).to_have_text("5")
+        assert page.get_by_label("Hob type").input_value() == ""
+
+    # -- Group 3: Empty State & Filter Chips --
+
+    def test_empty_state_when_no_results(self, server_url, page):
+        """Studio filter (0 beds) shows empty state."""
+        page.goto(server_url)
+        page.locator("label[for='beds-0']").click()
+
+        with page.expect_response(lambda r: "127.0.0.1" in r.url and "bedrooms=0" in r.url):
+            page.get_by_role("button", name="Apply").click()
+
+        expect(page.locator(".empty-state")).to_be_visible()
+        expect(page.locator(".empty-state")).to_contain_text("No properties found")
+        expect(page.locator(".empty-state a")).to_be_visible()
+
+    def test_empty_state_reset_link_works(self, server_url, page):
+        """Reset filters link in empty state restores all results."""
+        page.goto(f"{server_url}/?bedrooms=0")
+        expect(page.locator(".empty-state")).to_be_visible()
+
+        page.locator(".empty-state a").click()
+
+        expect(page.locator("nav #nav-count")).to_contain_text("5 properties")
+        expect(page.locator(".empty-state")).not_to_be_visible()
+
+    def test_filter_chips_appear_and_removal_works(self, server_url, page):
+        """Filter chips appear for active filters and can be removed."""
+        page.goto(f"{server_url}/?area=E8")
+        nav_count = page.locator("nav #nav-count")
+        expect(nav_count).to_contain_text("2 propert")
+
+        chip = page.locator(".filter-chip")
+        expect(chip).to_be_visible()
+        expect(chip).to_contain_text("E8")
+
+        with page.expect_response(lambda r: "127.0.0.1" in r.url):
+            page.locator(".filter-chip-remove").click()
+
+        expect(nav_count).to_contain_text("5 properties")
+        assert "area=E8" not in page.url

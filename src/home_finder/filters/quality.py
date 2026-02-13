@@ -53,6 +53,13 @@ DELAY_BETWEEN_CALLS: Final = 0.2  # seconds (1000 RPM = 0.06s minimum, add buffe
 MAX_RETRIES: Final = 3
 REQUEST_TIMEOUT: Final = 180.0  # 3 minutes for vision requests
 
+# Circuit breaker: stop hammering the API after consecutive outage-indicating errors
+_CIRCUIT_BREAKER_THRESHOLD: Final = 3
+
+
+class APIUnavailableError(Exception):
+    """Raised when the Anthropic API circuit breaker is open."""
+
 
 def assess_value(price_pcm: int, postcode: str | None, bedrooms: int) -> ValueAnalysis:
     """Assess value-for-money based on local rental benchmarks.
@@ -413,6 +420,9 @@ class PropertyQualityFilter:
         self._enable_extended_thinking = enable_extended_thinking
         self._thinking_budget_tokens = thinking_budget_tokens
         self._client: anthropic.AsyncAnthropic | None = None
+        # Circuit breaker state (asyncio is single-threaded, no lock needed)
+        self._consecutive_api_failures = 0
+        self._circuit_open = False
 
     def _get_client(self) -> "anthropic.AsyncAnthropic":
         """Get or create the Anthropic client with optimized settings."""
@@ -426,6 +436,20 @@ class PropertyQualityFilter:
                 timeout=httpx.Timeout(REQUEST_TIMEOUT),  # 3 min for vision requests
             )
         return self._client
+
+    def _record_api_failure(self) -> None:
+        """Record a consecutive API failure and open circuit if threshold reached."""
+        self._consecutive_api_failures += 1
+        if not self._circuit_open and self._consecutive_api_failures >= _CIRCUIT_BREAKER_THRESHOLD:
+            self._circuit_open = True
+            logger.warning(
+                "api_circuit_breaker_open",
+                consecutive_failures=self._consecutive_api_failures,
+            )
+
+    def _record_api_success(self) -> None:
+        """Reset consecutive failure counter on successful API response."""
+        self._consecutive_api_failures = 0
 
     @staticmethod
     def _needs_base64_download(url: str) -> bool:
@@ -654,6 +678,8 @@ class PropertyQualityFilter:
                 gallery_cached_paths=gallery_cached[: self._max_images],
                 floorplan_cached_path=floorplan_cached,
             )
+        except APIUnavailableError:
+            raise  # Propagate to caller for circuit breaker handling
         except Exception:
             logger.error(
                 "analyze_single_merged_failed",
@@ -810,6 +836,10 @@ class PropertyQualityFilter:
             ToolUseBlock,
         )
 
+        # Fast-fail if circuit breaker is already open
+        if self._circuit_open:
+            raise APIUnavailableError("Circuit breaker is open — API unavailable")
+
         client = self._get_client()
 
         # Build image content blocks (images first for best vision performance)
@@ -934,8 +964,10 @@ class PropertyQualityFilter:
                 return None
 
             visual_data = tool_use_block.input
+            self._record_api_success()
 
         except BadRequestError as e:
+            # Request-specific error — NOT an outage signal, don't trip circuit
             logger.warning(
                 "visual_analysis_bad_request",
                 property_id=property_id,
@@ -944,36 +976,25 @@ class PropertyQualityFilter:
             )
             return None
 
-        except RateLimitError as e:
+        except (RateLimitError, InternalServerError, APIConnectionError) as e:
+            # Outage-indicating errors — record failure and trip circuit
+            self._record_api_failure()
+            log_event = {
+                RateLimitError: "rate_limit_exhausted",
+                InternalServerError: "server_error",
+                APIConnectionError: "connection_error",
+            }[type(e)]
             logger.error(
-                "rate_limit_exhausted",
+                log_event,
                 property_id=property_id,
                 phase="visual",
                 error=str(e),
-                request_id=getattr(e, "_request_id", None),
+                request_id=getattr(e, "_request_id", None) if not isinstance(e, APIConnectionError) else None,
             )
-            return None
-
-        except InternalServerError as e:
-            logger.error(
-                "server_error",
-                property_id=property_id,
-                phase="visual",
-                error=str(e),
-                request_id=getattr(e, "_request_id", None),
-            )
-            return None
-
-        except APIConnectionError as e:
-            logger.error(
-                "connection_error",
-                property_id=property_id,
-                phase="visual",
-                error=str(e),
-            )
-            return None
+            raise APIUnavailableError(str(e)) from e
 
         except APIStatusError as e:
+            # Other status errors (e.g. 401, 403) — not outage signals
             logger.warning(
                 "api_status_error",
                 property_id=property_id,

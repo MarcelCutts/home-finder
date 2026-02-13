@@ -143,6 +143,7 @@ nav.container-fluid li {
     background: var(--bg-card);
     margin: 0;
     flex: 0 0 auto;
+    width: auto; /* override Pico fieldset width: 100% */
 }
 .beds-toggle label {
     display: inline-flex;
@@ -243,22 +244,27 @@ nav.container-fluid li {
 .filter-modal-close {
     width: 32px;
     height: 32px;
+    min-height: 0;
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    border: none;
-    background: transparent;
+    border: none !important;
+    background: none !important;
+    box-shadow: none !important;
+    outline: none !important;
     color: var(--text-muted);
-    font-size: 1.5rem;
+    font-size: 1.25rem;
     cursor: pointer;
     border-radius: 8px;
     transition: background 0.15s, color 0.15s;
-    padding: 0;
+    padding: 0 !important;
     line-height: 1;
     margin: 0;
+    --pico-border-width: 0;
+    --pico-font-size: 1.25rem;
 }
 .filter-modal-close:hover {
-    background: var(--bg-elevated);
+    background: var(--bg-elevated) !important;
     color: var(--text);
 }
 .filter-modal-body {
@@ -282,20 +288,26 @@ nav.container-fluid li {
     margin: 0;
     font-size: 0.82rem;
     height: 2.25rem;
-    padding: 0.25rem 0.85rem;
+    min-height: 0;
+    padding: 0.25rem 0.85rem !important;
+    white-space: nowrap;
+    --pico-font-size: 0.82rem;
 }
 .filter-modal-apply {
     margin: 0;
     font-size: 0.85rem;
     font-weight: 600;
     height: 2.25rem;
-    padding: 0.25rem 1.25rem;
+    min-height: 0;
+    padding: 0.25rem 1.25rem !important;
     background: var(--accent);
     color: #fff;
     border: none;
     border-radius: 8px;
     cursor: pointer;
     transition: background 0.15s;
+    white-space: nowrap;
+    --pico-font-size: 0.85rem;
 }
 .filter-modal-apply:hover {
     background: var(--accent-hover);
@@ -316,11 +328,14 @@ nav.container-fluid li {
     font-weight: 700;
     text-transform: uppercase;
     letter-spacing: 0.06em;
-    color: var(--text-dim);
+    color: var(--text-muted);
     padding: 0 0.25rem;
+    width: auto; /* override Pico fieldset width inheritance */
+    float: none;
+    margin-bottom: 0;
 }
 .filter-group legend svg {
-    opacity: 0.6;
+    opacity: 0.8;
 }
 .filter-group-grid {
     display: grid;
@@ -2149,9 +2164,13 @@ nav.container-fluid li {
         flex-wrap: wrap;
         gap: 0.35rem;
     }
+    .filter-controls .beds-toggle {
+        flex: 1 0 100%;
+    }
     .filter-row select,
     .filter-row input[type="number"] {
         min-width: 0;
+        flex: 1 1 4rem;
         height: 2rem;
         font-size: 0.8rem;
         padding: 0.15rem 0.5rem;

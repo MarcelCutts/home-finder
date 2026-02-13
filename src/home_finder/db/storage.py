@@ -1318,21 +1318,38 @@ class PropertyStorage:
         await conn.commit()
         logger.info("pre_analysis_properties_saved", count=len(merged_list))
 
-    async def get_pending_analysis_properties(self) -> list[MergedProperty]:
+    async def get_pending_analysis_properties(
+        self,
+        *,
+        exclude_ids: set[str] | None = None,
+    ) -> list[MergedProperty]:
         """Load properties needing quality analysis from previous crashed runs.
+
+        Args:
+            exclude_ids: Property IDs to exclude (e.g. current batch just saved).
 
         Returns:
             List of MergedProperty objects with notification_status='pending_analysis'.
         """
         conn = await self._get_connection()
-        cursor = await conn.execute(
-            """
+        query = """
             SELECT * FROM properties
             WHERE notification_status = ?
             ORDER BY first_seen ASC
-            """,
-            (NotificationStatus.PENDING_ANALYSIS.value,),
-        )
+        """
+        params: list[Any] = [NotificationStatus.PENDING_ANALYSIS.value]
+
+        if exclude_ids:
+            placeholders = ",".join("?" * len(exclude_ids))
+            query = f"""
+                SELECT * FROM properties
+                WHERE notification_status = ?
+                  AND unique_id NOT IN ({placeholders})
+                ORDER BY first_seen ASC
+            """
+            params.extend(exclude_ids)
+
+        cursor = await conn.execute(query, params)
         rows = await cursor.fetchall()
 
         results: list[MergedProperty] = []
@@ -1380,7 +1397,11 @@ class PropertyStorage:
                 )
             )
 
-        logger.info("loaded_pending_analysis_properties", count=len(results))
+        if results:
+            logger.info(
+                "loaded_pending_analysis_retries_from_db",
+                count=len(results),
+            )
         return results
 
     async def complete_analysis(

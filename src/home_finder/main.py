@@ -18,6 +18,7 @@ from home_finder.filters import (
     enrich_merged_properties,
     filter_by_floorplan,
 )
+from home_finder.filters.quality import APIUnavailableError
 from home_finder.logging import configure_logging, get_logger
 from home_finder.models import (
     FurnishType,
@@ -179,6 +180,9 @@ class PreAnalysisResult:
 
     merged_to_process: list[MergedProperty] = field(default_factory=list)
     commute_lookup: dict[str, tuple[int, TransportMode]] = field(default_factory=dict)
+    scraped_count: int = 0
+    enriched_count: int = 0
+    anchors_updated: int = 0
 
 
 async def _run_pre_analysis_pipeline(
@@ -483,6 +487,9 @@ async def _run_pre_analysis_pipeline(
     return PreAnalysisResult(
         merged_to_process=merged_to_notify,
         commute_lookup=commute_lookup,
+        scraped_count=len(all_properties),
+        enriched_count=len(enrichment_result.enriched),
+        anchors_updated=anchors_updated,
     )
 
 
@@ -540,12 +547,13 @@ async def _run_quality_and_save(
     )
 
     # Load any pending_analysis properties from previous crashed runs
-    pending_from_prev = await storage.get_pending_analysis_properties()
-    # Exclude properties already in current batch (just saved above)
     current_ids = {m.unique_id for m in pre.merged_to_process}
-    retried = [m for m in pending_from_prev if m.unique_id not in current_ids]
+    pending_from_prev = await storage.get_pending_analysis_properties(
+        exclude_ids=current_ids
+    )
+    retried = list(pending_from_prev)
     if retried:
-        logger.info("loaded_pending_analysis_retries", count=len(retried))
+        logger.info("retrying_pending_analysis_from_previous_run", count=len(retried))
 
     all_to_analyze = list(pre.merged_to_process) + retried
 
@@ -581,6 +589,17 @@ async def _run_quality_and_save(
         for coro in asyncio.as_completed(tasks):
             try:
                 merged, quality_analysis = await coro
+            except APIUnavailableError:
+                remaining = [t for t in tasks if not t.done()]
+                for t in remaining:
+                    t.cancel()
+                await asyncio.gather(*remaining, return_exceptions=True)
+                logger.warning(
+                    "api_circuit_breaker_activated",
+                    deferred_properties=len(remaining),
+                    processed=count,
+                )
+                break
             except Exception:
                 logger.error("property_processing_failed", exc_info=True)
                 continue
@@ -645,7 +664,10 @@ async def run_pipeline(settings: Settings, *, max_per_scraper: int | None = None
 
         await storage.update_pipeline_run(
             run_id,
+            scraped_count=pre.scraped_count,
             new_count=len(pre.merged_to_process),
+            enriched_count=pre.enriched_count,
+            anchors_updated=pre.anchors_updated,
         )
 
         logger.info(
