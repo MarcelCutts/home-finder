@@ -373,3 +373,111 @@ class TestOpenRentScraperIntegration:
 
                 # The parse method should have been called
                 mock_parse.assert_called_once()
+
+
+class TestOpenRentEarlyStop:
+    """Tests for early-stop pagination (requires newest-first sort)."""
+
+    def test_search_url_sorts_by_newest(self, openrent_scraper: OpenRentScraper) -> None:
+        """Verify sortType=3 (newest first) — required for early-stop correctness."""
+        url = openrent_scraper._build_search_url(
+            area="e8",
+            min_price=1800,
+            max_price=2200,
+            min_bedrooms=0,
+            max_bedrooms=2,
+        )
+        assert "sortType=3" in url
+
+    @pytest.mark.asyncio
+    async def test_stops_when_all_results_known(
+        self, openrent_scraper: OpenRentScraper, openrent_search_html: str
+    ) -> None:
+        """When all page-1 properties are already in DB, stop without fetching page 2."""
+        soup = BeautifulSoup(openrent_search_html, "html.parser")
+        page1_props = openrent_scraper._parse_search_results(soup, "https://test")
+        known_ids = {p.source_id for p in page1_props}
+        assert len(known_ids) >= 2  # sanity
+
+        pages_fetched: list[int] = []
+
+        with patch("home_finder.scrapers.openrent.BeautifulSoupCrawler") as MockCrawler:
+
+            def make_crawler(**kwargs):  # type: ignore[no-untyped-def]
+                idx = len(pages_fetched)
+                mock = MagicMock()
+                handler: list = []
+                mock.router = MagicMock()
+                mock.router.default_handler = handler.append
+
+                async def run(urls: list[str]) -> None:
+                    ctx = MagicMock()
+                    ctx.soup = BeautifulSoup(openrent_search_html, "html.parser")
+                    ctx.request.url = urls[0]
+                    await handler[0](ctx)
+
+                mock.run = run
+                pages_fetched.append(idx)
+                return mock
+
+            MockCrawler.side_effect = make_crawler
+
+            result = await openrent_scraper.scrape(
+                min_price=1800,
+                max_price=2500,
+                min_bedrooms=1,
+                max_bedrooms=2,
+                area="hackney",
+                known_source_ids=known_ids,
+            )
+
+        assert len(pages_fetched) == 1  # Only page 1 fetched
+        assert result == []  # All known → nothing returned
+
+    @pytest.mark.asyncio
+    async def test_continues_when_some_results_new(
+        self, openrent_scraper: OpenRentScraper, openrent_search_html: str
+    ) -> None:
+        """When only some results are known, don't early-stop — fetch next page."""
+        soup = BeautifulSoup(openrent_search_html, "html.parser")
+        page1_props = openrent_scraper._parse_search_results(soup, "https://test")
+        known_ids = {page1_props[0].source_id}
+
+        pages_fetched: list[int] = []
+
+        with patch("home_finder.scrapers.openrent.BeautifulSoupCrawler") as MockCrawler:
+
+            def make_crawler(**kwargs):  # type: ignore[no-untyped-def]
+                idx = len(pages_fetched)
+                mock = MagicMock()
+                handler: list = []
+                mock.router = MagicMock()
+                mock.router.default_handler = handler.append
+
+                async def run(urls: list[str]) -> None:
+                    ctx = MagicMock()
+                    if idx == 0:
+                        ctx.soup = BeautifulSoup(openrent_search_html, "html.parser")
+                    else:
+                        ctx.soup = BeautifulSoup("<html></html>", "html.parser")
+                    ctx.request.url = urls[0]
+                    await handler[0](ctx)
+
+                mock.run = run
+                pages_fetched.append(idx)
+                return mock
+
+            MockCrawler.side_effect = make_crawler
+
+            with patch("asyncio.sleep", new_callable=AsyncMock):
+                result = await openrent_scraper.scrape(
+                    min_price=1800,
+                    max_price=2500,
+                    min_bedrooms=1,
+                    max_bedrooms=2,
+                    area="hackney",
+                    known_source_ids=known_ids,
+                )
+
+        assert len(pages_fetched) >= 2  # Continued past page 1
+        assert len(result) == len(page1_props)  # All page 1 props returned

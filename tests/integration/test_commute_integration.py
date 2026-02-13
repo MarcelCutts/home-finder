@@ -213,6 +213,45 @@ class TestCommuteFilterIntegration:
         # PT is faster
         assert pt_results[0].travel_time_minutes < cycling_results[0].travel_time_minutes
 
+    async def test_geocode_skips_outcode_only_postcodes(self):
+        """Properties with outcode-only postcodes should NOT be geocoded.
+
+        Outcodes (e.g. 'E3') are too imprecise for commute calculation — the
+        geocoded center point may misrepresent the actual property location.
+        """
+        prop_outcode = _make_property("50", "E3")  # Outcode-only
+        prop_full = _make_property("51", "E3 4AA")  # Full postcode
+        merged_outcode = _make_merged(prop_outcode)
+        merged_full = _make_merged(prop_full)
+
+        geocode_resp = _mock_geocoding_response(51.5265, -0.0305)
+
+        commute_filter = CommuteFilter(
+            app_id="test-app-id",
+            api_key="test-api-key",
+            destination_postcode="N1 5AA",
+        )
+        CommuteFilter._geocoding_cache.clear()
+
+        with patch("traveltimepy.AsyncClient") as MockClient:
+            client_instance = AsyncMock()
+            client_instance.geocoding = AsyncMock(return_value=geocode_resp)
+            MockClient.return_value.__aenter__ = AsyncMock(return_value=client_instance)
+            MockClient.return_value.__aexit__ = AsyncMock(return_value=None)
+
+            result = await commute_filter.geocode_properties([merged_outcode, merged_full])
+
+        # Outcode-only property should still have no coordinates
+        assert result[0].canonical.latitude is None
+        assert result[0].canonical.longitude is None
+
+        # Full postcode property should be geocoded
+        assert result[1].canonical.latitude == pytest.approx(51.5265)
+        assert result[1].canonical.longitude == pytest.approx(-0.0305)
+
+        # Geocoding API should only be called once (for the full postcode)
+        assert client_instance.geocoding.call_count == 1
+
     async def test_api_failure_returns_empty(self):
         """API errors should return empty results."""
         props = [_make_property("40", "E8 3RH", 51.5465, -0.0553)]

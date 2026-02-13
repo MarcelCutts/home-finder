@@ -2,6 +2,7 @@
 
 import json
 from pathlib import Path
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from bs4 import BeautifulSoup
@@ -386,3 +387,113 @@ class TestZooplaRscExtraction:
         prop = zoopla_scraper._listing_to_property(listing)
         assert prop is not None
         assert prop.bedrooms == 2
+
+
+class TestZooplaEarlyStop:
+    """Tests for early-stop pagination (requires newest-first sort)."""
+
+    def test_search_url_sorts_by_newest(self, zoopla_scraper: ZooplaScraper) -> None:
+        """Verify results_sort=newest_listings — required for early-stop correctness."""
+        url = zoopla_scraper._build_search_url(
+            area="e8",
+            min_price=1800,
+            max_price=2200,
+            min_bedrooms=0,
+            max_bedrooms=2,
+        )
+        assert "results_sort=newest_listings" in url
+
+    @pytest.mark.asyncio
+    async def test_stops_when_all_results_known(
+        self, zoopla_scraper: ZooplaScraper
+    ) -> None:
+        """When all page-1 properties are already in DB, stop without fetching page 2."""
+        listings_data = [
+            {
+                "listingId": 100,
+                "price": "£1,850 pcm",
+                "priceUnformatted": 1850,
+                "address": "Test Street, London E8 1AA",
+                "title": "1 bed flat",
+                "listingUris": {"detail": "/to-rent/details/100/"},
+                "features": [{"iconId": "bed", "content": 1}],
+            },
+            {
+                "listingId": 200,
+                "price": "£2,000 pcm",
+                "priceUnformatted": 2000,
+                "address": "Another Street, London E8 2BB",
+                "title": "2 bed flat",
+                "listingUris": {"detail": "/to-rent/details/200/"},
+                "features": [{"iconId": "bed", "content": 2}],
+            },
+        ]
+        rsc_json = json.dumps({"regularListingsFormatted": listings_data})
+        inner_str = f"79:{rsc_json}"
+        push_content = f"1,{json.dumps(inner_str)}"
+        page1_html = f"<script>self.__next_f.push([{push_content}])</script>"
+
+        known_ids = {"100", "200"}
+
+        mock_fetch = AsyncMock(return_value=page1_html)
+        with patch.object(zoopla_scraper, "_fetch_page", mock_fetch):
+            result = await zoopla_scraper.scrape(
+                min_price=1800,
+                max_price=2500,
+                min_bedrooms=1,
+                max_bedrooms=2,
+                area="e8",
+                known_source_ids=known_ids,
+            )
+
+        assert mock_fetch.call_count == 1  # Only page 1 fetched
+        assert result == []  # All known → nothing returned
+
+    @pytest.mark.asyncio
+    async def test_continues_when_some_results_new(
+        self, zoopla_scraper: ZooplaScraper
+    ) -> None:
+        """When only some results are known, don't early-stop — fetch next page."""
+        listings_data = [
+            {
+                "listingId": 100,
+                "price": "£1,850 pcm",
+                "priceUnformatted": 1850,
+                "address": "Test Street, London E8 1AA",
+                "title": "1 bed flat",
+                "listingUris": {"detail": "/to-rent/details/100/"},
+                "features": [{"iconId": "bed", "content": 1}],
+            },
+            {
+                "listingId": 200,
+                "price": "£2,000 pcm",
+                "priceUnformatted": 2000,
+                "address": "Another Street, London E8 2BB",
+                "title": "2 bed flat",
+                "listingUris": {"detail": "/to-rent/details/200/"},
+                "features": [{"iconId": "bed", "content": 2}],
+            },
+        ]
+        rsc_json = json.dumps({"regularListingsFormatted": listings_data})
+        inner_str = f"79:{rsc_json}"
+        push_content = f"1,{json.dumps(inner_str)}"
+        page1_html = f"<script>self.__next_f.push([{push_content}])</script>"
+
+        known_ids = {"100"}  # Only one known — should not early-stop
+
+        mock_fetch = AsyncMock(side_effect=[page1_html, "<html></html>"])
+        with (
+            patch.object(zoopla_scraper, "_fetch_page", mock_fetch),
+            patch("asyncio.sleep", new_callable=AsyncMock),
+        ):
+            result = await zoopla_scraper.scrape(
+                min_price=1800,
+                max_price=2500,
+                min_bedrooms=1,
+                max_bedrooms=2,
+                area="e8",
+                known_source_ids=known_ids,
+            )
+
+        assert mock_fetch.call_count >= 2  # Continued past page 1
+        assert len(result) == 2  # Both page 1 properties returned

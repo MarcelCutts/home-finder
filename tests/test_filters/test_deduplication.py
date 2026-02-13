@@ -4,10 +4,39 @@ from pydantic import HttpUrl
 
 from home_finder.filters.scoring import (
     coordinates_match,
+    haversine_distance,
     is_full_postcode,
     prices_match,
 )
 from home_finder.models import Property, PropertySource
+
+
+class TestHaversineDistance:
+    """Tests for haversine distance with ground-truth assertions."""
+
+    def test_known_distance_london(self) -> None:
+        """London Eye to Big Ben is approximately 700m.
+
+        Ground-truth kills mutants that corrupt the haversine formula
+        (e.g., * → /, **2 → **3, 1-a → 1+a).
+        """
+        # London Eye: 51.5033, -0.1195
+        # Big Ben: 51.5007, -0.1246
+        distance = haversine_distance(51.5033, -0.1195, 51.5007, -0.1246)
+        assert 400 < distance < 1000  # Known to be ~470m
+
+    def test_same_point_is_zero(self) -> None:
+        """Same coordinates should give 0 distance."""
+        assert haversine_distance(51.5, -0.05, 51.5, -0.05) == 0.0
+
+    def test_longitude_difference(self) -> None:
+        """Points differing only in longitude should give nonzero distance.
+
+        At 51.5° latitude, 0.001° longitude ≈ 69m.
+        Kills mutants that corrupt the longitude/delta_lambda terms.
+        """
+        distance = haversine_distance(51.5, -0.05, 51.5, -0.051)
+        assert 50 < distance < 100  # ~69m
 
 
 class TestFuzzyPriceMatching:
@@ -166,5 +195,33 @@ class TestCoordinateMatching:
             price_pcm=2000,
             bedrooms=1,
             address="Address",
+        )
+        assert coordinates_match(prop1, prop2) is False
+
+    def test_coordinates_match_no_coords_first_property(self) -> None:
+        """Test matching fails when first property lacks coords but second has them.
+
+        Kills mutant: `and prop2.longitude` → `or prop2.longitude` which changes
+        operator precedence to `(... and prop2.lat) or prop2.lon`.
+        """
+        prop1 = Property(
+            source=PropertySource.OPENRENT,
+            source_id="1",
+            url=HttpUrl("https://example.com/1"),
+            title="Prop 1",
+            price_pcm=2000,
+            bedrooms=1,
+            address="Address",
+        )
+        prop2 = Property(
+            source=PropertySource.RIGHTMOVE,
+            source_id="2",
+            url=HttpUrl("https://example.com/2"),
+            title="Prop 2",
+            price_pcm=2000,
+            bedrooms=1,
+            address="Address",
+            latitude=51.5074,
+            longitude=-0.1278,
         )
         assert coordinates_match(prop1, prop2) is False

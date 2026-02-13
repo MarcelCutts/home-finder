@@ -33,6 +33,11 @@ settings.register_profile(
     max_examples=200,
     suppress_health_check=[HealthCheck.too_slow],
 )
+settings.register_profile(
+    "mutmut",
+    max_examples=10,
+    suppress_health_check=[HealthCheck.too_slow, HealthCheck.differing_executors],
+)
 settings.load_profile(os.getenv("HYPOTHESIS_PROFILE", "fast"))
 
 

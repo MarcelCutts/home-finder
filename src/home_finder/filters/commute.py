@@ -9,6 +9,7 @@ from pydantic import BaseModel, ConfigDict
 
 from home_finder.logging import get_logger
 from home_finder.models import MergedProperty, Property, TransportMode
+from home_finder.utils.address import is_outcode
 
 if TYPE_CHECKING:
     from traveltimepy import AsyncClient
@@ -218,8 +219,24 @@ class CommuteFilter:
         needs_geocoding = [
             m
             for m in properties
-            if not (m.canonical.latitude and m.canonical.longitude) and m.canonical.postcode
+            if not (m.canonical.latitude and m.canonical.longitude)
+            and m.canonical.postcode
+            and not is_outcode(m.canonical.postcode)
         ]
+
+        outcode_only_count = sum(
+            1
+            for m in properties
+            if not (m.canonical.latitude and m.canonical.longitude)
+            and m.canonical.postcode
+            and is_outcode(m.canonical.postcode)
+        )
+        if outcode_only_count:
+            logger.info(
+                "skipping_outcode_geocoding",
+                count=outcode_only_count,
+                reason="outcode-only postcodes too imprecise for commute calculation",
+            )
 
         if not needs_geocoding:
             return properties

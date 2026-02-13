@@ -305,7 +305,6 @@ class RightmoveScraper(BaseScraper):
 
         params = [
             f"locationIdentifier={location_id}",
-            f"minBedrooms={min_bedrooms}",
             f"maxBedrooms={max_bedrooms}",
             f"minPrice={min_price}",
             f"maxPrice={max_price}",
@@ -313,6 +312,9 @@ class RightmoveScraper(BaseScraper):
             "letType=longTerm",
             "sortType=6",
         ]
+
+        if min_bedrooms > 0:
+            params.append(f"minBedrooms={min_bedrooms}")
 
         if furnish_types:
             rm_values = {
@@ -495,13 +497,21 @@ class RightmoveScraper(BaseScraper):
         # Extract postcode
         postcode = extract_postcode(address)
 
-        # Extract image URL
+        # Extract image URL — prefer lazy-loaded real image over placeholder
         img = card.find("img")
-        image_url = img.get("src") if img else None
-        if not isinstance(image_url, str):
-            image_url = None
-        elif not image_url.startswith("http"):
-            image_url = f"https:{image_url}"
+        image_url: str | None = None
+        if img:
+            # Try data-src first (lazy-loaded), then srcset, then src
+            for attr in ("data-src", "srcset", "src"):
+                raw = img.get(attr)
+                if isinstance(raw, str) and raw.strip():
+                    # srcset format: "url 1x, url2 2x" — take first URL
+                    candidate = raw.split(",")[0].strip().split(" ")[0]
+                    if candidate:
+                        image_url = candidate
+                        break
+            if image_url and not image_url.startswith("http"):
+                image_url = f"https:{image_url}"
 
         return Property(
             source=PropertySource.RIGHTMOVE,

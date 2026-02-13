@@ -79,7 +79,7 @@ class Settings(BaseSettings):
     # Search criteria
     min_price: int = Field(default=1800, ge=0)
     max_price: int = Field(default=2200, ge=0)
-    min_bedrooms: int = Field(default=1, ge=0)
+    min_bedrooms: int = Field(default=0, ge=0)
     max_bedrooms: int = Field(default=2, ge=0)
     destination_postcode: str = Field(default="N1 5AA")
     max_commute_minutes: int = Field(default=30, ge=1, le=120)

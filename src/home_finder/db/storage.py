@@ -9,6 +9,7 @@ from typing import Any, Final, TypedDict, cast
 import aiosqlite
 from pydantic import HttpUrl
 
+from home_finder.filters.fit_score import compute_fit_score, compute_lifestyle_icons
 from home_finder.logging import get_logger
 from home_finder.models import (
     MergedProperty,
@@ -989,6 +990,7 @@ class PropertyStorage:
             "price_desc": "p.price_pcm DESC",
             "rating_desc": "COALESCE(q.overall_rating, 0) DESC, p.first_seen DESC",
         }
+        is_fit_sort = sort == "fit_desc"
         order_sql = order_map.get(sort, "p.first_seen DESC")
 
         # Count total
@@ -1003,28 +1005,56 @@ class PropertyStorage:
         count_row = await count_cursor.fetchone()
         total = count_row[0] if count_row else 0
 
-        # Fetch page
-        offset = (page - 1) * per_page
-        cursor = await conn.execute(
-            f"""
-            SELECT p.*, q.overall_rating as quality_rating,
-                   q.condition_concerns as quality_concerns,
-                   q.concern_severity as quality_severity,
-                   q.analysis_json
-            FROM properties p
-            LEFT JOIN quality_analyses q ON p.unique_id = q.property_unique_id
-            WHERE {where_sql}
-            ORDER BY {order_sql}
-            LIMIT ? OFFSET ?
-            """,  # noqa: S608
-            [*params, per_page, offset],
-        )
+        # Subquery: prefer first gallery image over original scraper thumbnail
+        gallery_subquery = """
+            (SELECT pi.url FROM property_images pi
+             WHERE pi.property_unique_id = p.unique_id
+             AND pi.image_type = 'gallery'
+             ORDER BY pi.id LIMIT 1) as first_gallery_url
+        """
+
+        if is_fit_sort:
+            # Fit sort: fetch all matching rows, sort in Python by computed score
+            cursor = await conn.execute(
+                f"""
+                SELECT p.*, q.overall_rating as quality_rating,
+                       q.condition_concerns as quality_concerns,
+                       q.concern_severity as quality_severity,
+                       q.analysis_json,
+                       {gallery_subquery}
+                FROM properties p
+                LEFT JOIN quality_analyses q ON p.unique_id = q.property_unique_id
+                WHERE {where_sql}
+                """,  # noqa: S608
+                params,
+            )
+        else:
+            # Standard sort: paginate in SQL
+            offset = (page - 1) * per_page
+            cursor = await conn.execute(
+                f"""
+                SELECT p.*, q.overall_rating as quality_rating,
+                       q.condition_concerns as quality_concerns,
+                       q.concern_severity as quality_severity,
+                       q.analysis_json,
+                       {gallery_subquery}
+                FROM properties p
+                LEFT JOIN quality_analyses q ON p.unique_id = q.property_unique_id
+                WHERE {where_sql}
+                ORDER BY {order_sql}
+                LIMIT ? OFFSET ?
+                """,  # noqa: S608
+                [*params, per_page, offset],
+            )
         rows = await cursor.fetchall()
 
         properties: list[PropertyListItem] = []
         for row in rows:
             prop_dict = dict(row)
             self._parse_json_fields(prop_dict)
+            # Prefer enriched gallery image over original scraper thumbnail
+            if prop_dict.get("first_gallery_url"):
+                prop_dict["image_url"] = prop_dict["first_gallery_url"]
             # Extract quality fields from analysis_json
             if prop_dict.get("analysis_json"):
                 try:
@@ -1053,6 +1083,10 @@ class PropertyStorage:
                     listing_ext = analysis.get("listing_extraction") or {}
                     prop_dict["property_type"] = listing_ext.get("property_type")
                     prop_dict["epc_rating"] = listing_ext.get("epc_rating")
+                    # Marcel fit score + lifestyle icons
+                    bedrooms = prop_dict.get("bedrooms", 0) or 0
+                    prop_dict["fit_score"] = compute_fit_score(analysis, bedrooms)
+                    prop_dict["lifestyle_icons"] = compute_lifestyle_icons(analysis, bedrooms)
                 except (json.JSONDecodeError, TypeError):
                     prop_dict["quality_summary"] = ""
                     prop_dict["value_rating"] = None
@@ -1061,6 +1095,8 @@ class PropertyStorage:
                     prop_dict["one_line"] = None
                     prop_dict["property_type"] = None
                     prop_dict["epc_rating"] = None
+                    prop_dict["fit_score"] = None
+                    prop_dict["lifestyle_icons"] = None
             else:
                 prop_dict["quality_summary"] = ""
                 prop_dict["value_rating"] = None
@@ -1069,7 +1105,19 @@ class PropertyStorage:
                 prop_dict["one_line"] = None
                 prop_dict["property_type"] = None
                 prop_dict["epc_rating"] = None
+                prop_dict["fit_score"] = None
+                prop_dict["lifestyle_icons"] = None
             properties.append(cast(PropertyListItem, prop_dict))
+
+        if is_fit_sort:
+            # Sort by fit_score descending (None → bottom), then by first_seen
+            properties.sort(
+                key=lambda p: (p.get("fit_score") is not None, p.get("fit_score") or 0),
+                reverse=True,
+            )
+            # Manual pagination
+            offset = (page - 1) * per_page
+            properties = properties[offset : offset + per_page]
 
         return properties, total
 

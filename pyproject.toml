@@ -93,10 +93,9 @@ paths_to_mutate = [
 ]
 also_copy = ["src/"]
 pytest_add_cli_args = [
-    "-o", "addopts=--tb=short -p no:cacheprovider --ignore=tests/integration --ignore=tests/test_property_based.py",
+    "-o", "addopts=--tb=short -q --capture=sys -p no:cacheprovider --hypothesis-profile=mutmut --ignore=tests/integration --ignore=tests/test_property_based.py --ignore=tests/test_db --ignore=tests/test_web --ignore=tests/test_notifiers --ignore=tests/test_scrapers",
 ]
 pytest_add_cli_args_test_selection = ["-m", "not slow and not browser"]
-debug = true
 
 [tool.uv]
 package = true

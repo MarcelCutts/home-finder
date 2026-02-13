@@ -283,7 +283,6 @@ class OnTheMarketScraper(BaseScraper):
         area_slug = area.lower().replace(" ", "-")
 
         params = [
-            f"min-bedrooms={min_bedrooms}",
             f"max-bedrooms={max_bedrooms}",
             f"min-price={min_price}",
             f"max-price={max_price}",
@@ -293,6 +292,9 @@ class OnTheMarketScraper(BaseScraper):
             "let-length=long-term",
             "sort-field=update_date",
         ]
+
+        if min_bedrooms > 0:
+            params.insert(0, f"min-bedrooms={min_bedrooms}")
 
         if furnish_types and len(furnish_types) == 1:
             otm_values = {

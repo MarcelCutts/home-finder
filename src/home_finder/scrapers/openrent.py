@@ -160,9 +160,11 @@ class OpenRentScraper(BaseScraper):
         params = [
             f"prices_min={min_price}",
             f"prices_max={max_price}",
-            f"bedrooms_min={min_bedrooms}",
             f"bedrooms_max={max_bedrooms}",
         ]
+
+        if min_bedrooms > 0:
+            params.append(f"bedrooms_min={min_bedrooms}")
 
         # OpenRent filtering is client-side (server returns all properties,
         # JS filters in browser), but these params pre-set the filter state.

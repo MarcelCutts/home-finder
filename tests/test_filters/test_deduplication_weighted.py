@@ -128,6 +128,37 @@ class TestStreetNormalization:
         assert result == "victoria road"
 
 
+class TestStreetNormalizationMutantKillers:
+    """Additional tests to kill surviving mutants in normalize_street_name."""
+
+    def test_borough_name_without_comma(self) -> None:
+        """Borough name embedded in address (no comma) should be removed.
+
+        Kills mutants that break the borough removal regex.
+        """
+        result = normalize_street_name("Mare Street Hackney E8")
+        assert "hackney" not in result
+        assert result == "mare street"
+
+    def test_delimiter_word_near(self) -> None:
+        """Delimiter word 'near' should split the address.
+
+        Kills mutants that break the delimiter split regex.
+        """
+        result = normalize_street_name("Mare Street near Dalston Junction")
+        assert result == "mare street"
+
+    def test_delimiter_word_off(self) -> None:
+        """Delimiter word 'off' should split the address."""
+        result = normalize_street_name("Victoria Road off High Street")
+        assert result == "victoria road"
+
+    def test_delimiter_word_opposite(self) -> None:
+        """Delimiter word 'opposite' should split the address."""
+        result = normalize_street_name("Green Lane opposite the park")
+        assert result == "green lane"
+
+
 class TestExtractOutcode:
     """Tests for outcode extraction."""
 
@@ -304,6 +335,70 @@ class TestCalculateMatchScore:
         assert score.street_name == 0
 
 
+class TestCalculateMatchScoreEdgeCases:
+    """Edge case tests for calculate_match_score to kill surviving mutants."""
+
+    @pytest.fixture
+    def base_property(self) -> Property:
+        return Property(
+            source=PropertySource.OPENRENT,
+            source_id="123",
+            url="https://openrent.com/123",
+            title="2 bed flat",
+            price_pcm=1500,
+            bedrooms=2,
+            address="Flat 1, 123 Mare Street, London",
+            postcode="E8 3RH",
+            latitude=51.5,
+            longitude=-0.05,
+        )
+
+    def test_far_apart_coords_no_coordinate_score(self, base_property: Property) -> None:
+        """Coordinates >100m apart should contribute 0 to score.
+
+        Kills mutant: coord_value > 0 → coord_value >= 0.
+        """
+        prop2 = base_property.model_copy(
+            update={
+                "source": PropertySource.ZOOPLA,
+                "source_id": "456",
+                "latitude": 51.502,  # ~220m away
+            }
+        )
+        score = calculate_match_score(base_property, prop2)
+        assert score.coordinates == 0
+
+    def test_one_outcode_missing_no_outcode_score(self, base_property: Property) -> None:
+        """One property without postcode should not get outcode score.
+
+        Kills mutants: and → or in outcode check.
+        """
+        prop2 = base_property.model_copy(
+            update={
+                "source": PropertySource.ZOOPLA,
+                "source_id": "456",
+                "postcode": None,
+            }
+        )
+        score = calculate_match_score(base_property, prop2)
+        assert score.outcode == 0
+
+    def test_prices_far_apart_no_price_score(self, base_property: Property) -> None:
+        """Prices >6% apart should contribute 0 to score.
+
+        Kills mutant: price_value > 0 → price_value >= 0.
+        """
+        prop2 = base_property.model_copy(
+            update={
+                "source": PropertySource.ZOOPLA,
+                "source_id": "456",
+                "price_pcm": 2000,  # 33% diff
+            }
+        )
+        score = calculate_match_score(base_property, prop2)
+        assert score.price == 0
+
+
 class TestMatchThresholdConstants:
     """Tests for threshold constants."""
 
@@ -427,3 +522,35 @@ class TestGraduatedScoring:
         """Zero price → 0.0."""
         assert graduated_price_score(0, 1500) == 0.0
         assert graduated_price_score(1500, 0) == 0.0
+
+    def test_coordinate_in_second_branch(self) -> None:
+        """Distance between 50m and 100m should give 0 < score < 0.5.
+
+        At 75m (1.5x max_meters), the formula should give ~0.25.
+        Kills mutants that corrupt the second branch formula.
+        """
+        prop1 = Property(
+            source=PropertySource.OPENRENT,
+            source_id="1",
+            url="https://example.com/1",
+            title="test",
+            price_pcm=1000,
+            bedrooms=1,
+            address="Test St",
+            latitude=51.5,
+            longitude=-0.05,
+        )
+        # ~75m away (approx 0.000675° lat at 51.5°)
+        prop2 = prop1.model_copy(update={"source_id": "2", "latitude": 51.500675})
+        score = graduated_coordinate_score(prop1, prop2)
+        assert 0.1 < score < 0.4  # Should be ~0.25
+
+    def test_price_in_second_branch(self) -> None:
+        """Price difference between 3% and 6% should give 0 < score < 0.5.
+
+        At ~4.5% diff, score should be ~0.25.
+        Kills mutants that corrupt the second branch formula.
+        """
+        # 1500 vs 1568: diff=68, avg=1534, pct=4.43% (between 3% and 6%)
+        score = graduated_price_score(1500, 1568)
+        assert 0.1 < score < 0.4  # Should be ~0.26

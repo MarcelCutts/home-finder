@@ -161,3 +161,6 @@ CLAUDE.md
 
 # Worktrees
 .worktrees/
+
+# Mutation testing (mutmut)
+mutants/

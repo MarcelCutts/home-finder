@@ -1,4 +1,4 @@
-{% from "_macros.html" import commute_pill %}
+{% from "_macros.html" import commute_pill, fit_badge, lifestyle_icons %}
 <article class="property-card" data-property-id="{{ prop.unique_id }}">
     <a href="/property/{{ prop.unique_id }}" class="card-link">
         <div class="card-image-wrapper">
@@ -21,6 +21,7 @@
                 {% endif %}
                 <span class="badge badge-neutral">{% if prop.bedrooms == 0 %}Studio{% else %}{{ prop.bedrooms }} bed{% endif %}</span>
             </div>
+            {{ fit_badge(prop.fit_score) }}
         </div>
         <div class="card-body">
             {# Meta row: postcode | commute pill | listing age #}
@@ -50,6 +51,9 @@
                 {% endif %}
             </div>
             {% endif %}
+
+            {# Lifestyle quick-glance icons #}
+            {{ lifestyle_icons(prop.lifestyle_icons) }}
 
             {# AI summary text (2-line clamp) #}
             {% if prop.quality_summary %}

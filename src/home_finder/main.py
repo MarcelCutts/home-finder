@@ -38,6 +38,19 @@ from home_finder.utils.address import is_outcode
 
 logger = get_logger(__name__)
 
+
+def _source_counts(properties: list[Property] | list[MergedProperty]) -> dict[str, int]:
+    """Count properties by source for diagnostic logging."""
+    counts: dict[str, int] = {}
+    for p in properties:
+        src = (
+            p.source.value
+            if isinstance(p, Property)
+            else p.canonical.source.value
+        )
+        counts[src] = counts.get(src, 0) + 1
+    return counts
+
 _QUALITY_CONCURRENCY: Final = 15
 
 
@@ -203,7 +216,7 @@ async def _run_pre_analysis_pipeline(
         known_ids_by_source=known_ids_by_source,
         proxy_url=settings.proxy_url,
     )
-    logger.info("scraping_summary", total_found=len(all_properties))
+    logger.info("scraping_summary", total_found=len(all_properties), by_source=_source_counts(all_properties))
 
     if not all_properties:
         logger.info("no_properties_found")
@@ -213,7 +226,7 @@ async def _run_pre_analysis_pipeline(
     logger.info("pipeline_started", phase="criteria_filtering")
     criteria_filter = CriteriaFilter(criteria)
     filtered = criteria_filter.filter_properties(all_properties)
-    logger.info("criteria_filter_summary", matched=len(filtered))
+    logger.info("criteria_filter_summary", matched=len(filtered), by_source=_source_counts(filtered))
 
     if not filtered:
         logger.info("no_properties_match_criteria")
@@ -223,7 +236,7 @@ async def _run_pre_analysis_pipeline(
     logger.info("pipeline_started", phase="location_filtering")
     location_filter = LocationFilter(search_areas, strict=False)
     filtered = location_filter.filter_properties(filtered)
-    logger.info("location_filter_summary", matched=len(filtered))
+    logger.info("location_filter_summary", matched=len(filtered), by_source=_source_counts(filtered))
 
     if not filtered:
         logger.info("no_properties_in_search_areas")
@@ -236,12 +249,12 @@ async def _run_pre_analysis_pipeline(
         enable_image_hashing=settings.enable_image_hash_matching,
     )
     merged_properties = deduplicator.properties_to_merged(filtered)
-    logger.info("wrap_merged_summary", count=len(merged_properties))
+    logger.info("wrap_merged_summary", count=len(merged_properties), by_source=_source_counts(merged_properties))
 
     # Step 4: Filter to new properties only
     logger.info("pipeline_started", phase="new_property_filter")
     new_merged = await storage.filter_new_merged(merged_properties)
-    logger.info("new_property_summary", new_count=len(new_merged))
+    logger.info("new_property_summary", new_count=len(new_merged), by_source=_source_counts(new_merged))
 
     if not new_merged:
         logger.info("no_new_properties")
@@ -298,6 +311,8 @@ async def _run_pre_analysis_pipeline(
             "commute_filter_summary",
             within_limit=len(merged_to_notify),
             total_checked=len(merged_with_coords),
+            without_coords=len(merged_without_coords),
+            by_source=_source_counts(merged_to_notify),
         )
     else:
         merged_to_notify = new_merged
@@ -328,6 +343,7 @@ async def _run_pre_analysis_pipeline(
         total=len(merged_to_notify),
         with_floorplan=sum(1 for m in merged_to_notify if m.floorplan),
         with_images=sum(1 for m in merged_to_notify if m.images),
+        by_source=_source_counts(merged_to_notify),
     )
 
     # Step 5.6: Cross-platform dedup (including DB anchors for cross-run detection)
@@ -387,6 +403,7 @@ async def _run_pre_analysis_pipeline(
         genuinely_new=len(genuinely_new),
         anchors_updated=anchors_updated,
         multi_source_count=sum(1 for m in genuinely_new if len(m.sources) > 1),
+        by_source=_source_counts(genuinely_new),
     )
 
     merged_to_notify = genuinely_new
@@ -404,6 +421,7 @@ async def _run_pre_analysis_pipeline(
             before=before_count,
             after=len(merged_to_notify),
             dropped=before_count - len(merged_to_notify),
+            by_source=_source_counts(merged_to_notify),
         )
 
         if not merged_to_notify:

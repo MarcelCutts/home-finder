@@ -577,7 +577,6 @@ class ZooplaScraper(BaseScraper):
 
         params: dict[str, str] = {
             "q": q_val,
-            "beds_min": str(min_bedrooms),
             "beds_max": str(max_bedrooms),
             "price_min": str(min_price),
             "price_max": str(max_price),
@@ -589,6 +588,9 @@ class ZooplaScraper(BaseScraper):
             "results_sort": "newest_listings",
             "search_source": "to-rent",
         }
+
+        if min_bedrooms > 0:
+            params["beds_min"] = str(min_bedrooms)
 
         # NOTE: furnished_state, bathrooms_min, and available_only are intentionally
         # NOT passed as URL params. Zoopla's furnished_state filter excludes listings

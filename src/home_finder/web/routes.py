@@ -36,7 +36,7 @@ logger = get_logger(__name__)
 router = APIRouter()
 templates = Jinja2Templates(directory=Path(__file__).parent / "templates")
 
-VALID_SORT_OPTIONS: Final = {"newest", "price_asc", "price_desc", "rating_desc"}
+VALID_SORT_OPTIONS: Final = {"newest", "price_asc", "price_desc", "rating_desc", "fit_desc"}
 VALID_PROPERTY_TYPES: Final = {
     "victorian", "edwardian", "georgian", "new_build", "purpose_built",
     "warehouse", "ex_council", "period_conversion",
@@ -237,6 +237,7 @@ async def dashboard(
                 "commute_minutes": p.get("commute_minutes"),
                 "value_rating": p.get("value_rating"),
                 "one_line": p.get("one_line"),
+                "fit_score": p.get("fit_score"),
             }
             for p in properties
             if p.get("latitude") and p.get("longitude")

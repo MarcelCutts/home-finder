@@ -1,7 +1,7 @@
 """Tests for Rightmove scraper."""
 
 from pathlib import Path
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
 import pytest
@@ -83,6 +83,21 @@ class TestRightmoveScraper:
         # Should use hardcoded OUTCODE identifier for E8
         assert "locationIdentifier=OUTCODE%5E762" in url
         assert "rightmove.co.uk" in url
+
+    @pytest.mark.asyncio
+    async def test_build_search_url_omits_min_bedrooms_zero(
+        self, rightmove_scraper: RightmoveScraper
+    ) -> None:
+        """Test that minBedrooms is omitted from URL when min_bedrooms=0."""
+        url = await rightmove_scraper._build_search_url(
+            area="hackney",
+            min_price=1800,
+            max_price=2200,
+            min_bedrooms=0,
+            max_bedrooms=2,
+        )
+        assert "minBedrooms" not in url
+        assert "maxBedrooms=2" in url
 
     @pytest.mark.asyncio
     async def test_build_search_url_outcode_fallback(
@@ -424,3 +439,118 @@ class TestRightmoveOutcodeResolver:
 
         result = await get_rightmove_outcode_id("E8")
         assert result == "OUTCODE^707"
+
+
+class TestRightmoveEarlyStop:
+    """Tests for early-stop pagination (requires newest-first sort)."""
+
+    @pytest.mark.asyncio
+    async def test_search_url_sorts_by_newest(
+        self, rightmove_scraper: RightmoveScraper
+    ) -> None:
+        """Verify sortType=6 (newest listed) — required for early-stop correctness."""
+        url = await rightmove_scraper._build_search_url(
+            area="hackney",
+            min_price=1800,
+            max_price=2200,
+            min_bedrooms=0,
+            max_bedrooms=2,
+        )
+        assert "sortType=6" in url
+
+    @pytest.mark.asyncio
+    async def test_stops_when_all_results_known(
+        self, rightmove_scraper: RightmoveScraper, rightmove_search_html: str
+    ) -> None:
+        """When all page-1 properties are already in DB, stop without fetching page 2."""
+        soup = BeautifulSoup(rightmove_search_html, "html.parser")
+        page1_props = rightmove_scraper._parse_search_results(
+            soup, "https://www.rightmove.co.uk/property-to-rent/find.html"
+        )
+        known_ids = {p.source_id for p in page1_props}
+        assert len(known_ids) >= 2
+
+        pages_fetched: list[int] = []
+
+        with patch("home_finder.scrapers.rightmove.BeautifulSoupCrawler") as MockCrawler:
+
+            def make_crawler(**kwargs):  # type: ignore[no-untyped-def]
+                idx = len(pages_fetched)
+                mock = MagicMock()
+                handler: list = []
+                mock.router = MagicMock()
+                mock.router.default_handler = handler.append
+
+                async def run(urls: list[str]) -> None:
+                    ctx = MagicMock()
+                    ctx.soup = BeautifulSoup(rightmove_search_html, "html.parser")
+                    ctx.request.url = urls[0]
+                    await handler[0](ctx)
+
+                mock.run = run
+                pages_fetched.append(idx)
+                return mock
+
+            MockCrawler.side_effect = make_crawler
+
+            result = await rightmove_scraper.scrape(
+                min_price=1800,
+                max_price=2500,
+                min_bedrooms=1,
+                max_bedrooms=2,
+                area="hackney",
+                known_source_ids=known_ids,
+            )
+
+        assert len(pages_fetched) == 1  # Only page 1 fetched
+        assert result == []  # All known → nothing returned
+
+    @pytest.mark.asyncio
+    async def test_continues_when_some_results_new(
+        self, rightmove_scraper: RightmoveScraper, rightmove_search_html: str
+    ) -> None:
+        """When only some results are known, don't early-stop — fetch next page."""
+        soup = BeautifulSoup(rightmove_search_html, "html.parser")
+        page1_props = rightmove_scraper._parse_search_results(
+            soup, "https://www.rightmove.co.uk/property-to-rent/find.html"
+        )
+        known_ids = {page1_props[0].source_id}
+
+        pages_fetched: list[int] = []
+
+        with patch("home_finder.scrapers.rightmove.BeautifulSoupCrawler") as MockCrawler:
+
+            def make_crawler(**kwargs):  # type: ignore[no-untyped-def]
+                idx = len(pages_fetched)
+                mock = MagicMock()
+                handler: list = []
+                mock.router = MagicMock()
+                mock.router.default_handler = handler.append
+
+                async def run(urls: list[str]) -> None:
+                    ctx = MagicMock()
+                    if idx == 0:
+                        ctx.soup = BeautifulSoup(rightmove_search_html, "html.parser")
+                    else:
+                        ctx.soup = BeautifulSoup("<html></html>", "html.parser")
+                    ctx.request.url = urls[0]
+                    await handler[0](ctx)
+
+                mock.run = run
+                pages_fetched.append(idx)
+                return mock
+
+            MockCrawler.side_effect = make_crawler
+
+            with patch("asyncio.sleep", new_callable=AsyncMock):
+                result = await rightmove_scraper.scrape(
+                    min_price=1800,
+                    max_price=2500,
+                    min_bedrooms=1,
+                    max_bedrooms=2,
+                    area="hackney",
+                    known_source_ids=known_ids,
+                )
+
+        assert len(pages_fetched) >= 2  # Continued past page 1
+        assert len(result) == len(page1_props)

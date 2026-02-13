@@ -253,3 +253,73 @@ class TestOnTheMarketParser:
         html = "<html><body><p>No data</p></body></html>"
         properties = onthemarket_scraper._parse_next_data(html)
         assert len(properties) == 0
+
+
+class TestOnTheMarketEarlyStop:
+    """Tests for early-stop pagination (requires newest-first sort)."""
+
+    def test_search_url_sorts_by_newest(
+        self, onthemarket_scraper: OnTheMarketScraper
+    ) -> None:
+        """Verify sort-field=update_date — required for early-stop correctness."""
+        url = onthemarket_scraper._build_search_url(
+            area="e8",
+            min_price=1800,
+            max_price=2200,
+            min_bedrooms=0,
+            max_bedrooms=2,
+        )
+        assert "sort-field=update_date" in url
+
+    @pytest.mark.asyncio
+    async def test_stops_when_all_results_known(
+        self, onthemarket_scraper: OnTheMarketScraper, sample_next_data: str
+    ) -> None:
+        """When all page-1 properties are already in DB, stop without fetching page 2."""
+        known_ids = {"15234567", "15345678", "15456789"}
+
+        mock_fetch = AsyncMock(return_value=sample_next_data)
+        with patch.object(onthemarket_scraper, "_fetch_page", mock_fetch):
+            result = await onthemarket_scraper.scrape(
+                min_price=1800,
+                max_price=2500,
+                min_bedrooms=0,
+                max_bedrooms=2,
+                area="hackney",
+                known_source_ids=known_ids,
+            )
+
+        assert mock_fetch.call_count == 1  # Only page 1 fetched
+        assert result == []  # All known → nothing returned
+
+    @pytest.mark.asyncio
+    async def test_continues_when_some_results_new(
+        self, onthemarket_scraper: OnTheMarketScraper, sample_next_data: str
+    ) -> None:
+        """When only some results are known, don't early-stop — fetch next page."""
+        known_ids = {"15234567"}  # Only one known — should not early-stop
+
+        empty_data = json.dumps(
+            {"props": {"initialReduxState": {"results": {"list": []}}}}
+        )
+        empty_html = (
+            '<html><body><script id="__NEXT_DATA__" type="application/json">'
+            f"{empty_data}</script></body></html>"
+        )
+
+        mock_fetch = AsyncMock(side_effect=[sample_next_data, empty_html])
+        with (
+            patch.object(onthemarket_scraper, "_fetch_page", mock_fetch),
+            patch("asyncio.sleep", new_callable=AsyncMock),
+        ):
+            result = await onthemarket_scraper.scrape(
+                min_price=1800,
+                max_price=2500,
+                min_bedrooms=0,
+                max_bedrooms=2,
+                area="hackney",
+                known_source_ids=known_ids,
+            )
+
+        assert mock_fetch.call_count >= 2  # Continued past page 1
+        assert len(result) == 3  # All page 1 properties returned

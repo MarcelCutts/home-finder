@@ -69,7 +69,7 @@ class LocationFilter:
             elif area in BOROUGH_OUTCODES:
                 self.valid_outcodes.update(BOROUGH_OUTCODES[area])
 
-        logger.debug(
+        logger.debug(  # pragma: no mutate
             "location_filter_initialized",
             search_areas=self.search_areas,
             valid_outcodes=sorted(self.valid_outcodes),
@@ -110,8 +110,7 @@ class LocationFilter:
             else:
                 rejected.append(prop)
 
-        if rejected:
-            # Log rejected properties for debugging
+        if rejected:  # pragma: no mutate (logging-only block)
             rejected_outcodes: dict[str, int] = {}
             for prop in rejected:
                 outcode = extract_outcode(prop.postcode) or "NO_POSTCODE"
@@ -123,7 +122,7 @@ class LocationFilter:
                 rejected_outcodes=rejected_outcodes,
             )
 
-        logger.info(
+        logger.info(  # pragma: no mutate
             "location_filter_complete",
             total_properties=len(properties),
             valid=len(valid),

@@ -141,6 +141,16 @@ class TestBoroughOutcodes:
 class TestLocationFilter:
     """Tests for LocationFilter class."""
 
+    def test_default_strict_is_true(self, no_postcode_property: Property) -> None:
+        """Test that LocationFilter defaults to strict=True.
+
+        Kills mutant: strict: bool = True → strict: bool = False.
+        """
+        filter = LocationFilter(["hackney"])
+        assert filter.strict is True
+        # Default strict should reject no-postcode properties
+        assert filter.is_valid_location(no_postcode_property) is False
+
     def test_filter_accepts_valid_location(self, hackney_property: Property) -> None:
         """Test filter accepts property in search area."""
         filter = LocationFilter(["hackney"])
