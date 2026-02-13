@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Final
 
 from pydantic import HttpUrl
@@ -21,6 +22,14 @@ if TYPE_CHECKING:
     from home_finder.db import PropertyStorage
 
 logger = get_logger(__name__)
+
+
+@dataclass
+class EnrichmentResult:
+    """Result of the enrichment step, splitting properties by outcome."""
+
+    enriched: list[MergedProperty] = field(default_factory=list)
+    failed: list[MergedProperty] = field(default_factory=list)
 
 
 _ENRICHMENT_CONCURRENCY: Final = 5
@@ -165,7 +174,7 @@ async def enrich_merged_properties(
     *,
     data_dir: str | None = None,
     storage: PropertyStorage | None = None,
-) -> list[MergedProperty]:
+) -> EnrichmentResult:
     """Fetch detail pages for all sources and populate images, floorplan, descriptions.
 
     Fetches up to _ENRICHMENT_CONCURRENCY properties in parallel.
@@ -179,24 +188,32 @@ async def enrich_merged_properties(
             data_dir is set to reconstruct images for skipped properties.
 
     Returns:
-        List of MergedProperty with images, floorplan, and descriptions populated.
+        EnrichmentResult with enriched properties (got images/floorplan)
+        and failed properties (still no images after attempt).
     """
+    result = EnrichmentResult()
+
     to_enrich: list[MergedProperty] = []
-    cached_results: list[MergedProperty] = []
 
     for merged in merged_properties:
         if data_dir and storage and is_property_cached(data_dir, merged.unique_id):
             logger.info("skipping_enriched_property", property_id=merged.unique_id)
             loaded = await _load_cached_property(merged, storage)
-            cached_results.append(loaded)
+            result.enriched.append(loaded)
         else:
             to_enrich.append(merged)
 
     semaphore = asyncio.Semaphore(_ENRICHMENT_CONCURRENCY)
     tasks = [_enrich_single(merged, detail_fetcher, semaphore, data_dir) for merged in to_enrich]
-    enriched = list(await asyncio.gather(*tasks))
+    enriched_list = list(await asyncio.gather(*tasks))
 
-    return cached_results + enriched
+    for merged in enriched_list:
+        if merged.images or merged.floorplan:
+            result.enriched.append(merged)
+        else:
+            result.failed.append(merged)
+
+    return result
 
 
 def filter_by_floorplan(properties: list[MergedProperty]) -> list[MergedProperty]:

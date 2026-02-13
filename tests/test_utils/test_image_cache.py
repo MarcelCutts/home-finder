@@ -3,6 +3,7 @@
 from pathlib import Path
 
 from home_finder.utils.image_cache import (
+    clear_image_cache,
     get_cache_dir,
     get_cached_image_path,
     is_property_cached,
@@ -88,6 +89,22 @@ class TestSaveAndReadImageBytes:
 
     def test_read_nonexistent_returns_none(self, tmp_path: Path) -> None:
         assert read_image_bytes(tmp_path / "missing.jpg") is None
+
+
+class TestClearImageCache:
+    def test_removes_cache_directory(self, tmp_path: Path) -> None:
+        cache_dir = get_cache_dir(str(tmp_path), "zoopla:123")
+        cache_dir.mkdir(parents=True)
+        (cache_dir / "gallery_000_abc12345.jpg").write_bytes(b"fake")
+        assert is_property_cached(str(tmp_path), "zoopla:123")
+
+        clear_image_cache(str(tmp_path), "zoopla:123")
+        assert not is_property_cached(str(tmp_path), "zoopla:123")
+        assert not cache_dir.exists()
+
+    def test_noop_when_no_cache(self, tmp_path: Path) -> None:
+        """Should not raise when cache directory doesn't exist."""
+        clear_image_cache(str(tmp_path), "nonexistent:999")
 
 
 class TestGetCachedImagePath:

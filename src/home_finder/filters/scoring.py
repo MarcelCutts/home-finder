@@ -160,7 +160,12 @@ def coordinates_match(
     Returns:
         True if both have coordinates and are within distance, False otherwise.
     """
-    if not (prop1.latitude and prop1.longitude and prop2.latitude and prop2.longitude):
+    if (
+        prop1.latitude is None
+        or prop1.longitude is None
+        or prop2.latitude is None
+        or prop2.longitude is None
+    ):
         return False
 
     distance = haversine_distance(prop1.latitude, prop1.longitude, prop2.latitude, prop2.longitude)
@@ -180,7 +185,7 @@ def prices_match(price1: int, price2: int, tolerance: float = PRICE_TOLERANCE) -
     """
     if price1 == price2:
         return True
-    if price1 == 0 or price2 == 0:
+    if price1 == 0 or price2 == 0:  # pragma: no mutate (defensive; math gives same result)
         return False
     diff = abs(price1 - price2)
     avg = (price1 + price2) / 2
@@ -202,7 +207,12 @@ def graduated_coordinate_score(
     Returns:
         Score in [0.0, 1.0], or 0.0 if either property lacks coordinates.
     """
-    if not (prop1.latitude and prop1.longitude and prop2.latitude and prop2.longitude):
+    if (
+        prop1.latitude is None
+        or prop1.longitude is None
+        or prop2.latitude is None
+        or prop2.longitude is None
+    ):
         return 0.0
 
     distance = haversine_distance(prop1.latitude, prop1.longitude, prop2.latitude, prop2.longitude)
@@ -230,7 +240,7 @@ def graduated_price_score(price1: int, price2: int, tolerance: float = PRICE_TOL
     """
     if price1 == price2:
         return 1.0
-    if price1 == 0 or price2 == 0:
+    if price1 == 0 or price2 == 0:  # pragma: no mutate (defensive; math gives same result)
         return 0.0
 
     diff = abs(price1 - price2)

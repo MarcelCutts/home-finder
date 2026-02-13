@@ -35,6 +35,7 @@ from home_finder.scrapers import (
 )
 from home_finder.scrapers.detail_fetcher import DetailFetcher
 from home_finder.utils.address import is_outcode
+from home_finder.utils.image_cache import clear_image_cache
 
 logger = get_logger(__name__)
 
@@ -256,7 +257,23 @@ async def _run_pre_analysis_pipeline(
     new_merged = await storage.filter_new_merged(merged_properties)
     logger.info("new_property_summary", new_count=len(new_merged), by_source=_source_counts(new_merged))
 
-    if not new_merged:
+    # Step 4.5: Load unenriched properties for retry
+    max_attempts = settings.max_enrichment_attempts
+    unenriched = await storage.get_unenriched_properties(max_attempts=max_attempts)
+    re_enrichment_ids: set[str] = set()
+    if unenriched:
+        logger.info(
+            "loaded_unenriched_for_retry",
+            count=len(unenriched),
+            by_source=_source_counts(unenriched),
+        )
+        # Clear image caches so partial downloads don't fool is_property_cached()
+        for m in unenriched:
+            if settings.data_dir:
+                clear_image_cache(settings.data_dir, m.unique_id)
+        re_enrichment_ids = {m.unique_id for m in unenriched}
+
+    if not new_merged and not unenriched:
         logger.info("no_new_properties")
         return None
 
@@ -318,6 +335,9 @@ async def _run_pre_analysis_pipeline(
         merged_to_notify = new_merged
         logger.info("skipping_commute_filter", reason="no_traveltime_credentials")
 
+    # Merge unenriched retries into enrichment batch (already have commute data from first run)
+    merged_to_notify.extend(unenriched)
+
     if not merged_to_notify:
         logger.info("no_properties_within_commute_limit")
         return None
@@ -329,7 +349,7 @@ async def _run_pre_analysis_pipeline(
         proxy_url=settings.proxy_url,
     )
     try:
-        merged_to_notify = await enrich_merged_properties(
+        enrichment_result = await enrich_merged_properties(
             merged_to_notify,
             detail_fetcher,
             data_dir=settings.data_dir,
@@ -338,19 +358,40 @@ async def _run_pre_analysis_pipeline(
     finally:
         await detail_fetcher.close()
 
+    merged_to_notify = enrichment_result.enriched
+
+    # Save failures for retry on next run
+    for failed in enrichment_result.failed:
+        commute_info = commute_lookup.get(failed.canonical.unique_id)
+        await storage.save_unenriched_property(
+            failed,
+            commute_minutes=commute_info[0] if commute_info else None,
+            transport_mode=commute_info[1] if commute_info else None,
+        )
+
+    # Give up on properties that exceeded max attempts
+    expired = await storage.expire_unenriched(max_attempts=max_attempts)
+
     logger.info(
         "enrichment_summary",
-        total=len(merged_to_notify),
+        enriched=len(enrichment_result.enriched),
+        failed=len(enrichment_result.failed),
+        expired=expired,
         with_floorplan=sum(1 for m in merged_to_notify if m.floorplan),
         with_images=sum(1 for m in merged_to_notify if m.images),
         by_source=_source_counts(merged_to_notify),
     )
+
+    if not merged_to_notify:
+        logger.info("no_enriched_properties")
+        return None
 
     # Step 5.6: Cross-platform dedup (including DB anchors for cross-run detection)
     logger.info("pipeline_started", phase="deduplication_merge")
 
     # Load recent DB properties as dedup anchors so that a property appearing
     # on platform B today can be matched against platform A stored last week.
+    # Note: unenriched properties are excluded from anchors (no useful data).
     db_anchors = await storage.get_recent_properties_for_dedup(days=30)
     logger.info(
         "loaded_dedup_anchors",
@@ -396,12 +437,23 @@ async def _run_pre_analysis_pipeline(
         else:
             genuinely_new.append(merged)
 
+    # Clean up unenriched DB rows consumed by anchor merges.
+    # When a re-enriched property merges into an existing anchor,
+    # update_merged_sources adds data to the anchor but the old
+    # unenriched row still exists — delete it.
+    genuinely_new_ids = {m.unique_id for m in genuinely_new}
+    consumed_retries = re_enrichment_ids - genuinely_new_ids
+    for uid in consumed_retries:
+        await storage.delete_property(uid)
+        logger.debug("consumed_retry_cleaned", unique_id=uid)
+
     logger.info(
         "deduplication_merge_summary",
         dedup_input=len(combined_for_dedup),
         dedup_output=len(dedup_results),
         genuinely_new=len(genuinely_new),
         anchors_updated=anchors_updated,
+        consumed_retries=len(consumed_retries),
         multi_source_count=sum(1 for m in genuinely_new if len(m.sources) > 1),
         by_source=_source_counts(genuinely_new),
     )
@@ -457,6 +509,10 @@ async def _save_one(
 
     if quality_analysis:
         await storage.save_quality_analysis(merged.unique_id, quality_analysis)
+
+    # Transition re-enriched properties into normal notification flow.
+    # No-op for genuinely new properties (already notification_status='pending').
+    await storage.mark_enriched(merged.unique_id)
 
 
 # Type alias for the per-property callback in quality analysis

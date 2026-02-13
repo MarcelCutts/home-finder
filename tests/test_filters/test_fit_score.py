@@ -90,12 +90,18 @@ class TestComputeFitScore:
     def test_ideal_2bed_scores_high(self):
         """A 2-bed with gas hob, solid brick, high ceilings, spacious should score high."""
         analysis = _full_analysis(
-            kitchen={"overall_quality": "modern", "hob_type": "gas",
-                     "has_dishwasher": "yes", "has_washing_machine": "yes"},
-            flooring_noise={"building_construction": "solid_brick",
-                            "has_double_glazing": "yes", "noise_indicators": []},
-            light_space={"ceiling_height": "high", "feels_spacious": True,
-                         "floor_level": "top"},
+            kitchen={
+                "overall_quality": "modern",
+                "hob_type": "gas",
+                "has_dishwasher": "yes",
+                "has_washing_machine": "yes",
+            },
+            flooring_noise={
+                "building_construction": "solid_brick",
+                "has_double_glazing": "yes",
+                "noise_indicators": [],
+            },
+            light_space={"ceiling_height": "high", "feels_spacious": True, "floor_level": "top"},
             listing_extraction={"property_type": "warehouse"},
             highlights=["Period features", "High ceilings", "Original character"],
             overall_rating=5,
@@ -118,10 +124,22 @@ class TestComputeFitScore:
 
     def test_electric_hob_lowers_kitchen_score(self):
         """Electric hob should produce a lower score than gas."""
-        gas = _full_analysis(kitchen={"hob_type": "gas", "overall_quality": "modern",
-                                       "has_dishwasher": "yes", "has_washing_machine": "yes"})
-        electric = _full_analysis(kitchen={"hob_type": "electric", "overall_quality": "modern",
-                                            "has_dishwasher": "yes", "has_washing_machine": "yes"})
+        gas = _full_analysis(
+            kitchen={
+                "hob_type": "gas",
+                "overall_quality": "modern",
+                "has_dishwasher": "yes",
+                "has_washing_machine": "yes",
+            }
+        )
+        electric = _full_analysis(
+            kitchen={
+                "hob_type": "electric",
+                "overall_quality": "modern",
+                "has_dishwasher": "yes",
+                "has_washing_machine": "yes",
+            }
+        )
         gas_score = compute_fit_score(gas, 2)
         elec_score = compute_fit_score(electric, 2)
         assert gas_score is not None and elec_score is not None
@@ -173,10 +191,10 @@ class TestComputeLifestyleIcons:
     def test_none_analysis_returns_none(self):
         assert compute_lifestyle_icons(None, 2) is None
 
-    def test_returns_all_five_keys(self):
+    def test_returns_all_six_keys(self):
         icons = compute_lifestyle_icons(_full_analysis(), 2)
         assert icons is not None
-        assert set(icons.keys()) == {"workspace", "hosting", "kitchen", "vibe", "space"}
+        assert set(icons.keys()) == {"workspace", "hosting", "kitchen", "vibe", "space", "internet"}
 
     def test_each_icon_has_state_and_tooltip(self):
         icons = compute_lifestyle_icons(_full_analysis(), 2)
@@ -280,8 +298,12 @@ class TestComputeLifestyleIcons:
     def test_space_good_for_spacious_with_outdoor(self):
         analysis = _full_analysis(
             space={"is_spacious_enough": True},
-            outdoor_space={"has_balcony": True, "has_garden": False,
-                           "has_terrace": False, "has_shared_garden": False},
+            outdoor_space={
+                "has_balcony": True,
+                "has_garden": False,
+                "has_terrace": False,
+                "has_shared_garden": False,
+            },
         )
         icons = compute_lifestyle_icons(analysis, 2)
         assert icons is not None
@@ -296,12 +318,82 @@ class TestComputeLifestyleIcons:
     def test_space_good_for_spacious_no_outdoor(self):
         analysis = _full_analysis(
             space={"is_spacious_enough": True},
-            outdoor_space={"has_balcony": False, "has_garden": False,
-                           "has_terrace": False, "has_shared_garden": False},
+            outdoor_space={
+                "has_balcony": False,
+                "has_garden": False,
+                "has_terrace": False,
+                "has_shared_garden": False,
+            },
         )
         icons = compute_lifestyle_icons(analysis, 2)
         assert icons is not None
         assert icons["space"]["state"] == "good"
+
+    # ── Internet icon ──
+
+    def test_internet_icon_fttp_good(self):
+        """FTTP broadband produces good internet icon."""
+        analysis = _full_analysis(
+            listing_extraction={"property_type": "victorian", "broadband_type": "fttp"}
+        )
+        icons = compute_lifestyle_icons(analysis, 2)
+        assert icons is not None
+        assert icons["internet"]["state"] == "good"
+
+    def test_internet_icon_standard_concern(self):
+        """Standard broadband produces concern internet icon."""
+        analysis = _full_analysis(
+            listing_extraction={"property_type": "victorian", "broadband_type": "standard"}
+        )
+        icons = compute_lifestyle_icons(analysis, 2)
+        assert icons is not None
+        assert icons["internet"]["state"] == "concern"
+
+    def test_internet_icon_unknown_neutral(self):
+        """Unknown broadband produces neutral internet icon."""
+        analysis = _full_analysis(
+            listing_extraction={"property_type": "victorian", "broadband_type": "unknown"}
+        )
+        icons = compute_lifestyle_icons(analysis, 2)
+        assert icons is not None
+        assert icons["internet"]["state"] == "neutral"
+
+    # ── Workspace icon with office_separation ──
+
+    def test_workspace_icon_prefers_office_separation(self):
+        """Workspace icon uses office_separation when available."""
+        analysis = _full_analysis(
+            bedroom={"office_separation": "dedicated_room", "can_fit_desk": "yes"}
+        )
+        icons = compute_lifestyle_icons(analysis, 2)
+        assert icons is not None
+        assert icons["workspace"]["state"] == "good"
+        assert "office" in icons["workspace"]["tooltip"].lower()
+
+    def test_workspace_icon_separate_area_good(self):
+        """Separate work area produces good workspace icon."""
+        analysis = _full_analysis(
+            bedroom={"office_separation": "separate_area", "can_fit_desk": "yes"}
+        )
+        icons = compute_lifestyle_icons(analysis, 1)
+        assert icons is not None
+        assert icons["workspace"]["state"] == "good"
+
+    def test_workspace_icon_shared_space_concern_1bed(self):
+        """Shared space produces concern for 1-bed."""
+        analysis = _full_analysis(
+            bedroom={"office_separation": "shared_space", "can_fit_desk": "yes"}
+        )
+        icons = compute_lifestyle_icons(analysis, 1)
+        assert icons is not None
+        assert icons["workspace"]["state"] == "concern"
+
+    def test_workspace_icon_none_concern(self):
+        """No viable workspace produces concern icon."""
+        analysis = _full_analysis(bedroom={"office_separation": "none", "can_fit_desk": "no"})
+        icons = compute_lifestyle_icons(analysis, 1)
+        assert icons is not None
+        assert icons["workspace"]["state"] == "concern"
 
 
 # ── Edge cases ─────────────────────────────────────────────────────────────────
@@ -331,6 +423,68 @@ class TestEdgeCases:
     def test_negative_living_room_sqm_ignored(self):
         """Negative sqm value shouldn't contribute to score."""
         analysis = _full_analysis(space={"living_room_sqm": -5, "is_spacious_enough": True})
+        score = compute_fit_score(analysis, 2)
+        assert score is not None
+        assert 0 <= score <= 100
+
+    def test_dedicated_office_boosts_workspace(self):
+        """dedicated_room office separation scores higher than shared_space."""
+        dedicated = _full_analysis(
+            bedroom={"office_separation": "dedicated_room", "can_fit_desk": "yes"}
+        )
+        shared = _full_analysis(
+            bedroom={"office_separation": "shared_space", "can_fit_desk": "yes"}
+        )
+        assert compute_fit_score(dedicated, 2) > compute_fit_score(shared, 2)
+
+    def test_fttp_broadband_boosts_workspace(self):
+        """FTTP broadband adds to workspace score."""
+        fttp = _full_analysis(
+            listing_extraction={"property_type": "victorian", "broadband_type": "fttp"}
+        )
+        unknown = _full_analysis(
+            listing_extraction={"property_type": "victorian", "broadband_type": "unknown"}
+        )
+        assert compute_fit_score(fttp, 2) > compute_fit_score(unknown, 2)
+
+    def test_excellent_hosting_layout_boosts_hosting(self):
+        """Excellent hosting layout scores higher than poor."""
+        excellent = _full_analysis(
+            space={"is_spacious_enough": True, "living_room_sqm": 20, "hosting_layout": "excellent"}
+        )
+        poor = _full_analysis(
+            space={"is_spacious_enough": True, "living_room_sqm": 20, "hosting_layout": "poor"}
+        )
+        assert compute_fit_score(excellent, 2) > compute_fit_score(poor, 2)
+
+    def test_low_hosting_noise_boosts_sound_and_hosting(self):
+        """Low hosting noise risk benefits both sound and hosting dimensions."""
+        low = _full_analysis(
+            flooring_noise={
+                "has_double_glazing": "yes",
+                "building_construction": "solid_brick",
+                "noise_indicators": [],
+                "hosting_noise_risk": "low",
+            }
+        )
+        high = _full_analysis(
+            flooring_noise={
+                "has_double_glazing": "yes",
+                "building_construction": "solid_brick",
+                "noise_indicators": [],
+                "hosting_noise_risk": "high",
+            }
+        )
+        assert compute_fit_score(low, 2) > compute_fit_score(high, 2)
+
+    def test_unknown_new_fields_still_produce_score(self):
+        """Properties with unknown new fields produce a valid score."""
+        analysis = _full_analysis()
+        # Simulate old analysis without new fields
+        analysis["space"].pop("hosting_layout", None)
+        analysis["bedroom"].pop("office_separation", None)
+        analysis["flooring_noise"].pop("hosting_noise_risk", None)
+        analysis["listing_extraction"].pop("broadband_type", None)
         score = compute_fit_score(analysis, 2)
         assert score is not None
         assert 0 <= score <= 100

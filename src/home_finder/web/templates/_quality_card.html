@@ -80,6 +80,9 @@
             {% if qa.space.is_spacious_enough is not none %}
             <p>{{ "Good for office + hosting" if qa.space.is_spacious_enough else "May be tight" }}</p>
             {% endif %}
+            {% if qa.space.hosting_layout and qa.space.hosting_layout != 'unknown' %}
+            <p>Hosting layout: {{ qa.space.hosting_layout | capitalize }}</p>
+            {% endif %}
         </div>
 
         {% if qa.bedroom %}
@@ -91,6 +94,9 @@
             {% if qa.bedroom.has_built_in_wardrobe == 'yes' %}<p>Built-in wardrobe</p>{% elif qa.bedroom.has_built_in_wardrobe == 'no' %}<p>No built-in wardrobe</p>{% endif %}
             {% if qa.bedroom.can_fit_desk != 'unknown' %}
             <p>{{ "Desk fits" if qa.bedroom.can_fit_desk == 'yes' else "No desk space" }}</p>
+            {% endif %}
+            {% if qa.bedroom.office_separation and qa.bedroom.office_separation != 'unknown' %}
+            <p>Office: {{ qa.bedroom.office_separation | replace("_", " ") | capitalize }}</p>
             {% endif %}
             {% if qa.bedroom.notes %}<p><small>{{ qa.bedroom.notes }}</small></p>{% endif %}
         </div>
@@ -133,6 +139,9 @@
             {% elif qa.flooring_noise.has_double_glazing == 'no' %}
             <p>Single glazing</p>
             {% endif %}
+            {% if qa.flooring_noise.hosting_noise_risk and qa.flooring_noise.hosting_noise_risk != 'unknown' %}
+            <p>Hosting noise risk: {{ qa.flooring_noise.hosting_noise_risk | capitalize }}</p>
+            {% endif %}
             {% if qa.flooring_noise.noise_indicators %}
             <p><small>{{ qa.flooring_noise.noise_indicators | join(", ") }}</small></p>
             {% endif %}
@@ -144,7 +153,7 @@
     {# Listing Details — lightweight key-value grid (visual hierarchy: secondary) #}
     {% if qa.listing_extraction %}
     {% set le = qa.listing_extraction %}
-    {% set has_listing_data = (le.epc_rating and le.epc_rating != 'unknown') or le.service_charge_pcm or le.deposit_weeks is not none or le.bills_included != 'unknown' or le.pets_allowed != 'unknown' or (le.parking and le.parking != 'unknown') or (le.council_tax_band and le.council_tax_band != 'unknown') or (le.property_type and le.property_type != 'unknown') or (le.furnished_status and le.furnished_status != 'unknown') %}
+    {% set has_listing_data = (le.epc_rating and le.epc_rating != 'unknown') or le.service_charge_pcm or le.deposit_weeks is not none or le.bills_included != 'unknown' or le.pets_allowed != 'unknown' or (le.parking and le.parking != 'unknown') or (le.council_tax_band and le.council_tax_band != 'unknown') or (le.property_type and le.property_type != 'unknown') or (le.furnished_status and le.furnished_status != 'unknown') or (le.broadband_type and le.broadband_type != 'unknown') %}
     {% if has_listing_data %}
     <div class="listing-details-section">
         <h4 class="section-subhead">Listing Details</h4>
@@ -179,6 +188,9 @@
             {% endif %}
             {% if le.furnished_status and le.furnished_status != 'unknown' %}
             <div class="listing-kv-item"><span class="listing-kv-label">Furnished</span><span class="listing-kv-value">{{ le.furnished_status | replace("_", " ") | capitalize }}</span></div>
+            {% endif %}
+            {% if le.broadband_type and le.broadband_type != 'unknown' %}
+            <div class="listing-kv-item"><span class="listing-kv-label">Broadband</span><span class="listing-kv-value">{{ le.broadband_type | upper }}</span></div>
             {% endif %}
         </div>
     </div>

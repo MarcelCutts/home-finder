@@ -2,6 +2,7 @@
 
 import hashlib
 import re
+import shutil
 from pathlib import Path
 from typing import Final
 
@@ -75,6 +76,18 @@ def save_image_bytes(path: Path, data: bytes) -> None:
     """Write image bytes to disk, creating parent dirs as needed."""
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_bytes(data)
+
+
+def clear_image_cache(data_dir: str, unique_id: str) -> None:
+    """Remove all cached images for a property.
+
+    Used before re-enrichment to clear partial downloads so
+    is_property_cached() returns False.
+    """
+    cache_dir = get_cache_dir(data_dir, unique_id)
+    if cache_dir.is_dir():
+        shutil.rmtree(cache_dir)
+        logger.debug("image_cache_cleared", unique_id=unique_id)
 
 
 def read_image_bytes(path: Path) -> bytes | None:

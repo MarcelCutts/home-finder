@@ -70,6 +70,14 @@ class Settings(BaseSettings):
         description="Token budget for extended thinking",
     )
 
+    # Enrichment retry
+    max_enrichment_attempts: int = Field(
+        default=3,
+        ge=1,
+        le=10,
+        description="Max enrichment retry attempts before giving up on a property",
+    )
+
     # Deduplication
     enable_image_hash_matching: bool = Field(
         default=False,

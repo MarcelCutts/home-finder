@@ -167,6 +167,14 @@ class _VisualAnalysisResponse(BaseModel):
         )
         is_spacious_enough: bool = Field(description="True if can fit office AND host 8+ people")
         confidence: Literal["high", "medium", "low"]
+        hosting_layout: Literal["excellent", "good", "awkward", "poor", "unknown"] = Field(
+            description=(
+                "Layout flow for hosting: excellent = open-plan kitchen/living + accessible "
+                "bathroom + practical entrance; good = mostly good flow; awkward = hosting "
+                "friction (disconnected kitchen, narrow entrance, guests pass bedrooms); "
+                "poor = fundamentally unsuitable (through-rooms, isolated kitchen)"
+            ),
+        )
 
     class Bathroom(BaseModel):
         model_config = _Forbid
@@ -181,6 +189,16 @@ class _VisualAnalysisResponse(BaseModel):
         primary_is_double: Literal["yes", "no", "unknown"]
         has_built_in_wardrobe: Literal["yes", "no", "unknown"]
         can_fit_desk: Literal["yes", "no", "unknown"]
+        office_separation: Literal[
+            "dedicated_room", "separate_area", "shared_space", "none", "unknown"
+        ] = Field(
+            description=(
+                "Quality of work-life separation: dedicated_room = closable room for "
+                "office (2-bed with non-through second room); separate_area = alcove, "
+                "mezzanine, or partitioned nook; shared_space = desk in living room, "
+                "no separation; none = studio or nowhere viable"
+            ),
+        )
         notes: str
 
     class OutdoorSpace(BaseModel):
@@ -205,6 +223,13 @@ class _VisualAnalysisResponse(BaseModel):
             "solid_brick", "concrete", "timber_frame", "mixed", "unknown"
         ] = Field(description="Building construction type estimated from visual cues")
         noise_indicators: list[str]
+        hosting_noise_risk: Literal["low", "moderate", "high", "unknown"] = Field(
+            description=(
+                "Risk of disturbing neighbours when hosting: low = solid construction + "
+                "carpet + top floor/detached; moderate = mixed signals; high = timber "
+                "frame + hard floors + lower floor + shared walls"
+            ),
+        )
         notes: str
 
     class RedFlags(BaseModel):
@@ -267,6 +292,13 @@ class _EvaluationResponse(BaseModel):
             "unknown",
         ]
         furnished_status: Literal["furnished", "unfurnished", "part_furnished", "unknown"]
+        broadband_type: Literal["fttp", "fttc", "cable", "standard", "unknown"] = Field(
+            description=(
+                "Broadband type from listing: fttp = fibre/FTTP/FTTH/Hyperoptic/"
+                "Community Fibre/full fibre/1Gbps; fttc = superfast/FTTC/up to 80Mbps; "
+                "cable = Virgin Media/cable; standard = broadband alone/ADSL"
+            ),
+        )
 
     class ViewingNotes(BaseModel):
         model_config = _Forbid
@@ -1035,9 +1067,7 @@ class PropertyQualityFilter:
                 return val
             s = val.strip()
             # Try to parse JSON strings that should be dicts/lists
-            if (s.startswith("{") and s.endswith("}")) or (
-                s.startswith("[") and s.endswith("]")
-            ):
+            if (s.startswith("{") and s.endswith("}")) or (s.startswith("[") and s.endswith("]")):
                 try:
                     parsed = _json.loads(s)
                     if isinstance(parsed, (dict, list)):
@@ -1104,6 +1134,7 @@ class PropertyQualityFilter:
                         living_room_sqm=analysis.space.living_room_sqm,
                         is_spacious_enough=True,
                         confidence="high",
+                        hosting_layout=analysis.space.hosting_layout,
                     ),
                 },
             )

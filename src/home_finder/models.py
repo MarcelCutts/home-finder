@@ -164,6 +164,7 @@ class NotificationStatus(StrEnum):
     """Status of property notification."""
 
     PENDING = "pending"
+    PENDING_ENRICHMENT = "pending_enrichment"
     SENT = "sent"
     FAILED = "failed"
 
@@ -282,6 +283,11 @@ class PropertyHighlight(StrEnum):
     # Views
     CANAL_VIEWS = "Canal views"
     PARK_VIEWS = "Park views"
+    # Marcel-specific
+    ULTRAFAST_BROADBAND = "Ultrafast broadband (FTTP)"
+    DEDICATED_OFFICE = "Dedicated office room"
+    SEPARATE_WORK_AREA = "Separate work area"
+    GREAT_HOSTING_LAYOUT = "Great hosting layout"
 
 
 class PropertyLowlight(StrEnum):
@@ -307,6 +313,10 @@ class PropertyLowlight(StrEnum):
     SERVICE_CHARGE_UNSTATED = "Service charge unstated"
     BALCONY_CRACKING = "Balcony cracking"
     NEEDS_UPDATING = "Needs updating"
+    # Marcel-specific
+    BASIC_BROADBAND = "Basic broadband only"
+    NO_WORK_SEPARATION = "No work-life separation"
+    POOR_HOSTING_LAYOUT = "Poor hosting layout"
 
 
 class PropertyType(StrEnum):
@@ -384,6 +394,7 @@ class SpaceAnalysis(BaseModel):
     living_room_sqm: float | None = None
     is_spacious_enough: bool | None = None  # None = unknown
     confidence: Literal["high", "medium", "low"] = "low"
+    hosting_layout: Literal["excellent", "good", "awkward", "poor", "unknown"] = "unknown"
 
 
 class ValueAnalysis(BaseModel):
@@ -428,6 +439,9 @@ class BedroomAnalysis(BaseModel):
     primary_is_double: Literal["yes", "no", "unknown"] = "unknown"
     has_built_in_wardrobe: Literal["yes", "no", "unknown"] = "unknown"
     can_fit_desk: Literal["yes", "no", "unknown"] = "unknown"
+    office_separation: Literal[
+        "dedicated_room", "separate_area", "shared_space", "none", "unknown"
+    ] = "unknown"
     notes: str = ""
 
     @field_validator("primary_is_double", "has_built_in_wardrobe", "can_fit_desk", mode="before")
@@ -481,6 +495,7 @@ class FlooringNoiseAnalysis(BaseModel):
         Literal["solid_brick", "concrete", "timber_frame", "mixed", "unknown"] | None
     ) = None
     noise_indicators: list[str] = []
+    hosting_noise_risk: Literal["low", "moderate", "high", "unknown"] = "unknown"
     notes: str = ""
 
     @field_validator("has_double_glazing", mode="before")
@@ -508,6 +523,7 @@ class ListingExtraction(BaseModel):
     council_tax_band: Literal["A", "B", "C", "D", "E", "F", "G", "H", "unknown"] | None = None
     property_type: PropertyType = PropertyType.UNKNOWN
     furnished_status: Literal["furnished", "unfurnished", "part_furnished", "unknown"] | None = None
+    broadband_type: Literal["fttp", "fttc", "cable", "standard", "unknown"] | None = None
 
     @field_validator("epc_rating", "council_tax_band", mode="before")
     @classmethod

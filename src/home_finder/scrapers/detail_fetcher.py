@@ -13,9 +13,9 @@ from curl_cffi.requests import AsyncSession
 from home_finder.logging import get_logger
 from home_finder.models import Property, PropertySource
 
-_MAX_RETRIES = 5
-_RETRY_BASE_DELAY = 3.0  # seconds, doubled each retry (3, 6, 12, 24, 48)
-_CURL_MIN_INTERVAL = 0.3  # minimum seconds between curl_cffi requests
+_MAX_RETRIES = 2  # cross-run retry handles persistent failures
+_RETRY_BASE_DELAY = 2.0  # seconds, doubled each retry (2, 4)
+_CURL_MIN_INTERVAL = 1.5  # minimum seconds between curl_cffi requests (Zoopla rate limit)
 
 logger = get_logger(__name__)
 

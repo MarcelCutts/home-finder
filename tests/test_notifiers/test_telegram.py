@@ -6,20 +6,30 @@ import pytest
 from pydantic import HttpUrl
 
 from home_finder.models import (
+    ConditionAnalysis,
+    KitchenAnalysis,
+    LightSpaceAnalysis,
+    ListingExtraction,
+    ListingRedFlags,
     MergedProperty,
     Property,
     PropertyImage,
     PropertyQualityAnalysis,
     PropertySource,
+    SpaceAnalysis,
     TrackedProperty,
     TransportMode,
+    ViewingNotes,
 )
 from home_finder.notifiers.telegram import (
     TelegramNotifier,
+    _format_quality_block,
     _format_star_rating,
+    _format_viewing_notes,
     _get_best_image_url,
     _get_gallery_urls,
     format_merged_property_caption,
+    format_merged_property_message,
     format_property_message,
 )
 
@@ -98,9 +108,46 @@ class TestFormatPropertyMessage:
         sample_property: Property,
         sample_quality_analysis: PropertyQualityAnalysis,
     ) -> None:
-        """Test that star rating appears in message when quality analysis has rating."""
+        """Test that star rating appears merged with price on same line."""
         message = format_property_message(sample_property, quality_analysis=sample_quality_analysis)
         assert "⭐⭐⭐⭐☆" in message
+        # Stars should be on the same line as price (merged format)
+        for line in message.split("\n"):
+            if "⭐⭐⭐⭐☆" in line:
+                assert "£" in line
+                break
+
+    def test_format_property_with_highlights_lowlights(
+        self,
+        sample_property: Property,
+        sample_quality_analysis: PropertyQualityAnalysis,
+    ) -> None:
+        """Test that highlights and lowlights appear in full message."""
+        message = format_property_message(sample_property, quality_analysis=sample_quality_analysis)
+        assert "✅" in message
+        assert "Gas hob" in message
+        assert "⛔" in message
+        assert "No garden" in message
+
+    def test_format_property_with_expandable_blockquote(
+        self,
+        sample_property: Property,
+        sample_quality_analysis: PropertyQualityAnalysis,
+    ) -> None:
+        """Test that full message uses expandable blockquote for summary."""
+        message = format_property_message(sample_property, quality_analysis=sample_quality_analysis)
+        assert "<blockquote expandable>" in message
+
+    def test_format_property_with_viewing_notes(
+        self,
+        sample_property: Property,
+        sample_quality_analysis: PropertyQualityAnalysis,
+    ) -> None:
+        """Test that viewing notes appear in full message."""
+        message = format_property_message(sample_property, quality_analysis=sample_quality_analysis)
+        assert "Check water pressure" in message
+        assert "Ask about sound insulation" in message
+        assert "Test internet speed" in message
 
 
 class TestFormatMergedPropertyCaption:
@@ -135,6 +182,50 @@ class TestFormatMergedPropertyCaption:
         assert "£" in caption
         assert "1 bed" in caption.lower()
         assert "14 min" in caption
+
+    def test_caption_uses_one_line_over_summary(
+        self,
+        sample_merged_property: MergedProperty,
+        sample_quality_analysis: PropertyQualityAnalysis,
+    ) -> None:
+        """Test that caption prefers one_line field over full summary."""
+        caption = format_merged_property_caption(
+            sample_merged_property,
+            quality_analysis=sample_quality_analysis,
+        )
+        # one_line should be used in caption, not the full summary
+        assert "Bright modern flat with gas kitchen" in caption
+
+    def test_caption_shows_highlight_lowlight_chips(
+        self,
+        sample_merged_property: MergedProperty,
+        sample_quality_analysis: PropertyQualityAnalysis,
+    ) -> None:
+        """Test that caption shows highlight/lowlight chip lines."""
+        caption = format_merged_property_caption(
+            sample_merged_property,
+            quality_analysis=sample_quality_analysis,
+        )
+        assert "✅" in caption
+        assert "⛔" in caption
+
+    def test_caption_falls_back_to_summary_without_one_line(
+        self,
+        sample_merged_property: MergedProperty,
+    ) -> None:
+        """Test that caption falls back to summary when one_line is absent."""
+        analysis = PropertyQualityAnalysis(
+            kitchen=KitchenAnalysis(),
+            condition=ConditionAnalysis(),
+            light_space=LightSpaceAnalysis(),
+            space=SpaceAnalysis(),
+            summary="Decent flat overall.",
+        )
+        caption = format_merged_property_caption(
+            sample_merged_property,
+            quality_analysis=analysis,
+        )
+        assert "Decent flat overall." in caption
 
     def test_caption_without_quality(self, sample_merged_property: MergedProperty) -> None:
         caption = format_merged_property_caption(sample_merged_property)
@@ -395,9 +486,13 @@ class TestTelegramNotifier:
 
         assert result is True
         mock_bot.send_media_group.assert_called_once()
-        # Follow-up message with inline keyboard buttons
+        # Follow-up message with full analysis text and inline keyboard
         mock_bot.send_message.assert_called_once()
-        assert "reply_markup" in mock_bot.send_message.call_args[1]
+        followup_kwargs = mock_bot.send_message.call_args[1]
+        assert "reply_markup" in followup_kwargs
+        # Follow-up should contain the full property message, not the old pointer
+        assert "1 Bed Flat" in followup_kwargs["text"]
+        assert "£1,900" in followup_kwargs["text"]
         # send_photo should NOT be called (media group used instead)
         mock_bot.send_photo.assert_not_called()
 
@@ -508,3 +603,212 @@ class TestGetGalleryUrls:
         )
         urls = _get_gallery_urls(merged)
         assert urls == ["https://example.com/thumb.jpg"]
+
+
+class TestFormatQualityBlock:
+    """Tests for _format_quality_block."""
+
+    def test_full_mode_expandable_blockquote(
+        self, sample_quality_analysis: PropertyQualityAnalysis
+    ) -> None:
+        """Test that full mode uses expandable blockquote."""
+        lines = _format_quality_block(sample_quality_analysis, full=True)
+        text = "\n".join(lines)
+        assert "<blockquote expandable>" in text
+
+    def test_full_mode_includes_highlights(
+        self, sample_quality_analysis: PropertyQualityAnalysis
+    ) -> None:
+        lines = _format_quality_block(sample_quality_analysis, full=True)
+        text = "\n".join(lines)
+        assert "✅ Gas hob · Good light · Spacious living room" in text
+
+    def test_full_mode_includes_lowlights(
+        self, sample_quality_analysis: PropertyQualityAnalysis
+    ) -> None:
+        lines = _format_quality_block(sample_quality_analysis, full=True)
+        text = "\n".join(lines)
+        assert "⛔ No garden · Street noise" in text
+
+    def test_full_mode_includes_viewing_notes(
+        self, sample_quality_analysis: PropertyQualityAnalysis
+    ) -> None:
+        lines = _format_quality_block(sample_quality_analysis, full=True)
+        text = "\n".join(lines)
+        assert "👁" in text
+        assert "Check water pressure" in text
+        assert "❓" in text
+        assert "Ask about sound insulation" in text
+        assert "🔍" in text
+        assert "Test internet speed" in text
+
+    def test_condensed_mode_uses_one_line(
+        self, sample_quality_analysis: PropertyQualityAnalysis
+    ) -> None:
+        """Test that condensed mode prefers one_line over summary."""
+        lines = _format_quality_block(sample_quality_analysis, full=False)
+        text = "\n".join(lines)
+        assert "Bright modern flat with gas kitchen" in text
+        # Should NOT contain the full summary
+        assert "Bright flat with modern kitchen." not in text
+
+    def test_condensed_mode_falls_back_to_summary(self) -> None:
+        """Test condensed mode falls back to summary when one_line is absent."""
+        analysis = PropertyQualityAnalysis(
+            kitchen=KitchenAnalysis(),
+            condition=ConditionAnalysis(),
+            light_space=LightSpaceAnalysis(),
+            space=SpaceAnalysis(),
+            summary="Decent flat overall.",
+        )
+        lines = _format_quality_block(analysis, full=False)
+        text = "\n".join(lines)
+        assert "Decent flat overall." in text
+
+    def test_condensed_mode_shows_highlight_chips(
+        self, sample_quality_analysis: PropertyQualityAnalysis
+    ) -> None:
+        lines = _format_quality_block(sample_quality_analysis, full=False)
+        text = "\n".join(lines)
+        assert "✅" in text
+        assert "⛔" in text
+
+    def test_condensed_mode_critical_alerts(self) -> None:
+        """Test that condensed mode still shows critical EPC and red flags."""
+        analysis = PropertyQualityAnalysis(
+            kitchen=KitchenAnalysis(),
+            condition=ConditionAnalysis(),
+            light_space=LightSpaceAnalysis(),
+            space=SpaceAnalysis(),
+            summary="Test",
+            listing_extraction=ListingExtraction(epc_rating="F"),
+            listing_red_flags=ListingRedFlags(
+                red_flag_count=3, too_few_photos=True, missing_room_photos=["kitchen"]
+            ),
+        )
+        lines = _format_quality_block(analysis, full=False)
+        text = "\n".join(lines)
+        assert "⚠️ EPC F" in text
+        assert "🚩 3 red flags" in text
+
+    def test_no_highlights_when_absent(self) -> None:
+        """Test that highlight/lowlight lines are omitted when not available."""
+        analysis = PropertyQualityAnalysis(
+            kitchen=KitchenAnalysis(),
+            condition=ConditionAnalysis(),
+            light_space=LightSpaceAnalysis(),
+            space=SpaceAnalysis(),
+            summary="Basic flat.",
+        )
+        lines = _format_quality_block(analysis, full=True)
+        text = "\n".join(lines)
+        assert "✅" not in text
+        assert "⛔" not in text
+
+
+class TestFormatViewingNotes:
+    """Tests for _format_viewing_notes."""
+
+    def test_formats_all_note_types(
+        self, sample_quality_analysis: PropertyQualityAnalysis
+    ) -> None:
+        lines = _format_viewing_notes(sample_quality_analysis)
+        assert len(lines) == 3
+        assert "👁" in lines[0]
+        assert "❓" in lines[1]
+        assert "🔍" in lines[2]
+
+    def test_returns_empty_when_no_notes(self) -> None:
+        analysis = PropertyQualityAnalysis(
+            kitchen=KitchenAnalysis(),
+            condition=ConditionAnalysis(),
+            light_space=LightSpaceAnalysis(),
+            space=SpaceAnalysis(),
+            summary="Test",
+        )
+        assert _format_viewing_notes(analysis) == []
+
+    def test_partial_notes(self) -> None:
+        """Test with only some note types populated."""
+        analysis = PropertyQualityAnalysis(
+            kitchen=KitchenAnalysis(),
+            condition=ConditionAnalysis(),
+            light_space=LightSpaceAnalysis(),
+            space=SpaceAnalysis(),
+            summary="Test",
+            viewing_notes=ViewingNotes(
+                check_items=["Check damp"],
+            ),
+        )
+        lines = _format_viewing_notes(analysis)
+        assert len(lines) == 1
+        assert "Check damp" in lines[0]
+
+
+class TestMergedHeaderFormat:
+    """Tests for the merged star rating + price header line format."""
+
+    def test_rating_and_price_on_same_line(
+        self,
+        sample_merged_property: MergedProperty,
+        sample_quality_analysis: PropertyQualityAnalysis,
+    ) -> None:
+        """Stars, price, and beds should all be on the same line."""
+        message = format_merged_property_message(
+            sample_merged_property,
+            quality_analysis=sample_quality_analysis,
+        )
+        for line in message.split("\n"):
+            if "⭐" in line:
+                assert "£" in line
+                assert "bed" in line.lower()
+                break
+        else:
+            pytest.fail("No line found with star rating")
+
+    def test_no_rating_still_shows_price(
+        self, sample_merged_property: MergedProperty
+    ) -> None:
+        """Without quality analysis, price line should still work."""
+        message = format_merged_property_message(sample_merged_property)
+        assert "£" in message
+        assert "bed" in message.lower()
+
+
+class TestStatusMessageSilent:
+    """Tests for silent status messages."""
+
+    @pytest.mark.asyncio
+    async def test_status_message_is_silent(self) -> None:
+        """Test that status messages use disable_notification=True."""
+        notifier = TelegramNotifier(bot_token="123456:ABC-DEF", chat_id=12345678)
+        mock_bot = AsyncMock()
+        mock_bot.send_message = AsyncMock(return_value=MagicMock(message_id=1))
+
+        with patch.object(notifier, "_get_bot", return_value=mock_bot):
+            await notifier.send_status_message("Pipeline started")
+
+        call_kwargs = mock_bot.send_message.call_args[1]
+        assert call_kwargs["disable_notification"] is True
+
+
+class TestLinkPreviewOptions:
+    """Tests for LinkPreviewOptions usage."""
+
+    @pytest.mark.asyncio
+    async def test_send_property_uses_link_preview_options(
+        self, sample_property: Property
+    ) -> None:
+        """Test that send_property_notification uses LinkPreviewOptions."""
+        notifier = TelegramNotifier(bot_token="123456:ABC-DEF", chat_id=12345678)
+        mock_bot = AsyncMock()
+        mock_bot.send_message = AsyncMock(return_value=MagicMock(message_id=1))
+
+        with patch.object(notifier, "_get_bot", return_value=mock_bot):
+            await notifier.send_property_notification(sample_property)
+
+        call_kwargs = mock_bot.send_message.call_args[1]
+        assert "link_preview_options" in call_kwargs
+        assert call_kwargs["link_preview_options"].is_disabled is True
+        # Old parameter should not be present
+        assert "disable_web_page_preview" not in call_kwargs

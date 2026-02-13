@@ -42,7 +42,7 @@ def _score_workspace(analysis: dict[str, Any], bedrooms: int) -> _DimensionResul
     signals = 0
 
     if bedrooms >= 2:
-        score += 60
+        score += 35
         signals += 1
     elif bedrooms == 0:
         # Studio — very poor for WFH separation
@@ -56,12 +56,37 @@ def _score_workspace(analysis: dict[str, Any], bedrooms: int) -> _DimensionResul
     elif can_fit_desk == "no":
         signals += 1
 
+    office_sep = bedroom.get("office_separation")
+    if office_sep == "dedicated_room":
+        score += 40
+        signals += 1
+    elif office_sep == "separate_area":
+        score += 25
+        signals += 1
+    elif office_sep == "shared_space":
+        score += 10
+        signals += 1
+    elif office_sep == "none":
+        signals += 1
+
     space = analysis.get("space") or {}
     is_spacious = space.get("is_spacious_enough")
     if is_spacious is True and bedrooms <= 1:
         score += 40
         signals += 1
     elif is_spacious is not None:
+        signals += 1
+
+    listing_ext = analysis.get("listing_extraction") or {}
+    broadband = listing_ext.get("broadband_type")
+    if broadband == "fttp":
+        score += 15
+        signals += 1
+    elif broadband == "cable":
+        score += 10
+        signals += 1
+    elif broadband == "fttc":
+        score += 8
         signals += 1
 
     confidence = min(1.0, signals * 0.5) if signals > 0 else 0.0
@@ -75,7 +100,7 @@ def _score_hosting(analysis: dict[str, Any], _bedrooms: int) -> _DimensionResult
     space = analysis.get("space") or {}
     is_spacious = space.get("is_spacious_enough")
     if is_spacious is True:
-        score += 40
+        score += 25
         signals += 1
     elif is_spacious is False:
         signals += 1
@@ -107,6 +132,22 @@ def _score_hosting(analysis: dict[str, Any], _bedrooms: int) -> _DimensionResult
         score += 15
         signals += 1
     elif has_outdoor_data:
+        signals += 1
+
+    hosting_layout = space.get("hosting_layout")
+    if hosting_layout == "excellent":
+        score += 25
+        signals += 1
+    elif hosting_layout == "good":
+        score += 15
+        signals += 1
+    elif hosting_layout and hosting_layout not in ("unknown", None):
+        signals += 1
+
+    flooring = analysis.get("flooring_noise") or {}
+    hosting_noise = flooring.get("hosting_noise_risk")
+    if hosting_noise == "low":
+        score += 10
         signals += 1
 
     confidence = min(1.0, signals * 0.4) if signals > 0 else 0.0
@@ -153,6 +194,16 @@ def _score_sound(analysis: dict[str, Any], _bedrooms: int) -> _DimensionResult:
     prop_type = listing_ext.get("property_type")
     if prop_type == "warehouse":
         score += 10
+        signals += 1
+
+    hosting_noise = flooring.get("hosting_noise_risk")
+    if hosting_noise == "low":
+        score += 20
+        signals += 1
+    elif hosting_noise == "moderate":
+        score += 8
+        signals += 1
+    elif hosting_noise and hosting_noise not in ("unknown", None):
         signals += 1
 
     confidence = min(1.0, signals * 0.35) if signals > 0 else 0.0
@@ -334,7 +385,7 @@ def compute_lifestyle_icons(
 ) -> dict[str, LifestyleIcon] | None:
     """Compute lifestyle quick-glance icon states.
 
-    Returns dict with keys: workspace, hosting, kitchen, vibe, space.
+    Returns dict with keys: workspace, hosting, kitchen, vibe, space, internet.
     Each value has 'state' ("good"/"neutral"/"concern") and 'tooltip' string.
     Returns None if no analysis data.
     """
@@ -347,6 +398,7 @@ def compute_lifestyle_icons(
         "kitchen": _icon_kitchen(analysis),
         "vibe": _icon_vibe(analysis),
         "space": _icon_space(analysis),
+        "internet": _icon_internet(analysis),
     }
 
 
@@ -355,7 +407,22 @@ def _icon_workspace(analysis: dict[str, Any], bedrooms: int) -> LifestyleIcon:
     space = analysis.get("space") or {}
     can_desk = bedroom.get("can_fit_desk")
     is_spacious = space.get("is_spacious_enough")
+    office_sep = bedroom.get("office_separation")
 
+    # Prefer office_separation when available
+    if office_sep and office_sep != "unknown":
+        if office_sep == "dedicated_room":
+            return {"state": "good", "tooltip": "Dedicated office room"}
+        if office_sep == "separate_area":
+            return {"state": "good", "tooltip": "Separate work area"}
+        if office_sep == "shared_space":
+            if bedrooms >= 2:
+                return {"state": "neutral", "tooltip": "2-bed but office in shared space"}
+            return {"state": "concern", "tooltip": "Desk in shared space — no separation"}
+        if office_sep == "none":
+            return {"state": "concern", "tooltip": "No viable workspace"}
+
+    # Fall back to existing bedroom count / can_fit_desk logic
     if bedrooms >= 2:
         return {"state": "good", "tooltip": "2+ beds — dedicated office possible"}
     if can_desk == "yes":
@@ -427,8 +494,18 @@ def _icon_vibe(analysis: dict[str, Any]) -> LifestyleIcon:
         for h in highlights:
             if isinstance(h, str):
                 hl = h.lower()
-                if any(kw in hl for kw in ("period", "character", "original", "warehouse",
-                                            "conversion", "high ceiling", "exposed")):
+                if any(
+                    kw in hl
+                    for kw in (
+                        "period",
+                        "character",
+                        "original",
+                        "warehouse",
+                        "conversion",
+                        "high ceiling",
+                        "exposed",
+                    )
+                ):
                     has_character_highlights = True
                     break
 
@@ -461,3 +538,18 @@ def _icon_space(analysis: dict[str, Any]) -> LifestyleIcon:
     if has_outdoor:
         return {"state": "neutral", "tooltip": "Has outdoor space, size unclear"}
     return {"state": "neutral", "tooltip": "Space unclear"}
+
+
+def _icon_internet(analysis: dict[str, Any]) -> LifestyleIcon:
+    listing_ext = analysis.get("listing_extraction") or {}
+    broadband = listing_ext.get("broadband_type")
+
+    if broadband == "fttp":
+        return {"state": "good", "tooltip": "Full fibre (FTTP) available"}
+    if broadband == "fttc":
+        return {"state": "neutral", "tooltip": "Superfast broadband (FTTC)"}
+    if broadband == "cable":
+        return {"state": "neutral", "tooltip": "Cable broadband"}
+    if broadband == "standard":
+        return {"state": "concern", "tooltip": "Basic broadband only"}
+    return {"state": "neutral", "tooltip": "Broadband not mentioned"}

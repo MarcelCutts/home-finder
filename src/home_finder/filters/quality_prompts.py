@@ -19,6 +19,8 @@ sentinel value: "unknown" for enum/string fields, false for boolean fields, \
 For has_visible_damp, has_visible_mold, has_double_glazing, \
 has_washing_machine, is_ensuite, primary_is_double, and \
 can_fit_desk use "yes"/"no"/"unknown" — these are tri-state string fields. \
+For multi-value fields (office_separation, hosting_layout, hosting_noise_risk) \
+use "unknown" when you cannot determine the value. \
 Do not guess — a confident "unknown" is more useful than a wrong answer.
 
 <task>
@@ -71,8 +73,11 @@ issues. Cross-reference listing mentions of "refurbished", "newly decorated".
 3. Natural Light & Space: Window sizes, brightness, spacious vs cramped feel, \
 ceiling heights if visible.
 
-4. Living Room Size: From floorplan if included, estimate sqm. Target: fits a \
-home office AND hosts 8+ people (~20-25 sqm minimum).
+4. Living Room Size & Hosting Layout: From floorplan if included, estimate sqm. \
+Target: fits a home office AND hosts 8+ people (~20-25 sqm minimum). \
+Assess hosting_layout: how well does the layout flow for hosting 8+ guests? \
+Consider kitchen-to-living connection (open-plan is ideal), bathroom accessibility \
+without crossing bedrooms, practical entrance flow. Rate excellent/good/awkward/poor.
 
 5. Overall Summary: 1-2 sentences — property character and what it's like to \
 live here. Don't restate condition concerns (they're listed separately).
@@ -83,8 +88,12 @@ live here. Don't restate condition concerns (they're listed separately).
 cubicle, electric), ensuite. Cross-ref "wet room", "new bathroom", \
 "recently refurbished bathroom" in description.
 
-8. Bedroom: Can primary bedroom fit a double bed + wardrobe + desk? Check \
-floorplan room labels and dimensions. "Double room" claims are often dubious.
+8. Bedroom & Office Separation: Can primary bedroom fit a double bed + wardrobe + desk? \
+Check floorplan room labels and dimensions. "Double room" claims are often dubious. \
+Assess office_separation quality: dedicated_room = closable second bedroom usable as \
+office (non-through room with a door); separate_area = alcove, mezzanine, or \
+partitioned nook; shared_space = desk in living room with no separation; none = studio \
+or nowhere viable for a desk.
 
 9. Storage: Built-in wardrobes, hallway cupboard, airing cupboard. London \
 flats are notoriously storage-poor — flag when absent.
@@ -97,7 +106,10 @@ presence, road-facing rooms, railway/traffic proximity indicators. Estimate \
 building construction type from visual cues: solid brick (thick walls, period \
 build), concrete (brutalist, ex-council, new-build blocks), timber frame \
 (lightweight new-builds, stud wall indicators), mixed, or unknown. This \
-affects sound insulation — solid brick and concrete are quieter.
+affects sound insulation — solid brick and concrete are quieter. \
+Assess hosting_noise_risk: risk of disturbing neighbours when hosting music/social \
+events. low = solid construction + carpet + top floor or detached; moderate = mixed \
+signals; high = timber frame + hard floors + lower floor + shared walls.
 
 12. Floor Level: Estimate from photos and floorplan context — look for stairs \
 in photos, "ground floor"/"first floor" in description, lift mentions, views \
@@ -155,7 +167,11 @@ Given visual analysis observations and listing text, produce:
 <evaluation_steps>
 1. Listing Data Extraction: Mine the description for EPC rating, service \
 charge, deposit weeks, bills included, pets allowed, parking, council tax \
-band, property type, furnished status. Only extract what is explicitly stated.
+band, property type, furnished status, broadband type. Only extract what is \
+explicitly stated. For broadband_type: fttp = "fibre", "FTTP", "FTTH", \
+"Hyperoptic", "Community Fibre", "full fibre", "1Gbps"; fttc = "superfast", \
+"FTTC", "up to 80Mbps"; cable = "Virgin Media", "cable"; standard = \
+"broadband" alone, ADSL. Use "unknown" if not mentioned.
 
 2. Value Assessment: Consider stock type (new-build at +15-30% is expected, \
 Victorian at +15% is overpriced, ex-council at average is poor value). Factor \

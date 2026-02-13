@@ -200,15 +200,26 @@ class PropertyStorage:
         """)
 
         # Migrate: add columns that may not exist in older databases
-        for column, col_type in [
-            ("sources", "TEXT"),
-            ("source_urls", "TEXT"),
-            ("min_price", "INTEGER"),
-            ("max_price", "INTEGER"),
-            ("descriptions_json", "TEXT"),
+        for column, col_type, default in [
+            ("sources", "TEXT", None),
+            ("source_urls", "TEXT", None),
+            ("min_price", "INTEGER", None),
+            ("max_price", "INTEGER", None),
+            ("descriptions_json", "TEXT", None),
+            ("enrichment_status", "TEXT", "'enriched'"),
+            ("enrichment_attempts", "INTEGER", "0"),
         ]:
             with contextlib.suppress(Exception):
-                await conn.execute(f"ALTER TABLE properties ADD COLUMN {column} {col_type}")
+                default_clause = f" DEFAULT {default}" if default is not None else ""
+                await conn.execute(
+                    f"ALTER TABLE properties ADD COLUMN {column} {col_type}{default_clause}"
+                )
+
+        # Index for efficiently loading unenriched properties
+        await conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_enrichment_status
+            ON properties(enrichment_status)
+        """)
 
         # Migrate: add denormalized quality columns
         for column, col_type in [
@@ -467,6 +478,207 @@ class PropertyStorage:
         seen = await self._get_seen_ids([m.canonical.unique_id for m in properties])
         return [m for m in properties if m.canonical.unique_id not in seen]
 
+    async def save_unenriched_property(
+        self,
+        merged: MergedProperty,
+        *,
+        commute_minutes: int | None = None,
+        transport_mode: TransportMode | None = None,
+    ) -> None:
+        """Save a property that failed enrichment for retry on next run.
+
+        On INSERT: saves with enrichment_status='pending', enrichment_attempts=1,
+        notification_status='pending_enrichment'.
+        On CONFLICT: just increments enrichment_attempts (preserves other fields).
+        """
+        prop = merged.canonical
+        conn = await self._get_connection()
+
+        sources_json = json.dumps([s.value for s in merged.sources])
+        source_urls_json = json.dumps({s.value: str(url) for s, url in merged.source_urls.items()})
+        descriptions_json = (
+            json.dumps({s.value: d for s, d in merged.descriptions.items()})
+            if merged.descriptions
+            else None
+        )
+
+        await conn.execute(
+            """
+            INSERT INTO properties (
+                unique_id, source, source_id, url, title, price_pcm,
+                bedrooms, address, postcode, latitude, longitude,
+                description, image_url, available_from, first_seen,
+                commute_minutes, transport_mode, notification_status,
+                sources, source_urls, min_price, max_price, descriptions_json,
+                enrichment_status, enrichment_attempts
+            ) VALUES (
+                ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 1
+            )
+            ON CONFLICT(unique_id) DO UPDATE SET
+                enrichment_attempts = enrichment_attempts + 1
+        """,
+            (
+                prop.unique_id,
+                prop.source.value,
+                prop.source_id,
+                str(prop.url),
+                prop.title,
+                prop.price_pcm,
+                prop.bedrooms,
+                prop.address,
+                prop.postcode,
+                prop.latitude,
+                prop.longitude,
+                prop.description,
+                str(prop.image_url) if prop.image_url else None,
+                prop.available_from.isoformat() if prop.available_from else None,
+                prop.first_seen.isoformat(),
+                commute_minutes,
+                transport_mode.value if transport_mode else None,
+                NotificationStatus.PENDING_ENRICHMENT.value,
+                sources_json,
+                source_urls_json,
+                merged.min_price,
+                merged.max_price,
+                descriptions_json,
+            ),
+        )
+        await conn.commit()
+        logger.debug("unenriched_property_saved", unique_id=prop.unique_id)
+
+    async def get_unenriched_properties(
+        self, max_attempts: int = 3
+    ) -> list[MergedProperty]:
+        """Load properties that failed enrichment for retry.
+
+        Args:
+            max_attempts: Only return properties with fewer attempts than this.
+
+        Returns:
+            List of MergedProperty objects needing enrichment.
+        """
+        conn = await self._get_connection()
+        cursor = await conn.execute(
+            """
+            SELECT * FROM properties
+            WHERE enrichment_status = 'pending'
+              AND enrichment_attempts < ?
+            ORDER BY first_seen ASC
+            """,
+            (max_attempts,),
+        )
+        rows = await cursor.fetchall()
+
+        results: list[MergedProperty] = []
+        for row in rows:
+            prop = self._row_to_tracked_property(row).property
+
+            sources_list: list[PropertySource] = []
+            source_urls: dict[PropertySource, HttpUrl] = {}
+            descriptions: dict[PropertySource, str] = {}
+
+            if row["sources"]:
+                for s in json.loads(row["sources"]):
+                    sources_list.append(PropertySource(s))
+            else:
+                sources_list.append(prop.source)
+
+            if row["source_urls"]:
+                for s, url in json.loads(row["source_urls"]).items():
+                    source_urls[PropertySource(s)] = HttpUrl(url)
+            else:
+                source_urls[prop.source] = prop.url
+
+            if row["descriptions_json"]:
+                for s, desc in json.loads(row["descriptions_json"]).items():
+                    descriptions[PropertySource(s)] = desc
+
+            min_price = row["min_price"] if row["min_price"] is not None else prop.price_pcm
+            max_price = row["max_price"] if row["max_price"] is not None else prop.price_pcm
+
+            results.append(
+                MergedProperty(
+                    canonical=prop,
+                    sources=tuple(sources_list),
+                    source_urls=source_urls,
+                    images=(),
+                    floorplan=None,
+                    min_price=min_price,
+                    max_price=max_price,
+                    descriptions=descriptions,
+                )
+            )
+
+        logger.info("loaded_unenriched_properties", count=len(results))
+        return results
+
+    async def mark_enriched(self, unique_id: str) -> None:
+        """Transition a re-enriched property into the normal notification flow.
+
+        Sets enrichment_status='enriched' and notification_status='pending'
+        only for rows that still have notification_status='pending_enrichment'.
+        No-op for genuinely new properties (already 'pending').
+        """
+        conn = await self._get_connection()
+        await conn.execute(
+            """
+            UPDATE properties
+            SET enrichment_status = 'enriched',
+                notification_status = ?
+            WHERE unique_id = ?
+              AND notification_status = ?
+            """,
+            (
+                NotificationStatus.PENDING.value,
+                unique_id,
+                NotificationStatus.PENDING_ENRICHMENT.value,
+            ),
+        )
+        await conn.commit()
+
+    async def expire_unenriched(self, max_attempts: int = 3) -> int:
+        """Give up on properties that exceeded max enrichment retries.
+
+        Args:
+            max_attempts: Threshold for giving up.
+
+        Returns:
+            Number of properties expired.
+        """
+        conn = await self._get_connection()
+        cursor = await conn.execute(
+            """
+            UPDATE properties
+            SET enrichment_status = 'failed'
+            WHERE enrichment_status = 'pending'
+              AND enrichment_attempts >= ?
+            """,
+            (max_attempts,),
+        )
+        await conn.commit()
+        count = cursor.rowcount
+        if count:
+            logger.info("expired_unenriched_properties", count=count)
+        return count
+
+    async def delete_property(self, unique_id: str) -> None:
+        """Delete a property and its images from the database.
+
+        Used to clean up unenriched rows consumed by cross-platform anchor merges.
+        """
+        conn = await self._get_connection()
+        await conn.execute(
+            "DELETE FROM property_images WHERE property_unique_id = ?",
+            (unique_id,),
+        )
+        await conn.execute(
+            "DELETE FROM properties WHERE unique_id = ?",
+            (unique_id,),
+        )
+        await conn.commit()
+        logger.debug("property_deleted", unique_id=unique_id)
+
     async def get_recent_properties_for_dedup(
         self, days: int = _DEDUP_LOOKBACK_DAYS
     ) -> list[MergedProperty]:
@@ -489,6 +701,7 @@ class PropertyStorage:
             """
             SELECT * FROM properties
             WHERE first_seen >= ?
+              AND COALESCE(enrichment_status, 'enriched') != 'pending'
             ORDER BY first_seen DESC
             """,
             (cutoff,),
@@ -915,7 +1128,9 @@ class PropertyStorage:
         """
         conn = await self._get_connection()
 
-        where_clauses: list[str] = []
+        where_clauses: list[str] = [
+            "COALESCE(p.enrichment_status, 'enriched') != 'pending'"
+        ]
         params: list[Any] = []
 
         if min_price is not None:

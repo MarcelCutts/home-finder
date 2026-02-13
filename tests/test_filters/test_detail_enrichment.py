@@ -73,8 +73,9 @@ class TestEnrichMergedProperties:
         ):
             result = await enrich_merged_properties([merged], fetcher)
 
-        assert len(result) == 1
-        enriched = result[0]
+        assert len(result.enriched) == 1
+        assert len(result.failed) == 0
+        enriched = result.enriched[0]
         assert enriched.floorplan is not None
         assert enriched.floorplan.image_type == "floorplan"
         assert len(enriched.images) == 2
@@ -110,7 +111,7 @@ class TestEnrichMergedProperties:
             result = await enrich_merged_properties([merged], fetcher)
 
         assert call_count == 2
-        enriched = result[0]
+        enriched = result.enriched[0]
         assert len(enriched.images) == 2
         assert enriched.floorplan is not None
         assert enriched.floorplan.source == PropertySource.ZOOPLA
@@ -137,21 +138,22 @@ class TestEnrichMergedProperties:
         with patch.object(fetcher, "fetch_detail_page", side_effect=mock_fetch):
             result = await enrich_merged_properties([merged], fetcher)
 
-        enriched = result[0]
+        enriched = result.enriched[0]
         assert enriched.floorplan is not None
         assert str(enriched.floorplan.url).endswith(".jpg")
 
     async def test_handles_fetch_failure(self) -> None:
-        """Should handle detail fetch returning None gracefully."""
+        """Should place properties with no images into failed list."""
         merged = _make_merged()
         fetcher = DetailFetcher()
         with patch.object(fetcher, "fetch_detail_page", new_callable=AsyncMock, return_value=None):
             result = await enrich_merged_properties([merged], fetcher)
 
-        assert len(result) == 1
-        enriched = result[0]
-        assert enriched.floorplan is None
-        assert len(enriched.images) == 0
+        assert len(result.enriched) == 0
+        assert len(result.failed) == 1
+        failed = result.failed[0]
+        assert failed.floorplan is None
+        assert len(failed.images) == 0
 
     async def test_skips_cached_property(self, tmp_path: Path) -> None:
         """Should skip enrichment for properties with cached images on disk."""
@@ -186,10 +188,10 @@ class TestEnrichMergedProperties:
 
         # Should NOT have called fetch_detail_page
         mock_fetch.assert_not_called()
-        # Should have loaded images from storage
-        assert len(result) == 1
-        assert len(result[0].images) == 1
-        assert result[0].floorplan is not None
+        # Should have loaded images from storage (into enriched)
+        assert len(result.enriched) == 1
+        assert len(result.enriched[0].images) == 1
+        assert result.enriched[0].floorplan is not None
 
     async def test_caches_downloaded_images(self, tmp_path: Path) -> None:
         """Should download and cache images when data_dir is set."""
@@ -212,7 +214,7 @@ class TestEnrichMergedProperties:
         ):
             result = await enrich_merged_properties([merged], fetcher, data_dir=data_dir)
 
-        assert len(result) == 1
+        assert len(result.enriched) == 1
         # Verify images were cached to disk
         cache_dir = get_cache_dir(data_dir, merged.unique_id)
         cached_files = list(cache_dir.iterdir())

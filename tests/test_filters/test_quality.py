@@ -15,9 +15,12 @@ from home_finder.filters.quality import (
     build_evaluation_prompt,
 )
 from home_finder.models import (
+    BedroomAnalysis,
     ConditionAnalysis,
+    FlooringNoiseAnalysis,
     KitchenAnalysis,
     LightSpaceAnalysis,
+    ListingExtraction,
     MergedProperty,
     Property,
     PropertyImage,
@@ -513,6 +516,7 @@ def sample_visual_response() -> dict[str, Any]:
             "living_room_sqm": 22,
             "is_spacious_enough": True,
             "confidence": "high",
+            "hosting_layout": "good",
         },
         "bathroom": {
             "overall_condition": "modern",
@@ -525,6 +529,7 @@ def sample_visual_response() -> dict[str, Any]:
             "primary_is_double": "yes",
             "has_built_in_wardrobe": "yes",
             "can_fit_desk": "yes",
+            "office_separation": "dedicated_room",
             "notes": "Good-sized double bedroom",
         },
         "outdoor_space": {
@@ -543,6 +548,7 @@ def sample_visual_response() -> dict[str, Any]:
             "primary_flooring": "hardwood",
             "has_double_glazing": "yes",
             "noise_indicators": [],
+            "hosting_noise_risk": "moderate",
             "notes": "Quiet street",
         },
         "listing_red_flags": {
@@ -573,6 +579,7 @@ def sample_evaluation_response() -> dict[str, Any]:
             "council_tax_band": "C",
             "property_type": "victorian",
             "furnished_status": "furnished",
+            "broadband_type": "fttc",
         },
         "value_for_quality": {
             "rating": "good",
@@ -1422,3 +1429,233 @@ class TestBackwardCompatValidators:
         assert BedroomAnalysis(can_fit_desk=True).can_fit_desk == "yes"  # type: ignore[arg-type]
         assert BedroomAnalysis(can_fit_desk=False).can_fit_desk == "no"  # type: ignore[arg-type]
         assert BedroomAnalysis(can_fit_desk=None).can_fit_desk == "unknown"  # type: ignore[arg-type]
+
+
+class TestNewMarcelFields:
+    """Tests for new Marcel-specific fields in schemas and models."""
+
+    def test_new_phase1_fields_in_visual_schema(self) -> None:
+        """New Marcel-specific fields appear in Phase 1 tool schema."""
+        visual = VISUAL_ANALYSIS_TOOL["input_schema"]["properties"]
+
+        # office_separation in bedroom sub-model
+        bedroom_props = visual["bedroom"]["properties"]
+        assert "office_separation" in bedroom_props
+        assert bedroom_props["office_separation"]["type"] == "string"
+        assert "dedicated_room" in bedroom_props["office_separation"]["enum"]
+        assert "unknown" in bedroom_props["office_separation"]["enum"]
+
+        # hosting_layout in space sub-model
+        space_props = visual["space"]["properties"]
+        assert "hosting_layout" in space_props
+        assert space_props["hosting_layout"]["type"] == "string"
+        assert "excellent" in space_props["hosting_layout"]["enum"]
+
+        # hosting_noise_risk in flooring_noise sub-model
+        fn_props = visual["flooring_noise"]["properties"]
+        assert "hosting_noise_risk" in fn_props
+        assert fn_props["hosting_noise_risk"]["type"] == "string"
+        assert "low" in fn_props["hosting_noise_risk"]["enum"]
+
+    def test_broadband_type_in_evaluation_schema(self) -> None:
+        """broadband_type appears in Phase 2 listing_extraction."""
+        eval_schema = EVALUATION_TOOL["input_schema"]["properties"]
+        le_props = eval_schema["listing_extraction"]["properties"]
+        assert "broadband_type" in le_props
+        assert le_props["broadband_type"]["type"] == "string"
+        assert "fttp" in le_props["broadband_type"]["enum"]
+        assert "unknown" in le_props["broadband_type"]["enum"]
+
+    def test_new_fields_are_not_tristate(self) -> None:
+        """New multi-value fields should NOT be yes/no/unknown tri-states."""
+        visual = VISUAL_ANALYSIS_TOOL["input_schema"]["properties"]
+        # office_separation is 5-value, not tri-state
+        sep_enum = visual["bedroom"]["properties"]["office_separation"]["enum"]
+        assert len(sep_enum) == 5
+        assert "yes" not in sep_enum
+
+    def test_new_highlights_in_strict_eval_schema(self) -> None:
+        """New highlight enum values are present in strict Phase 2 schema."""
+        eval_schema = EVALUATION_TOOL["input_schema"]["properties"]
+        hl_items = eval_schema["highlights"]["items"]
+        enum_values = hl_items.get("enum", [])
+        assert "Ultrafast broadband (FTTP)" in enum_values
+        assert "Dedicated office room" in enum_values
+        assert "Separate work area" in enum_values
+        assert "Great hosting layout" in enum_values
+
+    def test_new_lowlights_in_strict_eval_schema(self) -> None:
+        """New lowlight enum values are present in strict Phase 2 schema."""
+        eval_schema = EVALUATION_TOOL["input_schema"]["properties"]
+        ll_items = eval_schema["lowlights"]["items"]
+        enum_values = ll_items.get("enum", [])
+        assert "Basic broadband only" in enum_values
+        assert "No work-life separation" in enum_values
+        assert "Poor hosting layout" in enum_values
+
+
+class TestNewFieldBackwardCompat:
+    """New fields gracefully handle missing data from old DB rows."""
+
+    def test_bedroom_without_office_separation(self) -> None:
+        """Old DB rows without office_separation default to 'unknown'."""
+        old_data = {"primary_is_double": "yes", "can_fit_desk": "yes", "notes": ""}
+        bedroom = BedroomAnalysis.model_validate(old_data)
+        assert bedroom.office_separation == "unknown"
+
+    def test_space_without_hosting_layout(self) -> None:
+        """Old DB rows without hosting_layout default to 'unknown'."""
+        old_data = {"living_room_sqm": 20, "is_spacious_enough": True, "confidence": "high"}
+        space = SpaceAnalysis.model_validate(old_data)
+        assert space.hosting_layout == "unknown"
+
+    def test_flooring_without_hosting_noise_risk(self) -> None:
+        """Old DB rows without hosting_noise_risk default to 'unknown'."""
+        old_data = {
+            "primary_flooring": "hardwood",
+            "has_double_glazing": "yes",
+            "building_construction": "solid_brick",
+            "noise_indicators": [],
+            "notes": "",
+        }
+        flooring = FlooringNoiseAnalysis.model_validate(old_data)
+        assert flooring.hosting_noise_risk == "unknown"
+
+    def test_listing_extraction_without_broadband(self) -> None:
+        """Old DB rows without broadband_type default to None."""
+        old_data = {
+            "epc_rating": "C",
+            "property_type": "victorian",
+            "bills_included": "no",
+            "pets_allowed": "unknown",
+        }
+        le = ListingExtraction.model_validate(old_data)
+        assert le.broadband_type is None
+
+    def test_full_analysis_roundtrip_without_new_fields(self) -> None:
+        """Full PropertyQualityAnalysis parses old JSON without new fields."""
+        old_json: dict[str, Any] = {
+            "kitchen": {
+                "overall_quality": "decent",
+                "hob_type": "gas",
+                "has_dishwasher": "yes",
+                "has_washing_machine": "yes",
+                "notes": "",
+            },
+            "condition": {
+                "overall_condition": "good",
+                "has_visible_damp": "no",
+                "has_visible_mold": "no",
+                "has_worn_fixtures": "no",
+                "maintenance_concerns": [],
+                "confidence": "high",
+            },
+            "light_space": {
+                "natural_light": "good",
+                "feels_spacious": True,
+                "notes": "",
+            },
+            "space": {
+                "living_room_sqm": 20,
+                "is_spacious_enough": True,
+                "confidence": "high",
+            },
+            "summary": "Nice flat",
+        }
+        analysis = PropertyQualityAnalysis.model_validate(old_json)
+        assert analysis.space.hosting_layout == "unknown"
+        assert analysis.summary == "Nice flat"
+
+
+class TestNewFieldsPipelineFlow:
+    """New Marcel fields pass through the two-phase pipeline."""
+
+    async def test_new_fields_flow_through_two_phase_pipeline(
+        self,
+        sample_merged_property: MergedProperty,
+    ) -> None:
+        """New Marcel fields pass from API response to PropertyQualityAnalysis."""
+        visual = {
+            "kitchen": {
+                "overall_quality": "modern",
+                "hob_type": "gas",
+                "has_dishwasher": "yes",
+                "has_washing_machine": "yes",
+                "notes": "",
+            },
+            "condition": {
+                "overall_condition": "good",
+                "has_visible_damp": "no",
+                "has_visible_mold": "no",
+                "has_worn_fixtures": "no",
+                "maintenance_concerns": [],
+                "confidence": "high",
+            },
+            "light_space": {
+                "natural_light": "good",
+                "feels_spacious": True,
+                "notes": "",
+            },
+            "space": {
+                "living_room_sqm": 22,
+                "is_spacious_enough": True,
+                "confidence": "high",
+                "hosting_layout": "excellent",
+            },
+            "bedroom": {
+                "primary_is_double": "yes",
+                "has_built_in_wardrobe": "yes",
+                "can_fit_desk": "yes",
+                "office_separation": "dedicated_room",
+                "notes": "",
+            },
+            "flooring_noise": {
+                "primary_flooring": "hardwood",
+                "has_double_glazing": "yes",
+                "noise_indicators": [],
+                "hosting_noise_risk": "low",
+                "notes": "",
+            },
+            "overall_rating": 4,
+            "condition_concerns": False,
+            "concern_severity": "none",
+            "summary": "Great flat",
+        }
+        eval_resp = {
+            "listing_extraction": {
+                "epc_rating": "C",
+                "service_charge_pcm": None,
+                "deposit_weeks": 5,
+                "bills_included": "no",
+                "pets_allowed": "unknown",
+                "parking": "street",
+                "council_tax_band": "C",
+                "property_type": "victorian",
+                "furnished_status": "furnished",
+                "broadband_type": "fttp",
+            },
+            "value_for_quality": {"rating": "good", "reasoning": "Fair price"},
+            "viewing_notes": {
+                "check_items": [],
+                "questions_for_agent": [],
+                "deal_breaker_tests": [],
+            },
+            "highlights": ["Gas hob"],
+            "lowlights": [],
+            "one_line": "Great flat for WFH",
+        }
+
+        quality_filter = PropertyQualityFilter(api_key="test-key")
+        quality_filter._client = MagicMock()
+        quality_filter._client.messages.create = _make_two_phase_mock(visual, eval_resp)
+
+        results = await quality_filter.analyze_merged_properties([sample_merged_property])
+        _, analysis = results[0]
+
+        assert analysis.bedroom is not None
+        assert analysis.bedroom.office_separation == "dedicated_room"
+        assert analysis.space.hosting_layout == "excellent"
+        assert analysis.flooring_noise is not None
+        assert analysis.flooring_noise.hosting_noise_risk == "low"
+        assert analysis.listing_extraction is not None
+        assert analysis.listing_extraction.broadband_type == "fttp"

@@ -18,6 +18,7 @@ from home_finder.models import (
     TrackedProperty,
     TransportMode,
     ValueAnalysis,
+    ViewingNotes,
 )
 
 
@@ -94,4 +95,12 @@ def sample_quality_analysis() -> PropertyQualityAnalysis:
         ),
         overall_rating=4,
         summary="Bright flat with modern kitchen.",
+        one_line="Bright modern flat with gas kitchen, good natural light",
+        highlights=["Gas hob", "Good light", "Spacious living room"],
+        lowlights=["No garden", "Street noise"],
+        viewing_notes=ViewingNotes(
+            check_items=["Check water pressure", "Inspect window seals"],
+            questions_for_agent=["Ask about sound insulation"],
+            deal_breaker_tests=["Test internet speed"],
+        ),
     )

@@ -2,6 +2,7 @@
 
 import asyncio
 import html
+import random
 import urllib.parse
 from typing import TYPE_CHECKING, Final
 
@@ -143,16 +144,19 @@ def _format_header_lines(
     min_price: int = 0,
     max_price: int = 0,
 ) -> list[str]:
-    """Build common header lines: title, star rating, price, address, commute."""
+    """Build common header lines: title, rating+price, address, commute."""
     lines = [f"🏠 <b>{html.escape(title)}</b>", ""]
 
+    # Merge star rating with price/beds on one line for density
+    info_parts: list[str] = []
     if overall_rating is not None:
-        lines.append(_format_star_rating(overall_rating))
-
+        info_parts.append(_format_star_rating(overall_rating))
     if price_varies:
-        lines.append(f"💰 £{min_price:,}-£{max_price:,}/mo · 🛏 {bedrooms} bed")
+        info_parts.append(f"💰 £{min_price:,}-£{max_price:,}/mo")
     else:
-        lines.append(f"💰 £{price_pcm:,}/mo · 🛏 {bedrooms} bed")
+        info_parts.append(f"💰 £{price_pcm:,}/mo")
+    info_parts.append(f"🛏 {bedrooms} bed")
+    lines.append(" · ".join(info_parts))
 
     escaped_address = html.escape(address)
     escaped_postcode = html.escape(postcode)
@@ -214,7 +218,28 @@ def _format_listing_extraction_info(analysis: PropertyQualityAnalysis) -> str | 
         parts.append("No pets")
     if le.bills_included == "yes":
         parts.append("Bills incl.")
+    broadband_labels = {"fttp": "FTTP", "fttc": "FTTC", "cable": "Cable", "standard": "Basic BB"}
+    if le.broadband_type and le.broadband_type in broadband_labels:
+        parts.append(f"BB: {broadband_labels[le.broadband_type]}")
     return " · ".join(parts) if parts else None
+
+
+def _format_viewing_notes(analysis: PropertyQualityAnalysis) -> list[str]:
+    """Format viewing notes for display."""
+    if not analysis.viewing_notes:
+        return []
+    vn = analysis.viewing_notes
+    lines: list[str] = []
+    if vn.check_items:
+        items = ", ".join(html.escape(c) for c in vn.check_items[:3])
+        lines.append(f"👁 <b>Check:</b> {items}")
+    if vn.questions_for_agent:
+        questions = ", ".join(html.escape(q) for q in vn.questions_for_agent[:3])
+        lines.append(f"❓ <b>Ask:</b> {questions}")
+    if vn.deal_breaker_tests:
+        tests = ", ".join(html.escape(t) for t in vn.deal_breaker_tests[:3])
+        lines.append(f"🔍 <b>Test:</b> {tests}")
+    return lines
 
 
 def _format_quality_block(
@@ -239,7 +264,16 @@ def _format_quality_block(
     lines.append("")
 
     if full:
-        lines.append(f"<blockquote>{html.escape(analysis.summary)}</blockquote>")
+        lines.append(f"<blockquote expandable>{html.escape(analysis.summary)}</blockquote>")
+
+        # Highlight/lowlight chip lines
+        if analysis.highlights:
+            chips = " · ".join(html.escape(h) for h in analysis.highlights[:5])
+            lines.append(f"✅ {chips}")
+        if analysis.lowlights:
+            chips = " · ".join(html.escape(lo) for lo in analysis.lowlights[:5])
+            lines.append(f"⛔ {chips}")
+
         lines.append(f"🍳 {_format_kitchen_info(analysis)}")
 
         bathroom_info = _format_bathroom_info(analysis)
@@ -268,8 +302,24 @@ def _format_quality_block(
             if rf_parts:
                 lines.append(f"🚩 {' · '.join(rf_parts)}")
 
+        # Viewing notes
+        viewing_lines = _format_viewing_notes(analysis)
+        if viewing_lines:
+            lines.append("")
+            lines.extend(viewing_lines)
+
     else:
-        lines.append(f"<i>{html.escape(analysis.summary)}</i>")
+        # Use one_line if available, fall back to summary
+        display_text = analysis.one_line or analysis.summary
+        lines.append(f"<i>{html.escape(display_text)}</i>")
+
+        # Highlight/lowlight chip lines
+        if analysis.highlights:
+            chips = " · ".join(html.escape(h) for h in analysis.highlights[:4])
+            lines.append(f"✅ {chips}")
+        if analysis.lowlights:
+            chips = " · ".join(html.escape(lo) for lo in analysis.lowlights[:4])
+            lines.append(f"⛔ {chips}")
 
         # Critical alerts even in condensed captions
         if analysis.listing_extraction and analysis.listing_extraction.epc_rating in (
@@ -587,11 +637,13 @@ class TelegramNotifier:
 
             keyboard = InlineKeyboardMarkup(inline_keyboard=[buttons])
 
+            from aiogram.types import LinkPreviewOptions
+
             await bot.send_message(
                 chat_id=self.chat_id,
                 text=message,
                 reply_markup=keyboard,
-                disable_web_page_preview=True,
+                link_preview_options=LinkPreviewOptions(is_disabled=True),
             )
             logger.info(
                 "notification_sent",
@@ -651,9 +703,18 @@ class TelegramNotifier:
                 )
                 try:
                     if len(gallery_urls) >= 3:
-                        # Send media group for rich galleries
+                        # Send media group + full analysis in follow-up message
+                        followup_text = format_merged_property_message(
+                            merged,
+                            commute_minutes=commute_minutes,
+                            transport_mode=transport_mode,
+                            quality_analysis=quality_analysis,
+                        )
                         sent_photo = await self._send_media_group(
-                            gallery_urls, caption=caption, keyboard=keyboard
+                            gallery_urls,
+                            caption=caption,
+                            keyboard=keyboard,
+                            followup_text=followup_text,
                         )
                     else:
                         await bot.send_photo(
@@ -721,7 +782,7 @@ class TelegramNotifier:
                 retry_after=e.retry_after,
                 attempt=_retry_count + 1,
             )
-            await asyncio.sleep(e.retry_after + 1)
+            await asyncio.sleep(e.retry_after * random.uniform(1.0, 1.5))
             return await self.send_merged_property_notification(
                 merged,
                 commute_minutes=commute_minutes,
@@ -744,45 +805,41 @@ class TelegramNotifier:
         *,
         caption: str,
         keyboard: "InlineKeyboardMarkup",
+        followup_text: str = "",
     ) -> bool:
         """Send a media group (album) of images with caption on the first photo.
 
-        After the album, sends a follow-up text message with the inline keyboard
-        (Telegram media groups don't support inline keyboards directly).
+        After the album, sends a follow-up message with the full analysis text
+        and inline keyboard (Telegram media groups don't support inline keyboards
+        directly). Falls back to a minimal pointer if no followup_text provided.
 
         Args:
             image_urls: List of image URLs (up to 10).
             caption: Caption for the first photo.
             keyboard: Inline keyboard to send in follow-up message.
+            followup_text: Full analysis text for follow-up (up to 4096 chars).
 
         Returns:
             True if the media group was sent successfully.
         """
-        from aiogram.types import (
-            InputMediaAudio,
-            InputMediaDocument,
-            InputMediaPhoto,
-            InputMediaVideo,
-        )
+        from aiogram.utils.media_group import MediaGroupBuilder
 
-        MediaType = InputMediaAudio | InputMediaDocument | InputMediaPhoto | InputMediaVideo
-        media: list[MediaType] = [
-            InputMediaPhoto(
-                media=url,
-                caption=caption if i == 0 else None,
-                parse_mode="HTML" if i == 0 else None,
-            )
-            for i, url in enumerate(image_urls[:10])
-        ]
+        builder = MediaGroupBuilder()
+        for i, url in enumerate(image_urls[:10]):
+            if i == 0:
+                builder.add_photo(media=url, caption=caption, parse_mode="HTML")
+            else:
+                builder.add_photo(media=url)
 
         bot = self._get_bot()
-        await bot.send_media_group(chat_id=self.chat_id, media=media)
+        await bot.send_media_group(chat_id=self.chat_id, media=builder.build())
 
         # Media groups don't support inline keyboards, so send a follow-up
-        # message with the buttons
+        # message with full analysis + buttons
+        text = followup_text if followup_text else "👆 View links for this property:"
         await bot.send_message(
             chat_id=self.chat_id,
-            text="👆 View links for this property:",
+            text=text,
             reply_markup=keyboard,
         )
         return True
@@ -824,6 +881,7 @@ class TelegramNotifier:
             await bot.send_message(
                 chat_id=self.chat_id,
                 text=html.escape(message),
+                disable_notification=True,
             )
             return True
         except Exception as e:

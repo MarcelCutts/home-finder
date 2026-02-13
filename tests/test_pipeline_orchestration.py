@@ -15,6 +15,7 @@ from pydantic import HttpUrl
 
 from home_finder.config import Settings
 from home_finder.db import PropertyStorage
+from home_finder.filters.detail_enrichment import EnrichmentResult
 from home_finder.main import (
     PreAnalysisResult,
     _run_pre_analysis_pipeline,
@@ -471,7 +472,7 @@ class TestPreAnalysisPipeline:
         prop = _prop(source_id="valid")
         mock_scrape.return_value = [prop]
         # enrich returns the merged properties unchanged
-        mock_enrich.side_effect = lambda merged, *a, **kw: merged
+        mock_enrich.side_effect = lambda merged, *a, **kw: EnrichmentResult(enriched=merged)
 
         result = await _run_pre_analysis_pipeline(test_settings, storage)
         assert result is not None
@@ -494,7 +495,7 @@ class TestPreAnalysisPipeline:
 
         # Now scrape returns the same property
         mock_scrape.return_value = [prop]
-        mock_enrich.side_effect = lambda merged, *a, **kw: merged
+        mock_enrich.side_effect = lambda merged, *a, **kw: EnrichmentResult(enriched=merged)
 
         result = await _run_pre_analysis_pipeline(test_settings, storage)
         assert result is None  # No new properties
@@ -524,7 +525,7 @@ class TestPreAnalysisPipeline:
         prop = _prop(source_id="no-fp")
         mock_scrape.return_value = [prop]
         # enrich returns merged without floorplan
-        mock_enrich.side_effect = lambda merged, *a, **kw: merged
+        mock_enrich.side_effect = lambda merged, *a, **kw: EnrichmentResult(enriched=merged)
 
         result = await _run_pre_analysis_pipeline(settings, storage)
         # No floorplan → filtered out

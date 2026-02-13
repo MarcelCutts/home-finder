@@ -91,9 +91,8 @@ def normalize_street_name(address: str) -> str:
     # Lowercase
     addr = address.lower()
 
-    # Remove flat/unit numbers at start
+    # Remove flat/unit numbers at start (needed for non-comma "Flat 2 123 Mare Street")
     addr = re.sub(r"^(flat|unit|apt|apartment)\s*\d+[a-z]?\s*,?\s*", "", addr)
-    addr = re.sub(r"^\d+[a-z]?\s*,?\s*", "", addr)
 
     # If comma-separated, find the part with a street type word
     if "," in addr:
@@ -109,23 +108,17 @@ def normalize_street_name(address: str) -> str:
 
     # Expand abbreviations
     for abbrev, full in STREET_TYPES.items():
-        addr = re.sub(abbrev, full, addr, flags=re.IGNORECASE)
+        addr = re.sub(abbrev, full, addr)
 
-    # Remove postcodes
-    addr = re.sub(
-        r"[A-Z]{1,2}\d{1,2}[A-Z]?\s*\d?[A-Z]{0,2}",
-        "",
-        addr,
-        flags=re.IGNORECASE,
-    )
+    # Remove postcodes (input already lowered, so use [a-z])
+    addr = re.sub(r"[a-z]{1,2}\d{1,2}[a-z]?\s*\d?[a-z]{0,2}", "", addr)
 
-    # Remove "London", borough names
+    # Remove "London", borough names (input already lowered)
     addr = re.sub(
         r"\b(london|hackney|islington|tower hamlets|haringey|camden|"
         r"lambeth|southwark|lewisham|greenwich|newham|waltham forest)\b",
         "",
         addr,
-        flags=re.IGNORECASE,
     )
 
     # Remove commas and normalize whitespace
