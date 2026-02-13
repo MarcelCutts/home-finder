@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "_macros.html" import commute_pill, fit_badge %}
+{% from "_macros.html" import commute_pill, fit_badge, fit_tier_label, fit_tier_class %}
 
 {% block title %}{{ prop.title }} — Home Finder{% endblock %}
 
@@ -156,14 +156,22 @@
 
         {% if fit_score is not none and fit_breakdown %}
         <div class="overview-card fit-breakdown-card">
-            <h4>Marcel Fit <span class="fit-breakdown-score {% if fit_score >= 80 %}fit-green{% elif fit_score >= 60 %}fit-accent{% elif fit_score >= 40 %}fit-amber{% else %}fit-dim{% endif %}">{{ fit_score }}</span></h4>
+            <h4>
+                Marcel Fit
+                <span class="fit-breakdown-donut-wrap">
+                    <span class="fit-breakdown-donut {% if fit_score >= 80 %}fit-green{% elif fit_score >= 60 %}fit-accent{% elif fit_score >= 40 %}fit-amber{% else %}fit-dim{% endif %}" style="--score-pct: {{ fit_score }}"></span>
+                    <span class="fit-breakdown-donut-value">{{ fit_score }}</span>
+                </span>
+                <span class="fit-breakdown-tier {{ fit_tier_class(fit_score) }}">{{ fit_tier_label(fit_score) }}</span>
+            </h4>
             <div class="fit-breakdown-bars">
                 {% for dim in fit_breakdown %}
-                <div class="fit-breakdown-row">
+                <div class="fit-breakdown-row{% if dim.confidence is defined and dim.confidence < 0.5 %} fit-dim-low-conf{% endif %}">
                     <span class="fit-breakdown-label">{{ dim.label }}</span>
                     <div class="fit-breakdown-track"><div class="fit-breakdown-fill {% if dim.score >= 70 %}fit-dim-green{% elif dim.score >= 40 %}fit-dim-accent{% else %}fit-dim-low{% endif %}" style="--bar-pct: {{ dim.score }}%"></div></div>
                     <span class="fit-breakdown-value">{{ dim.score }}</span>
                     <span class="fit-breakdown-weight">{{ dim.weight }}%</span>
+                    {% if dim.confidence is defined and dim.confidence < 0.5 %}<span class="fit-dim-conf-hint" title="Limited data for this dimension">?</span>{% endif %}
                 </div>
                 {% endfor %}
             </div>

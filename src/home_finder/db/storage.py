@@ -1442,6 +1442,51 @@ class PropertyStorage:
         await conn.commit()
         logger.debug("analysis_completed", unique_id=unique_id)
 
+    async def reset_failed_analyses(self) -> int:
+        """Reset properties with fallback analysis for re-analysis.
+
+        Finds properties where quality analysis ran but produced only the
+        minimal fallback (overall_rating IS NULL), indicating the API failed.
+        Deletes the fallback quality data and transitions them back to
+        'pending_analysis' so the next pipeline run re-analyzes them.
+
+        Returns:
+            Number of properties reset.
+        """
+        conn = await self._get_connection()
+
+        cursor = await conn.execute(
+            """
+            SELECT p.unique_id FROM properties p
+            JOIN quality_analyses q ON p.unique_id = q.property_unique_id
+            WHERE q.overall_rating IS NULL
+              AND p.notification_status != ?
+            """,
+            (NotificationStatus.PENDING_ANALYSIS.value,),
+        )
+        rows = await cursor.fetchall()
+        if not rows:
+            return 0
+
+        ids = [row["unique_id"] for row in rows]
+        placeholders = ",".join("?" * len(ids))
+
+        await conn.execute(
+            f"DELETE FROM quality_analyses WHERE property_unique_id IN ({placeholders})",  # noqa: S608
+            ids,
+        )
+        await conn.execute(
+            f"""
+            UPDATE properties SET notification_status = ?
+            WHERE unique_id IN ({placeholders})
+            """,  # noqa: S608
+            [NotificationStatus.PENDING_ANALYSIS.value, *ids],
+        )
+        await conn.commit()
+
+        logger.info("reset_failed_analyses", count=len(ids), unique_ids=ids)
+        return len(ids)
+
     @staticmethod
     def _build_filter_clauses(
         *,
@@ -1472,6 +1517,10 @@ class PropertyStorage:
         where_clauses: list[str] = [
             "COALESCE(p.enrichment_status, 'enriched') != 'pending'",
             "p.notification_status != 'pending_analysis'",
+            # Hide properties with fallback analysis (API failed, no real quality data).
+            # A fallback has a quality_analyses row but NULL overall_rating.
+            # Properties with no analysis row at all (q.property_unique_id IS NULL) are fine.
+            "(q.overall_rating IS NOT NULL OR q.property_unique_id IS NULL)",
         ]
         params: list[Any] = []
 
@@ -1770,11 +1819,14 @@ class PropertyStorage:
         count_row = await count_cursor.fetchone()
         total = count_row[0] if count_row else 0
 
-        # Subquery: prefer first gallery image over original scraper thumbnail
+        # Subquery: first non-EPC gallery image as fallback thumbnail
         gallery_subquery = """
             (SELECT pi.url FROM property_images pi
              WHERE pi.property_unique_id = p.unique_id
              AND pi.image_type = 'gallery'
+             AND LOWER(pi.url) NOT LIKE '%epc%'
+             AND LOWER(pi.url) NOT LIKE '%energy-performance%'
+             AND LOWER(pi.url) NOT LIKE '%energy_performance%'
              ORDER BY pi.id LIMIT 1) as first_gallery_url
         """
 
@@ -1817,8 +1869,10 @@ class PropertyStorage:
         for row in rows:
             prop_dict = dict(row)
             self._parse_json_fields(prop_dict)
-            # Prefer enriched gallery image over original scraper thumbnail
-            if prop_dict.get("first_gallery_url"):
+            # Use gallery image only as fallback when scraper thumbnail is missing
+            # Scraper image_url comes from search results (always a real property photo),
+            # while first gallery image may be an EPC chart
+            if not prop_dict.get("image_url") and prop_dict.get("first_gallery_url"):
                 prop_dict["image_url"] = prop_dict["first_gallery_url"]
             # Extract quality fields from analysis_json
             if prop_dict.get("analysis_json"):

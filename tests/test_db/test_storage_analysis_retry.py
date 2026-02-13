@@ -73,6 +73,22 @@ def _make_quality_analysis() -> PropertyQualityAnalysis:
     )
 
 
+def _make_fallback_analysis() -> PropertyQualityAnalysis:
+    """Minimal analysis created when API fails — no overall_rating."""
+    return PropertyQualityAnalysis(
+        kitchen=KitchenAnalysis(notes="No images available for analysis"),
+        condition=ConditionAnalysis(overall_condition="unknown", confidence="low"),
+        light_space=LightSpaceAnalysis(
+            natural_light="unknown",
+            feels_spacious=None,
+            notes="No images available for analysis",
+        ),
+        space=SpaceAnalysis(is_spacious_enough=None, confidence="low"),
+        condition_concerns=False,
+        summary="No images available for quality analysis",
+    )
+
+
 @pytest_asyncio.fixture
 async def storage() -> AsyncGenerator[PropertyStorage, None]:
     s = PropertyStorage(":memory:")
@@ -333,3 +349,114 @@ class TestNotificationRetryExcludesPendingAnalysis:
         unsent = await storage.get_unsent_notifications()
         unsent_ids = {t.property.unique_id for t in unsent}
         assert merged.unique_id not in unsent_ids
+
+
+class TestResetFailedAnalyses:
+    @pytest.mark.asyncio
+    async def test_resets_fallback_analysis(self, storage: PropertyStorage) -> None:
+        """Properties with fallback analysis should be reset to pending_analysis."""
+        merged = _make_merged()
+        await storage.save_pre_analysis_properties([merged], {})
+        await storage.complete_analysis(merged.unique_id, _make_fallback_analysis())
+        await storage.mark_notified(merged.unique_id)
+
+        count = await storage.reset_failed_analyses()
+        assert count == 1
+
+        conn = await storage._get_connection()
+        cursor = await conn.execute(
+            "SELECT notification_status FROM properties WHERE unique_id = ?",
+            (merged.unique_id,),
+        )
+        row = await cursor.fetchone()
+        assert row["notification_status"] == NotificationStatus.PENDING_ANALYSIS.value
+
+        # Quality analysis should be deleted
+        analysis = await storage.get_quality_analysis(merged.unique_id)
+        assert analysis is None
+
+    @pytest.mark.asyncio
+    async def test_does_not_reset_real_analysis(self, storage: PropertyStorage) -> None:
+        """Properties with real analysis (has overall_rating) should not be reset."""
+        merged = _make_merged()
+        await storage.save_pre_analysis_properties([merged], {})
+        await storage.complete_analysis(merged.unique_id, _make_quality_analysis())
+
+        count = await storage.reset_failed_analyses()
+        assert count == 0
+
+        analysis = await storage.get_quality_analysis(merged.unique_id)
+        assert analysis is not None
+        assert analysis.overall_rating == 4
+
+    @pytest.mark.asyncio
+    async def test_does_not_reset_already_pending(self, storage: PropertyStorage) -> None:
+        """Properties already pending_analysis should not be double-counted."""
+        merged = _make_merged()
+        await storage.save_pre_analysis_properties([merged], {})
+        # Still pending_analysis, no complete_analysis called
+
+        count = await storage.reset_failed_analyses()
+        assert count == 0
+
+    @pytest.mark.asyncio
+    async def test_returns_zero_when_no_fallbacks(self, storage: PropertyStorage) -> None:
+        """Should return 0 when all analyses are real."""
+        merged = _make_merged()
+        await storage.save_pre_analysis_properties([merged], {})
+        await storage.complete_analysis(merged.unique_id, _make_quality_analysis())
+
+        count = await storage.reset_failed_analyses()
+        assert count == 0
+
+    @pytest.mark.asyncio
+    async def test_reset_properties_picked_up_by_retry(self, storage: PropertyStorage) -> None:
+        """After reset, properties appear in get_pending_analysis_properties."""
+        merged = _make_merged()
+        await storage.save_pre_analysis_properties([merged], {})
+        await storage.complete_analysis(merged.unique_id, _make_fallback_analysis())
+        await storage.mark_notified(merged.unique_id)
+
+        await storage.reset_failed_analyses()
+
+        pending = await storage.get_pending_analysis_properties()
+        assert len(pending) == 1
+        assert pending[0].unique_id == merged.unique_id
+
+
+class TestDashboardExcludesFallbackAnalysis:
+    @pytest.mark.asyncio
+    async def test_excludes_fallback_from_paginated(self, storage: PropertyStorage) -> None:
+        """Properties with fallback analysis should be hidden from the dashboard."""
+        # Save property with fallback analysis
+        fallback = _make_merged(_make_property(source_id="fallback-1"))
+        await storage.save_pre_analysis_properties([fallback], {})
+        await storage.complete_analysis(fallback.unique_id, _make_fallback_analysis())
+
+        # Save property with real analysis
+        real_prop = _make_property(source=PropertySource.OPENRENT, source_id="real-1")
+        real = _make_merged(real_prop, sources=(PropertySource.OPENRENT,))
+        await storage.save_pre_analysis_properties([real], {})
+        await storage.complete_analysis(real.unique_id, _make_quality_analysis())
+
+        results, total = await storage.get_properties_paginated()
+        result_ids = {r["unique_id"] for r in results}
+
+        assert total == 1
+        assert real.unique_id in result_ids
+        assert fallback.unique_id not in result_ids
+
+    @pytest.mark.asyncio
+    async def test_excludes_fallback_from_paginated_total(self, storage: PropertyStorage) -> None:
+        """Paginated total should not count fallback-analysis properties."""
+        fallback = _make_merged(_make_property(source_id="fallback-1"))
+        await storage.save_pre_analysis_properties([fallback], {})
+        await storage.complete_analysis(fallback.unique_id, _make_fallback_analysis())
+
+        real_prop = _make_property(source=PropertySource.OPENRENT, source_id="real-1")
+        real = _make_merged(real_prop, sources=(PropertySource.OPENRENT,))
+        await storage.save_pre_analysis_properties([real], {})
+        await storage.complete_analysis(real.unique_id, _make_quality_analysis())
+
+        _, total = await storage.get_properties_paginated()
+        assert total == 1

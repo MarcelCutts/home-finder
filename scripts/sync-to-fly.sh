@@ -16,15 +16,32 @@ echo "==> Starting app for file transfer..."
 fly machine start "$MACHINE_ID" --app "$APP"
 sleep 3
 
-echo "==> Removing old data on remote..."
-fly ssh console -C "sh -c 'rm -rf /app/data/properties.db /app/data/properties.db-shm /app/data/properties.db-wal /app/data/image_cache'" \
+echo "==> Replacing database..."
+fly ssh console -C "sh -c 'rm -f /app/data/properties.db /app/data/properties.db-shm /app/data/properties.db-wal'" \
   --app "$APP" 2>/dev/null || true
-
-echo "==> Uploading database..."
 fly sftp put "$DATA_DIR/properties.db" /app/data/properties.db --app "$APP" -q
 
-echo "==> Uploading image cache..."
-fly sftp put "$DATA_DIR/image_cache/" /app/data/image_cache/ -R --app "$APP" -q
+echo "==> Syncing image cache (incremental)..."
+REMOTE_DIRS=$(fly ssh console --app "$APP" -C "ls /app/data/image_cache/" 2>/dev/null | tr -d '\r' || echo "")
+LOCAL_DIRS=$(ls "$DATA_DIR/image_cache/")
+NEW_DIRS=$(comm -23 <(echo "$LOCAL_DIRS" | sort) <(echo "$REMOTE_DIRS" | sort) || true)
+
+if [ -z "$NEW_DIRS" ]; then
+  echo "    Image cache is up to date."
+else
+  COUNT=$(echo "$NEW_DIRS" | wc -l | tr -d ' ')
+  echo "    Uploading $COUNT new property directories..."
+
+  cd "$DATA_DIR/image_cache"
+  # shellcheck disable=SC2086
+  tar czf /tmp/hf_new_images.tar.gz --no-xattrs --no-mac-metadata $NEW_DIRS
+  SIZE=$(du -h /tmp/hf_new_images.tar.gz | cut -f1)
+  echo "    Compressed size: $SIZE"
+
+  fly sftp put /tmp/hf_new_images.tar.gz /app/data/hf_new_images.tar.gz --app "$APP" -q
+  fly ssh console --app "$APP" -C "sh -c 'cd /app/data/image_cache && tar xzf /app/data/hf_new_images.tar.gz && rm /app/data/hf_new_images.tar.gz'"
+  rm /tmp/hf_new_images.tar.gz
+fi
 
 echo "==> Restarting app..."
 fly apps restart "$APP"

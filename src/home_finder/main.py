@@ -546,6 +546,12 @@ async def _run_quality_and_save(
         pre.merged_to_process, pre.commute_lookup
     )
 
+    # Reset properties with fallback analysis (API failed previously)
+    # so they get re-analyzed this run
+    reset_count = await storage.reset_failed_analyses()
+    if reset_count:
+        logger.info("reset_failed_analyses_for_retry", count=reset_count)
+
     # Load any pending_analysis properties from previous crashed runs
     current_ids = {m.unique_id for m in pre.merged_to_process}
     pending_from_prev = await storage.get_pending_analysis_properties(

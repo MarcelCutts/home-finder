@@ -21,6 +21,15 @@ _IMAGE_MIN_INTERVAL = 0.1  # seconds between CDN image downloads (rarely rate li
 
 logger = get_logger(__name__)
 
+# Substrings in image URLs that indicate EPC (Energy Performance Certificate) charts
+_EPC_URL_MARKERS = ("epc", "energy-performance", "energy_performance")
+
+
+def _is_epc_url(url: str) -> bool:
+    """Check if a URL likely points to an EPC chart image."""
+    url_lower = url.lower()
+    return any(marker in url_lower for marker in _EPC_URL_MARKERS)
+
 
 def _find_dict_with_key(data: Any, key: str, depth: int = 0) -> dict[str, Any] | None:
     """Recursively find a dict containing the given key."""
@@ -240,8 +249,9 @@ class DetailFetcher:
             gallery_urls: list[str] = []
             images = property_data.get("images", [])
             for img in images[: self._max_gallery_images]:
-                if img.get("url"):
-                    gallery_urls.append(img["url"])
+                url = img.get("url", "")
+                if url and not _is_epc_url(url):
+                    gallery_urls.append(url)
 
             # Extract description
             description = property_data.get("text", {}).get("description")
@@ -388,13 +398,13 @@ class DetailFetcher:
             # Fallback: Extract from RSC payload caption/filename pairs
             # Zoopla RSC stores images as escaped JSON:
             #   \"caption\":\"Room\",\"filename\":\"hash.jpg\"
+            seen_hashes: set[str] = set()
             if not gallery_urls:
                 rsc_matches = re.findall(
                     r'\\"caption\\":\\"([^\\]*)\\",\\"filename\\":\\"([a-f0-9]+\.(?:jpg|jpeg|png|webp))\\"',
                     html,
                     re.IGNORECASE,
                 )
-                seen_hashes: set[str] = set()
                 for caption, filename in rsc_matches:
                     hash_part = filename.split(".")[0]
                     if hash_part in seen_hashes:
@@ -413,7 +423,9 @@ class DetailFetcher:
             # Also runs if previous step found too few images (e.g. only a floorplan)
             if len(gallery_urls) < 3:
                 # Collect hashes already in gallery to avoid duplicates
+                # Union with seen_hashes to exclude EPC images skipped in the RSC pass
                 existing_hashes = {u.rsplit("/", 1)[-1].split(".")[0] for u in gallery_urls}
+                existing_hashes |= seen_hashes
                 img_matches = re.findall(
                     r"https://lid\.zoocdn\.com/u/(\d+)/(\d+)/([a-f0-9]+\.(?:jpg|jpeg|png|webp))",
                     html,
@@ -491,7 +503,7 @@ class DetailFetcher:
                 re.IGNORECASE,
             )
             for url in gallery_matches[: self._max_gallery_images]:
-                if url and "floorplan" not in url.lower():
+                if url and "floorplan" not in url.lower() and not _is_epc_url(url):
                     full_url = f"https:{url}" if url.startswith("//") else url
                     gallery_urls.append(full_url)
 
@@ -503,7 +515,7 @@ class DetailFetcher:
                     re.IGNORECASE,
                 )
                 for url in gallery_matches[: self._max_gallery_images]:
-                    if url and "floorplan" not in url.lower():
+                    if url and "floorplan" not in url.lower() and not _is_epc_url(url):
                         full_url = f"https:{url}" if url.startswith("//") else url
                         gallery_urls.append(full_url)
 
@@ -515,7 +527,7 @@ class DetailFetcher:
                     re.IGNORECASE,
                 )
                 for url in img_matches[: self._max_gallery_images]:
-                    if url and "floorplan" not in url.lower():
+                    if url and "floorplan" not in url.lower() and not _is_epc_url(url):
                         full_url = f"https:{url}"
                         if full_url not in gallery_urls:
                             gallery_urls.append(full_url)
@@ -611,7 +623,7 @@ class DetailFetcher:
                         url = f"{img['prefix']}-1024x1024.jpg"
                 else:
                     url = img
-                if url:
+                if url and not _is_epc_url(url):
                     gallery_urls.append(url)
 
             # Extract description

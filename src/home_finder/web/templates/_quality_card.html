@@ -70,7 +70,7 @@
             {% if qa.light_space.notes %}<p><small>{{ qa.light_space.notes }}</small></p>{% endif %}
         </div>
 
-        <div class="quality-item quality-item-neutral">
+        <div class="{{ quality_item_class(qa.space.hosting_layout, ['excellent', 'good'], ['awkward'], ['poor']) }}">
             <h4>Living Room</h4>
             {% if qa.space.living_room_sqm %}
             <span class="badge badge-neutral">~{{ "%.0f" | format(qa.space.living_room_sqm) }}m&sup2;</span>
@@ -81,12 +81,12 @@
             <p>{{ "Good for office + hosting" if qa.space.is_spacious_enough else "May be tight" }}</p>
             {% endif %}
             {% if qa.space.hosting_layout and qa.space.hosting_layout != 'unknown' %}
-            <p>Hosting layout: {{ qa.space.hosting_layout | capitalize }}</p>
+            {% call quality_badge(qa.space.hosting_layout, ['excellent', 'good'], ['awkward'], ['poor']) %}Layout: {{ qa.space.hosting_layout | capitalize }}{% endcall %}
             {% endif %}
         </div>
 
         {% if qa.bedroom %}
-        <div class="quality-item quality-item-neutral">
+        <div class="{{ quality_item_class(qa.bedroom.office_separation, ['dedicated_room', 'separate_area'], ['shared_space'], ['none']) }}">
             <h4>Bedroom</h4>
             {% if qa.bedroom.primary_is_double != 'unknown' %}
             <p>{{ "Double bed fits" if qa.bedroom.primary_is_double == 'yes' else "Single only" }}</p>
@@ -129,8 +129,11 @@
         {% endif %}
 
         {% if qa.flooring_noise %}
-        <div class="quality-item quality-item-neutral">
+        <div class="{{ quality_item_class(qa.flooring_noise.hosting_noise_risk, ['low'], ['moderate'], ['high']) }}">
             <h4>Flooring &amp; Noise</h4>
+            {% if qa.flooring_noise.hosting_noise_risk and qa.flooring_noise.hosting_noise_risk != 'unknown' %}
+            {% call quality_badge(qa.flooring_noise.hosting_noise_risk, ['low'], ['moderate'], ['high']) %}{{ qa.flooring_noise.hosting_noise_risk | capitalize }}{% endcall %}
+            {% endif %}
             {% if qa.flooring_noise.primary_flooring != 'unknown' %}
             <p>{{ qa.flooring_noise.primary_flooring | capitalize }}</p>
             {% endif %}
@@ -138,9 +141,6 @@
             <p>Double glazed</p>
             {% elif qa.flooring_noise.has_double_glazing == 'no' %}
             <p>Single glazing</p>
-            {% endif %}
-            {% if qa.flooring_noise.hosting_noise_risk and qa.flooring_noise.hosting_noise_risk != 'unknown' %}
-            <p>Hosting noise risk: {{ qa.flooring_noise.hosting_noise_risk | capitalize }}</p>
             {% endif %}
             {% if qa.flooring_noise.noise_indicators %}
             <p><small>{{ qa.flooring_noise.noise_indicators | join(", ") }}</small></p>

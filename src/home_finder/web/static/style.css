@@ -210,6 +210,7 @@ nav.container-fluid li {
 
 /* ===== Filter modal (native <dialog>) ===== */
 .filter-modal {
+    position: relative;
     max-width: 640px;
     width: 92vw;
     max-height: 85vh;
@@ -230,9 +231,8 @@ nav.container-fluid li {
 .filter-modal-header {
     display: flex;
     align-items: center;
-    justify-content: space-between;
+    justify-content: center;
     padding: 1rem 1.25rem;
-    border-bottom: 1px solid var(--border);
     flex-shrink: 0;
 }
 .filter-modal-header h2 {
@@ -242,31 +242,39 @@ nav.container-fluid li {
     font-family: var(--font-heading);
 }
 .filter-modal-close {
-    width: 40px;
-    height: 40px;
-    min-height: 0;
-    display: inline-flex;
+    all: unset;
+    position: absolute;
+    top: 0.6rem;
+    right: 0.6rem;
+    z-index: 10;
+    width: 36px;
+    height: 36px;
+    display: flex;
     align-items: center;
     justify-content: center;
-    border: none !important;
-    background: var(--bg-elevated) !important;
-    box-shadow: none !important;
-    outline: none !important;
-    color: var(--text);
-    font-size: 1.4rem;
-    font-weight: 700;
     cursor: pointer;
-    border-radius: 50%;
-    transition: background 0.15s, color 0.15s;
-    padding: 0 !important;
-    line-height: 1;
-    margin: 0;
-    --pico-border-width: 0;
-    --pico-font-size: 1.4rem;
+    border-radius: 8px;
+    transition: background 0.15s;
+    box-sizing: border-box;
 }
+.filter-modal-close::before,
+.filter-modal-close::after {
+    content: "";
+    position: absolute;
+    width: 16px;
+    height: 1.5px;
+    background: var(--text-muted);
+    border-radius: 1px;
+    transition: background 0.15s;
+}
+.filter-modal-close::before { transform: rotate(45deg); }
+.filter-modal-close::after { transform: rotate(-45deg); }
 .filter-modal-close:hover {
-    background: var(--border-hover) !important;
-    color: #fff;
+    background: var(--bg-elevated);
+}
+.filter-modal-close:hover::before,
+.filter-modal-close:hover::after {
+    background: var(--text);
 }
 .filter-modal-body {
     flex: 1;
@@ -928,7 +936,7 @@ nav.container-fluid li {
 .fit-green { border-color: #34d399; }
 .fit-accent { border-color: #a78bfa; }
 .fit-amber { border-color: #fbbf24; }
-.fit-dim { border-color: #55555f; color: var(--text-dim); }
+.fit-dim { border-color: #888; }
 
 /* Fit popover (details/summary on card) */
 .fit-popover-wrap {
@@ -1020,12 +1028,89 @@ nav.container-fluid li {
     font-family: var(--font-heading);
 }
 
+/* Fit popover tier label */
+.fit-popover-tier {
+    font-size: 0.68rem;
+    font-weight: 700;
+    text-align: center;
+    margin: -0.2rem 0 0.5rem 0;
+    letter-spacing: 0.02em;
+}
+.fit-tier-great { color: #34d399; }
+.fit-tier-good { color: var(--accent); }
+.fit-tier-okay { color: #fbbf24; }
+.fit-tier-poor { color: var(--text-dim); }
+
+/* Low-confidence dimension styling */
+.fit-dim-low-conf .fit-dim-fill,
+.fit-dim-low-conf .fit-dim-score,
+.fit-dim-low-conf .fit-breakdown-fill,
+.fit-dim-low-conf .fit-breakdown-value {
+    opacity: 0.45;
+}
+.fit-dim-low-conf .fit-dim-label,
+.fit-dim-low-conf .fit-breakdown-label {
+    opacity: 0.6;
+}
+.fit-dim-conf-hint {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    font-size: 0.6rem;
+    font-weight: 700;
+    color: var(--text-dim);
+    border: 1px solid var(--border-hover);
+    cursor: help;
+    flex-shrink: 0;
+}
+
 /* Fit breakdown card (detail page) */
 .fit-breakdown-card h4 {
     display: flex;
     align-items: center;
     gap: 0.5rem;
     margin-bottom: 0.85rem;
+}
+/* Donut ring for detail page overall score */
+.fit-breakdown-donut-wrap {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 48px;
+    height: 48px;
+    flex-shrink: 0;
+}
+.fit-breakdown-donut {
+    position: absolute;
+    inset: 0;
+    border-radius: 50%;
+    background: conic-gradient(
+        var(--donut-color) calc(var(--score-pct) * 3.6deg),
+        var(--border) calc(var(--score-pct) * 3.6deg)
+    );
+    -webkit-mask: radial-gradient(farthest-side, transparent 62%, black 63%);
+    mask: radial-gradient(farthest-side, transparent 62%, black 63%);
+}
+.fit-breakdown-donut.fit-green { --donut-color: #34d399; }
+.fit-breakdown-donut.fit-accent { --donut-color: var(--accent); }
+.fit-breakdown-donut.fit-amber { --donut-color: #fbbf24; }
+.fit-breakdown-donut.fit-dim { --donut-color: var(--text-dim); }
+.fit-breakdown-donut-value {
+    position: relative;
+    z-index: 1;
+    font-size: 0.82rem;
+    font-weight: 800;
+    font-family: var(--font-heading);
+    color: var(--text);
+}
+.fit-breakdown-tier {
+    font-size: 0.82rem;
+    font-weight: 700;
+    letter-spacing: 0.01em;
 }
 .fit-breakdown-score {
     display: inline-flex;

@@ -574,3 +574,141 @@ class TestGetPropertyDetail:
         assert detail is not None
         assert "rightmove" in detail["source_urls_dict"]
         assert "zoopla" in detail["source_urls_dict"]
+
+
+class TestThumbnailEpcFiltering:
+    """Dashboard thumbnail selection avoids EPC chart images."""
+
+    @pytest.mark.asyncio
+    async def test_gallery_subquery_skips_epc_url(
+        self, storage: PropertyStorage, prop_a: Property, merged_a: MergedProperty
+    ) -> None:
+        """first_gallery_url skips images with 'epc' in the URL."""
+        await storage.save_merged_property(merged_a)
+        images = [
+            PropertyImage(
+                url=HttpUrl("https://media.example.com/epc/epc_chart.png"),
+                source=PropertySource.OPENRENT,
+                image_type="gallery",
+            ),
+            PropertyImage(
+                url=HttpUrl("https://media.example.com/img/living_room.jpg"),
+                source=PropertySource.OPENRENT,
+                image_type="gallery",
+            ),
+        ]
+        await storage.save_property_images(prop_a.unique_id, images)
+
+        props, _ = await storage.get_properties_paginated()
+        assert len(props) == 1
+        # Should pick the second image (living_room), not the EPC chart
+        assert "living_room" in props[0]["image_url"]
+        assert "epc" not in props[0]["image_url"].lower()
+
+    @pytest.mark.asyncio
+    async def test_gallery_subquery_skips_energy_performance_url(
+        self, storage: PropertyStorage, prop_a: Property, merged_a: MergedProperty
+    ) -> None:
+        await storage.save_merged_property(merged_a)
+        images = [
+            PropertyImage(
+                url=HttpUrl("https://cdn.example.com/energy-performance-cert.png"),
+                source=PropertySource.OPENRENT,
+                image_type="gallery",
+            ),
+            PropertyImage(
+                url=HttpUrl("https://cdn.example.com/img/kitchen.jpg"),
+                source=PropertySource.OPENRENT,
+                image_type="gallery",
+            ),
+        ]
+        await storage.save_property_images(prop_a.unique_id, images)
+
+        props, _ = await storage.get_properties_paginated()
+        assert len(props) == 1
+        assert "kitchen" in props[0]["image_url"]
+
+    @pytest.mark.asyncio
+    async def test_scraper_image_url_preferred_over_gallery(
+        self, storage: PropertyStorage
+    ) -> None:
+        """When the scraper provides image_url, it takes priority over gallery."""
+        prop = Property(
+            source=PropertySource.RIGHTMOVE,
+            source_id="thumb-test",
+            url=HttpUrl("https://rightmove.co.uk/thumb-test"),
+            title="Flat with scraper thumb",
+            price_pcm=1800,
+            bedrooms=1,
+            address="1 Test St",
+            image_url=HttpUrl("https://media.rightmove.co.uk/img/scraper_thumb.jpg"),
+        )
+        merged = MergedProperty(
+            canonical=prop,
+            sources=(PropertySource.RIGHTMOVE,),
+            source_urls={PropertySource.RIGHTMOVE: prop.url},
+            min_price=1800,
+            max_price=1800,
+        )
+        await storage.save_merged_property(merged)
+        # Save a gallery image that happens to be an EPC
+        await storage.save_property_images(
+            prop.unique_id,
+            [
+                PropertyImage(
+                    url=HttpUrl("https://media.rightmove.co.uk/epc/chart.png"),
+                    source=PropertySource.RIGHTMOVE,
+                    image_type="gallery",
+                ),
+            ],
+        )
+
+        props, _ = await storage.get_properties_paginated()
+        assert len(props) == 1
+        assert "scraper_thumb" in props[0]["image_url"]
+
+    @pytest.mark.asyncio
+    async def test_gallery_fallback_when_no_scraper_image(
+        self, storage: PropertyStorage, prop_a: Property, merged_a: MergedProperty
+    ) -> None:
+        """When scraper image_url is absent, use first non-EPC gallery image."""
+        # prop_a has no image_url
+        assert prop_a.image_url is None
+        await storage.save_merged_property(merged_a)
+        await storage.save_property_images(
+            prop_a.unique_id,
+            [
+                PropertyImage(
+                    url=HttpUrl("https://example.com/gallery/bedroom.jpg"),
+                    source=PropertySource.OPENRENT,
+                    image_type="gallery",
+                ),
+            ],
+        )
+
+        props, _ = await storage.get_properties_paginated()
+        assert len(props) == 1
+        assert "bedroom" in props[0]["image_url"]
+
+    @pytest.mark.asyncio
+    async def test_hash_epc_url_not_filtered(
+        self, storage: PropertyStorage, prop_a: Property, merged_a: MergedProperty
+    ) -> None:
+        """Zoopla hash-based EPC URLs (e.g. 5e2020de.png) are NOT filterable at DB level.
+        Caption-based filtering in the detail_fetcher prevents these from being saved."""
+        await storage.save_merged_property(merged_a)
+        await storage.save_property_images(
+            prop_a.unique_id,
+            [
+                PropertyImage(
+                    url=HttpUrl("https://lid.zoocdn.com/u/1024/768/5e2020de.png"),
+                    source=PropertySource.ZOOPLA,
+                    image_type="gallery",
+                ),
+            ],
+        )
+
+        props, _ = await storage.get_properties_paginated()
+        assert len(props) == 1
+        # Hash URL passes through — no way to tell it's an EPC from the URL alone
+        assert "5e2020de" in props[0]["image_url"]

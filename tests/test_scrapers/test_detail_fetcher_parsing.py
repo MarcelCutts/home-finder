@@ -11,7 +11,12 @@ import pytest
 from pydantic import HttpUrl
 
 from home_finder.models import Property, PropertySource
-from home_finder.scrapers.detail_fetcher import DetailFetcher, DetailPageData, _find_dict_with_key
+from home_finder.scrapers.detail_fetcher import (
+    DetailFetcher,
+    DetailPageData,
+    _find_dict_with_key,
+    _is_epc_url,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -94,6 +99,37 @@ class TestFindDictWithKey:
         assert _find_dict_with_key("string", "key") is None
         assert _find_dict_with_key(42, "key") is None
         assert _find_dict_with_key(None, "key") is None
+
+
+# ---------------------------------------------------------------------------
+# _is_epc_url (EPC image detection)
+# ---------------------------------------------------------------------------
+
+
+class TestIsEpcUrl:
+    def test_detects_epc_in_path(self) -> None:
+        assert _is_epc_url("https://media.rightmove.co.uk/epc/123_EPC_00.png")
+
+    def test_detects_epc_in_filename(self) -> None:
+        assert _is_epc_url("https://imagescdn.openrent.co.uk/listings/999/epc_chart.jpg")
+
+    def test_detects_energy_performance_hyphenated(self) -> None:
+        assert _is_epc_url("https://cdn.example.com/energy-performance-chart.png")
+
+    def test_detects_energy_performance_underscored(self) -> None:
+        assert _is_epc_url("https://cdn.example.com/energy_performance_123.jpg")
+
+    def test_case_insensitive(self) -> None:
+        assert _is_epc_url("https://media.rightmove.co.uk/img/123_EPC_Graph.jpg")
+
+    def test_normal_image_not_matched(self) -> None:
+        assert not _is_epc_url("https://media.rightmove.co.uk/img/123_01.jpg")
+        assert not _is_epc_url("https://lid.zoocdn.com/u/1024/768/abc123.jpg")
+
+    def test_hash_based_zoopla_url_not_filterable(self) -> None:
+        """Zoopla EPC images use opaque hash filenames — not detectable by URL alone.
+        Caption-based filtering in the RSC pass handles these instead."""
+        assert not _is_epc_url("https://lid.zoocdn.com/u/1024/768/5e2020de.png")
 
 
 # ---------------------------------------------------------------------------
@@ -228,6 +264,32 @@ class TestRightmoveParsing:
         assert result.gallery_urls is not None
         assert len(result.gallery_urls) == 2
 
+    async def test_gallery_excludes_epc_images(self, fetcher: DetailFetcher) -> None:
+        html = """<!DOCTYPE html><html><body><script>
+        window.PAGE_MODEL = {
+            "propertyData": {
+                "floorplans": [],
+                "images": [
+                    {"url": "https://media.rightmove.co.uk/img/123_01.jpg"},
+                    {"url": "https://media.rightmove.co.uk/epc/123_EPC_00.png"},
+                    {"url": "https://media.rightmove.co.uk/img/123_02.jpg"}
+                ],
+                "text": {"description": "A flat."},
+                "keyFeatures": []
+            }
+        };
+        </script></body></html>"""
+        fetcher._httpx_get_with_retry = AsyncMock(  # type: ignore[method-assign]
+            return_value=_mock_httpx_response(html)
+        )
+        prop = _make_property(PropertySource.RIGHTMOVE)
+        result = await fetcher.fetch_detail_page(prop)
+        assert result is not None
+        assert result.gallery_urls is not None
+        assert len(result.gallery_urls) == 2
+        for url in result.gallery_urls:
+            assert "epc" not in url.lower()
+
 
 # ---------------------------------------------------------------------------
 # Zoopla parsing
@@ -313,6 +375,63 @@ class TestZooplaParsing:
         result = await fetcher.fetch_detail_page(prop)
         assert result is None
 
+    async def test_rsc_caption_filters_epc(self, fetcher: DetailFetcher) -> None:
+        """RSC path skips images with 'epc' in caption."""
+        html = """<!DOCTYPE html><html><body>
+        \\"caption\\":\\"Living room\\",\\"filename\\":\\"aaa111.jpg\\"
+        \\"caption\\":\\"EPC Rating\\",\\"filename\\":\\"epc222.jpg\\"
+        \\"caption\\":\\"Bedroom\\",\\"filename\\":\\"bbb333.jpg\\"
+        </body></html>"""
+        fetcher._curl_get_with_retry = AsyncMock(  # type: ignore[method-assign]
+            return_value=_mock_curl_response(html)
+        )
+        prop = _make_property(PropertySource.ZOOPLA)
+        result = await fetcher.fetch_detail_page(prop)
+        assert result is not None
+        assert result.gallery_urls is not None
+        assert len(result.gallery_urls) == 2
+        hashes = [url.rsplit("/", 1)[-1].split(".")[0] for url in result.gallery_urls]
+        assert "epc222" not in hashes
+
+    async def test_html_fallback_excludes_rsc_epc_hashes(self, fetcher: DetailFetcher) -> None:
+        """HTML fallback inherits seen_hashes from RSC pass so EPC hashes don't reappear."""
+        # RSC pass finds 1 normal + 1 EPC (skipped) → only 1 gallery image → triggers fallback
+        # HTML fallback sees the EPC hash in full URL form — should still skip it
+        html = """<!DOCTYPE html><html><body>
+        \\"caption\\":\\"Kitchen\\",\\"filename\\":\\"aaa111.jpg\\"
+        \\"caption\\":\\"EPC Rating\\",\\"filename\\":\\"epc222.jpg\\"
+        https://lid.zoocdn.com/u/1024/768/epc222.jpg
+        https://lid.zoocdn.com/u/1024/768/ccc333.jpg
+        </body></html>"""
+        fetcher._curl_get_with_retry = AsyncMock(  # type: ignore[method-assign]
+            return_value=_mock_curl_response(html)
+        )
+        prop = _make_property(PropertySource.ZOOPLA)
+        result = await fetcher.fetch_detail_page(prop)
+        assert result is not None
+        assert result.gallery_urls is not None
+        hashes = [url.rsplit("/", 1)[-1].split(".")[0] for url in result.gallery_urls]
+        assert "epc222" not in hashes
+        assert "aaa111" in hashes
+        assert "ccc333" in hashes
+
+    async def test_zoopla_hash_epc_not_filterable_by_url(self, fetcher: DetailFetcher) -> None:
+        """Zoopla EPC images with opaque hash filenames can't be detected by URL.
+        Only the RSC caption check catches these — the HTML-only path has no signal."""
+        html = """<!DOCTYPE html><html><body>
+        https://lid.zoocdn.com/u/1024/768/5e2020de.jpg
+        https://lid.zoocdn.com/u/1024/768/abc12345.jpg
+        </body></html>"""
+        fetcher._curl_get_with_retry = AsyncMock(  # type: ignore[method-assign]
+            return_value=_mock_curl_response(html)
+        )
+        prop = _make_property(PropertySource.ZOOPLA)
+        result = await fetcher.fetch_detail_page(prop)
+        assert result is not None
+        assert result.gallery_urls is not None
+        # Both pass through — no way to distinguish EPC from photo by hash URL alone
+        assert len(result.gallery_urls) == 2
+
 
 # ---------------------------------------------------------------------------
 # OpenRent parsing
@@ -395,6 +514,61 @@ class TestOpenRentParsing:
         prop = _make_property(PropertySource.OPENRENT)
         result = await fetcher.fetch_detail_page(prop)
         assert result is None
+
+    async def test_gallery_excludes_epc_lightbox(self, fetcher: DetailFetcher) -> None:
+        """PhotoSwipe lightbox items with 'epc' in URL are filtered."""
+        html = """<!DOCTYPE html><html><body>
+        <a href="//imagescdn.openrent.co.uk/listings/999/o_photo1.JPG"
+           class="lightbox_item"></a>
+        <a href="//imagescdn.openrent.co.uk/listings/999/o_epc_chart.JPG"
+           class="lightbox_item"></a>
+        <a href="//imagescdn.openrent.co.uk/listings/999/o_photo2.JPG"
+           class="lightbox_item"></a>
+        </body></html>"""
+        fetcher._httpx_get_with_retry = AsyncMock(  # type: ignore[method-assign]
+            return_value=_mock_httpx_response(html)
+        )
+        prop = _make_property(PropertySource.OPENRENT)
+        result = await fetcher.fetch_detail_page(prop)
+        assert result is not None
+        assert result.gallery_urls is not None
+        assert len(result.gallery_urls) == 2
+        for url in result.gallery_urls:
+            assert "epc" not in url.lower()
+
+    async def test_gallery_excludes_epc_legacy_lightbox(self, fetcher: DetailFetcher) -> None:
+        """Legacy data-lightbox="gallery" items with 'epc' in URL are filtered."""
+        html = """<!DOCTYPE html><html><body>
+        <a href="//imagescdn.openrent.co.uk/listings/999/o_photo1.JPG"
+           data-lightbox="gallery"></a>
+        <a href="//imagescdn.openrent.co.uk/listings/999/o_epc_graph.JPG"
+           data-lightbox="gallery"></a>
+        </body></html>"""
+        fetcher._httpx_get_with_retry = AsyncMock(  # type: ignore[method-assign]
+            return_value=_mock_httpx_response(html)
+        )
+        prop = _make_property(PropertySource.OPENRENT)
+        result = await fetcher.fetch_detail_page(prop)
+        assert result is not None
+        assert result.gallery_urls is not None
+        assert len(result.gallery_urls) == 1
+        assert "epc" not in result.gallery_urls[0].lower()
+
+    async def test_gallery_excludes_epc_cdn_fallback(self, fetcher: DetailFetcher) -> None:
+        """CDN URL pattern fallback also filters EPC images."""
+        html = """<!DOCTYPE html><html><body>
+        <img src="//imagescdn.openrent.co.uk/listings/999/o_bedroom.jpg" />
+        <img src="//imagescdn.openrent.co.uk/listings/999/o_epc_rating.jpg" />
+        </body></html>"""
+        fetcher._httpx_get_with_retry = AsyncMock(  # type: ignore[method-assign]
+            return_value=_mock_httpx_response(html)
+        )
+        prop = _make_property(PropertySource.OPENRENT)
+        result = await fetcher.fetch_detail_page(prop)
+        assert result is not None
+        assert result.gallery_urls is not None
+        assert len(result.gallery_urls) == 1
+        assert "epc" not in result.gallery_urls[0].lower()
 
 
 # ---------------------------------------------------------------------------
@@ -480,6 +654,30 @@ class TestOnTheMarketParsing:
         prop = _make_property(PropertySource.ONTHEMARKET)
         result = await fetcher.fetch_detail_page(prop)
         assert result is None
+
+    async def test_gallery_excludes_epc_images(self, fetcher: DetailFetcher) -> None:
+        html = """<!DOCTYPE html><html><body>
+        <script id="__NEXT_DATA__" type="application/json">
+        {"props":{"initialReduxState":{"property":{
+            "floorplans":[],
+            "images":[
+                {"original":"https://media.onthemarket.com/img/photo1.jpg"},
+                {"original":"https://media.onthemarket.com/epc/epc_chart.png"},
+                {"original":"https://media.onthemarket.com/img/photo2.jpg"}
+            ],
+            "description":"A nice flat."
+        }}}}
+        </script></body></html>"""
+        fetcher._curl_get_with_retry = AsyncMock(  # type: ignore[method-assign]
+            return_value=_mock_curl_response(html)
+        )
+        prop = _make_property(PropertySource.ONTHEMARKET)
+        result = await fetcher.fetch_detail_page(prop)
+        assert result is not None
+        assert result.gallery_urls is not None
+        assert len(result.gallery_urls) == 2
+        for url in result.gallery_urls:
+            assert "epc" not in url.lower()
 
 
 # ---------------------------------------------------------------------------
