@@ -30,8 +30,8 @@ from home_finder.models import (
     ValueAnalysis,
 )
 
-# Port for test server — avoid conflicts with dev server
-TEST_PORT = 8765
+# Port for test server — avoid conflicts with dev server (8765)
+TEST_PORT = 18765
 BASE_URL = f"http://127.0.0.1:{TEST_PORT}"
 
 
