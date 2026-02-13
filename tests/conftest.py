@@ -10,6 +10,7 @@ import pytest
 from hypothesis import HealthCheck, settings
 from pydantic import HttpUrl
 
+from home_finder.config import Settings
 from home_finder.models import (
     ConditionAnalysis,
     KitchenAnalysis,
@@ -33,6 +34,16 @@ settings.register_profile(
     suppress_health_check=[HealthCheck.too_slow],
 )
 settings.load_profile(os.getenv("HYPOTHESIS_PROFILE", "fast"))
+
+
+@pytest.fixture(autouse=True)
+def _isolate_settings_from_dotenv(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Prevent the local .env file from leaking into test Settings instances."""
+    monkeypatch.setattr(
+        Settings,
+        "model_config",
+        {**Settings.model_config, "env_file": None},
+    )
 
 
 @pytest.fixture
@@ -236,7 +247,7 @@ def sample_quality_analysis() -> PropertyQualityAnalysis:
             overall_condition="good",
             has_visible_damp="no",
             has_visible_mold="no",
-            has_worn_fixtures=False,
+            has_worn_fixtures="no",
             maintenance_concerns=[],
             confidence="high",
         ),

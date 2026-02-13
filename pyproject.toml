@@ -87,10 +87,15 @@ exclude_lines = [
 
 [tool.mutmut]
 paths_to_mutate = [
-    "src/home_finder/filters/criteria.py",
+    "src/home_finder/filters/scoring.py",
+    "src/home_finder/filters/location.py",
+    "src/home_finder/utils/address.py",
 ]
 also_copy = ["src/"]
-pytest_add_cli_args = ["-o", "addopts=--tb=short -p no:cacheprovider -m 'not slow and not browser' --disable-socket --allow-unix-socket --ignore=tests/integration"]
+pytest_add_cli_args = [
+    "-o", "addopts=--tb=short -p no:cacheprovider --ignore=tests/integration --ignore=tests/test_property_based.py",
+]
+pytest_add_cli_args_test_selection = ["-m", "not slow and not browser"]
 debug = true
 
 [tool.uv]

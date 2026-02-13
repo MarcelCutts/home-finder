@@ -200,6 +200,30 @@ class TestOpenRentParser:
         beds = openrent_scraper._extract_bedrooms_from_html(link)
         assert beds == 2
 
+    def test_extract_bedrooms_studio_text(self, openrent_scraper: OpenRentScraper) -> None:
+        """Test that 'Studio' text is parsed as 0 bedrooms."""
+        html = """
+        <a href="/property/123">
+            <span>Studio</span>
+        </a>
+        """
+        soup = BeautifulSoup(html, "html.parser")
+        link = soup.find("a")
+        beds = openrent_scraper._extract_bedrooms_from_html(link)
+        assert beds == 0
+
+    def test_extract_bedrooms_studio_flat_title(self, openrent_scraper: OpenRentScraper) -> None:
+        """Test that 'Studio Flat, E2' title is parsed as 0 bedrooms."""
+        html = """
+        <a href="/property/123">
+            <span>Studio Flat, E2</span>
+        </a>
+        """
+        soup = BeautifulSoup(html, "html.parser")
+        link = soup.find("a")
+        beds = openrent_scraper._extract_bedrooms_from_html(link)
+        assert beds == 0
+
     def test_extract_bedrooms_from_title(self, openrent_scraper: OpenRentScraper) -> None:
         """Test bedroom extraction from title text."""
         html = """

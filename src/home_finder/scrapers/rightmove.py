@@ -309,7 +309,6 @@ class RightmoveScraper(BaseScraper):
             f"maxBedrooms={max_bedrooms}",
             f"minPrice={min_price}",
             f"maxPrice={max_price}",
-            "propertyTypes=flat",
             "dontShow=houseShare",
             "letType=longTerm",
             "sortType=6",

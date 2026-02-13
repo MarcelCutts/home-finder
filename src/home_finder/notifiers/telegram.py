@@ -109,22 +109,22 @@ def _format_value_info(analysis: PropertyQualityAnalysis) -> str | None:
     # Show both benchmark and quality-adjusted value when available
     if value.quality_adjusted_rating and value.note:
         emoji = emoji_map.get(value.quality_adjusted_rating, "")
-        parts = [value.note]
+        parts = [html.escape(value.note)]
         if value.quality_adjusted_note:
-            parts.append(value.quality_adjusted_note)
+            parts.append(html.escape(value.quality_adjusted_note))
         return f"{emoji} {value.quality_adjusted_rating.capitalize()} value — {', '.join(parts)}"
 
     # Quality-adjusted only (no benchmark data)
     if value.quality_adjusted_rating:
         emoji = emoji_map.get(value.quality_adjusted_rating, "")
-        note = value.quality_adjusted_note or ""
+        note = html.escape(value.quality_adjusted_note) if value.quality_adjusted_note else ""
         suffix = f" — {note}" if note else ""
         return f"{emoji} {value.quality_adjusted_rating.capitalize()} value{suffix}"
 
     # Fall back to simple price comparison
     if value.rating:
         emoji = emoji_map.get(value.rating, "")
-        return f"{emoji} {value.rating.capitalize()} value — {value.note}"
+        return f"{emoji} {value.rating.capitalize()} value — {html.escape(value.note)}"
 
     return None
 
@@ -172,7 +172,7 @@ def _format_bathroom_info(analysis: PropertyQualityAnalysis) -> str | None:
         return None
     bathroom = analysis.bathroom
     parts = [bathroom.overall_condition.capitalize()]
-    if bathroom.has_bathtub is True:
+    if bathroom.has_bathtub == "yes":
         parts.append("bathtub")
     if bathroom.shower_type and bathroom.shower_type not in ("unknown", "none"):
         parts.append(f"{bathroom.shower_type.replace('_', ' ')} shower")
@@ -614,12 +614,16 @@ class TelegramNotifier:
         commute_minutes: int | None = None,
         transport_mode: TransportMode | None = None,
         quality_analysis: PropertyQualityAnalysis | None = None,
+        _retry_count: int = 0,
     ) -> bool:
         """Send a merged property notification with photo, inline keyboard, and venue.
 
         If an image is available, sends as a photo with condensed caption and
         inline keyboard buttons. Otherwise falls back to a text message.
         If coordinates are available, follows up with a venue pin.
+
+        Automatically retries on Telegram flood control (429) up to 2 times,
+        sleeping for the duration Telegram specifies.
 
         Args:
             merged: Merged property to notify about.
@@ -630,6 +634,8 @@ class TelegramNotifier:
         Returns:
             True if notification was sent successfully.
         """
+        from aiogram.exceptions import TelegramRetryAfter
+
         try:
             bot = self._get_bot()
             keyboard = _build_inline_keyboard(merged, web_base_url=self.web_base_url)
@@ -657,6 +663,8 @@ class TelegramNotifier:
                             reply_markup=keyboard,
                         )
                         sent_photo = True
+                except TelegramRetryAfter:
+                    raise  # Let the outer handler retry the whole notification
                 except Exception as photo_err:
                     logger.warning(
                         "send_photo_failed_falling_back_to_text",
@@ -697,6 +705,31 @@ class TelegramNotifier:
                 has_image=bool(gallery_urls),
             )
             return True
+
+        except TelegramRetryAfter as e:
+            if _retry_count >= 2:
+                logger.error(
+                    "notification_failed_after_retries",
+                    property_id=merged.unique_id,
+                    retries=_retry_count,
+                    error=str(e),
+                )
+                return False
+            logger.info(
+                "flood_control_retry",
+                property_id=merged.unique_id,
+                retry_after=e.retry_after,
+                attempt=_retry_count + 1,
+            )
+            await asyncio.sleep(e.retry_after + 1)
+            return await self.send_merged_property_notification(
+                merged,
+                commute_minutes=commute_minutes,
+                transport_mode=transport_mode,
+                quality_analysis=quality_analysis,
+                _retry_count=_retry_count + 1,
+            )
+
         except Exception as e:
             logger.error(
                 "notification_failed",

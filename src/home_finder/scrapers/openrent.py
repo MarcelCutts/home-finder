@@ -400,6 +400,9 @@ class OpenRentScraper(BaseScraper):
     def _extract_bedrooms_from_html(self, link) -> int | None:  # type: ignore[no-untyped-def]
         """Try to extract bedroom count from HTML element text."""
         for text in link.stripped_strings:
+            # Studios have 0 bedrooms
+            if "studio" in text.lower():
+                return 0
             # Match "1 Bed" or "2 Beds"
             match = re.match(r"^(\d+)\s+Bed", text)
             if match:

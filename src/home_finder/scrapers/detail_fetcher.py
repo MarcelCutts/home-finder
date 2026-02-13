@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import random
 import re
 from dataclasses import dataclass
 from typing import Any, assert_never
@@ -12,8 +13,9 @@ from curl_cffi.requests import AsyncSession
 from home_finder.logging import get_logger
 from home_finder.models import Property, PropertySource
 
-_MAX_RETRIES = 3
-_RETRY_BASE_DELAY = 2.0  # seconds, doubled each retry
+_MAX_RETRIES = 5
+_RETRY_BASE_DELAY = 3.0  # seconds, doubled each retry (3, 6, 12, 24, 48)
+_CURL_MIN_INTERVAL = 0.3  # minimum seconds between curl_cffi requests
 
 logger = get_logger(__name__)
 
@@ -61,6 +63,8 @@ class DetailFetcher:
         self._curl_session: AsyncSession | None = None  # type: ignore[type-arg]
         self._max_gallery_images = max_gallery_images
         self._proxy_url = proxy_url
+        self._curl_lock = asyncio.Lock()
+        self._curl_next_time: float = 0.0
 
     async def _get_client(self) -> httpx.AsyncClient:
         """Get or create HTTP client."""
@@ -95,6 +99,15 @@ class DetailFetcher:
         response.raise_for_status()  # raise the 429 on final failure
         return response  # unreachable but satisfies type checker
 
+    async def _curl_throttle(self) -> None:
+        """Ensure minimum interval between curl_cffi requests to avoid rate limiting."""
+        async with self._curl_lock:
+            now = asyncio.get_event_loop().time()
+            wait = self._curl_next_time - now
+            if wait > 0:
+                await asyncio.sleep(wait)
+            self._curl_next_time = asyncio.get_event_loop().time() + _CURL_MIN_INTERVAL
+
     async def _curl_get_with_retry(self, url: str) -> Any:
         """GET with retry on 429 for curl_cffi session."""
         session = await self._get_curl_session()
@@ -110,12 +123,20 @@ class DetailFetcher:
         if self._proxy_url:
             kwargs["proxy"] = self._proxy_url
         for attempt in range(_MAX_RETRIES):
+            await self._curl_throttle()
             response = await session.get(url, **kwargs)  # type: ignore[arg-type]
             if response.status_code != 429:
                 return response
-            delay = _RETRY_BASE_DELAY * (2**attempt)
-            logger.debug("rate_limited_retrying", url=url, attempt=attempt + 1, delay=delay)
+            delay = _RETRY_BASE_DELAY * (2**attempt) + random.uniform(0, 1)
+            logger.warning(
+                "rate_limited_retrying",
+                url=url,
+                attempt=attempt + 1,
+                max_retries=_MAX_RETRIES,
+                delay=round(delay, 1),
+            )
             await asyncio.sleep(delay)
+        logger.warning("rate_limit_retries_exhausted", url=url, attempts=_MAX_RETRIES)
         return response
 
     async def fetch_floorplan_url(self, prop: Property) -> str | None:

@@ -133,6 +133,46 @@ nav.container-fluid li {
     font-size: 0.85rem;
 }
 
+/* ===== Quality filters (collapsible) ===== */
+.quality-filters {
+    margin-top: 0.4rem;
+}
+.quality-filters summary {
+    cursor: pointer;
+    font-size: 0.78rem;
+    font-weight: 600;
+    color: var(--text-muted);
+    padding: 0.2rem 0;
+    list-style: none;
+    user-select: none;
+}
+.quality-filters summary::-webkit-details-marker {
+    display: none;
+}
+.quality-filters summary::before {
+    content: "\25B6";
+    display: inline-block;
+    margin-right: 0.35rem;
+    font-size: 0.6rem;
+    transition: transform 0.2s;
+    vertical-align: middle;
+}
+.quality-filters[open] summary::before {
+    transform: rotate(90deg);
+}
+.quality-filters .filter-controls {
+    margin-top: 0.35rem;
+}
+.quality-filters select {
+    margin-bottom: 0;
+    min-width: 110px;
+    flex: 1;
+    height: 2.25rem;
+    font-size: 0.85rem;
+    padding-top: 0.25rem;
+    padding-bottom: 0.25rem;
+}
+
 /* ===== Filter chips ===== */
 .filter-chips-row {
     display: flex;

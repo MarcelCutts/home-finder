@@ -12,9 +12,9 @@ from hypothesis import given, settings
 from hypothesis import strategies as st
 from pydantic import HttpUrl
 
-from home_finder.filters.deduplication import (
+from home_finder.filters.deduplication import Deduplicator
+from home_finder.filters.scoring import (
     MATCH_THRESHOLD,
-    Deduplicator,
     calculate_match_score,
 )
 from home_finder.models import MergedProperty, Property, PropertyImage, PropertySource

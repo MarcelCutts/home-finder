@@ -2,7 +2,7 @@
 
 import pytest
 
-from home_finder.filters.deduplication import (
+from home_finder.filters.scoring import (
     MATCH_THRESHOLD,
     MINIMUM_SIGNALS,
     MatchConfidence,

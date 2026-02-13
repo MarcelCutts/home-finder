@@ -16,6 +16,7 @@
             <div class="filter-controls" role="group">
                 <select name="bedrooms" aria-label="Bedrooms">
                     <option value="">All beds</option>
+                    <option value="0" {% if bedrooms == 0 %}selected{% endif %}>Studio</option>
                     {% for b in [1, 2, 3, 4] %}
                     <option value="{{ b }}" {% if bedrooms == b %}selected{% endif %}>{{ b }} bed</option>
                     {% endfor %}
@@ -52,6 +53,63 @@
                 {% endif %}
             </div>
         </div>
+        <details class="quality-filters" {% if any_quality_filter_active %}open{% endif %}>
+            <summary>More filters</summary>
+            <div class="filter-controls">
+                <select name="property_type" aria-label="Property type">
+                    <option value="">Any type</option>
+                    {% for t in ["victorian", "edwardian", "georgian", "new_build", "purpose_built", "warehouse", "ex_council", "period_conversion"] %}
+                    <option value="{{ t }}" {% if property_type == t %}selected{% endif %}>{{ t | replace("_", " ") | title }}</option>
+                    {% endfor %}
+                </select>
+
+                <select name="outdoor_space" aria-label="Outdoor space">
+                    <option value="">Outdoor</option>
+                    <option value="yes" {% if outdoor_space == "yes" %}selected{% endif %}>Has outdoor</option>
+                    <option value="no" {% if outdoor_space == "no" %}selected{% endif %}>No outdoor</option>
+                </select>
+
+                <select name="natural_light" aria-label="Natural light">
+                    <option value="">Any light</option>
+                    {% for l in ["excellent", "good", "fair", "poor"] %}
+                    <option value="{{ l }}" {% if natural_light == l %}selected{% endif %}>{{ l | title }} light</option>
+                    {% endfor %}
+                </select>
+
+                <select name="pets" aria-label="Pets allowed">
+                    <option value="">Pets</option>
+                    <option value="yes" {% if pets == "yes" %}selected{% endif %}>Pets allowed</option>
+                </select>
+
+                <select name="value_rating" aria-label="Value rating">
+                    <option value="">Any value</option>
+                    {% for v in ["excellent", "good", "fair", "poor"] %}
+                    <option value="{{ v }}" {% if value_rating == v %}selected{% endif %}>{{ v | title }} value</option>
+                    {% endfor %}
+                </select>
+
+                <select name="hob_type" aria-label="Hob type">
+                    <option value="">Any hob</option>
+                    {% for h in ["gas", "induction", "electric"] %}
+                    <option value="{{ h }}" {% if hob_type == h %}selected{% endif %}>{{ h | title }}</option>
+                    {% endfor %}
+                </select>
+
+                <select name="floor_level" aria-label="Floor level">
+                    <option value="">Any floor</option>
+                    {% for f in ["basement", "ground", "lower", "upper", "top"] %}
+                    <option value="{{ f }}" {% if floor_level == f %}selected{% endif %}>{{ f | title }}</option>
+                    {% endfor %}
+                </select>
+
+                <select name="building_construction" aria-label="Construction">
+                    <option value="">Any build</option>
+                    {% for c in ["solid_brick", "concrete", "timber_frame", "mixed"] %}
+                    <option value="{{ c }}" {% if building_construction == c %}selected{% endif %}>{{ c | replace("_", " ") | title }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+        </details>
         <div class="filter-toolbar">
             <div class="view-toggle">
                 <button type="button" class="view-toggle-btn active" data-view="grid" aria-label="Grid view" aria-pressed="true">

@@ -235,6 +235,80 @@ class MergedProperty(BaseModel):
 # ---------------------------------------------------------------------------
 
 
+class PropertyHighlight(StrEnum):
+    """Constrained vocabulary for positive property features."""
+
+    # Kitchen
+    GAS_HOB = "Gas hob"
+    INDUCTION_HOB = "Induction hob"
+    DISHWASHER = "Dishwasher included"
+    WASHING_MACHINE = "Washing machine"
+    MODERN_KITCHEN = "Modern kitchen"
+    # Bathroom
+    MODERN_BATHROOM = "Modern bathroom"
+    TWO_BATHROOMS = "Two bathrooms"
+    ENSUITE = "Ensuite bathroom"
+    # Light & Space
+    EXCELLENT_LIGHT = "Excellent natural light"
+    GOOD_LIGHT = "Good natural light"
+    FLOOR_TO_CEILING_WINDOWS = "Floor-to-ceiling windows"
+    HIGH_CEILINGS = "High ceilings"
+    SPACIOUS_LIVING = "Spacious living room"
+    OPEN_PLAN = "Open-plan layout"
+    # Storage
+    BUILT_IN_WARDROBES = "Built-in wardrobes"
+    GOOD_STORAGE = "Good storage"
+    # Outdoor
+    PRIVATE_BALCONY = "Private balcony"
+    PRIVATE_GARDEN = "Private garden"
+    PRIVATE_TERRACE = "Private terrace"
+    SHARED_GARDEN = "Shared garden"
+    COMMUNAL_GARDENS = "Communal gardens"
+    ROOF_TERRACE = "Roof terrace"
+    # Condition
+    EXCELLENT_CONDITION = "Excellent condition"
+    RECENTLY_REFURBISHED = "Recently refurbished"
+    PERIOD_FEATURES = "Period features"
+    # Glazing
+    DOUBLE_GLAZING = "Double glazing"
+    # Amenities
+    ON_SITE_GYM = "On-site gym"
+    CONCIERGE = "Concierge"
+    BIKE_STORAGE = "Bike storage"
+    PARKING = "Parking included"
+    # Lifestyle
+    PETS_ALLOWED = "Pets allowed"
+    BILLS_INCLUDED = "Bills included"
+    # Views
+    CANAL_VIEWS = "Canal views"
+    PARK_VIEWS = "Park views"
+
+
+class PropertyLowlight(StrEnum):
+    """Constrained vocabulary for property concerns."""
+
+    NO_DISHWASHER = "No dishwasher"
+    NO_WASHING_MACHINE = "No washing machine"
+    DATED_KITCHEN = "Dated kitchen"
+    ELECTRIC_HOB = "Electric hob"
+    COMPACT_LIVING = "Compact living room"
+    SMALL_LIVING = "Small living room"
+    SMALL_BEDROOM = "Small bedroom"
+    COMPACT_BEDROOM = "Compact bedroom"
+    POOR_STORAGE = "Poor storage"
+    NO_STORAGE = "No storage"
+    DATED_BATHROOM = "Dated bathroom"
+    NO_OUTDOOR_SPACE = "No outdoor space"
+    NO_INTERIOR_PHOTOS = "No interior photos"
+    NO_BATHROOM_PHOTOS = "No bathroom photos"
+    MISSING_KEY_PHOTOS = "Missing key photos"
+    TRAFFIC_NOISE = "Potential traffic noise"
+    NEW_BUILD_ACOUSTICS = "New-build acoustics"
+    SERVICE_CHARGE_UNSTATED = "Service charge unstated"
+    BALCONY_CRACKING = "Balcony cracking"
+    NEEDS_UPDATING = "Needs updating"
+
+
 class PropertyType(StrEnum):
     """Property stock type."""
 
@@ -274,19 +348,14 @@ class ConditionAnalysis(BaseModel):
     overall_condition: Literal["excellent", "good", "fair", "poor", "unknown"] = "unknown"
     has_visible_damp: Literal["yes", "no", "unknown"] = "unknown"
     has_visible_mold: Literal["yes", "no", "unknown"] = "unknown"
-    has_worn_fixtures: bool = False
+    has_worn_fixtures: Literal["yes", "no", "unknown"] = "unknown"
     maintenance_concerns: list[str] = []
     confidence: Literal["high", "medium", "low"] = "medium"
 
-    @field_validator("has_visible_damp", "has_visible_mold", mode="before")
+    @field_validator("has_visible_damp", "has_visible_mold", "has_worn_fixtures", mode="before")
     @classmethod
     def coerce_bool_to_tristate(cls, v: Any) -> Any:
         return _coerce_bool_to_tristate(v)
-
-    @field_validator("has_worn_fixtures", mode="before")
-    @classmethod
-    def coerce_none_to_false(cls, v: Any) -> Any:
-        return _coerce_none_to_false(v)
 
 
 class LightSpaceAnalysis(BaseModel):
@@ -298,9 +367,10 @@ class LightSpaceAnalysis(BaseModel):
     window_sizes: Literal["large", "medium", "small", "unknown"] | None = None
     feels_spacious: bool | None = None  # None = unknown
     ceiling_height: Literal["high", "standard", "low", "unknown"] | None = None
+    floor_level: Literal["basement", "ground", "lower", "upper", "top", "unknown"] | None = None
     notes: str = ""
 
-    @field_validator("window_sizes", "ceiling_height", mode="before")
+    @field_validator("window_sizes", "ceiling_height", "floor_level", mode="before")
     @classmethod
     def coerce_none_to_unknown(cls, v: Any) -> Any:
         return _coerce_none_to_unknown(v)
@@ -337,14 +407,14 @@ class BathroomAnalysis(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     overall_condition: Literal["modern", "decent", "dated", "unknown"] = "unknown"
-    has_bathtub: bool | None = None
+    has_bathtub: Literal["yes", "no", "unknown"] = "unknown"
     shower_type: Literal["overhead", "separate_cubicle", "electric", "none", "unknown"] | None = (
         None
     )
     is_ensuite: Literal["yes", "no", "unknown"] = "unknown"
     notes: str = ""
 
-    @field_validator("is_ensuite", mode="before")
+    @field_validator("has_bathtub", "is_ensuite", mode="before")
     @classmethod
     def coerce_bool_to_tristate(cls, v: Any) -> Any:
         return _coerce_bool_to_tristate(v)
@@ -356,11 +426,11 @@ class BedroomAnalysis(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     primary_is_double: Literal["yes", "no", "unknown"] = "unknown"
-    has_built_in_wardrobe: bool | None = None
+    has_built_in_wardrobe: Literal["yes", "no", "unknown"] = "unknown"
     can_fit_desk: Literal["yes", "no", "unknown"] = "unknown"
     notes: str = ""
 
-    @field_validator("primary_is_double", "can_fit_desk", mode="before")
+    @field_validator("primary_is_double", "has_built_in_wardrobe", "can_fit_desk", mode="before")
     @classmethod
     def coerce_bool_to_tristate(cls, v: Any) -> Any:
         return _coerce_bool_to_tristate(v)
@@ -388,9 +458,14 @@ class StorageAnalysis(BaseModel):
 
     model_config = ConfigDict(frozen=True)
 
-    has_built_in_wardrobes: bool | None = None
-    has_hallway_cupboard: bool | None = None
+    has_built_in_wardrobes: Literal["yes", "no", "unknown"] = "unknown"
+    has_hallway_cupboard: Literal["yes", "no", "unknown"] = "unknown"
     storage_rating: Literal["good", "adequate", "poor", "unknown"] = "unknown"
+
+    @field_validator("has_built_in_wardrobes", "has_hallway_cupboard", mode="before")
+    @classmethod
+    def coerce_bool_to_tristate(cls, v: Any) -> Any:
+        return _coerce_bool_to_tristate(v)
 
 
 class FlooringNoiseAnalysis(BaseModel):
@@ -402,6 +477,9 @@ class FlooringNoiseAnalysis(BaseModel):
         "unknown"
     )
     has_double_glazing: Literal["yes", "no", "unknown"] = "unknown"
+    building_construction: (
+        Literal["solid_brick", "concrete", "timber_frame", "mixed", "unknown"] | None
+    ) = None
     noise_indicators: list[str] = []
     notes: str = ""
 
@@ -409,6 +487,11 @@ class FlooringNoiseAnalysis(BaseModel):
     @classmethod
     def coerce_bool_to_tristate(cls, v: Any) -> Any:
         return _coerce_bool_to_tristate(v)
+
+    @field_validator("building_construction", mode="before")
+    @classmethod
+    def coerce_construction_none(cls, v: Any) -> Any:
+        return _coerce_none_to_unknown(v)
 
 
 class ListingExtraction(BaseModel):

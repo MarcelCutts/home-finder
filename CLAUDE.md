@@ -2,6 +2,18 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+## Why This Exists
+
+Personal rental property finder for Marcel, based in Stoke Newington, London. Scrapes listings, filters, analyzes quality with AI vision, and sends Telegram notifications for good matches.
+
+Marcel runs a small remote software consultancy (WFH full-time) and music events. Key preferences that should inform quality analysis, scoring, and UX decisions:
+
+- **Space layout:** 2-bed (one as office) ideal, or 1-bed with a large common area. Needs separation between sleep and work, plus room to host people for music/social events.
+- **Sound & neighbours:** Good sound insulation, artist-friendly/warehouse areas are a plus — wants to host without being antisocial.
+- **Practical needs:** High-speed internet, gas or induction hob (likes to cook).
+- **Vibe:** Creative/cool spaces appreciated (lofts, conversions, interesting architecture) but subjective.
+- **Reality:** All preferences, not dealbreakers. The London rental market is brutal — compromise expected.
+
 ## Commands
 
 ```bash

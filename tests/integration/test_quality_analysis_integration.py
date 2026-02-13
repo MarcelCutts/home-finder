@@ -91,7 +91,7 @@ def _sample_visual_response() -> dict[str, Any]:
             "overall_condition": "good",
             "has_visible_damp": "no",
             "has_visible_mold": "no",
-            "has_worn_fixtures": False,
+            "has_worn_fixtures": "no",
             "maintenance_concerns": [],
             "confidence": "high",
         },
@@ -109,14 +109,14 @@ def _sample_visual_response() -> dict[str, Any]:
         },
         "bathroom": {
             "overall_condition": "modern",
-            "has_bathtub": True,
+            "has_bathtub": "yes",
             "shower_type": "overhead",
             "is_ensuite": "no",
             "notes": "Clean and modern",
         },
         "bedroom": {
             "primary_is_double": "yes",
-            "has_built_in_wardrobe": True,
+            "has_built_in_wardrobe": "yes",
             "can_fit_desk": "yes",
             "notes": "Good-sized double bedroom",
         },
@@ -128,8 +128,8 @@ def _sample_visual_response() -> dict[str, Any]:
             "notes": "Shared communal garden",
         },
         "storage": {
-            "has_built_in_wardrobes": True,
-            "has_hallway_cupboard": False,
+            "has_built_in_wardrobes": "yes",
+            "has_hallway_cupboard": "no",
             "storage_rating": "adequate",
         },
         "flooring_noise": {

@@ -7,9 +7,11 @@ def extract_price(text: str) -> int | None:
     """Extract monthly price from text.
 
     Handles both pcm (per calendar month) and pw (per week) formats.
+    When both are present (e.g. Rightmove shows "£2,400 pcm £554 pw"),
+    the PCM value is used directly.
 
     Args:
-        text: Price text (e.g., "£2,300 pcm", "£500 pw").
+        text: Price text (e.g., "£2,300 pcm", "£500 pw", "£2,400 pcm £554 pw").
 
     Returns:
         Monthly price in GBP, or None if not parseable.
@@ -17,14 +19,21 @@ def extract_price(text: str) -> int | None:
     if not text:
         return None
 
+    text_lower = text.lower()
+
+    # Prefer explicit PCM price (avoids double-conversion when both pcm and pw present)
+    pcm_match = re.search(r"£([\d,]+)\s*pcm", text_lower)
+    if pcm_match:
+        return int(pcm_match.group(1).replace(",", ""))
+
     match = re.search(r"£([\d,]+)", text)
     if not match:
         return None
 
     price = int(match.group(1).replace(",", ""))
 
-    # Convert weekly to monthly if needed
-    if "pw" in text.lower():
+    # Convert weekly to monthly (only when no PCM value was found)
+    if "pw" in text_lower:
         price = int(price * 52 / 12)
 
     return price

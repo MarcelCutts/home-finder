@@ -93,9 +93,18 @@ flats are notoriously storage-poor — flag when absent.
 description. Premium London feature worth noting.
 
 11. Flooring & Noise: Floor type (hardwood, laminate, carpet), double glazing \
-presence, road-facing rooms, railway/traffic proximity indicators.
+presence, road-facing rooms, railway/traffic proximity indicators. Estimate \
+building construction type from visual cues: solid brick (thick walls, period \
+build), concrete (brutalist, ex-council, new-build blocks), timber frame \
+(lightweight new-builds, stud wall indicators), mixed, or unknown. This \
+affects sound insulation — solid brick and concrete are quieter.
 
-12. Red Flags: Missing room photos (no bathroom/kitchen photos), too few \
+12. Floor Level: Estimate from photos and floorplan context — look for stairs \
+in photos, "ground floor"/"first floor" in description, lift mentions, views \
+from windows. Use: basement, ground, lower (1st-2nd), upper (3rd-4th), top \
+(5th+), or unknown.
+
+13. Red Flags: Missing room photos (no bathroom/kitchen photos), too few \
 photos total (<4), selective angles hiding issues, description gaps or \
 concerning language.
 </analysis_steps>
@@ -162,13 +171,12 @@ the visual analysis findings — if damp was flagged as unknown, suggest \
 checking for it; if maintenance concerns were noted, suggest inspecting those \
 areas. Be specific, not generic.
 
-4. Highlights: Review all visual analysis sub-models and pick 3-5 most notable \
-positive features as 1-3 word tags (e.g. "Gas hob", "Balcony", "High ceilings", \
-"New bathroom", "Pets allowed"). Do NOT include EPC rating here.
+4. Highlights: Select 3-5 from the available highlight tags that best describe \
+this property's positive features. Choose only tags supported by the visual \
+evidence. Do NOT include EPC rating here.
 
-5. Lowlights: Review all visual analysis sub-models and pick 1-3 most notable \
-concerns or gaps as 1-3 word tags (e.g. "No dishwasher", "Street noise", \
-"Small bedroom").
+5. Lowlights: Select 1-3 from the available lowlight tags that best describe \
+this property's concerns or gaps.
 
 6. One-liner: 6-12 word tagline capturing the property's character \
 (e.g. "Bright Victorian flat with period features and a modern kitchen"). \

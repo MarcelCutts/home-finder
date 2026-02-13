@@ -91,12 +91,31 @@ class TestToolSchema:
         eval_schema = EVALUATION_TOOL["input_schema"]["properties"]
         expected_enum = ["yes", "no", "unknown"]
 
-        # condition.has_visible_damp and has_visible_mold (Phase 1)
+        # condition tri-state fields (Phase 1)
         condition_props = visual_schema["condition"]["properties"]
         assert condition_props["has_visible_damp"]["type"] == "string"
         assert condition_props["has_visible_damp"]["enum"] == expected_enum
         assert condition_props["has_visible_mold"]["type"] == "string"
         assert condition_props["has_visible_mold"]["enum"] == expected_enum
+        assert condition_props["has_worn_fixtures"]["type"] == "string"
+        assert condition_props["has_worn_fixtures"]["enum"] == expected_enum
+
+        # bathroom.has_bathtub (Phase 1)
+        bathroom_props = visual_schema["bathroom"]["properties"]
+        assert bathroom_props["has_bathtub"]["type"] == "string"
+        assert bathroom_props["has_bathtub"]["enum"] == expected_enum
+
+        # bedroom.has_built_in_wardrobe (Phase 1)
+        bedroom_props = visual_schema["bedroom"]["properties"]
+        assert bedroom_props["has_built_in_wardrobe"]["type"] == "string"
+        assert bedroom_props["has_built_in_wardrobe"]["enum"] == expected_enum
+
+        # storage tri-state fields (Phase 1)
+        storage_props = visual_schema["storage"]["properties"]
+        assert storage_props["has_built_in_wardrobes"]["type"] == "string"
+        assert storage_props["has_built_in_wardrobes"]["enum"] == expected_enum
+        assert storage_props["has_hallway_cupboard"]["type"] == "string"
+        assert storage_props["has_hallway_cupboard"]["enum"] == expected_enum
 
         # flooring_noise.has_double_glazing (Phase 1)
         fn_props = visual_schema["flooring_noise"]["properties"]
@@ -187,7 +206,7 @@ class TestConditionAnalysis:
             overall_condition="fair",
             has_visible_damp="yes",
             has_visible_mold="no",
-            has_worn_fixtures=True,
+            has_worn_fixtures="yes",
             maintenance_concerns=["Damp near window", "Dated bathroom"],
             confidence="high",
         )
@@ -479,7 +498,7 @@ def sample_visual_response() -> dict[str, Any]:
             "overall_condition": "good",
             "has_visible_damp": "no",
             "has_visible_mold": "no",
-            "has_worn_fixtures": False,
+            "has_worn_fixtures": "no",
             "maintenance_concerns": [],
             "confidence": "high",
         },
@@ -497,14 +516,14 @@ def sample_visual_response() -> dict[str, Any]:
         },
         "bathroom": {
             "overall_condition": "modern",
-            "has_bathtub": True,
+            "has_bathtub": "yes",
             "shower_type": "overhead",
             "is_ensuite": "no",
             "notes": "Clean and modern",
         },
         "bedroom": {
             "primary_is_double": "yes",
-            "has_built_in_wardrobe": True,
+            "has_built_in_wardrobe": "yes",
             "can_fit_desk": "yes",
             "notes": "Good-sized double bedroom",
         },
@@ -516,8 +535,8 @@ def sample_visual_response() -> dict[str, Any]:
             "notes": "Shared communal garden",
         },
         "storage": {
-            "has_built_in_wardrobes": True,
-            "has_hallway_cupboard": False,
+            "has_built_in_wardrobes": "yes",
+            "has_hallway_cupboard": "no",
             "storage_rating": "adequate",
         },
         "flooring_noise": {
@@ -585,7 +604,7 @@ def sample_visual_response_with_nulls() -> dict[str, Any]:
             "overall_condition": "unknown",
             "has_visible_damp": "unknown",
             "has_visible_mold": "unknown",
-            "has_worn_fixtures": False,
+            "has_worn_fixtures": "unknown",
             "maintenance_concerns": [],
             "confidence": "low",
         },
@@ -760,7 +779,7 @@ class TestPropertyQualityFilter:
                 "overall_condition": "good",
                 "has_visible_damp": "no",
                 "has_visible_mold": "no",
-                "has_worn_fixtures": False,
+                "has_worn_fixtures": "no",
                 "maintenance_concerns": [],
                 "confidence": "high",
             },
@@ -797,7 +816,7 @@ class TestPropertyQualityFilter:
                 "overall_condition": "good",
                 "has_visible_damp": "no",
                 "has_visible_mold": "no",
-                "has_worn_fixtures": False,
+                "has_worn_fixtures": "no",
                 "maintenance_concerns": [],
                 "confidence": "high",
             },

@@ -10,7 +10,7 @@ import pytest
 from hypothesis import assume, given, settings
 from hypothesis import strategies as st
 
-from home_finder.filters.deduplication import (
+from home_finder.filters.scoring import (
     COORDINATE_DISTANCE_METERS,
     MATCH_THRESHOLD,
     MINIMUM_SIGNALS,

@@ -2,7 +2,7 @@
 
 from pydantic import HttpUrl
 
-from home_finder.filters.deduplication import (
+from home_finder.filters.scoring import (
     coordinates_match,
     is_full_postcode,
     prices_match,

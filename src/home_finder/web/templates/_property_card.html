@@ -3,7 +3,7 @@
     <a href="/property/{{ prop.unique_id }}" class="card-link">
         <div class="card-image-wrapper">
             {% if prop.image_url %}
-            <img src="{{ prop.image_url }}" alt="{{ prop.bedrooms }} bed — {{ prop.postcode or 'Property' }}" loading="lazy" class="card-image">
+            <img src="{{ prop.image_url }}" alt="{% if prop.bedrooms == 0 %}Studio{% else %}{{ prop.bedrooms }} bed{% endif %} — {{ prop.postcode or 'Property' }}" loading="lazy" class="card-image">
             {% else %}
             <div class="card-image card-image-placeholder">No image</div>
             {% endif %}
@@ -19,7 +19,7 @@
                     <span class="card-price-label">pcm</span>
                 </div>
                 {% endif %}
-                <span class="badge badge-neutral">{{ prop.bedrooms }} bed</span>
+                <span class="badge badge-neutral">{% if prop.bedrooms == 0 %}Studio{% else %}{{ prop.bedrooms }} bed{% endif %}</span>
             </div>
         </div>
         <div class="card-body">

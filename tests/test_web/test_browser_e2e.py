@@ -105,7 +105,7 @@ def _make_analyzed_property(
             overall_condition="good",
             has_visible_damp="no",
             has_visible_mold="no",
-            has_worn_fixtures=False,
+            has_worn_fixtures="no",
             maintenance_concerns=[],
             confidence="high",
         ),

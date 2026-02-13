@@ -181,6 +181,9 @@ class TestRightmoveParser:
             ("£1,950 pcm", 1950),
             ("£2,100 pcm", 2100),
             ("£500 pw", 2166),  # Weekly to monthly (500*52/12)
+            ("£2,400 pcm£554 pw", 2400),  # Both present: use PCM
+            ("£2,400 pcm\n£554 pw", 2400),  # Newline-separated
+            ("£2,400 pcm (£554 pw)", 2400),  # Parenthesised pw
         ],
     )
     def test_extract_price(self, text: str, expected: int) -> None:

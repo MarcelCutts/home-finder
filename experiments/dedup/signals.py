@@ -13,7 +13,7 @@ from dataclasses import dataclass, field
 import numpy as np
 from rapidfuzz import fuzz
 
-from home_finder.filters.deduplication import (
+from home_finder.filters.scoring import (
     COORDINATE_DISTANCE_METERS,
     FULL_POSTCODE_PATTERN,
     PRICE_TOLERANCE,

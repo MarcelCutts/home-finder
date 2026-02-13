@@ -897,6 +897,15 @@ class PropertyStorage:
         area: str | None = None,
         page: int = 1,
         per_page: int = 24,
+        property_type: str | None = None,
+        outdoor_space: str | None = None,
+        natural_light: str | None = None,
+        pets: str | None = None,
+        value_rating: str | None = None,
+        hob_type: str | None = None,
+        floor_level: str | None = None,
+        building_construction: str | None = None,
+        tags: list[str] | None = None,
     ) -> tuple[list[PropertyListItem], int]:
         """Get paginated properties with optional filters.
 
@@ -923,6 +932,54 @@ class PropertyStorage:
         if area:
             where_clauses.append("UPPER(p.postcode) LIKE ?")
             params.append(f"{area.upper()}%")
+        if property_type:
+            where_clauses.append(
+                "json_extract(q.analysis_json, '$.listing_extraction.property_type') = ?"
+            )
+            params.append(property_type)
+        if outdoor_space == "yes":
+            where_clauses.append("q.has_outdoor_space = 1")
+        elif outdoor_space == "no":
+            where_clauses.append("(q.has_outdoor_space = 0 OR q.has_outdoor_space IS NULL)")
+        if natural_light:
+            where_clauses.append(
+                "json_extract(q.analysis_json, '$.light_space.natural_light') = ?"
+            )
+            params.append(natural_light)
+        if pets == "yes":
+            where_clauses.append(
+                "json_extract(q.analysis_json, '$.listing_extraction.pets_allowed') = 'yes'"
+            )
+        if value_rating:
+            where_clauses.append(
+                "(json_extract(q.analysis_json, '$.value.quality_adjusted_rating') = ?"
+                " OR json_extract(q.analysis_json, '$.value.rating') = ?)"
+            )
+            params.extend([value_rating, value_rating])
+        if hob_type:
+            where_clauses.append(
+                "json_extract(q.analysis_json, '$.kitchen.hob_type') = ?"
+            )
+            params.append(hob_type)
+        if floor_level:
+            where_clauses.append(
+                "json_extract(q.analysis_json, '$.light_space.floor_level') = ?"
+            )
+            params.append(floor_level)
+        if building_construction:
+            where_clauses.append(
+                "json_extract(q.analysis_json, '$.flooring_noise.building_construction') = ?"
+            )
+            params.append(building_construction)
+        if tags:
+            for t in tags:
+                # Search in both highlights and lowlights JSON arrays
+                where_clauses.append(
+                    "(json_extract(q.analysis_json, '$.highlights') LIKE ?"
+                    " OR json_extract(q.analysis_json, '$.lowlights') LIKE ?)"
+                )
+                escaped = t.replace("%", "\\%").replace("_", "\\_")
+                params.extend([f"%{escaped}%", f"%{escaped}%"])
 
         where_sql = " AND ".join(where_clauses) if where_clauses else "1=1"
 
@@ -978,8 +1035,20 @@ class PropertyStorage:
                         "rating"
                     )
                     # Extended quality fields for card display
-                    prop_dict["highlights"] = analysis.get("highlights")
-                    prop_dict["lowlights"] = analysis.get("lowlights")
+                    # Defensive: filter out junk entries (commas, empties) from
+                    # old analyses where Claude returned malformed lists
+                    raw_hl = analysis.get("highlights")
+                    raw_ll = analysis.get("lowlights")
+                    prop_dict["highlights"] = (
+                        [t for t in raw_hl if isinstance(t, str) and t.strip() not in ("", ",")]
+                        if isinstance(raw_hl, list)
+                        else None
+                    )
+                    prop_dict["lowlights"] = (
+                        [t for t in raw_ll if isinstance(t, str) and t.strip() not in ("", ",")]
+                        if isinstance(raw_ll, list)
+                        else None
+                    )
                     prop_dict["one_line"] = analysis.get("one_line")
                     listing_ext = analysis.get("listing_extraction") or {}
                     prop_dict["property_type"] = listing_ext.get("property_type")

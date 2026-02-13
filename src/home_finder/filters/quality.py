@@ -22,6 +22,8 @@ from home_finder.models import (
     KitchenAnalysis,
     LightSpaceAnalysis,
     MergedProperty,
+    PropertyHighlight,
+    PropertyLowlight,
     PropertyQualityAnalysis,
     SpaceAnalysis,
     ValueAnalysis,
@@ -143,7 +145,7 @@ class _VisualAnalysisResponse(BaseModel):
         overall_condition: Literal["excellent", "good", "fair", "poor", "unknown"]
         has_visible_damp: Literal["yes", "no", "unknown"]
         has_visible_mold: Literal["yes", "no", "unknown"]
-        has_worn_fixtures: bool
+        has_worn_fixtures: Literal["yes", "no", "unknown"]
         maintenance_concerns: list[str] = Field(description="List of specific maintenance concerns")
         confidence: Literal["high", "medium", "low"]
 
@@ -153,6 +155,9 @@ class _VisualAnalysisResponse(BaseModel):
         window_sizes: Literal["large", "medium", "small", "unknown"]
         feels_spacious: bool = Field(description="Whether the property feels spacious")
         ceiling_height: Literal["high", "standard", "low", "unknown"]
+        floor_level: Literal["basement", "ground", "lower", "upper", "top", "unknown"] = Field(
+            description="Estimated floor level from photos/description/floorplan"
+        )
         notes: str
 
     class Space(BaseModel):
@@ -166,7 +171,7 @@ class _VisualAnalysisResponse(BaseModel):
     class Bathroom(BaseModel):
         model_config = _Forbid
         overall_condition: Literal["modern", "decent", "dated", "unknown"]
-        has_bathtub: bool
+        has_bathtub: Literal["yes", "no", "unknown"]
         shower_type: Literal["overhead", "separate_cubicle", "electric", "none", "unknown"]
         is_ensuite: Literal["yes", "no", "unknown"]
         notes: str
@@ -174,7 +179,7 @@ class _VisualAnalysisResponse(BaseModel):
     class Bedroom(BaseModel):
         model_config = _Forbid
         primary_is_double: Literal["yes", "no", "unknown"]
-        has_built_in_wardrobe: bool
+        has_built_in_wardrobe: Literal["yes", "no", "unknown"]
         can_fit_desk: Literal["yes", "no", "unknown"]
         notes: str
 
@@ -188,14 +193,17 @@ class _VisualAnalysisResponse(BaseModel):
 
     class Storage(BaseModel):
         model_config = _Forbid
-        has_built_in_wardrobes: bool
-        has_hallway_cupboard: bool
+        has_built_in_wardrobes: Literal["yes", "no", "unknown"]
+        has_hallway_cupboard: Literal["yes", "no", "unknown"]
         storage_rating: Literal["good", "adequate", "poor", "unknown"]
 
     class FlooringNoise(BaseModel):
         model_config = _Forbid
         primary_flooring: Literal["hardwood", "laminate", "carpet", "tile", "mixed", "unknown"]
         has_double_glazing: Literal["yes", "no", "unknown"]
+        building_construction: Literal[
+            "solid_brick", "concrete", "timber_frame", "mixed", "unknown"
+        ] = Field(description="Building construction type estimated from visual cues")
         noise_indicators: list[str]
         notes: str
 
@@ -286,8 +294,12 @@ class _EvaluationResponse(BaseModel):
 
     listing_extraction: ListingExtraction
     viewing_notes: ViewingNotes
-    highlights: list[str] = Field(description="Top 3-5 positive features as 1-3 word tags")
-    lowlights: list[str] = Field(description="Top 1-3 concerns as 1-3 word tags")
+    highlights: list[Literal[tuple(PropertyHighlight)]] = Field(  # type: ignore[valid-type]
+        description="Top 3-5 positive features from the allowed highlight tags"
+    )
+    lowlights: list[Literal[tuple(PropertyLowlight)]] = Field(  # type: ignore[valid-type]
+        description="Top 1-3 concerns from the allowed lowlight tags"
+    )
     one_line: str = Field(description="6-12 word tagline capturing the property's character")
     value_for_quality: ValueForQuality
 
@@ -1013,17 +1025,45 @@ class PropertyQualityFilter:
             has_eval=bool(eval_data),
         )
 
-        # ── Clean up string fields (Claude sometimes wraps in {"..."}) ──
-        def _clean_str(val: Any) -> Any:
-            if isinstance(val, str):
-                s = val.strip()
-                if s.startswith('{"') and s.endswith('"}'):
-                    s = s[2:-2]
-                return s
-            return val
+        # ── Clean up response data ──
+        # Non-strict mode: Claude sometimes returns nested objects as JSON
+        # strings instead of dicts, or wraps string values in {"..."}.
+        import json as _json
+
+        def _clean_value(val: Any) -> Any:
+            if not isinstance(val, str):
+                return val
+            s = val.strip()
+            # Try to parse JSON strings that should be dicts/lists
+            if (s.startswith("{") and s.endswith("}")) or (
+                s.startswith("[") and s.endswith("]")
+            ):
+                try:
+                    parsed = _json.loads(s)
+                    if isinstance(parsed, (dict, list)):
+                        return parsed
+                except (ValueError, _json.JSONDecodeError):
+                    pass
+            return s
+
+        def _clean_list(lst: list[Any]) -> list[Any]:
+            """Clean list values and remove junk entries (bare commas, empty strings)."""
+            cleaned = []
+            for item in lst:
+                item = _clean_value(item)
+                if isinstance(item, str) and item.strip() in ("", ","):
+                    continue
+                cleaned.append(item)
+            return cleaned
 
         def _clean_dict(d: dict[str, Any]) -> dict[str, Any]:
-            return {k: _clean_str(v) if isinstance(v, str) else v for k, v in d.items()}
+            out: dict[str, Any] = {}
+            for k, v in d.items():
+                if isinstance(v, list):
+                    out[k] = _clean_list(v)
+                else:
+                    out[k] = _clean_value(v)
+            return out
 
         visual_data = _clean_dict(visual_data)
         eval_data = _clean_dict(eval_data)

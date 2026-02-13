@@ -32,8 +32,10 @@
         <div class="{{ quality_item_class(qa.bathroom.overall_condition, ['modern'], ['decent'], ['dated']) }}">
             <h4>Bathroom</h4>
             {% call quality_badge(qa.bathroom.overall_condition, ['modern'], ['decent'], ['dated']) %}{{ qa.bathroom.overall_condition | capitalize }}{% endcall %}
-            {% if qa.bathroom.has_bathtub is not none %}
-            <p>{{ "Bathtub" if qa.bathroom.has_bathtub else "No bathtub" }}</p>
+            {% if qa.bathroom.has_bathtub == 'yes' %}
+            <p>Bathtub</p>
+            {% elif qa.bathroom.has_bathtub == 'no' %}
+            <p>No bathtub</p>
             {% endif %}
             {% if qa.bathroom.shower_type and qa.bathroom.shower_type not in ('unknown', 'none') %}
             <p>{{ qa.bathroom.shower_type | replace("_", " ") | capitalize }} shower</p>
@@ -48,10 +50,10 @@
             {% call quality_badge(qa.condition.overall_condition, ['excellent', 'good'], ['fair'], ['poor']) %}{{ qa.condition.overall_condition | capitalize }}{% endcall %}
             {% if qa.condition.has_visible_damp == 'yes' %}<p>Visible damp</p>{% endif %}
             {% if qa.condition.has_visible_mold == 'yes' %}<p>Visible mould</p>{% endif %}
-            {% if qa.condition.has_worn_fixtures %}<p>Worn fixtures</p>{% endif %}
+            {% if qa.condition.has_worn_fixtures == 'yes' %}<p>Worn fixtures</p>{% endif %}
             {% if qa.condition.maintenance_concerns %}
             <p><small>{{ qa.condition.maintenance_concerns | join(", ") }}</small></p>
-            {% elif qa.condition.overall_condition in ('excellent', 'good') and qa.condition.has_visible_damp != 'yes' and qa.condition.has_visible_mold != 'yes' and not qa.condition.has_worn_fixtures %}
+            {% elif qa.condition.overall_condition in ('excellent', 'good') and qa.condition.has_visible_damp != 'yes' and qa.condition.has_visible_mold != 'yes' and qa.condition.has_worn_fixtures != 'yes' %}
             <p><small>No concerns found</small></p>
             {% endif %}
         </div>
@@ -86,7 +88,7 @@
             {% if qa.bedroom.primary_is_double != 'unknown' %}
             <p>{{ "Double bed fits" if qa.bedroom.primary_is_double == 'yes' else "Single only" }}</p>
             {% endif %}
-            {% if qa.bedroom.has_built_in_wardrobe %}<p>Built-in wardrobe</p>{% else %}<p>No built-in wardrobe</p>{% endif %}
+            {% if qa.bedroom.has_built_in_wardrobe == 'yes' %}<p>Built-in wardrobe</p>{% elif qa.bedroom.has_built_in_wardrobe == 'no' %}<p>No built-in wardrobe</p>{% endif %}
             {% if qa.bedroom.can_fit_desk != 'unknown' %}
             <p>{{ "Desk fits" if qa.bedroom.can_fit_desk == 'yes' else "No desk space" }}</p>
             {% endif %}
@@ -115,8 +117,8 @@
         <div class="{{ quality_item_class(qa.storage.storage_rating, ['good'], ['adequate'], ['poor']) }}">
             <h4>Storage</h4>
             {% call quality_badge(qa.storage.storage_rating, ['good'], ['adequate'], ['poor']) %}{{ qa.storage.storage_rating | capitalize }}{% endcall %}
-            {% if qa.storage.has_built_in_wardrobes %}<p>Built-in wardrobes</p>{% else %}<p>No built-in wardrobes</p>{% endif %}
-            {% if qa.storage.has_hallway_cupboard %}<p>Hallway cupboard</p>{% else %}<p>No hallway cupboard</p>{% endif %}
+            {% if qa.storage.has_built_in_wardrobes == 'yes' %}<p>Built-in wardrobes</p>{% elif qa.storage.has_built_in_wardrobes == 'no' %}<p>No built-in wardrobes</p>{% endif %}
+            {% if qa.storage.has_hallway_cupboard == 'yes' %}<p>Hallway cupboard</p>{% elif qa.storage.has_hallway_cupboard == 'no' %}<p>No hallway cupboard</p>{% endif %}
         </div>
         {% endif %}
 
