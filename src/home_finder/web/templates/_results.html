@@ -1,4 +1,4 @@
-{% macro page_url(target_page) %}?page={{ target_page }}&sort={{ sort }}{% if min_price %}&min_price={{ min_price }}{% endif %}{% if max_price %}&max_price={{ max_price }}{% endif %}{% if bedrooms is not none %}&bedrooms={{ bedrooms }}{% endif %}{% if min_rating %}&min_rating={{ min_rating }}{% endif %}{% if area %}&area={{ area }}{% endif %}{% if property_type %}&property_type={{ property_type }}{% endif %}{% if outdoor_space %}&outdoor_space={{ outdoor_space }}{% endif %}{% if natural_light %}&natural_light={{ natural_light }}{% endif %}{% if pets %}&pets={{ pets }}{% endif %}{% if value_rating %}&value_rating={{ value_rating }}{% endif %}{% if hob_type %}&hob_type={{ hob_type }}{% endif %}{% if floor_level %}&floor_level={{ floor_level }}{% endif %}{% if building_construction %}&building_construction={{ building_construction }}{% endif %}{% if tags %}{% for t in tags %}&tag={{ t | urlencode }}{% endfor %}{% endif %}{% endmacro %}
+{% macro page_url(target_page) %}?page={{ target_page }}&sort={{ sort }}{% if min_price %}&min_price={{ min_price }}{% endif %}{% if max_price %}&max_price={{ max_price }}{% endif %}{% if bedrooms is not none %}&bedrooms={{ bedrooms }}{% endif %}{% if min_rating %}&min_rating={{ min_rating }}{% endif %}{% if area %}&area={{ area }}{% endif %}{% if property_type %}&property_type={{ property_type }}{% endif %}{% if outdoor_space %}&outdoor_space={{ outdoor_space }}{% endif %}{% if natural_light %}&natural_light={{ natural_light }}{% endif %}{% if pets %}&pets={{ pets }}{% endif %}{% if value_rating %}&value_rating={{ value_rating }}{% endif %}{% if hob_type %}&hob_type={{ hob_type }}{% endif %}{% if floor_level %}&floor_level={{ floor_level }}{% endif %}{% if building_construction %}&building_construction={{ building_construction }}{% endif %}{% if office_separation %}&office_separation={{ office_separation }}{% endif %}{% if hosting_layout %}&hosting_layout={{ hosting_layout }}{% endif %}{% if hosting_noise_risk %}&hosting_noise_risk={{ hosting_noise_risk }}{% endif %}{% if broadband_type %}&broadband_type={{ broadband_type }}{% endif %}{% if tags %}{% for t in tags %}&tag={{ t | urlencode }}{% endfor %}{% endif %}{% endmacro %}
 
 <span id="nav-count" hx-swap-oob="innerHTML:#nav-count">{{ total }} properties{% if active_filters %} <small>({{ active_filters|length }} filter{{ 's' if active_filters|length != 1 }} active)</small>{% endif %}</span>
 
@@ -9,7 +9,7 @@
     {% for f in active_filters %}
     <span class="filter-chip">
         {{ f.label }}
-        <button type="button" class="filter-chip-remove" data-filter-key="{{ f.key }}" aria-label="Remove {{ f.label }} filter">&times;</button>
+        <button type="button" class="filter-chip-remove" data-filter-key="{{ f.key }}"{% if f.value %} data-filter-value="{{ f.value }}"{% endif %} aria-label="Remove {{ f.label }} filter">&times;</button>
     </span>
     {% endfor %}
 </div>

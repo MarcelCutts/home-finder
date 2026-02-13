@@ -28,7 +28,8 @@ uv run home-finder --max-per-scraper 5  # Limit results per scraper (for testing
 uv run home-finder --serve              # Web dashboard + recurring pipeline scheduler
 uv run home-finder --debug              # Enable debug-level logging
 
-# Testing
+# Testing — timeout is already configured in pyproject.toml addopts (30s default).
+# Do NOT pass --timeout on the command line; it's handled automatically.
 uv run pytest                         # Run all tests (slow tests excluded by default)
 uv run pytest tests/test_models.py    # Run specific test file
 uv run pytest -k "test_openrent"      # Run tests matching pattern

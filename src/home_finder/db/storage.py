@@ -221,6 +221,34 @@ class PropertyStorage:
             ON properties(enrichment_status)
         """)
 
+        # Pipeline runs table for observability
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS pipeline_runs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                started_at TEXT NOT NULL,
+                completed_at TEXT,
+                status TEXT NOT NULL DEFAULT 'running',
+                scraped_count INTEGER DEFAULT 0,
+                new_count INTEGER DEFAULT 0,
+                enriched_count INTEGER DEFAULT 0,
+                analyzed_count INTEGER DEFAULT 0,
+                notified_count INTEGER DEFAULT 0,
+                anchors_updated INTEGER DEFAULT 0,
+                error_message TEXT,
+                duration_seconds REAL
+            )
+        """)
+
+        # Migrate: add sources_updated_at for cross-run source tracking
+        for column, col_type, default in [
+            ("sources_updated_at", "TEXT", None),
+        ]:
+            with contextlib.suppress(Exception):
+                default_clause = f" DEFAULT {default}" if default is not None else ""
+                await conn.execute(
+                    f"ALTER TABLE properties ADD COLUMN {column} {col_type}{default_clause}"
+                )
+
         # Migrate: add denormalized quality columns
         for column, col_type in [
             ("epc_rating", "TEXT"),
@@ -547,9 +575,7 @@ class PropertyStorage:
         await conn.commit()
         logger.debug("unenriched_property_saved", unique_id=prop.unique_id)
 
-    async def get_unenriched_properties(
-        self, max_attempts: int = 3
-    ) -> list[MergedProperty]:
+    async def get_unenriched_properties(self, max_attempts: int = 3) -> list[MergedProperty]:
         """Load properties that failed enrichment for retry.
 
         Args:
@@ -823,7 +849,8 @@ class PropertyStorage:
                 source_urls = ?,
                 descriptions_json = ?,
                 min_price = ?,
-                max_price = ?
+                max_price = ?,
+                sources_updated_at = ?
             WHERE unique_id = ?
             """,
             (
@@ -832,6 +859,7 @@ class PropertyStorage:
                 descriptions_json,
                 new_min,
                 new_max,
+                datetime.now(UTC).isoformat(),
                 existing_unique_id,
             ),
         )
@@ -1100,17 +1128,303 @@ class PropertyStorage:
             return None
         return PropertyQualityAnalysis.model_validate_json(row["analysis_json"])
 
-    async def get_properties_paginated(
+    # ------------------------------------------------------------------
+    # Pipeline run tracking
+    # ------------------------------------------------------------------
+
+    async def create_pipeline_run(self) -> int:
+        """Create a new pipeline run record.
+
+        Returns:
+            The ID of the new run.
+        """
+        conn = await self._get_connection()
+        cursor = await conn.execute(
+            "INSERT INTO pipeline_runs (started_at, status) VALUES (?, 'running')",
+            (datetime.now(UTC).isoformat(),),
+        )
+        await conn.commit()
+        return cursor.lastrowid  # type: ignore[return-value]
+
+    async def update_pipeline_run(self, run_id: int, **counts: int) -> None:
+        """Update count columns on a pipeline run.
+
+        Args:
+            run_id: The pipeline run ID.
+            **counts: Column name/value pairs to update (e.g. scraped_count=42).
+        """
+        if not counts:
+            return
+        conn = await self._get_connection()
+        set_clauses = ", ".join(f"{k} = ?" for k in counts)
+        values = list(counts.values())
+        values.append(run_id)
+        await conn.execute(
+            f"UPDATE pipeline_runs SET {set_clauses} WHERE id = ?",  # noqa: S608
+            values,
+        )
+        await conn.commit()
+
+    async def complete_pipeline_run(
         self,
+        run_id: int,
+        status: str,
         *,
-        sort: str = "newest",
+        error_message: str | None = None,
+    ) -> None:
+        """Mark a pipeline run as completed or failed.
+
+        Args:
+            run_id: The pipeline run ID.
+            status: Final status ('completed' or 'failed').
+            error_message: Error message if status is 'failed'.
+        """
+        conn = await self._get_connection()
+        now = datetime.now(UTC).isoformat()
+        # Calculate duration from started_at
+        cursor = await conn.execute("SELECT started_at FROM pipeline_runs WHERE id = ?", (run_id,))
+        row = await cursor.fetchone()
+        duration = None
+        if row:
+            started = datetime.fromisoformat(row["started_at"])
+            duration = (datetime.fromisoformat(now) - started).total_seconds()
+
+        await conn.execute(
+            """
+            UPDATE pipeline_runs
+            SET completed_at = ?, status = ?, error_message = ?, duration_seconds = ?
+            WHERE id = ?
+            """,
+            (now, status, error_message, duration, run_id),
+        )
+        await conn.commit()
+
+    async def get_last_pipeline_run(self) -> dict[str, Any] | None:
+        """Get the most recent completed pipeline run.
+
+        Returns:
+            Dict with run data, or None if no runs exist.
+        """
+        conn = await self._get_connection()
+        cursor = await conn.execute(
+            """
+            SELECT * FROM pipeline_runs
+            WHERE status IN ('completed', 'failed')
+            ORDER BY id DESC LIMIT 1
+            """
+        )
+        row = await cursor.fetchone()
+        if row is None:
+            return None
+        return dict(row)
+
+    # ------------------------------------------------------------------
+    # Quality analysis retry (save-before-analyze pattern)
+    # ------------------------------------------------------------------
+
+    async def save_pre_analysis_properties(
+        self,
+        merged_list: list[MergedProperty],
+        commute_lookup: dict[str, tuple[int, TransportMode]],
+    ) -> None:
+        """Batch save properties before quality analysis.
+
+        Saves with notification_status='pending_analysis' and
+        enrichment_status='enriched'. If the process crashes during
+        quality analysis, these can be recovered on next run.
+
+        Args:
+            merged_list: Properties to save.
+            commute_lookup: Commute data keyed by unique_id.
+        """
+        conn = await self._get_connection()
+        for merged in merged_list:
+            prop = merged.canonical
+            commute_info = commute_lookup.get(prop.unique_id)
+            commute_minutes = commute_info[0] if commute_info else None
+            transport_mode = commute_info[1] if commute_info else None
+
+            sources_json = json.dumps([s.value for s in merged.sources])
+            source_urls_json = json.dumps(
+                {s.value: str(url) for s, url in merged.source_urls.items()}
+            )
+            descriptions_json = (
+                json.dumps({s.value: d for s, d in merged.descriptions.items()})
+                if merged.descriptions
+                else None
+            )
+
+            await conn.execute(
+                """
+                INSERT INTO properties (
+                    unique_id, source, source_id, url, title, price_pcm,
+                    bedrooms, address, postcode, latitude, longitude,
+                    description, image_url, available_from, first_seen,
+                    commute_minutes, transport_mode, notification_status,
+                    sources, source_urls, min_price, max_price, descriptions_json,
+                    enrichment_status
+                ) VALUES (
+                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'enriched'
+                )
+                ON CONFLICT(unique_id) DO UPDATE SET
+                    notification_status = excluded.notification_status
+                """,
+                (
+                    prop.unique_id,
+                    prop.source.value,
+                    prop.source_id,
+                    str(prop.url),
+                    prop.title,
+                    prop.price_pcm,
+                    prop.bedrooms,
+                    prop.address,
+                    prop.postcode,
+                    prop.latitude,
+                    prop.longitude,
+                    prop.description,
+                    str(prop.image_url) if prop.image_url else None,
+                    prop.available_from.isoformat() if prop.available_from else None,
+                    prop.first_seen.isoformat(),
+                    commute_minutes,
+                    transport_mode.value if transport_mode else None,
+                    NotificationStatus.PENDING_ANALYSIS.value,
+                    sources_json,
+                    source_urls_json,
+                    merged.min_price,
+                    merged.max_price,
+                    descriptions_json,
+                ),
+            )
+
+            # Save images
+            images = list(merged.images)
+            if merged.floorplan:
+                images.append(merged.floorplan)
+            if images:
+                rows = [
+                    (prop.unique_id, img.source.value, str(img.url), img.image_type)
+                    for img in images
+                ]
+                await conn.executemany(
+                    """
+                    INSERT OR IGNORE INTO property_images
+                    (property_unique_id, source, url, image_type)
+                    VALUES (?, ?, ?, ?)
+                    """,
+                    rows,
+                )
+
+        await conn.commit()
+        logger.info("pre_analysis_properties_saved", count=len(merged_list))
+
+    async def get_pending_analysis_properties(self) -> list[MergedProperty]:
+        """Load properties needing quality analysis from previous crashed runs.
+
+        Returns:
+            List of MergedProperty objects with notification_status='pending_analysis'.
+        """
+        conn = await self._get_connection()
+        cursor = await conn.execute(
+            """
+            SELECT * FROM properties
+            WHERE notification_status = ?
+            ORDER BY first_seen ASC
+            """,
+            (NotificationStatus.PENDING_ANALYSIS.value,),
+        )
+        rows = await cursor.fetchall()
+
+        results: list[MergedProperty] = []
+        for row in rows:
+            prop = self._row_to_tracked_property(row).property
+
+            sources_list: list[PropertySource] = []
+            source_urls: dict[PropertySource, HttpUrl] = {}
+            descriptions: dict[PropertySource, str] = {}
+
+            if row["sources"]:
+                for s in json.loads(row["sources"]):
+                    sources_list.append(PropertySource(s))
+            else:
+                sources_list.append(prop.source)
+
+            if row["source_urls"]:
+                for s, url in json.loads(row["source_urls"]).items():
+                    source_urls[PropertySource(s)] = HttpUrl(url)
+            else:
+                source_urls[prop.source] = prop.url
+
+            if row["descriptions_json"]:
+                for s, desc in json.loads(row["descriptions_json"]).items():
+                    descriptions[PropertySource(s)] = desc
+
+            # Load images
+            images = await self.get_property_images(prop.unique_id)
+            gallery = tuple(img for img in images if img.image_type == "gallery")
+            floorplan_img = next((img for img in images if img.image_type == "floorplan"), None)
+
+            min_price = row["min_price"] if row["min_price"] is not None else prop.price_pcm
+            max_price = row["max_price"] if row["max_price"] is not None else prop.price_pcm
+
+            results.append(
+                MergedProperty(
+                    canonical=prop,
+                    sources=tuple(sources_list),
+                    source_urls=source_urls,
+                    images=gallery,
+                    floorplan=floorplan_img,
+                    min_price=min_price,
+                    max_price=max_price,
+                    descriptions=descriptions,
+                )
+            )
+
+        logger.info("loaded_pending_analysis_properties", count=len(results))
+        return results
+
+    async def complete_analysis(
+        self,
+        unique_id: str,
+        quality_analysis: PropertyQualityAnalysis | None,
+    ) -> None:
+        """Complete quality analysis for a property and transition to pending notification.
+
+        Saves quality data (if any) and sets notification_status to 'pending'.
+        Only transitions properties that are currently 'pending_analysis'.
+
+        Args:
+            unique_id: Property unique ID.
+            quality_analysis: Analysis result, or None if analysis was skipped.
+        """
+        if quality_analysis:
+            await self.save_quality_analysis(unique_id, quality_analysis)
+
+        conn = await self._get_connection()
+        await conn.execute(
+            """
+            UPDATE properties
+            SET notification_status = ?
+            WHERE unique_id = ?
+              AND notification_status = ?
+            """,
+            (
+                NotificationStatus.PENDING.value,
+                unique_id,
+                NotificationStatus.PENDING_ANALYSIS.value,
+            ),
+        )
+        await conn.commit()
+        logger.debug("analysis_completed", unique_id=unique_id)
+
+    @staticmethod
+    def _build_filter_clauses(
+        *,
         min_price: int | None = None,
         max_price: int | None = None,
         bedrooms: int | None = None,
         min_rating: int | None = None,
         area: str | None = None,
-        page: int = 1,
-        per_page: int = 24,
         property_type: str | None = None,
         outdoor_space: str | None = None,
         natural_light: str | None = None,
@@ -1119,17 +1433,20 @@ class PropertyStorage:
         hob_type: str | None = None,
         floor_level: str | None = None,
         building_construction: str | None = None,
+        office_separation: str | None = None,
+        hosting_layout: str | None = None,
+        hosting_noise_risk: str | None = None,
+        broadband_type: str | None = None,
         tags: list[str] | None = None,
-    ) -> tuple[list[PropertyListItem], int]:
-        """Get paginated properties with optional filters.
+    ) -> tuple[str, list[Any]]:
+        """Build WHERE clause and params for property filtering.
 
         Returns:
-            Tuple of (property dicts, total count).
+            Tuple of (where_sql, params).
         """
-        conn = await self._get_connection()
-
         where_clauses: list[str] = [
-            "COALESCE(p.enrichment_status, 'enriched') != 'pending'"
+            "COALESCE(p.enrichment_status, 'enriched') != 'pending'",
+            "p.notification_status != 'pending_analysis'",
         ]
         params: list[Any] = []
 
@@ -1158,9 +1475,7 @@ class PropertyStorage:
         elif outdoor_space == "no":
             where_clauses.append("(q.has_outdoor_space = 0 OR q.has_outdoor_space IS NULL)")
         if natural_light:
-            where_clauses.append(
-                "json_extract(q.analysis_json, '$.light_space.natural_light') = ?"
-            )
+            where_clauses.append("json_extract(q.analysis_json, '$.light_space.natural_light') = ?")
             params.append(natural_light)
         if pets == "yes":
             where_clauses.append(
@@ -1173,23 +1488,34 @@ class PropertyStorage:
             )
             params.extend([value_rating, value_rating])
         if hob_type:
-            where_clauses.append(
-                "json_extract(q.analysis_json, '$.kitchen.hob_type') = ?"
-            )
+            where_clauses.append("json_extract(q.analysis_json, '$.kitchen.hob_type') = ?")
             params.append(hob_type)
         if floor_level:
-            where_clauses.append(
-                "json_extract(q.analysis_json, '$.light_space.floor_level') = ?"
-            )
+            where_clauses.append("json_extract(q.analysis_json, '$.light_space.floor_level') = ?")
             params.append(floor_level)
         if building_construction:
             where_clauses.append(
                 "json_extract(q.analysis_json, '$.flooring_noise.building_construction') = ?"
             )
             params.append(building_construction)
+        if office_separation:
+            where_clauses.append("json_extract(q.analysis_json, '$.bedroom.office_separation') = ?")
+            params.append(office_separation)
+        if hosting_layout:
+            where_clauses.append("json_extract(q.analysis_json, '$.space.hosting_layout') = ?")
+            params.append(hosting_layout)
+        if hosting_noise_risk:
+            where_clauses.append(
+                "json_extract(q.analysis_json, '$.flooring_noise.hosting_noise_risk') = ?"
+            )
+            params.append(hosting_noise_risk)
+        if broadband_type:
+            where_clauses.append(
+                "json_extract(q.analysis_json, '$.listing_extraction.broadband_type') = ?"
+            )
+            params.append(broadband_type)
         if tags:
             for t in tags:
-                # Search in both highlights and lowlights JSON arrays
                 where_clauses.append(
                     "(json_extract(q.analysis_json, '$.highlights') LIKE ?"
                     " OR json_extract(q.analysis_json, '$.lowlights') LIKE ?)"
@@ -1198,6 +1524,119 @@ class PropertyStorage:
                 params.extend([f"%{escaped}%", f"%{escaped}%"])
 
         where_sql = " AND ".join(where_clauses) if where_clauses else "1=1"
+        return where_sql, params
+
+    async def get_filter_count(
+        self,
+        *,
+        min_price: int | None = None,
+        max_price: int | None = None,
+        bedrooms: int | None = None,
+        min_rating: int | None = None,
+        area: str | None = None,
+        property_type: str | None = None,
+        outdoor_space: str | None = None,
+        natural_light: str | None = None,
+        pets: str | None = None,
+        value_rating: str | None = None,
+        hob_type: str | None = None,
+        floor_level: str | None = None,
+        building_construction: str | None = None,
+        office_separation: str | None = None,
+        hosting_layout: str | None = None,
+        hosting_noise_risk: str | None = None,
+        broadband_type: str | None = None,
+        tags: list[str] | None = None,
+    ) -> int:
+        """Get count of properties matching filters (no data fetch).
+
+        Returns:
+            Total count of matching properties.
+        """
+        conn = await self._get_connection()
+        where_sql, params = self._build_filter_clauses(
+            min_price=min_price,
+            max_price=max_price,
+            bedrooms=bedrooms,
+            min_rating=min_rating,
+            area=area,
+            property_type=property_type,
+            outdoor_space=outdoor_space,
+            natural_light=natural_light,
+            pets=pets,
+            value_rating=value_rating,
+            hob_type=hob_type,
+            floor_level=floor_level,
+            building_construction=building_construction,
+            office_separation=office_separation,
+            hosting_layout=hosting_layout,
+            hosting_noise_risk=hosting_noise_risk,
+            broadband_type=broadband_type,
+            tags=tags,
+        )
+        cursor = await conn.execute(
+            f"""
+            SELECT COUNT(*) FROM properties p
+            LEFT JOIN quality_analyses q ON p.unique_id = q.property_unique_id
+            WHERE {where_sql}
+            """,  # noqa: S608
+            params,
+        )
+        row = await cursor.fetchone()
+        return row[0] if row else 0
+
+    async def get_properties_paginated(
+        self,
+        *,
+        sort: str = "newest",
+        min_price: int | None = None,
+        max_price: int | None = None,
+        bedrooms: int | None = None,
+        min_rating: int | None = None,
+        area: str | None = None,
+        page: int = 1,
+        per_page: int = 24,
+        property_type: str | None = None,
+        outdoor_space: str | None = None,
+        natural_light: str | None = None,
+        pets: str | None = None,
+        value_rating: str | None = None,
+        hob_type: str | None = None,
+        floor_level: str | None = None,
+        building_construction: str | None = None,
+        office_separation: str | None = None,
+        hosting_layout: str | None = None,
+        hosting_noise_risk: str | None = None,
+        broadband_type: str | None = None,
+        tags: list[str] | None = None,
+    ) -> tuple[list[PropertyListItem], int]:
+        """Get paginated properties with optional filters.
+
+        Returns:
+            Tuple of (property dicts, total count).
+        """
+        conn = await self._get_connection()
+
+        where_sql, params = self._build_filter_clauses(
+            min_price=min_price,
+            max_price=max_price,
+            bedrooms=bedrooms,
+            min_rating=min_rating,
+            area=area,
+            property_type=property_type,
+            outdoor_space=outdoor_space,
+            natural_light=natural_light,
+            pets=pets,
+            value_rating=value_rating,
+            hob_type=hob_type,
+            floor_level=floor_level,
+            building_construction=building_construction,
+            office_separation=office_separation,
+            hosting_layout=hosting_layout,
+            hosting_noise_risk=hosting_noise_risk,
+            broadband_type=broadband_type,
+            tags=tags,
+        )
 
         order_map = {
             "newest": "p.first_seen DESC",

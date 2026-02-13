@@ -492,26 +492,16 @@ async def _save_one(
     quality_analysis: PropertyQualityAnalysis | None,
     storage: PropertyStorage,
 ) -> None:
-    """Save a single property with its commute and quality data to the database."""
-    commute_minutes = commute_info[0] if commute_info else None
-    transport_mode = commute_info[1] if commute_info else None
+    """Complete analysis for a single property and transition to notification-ready.
 
-    await storage.save_merged_property(
-        merged,
-        commute_minutes=commute_minutes,
-        transport_mode=transport_mode,
-    )
-
-    if merged.images:
-        await storage.save_property_images(merged.unique_id, list(merged.images))
-    if merged.floorplan:
-        await storage.save_property_images(merged.unique_id, [merged.floorplan])
-
-    if quality_analysis:
-        await storage.save_quality_analysis(merged.unique_id, quality_analysis)
+    Called after quality analysis completes. The property was already saved to DB
+    by save_pre_analysis_properties() before analysis started.
+    """
+    # Save quality data and transition notification_status to 'pending'
+    await storage.complete_analysis(merged.unique_id, quality_analysis)
 
     # Transition re-enriched properties into normal notification flow.
-    # No-op for genuinely new properties (already notification_status='pending').
+    # No-op for genuinely new properties (already handled by complete_analysis).
     await storage.mark_enriched(merged.unique_id)
 
 
@@ -531,15 +521,34 @@ async def _run_quality_and_save(
 ) -> int:
     """Run quality analysis, save each property, and invoke callback.
 
+    Properties are saved to DB *before* analysis starts (with notification_status
+    'pending_analysis'). If the process crashes mid-analysis, the next run picks
+    them up via get_pending_analysis_properties().
+
     Args:
         pre: Pre-analysis pipeline result.
         settings: Application settings.
         storage: Database storage.
-        on_result: Async callback invoked after each property is saved.
+        on_result: Async callback invoked after each property is analyzed.
 
     Returns:
         Number of properties processed.
     """
+    # Save all properties to DB before analysis (crash recovery checkpoint)
+    await storage.save_pre_analysis_properties(
+        pre.merged_to_process, pre.commute_lookup
+    )
+
+    # Load any pending_analysis properties from previous crashed runs
+    pending_from_prev = await storage.get_pending_analysis_properties()
+    # Exclude properties already in current batch (just saved above)
+    current_ids = {m.unique_id for m in pre.merged_to_process}
+    retried = [m for m in pending_from_prev if m.unique_id not in current_ids]
+    if retried:
+        logger.info("loaded_pending_analysis_retries", count=len(retried))
+
+    all_to_analyze = list(pre.merged_to_process) + retried
+
     use_quality = settings.anthropic_api_key.get_secret_value() and settings.enable_quality_filter
     quality_filter: PropertyQualityFilter | None = None
     if use_quality:
@@ -567,7 +576,7 @@ async def _run_quality_and_save(
                     )
                 return merged, None
 
-        tasks = [asyncio.create_task(_analyze_one(m)) for m in pre.merged_to_process]
+        tasks = [asyncio.create_task(_analyze_one(m)) for m in all_to_analyze]
 
         for coro in asyncio.as_completed(tasks):
             try:
@@ -600,6 +609,9 @@ async def run_pipeline(settings: Settings, *, max_per_scraper: int | None = None
     storage = PropertyStorage(settings.database_path)
     await storage.initialize()
 
+    run_id = await storage.create_pipeline_run()
+    logger.info("pipeline_run_created", run_id=run_id)
+
     notifier = TelegramNotifier(
         bot_token=settings.telegram_bot_token.get_secret_value(),
         chat_id=settings.telegram_chat_id,
@@ -628,7 +640,13 @@ async def run_pipeline(settings: Settings, *, max_per_scraper: int | None = None
 
         pre = await _run_pre_analysis_pipeline(settings, storage, max_per_scraper=max_per_scraper)
         if pre is None:
+            await storage.complete_pipeline_run(run_id, "completed")
             return
+
+        await storage.update_pipeline_run(
+            run_id,
+            new_count=len(pre.merged_to_process),
+        )
 
         logger.info(
             "pipeline_started",
@@ -636,11 +654,14 @@ async def run_pipeline(settings: Settings, *, max_per_scraper: int | None = None
             count=len(pre.merged_to_process),
         )
 
+        notified_count = 0
+
         async def _notify(
             merged: MergedProperty,
             commute_info: _CommInfo,
             quality_analysis: PropertyQualityAnalysis | None,
         ) -> None:
+            nonlocal notified_count
             commute_minutes = commute_info[0] if commute_info else None
             transport_mode = commute_info[1] if commute_info else None
 
@@ -653,14 +674,26 @@ async def run_pipeline(settings: Settings, *, max_per_scraper: int | None = None
 
             if success:
                 await storage.mark_notified(merged.unique_id)
+                notified_count += 1
             else:
                 await storage.mark_notification_failed(merged.unique_id)
 
             await asyncio.sleep(1)  # Telegram rate limit
 
-        notified_count = await _run_quality_and_save(pre, settings, storage, _notify)
+        analyzed_count = await _run_quality_and_save(pre, settings, storage, _notify)
+        await storage.update_pipeline_run(
+            run_id,
+            analyzed_count=analyzed_count,
+            notified_count=notified_count,
+        )
+        await storage.complete_pipeline_run(run_id, "completed")
         logger.info("pipeline_complete", notified=notified_count)
 
+    except Exception as exc:
+        await storage.complete_pipeline_run(
+            run_id, "failed", error_message=str(exc)
+        )
+        raise
     finally:
         await notifier.close()
         await storage.close()

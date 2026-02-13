@@ -58,7 +58,9 @@ class TestSecurityHeaders:
 
         test_app = FastAPI()
         test_app.add_middleware(SecurityHeadersMiddleware)
-        test_app.state.storage = AsyncMock()
+        mock_storage = AsyncMock()
+        mock_storage.get_last_pipeline_run.return_value = None
+        test_app.state.storage = mock_storage
         test_app.state.settings = settings
         test_app.include_router(router)
 

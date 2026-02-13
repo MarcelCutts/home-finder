@@ -133,44 +133,284 @@ nav.container-fluid li {
     font-size: 0.85rem;
 }
 
-/* ===== Quality filters (collapsible) ===== */
-.quality-filters {
-    margin-top: 0.4rem;
+/* ===== Beds segmented toggle ===== */
+.beds-toggle {
+    display: inline-flex;
+    gap: 0;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 2px;
+    background: var(--bg-card);
+    margin: 0;
+    flex: 0 0 auto;
 }
-.quality-filters summary {
-    cursor: pointer;
+.beds-toggle label {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0.15rem 0.55rem;
+    height: 2rem;
     font-size: 0.78rem;
     font-weight: 600;
-    color: var(--text-muted);
-    padding: 0.2rem 0;
-    list-style: none;
+    color: var(--text-dim);
+    cursor: pointer;
+    border-radius: 6px;
+    transition: background 0.15s, color 0.15s;
     user-select: none;
+    margin: 0;
+    white-space: nowrap;
 }
-.quality-filters summary::-webkit-details-marker {
-    display: none;
+.beds-toggle label:hover {
+    color: var(--text-muted);
 }
-.quality-filters summary::before {
-    content: "\25B6";
-    display: inline-block;
-    margin-right: 0.35rem;
-    font-size: 0.6rem;
-    transition: transform 0.2s;
-    vertical-align: middle;
+.beds-toggle input:checked + label {
+    background: var(--bg-elevated);
+    color: var(--text);
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
 }
-.quality-filters[open] summary::before {
-    transform: rotate(90deg);
-}
-.quality-filters .filter-controls {
-    margin-top: 0.35rem;
-}
-.quality-filters select {
-    margin-bottom: 0;
-    min-width: 110px;
-    flex: 1;
+
+/* ===== Filter modal trigger button ===== */
+.filter-modal-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    padding: 0.25rem 0.75rem;
     height: 2.25rem;
     font-size: 0.85rem;
+    font-weight: 600;
+    color: var(--text-muted);
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    cursor: pointer;
+    transition: border-color 0.15s, color 0.15s;
+    white-space: nowrap;
+    margin-bottom: 0;
+    flex: 0 0 auto;
+}
+.filter-modal-btn:hover {
+    border-color: var(--border-hover);
+    color: var(--text);
+}
+.filter-badge {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 18px;
+    height: 18px;
+    padding: 0 5px;
+    border-radius: 10px;
+    font-size: 0.68rem;
+    font-weight: 700;
+    background: var(--accent);
+    color: #fff;
+    line-height: 1;
+}
+
+/* ===== Filter modal (native <dialog>) ===== */
+.filter-modal {
+    max-width: 640px;
+    width: 92vw;
+    max-height: 85vh;
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    background: var(--bg);
+    color: var(--text);
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    box-shadow: 0 24px 80px rgba(0, 0, 0, 0.6);
+}
+.filter-modal::backdrop {
+    background: rgba(0, 0, 0, 0.6);
+    backdrop-filter: blur(4px);
+    -webkit-backdrop-filter: blur(4px);
+}
+.filter-modal-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 1rem 1.25rem;
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+}
+.filter-modal-header h2 {
+    margin: 0;
+    font-size: 1.05rem;
+    font-weight: 700;
+    font-family: var(--font-heading);
+}
+.filter-modal-close {
+    width: 32px;
+    height: 32px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border: none;
+    background: transparent;
+    color: var(--text-muted);
+    font-size: 1.5rem;
+    cursor: pointer;
+    border-radius: 8px;
+    transition: background 0.15s, color 0.15s;
+    padding: 0;
+    line-height: 1;
+    margin: 0;
+}
+.filter-modal-close:hover {
+    background: var(--bg-elevated);
+    color: var(--text);
+}
+.filter-modal-body {
+    flex: 1;
+    overflow-y: auto;
+    padding: 1rem 1.25rem;
+    display: flex;
+    flex-direction: column;
+    gap: 1.25rem;
+}
+.filter-modal-footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0.85rem 1.25rem;
+    border-top: 1px solid var(--border);
+    flex-shrink: 0;
+    gap: 0.75rem;
+}
+.filter-modal-reset {
+    margin: 0;
+    font-size: 0.82rem;
+    height: 2.25rem;
+    padding: 0.25rem 0.85rem;
+}
+.filter-modal-apply {
+    margin: 0;
+    font-size: 0.85rem;
+    font-weight: 600;
+    height: 2.25rem;
+    padding: 0.25rem 1.25rem;
+    background: var(--accent);
+    color: #fff;
+    border: none;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: background 0.15s;
+}
+.filter-modal-apply:hover {
+    background: var(--accent-hover);
+}
+
+/* Filter groups inside modal */
+.filter-group {
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 0.85rem 1rem;
+    margin: 0;
+}
+.filter-group legend {
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+    font-size: 0.7rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--text-dim);
+    padding: 0 0.25rem;
+}
+.filter-group legend svg {
+    opacity: 0.6;
+}
+.filter-group-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.5rem;
+    margin-top: 0.5rem;
+}
+.filter-group-grid select {
+    margin-bottom: 0;
+    min-width: 0;
+    height: 2.25rem;
+    font-size: 0.82rem;
     padding-top: 0.25rem;
     padding-bottom: 0.25rem;
+}
+
+/* Tag chips inside modal */
+.filter-group-tags {
+    padding-bottom: 1rem;
+}
+.tag-category {
+    margin-bottom: 0.85rem;
+}
+.tag-category:last-child {
+    margin-bottom: 0;
+}
+.tag-category-label {
+    display: block;
+    font-size: 0.68rem;
+    font-weight: 600;
+    color: var(--text-dim);
+    margin-bottom: 0.35rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+.tag-chips-wrap {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.3rem;
+}
+.tag-chip {
+    display: inline-flex;
+    align-items: center;
+    padding: 0.15rem 0.5rem;
+    border-radius: 20px;
+    font-size: 0.72rem;
+    font-weight: 600;
+    cursor: pointer;
+    border: 1px solid var(--border);
+    background: transparent;
+    color: var(--text-muted);
+    transition: background 0.15s, border-color 0.15s, color 0.15s;
+    user-select: none;
+}
+.tag-chip:hover {
+    border-color: var(--border-hover);
+}
+.tag-chip-positive:has(input:checked) {
+    background: var(--value-excellent-bg);
+    color: var(--value-excellent-text);
+    border-color: rgba(16, 185, 129, 0.3);
+}
+.tag-chip-negative:has(input:checked) {
+    background: var(--value-poor-bg);
+    color: var(--value-poor-text);
+    border-color: rgba(239, 68, 68, 0.3);
+}
+
+/* Mobile primary section inside modal (hidden on desktop) */
+.mobile-primary-section {
+    display: none;
+}
+.mobile-price-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.5rem;
+}
+.mobile-primary-section select,
+.mobile-primary-section input[type="number"] {
+    margin-bottom: 0;
+    height: 2.25rem;
+    font-size: 0.82rem;
+}
+.mobile-primary-section .beds-toggle {
+    width: 100%;
+    justify-content: stretch;
+}
+.mobile-primary-section .beds-toggle label {
+    flex: 1;
+    text-align: center;
 }
 
 /* ===== Filter chips ===== */
@@ -1886,9 +2126,27 @@ nav.container-fluid li {
     .card-grid {
         grid-template-columns: 1fr;
     }
+    .desktop-only {
+        display: none !important;
+    }
+    .mobile-primary-section {
+        display: flex;
+        flex-direction: column;
+        gap: 0.65rem;
+        padding-bottom: 1rem;
+        border-bottom: 1px solid var(--border);
+    }
+    .filter-modal {
+        max-width: 100vw;
+        width: 100vw;
+        max-height: 100dvh;
+        height: 100dvh;
+        border-radius: 0;
+        border: none;
+    }
     .filter-controls {
-        display: grid;
-        grid-template-columns: 1fr 1fr;
+        display: flex;
+        flex-wrap: wrap;
         gap: 0.35rem;
     }
     .filter-row select,
@@ -1906,17 +2164,6 @@ nav.container-fluid li {
     }
     .filter-bar {
         padding: 0.35rem 0;
-    }
-    .quality-filters .filter-controls {
-        display: grid;
-        grid-template-columns: 1fr 1fr 1fr;
-        gap: 0.35rem;
-    }
-    .quality-filters select {
-        min-width: 0;
-        height: 2rem;
-        font-size: 0.78rem;
-        padding: 0.15rem 0.4rem;
     }
     .filter-toolbar {
         justify-content: center;

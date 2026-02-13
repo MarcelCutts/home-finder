@@ -8,6 +8,7 @@ from pydantic import HttpUrl
 
 from home_finder.config import Settings
 from home_finder.db import PropertyStorage
+from home_finder.filters.detail_enrichment import EnrichmentResult
 from home_finder.main import _run_pre_analysis_pipeline, _save_one
 from home_finder.models import (
     Property,
@@ -76,7 +77,7 @@ class TestFullPipelineE2E:
             patch(
                 "home_finder.main.enrich_merged_properties",
                 new_callable=AsyncMock,
-                side_effect=lambda merged, fetcher, **kwargs: merged,
+                side_effect=lambda merged, *a, **kw: EnrichmentResult(enriched=merged),
             ),
             patch(
                 "home_finder.main.DetailFetcher",
@@ -91,7 +92,10 @@ class TestFullPipelineE2E:
         assert result is not None
         assert len(result.merged_to_process) > 0
 
-        # Save to DB
+        # Pre-save (as pipeline does before analysis), then update with _save_one
+        await storage.save_pre_analysis_properties(
+            result.merged_to_process, result.commute_lookup
+        )
         for merged in result.merged_to_process:
             commute_info = result.commute_lookup.get(merged.canonical.unique_id)
             await _save_one(merged, commute_info, None, storage)
@@ -155,7 +159,7 @@ class TestFullPipelineE2E:
             patch(
                 "home_finder.main.enrich_merged_properties",
                 new_callable=AsyncMock,
-                side_effect=lambda merged, fetcher, **kwargs: merged,
+                side_effect=lambda merged, *a, **kw: EnrichmentResult(enriched=merged),
             ),
             patch(
                 "home_finder.main.DetailFetcher",
@@ -242,7 +246,7 @@ class TestFullPipelineE2E:
             patch(
                 "home_finder.main.enrich_merged_properties",
                 new_callable=AsyncMock,
-                side_effect=lambda merged, fetcher, **kwargs: merged,
+                side_effect=lambda merged, *a, **kw: EnrichmentResult(enriched=merged),
             ),
             patch(
                 "home_finder.main.DetailFetcher",

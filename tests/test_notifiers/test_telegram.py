@@ -23,8 +23,10 @@ from home_finder.models import (
 )
 from home_finder.notifiers.telegram import (
     TelegramNotifier,
+    _format_followup_detail,
     _format_quality_block,
     _format_star_rating,
+    _format_value_info,
     _format_viewing_notes,
     _get_best_image_url,
     _get_gallery_urls,
@@ -486,15 +488,57 @@ class TestTelegramNotifier:
 
         assert result is True
         mock_bot.send_media_group.assert_called_once()
-        # Follow-up message with full analysis text and inline keyboard
+        # Follow-up message with inline keyboard but NO repeated header
         mock_bot.send_message.assert_called_once()
         followup_kwargs = mock_bot.send_message.call_args[1]
         assert "reply_markup" in followup_kwargs
-        # Follow-up should contain the full property message, not the old pointer
-        assert "1 Bed Flat" in followup_kwargs["text"]
-        assert "£1,900" in followup_kwargs["text"]
+        # Without quality_analysis, follow-up should be the minimal pointer
+        assert "View links" in followup_kwargs["text"]
         # send_photo should NOT be called (media group used instead)
         mock_bot.send_photo.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_send_merged_media_group_followup_has_detail_not_header(
+        self,
+        sample_property: Property,
+        sample_quality_analysis: PropertyQualityAnalysis,
+    ) -> None:
+        """Test that media group follow-up contains detail, not repeated header."""
+        images = tuple(
+            PropertyImage(
+                url=HttpUrl(f"https://example.com/img{i}.jpg"),
+                source=PropertySource.OPENRENT,
+                image_type="gallery",
+            )
+            for i in range(5)
+        )
+        merged = MergedProperty(
+            canonical=sample_property,
+            sources=(PropertySource.OPENRENT,),
+            source_urls={PropertySource.OPENRENT: sample_property.url},
+            images=images,
+            min_price=1900,
+            max_price=1900,
+        )
+        notifier = TelegramNotifier(bot_token="123456:ABC-DEF", chat_id=12345678)
+        mock_bot = AsyncMock()
+        mock_bot.send_media_group = AsyncMock(return_value=[MagicMock(message_id=1)])
+        mock_bot.send_message = AsyncMock(return_value=MagicMock(message_id=2))
+        mock_bot.send_venue = AsyncMock(return_value=MagicMock(message_id=3))
+
+        with patch.object(notifier, "_get_bot", return_value=mock_bot):
+            result = await notifier.send_merged_property_notification(
+                merged, quality_analysis=sample_quality_analysis
+            )
+
+        assert result is True
+        followup_text = mock_bot.send_message.call_args[1]["text"]
+        # Follow-up should have detail breakdown
+        assert "🍳" in followup_text
+        assert "💡" in followup_text
+        # Follow-up should NOT repeat the header info (that's in the caption)
+        assert "🏠" not in followup_text
+        assert "1 Bed Flat" not in followup_text
 
     @pytest.mark.asyncio
     async def test_send_merged_single_photo_for_few_images(self, sample_property: Property) -> None:
@@ -812,3 +856,147 @@ class TestLinkPreviewOptions:
         assert call_kwargs["link_preview_options"].is_disabled is True
         # Old parameter should not be present
         assert "disable_web_page_preview" not in call_kwargs
+
+
+class TestFormatValueInfoBrief:
+    """Tests for _format_value_info brief mode."""
+
+    def test_brief_returns_short_benchmark(
+        self, sample_quality_analysis: PropertyQualityAnalysis
+    ) -> None:
+        """Brief mode should return rating + benchmark note, no essay."""
+        result = _format_value_info(sample_quality_analysis, brief=True)
+        assert result is not None
+        # Should contain the benchmark note
+        assert "£300 below E8 average" in result
+        # Should NOT contain the full quality_adjusted_note (if any)
+        assert "Excellent" in result or "excellent" in result.lower()
+
+    def test_brief_without_benchmark(self) -> None:
+        """Brief with no benchmark note should just show rating."""
+        from home_finder.models import ValueAnalysis
+
+        analysis = PropertyQualityAnalysis(
+            kitchen=KitchenAnalysis(),
+            condition=ConditionAnalysis(),
+            light_space=LightSpaceAnalysis(),
+            space=SpaceAnalysis(),
+            summary="Test",
+            value=ValueAnalysis(
+                quality_adjusted_rating="good",
+                quality_adjusted_note="Long essay about value...",
+            ),
+        )
+        result = _format_value_info(analysis, brief=True)
+        assert result is not None
+        assert "Good value" in result
+        # Should NOT include the quality_adjusted_note essay
+        assert "Long essay" not in result
+
+    def test_full_includes_quality_note(self) -> None:
+        """Full mode (default) should include quality_adjusted_note."""
+        from home_finder.models import ValueAnalysis
+
+        analysis = PropertyQualityAnalysis(
+            kitchen=KitchenAnalysis(),
+            condition=ConditionAnalysis(),
+            light_space=LightSpaceAnalysis(),
+            space=SpaceAnalysis(),
+            summary="Test",
+            value=ValueAnalysis(
+                quality_adjusted_rating="fair",
+                quality_adjusted_note="Full analysis of value considerations.",
+                note="£200 above average",
+            ),
+        )
+        result = _format_value_info(analysis, brief=False)
+        assert result is not None
+        assert "Full analysis of value considerations" in result
+
+    def test_condensed_caption_uses_brief_value(
+        self,
+        sample_merged_property: MergedProperty,
+    ) -> None:
+        """Condensed caption should use brief value (no essay)."""
+        from home_finder.models import ValueAnalysis
+
+        analysis = PropertyQualityAnalysis(
+            kitchen=KitchenAnalysis(),
+            condition=ConditionAnalysis(),
+            light_space=LightSpaceAnalysis(),
+            space=SpaceAnalysis(),
+            summary="Test",
+            value=ValueAnalysis(
+                quality_adjusted_rating="fair",
+                quality_adjusted_note="This is a very long essay about value " * 10,
+                note="£200 above average",
+            ),
+        )
+        caption = format_merged_property_caption(
+            sample_merged_property, quality_analysis=analysis
+        )
+        assert "£200 above average" in caption
+        assert "very long essay" not in caption
+
+
+class TestFormatFollowupDetail:
+    """Tests for _format_followup_detail."""
+
+    def test_contains_detail_breakdown(
+        self, sample_quality_analysis: PropertyQualityAnalysis
+    ) -> None:
+        """Follow-up should contain kitchen, light, space, condition detail."""
+        result = _format_followup_detail(quality_analysis=sample_quality_analysis)
+        assert "🍳" in result
+        assert "💡" in result
+        assert "📐" in result
+        assert "🔧" in result
+
+    def test_does_not_contain_header(
+        self, sample_quality_analysis: PropertyQualityAnalysis
+    ) -> None:
+        """Follow-up should NOT contain title, price, address, or header emoji."""
+        result = _format_followup_detail(quality_analysis=sample_quality_analysis)
+        assert "🏠" not in result
+        assert "💰" not in result
+        assert "🛏" not in result
+        assert "📍" not in result
+
+    def test_does_not_repeat_highlights(
+        self, sample_quality_analysis: PropertyQualityAnalysis
+    ) -> None:
+        """Follow-up should NOT repeat highlight/lowlight chips (those are in caption)."""
+        result = _format_followup_detail(quality_analysis=sample_quality_analysis)
+        assert "✅" not in result
+        assert "⛔" not in result
+
+    def test_includes_viewing_notes(
+        self, sample_quality_analysis: PropertyQualityAnalysis
+    ) -> None:
+        result = _format_followup_detail(quality_analysis=sample_quality_analysis)
+        assert "👁" in result
+        assert "Check water pressure" in result
+
+    def test_value_in_expandable_blockquote(self) -> None:
+        """Full value commentary should be in an expandable blockquote."""
+        from home_finder.models import ValueAnalysis
+
+        analysis = PropertyQualityAnalysis(
+            kitchen=KitchenAnalysis(),
+            condition=ConditionAnalysis(),
+            light_space=LightSpaceAnalysis(),
+            space=SpaceAnalysis(),
+            summary="Test",
+            value=ValueAnalysis(
+                quality_adjusted_rating="fair",
+                quality_adjusted_note="Detailed value commentary here.",
+                note="£200 above average",
+            ),
+        )
+        result = _format_followup_detail(quality_analysis=analysis)
+        assert "<blockquote expandable>" in result
+        assert "Detailed value commentary here." in result
+
+    def test_returns_empty_without_quality(self) -> None:
+        """Should return empty string when no quality analysis provided."""
+        assert _format_followup_detail(quality_analysis=None) == ""

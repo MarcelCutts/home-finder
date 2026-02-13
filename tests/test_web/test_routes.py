@@ -107,7 +107,12 @@ class TestHealthCheck:
     def test_health_returns_ok(self, client: TestClient) -> None:
         resp = client.get("/health")
         assert resp.status_code == 200
-        assert resp.json() == {"status": "ok"}
+        data = resp.json()
+        assert data["status"] == "ok"
+        assert data["pipeline_running"] is False
+        assert data["last_run_at"] is None
+        assert data["last_run_status"] is None
+        assert data["last_run_notified"] is None
 
 
 class TestDashboard:
@@ -850,8 +855,7 @@ class TestQualityFilters:
 
         # All matching filters
         resp = client.get(
-            "/?property_type=warehouse&hob_type=gas"
-            "&outdoor_space=yes&natural_light=excellent"
+            "/?property_type=warehouse&hob_type=gas&outdoor_space=yes&natural_light=excellent"
         )
         assert resp.status_code == 200
         assert "1 bed in E8" in resp.text
@@ -881,22 +885,20 @@ class TestQualityFilters:
         assert "1 bed in E8" in resp.text
 
     @pytest.mark.asyncio
-    async def test_more_filters_details_open_when_active(
+    async def test_filter_badge_shown_when_active(
         self, client: TestClient, storage: PropertyStorage, merged_a: MergedProperty
     ) -> None:
         await storage.save_merged_property(merged_a)
         resp = client.get("/?hob_type=gas")
         assert resp.status_code == 200
-        assert 'open' in resp.text
+        assert "filter-badge" in resp.text
 
 
 class TestStudioSupport:
     """Tests for studio (0 bedrooms) support in the dashboard."""
 
     @pytest.mark.asyncio
-    async def test_studio_filter(
-        self, client: TestClient, storage: PropertyStorage
-    ) -> None:
+    async def test_studio_filter(self, client: TestClient, storage: PropertyStorage) -> None:
         studio = Property(
             source=PropertySource.OPENRENT,
             source_id="300",
@@ -922,9 +924,7 @@ class TestStudioSupport:
         assert "Studio in E8" in resp.text
 
     @pytest.mark.asyncio
-    async def test_studio_chip_label(
-        self, client: TestClient, storage: PropertyStorage
-    ) -> None:
+    async def test_studio_chip_label(self, client: TestClient, storage: PropertyStorage) -> None:
         studio = Property(
             source=PropertySource.OPENRENT,
             source_id="300",
@@ -951,9 +951,7 @@ class TestStudioSupport:
         assert "0 bed" not in resp.text
 
     @pytest.mark.asyncio
-    async def test_studio_card_badge(
-        self, client: TestClient, storage: PropertyStorage
-    ) -> None:
+    async def test_studio_card_badge(self, client: TestClient, storage: PropertyStorage) -> None:
         studio = Property(
             source=PropertySource.OPENRENT,
             source_id="300",
@@ -1016,3 +1014,314 @@ class TestAriaLive:
         assert resp.status_code == 200
         assert 'aria-live="polite"' in resp.text
         assert "0 properties found" in resp.text
+
+
+class TestNewFilters:
+    """Tests for office_separation, hosting_layout, hosting_noise_risk, broadband_type."""
+
+    @pytest.mark.asyncio
+    async def test_office_separation_filter(
+        self,
+        client: TestClient,
+        storage: PropertyStorage,
+        prop_a: Property,
+        merged_a: MergedProperty,
+    ) -> None:
+        from home_finder.models import (
+            BedroomAnalysis,
+            ConditionAnalysis,
+            KitchenAnalysis,
+            LightSpaceAnalysis,
+            PropertyQualityAnalysis,
+            SpaceAnalysis,
+        )
+
+        await storage.save_merged_property(merged_a)
+        analysis = PropertyQualityAnalysis(
+            kitchen=KitchenAnalysis(overall_quality="modern"),
+            condition=ConditionAnalysis(overall_condition="good", confidence="high"),
+            light_space=LightSpaceAnalysis(natural_light="good"),
+            space=SpaceAnalysis(confidence="high"),
+            bedroom=BedroomAnalysis(office_separation="dedicated_room"),
+            overall_rating=4,
+            summary="Dedicated office.",
+        )
+        await storage.save_quality_analysis(prop_a.unique_id, analysis)
+
+        resp = client.get("/?office_separation=dedicated_room")
+        assert resp.status_code == 200
+        assert "1 bed in E8" in resp.text
+
+        resp = client.get("/?office_separation=none")
+        assert resp.status_code == 200
+        assert "No properties found" in resp.text
+
+    @pytest.mark.asyncio
+    async def test_hosting_layout_filter(
+        self,
+        client: TestClient,
+        storage: PropertyStorage,
+        prop_a: Property,
+        merged_a: MergedProperty,
+    ) -> None:
+        from home_finder.models import (
+            ConditionAnalysis,
+            KitchenAnalysis,
+            LightSpaceAnalysis,
+            PropertyQualityAnalysis,
+            SpaceAnalysis,
+        )
+
+        await storage.save_merged_property(merged_a)
+        analysis = PropertyQualityAnalysis(
+            kitchen=KitchenAnalysis(overall_quality="modern"),
+            condition=ConditionAnalysis(overall_condition="good", confidence="high"),
+            light_space=LightSpaceAnalysis(natural_light="good"),
+            space=SpaceAnalysis(confidence="high", hosting_layout="excellent"),
+            overall_rating=4,
+            summary="Great for hosting.",
+        )
+        await storage.save_quality_analysis(prop_a.unique_id, analysis)
+
+        resp = client.get("/?hosting_layout=excellent")
+        assert resp.status_code == 200
+        assert "1 bed in E8" in resp.text
+
+        resp = client.get("/?hosting_layout=poor")
+        assert resp.status_code == 200
+        assert "No properties found" in resp.text
+
+    @pytest.mark.asyncio
+    async def test_hosting_noise_risk_filter(
+        self,
+        client: TestClient,
+        storage: PropertyStorage,
+        prop_a: Property,
+        merged_a: MergedProperty,
+    ) -> None:
+        from home_finder.models import (
+            ConditionAnalysis,
+            FlooringNoiseAnalysis,
+            KitchenAnalysis,
+            LightSpaceAnalysis,
+            PropertyQualityAnalysis,
+            SpaceAnalysis,
+        )
+
+        await storage.save_merged_property(merged_a)
+        analysis = PropertyQualityAnalysis(
+            kitchen=KitchenAnalysis(overall_quality="modern"),
+            condition=ConditionAnalysis(overall_condition="good", confidence="high"),
+            light_space=LightSpaceAnalysis(natural_light="good"),
+            space=SpaceAnalysis(confidence="high"),
+            flooring_noise=FlooringNoiseAnalysis(hosting_noise_risk="low"),
+            overall_rating=4,
+            summary="Low noise.",
+        )
+        await storage.save_quality_analysis(prop_a.unique_id, analysis)
+
+        resp = client.get("/?hosting_noise_risk=low")
+        assert resp.status_code == 200
+        assert "1 bed in E8" in resp.text
+
+        resp = client.get("/?hosting_noise_risk=high")
+        assert resp.status_code == 200
+        assert "No properties found" in resp.text
+
+    @pytest.mark.asyncio
+    async def test_broadband_type_filter(
+        self,
+        client: TestClient,
+        storage: PropertyStorage,
+        prop_a: Property,
+        merged_a: MergedProperty,
+    ) -> None:
+        from home_finder.models import (
+            ConditionAnalysis,
+            KitchenAnalysis,
+            LightSpaceAnalysis,
+            ListingExtraction,
+            PropertyQualityAnalysis,
+            SpaceAnalysis,
+        )
+
+        await storage.save_merged_property(merged_a)
+        analysis = PropertyQualityAnalysis(
+            kitchen=KitchenAnalysis(overall_quality="modern"),
+            condition=ConditionAnalysis(overall_condition="good", confidence="high"),
+            light_space=LightSpaceAnalysis(natural_light="good"),
+            space=SpaceAnalysis(confidence="high"),
+            listing_extraction=ListingExtraction(broadband_type="fttp"),
+            overall_rating=4,
+            summary="FTTP broadband.",
+        )
+        await storage.save_quality_analysis(prop_a.unique_id, analysis)
+
+        resp = client.get("/?broadband_type=fttp")
+        assert resp.status_code == 200
+        assert "1 bed in E8" in resp.text
+
+        resp = client.get("/?broadband_type=standard")
+        assert resp.status_code == 200
+        assert "No properties found" in resp.text
+
+    @pytest.mark.asyncio
+    async def test_invalid_office_separation_ignored(
+        self, client: TestClient, storage: PropertyStorage, merged_a: MergedProperty
+    ) -> None:
+        await storage.save_merged_property(merged_a)
+        resp = client.get("/?office_separation=evil_injection")
+        assert resp.status_code == 200
+        assert "1 bed in E8" in resp.text
+
+    @pytest.mark.asyncio
+    async def test_invalid_hosting_layout_ignored(
+        self, client: TestClient, storage: PropertyStorage, merged_a: MergedProperty
+    ) -> None:
+        await storage.save_merged_property(merged_a)
+        resp = client.get("/?hosting_layout=evil")
+        assert resp.status_code == 200
+        assert "1 bed in E8" in resp.text
+
+    @pytest.mark.asyncio
+    async def test_new_filter_chips_rendered(
+        self, client: TestClient, storage: PropertyStorage, merged_a: MergedProperty
+    ) -> None:
+        await storage.save_merged_property(merged_a)
+        resp = client.get("/?office_separation=dedicated_room")
+        assert resp.status_code == 200
+        assert "filter-chip" in resp.text
+        assert "Dedicated Room" in resp.text
+
+
+class TestFilterCount:
+    """Tests for the /count endpoint."""
+
+    def test_count_empty_db(self, client: TestClient) -> None:
+        resp = client.get("/count")
+        assert resp.status_code == 200
+        assert resp.text == "0"
+        assert resp.headers["content-type"] == "text/plain; charset=utf-8"
+
+    @pytest.mark.asyncio
+    async def test_count_with_data(
+        self, client: TestClient, storage: PropertyStorage, merged_a: MergedProperty
+    ) -> None:
+        await storage.save_merged_property(merged_a)
+        resp = client.get("/count")
+        assert resp.status_code == 200
+        assert resp.text == "1"
+
+    @pytest.mark.asyncio
+    async def test_count_with_filters(
+        self,
+        client: TestClient,
+        storage: PropertyStorage,
+        merged_a: MergedProperty,
+        merged_b: MergedProperty,
+    ) -> None:
+        await storage.save_merged_property(merged_a)  # 1 bed
+        await storage.save_merged_property(merged_b)  # 2 bed
+        resp = client.get("/count?bedrooms=1")
+        assert resp.status_code == 200
+        assert resp.text == "1"
+
+    @pytest.mark.asyncio
+    async def test_count_with_price_range(
+        self,
+        client: TestClient,
+        storage: PropertyStorage,
+        merged_a: MergedProperty,
+        merged_b: MergedProperty,
+    ) -> None:
+        await storage.save_merged_property(merged_a)  # 1900
+        await storage.save_merged_property(merged_b)  # 2500
+        resp = client.get("/count?max_price=2000")
+        assert resp.status_code == 200
+        assert resp.text == "1"
+
+
+class TestFilterModal:
+    """Tests for the filter modal dialog in full page render."""
+
+    def test_dialog_present_in_page(self, client: TestClient) -> None:
+        resp = client.get("/")
+        assert resp.status_code == 200
+        assert 'id="filter-modal"' in resp.text
+        assert "<dialog" in resp.text
+
+    def test_tag_checkboxes_rendered(self, client: TestClient) -> None:
+        resp = client.get("/")
+        assert resp.status_code == 200
+        assert 'name="tag"' in resp.text
+        assert "Gas hob" in resp.text
+
+    def test_tag_categories_present(self, client: TestClient) -> None:
+        resp = client.get("/")
+        assert resp.status_code == 200
+        assert "Workspace" in resp.text
+        assert "Hosting" in resp.text
+        assert "Kitchen" in resp.text
+
+    def test_filter_groups_present(self, client: TestClient) -> None:
+        resp = client.get("/")
+        assert resp.status_code == 200
+        assert 'name="office_separation"' in resp.text
+        assert 'name="broadband_type"' in resp.text
+        assert 'name="hosting_layout"' in resp.text
+        assert 'name="hosting_noise_risk"' in resp.text
+
+
+class TestBedsToggle:
+    """Tests for the segmented beds toggle (radio inputs)."""
+
+    def test_radio_inputs_rendered(self, client: TestClient) -> None:
+        resp = client.get("/")
+        assert resp.status_code == 200
+        assert 'name="bedrooms"' in resp.text
+        assert 'type="radio"' in resp.text
+        assert 'id="beds-any"' in resp.text
+
+    @pytest.mark.asyncio
+    async def test_correct_radio_checked_for_bedrooms_1(
+        self, client: TestClient, storage: PropertyStorage, merged_a: MergedProperty
+    ) -> None:
+        await storage.save_merged_property(merged_a)
+        resp = client.get("/?bedrooms=1")
+        assert resp.status_code == 200
+        # The radio for value="1" should be checked
+        assert 'id="beds-1"' in resp.text
+
+    def test_studio_radio_checked(self, client: TestClient) -> None:
+        resp = client.get("/?bedrooms=0")
+        assert resp.status_code == 200
+        assert 'id="beds-0"' in resp.text
+
+
+class TestSecondaryFilterCount:
+    """Tests for 'Filters (N)' badge showing active secondary filter count."""
+
+    def test_no_badge_without_secondary_filters(self, client: TestClient) -> None:
+        resp = client.get("/")
+        assert resp.status_code == 200
+        assert "filter-badge" not in resp.text
+
+    @pytest.mark.asyncio
+    async def test_badge_with_one_secondary_filter(
+        self, client: TestClient, storage: PropertyStorage, merged_a: MergedProperty
+    ) -> None:
+        await storage.save_merged_property(merged_a)
+        resp = client.get("/?hob_type=gas")
+        assert resp.status_code == 200
+        assert "filter-badge" in resp.text
+
+    @pytest.mark.asyncio
+    async def test_badge_count_with_multiple_secondary_filters(
+        self, client: TestClient, storage: PropertyStorage, merged_a: MergedProperty
+    ) -> None:
+        await storage.save_merged_property(merged_a)
+        resp = client.get("/?hob_type=gas&property_type=warehouse")
+        assert resp.status_code == 200
+        assert "filter-badge" in resp.text
+        # Badge should show "2"
+        assert ">2<" in resp.text

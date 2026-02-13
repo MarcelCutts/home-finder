@@ -104,16 +104,26 @@ def _merged(prop: Property | None = None) -> MergedProperty:
 
 
 class TestSaveOne:
-    async def test_saves_property(self, storage: PropertyStorage) -> None:
+    async def test_completes_analysis(self, storage: PropertyStorage) -> None:
         merged = _merged()
+        # Pre-save (as pipeline does before analysis)
+        await storage.save_pre_analysis_properties([merged], {})
         await _save_one(merged, None, None, storage)
 
         count = await storage.get_property_count()
         assert count == 1
+        # Should transition from pending_analysis to pending
+        tracked = await storage.get_property(merged.unique_id)
+        assert tracked is not None
+        assert tracked.notification_status.value == "pending"
 
-    async def test_saves_with_commute_info(self, storage: PropertyStorage) -> None:
+    async def test_preserves_commute_from_pre_save(self, storage: PropertyStorage) -> None:
         merged = _merged()
         commute_info = (18, TransportMode.CYCLING)
+        # Pre-save with commute data
+        await storage.save_pre_analysis_properties(
+            [merged], {merged.unique_id: commute_info}
+        )
         await _save_one(merged, commute_info, None, storage)
 
         tracked = await storage.get_property(merged.unique_id)
@@ -125,6 +135,7 @@ class TestSaveOne:
         self, storage: PropertyStorage, sample_quality_analysis: PropertyQualityAnalysis
     ) -> None:
         merged = _merged()
+        await storage.save_pre_analysis_properties([merged], {})
         await _save_one(merged, None, sample_quality_analysis, storage)
 
         # Verify quality analysis was stored

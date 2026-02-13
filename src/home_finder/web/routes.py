@@ -38,14 +38,102 @@ templates = Jinja2Templates(directory=Path(__file__).parent / "templates")
 
 VALID_SORT_OPTIONS: Final = {"newest", "price_asc", "price_desc", "rating_desc", "fit_desc"}
 VALID_PROPERTY_TYPES: Final = {
-    "victorian", "edwardian", "georgian", "new_build", "purpose_built",
-    "warehouse", "ex_council", "period_conversion",
+    "victorian",
+    "edwardian",
+    "georgian",
+    "new_build",
+    "purpose_built",
+    "warehouse",
+    "ex_council",
+    "period_conversion",
 }
 VALID_NATURAL_LIGHT: Final = {"excellent", "good", "fair", "poor"}
 VALID_HOB_TYPES: Final = {"gas", "induction", "electric"}
 VALID_VALUE_RATINGS: Final = {"excellent", "good", "fair", "poor"}
 VALID_FLOOR_LEVELS: Final = {"basement", "ground", "lower", "upper", "top"}
 VALID_BUILDING_CONSTRUCTION: Final = {"solid_brick", "concrete", "timber_frame", "mixed"}
+VALID_OFFICE_SEPARATION: Final = {"dedicated_room", "separate_area", "shared_space", "none"}
+VALID_HOSTING_LAYOUT: Final = {"excellent", "good", "awkward", "poor"}
+VALID_HOSTING_NOISE_RISK: Final = {"low", "moderate", "high"}
+VALID_BROADBAND_TYPE: Final = {"fttp", "fttc", "cable", "standard"}
+
+TAG_CATEGORIES: Final[dict[str, list[str]]] = {
+    "Workspace": [
+        PropertyHighlight.ULTRAFAST_BROADBAND.value,
+        PropertyHighlight.DEDICATED_OFFICE.value,
+        PropertyHighlight.SEPARATE_WORK_AREA.value,
+        PropertyLowlight.BASIC_BROADBAND.value,
+        PropertyLowlight.NO_WORK_SEPARATION.value,
+    ],
+    "Hosting": [
+        PropertyHighlight.GREAT_HOSTING_LAYOUT.value,
+        PropertyHighlight.SPACIOUS_LIVING.value,
+        PropertyHighlight.OPEN_PLAN.value,
+        PropertyLowlight.POOR_HOSTING_LAYOUT.value,
+        PropertyLowlight.COMPACT_LIVING.value,
+        PropertyLowlight.SMALL_LIVING.value,
+        PropertyLowlight.NEW_BUILD_ACOUSTICS.value,
+        PropertyLowlight.TRAFFIC_NOISE.value,
+    ],
+    "Kitchen": [
+        PropertyHighlight.GAS_HOB.value,
+        PropertyHighlight.INDUCTION_HOB.value,
+        PropertyHighlight.DISHWASHER.value,
+        PropertyHighlight.WASHING_MACHINE.value,
+        PropertyHighlight.MODERN_KITCHEN.value,
+        PropertyLowlight.ELECTRIC_HOB.value,
+        PropertyLowlight.NO_DISHWASHER.value,
+        PropertyLowlight.NO_WASHING_MACHINE.value,
+        PropertyLowlight.DATED_KITCHEN.value,
+    ],
+    "Space & Light": [
+        PropertyHighlight.EXCELLENT_LIGHT.value,
+        PropertyHighlight.GOOD_LIGHT.value,
+        PropertyHighlight.FLOOR_TO_CEILING_WINDOWS.value,
+        PropertyHighlight.HIGH_CEILINGS.value,
+        PropertyHighlight.BUILT_IN_WARDROBES.value,
+        PropertyHighlight.GOOD_STORAGE.value,
+        PropertyLowlight.POOR_STORAGE.value,
+        PropertyLowlight.NO_STORAGE.value,
+        PropertyLowlight.SMALL_BEDROOM.value,
+        PropertyLowlight.COMPACT_BEDROOM.value,
+    ],
+    "Property": [
+        PropertyHighlight.EXCELLENT_CONDITION.value,
+        PropertyHighlight.RECENTLY_REFURBISHED.value,
+        PropertyHighlight.PERIOD_FEATURES.value,
+        PropertyHighlight.DOUBLE_GLAZING.value,
+        PropertyHighlight.MODERN_BATHROOM.value,
+        PropertyHighlight.TWO_BATHROOMS.value,
+        PropertyHighlight.ENSUITE.value,
+        PropertyLowlight.DATED_BATHROOM.value,
+        PropertyLowlight.NEEDS_UPDATING.value,
+        PropertyLowlight.BALCONY_CRACKING.value,
+        PropertyLowlight.NO_INTERIOR_PHOTOS.value,
+        PropertyLowlight.NO_BATHROOM_PHOTOS.value,
+        PropertyLowlight.MISSING_KEY_PHOTOS.value,
+    ],
+    "Practical": [
+        PropertyHighlight.PETS_ALLOWED.value,
+        PropertyHighlight.BILLS_INCLUDED.value,
+        PropertyHighlight.BIKE_STORAGE.value,
+        PropertyHighlight.PARKING.value,
+        PropertyHighlight.ON_SITE_GYM.value,
+        PropertyHighlight.CONCIERGE.value,
+        PropertyLowlight.SERVICE_CHARGE_UNSTATED.value,
+    ],
+    "Outdoor": [
+        PropertyHighlight.PRIVATE_BALCONY.value,
+        PropertyHighlight.PRIVATE_GARDEN.value,
+        PropertyHighlight.PRIVATE_TERRACE.value,
+        PropertyHighlight.SHARED_GARDEN.value,
+        PropertyHighlight.COMMUNAL_GARDENS.value,
+        PropertyHighlight.ROOF_TERRACE.value,
+        PropertyHighlight.CANAL_VIEWS.value,
+        PropertyHighlight.PARK_VIEWS.value,
+        PropertyLowlight.NO_OUTDOOR_SPACE.value,
+    ],
+}
 
 
 def _parse_optional_int(value: str | None) -> int | None:
@@ -108,54 +196,41 @@ SearchAreasDep = Annotated[list[str], Depends(get_search_areas)]
 DataDirDep = Annotated[str, Depends(get_data_dir)]
 
 
-@router.get("/health")
-async def health_check() -> JSONResponse:
-    """Health check endpoint for Fly.io."""
-    return JSONResponse({"status": "ok"})
-
-
-@router.get("/", response_class=HTMLResponse)
-async def dashboard(
-    request: Request,
-    storage: StorageDep,
-    search_areas: SearchAreasDep,
-    sort: str = "newest",
-    min_price: str | None = None,
-    max_price: str | None = None,
-    bedrooms: str | None = None,
-    min_rating: str | None = None,
-    area: str | None = None,
-    page: str | None = None,
-    property_type: str | None = None,
-    outdoor_space: str | None = None,
-    natural_light: str | None = None,
-    pets: str | None = None,
-    value_rating: str | None = None,
-    hob_type: str | None = None,
-    floor_level: str | None = None,
-    building_construction: str | None = None,
-    tag: list[str] = Query(default=[]),
-) -> HTMLResponse:
-    """Dashboard page with property card grid."""
-    # Parse optional int params (empty strings → None)
+def _validate_filters(
+    *,
+    min_price: str | None,
+    max_price: str | None,
+    bedrooms: str | None,
+    min_rating: str | None,
+    area: str | None,
+    property_type: str | None,
+    outdoor_space: str | None,
+    natural_light: str | None,
+    pets: str | None,
+    value_rating: str | None,
+    hob_type: str | None,
+    floor_level: str | None,
+    building_construction: str | None,
+    office_separation: str | None,
+    hosting_layout: str | None,
+    hosting_noise_risk: str | None,
+    broadband_type: str | None,
+    tag: list[str],
+) -> dict[str, Any]:
+    """Validate and parse all filter params. Returns dict of validated values."""
     min_price_val = _parse_optional_int(min_price)
     max_price_val = _parse_optional_int(max_price)
     bedrooms_val = _parse_optional_int(bedrooms)
     min_rating_val = _parse_optional_int(min_rating)
-    page_val = _parse_optional_int(page) or 1
     area_val = area.strip() if area else None
     if area_val == "":
         area_val = None
 
-    # Validate and clamp inputs
-    page_val = max(1, page_val)
-    sort = sort if sort in VALID_SORT_OPTIONS else "newest"
     if min_rating_val is not None:
         min_rating_val = max(1, min(5, min_rating_val))
     if bedrooms_val is not None:
         bedrooms_val = max(0, min(10, bedrooms_val))
 
-    # Validate quality filter params against whitelists (invalid → None)
     property_type_val = property_type.strip() if property_type else None
     if property_type_val and property_type_val not in VALID_PROPERTY_TYPES:
         property_type_val = None
@@ -182,10 +257,178 @@ async def dashboard(
     )
     if building_construction_val and building_construction_val not in VALID_BUILDING_CONSTRUCTION:
         building_construction_val = None
+    office_separation_val = office_separation.strip().lower() if office_separation else None
+    if office_separation_val and office_separation_val not in VALID_OFFICE_SEPARATION:
+        office_separation_val = None
+    hosting_layout_val = hosting_layout.strip().lower() if hosting_layout else None
+    if hosting_layout_val and hosting_layout_val not in VALID_HOSTING_LAYOUT:
+        hosting_layout_val = None
+    hosting_noise_risk_val = hosting_noise_risk.strip().lower() if hosting_noise_risk else None
+    if hosting_noise_risk_val and hosting_noise_risk_val not in VALID_HOSTING_NOISE_RISK:
+        hosting_noise_risk_val = None
+    broadband_type_val = broadband_type.strip().lower() if broadband_type else None
+    if broadband_type_val and broadband_type_val not in VALID_BROADBAND_TYPE:
+        broadband_type_val = None
 
-    # Validate tag params against known highlight/lowlight values
     valid_tags = {v.value for v in PropertyHighlight} | {v.value for v in PropertyLowlight}
     tags_val = [t for t in tag if t in valid_tags]
+
+    return {
+        "min_price": min_price_val,
+        "max_price": max_price_val,
+        "bedrooms": bedrooms_val,
+        "min_rating": min_rating_val,
+        "area": area_val,
+        "property_type": property_type_val,
+        "outdoor_space": outdoor_space_val,
+        "natural_light": natural_light_val,
+        "pets": pets_val,
+        "value_rating": value_rating_val,
+        "hob_type": hob_type_val,
+        "floor_level": floor_level_val,
+        "building_construction": building_construction_val,
+        "office_separation": office_separation_val,
+        "hosting_layout": hosting_layout_val,
+        "hosting_noise_risk": hosting_noise_risk_val,
+        "broadband_type": broadband_type_val,
+        "tags": tags_val,
+    }
+
+
+@router.get("/count")
+async def filter_count(
+    storage: StorageDep,
+    min_price: str | None = None,
+    max_price: str | None = None,
+    bedrooms: str | None = None,
+    min_rating: str | None = None,
+    area: str | None = None,
+    property_type: str | None = None,
+    outdoor_space: str | None = None,
+    natural_light: str | None = None,
+    pets: str | None = None,
+    value_rating: str | None = None,
+    hob_type: str | None = None,
+    floor_level: str | None = None,
+    building_construction: str | None = None,
+    office_separation: str | None = None,
+    hosting_layout: str | None = None,
+    hosting_noise_risk: str | None = None,
+    broadband_type: str | None = None,
+    tag: list[str] = Query(default=[]),
+) -> Response:
+    """Lightweight count endpoint for live filter preview in modal."""
+    f = _validate_filters(
+        min_price=min_price,
+        max_price=max_price,
+        bedrooms=bedrooms,
+        min_rating=min_rating,
+        area=area,
+        property_type=property_type,
+        outdoor_space=outdoor_space,
+        natural_light=natural_light,
+        pets=pets,
+        value_rating=value_rating,
+        hob_type=hob_type,
+        floor_level=floor_level,
+        building_construction=building_construction,
+        office_separation=office_separation,
+        hosting_layout=hosting_layout,
+        hosting_noise_risk=hosting_noise_risk,
+        broadband_type=broadband_type,
+        tag=tag,
+    )
+    total = await storage.get_filter_count(**f)
+    return Response(str(total), media_type="text/plain")
+
+
+@router.get("/health")
+async def health_check(request: Request) -> JSONResponse:
+    """Health check endpoint for Fly.io with pipeline status."""
+    storage: PropertyStorage = request.app.state.storage
+    last_run = await storage.get_last_pipeline_run()
+    pipeline_lock = getattr(request.app.state, "pipeline_lock", None)
+    return JSONResponse(
+        {
+            "status": "ok",
+            "pipeline_running": pipeline_lock.locked() if pipeline_lock else False,
+            "last_run_at": last_run["completed_at"] if last_run else None,
+            "last_run_status": last_run["status"] if last_run else None,
+            "last_run_notified": last_run["notified_count"] if last_run else None,
+        }
+    )
+
+
+@router.get("/", response_class=HTMLResponse)
+async def dashboard(
+    request: Request,
+    storage: StorageDep,
+    search_areas: SearchAreasDep,
+    sort: str = "newest",
+    min_price: str | None = None,
+    max_price: str | None = None,
+    bedrooms: str | None = None,
+    min_rating: str | None = None,
+    area: str | None = None,
+    page: str | None = None,
+    property_type: str | None = None,
+    outdoor_space: str | None = None,
+    natural_light: str | None = None,
+    pets: str | None = None,
+    value_rating: str | None = None,
+    hob_type: str | None = None,
+    floor_level: str | None = None,
+    building_construction: str | None = None,
+    office_separation: str | None = None,
+    hosting_layout: str | None = None,
+    hosting_noise_risk: str | None = None,
+    broadband_type: str | None = None,
+    tag: list[str] = Query(default=[]),
+) -> HTMLResponse:
+    """Dashboard page with property card grid."""
+    f = _validate_filters(
+        min_price=min_price,
+        max_price=max_price,
+        bedrooms=bedrooms,
+        min_rating=min_rating,
+        area=area,
+        property_type=property_type,
+        outdoor_space=outdoor_space,
+        natural_light=natural_light,
+        pets=pets,
+        value_rating=value_rating,
+        hob_type=hob_type,
+        floor_level=floor_level,
+        building_construction=building_construction,
+        office_separation=office_separation,
+        hosting_layout=hosting_layout,
+        hosting_noise_risk=hosting_noise_risk,
+        broadband_type=broadband_type,
+        tag=tag,
+    )
+
+    min_price_val = f["min_price"]
+    max_price_val = f["max_price"]
+    bedrooms_val = f["bedrooms"]
+    min_rating_val = f["min_rating"]
+    area_val = f["area"]
+    property_type_val = f["property_type"]
+    outdoor_space_val = f["outdoor_space"]
+    natural_light_val = f["natural_light"]
+    pets_val = f["pets"]
+    value_rating_val = f["value_rating"]
+    hob_type_val = f["hob_type"]
+    floor_level_val = f["floor_level"]
+    building_construction_val = f["building_construction"]
+    office_separation_val = f["office_separation"]
+    hosting_layout_val = f["hosting_layout"]
+    hosting_noise_risk_val = f["hosting_noise_risk"]
+    broadband_type_val = f["broadband_type"]
+    tags_val = f["tags"]
+
+    page_val = _parse_optional_int(page) or 1
+    page_val = max(1, page_val)
+    sort = sort if sort in VALID_SORT_OPTIONS else "newest"
 
     per_page = 24
 
@@ -207,6 +450,10 @@ async def dashboard(
             hob_type=hob_type_val,
             floor_level=floor_level_val,
             building_construction=building_construction_val,
+            office_separation=office_separation_val,
+            hosting_layout=hosting_layout_val,
+            hosting_noise_risk=hosting_noise_risk_val,
+            broadband_type=broadband_type_val,
             tags=tags_val,
         )
     except Exception:
@@ -261,9 +508,7 @@ async def dashboard(
         pt_label = property_type_val.replace("_", " ").title()
         active_filters.append({"key": "property_type", "label": pt_label})
     if outdoor_space_val:
-        active_filters.append(
-            {"key": "outdoor_space", "label": f"Outdoor: {outdoor_space_val}"}
-        )
+        active_filters.append({"key": "outdoor_space", "label": f"Outdoor: {outdoor_space_val}"})
     if natural_light_val:
         active_filters.append(
             {"key": "natural_light", "label": f"{natural_light_val.title()} light"}
@@ -279,15 +524,64 @@ async def dashboard(
     if building_construction_val:
         bc_label = building_construction_val.replace("_", " ").title()
         active_filters.append({"key": "building_construction", "label": bc_label})
+    if office_separation_val:
+        os_label = office_separation_val.replace("_", " ").title()
+        active_filters.append({"key": "office_separation", "label": os_label})
+    if hosting_layout_val:
+        active_filters.append(
+            {"key": "hosting_layout", "label": f"{hosting_layout_val.title()} hosting"}
+        )
+    if hosting_noise_risk_val:
+        active_filters.append(
+            {"key": "hosting_noise_risk", "label": f"{hosting_noise_risk_val.title()} noise risk"}
+        )
+    if broadband_type_val:
+        active_filters.append(
+            {"key": "broadband_type", "label": f"{broadband_type_val.upper()} broadband"}
+        )
 
     for t in tags_val:
         active_filters.append({"key": "tag", "label": t, "value": t})
 
-    any_quality_filter_active = any([
-        property_type_val, outdoor_space_val, natural_light_val,
-        pets_val, value_rating_val, hob_type_val, floor_level_val,
-        building_construction_val, tags_val,
-    ])
+    any_quality_filter_active = any(
+        [
+            property_type_val,
+            outdoor_space_val,
+            natural_light_val,
+            pets_val,
+            value_rating_val,
+            hob_type_val,
+            floor_level_val,
+            building_construction_val,
+            office_separation_val,
+            hosting_layout_val,
+            hosting_noise_risk_val,
+            broadband_type_val,
+            tags_val,
+        ]
+    )
+
+    # Count of active secondary (modal) filters for badge display
+    secondary_filter_count = sum(
+        1
+        for v in [
+            property_type_val,
+            outdoor_space_val,
+            natural_light_val,
+            pets_val,
+            value_rating_val,
+            hob_type_val,
+            floor_level_val,
+            building_construction_val,
+            office_separation_val,
+            hosting_layout_val,
+            hosting_noise_risk_val,
+            broadband_type_val,
+        ]
+        if v is not None
+    ) + len(tags_val)
+
+    highlight_values = {h.value for h in PropertyHighlight}
 
     context: dict[str, Any] = {
         "request": request,
@@ -314,8 +608,15 @@ async def dashboard(
         "hob_type": hob_type_val,
         "floor_level": floor_level_val,
         "building_construction": building_construction_val,
+        "office_separation": office_separation_val,
+        "hosting_layout": hosting_layout_val,
+        "hosting_noise_risk": hosting_noise_risk_val,
+        "broadband_type": broadband_type_val,
         "any_quality_filter_active": any_quality_filter_active,
         "tags": tags_val,
+        "secondary_filter_count": secondary_filter_count,
+        "tag_categories": TAG_CATEGORIES,
+        "highlight_values": highlight_values,
     }
 
     # HTMX partial rendering

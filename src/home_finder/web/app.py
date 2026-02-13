@@ -2,6 +2,7 @@
 
 import asyncio
 import contextlib
+import random
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -20,6 +21,12 @@ logger = get_logger(__name__)
 WEB_DIR: Final = Path(__file__).parent
 
 PIPELINE_INITIAL_DELAY_SECONDS: Final = 30
+
+# Module-level lock prevents overlapping pipeline runs
+_pipeline_lock = asyncio.Lock()
+
+# Jitter range (seconds) added to sleep interval to avoid scraping at fixed offsets
+_JITTER_SECONDS: Final = 300
 
 
 class SecurityHeadersMiddleware(BaseHTTPMiddleware):
@@ -42,13 +49,24 @@ async def _pipeline_loop(settings: Settings, interval_minutes: int) -> None:
     await asyncio.sleep(PIPELINE_INITIAL_DELAY_SECONDS)
 
     while True:
-        logger.info("pipeline_scheduler_running")
-        try:
-            await run_pipeline(settings)
-        except Exception:
-            logger.error("pipeline_scheduler_error", exc_info=True)
-        logger.info("pipeline_scheduler_sleeping", minutes=interval_minutes)
-        await asyncio.sleep(interval_minutes * 60)
+        if _pipeline_lock.locked():
+            logger.warning("pipeline_still_running_skipping")
+        else:
+            async with _pipeline_lock:
+                logger.info("pipeline_scheduler_running")
+                try:
+                    await run_pipeline(settings)
+                except Exception:
+                    logger.error("pipeline_scheduler_error", exc_info=True)
+
+        jitter = random.uniform(-_JITTER_SECONDS, _JITTER_SECONDS)  # noqa: S311
+        sleep_seconds = interval_minutes * 60 + jitter
+        logger.info(
+            "pipeline_scheduler_sleeping",
+            minutes=interval_minutes,
+            jitter_seconds=round(jitter),
+        )
+        await asyncio.sleep(sleep_seconds)
 
 
 def create_app(settings: Settings | None = None, *, run_pipeline: bool = True) -> FastAPI:
@@ -72,6 +90,7 @@ def create_app(settings: Settings | None = None, *, run_pipeline: bool = True) -
         await storage.initialize()
         app.state.storage = storage
         app.state.settings = settings
+        app.state.pipeline_lock = _pipeline_lock
 
         if run_pipeline:
             # Start background pipeline scheduler

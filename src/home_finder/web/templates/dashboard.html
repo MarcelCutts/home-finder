@@ -14,16 +14,16 @@
           hx-get="/" hx-target="#results" hx-push-url="true" hx-indicator="#loading">
         <div class="filter-row">
             <div class="filter-controls" role="group">
-                <select name="bedrooms" aria-label="Bedrooms">
-                    <option value="">All beds</option>
-                    <option value="0" {% if bedrooms == 0 %}selected{% endif %}>Studio</option>
-                    {% for b in [1, 2, 3, 4] %}
-                    <option value="{{ b }}" {% if bedrooms == b %}selected{% endif %}>{{ b }} bed</option>
+                <fieldset class="beds-toggle" aria-label="Bedrooms">
+                    {% for val, label in [("", "Any"), ("0", "Studio"), ("1", "1"), ("2", "2")] %}
+                    <input type="radio" name="bedrooms" id="beds-{{ val or 'any' }}" value="{{ val }}"
+                           class="sr-only" {% if (val == "" and bedrooms is none) or (val != "" and bedrooms is not none and bedrooms == val|int) %}checked{% endif %}>
+                    <label for="beds-{{ val or 'any' }}">{{ label }}</label>
                     {% endfor %}
-                </select>
+                </fieldset>
 
-                <input type="number" name="min_price" placeholder="Min price" value="{{ min_price or '' }}" aria-label="Min price" step="50">
-                <input type="number" name="max_price" placeholder="Max price" value="{{ max_price or '' }}" aria-label="Max price" step="50">
+                <input type="number" name="min_price" placeholder="Min price" value="{{ min_price or '' }}" aria-label="Min price" step="50" class="desktop-only">
+                <input type="number" name="max_price" placeholder="Max price" value="{{ max_price or '' }}" aria-label="Max price" step="50" class="desktop-only">
 
                 <select name="area" aria-label="Area">
                     <option value="">All areas</option>
@@ -32,7 +32,7 @@
                     {% endfor %}
                 </select>
 
-                <select name="min_rating" aria-label="Min rating">
+                <select name="min_rating" aria-label="Min rating" class="desktop-only">
                     <option value="">Any rating</option>
                     {% for r in [3, 4, 5] %}
                     <option value="{{ r }}" {% if min_rating == r %}selected{% endif %}>{{ r }}+ stars</option>
@@ -47,6 +47,8 @@
                     <option value="fit_desc" {% if sort == "fit_desc" %}selected{% endif %}>Best Fit</option>
                 </select>
 
+                <button type="button" id="open-filters-btn" class="filter-modal-btn">Filters{% if secondary_filter_count %} <span class="filter-badge">{{ secondary_filter_count }}</span>{% endif %}</button>
+
                 <button type="submit" class="secondary">Apply</button>
                 {% if active_filters %}
                 <a href="/" role="button" class="outline secondary filter-reset"
@@ -54,63 +56,6 @@
                 {% endif %}
             </div>
         </div>
-        <details class="quality-filters" {% if any_quality_filter_active %}open{% endif %}>
-            <summary>More filters</summary>
-            <div class="filter-controls">
-                <select name="property_type" aria-label="Property type">
-                    <option value="">Any type</option>
-                    {% for t in ["victorian", "edwardian", "georgian", "new_build", "purpose_built", "warehouse", "ex_council", "period_conversion"] %}
-                    <option value="{{ t }}" {% if property_type == t %}selected{% endif %}>{{ t | replace("_", " ") | title }}</option>
-                    {% endfor %}
-                </select>
-
-                <select name="outdoor_space" aria-label="Outdoor space">
-                    <option value="">Outdoor</option>
-                    <option value="yes" {% if outdoor_space == "yes" %}selected{% endif %}>Has outdoor</option>
-                    <option value="no" {% if outdoor_space == "no" %}selected{% endif %}>No outdoor</option>
-                </select>
-
-                <select name="natural_light" aria-label="Natural light">
-                    <option value="">Any light</option>
-                    {% for l in ["excellent", "good", "fair", "poor"] %}
-                    <option value="{{ l }}" {% if natural_light == l %}selected{% endif %}>{{ l | title }} light</option>
-                    {% endfor %}
-                </select>
-
-                <select name="pets" aria-label="Pets allowed">
-                    <option value="">Pets</option>
-                    <option value="yes" {% if pets == "yes" %}selected{% endif %}>Pets allowed</option>
-                </select>
-
-                <select name="value_rating" aria-label="Value rating">
-                    <option value="">Any value</option>
-                    {% for v in ["excellent", "good", "fair", "poor"] %}
-                    <option value="{{ v }}" {% if value_rating == v %}selected{% endif %}>{{ v | title }} value</option>
-                    {% endfor %}
-                </select>
-
-                <select name="hob_type" aria-label="Hob type">
-                    <option value="">Any hob</option>
-                    {% for h in ["gas", "induction", "electric"] %}
-                    <option value="{{ h }}" {% if hob_type == h %}selected{% endif %}>{{ h | title }}</option>
-                    {% endfor %}
-                </select>
-
-                <select name="floor_level" aria-label="Floor level">
-                    <option value="">Any floor</option>
-                    {% for f in ["basement", "ground", "lower", "upper", "top"] %}
-                    <option value="{{ f }}" {% if floor_level == f %}selected{% endif %}>{{ f | title }}</option>
-                    {% endfor %}
-                </select>
-
-                <select name="building_construction" aria-label="Construction">
-                    <option value="">Any build</option>
-                    {% for c in ["solid_brick", "concrete", "timber_frame", "mixed"] %}
-                    <option value="{{ c }}" {% if building_construction == c %}selected{% endif %}>{{ c | replace("_", " ") | title }}</option>
-                    {% endfor %}
-                </select>
-            </div>
-        </details>
         <div class="filter-toolbar">
             <div class="view-toggle">
                 <button type="button" class="view-toggle-btn active" data-view="grid" aria-label="Grid view" aria-pressed="true">
@@ -127,6 +72,155 @@
                 </button>
             </div>
         </div>
+        <dialog id="filter-modal" class="filter-modal">
+            <header class="filter-modal-header">
+                <h2>Filters</h2>
+                <button type="button" class="filter-modal-close" aria-label="Close filters">&times;</button>
+            </header>
+            <div class="filter-modal-body">
+                <div class="mobile-primary-section">
+                    <fieldset class="beds-toggle" aria-label="Bedrooms (mobile)">
+                        {% for val, label in [("", "Any"), ("0", "Studio"), ("1", "1"), ("2", "2")] %}
+                        <input type="radio" name="bedrooms_mobile" id="beds-m-{{ val or 'any' }}" value="{{ val }}"
+                               class="sr-only" {% if (val == "" and bedrooms is none) or (val != "" and bedrooms is not none and bedrooms == val|int) %}checked{% endif %} disabled>
+                        <label for="beds-m-{{ val or 'any' }}">{{ label }}</label>
+                        {% endfor %}
+                    </fieldset>
+                    <div class="mobile-price-row">
+                        <input type="number" name="min_price_mobile" placeholder="Min price" value="{{ min_price or '' }}" aria-label="Min price" step="50" disabled>
+                        <input type="number" name="max_price_mobile" placeholder="Max price" value="{{ max_price or '' }}" aria-label="Max price" step="50" disabled>
+                    </div>
+                    <select name="min_rating_mobile" aria-label="Min rating" disabled>
+                        <option value="">Any rating</option>
+                        {% for r in [3, 4, 5] %}
+                        <option value="{{ r }}" {% if min_rating == r %}selected{% endif %}>{{ r }}+ stars</option>
+                        {% endfor %}
+                    </select>
+                </div>
+
+                <fieldset class="filter-group">
+                    <legend><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg> Workspace</legend>
+                    <div class="filter-group-grid">
+                        <select name="office_separation" aria-label="Office separation">
+                            <option value="">Any office</option>
+                            {% for v in ["dedicated_room", "separate_area", "shared_space", "none"] %}
+                            <option value="{{ v }}" {% if office_separation == v %}selected{% endif %}>{{ v | replace("_", " ") | title }}</option>
+                            {% endfor %}
+                        </select>
+                        <select name="broadband_type" aria-label="Broadband type">
+                            <option value="">Any broadband</option>
+                            {% for v in ["fttp", "fttc", "cable", "standard"] %}
+                            <option value="{{ v }}" {% if broadband_type == v %}selected{% endif %}>{{ v | upper }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                </fieldset>
+
+                <fieldset class="filter-group">
+                    <legend><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg> Hosting</legend>
+                    <div class="filter-group-grid">
+                        <select name="hosting_layout" aria-label="Hosting layout">
+                            <option value="">Any layout</option>
+                            {% for v in ["excellent", "good", "awkward", "poor"] %}
+                            <option value="{{ v }}" {% if hosting_layout == v %}selected{% endif %}>{{ v | title }}</option>
+                            {% endfor %}
+                        </select>
+                        <select name="hosting_noise_risk" aria-label="Noise risk">
+                            <option value="">Any noise</option>
+                            {% for v in ["low", "moderate", "high"] %}
+                            <option value="{{ v }}" {% if hosting_noise_risk == v %}selected{% endif %}>{{ v | title }} risk</option>
+                            {% endfor %}
+                        </select>
+                        <select name="outdoor_space" aria-label="Outdoor space">
+                            <option value="">Outdoor</option>
+                            <option value="yes" {% if outdoor_space == "yes" %}selected{% endif %}>Has outdoor</option>
+                            <option value="no" {% if outdoor_space == "no" %}selected{% endif %}>No outdoor</option>
+                        </select>
+                    </div>
+                </fieldset>
+
+                <fieldset class="filter-group">
+                    <legend><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 9h18M3 15h18M9 3v18"/></svg> Kitchen</legend>
+                    <div class="filter-group-grid">
+                        <select name="hob_type" aria-label="Hob type">
+                            <option value="">Any hob</option>
+                            {% for h in ["gas", "induction", "electric"] %}
+                            <option value="{{ h }}" {% if hob_type == h %}selected{% endif %}>{{ h | title }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                </fieldset>
+
+                <fieldset class="filter-group">
+                    <legend><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg> Space & Light</legend>
+                    <div class="filter-group-grid">
+                        <select name="natural_light" aria-label="Natural light">
+                            <option value="">Any light</option>
+                            {% for l in ["excellent", "good", "fair", "poor"] %}
+                            <option value="{{ l }}" {% if natural_light == l %}selected{% endif %}>{{ l | title }} light</option>
+                            {% endfor %}
+                        </select>
+                        <select name="floor_level" aria-label="Floor level">
+                            <option value="">Any floor</option>
+                            {% for f in ["basement", "ground", "lower", "upper", "top"] %}
+                            <option value="{{ f }}" {% if floor_level == f %}selected{% endif %}>{{ f | title }}</option>
+                            {% endfor %}
+                        </select>
+                        <select name="building_construction" aria-label="Construction">
+                            <option value="">Any build</option>
+                            {% for c in ["solid_brick", "concrete", "timber_frame", "mixed"] %}
+                            <option value="{{ c }}" {% if building_construction == c %}selected{% endif %}>{{ c | replace("_", " ") | title }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                </fieldset>
+
+                <fieldset class="filter-group">
+                    <legend><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg> Property</legend>
+                    <div class="filter-group-grid">
+                        <select name="property_type" aria-label="Property type">
+                            <option value="">Any type</option>
+                            {% for t in ["victorian", "edwardian", "georgian", "new_build", "purpose_built", "warehouse", "ex_council", "period_conversion"] %}
+                            <option value="{{ t }}" {% if property_type == t %}selected{% endif %}>{{ t | replace("_", " ") | title }}</option>
+                            {% endfor %}
+                        </select>
+                        <select name="value_rating" aria-label="Value rating">
+                            <option value="">Any value</option>
+                            {% for v in ["excellent", "good", "fair", "poor"] %}
+                            <option value="{{ v }}" {% if value_rating == v %}selected{% endif %}>{{ v | title }} value</option>
+                            {% endfor %}
+                        </select>
+                        <select name="pets" aria-label="Pets allowed">
+                            <option value="">Pets</option>
+                            <option value="yes" {% if pets == "yes" %}selected{% endif %}>Pets allowed</option>
+                        </select>
+                    </div>
+                </fieldset>
+
+                {% if tag_categories %}
+                <fieldset class="filter-group filter-group-tags">
+                    <legend><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg> Tags</legend>
+                    {% for category, tag_list in tag_categories.items() %}
+                    <div class="tag-category">
+                        <span class="tag-category-label">{{ category }}</span>
+                        <div class="tag-chips-wrap">
+                            {% for t in tag_list %}
+                            <label class="tag-chip {% if t in highlight_values %}tag-chip-positive{% else %}tag-chip-negative{% endif %}">
+                                <input type="checkbox" name="tag" value="{{ t }}" class="sr-only" {% if t in tags %}checked{% endif %}>
+                                {{ t }}
+                            </label>
+                            {% endfor %}
+                        </div>
+                    </div>
+                    {% endfor %}
+                </fieldset>
+                {% endif %}
+            </div>
+            <footer class="filter-modal-footer">
+                <button type="button" class="filter-modal-reset outline secondary">Reset all</button>
+                <button type="submit" class="filter-modal-apply">Show <span id="modal-count" hx-get="/count" hx-trigger="filterChange from:closest dialog delay:300ms" hx-include="closest form">{{ total }}</span> properties</button>
+            </footer>
+        </dialog>
     </form>
 </section>
 

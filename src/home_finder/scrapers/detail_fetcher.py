@@ -15,7 +15,9 @@ from home_finder.models import Property, PropertySource
 
 _MAX_RETRIES = 2  # cross-run retry handles persistent failures
 _RETRY_BASE_DELAY = 2.0  # seconds, doubled each retry (2, 4)
-_CURL_MIN_INTERVAL = 1.5  # minimum seconds between curl_cffi requests (Zoopla rate limit)
+_ZOOPLA_MIN_INTERVAL = 1.5  # seconds between Zoopla detail page requests
+_OTM_MIN_INTERVAL = 0.3  # seconds between OnTheMarket requests (less aggressive)
+_IMAGE_MIN_INTERVAL = 0.1  # seconds between CDN image downloads (rarely rate limited)
 
 logger = get_logger(__name__)
 
@@ -63,8 +65,14 @@ class DetailFetcher:
         self._curl_session: AsyncSession | None = None  # type: ignore[type-arg]
         self._max_gallery_images = max_gallery_images
         self._proxy_url = proxy_url
-        self._curl_lock = asyncio.Lock()
-        self._curl_next_time: float = 0.0
+        # Per-purpose throttles: Zoopla detail pages are heavily rate-limited,
+        # OTM less so, and CDN image downloads rarely trigger 429s.
+        self._zoopla_lock = asyncio.Lock()
+        self._zoopla_next_time: float = 0.0
+        self._otm_lock = asyncio.Lock()
+        self._otm_next_time: float = 0.0
+        self._image_lock = asyncio.Lock()
+        self._image_next_time: float = 0.0
 
     async def _get_client(self) -> httpx.AsyncClient:
         """Get or create HTTP client."""
@@ -99,17 +107,35 @@ class DetailFetcher:
         response.raise_for_status()  # raise the 429 on final failure
         return response  # unreachable but satisfies type checker
 
-    async def _curl_throttle(self) -> None:
-        """Ensure minimum interval between curl_cffi requests to avoid rate limiting."""
-        async with self._curl_lock:
+    async def _throttle(
+        self, lock: asyncio.Lock, attr: str, interval: float
+    ) -> None:
+        """Ensure minimum interval between requests for a specific throttle."""
+        async with lock:
             now = asyncio.get_event_loop().time()
-            wait = self._curl_next_time - now
+            next_time = getattr(self, attr)
+            wait = next_time - now
             if wait > 0:
                 await asyncio.sleep(wait)
-            self._curl_next_time = asyncio.get_event_loop().time() + _CURL_MIN_INTERVAL
+            setattr(self, attr, asyncio.get_event_loop().time() + interval)
 
-    async def _curl_get_with_retry(self, url: str) -> Any:
-        """GET with retry on 429 for curl_cffi session."""
+    async def _curl_get_with_retry(
+        self, url: str, *, min_interval: float = _ZOOPLA_MIN_INTERVAL
+    ) -> Any:
+        """GET with retry on 429 for curl_cffi session.
+
+        Args:
+            url: URL to fetch.
+            min_interval: Minimum seconds between requests for this throttle.
+        """
+        # Pick the right throttle based on interval (avoids adding more params)
+        if min_interval >= _ZOOPLA_MIN_INTERVAL:
+            lock, attr = self._zoopla_lock, "_zoopla_next_time"
+        elif min_interval >= _OTM_MIN_INTERVAL:
+            lock, attr = self._otm_lock, "_otm_next_time"
+        else:
+            lock, attr = self._image_lock, "_image_next_time"
+
         session = await self._get_curl_session()
         kwargs: dict[str, object] = {
             "impersonate": "chrome",
@@ -123,7 +149,7 @@ class DetailFetcher:
         if self._proxy_url:
             kwargs["proxy"] = self._proxy_url
         for attempt in range(_MAX_RETRIES):
-            await self._curl_throttle()
+            await self._throttle(lock, attr, min_interval)
             response = await session.get(url, **kwargs)  # type: ignore[arg-type]
             if response.status_code != 429:
                 return response
@@ -516,7 +542,9 @@ class DetailFetcher:
         OnTheMarket's bot detection.
         """
         try:
-            response = await self._curl_get_with_retry(str(prop.url))
+            response = await self._curl_get_with_retry(
+                str(prop.url), min_interval=_OTM_MIN_INTERVAL
+            )
             if response.status_code != 200:
                 logger.warning(
                     "onthemarket_http_error",
@@ -600,7 +628,9 @@ class DetailFetcher:
         """
         try:
             if "zoocdn.com" in url or "onthemarket.com" in url:
-                response = await self._curl_get_with_retry(url)
+                response = await self._curl_get_with_retry(
+                    url, min_interval=_IMAGE_MIN_INTERVAL
+                )
                 if response.status_code != 200:
                     logger.debug("image_download_failed", url=url, status=response.status_code)
                     return None

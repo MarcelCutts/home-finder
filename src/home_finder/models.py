@@ -165,6 +165,7 @@ class NotificationStatus(StrEnum):
 
     PENDING = "pending"
     PENDING_ENRICHMENT = "pending_enrichment"
+    PENDING_ANALYSIS = "pending_analysis"
     SENT = "sent"
     FAILED = "failed"
 

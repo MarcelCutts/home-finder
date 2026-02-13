@@ -89,8 +89,15 @@ def _format_space_info(analysis: PropertyQualityAnalysis) -> str:
     return "Size unknown"
 
 
-def _format_value_info(analysis: PropertyQualityAnalysis) -> str | None:
+def _format_value_info(
+    analysis: PropertyQualityAnalysis, *, brief: bool = False
+) -> str | None:
     """Format value assessment for display.
+
+    Args:
+        analysis: The quality analysis.
+        brief: If True, return only the rating + benchmark note
+               (no full quality commentary). Ideal for captions.
 
     Prefers the quality-adjusted rating from Claude if available,
     falls back to the simple price-based rating.
@@ -106,6 +113,16 @@ def _format_value_info(analysis: PropertyQualityAnalysis) -> str | None:
         "fair": "📊",
         "poor": "⚠️",
     }
+
+    if brief:
+        # Short form for captions: rating + benchmark note only
+        rating = value.quality_adjusted_rating or value.rating
+        if not rating:
+            return None
+        emoji = emoji_map.get(rating, "")
+        if value.note:
+            return f"{emoji} {rating.capitalize()} value — {html.escape(value.note)}"
+        return f"{emoji} {rating.capitalize()} value"
 
     # Show both benchmark and quality-adjusted value when available
     if value.quality_adjusted_rating and value.note:
@@ -331,7 +348,7 @@ def _format_quality_block(
         if analysis.listing_red_flags and analysis.listing_red_flags.red_flag_count >= 2:
             lines.append(f"🚩 {analysis.listing_red_flags.red_flag_count} red flags")
 
-    value_info = _format_value_info(analysis)
+    value_info = _format_value_info(analysis, brief=not full)
     if value_info:
         lines.append(value_info)
 
@@ -476,6 +493,69 @@ def format_merged_property_caption(
     if len(caption) > 1024:
         caption = caption[:1021] + "..."
     return caption
+
+
+def _format_followup_detail(
+    quality_analysis: PropertyQualityAnalysis | None = None,
+) -> str:
+    """Format non-redundant detail for media group follow-up message.
+
+    Complements the condensed caption (which shows title, price, address,
+    one-line summary, highlights/lowlights, and brief value) by providing
+    only the detailed breakdown, viewing notes, and full value commentary.
+    No title/price/address repetition.
+    """
+    if not quality_analysis:
+        return ""
+
+    analysis = quality_analysis
+    lines: list[str] = []
+
+    if analysis.condition_concerns:
+        concerns_text = ", ".join(html.escape(c) for c in analysis.condition.maintenance_concerns)
+        lines.append(f"⚠️ <b>Concerns:</b> {concerns_text}")
+
+    lines.append(f"🍳 {_format_kitchen_info(analysis)}")
+
+    bathroom_info = _format_bathroom_info(analysis)
+    if bathroom_info:
+        lines.append(f"🚿 {bathroom_info}")
+
+    lines.append(f"💡 {_format_light_space_info(analysis)}")
+    lines.append(f"📐 {_format_space_info(analysis)}")
+    lines.append(f"🔧 {analysis.condition.overall_condition}")
+
+    outdoor_info = _format_outdoor_info(analysis)
+    if outdoor_info:
+        lines.append(f"🌿 {outdoor_info}")
+
+    listing_info = _format_listing_extraction_info(analysis)
+    if listing_info:
+        lines.append(f"📋 {listing_info}")
+
+    if analysis.listing_red_flags and analysis.listing_red_flags.red_flag_count > 0:
+        rf = analysis.listing_red_flags
+        rf_parts = []
+        if rf.missing_room_photos:
+            rf_parts.append(f"No photos of: {', '.join(rf.missing_room_photos)}")
+        if rf.too_few_photos:
+            rf_parts.append("Too few photos")
+        if rf_parts:
+            lines.append(f"🚩 {' · '.join(rf_parts)}")
+
+    # Viewing notes
+    viewing_lines = _format_viewing_notes(analysis)
+    if viewing_lines:
+        lines.append("")
+        lines.extend(viewing_lines)
+
+    # Full value commentary in expandable blockquote (caption only has the brief line)
+    if analysis.value and analysis.value.quality_adjusted_note:
+        lines.append("")
+        escaped_note = html.escape(analysis.value.quality_adjusted_note)
+        lines.append(f"<blockquote expandable>{escaped_note}</blockquote>")
+
+    return "\n".join(lines)
 
 
 def _build_inline_keyboard(
@@ -703,11 +783,8 @@ class TelegramNotifier:
                 )
                 try:
                     if len(gallery_urls) >= 3:
-                        # Send media group + full analysis in follow-up message
-                        followup_text = format_merged_property_message(
-                            merged,
-                            commute_minutes=commute_minutes,
-                            transport_mode=transport_mode,
+                        # Complementary detail only (no title/price/address repetition)
+                        followup_text = _format_followup_detail(
                             quality_analysis=quality_analysis,
                         )
                         sent_photo = await self._send_media_group(

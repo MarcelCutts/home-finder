@@ -16,12 +16,21 @@
     }
   });
 
-  // Auto-apply: submit form on <select> change
+  // Auto-apply: submit form on <select> or radio change (not inside dialog)
   document.addEventListener("change", function (e) {
-    if (e.target.tagName !== "SELECT") return;
-    var form = e.target.closest(".filter-form");
-    if (form) {
-      htmx.trigger(form, "submit");
+    var tag = e.target.tagName;
+    var type = (e.target.type || "").toLowerCase();
+    var inDialog = e.target.closest("dialog");
+    if (inDialog) {
+      // Inside modal: dispatch filterChange for live count
+      inDialog.dispatchEvent(new CustomEvent("filterChange", { bubbles: true }));
+      return;
+    }
+    if (tag === "SELECT" || (tag === "INPUT" && type === "radio")) {
+      var form = e.target.closest(".filter-form");
+      if (form) {
+        htmx.trigger(form, "submit");
+      }
     }
   });
 
@@ -30,14 +39,135 @@
     var btn = e.target.closest(".filter-chip-remove[data-filter-key]");
     if (!btn) return;
     var key = btn.dataset.filterKey;
+    var value = btn.dataset.filterValue;
     var form = document.querySelector(".filter-form");
     if (!form) return;
-    var field = form.querySelector('[name="' + key + '"]');
-    if (field) {
-      field.value = "";
+
+    if (key === "tag" && value) {
+      // Uncheck the matching tag checkbox
+      var checkboxes = form.querySelectorAll('input[name="tag"]');
+      for (var i = 0; i < checkboxes.length; i++) {
+        if (checkboxes[i].value === value) {
+          checkboxes[i].checked = false;
+        }
+      }
+    } else if (key === "bedrooms") {
+      // Reset beds toggle to "Any"
+      var anyRadio = form.querySelector('input[name="bedrooms"][value=""]');
+      if (anyRadio) anyRadio.checked = true;
+    } else {
+      var field = form.querySelector('[name="' + key + '"]');
+      if (field) {
+        field.value = "";
+      }
     }
     htmx.trigger(form, "submit");
   });
+
+  // Filter modal: open, close, reset
+  var dialog = document.getElementById("filter-modal");
+  var openBtn = document.getElementById("open-filters-btn");
+  if (dialog && openBtn) {
+    openBtn.addEventListener("click", function () {
+      syncToMobile();
+      dialog.showModal();
+    });
+
+    dialog.querySelector(".filter-modal-close").addEventListener("click", function () {
+      dialog.close();
+    });
+
+    dialog.querySelector(".filter-modal-reset").addEventListener("click", function () {
+      // Clear all selects and checkboxes inside the dialog
+      var selects = dialog.querySelectorAll("select");
+      for (var i = 0; i < selects.length; i++) selects[i].value = "";
+      var checkboxes = dialog.querySelectorAll('input[type="checkbox"]');
+      for (var j = 0; j < checkboxes.length; j++) checkboxes[j].checked = false;
+      // Reset mobile beds toggle
+      var anyBeds = dialog.querySelector('input[name="bedrooms_mobile"][value=""]');
+      if (anyBeds) anyBeds.checked = true;
+      // Reset mobile price/rating
+      var mobileInputs = dialog.querySelectorAll('.mobile-primary-section input[type="number"]');
+      for (var k = 0; k < mobileInputs.length; k++) mobileInputs[k].value = "";
+      var mobileSelects = dialog.querySelectorAll('.mobile-primary-section select');
+      for (var l = 0; l < mobileSelects.length; l++) mobileSelects[l].value = "";
+      dialog.dispatchEvent(new CustomEvent("filterChange", { bubbles: true }));
+    });
+
+    // Apply closes dialog and syncs values from mobile to desktop
+    dialog.querySelector(".filter-modal-apply").addEventListener("click", function (e) {
+      syncFromMobile();
+      dialog.close();
+    });
+
+    // Close modal after HTMX swap completes (apply was clicked)
+    document.addEventListener("htmx:afterRequest", function (e) {
+      if (dialog.open && e.detail.elt && e.detail.elt.closest && e.detail.elt.closest(".filter-form")) {
+        dialog.close();
+      }
+    });
+  }
+
+  // Mobile ↔ Desktop input sync
+  var isMobile = window.matchMedia("(max-width: 768px)");
+
+  function syncToMobile() {
+    if (!isMobile.matches || !dialog) return;
+    var form = document.querySelector(".filter-form");
+    if (!form) return;
+    // Beds
+    var desktopBeds = form.querySelector('input[name="bedrooms"]:checked');
+    if (desktopBeds) {
+      var mobileBeds = dialog.querySelector('input[name="bedrooms_mobile"][value="' + desktopBeds.value + '"]');
+      if (mobileBeds) mobileBeds.checked = true;
+    }
+    // Price
+    var minP = form.querySelector('input[name="min_price"]');
+    var minPM = dialog.querySelector('input[name="min_price_mobile"]');
+    if (minP && minPM) minPM.value = minP.value;
+    var maxP = form.querySelector('input[name="max_price"]');
+    var maxPM = dialog.querySelector('input[name="max_price_mobile"]');
+    if (maxP && maxPM) maxPM.value = maxP.value;
+    // Rating
+    var rating = form.querySelector('select[name="min_rating"]');
+    var ratingM = dialog.querySelector('select[name="min_rating_mobile"]');
+    if (rating && ratingM) ratingM.value = rating.value;
+  }
+
+  function syncFromMobile() {
+    if (!isMobile.matches || !dialog) return;
+    var form = document.querySelector(".filter-form");
+    if (!form) return;
+    // Beds
+    var mobileBeds = dialog.querySelector('input[name="bedrooms_mobile"]:checked');
+    if (mobileBeds) {
+      var desktopBeds = form.querySelector('input[name="bedrooms"][value="' + mobileBeds.value + '"]');
+      if (desktopBeds) desktopBeds.checked = true;
+    }
+    // Price
+    var minPM = dialog.querySelector('input[name="min_price_mobile"]');
+    var minP = form.querySelector('input[name="min_price"]');
+    if (minPM && minP) minP.value = minPM.value;
+    var maxPM = dialog.querySelector('input[name="max_price_mobile"]');
+    var maxP = form.querySelector('input[name="max_price"]');
+    if (maxPM && maxP) maxP.value = maxPM.value;
+    // Rating
+    var ratingM = dialog.querySelector('select[name="min_rating_mobile"]');
+    var rating = form.querySelector('select[name="min_rating"]');
+    if (ratingM && rating) rating.value = ratingM.value;
+  }
+
+  // Enable/disable mobile duplicates based on screen size
+  function toggleMobileInputs() {
+    if (!dialog) return;
+    var mobile = isMobile.matches;
+    var mobileInputs = dialog.querySelectorAll('.mobile-primary-section input, .mobile-primary-section select');
+    for (var i = 0; i < mobileInputs.length; i++) {
+      mobileInputs[i].disabled = !mobile;
+    }
+  }
+  toggleMobileInputs();
+  isMobile.addEventListener("change", toggleMobileInputs);
 })();
 
 // Lightbox with focus trapping, touch/swipe, event delegation, and preloading
