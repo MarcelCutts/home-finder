@@ -11,6 +11,7 @@ from pydantic import HttpUrl
 from home_finder.logging import get_logger
 from home_finder.models import MergedProperty, Property, PropertyImage, PropertySource
 from home_finder.scrapers.detail_fetcher import DetailFetcher
+from home_finder.utils.address import is_outcode
 from home_finder.utils.image_cache import (
     get_cached_image_path,
     is_property_cached,
@@ -48,6 +49,7 @@ async def _enrich_single(
         floorplan_image: PropertyImage | None = None
         best_description: str | None = None
         best_features: list[str] | None = None
+        canon_updates: dict[str, float | str] = {}
 
         for source, url in merged.source_urls.items():
             temp_prop = Property(
@@ -121,8 +123,24 @@ async def _enrich_single(
                 ):
                     best_features = detail_data.features
 
+                # Backfill coordinates/postcode from detail page (Rightmove especially)
+                if (
+                    "latitude" not in canon_updates
+                    and not prop.latitude
+                    and detail_data.latitude
+                    and detail_data.longitude
+                ):
+                    canon_updates["latitude"] = detail_data.latitude
+                    canon_updates["longitude"] = detail_data.longitude
+                if "postcode" not in canon_updates and detail_data.postcode:
+                    current_pc = prop.postcode or ""
+                    if not current_pc or is_outcode(current_pc):
+                        canon_updates["postcode"] = detail_data.postcode
+
+        canonical = prop.model_copy(update=canon_updates) if canon_updates else prop
+
         updated = MergedProperty(
-            canonical=merged.canonical,
+            canonical=canonical,
             sources=merged.sources,
             source_urls=merged.source_urls,
             images=tuple(all_images),

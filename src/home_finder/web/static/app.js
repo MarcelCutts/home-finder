@@ -170,6 +170,35 @@
   isMobile.addEventListener("change", toggleMobileInputs);
 })();
 
+// Fit badge popover: click-outside close
+(function () {
+  document.addEventListener("click", function (e) {
+    var openDetails = document.querySelectorAll("details.fit-popover-wrap[open]");
+    for (var i = 0; i < openDetails.length; i++) {
+      if (!openDetails[i].contains(e.target)) {
+        openDetails[i].removeAttribute("open");
+      }
+    }
+  });
+})();
+
+// Fit breakdown bar fill animation (detail page)
+(function () {
+  var bars = document.querySelectorAll(".fit-breakdown-fill");
+  if (!("IntersectionObserver" in window) || bars.length === 0) return;
+
+  var observer = new IntersectionObserver(function (entries) {
+    entries.forEach(function (entry) {
+      if (entry.isIntersecting) {
+        entry.target.classList.add("animate");
+        observer.unobserve(entry.target);
+      }
+    });
+  }, { threshold: 0.3 });
+
+  bars.forEach(function (bar) { observer.observe(bar); });
+})();
+
 // Lightbox with focus trapping, touch/swipe, event delegation, and preloading
 (function () {
   var lightbox = document.getElementById("lightbox");
@@ -619,7 +648,12 @@
   links.forEach(function (link) {
     link.addEventListener("click", function (e) {
       e.preventDefault();
-      var id = link.getAttribute("href").slice(1);
+      var href = link.getAttribute("href");
+      if (href === "#top") {
+        window.scrollTo({ top: 0, behavior: "smooth" });
+        return;
+      }
+      var id = href.slice(1);
       var target = document.getElementById(id);
       if (target) target.scrollIntoView({ behavior: "smooth" });
     });

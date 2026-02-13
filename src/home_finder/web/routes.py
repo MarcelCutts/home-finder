@@ -20,6 +20,7 @@ from home_finder.data.area_context import (
     RENTAL_BENCHMARKS,
 )
 from home_finder.db import PropertyStorage
+from home_finder.filters.fit_score import compute_fit_breakdown, compute_fit_score
 from home_finder.logging import get_logger
 from home_finder.models import (
     SOURCE_BADGES,
@@ -467,29 +468,14 @@ async def dashboard(
     total_pages = math.ceil(total / per_page) if total > 0 else 1
     page_val = min(page_val, total_pages)
 
-    # Build properties JSON for map view
-    properties_json = json.dumps(
-        [
-            {
-                "id": p["unique_id"],
-                "lat": p["latitude"],
-                "lon": p["longitude"],
-                "price": p["price_pcm"],
-                "bedrooms": p["bedrooms"],
-                "rating": p.get("quality_rating"),
-                "title": p["title"],
-                "url": f"/property/{p['unique_id']}",
-                "image_url": p.get("image_url"),
-                "postcode": p.get("postcode"),
-                "commute_minutes": p.get("commute_minutes"),
-                "value_rating": p.get("value_rating"),
-                "one_line": p.get("one_line"),
-                "fit_score": p.get("fit_score"),
-            }
-            for p in properties
-            if p.get("latitude") and p.get("longitude")
-        ]
-    )
+    # Build properties JSON for map view — all matching properties with coords,
+    # not just the current page.
+    try:
+        map_markers = await storage.get_map_markers(**f)
+    except Exception:
+        logger.error("map_markers_query_failed", exc_info=True)
+        map_markers = []
+    properties_json = json.dumps(map_markers)
 
     # Build active filter descriptors for chips
     active_filters: list[dict[str, str]] = []
@@ -723,6 +709,16 @@ async def property_detail(
     if not best_description and prop.get("description"):
         best_description = prop.get("description") or ""
 
+    # Compute Marcel Fit Score + breakdown for detail page
+    fit_score = None
+    fit_breakdown = None
+    qa = prop.get("quality_analysis")
+    if qa is not None:
+        analysis_dict = qa.model_dump()
+        bedrooms = prop.get("bedrooms", 0) or 0
+        fit_score = compute_fit_score(analysis_dict, bedrooms)
+        fit_breakdown = compute_fit_breakdown(analysis_dict, bedrooms)
+
     return templates.TemplateResponse(
         "detail.html",
         {
@@ -734,5 +730,7 @@ async def property_detail(
             "source_names": SOURCE_NAMES,
             "source_badges": SOURCE_BADGES,
             "image_url_map": image_url_map,
+            "fit_score": fit_score,
+            "fit_breakdown": fit_breakdown,
         },
     )

@@ -36,6 +36,9 @@ dev = [
     "mutmut>=3.0",
     "ruff>=0.8",
     "mypy>=1.13",
+    "inline-snapshot>=0.28",
+    "dirty-equals>=0.6",
+    "respx>=0.22",
 ]
 
 [project.scripts]

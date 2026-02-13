@@ -167,6 +167,38 @@ class TestRightmoveParsing:
         assert result.gallery_urls is not None
         assert len(result.gallery_urls) == 2
 
+    async def test_extracts_location(self, fetcher: DetailFetcher, with_floorplan: str) -> None:
+        fetcher._httpx_get_with_retry = AsyncMock(  # type: ignore[method-assign]
+            return_value=_mock_httpx_response(with_floorplan)
+        )
+        prop = _make_property(PropertySource.RIGHTMOVE)
+        result = await fetcher.fetch_detail_page(prop)
+        assert result is not None
+        assert result.latitude == pytest.approx(51.5465)
+        assert result.longitude == pytest.approx(-0.0553)
+        assert result.postcode == "E8 3RH"
+
+    async def test_missing_location_returns_none_coords(self, fetcher: DetailFetcher) -> None:
+        html = """<!DOCTYPE html><html><body><script>
+        window.PAGE_MODEL = {
+            "propertyData": {
+                "floorplans": [],
+                "images": [{"url": "https://example.com/img.jpg"}],
+                "text": {"description": "A flat."},
+                "keyFeatures": []
+            }
+        };
+        </script></body></html>"""
+        fetcher._httpx_get_with_retry = AsyncMock(  # type: ignore[method-assign]
+            return_value=_mock_httpx_response(html)
+        )
+        prop = _make_property(PropertySource.RIGHTMOVE)
+        result = await fetcher.fetch_detail_page(prop)
+        assert result is not None
+        assert result.latitude is None
+        assert result.longitude is None
+        assert result.postcode is None
+
     async def test_no_page_model_returns_none(self, fetcher: DetailFetcher) -> None:
         fetcher._httpx_get_with_retry = AsyncMock(  # type: ignore[method-assign]
             return_value=_mock_httpx_response("<html><body>No data</body></html>")

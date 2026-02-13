@@ -8,9 +8,23 @@
 quality-item quality-item{% if value in excellent_values %}-excellent{% elif value in fair_values %}-fair{% elif value in poor_values %}-poor{% else %}-neutral{% endif %}
 {%- endmacro -%}
 
-{%- macro fit_badge(score) -%}
+{%- macro fit_badge(score, breakdown=None) -%}
 {% if score is not none %}
-<div class="fit-badge {% if score >= 80 %}fit-green{% elif score >= 60 %}fit-accent{% elif score >= 40 %}fit-amber{% else %}fit-dim{% endif %}" title="Marcel Fit Score: {{ score }}">{{ score }}</div>
+<details class="fit-popover-wrap">
+    <summary class="fit-badge {% if score >= 80 %}fit-green{% elif score >= 60 %}fit-accent{% elif score >= 40 %}fit-amber{% else %}fit-dim{% endif %}" title="Marcel Fit Score: {{ score }}" onclick="event.stopPropagation();">{{ score }}</summary>
+    <div class="fit-popover" onclick="event.stopPropagation();">
+        <div class="fit-popover-title">Marcel Fit <span class="fit-popover-score">{{ score }}</span></div>
+        {% if breakdown %}
+        {% for dim in breakdown %}
+        <div class="fit-dim-row">
+            <span class="fit-dim-label">{{ dim.label }}</span>
+            <div class="fit-dim-track"><div class="fit-dim-fill {% if dim.score >= 70 %}fit-dim-green{% elif dim.score >= 40 %}fit-dim-accent{% else %}fit-dim-low{% endif %}" style="width: {{ dim.score }}%"></div></div>
+            <span class="fit-dim-score">{{ dim.score }}</span>
+        </div>
+        {% endfor %}
+        {% endif %}
+    </div>
+</details>
 {% endif %}
 {%- endmacro -%}
 

@@ -309,6 +309,105 @@ class TestPropertyStorage:
         assert NotificationStatus.FAILED in statuses
 
 
+class TestGetMapMarkers:
+    """Tests for get_map_markers."""
+
+    @pytest.mark.asyncio
+    async def test_returns_all_matching_with_coords(self, storage: PropertyStorage) -> None:
+        """Should return all properties with coordinates, not paginated."""
+        for i in range(5):
+            prop = Property(
+                source=PropertySource.OPENRENT,
+                source_id=f"map-{i}",
+                url=HttpUrl(f"https://openrent.com/map-{i}"),
+                title=f"Flat {i}",
+                price_pcm=1800 + i * 100,
+                bedrooms=1,
+                address=f"{i} Test Street",
+                postcode="E8 3RH",
+                latitude=51.5465 + i * 0.001,
+                longitude=-0.0553,
+            )
+            await storage.save_property(prop)
+
+        markers = await storage.get_map_markers()
+        assert len(markers) == 5
+        # Check marker structure
+        m = markers[0]
+        assert "id" in m
+        assert "lat" in m
+        assert "lon" in m
+        assert "price" in m
+        assert "url" in m
+        assert m["url"].startswith("/property/")
+
+    @pytest.mark.asyncio
+    async def test_excludes_properties_without_coords(self, storage: PropertyStorage) -> None:
+        """Properties missing lat/lon should not appear in map markers."""
+        with_coords = Property(
+            source=PropertySource.OPENRENT,
+            source_id="with-coords",
+            url=HttpUrl("https://openrent.com/with-coords"),
+            title="Has coords",
+            price_pcm=1900,
+            bedrooms=1,
+            address="10 Test Street",
+            postcode="E8 3RH",
+            latitude=51.5465,
+            longitude=-0.0553,
+        )
+        without_coords = Property(
+            source=PropertySource.RIGHTMOVE,
+            source_id="no-coords",
+            url=HttpUrl("https://rightmove.co.uk/no-coords"),
+            title="No coords",
+            price_pcm=2000,
+            bedrooms=2,
+            address="20 Test Street",
+            postcode="E8",
+        )
+        await storage.save_property(with_coords)
+        await storage.save_property(without_coords)
+
+        markers = await storage.get_map_markers()
+        assert len(markers) == 1
+        assert markers[0]["id"] == with_coords.unique_id
+
+    @pytest.mark.asyncio
+    async def test_respects_filters(self, storage: PropertyStorage) -> None:
+        """Filters (e.g. bedrooms) should apply to map markers."""
+        one_bed = Property(
+            source=PropertySource.OPENRENT,
+            source_id="1bed",
+            url=HttpUrl("https://openrent.com/1bed"),
+            title="1 bed",
+            price_pcm=1900,
+            bedrooms=1,
+            address="10 Test Street",
+            postcode="E8 3RH",
+            latitude=51.5465,
+            longitude=-0.0553,
+        )
+        two_bed = Property(
+            source=PropertySource.OPENRENT,
+            source_id="2bed",
+            url=HttpUrl("https://openrent.com/2bed"),
+            title="2 bed",
+            price_pcm=2200,
+            bedrooms=2,
+            address="20 Test Street",
+            postcode="E8 3RH",
+            latitude=51.5470,
+            longitude=-0.0550,
+        )
+        await storage.save_property(one_bed)
+        await storage.save_property(two_bed)
+
+        markers = await storage.get_map_markers(bedrooms=1)
+        assert len(markers) == 1
+        assert markers[0]["id"] == one_bed.unique_id
+
+
 class TestGetRecentPropertiesForDedup:
     """Tests for get_recent_properties_for_dedup."""
 

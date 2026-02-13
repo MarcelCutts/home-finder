@@ -9,7 +9,11 @@ from typing import Any, Final, TypedDict, cast
 import aiosqlite
 from pydantic import HttpUrl
 
-from home_finder.filters.fit_score import compute_fit_score, compute_lifestyle_icons
+from home_finder.filters.fit_score import (
+    compute_fit_breakdown,
+    compute_fit_score,
+    compute_lifestyle_icons,
+)
 from home_finder.logging import get_logger
 from home_finder.models import (
     MergedProperty,
@@ -1606,6 +1610,92 @@ class PropertyStorage:
         row = await cursor.fetchone()
         return row[0] if row else 0
 
+    async def get_map_markers(
+        self,
+        *,
+        min_price: int | None = None,
+        max_price: int | None = None,
+        bedrooms: int | None = None,
+        min_rating: int | None = None,
+        area: str | None = None,
+        property_type: str | None = None,
+        outdoor_space: str | None = None,
+        natural_light: str | None = None,
+        pets: str | None = None,
+        value_rating: str | None = None,
+        hob_type: str | None = None,
+        floor_level: str | None = None,
+        building_construction: str | None = None,
+        office_separation: str | None = None,
+        hosting_layout: str | None = None,
+        hosting_noise_risk: str | None = None,
+        broadband_type: str | None = None,
+        tags: list[str] | None = None,
+    ) -> list[dict[str, Any]]:
+        """Get lightweight map marker data for all matching properties with coordinates.
+
+        Same filters as get_properties_paginated but no pagination and only
+        map-relevant columns. Returns only properties that have lat/lon.
+
+        Returns:
+            List of dicts with map marker fields.
+        """
+        conn = await self._get_connection()
+        where_sql, params = self._build_filter_clauses(
+            min_price=min_price,
+            max_price=max_price,
+            bedrooms=bedrooms,
+            min_rating=min_rating,
+            area=area,
+            property_type=property_type,
+            outdoor_space=outdoor_space,
+            natural_light=natural_light,
+            pets=pets,
+            value_rating=value_rating,
+            hob_type=hob_type,
+            floor_level=floor_level,
+            building_construction=building_construction,
+            office_separation=office_separation,
+            hosting_layout=hosting_layout,
+            hosting_noise_risk=hosting_noise_risk,
+            broadband_type=broadband_type,
+            tags=tags,
+        )
+        cursor = await conn.execute(
+            f"""
+            SELECT p.unique_id, p.latitude, p.longitude, p.price_pcm,
+                   p.bedrooms, p.title, p.postcode,
+                   p.commute_minutes, p.image_url,
+                   q.overall_rating as quality_rating,
+                   json_extract(q.analysis_json, '$.value.quality_adjusted_rating') as value_rating,
+                   json_extract(q.analysis_json, '$.one_line') as one_line
+            FROM properties p
+            LEFT JOIN quality_analyses q ON p.unique_id = q.property_unique_id
+            WHERE {where_sql}
+              AND p.latitude IS NOT NULL AND p.longitude IS NOT NULL
+            """,  # noqa: S608
+            params,
+        )
+        rows = await cursor.fetchall()
+        return [
+            {
+                "id": row["unique_id"],
+                "lat": row["latitude"],
+                "lon": row["longitude"],
+                "price": row["price_pcm"],
+                "bedrooms": row["bedrooms"],
+                "rating": row["quality_rating"],
+                "title": row["title"],
+                "url": f"/property/{row['unique_id']}",
+                "image_url": row["image_url"],
+                "postcode": row["postcode"],
+                "commute_minutes": row["commute_minutes"],
+                "value_rating": row["value_rating"],
+                "one_line": row["one_line"],
+            }
+            for row in rows
+        ]
+
     async def get_properties_paginated(
         self,
         *,
@@ -1758,9 +1848,10 @@ class PropertyStorage:
                     listing_ext = analysis.get("listing_extraction") or {}
                     prop_dict["property_type"] = listing_ext.get("property_type")
                     prop_dict["epc_rating"] = listing_ext.get("epc_rating")
-                    # Marcel fit score + lifestyle icons
+                    # Marcel fit score + breakdown + lifestyle icons
                     bedrooms = prop_dict.get("bedrooms", 0) or 0
                     prop_dict["fit_score"] = compute_fit_score(analysis, bedrooms)
+                    prop_dict["fit_breakdown"] = compute_fit_breakdown(analysis, bedrooms)
                     prop_dict["lifestyle_icons"] = compute_lifestyle_icons(analysis, bedrooms)
                 except (json.JSONDecodeError, TypeError):
                     prop_dict["quality_summary"] = ""
@@ -1771,6 +1862,7 @@ class PropertyStorage:
                     prop_dict["property_type"] = None
                     prop_dict["epc_rating"] = None
                     prop_dict["fit_score"] = None
+                    prop_dict["fit_breakdown"] = None
                     prop_dict["lifestyle_icons"] = None
             else:
                 prop_dict["quality_summary"] = ""
@@ -1781,6 +1873,7 @@ class PropertyStorage:
                 prop_dict["property_type"] = None
                 prop_dict["epc_rating"] = None
                 prop_dict["fit_score"] = None
+                prop_dict["fit_breakdown"] = None
                 prop_dict["lifestyle_icons"] = None
             properties.append(cast(PropertyListItem, prop_dict))
 

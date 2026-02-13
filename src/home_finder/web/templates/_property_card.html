@@ -21,7 +21,7 @@
                 {% endif %}
                 <span class="badge badge-neutral">{% if prop.bedrooms == 0 %}Studio{% else %}{{ prop.bedrooms }} bed{% endif %}</span>
             </div>
-            {{ fit_badge(prop.fit_score) }}
+            {{ fit_badge(prop.fit_score, prop.fit_breakdown) }}
         </div>
         <div class="card-body">
             {# Meta row: postcode | commute pill | listing age #}
@@ -97,11 +97,11 @@
             </div>
             {% endif %}
         </div>
+        <div class="card-sources">
+            {% for s in prop.sources_list %}
+            {% set badge = source_badges.get(s, {}) %}
+            <span class="source-badge" style="background-color: {{ badge.get('color', '#888') }}" title="{{ badge.get('name', s) }}">{{ badge.get('abbr', s[:1]|upper) }}</span>
+            {% endfor %}
+        </div>
     </a>
-    <div class="card-sources">
-        {% for s in prop.sources_list %}
-        {% set badge = source_badges.get(s, {}) %}
-        <span class="source-badge" style="background-color: {{ badge.get('color', '#888') }}" title="{{ badge.get('name', s) }}">{{ badge.get('abbr', s[:1]|upper) }}</span>
-        {% endfor %}
-    </div>
 </article>

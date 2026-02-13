@@ -5,7 +5,6 @@ storage, and mock notifiers. Focuses on wiring correctness and stage ordering.
 """
 
 from collections.abc import Callable
-from datetime import datetime
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -63,49 +62,18 @@ def test_settings() -> Settings:
     )
 
 
-def _prop(source: PropertySource = PropertySource.OPENRENT, source_id: str = "1") -> Property:
-    urls = {
-        PropertySource.OPENRENT: f"https://openrent.com/{source_id}",
-        PropertySource.RIGHTMOVE: f"https://rightmove.co.uk/{source_id}",
-        PropertySource.ZOOPLA: f"https://zoopla.co.uk/{source_id}",
-        PropertySource.ONTHEMARKET: f"https://onthemarket.com/{source_id}",
-    }
-    return Property(
-        source=source,
-        source_id=source_id,
-        url=HttpUrl(urls[source]),
-        title=f"Test {source_id}",
-        price_pcm=1800,
-        bedrooms=1,
-        address="123 Test St",
-        postcode="E8 1AA",
-        latitude=51.5465,
-        longitude=-0.0553,
-        first_seen=datetime(2026, 1, 15, 10, 0),
-    )
-
-
-def _merged(prop: Property | None = None) -> MergedProperty:
-    p = prop or _prop()
-    return MergedProperty(
-        canonical=p,
-        sources=(p.source,),
-        source_urls={p.source: p.url},
-        images=(),
-        floorplan=None,
-        min_price=p.price_pcm,
-        max_price=p.price_pcm,
-    )
-
-
 # ---------------------------------------------------------------------------
 # _save_one
 # ---------------------------------------------------------------------------
 
 
 class TestSaveOne:
-    async def test_completes_analysis(self, storage: PropertyStorage) -> None:
-        merged = _merged()
+    async def test_completes_analysis(
+        self,
+        storage: PropertyStorage,
+        make_merged_property: Callable[..., MergedProperty],
+    ) -> None:
+        merged = make_merged_property()
         # Pre-save (as pipeline does before analysis)
         await storage.save_pre_analysis_properties([merged], {})
         await _save_one(merged, None, None, storage)
@@ -117,8 +85,12 @@ class TestSaveOne:
         assert tracked is not None
         assert tracked.notification_status.value == "pending"
 
-    async def test_preserves_commute_from_pre_save(self, storage: PropertyStorage) -> None:
-        merged = _merged()
+    async def test_preserves_commute_from_pre_save(
+        self,
+        storage: PropertyStorage,
+        make_merged_property: Callable[..., MergedProperty],
+    ) -> None:
+        merged = make_merged_property()
         commute_info = (18, TransportMode.CYCLING)
         # Pre-save with commute data
         await storage.save_pre_analysis_properties(
@@ -132,9 +104,12 @@ class TestSaveOne:
         assert tracked.transport_mode == TransportMode.CYCLING
 
     async def test_saves_quality_analysis(
-        self, storage: PropertyStorage, sample_quality_analysis: PropertyQualityAnalysis
+        self,
+        storage: PropertyStorage,
+        sample_quality_analysis: PropertyQualityAnalysis,
+        make_merged_property: Callable[..., MergedProperty],
     ) -> None:
-        merged = _merged()
+        merged = make_merged_property()
         await storage.save_pre_analysis_properties([merged], {})
         await _save_one(merged, None, sample_quality_analysis, storage)
 
@@ -150,8 +125,16 @@ class TestSaveOne:
 
 
 class TestRunQualityAndSave:
-    async def test_processes_all_properties(self, storage: PropertyStorage) -> None:
-        props = [_merged(_prop(source_id=str(i))) for i in range(3)]
+    async def test_processes_all_properties(
+        self,
+        storage: PropertyStorage,
+        make_property: Callable[..., Property],
+        make_merged_property: Callable[..., MergedProperty],
+    ) -> None:
+        props = [
+            make_merged_property(price_pcm=1800 + i * 10)
+            for i in range(3)
+        ]
         pre = PreAnalysisResult(merged_to_process=props, commute_lookup={})
         settings = Settings(
             telegram_bot_token="fake:token",
@@ -169,13 +152,18 @@ class TestRunQualityAndSave:
         assert count == 3
         assert callback.await_count == 3
 
-    async def test_callback_receives_correct_args(self, storage: PropertyStorage) -> None:
-        prop = _prop()
-        merged = _merged(prop)
+    async def test_callback_receives_correct_args(
+        self,
+        storage: PropertyStorage,
+        make_property: Callable[..., Property],
+        make_merged_property: Callable[..., MergedProperty],
+    ) -> None:
+        prop = make_property()
+        merged = make_merged_property()
         commute = (15, TransportMode.PUBLIC_TRANSPORT)
         pre = PreAnalysisResult(
             merged_to_process=[merged],
-            commute_lookup={prop.unique_id: commute},
+            commute_lookup={merged.canonical.unique_id: commute},
         )
         settings = Settings(
             telegram_bot_token="fake:token",
@@ -196,13 +184,20 @@ class TestRunQualityAndSave:
 
         assert len(received) == 1
         m, c, q = received[0]
-        assert m.canonical.unique_id == prop.unique_id
+        assert m.canonical.unique_id == merged.canonical.unique_id
         assert c == commute
         assert q is None  # quality disabled
 
-    async def test_continues_on_analysis_error(self, storage: PropertyStorage) -> None:
+    async def test_continues_on_analysis_error(
+        self,
+        storage: PropertyStorage,
+        make_merged_property: Callable[..., MergedProperty],
+    ) -> None:
         """If one property's analysis fails, others should still be processed."""
-        props = [_merged(_prop(source_id=str(i))) for i in range(3)]
+        props = [
+            make_merged_property(price_pcm=1800 + i * 10)
+            for i in range(3)
+        ]
         pre = PreAnalysisResult(merged_to_process=props, commute_lookup={})
 
         settings = Settings(
@@ -252,7 +247,12 @@ class TestScrapeAllPlatforms:
     @patch("home_finder.main.ZooplaScraper")
     @patch("home_finder.main.OnTheMarketScraper")
     async def test_collects_from_all_scrapers(
-        self, mock_otm_cls: Any, mock_zoopla_cls: Any, mock_rm_cls: Any, mock_or_cls: Any
+        self,
+        mock_otm_cls: Any,
+        mock_zoopla_cls: Any,
+        mock_rm_cls: Any,
+        mock_or_cls: Any,
+        make_property: Callable[..., Property],
     ) -> None:
         # Setup mock scrapers
         for i, mock_cls in enumerate([mock_or_cls, mock_rm_cls, mock_zoopla_cls, mock_otm_cls]):
@@ -264,7 +264,9 @@ class TestScrapeAllPlatforms:
             ]
             scraper = AsyncMock()
             scraper.source = sources[i]
-            scraper.scrape = AsyncMock(return_value=[_prop(source=sources[i], source_id=f"s{i}")])
+            scraper.scrape = AsyncMock(
+                return_value=[make_property(source=sources[i], source_id=f"s{i}")]
+            )
             scraper.close = AsyncMock()
             mock_cls.return_value = scraper
 
@@ -283,13 +285,18 @@ class TestScrapeAllPlatforms:
     @patch("home_finder.main.ZooplaScraper")
     @patch("home_finder.main.OnTheMarketScraper")
     async def test_respects_max_per_scraper(
-        self, mock_otm_cls: Any, mock_zoopla_cls: Any, mock_rm_cls: Any, mock_or_cls: Any
+        self,
+        mock_otm_cls: Any,
+        mock_zoopla_cls: Any,
+        mock_rm_cls: Any,
+        mock_or_cls: Any,
+        make_property: Callable[..., Property],
     ) -> None:
         # Only configure OpenRent to return results (simpler)
         or_scraper = AsyncMock()
         or_scraper.source = PropertySource.OPENRENT
         or_scraper.scrape = AsyncMock(
-            return_value=[_prop(source_id=str(i)) for i in range(10)]
+            return_value=[make_property(source_id=str(i)) for i in range(10)]
         )
         or_scraper.close = AsyncMock()
         mock_or_cls.return_value = or_scraper
@@ -324,7 +331,12 @@ class TestScrapeAllPlatforms:
     @patch("home_finder.main.ZooplaScraper")
     @patch("home_finder.main.OnTheMarketScraper")
     async def test_continues_on_scraper_error(
-        self, mock_otm_cls: Any, mock_zoopla_cls: Any, mock_rm_cls: Any, mock_or_cls: Any
+        self,
+        mock_otm_cls: Any,
+        mock_zoopla_cls: Any,
+        mock_rm_cls: Any,
+        mock_or_cls: Any,
+        make_property: Callable[..., Property],
     ) -> None:
         # OpenRent fails
         or_scraper = AsyncMock()
@@ -341,7 +353,9 @@ class TestScrapeAllPlatforms:
         ]:
             s = AsyncMock()
             s.source = src
-            s.scrape = AsyncMock(return_value=[_prop(source=src, source_id=f"ok-{src.value}")])
+            s.scrape = AsyncMock(
+                return_value=[make_property(source=src, source_id=f"ok-{src.value}")]
+            )
             s.close = AsyncMock()
             mock_cls.return_value = s
 
@@ -361,10 +375,15 @@ class TestScrapeAllPlatforms:
     @patch("home_finder.main.ZooplaScraper")
     @patch("home_finder.main.OnTheMarketScraper")
     async def test_cross_area_dedup(
-        self, mock_otm_cls: Any, mock_zoopla_cls: Any, mock_rm_cls: Any, mock_or_cls: Any
+        self,
+        mock_otm_cls: Any,
+        mock_zoopla_cls: Any,
+        mock_rm_cls: Any,
+        mock_or_cls: Any,
+        make_property: Callable[..., Property],
     ) -> None:
         """Same property from multiple areas should be deduped."""
-        shared_prop = _prop(source_id="shared-1")
+        shared_prop = make_property(source_id="shared-1")
 
         or_scraper = AsyncMock()
         or_scraper.source = PropertySource.OPENRENT
@@ -399,18 +418,16 @@ class TestScrapeAllPlatforms:
     @patch("home_finder.main.ZooplaScraper")
     @patch("home_finder.main.OnTheMarketScraper")
     async def test_backfills_outcode(
-        self, mock_otm_cls: Any, mock_zoopla_cls: Any, mock_rm_cls: Any, mock_or_cls: Any
+        self,
+        mock_otm_cls: Any,
+        mock_zoopla_cls: Any,
+        mock_rm_cls: Any,
+        mock_or_cls: Any,
+        make_property: Callable[..., Property],
     ) -> None:
         """Properties without postcodes get outcode backfilled when searching by outcode."""
-        no_postcode = Property(
-            source=PropertySource.OPENRENT,
-            source_id="no-pc",
-            url=HttpUrl("https://openrent.com/no-pc"),
-            title="Test",
-            price_pcm=1800,
-            bedrooms=1,
-            address="123 Test St",
-            postcode=None,
+        no_postcode = make_property(
+            source_id="no-pc", postcode=None, latitude=None, longitude=None
         )
 
         or_scraper = AsyncMock()
@@ -465,9 +482,12 @@ class TestPreAnalysisPipeline:
         mock_scrape: Any,
         storage: PropertyStorage,
         test_settings: Settings,
+        make_property: Callable[..., Property],
     ) -> None:
         # Price way above max
-        mock_scrape.return_value = [_prop(source_id="expensive").model_copy(update={"price_pcm": 99999})]
+        mock_scrape.return_value = [
+            make_property(source_id="expensive", price_pcm=99999)
+        ]
         result = await _run_pre_analysis_pipeline(test_settings, storage)
         assert result is None
 
@@ -479,8 +499,9 @@ class TestPreAnalysisPipeline:
         mock_enrich: Any,
         storage: PropertyStorage,
         test_settings: Settings,
+        make_property: Callable[..., Property],
     ) -> None:
-        prop = _prop(source_id="valid")
+        prop = make_property(source_id="valid")
         mock_scrape.return_value = [prop]
         # enrich returns the merged properties unchanged
         mock_enrich.side_effect = lambda merged, *a, **kw: EnrichmentResult(enriched=merged)
@@ -497,12 +518,24 @@ class TestPreAnalysisPipeline:
         mock_enrich: Any,
         storage: PropertyStorage,
         test_settings: Settings,
+        make_property: Callable[..., Property],
+        make_merged_property: Callable[..., MergedProperty],
     ) -> None:
-        prop = _prop(source_id="seen")
-        merged = _merged(prop)
+        prop = make_property(source_id="seen")
+        merged = make_merged_property()
+        # Use the same canonical property for consistent unique_id
+        merged_with_prop = MergedProperty(
+            canonical=prop,
+            sources=(prop.source,),
+            source_urls={prop.source: prop.url},
+            images=(),
+            floorplan=None,
+            min_price=prop.price_pcm,
+            max_price=prop.price_pcm,
+        )
 
         # Save it first
-        await storage.save_merged_property(merged)
+        await storage.save_merged_property(merged_with_prop)
 
         # Now scrape returns the same property
         mock_scrape.return_value = [prop]
@@ -518,6 +551,7 @@ class TestPreAnalysisPipeline:
         mock_scrape: Any,
         mock_enrich: Any,
         storage: PropertyStorage,
+        make_property: Callable[..., Property],
     ) -> None:
         settings = Settings(
             telegram_bot_token="fake:token",
@@ -533,7 +567,8 @@ class TestPreAnalysisPipeline:
             traveltime_app_id="",
             traveltime_api_key="",
         )
-        prop = _prop(source_id="no-fp")
+        # Use RIGHTMOVE (not OpenRent) since OpenRent is exempt from floorplan requirement
+        prop = make_property(source=PropertySource.RIGHTMOVE, source_id="no-fp")
         mock_scrape.return_value = [prop]
         # enrich returns merged without floorplan
         mock_enrich.side_effect = lambda merged, *a, **kw: EnrichmentResult(enriched=merged)

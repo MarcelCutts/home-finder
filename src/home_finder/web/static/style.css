@@ -242,30 +242,31 @@ nav.container-fluid li {
     font-family: var(--font-heading);
 }
 .filter-modal-close {
-    width: 32px;
-    height: 32px;
+    width: 40px;
+    height: 40px;
     min-height: 0;
     display: inline-flex;
     align-items: center;
     justify-content: center;
     border: none !important;
-    background: none !important;
+    background: var(--bg-elevated) !important;
     box-shadow: none !important;
     outline: none !important;
-    color: var(--text-muted);
-    font-size: 1.25rem;
+    color: var(--text);
+    font-size: 1.4rem;
+    font-weight: 700;
     cursor: pointer;
-    border-radius: 8px;
+    border-radius: 50%;
     transition: background 0.15s, color 0.15s;
     padding: 0 !important;
     line-height: 1;
     margin: 0;
     --pico-border-width: 0;
-    --pico-font-size: 1.25rem;
+    --pico-font-size: 1.4rem;
 }
 .filter-modal-close:hover {
-    background: var(--bg-elevated) !important;
-    color: var(--text);
+    background: var(--border-hover) !important;
+    color: #fff;
 }
 .filter-modal-body {
     flex: 1;
@@ -915,16 +916,183 @@ nav.container-fluid li {
     font-size: 0.72rem;
     font-weight: 800;
     font-family: var(--font-heading);
+    line-height: 1;
     color: #fff;
     border: 2px solid;
     backdrop-filter: blur(6px);
     background: rgba(0, 0, 0, 0.45);
     z-index: 2;
+    box-sizing: border-box;
+    text-align: center;
 }
 .fit-green { border-color: #34d399; }
 .fit-accent { border-color: #a78bfa; }
 .fit-amber { border-color: #fbbf24; }
 .fit-dim { border-color: #55555f; color: var(--text-dim); }
+
+/* Fit popover (details/summary on card) */
+.fit-popover-wrap {
+    position: absolute;
+    top: 0.5rem;
+    right: 0.5rem;
+    z-index: 10;
+}
+.fit-popover-wrap > summary {
+    list-style: none;
+    cursor: pointer;
+    padding: 0;
+    margin: 0;
+}
+.fit-popover-wrap > summary::-webkit-details-marker { display: none; }
+.fit-popover-wrap > summary::marker { display: none; content: ""; }
+.fit-popover-wrap > summary::before,
+.fit-popover-wrap > summary::after { display: none; }
+.fit-popover-wrap[open] > .fit-popover {
+    display: block;
+}
+.fit-popover-wrap > .fit-badge {
+    position: static;
+}
+.fit-popover {
+    display: none;
+    position: absolute;
+    top: calc(100% + 6px);
+    right: 0;
+    width: 200px;
+    background: var(--bg-elevated);
+    border: 1px solid var(--border-hover);
+    border-radius: 10px;
+    padding: 0.75rem;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+    z-index: 20;
+}
+.fit-popover-title {
+    font-size: 0.72rem;
+    font-weight: 700;
+    color: var(--text-muted);
+    margin-bottom: 0.5rem;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+.fit-popover-score {
+    font-size: 0.85rem;
+    font-weight: 800;
+    color: var(--text);
+    font-family: var(--font-heading);
+}
+.fit-dim-row {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    margin-bottom: 0.35rem;
+}
+.fit-dim-row:last-child { margin-bottom: 0; }
+.fit-dim-label {
+    font-size: 0.68rem;
+    font-weight: 600;
+    color: var(--text-muted);
+    min-width: 58px;
+}
+.fit-dim-track {
+    flex: 1;
+    height: 5px;
+    background: var(--border);
+    border-radius: 3px;
+    overflow: hidden;
+}
+.fit-dim-fill {
+    height: 100%;
+    border-radius: 3px;
+    transition: width 0.3s ease;
+}
+.fit-dim-green { background: #34d399; }
+.fit-dim-accent { background: var(--accent); }
+.fit-dim-low { background: #fbbf24; }
+.fit-dim-score {
+    font-size: 0.68rem;
+    font-weight: 700;
+    color: var(--text-dim);
+    min-width: 20px;
+    text-align: right;
+    font-family: var(--font-heading);
+}
+
+/* Fit breakdown card (detail page) */
+.fit-breakdown-card h4 {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin-bottom: 0.85rem;
+}
+.fit-breakdown-score {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 36px;
+    height: 36px;
+    border-radius: 50%;
+    font-size: 0.85rem;
+    font-weight: 800;
+    font-family: var(--font-heading);
+    color: #fff;
+    border: 2px solid;
+    background: rgba(0, 0, 0, 0.3);
+}
+.fit-breakdown-bars {
+    display: flex;
+    flex-direction: column;
+    gap: 0.55rem;
+}
+.fit-breakdown-row {
+    display: flex;
+    align-items: center;
+    gap: 0.65rem;
+}
+.fit-breakdown-label {
+    font-size: 0.82rem;
+    font-weight: 600;
+    color: var(--text-muted);
+    min-width: 80px;
+}
+.fit-breakdown-track {
+    flex: 1;
+    height: 8px;
+    background: var(--border);
+    border-radius: 4px;
+    overflow: hidden;
+}
+.fit-breakdown-fill {
+    height: 100%;
+    border-radius: 4px;
+    transition: width 0.8s cubic-bezier(0.16, 1, 0.3, 1);
+    width: 0;
+}
+.fit-breakdown-fill.animate {
+    width: var(--bar-pct);
+}
+.fit-breakdown-value {
+    font-size: 0.82rem;
+    font-weight: 700;
+    color: var(--text);
+    min-width: 28px;
+    text-align: right;
+    font-family: var(--font-heading);
+}
+.fit-breakdown-weight {
+    font-size: 0.68rem;
+    color: var(--text-dim);
+    min-width: 28px;
+    text-align: right;
+}
+.fit-breakdown-legend {
+    margin: 0.75rem 0 0 0;
+    font-size: 0.72rem;
+    color: var(--text-dim);
+    line-height: 1.5;
+}
 
 /* Lifestyle quick-glance icons */
 .card-lifestyle {
@@ -1274,6 +1442,9 @@ nav.container-fluid li {
     margin: 0;
     padding: 0;
     color: inherit;
+}
+.section-nav-top {
+    margin-left: auto;
 }
 .section-nav-links a {
     display: inline-block;
@@ -2138,6 +2309,22 @@ nav.container-fluid li {
     }
 }
 @media (max-width: 768px) {
+    /* Non-sticky filter bar on mobile to save viewport */
+    .filter-bar {
+        position: static;
+    }
+    /* Hide view toggle text labels on mobile (icons only) */
+    .view-toggle-label {
+        display: none;
+    }
+    /* Scrollable filter chips (no wrapping) */
+    .filter-chips-row {
+        flex-wrap: nowrap;
+        overflow-x: auto;
+        -ms-overflow-style: none;
+        scrollbar-width: none;
+    }
+    .filter-chips-row::-webkit-scrollbar { display: none; }
     .card-grid {
         grid-template-columns: 1fr;
     }

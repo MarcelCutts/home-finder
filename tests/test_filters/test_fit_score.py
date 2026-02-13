@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from home_finder.filters.fit_score import (
     WEIGHTS,
+    compute_fit_breakdown,
     compute_fit_score,
     compute_lifestyle_icons,
 )
@@ -502,3 +503,69 @@ class TestEdgeCases:
         assert score is not None
         icons = compute_lifestyle_icons(analysis, 2)
         assert icons is not None
+
+
+# ── compute_fit_breakdown ─────────────────────────────────────────────────────
+
+
+class TestComputeFitBreakdown:
+    def test_none_analysis_returns_none(self):
+        assert compute_fit_breakdown(None, 2) is None
+
+    def test_empty_analysis_returns_none(self):
+        assert compute_fit_breakdown({}, 2) is None
+
+    def test_returns_list_for_valid_analysis(self):
+        result = compute_fit_breakdown(_full_analysis(), 2)
+        assert isinstance(result, list)
+
+    def test_returns_six_dimensions(self):
+        result = compute_fit_breakdown(_full_analysis(), 2)
+        assert result is not None
+        assert len(result) == 6
+
+    def test_dimensions_match_weights_keys(self):
+        result = compute_fit_breakdown(_full_analysis(), 2)
+        assert result is not None
+        keys = {d["key"] for d in result}
+        assert keys == set(WEIGHTS.keys())
+
+    def test_each_dimension_has_required_fields(self):
+        result = compute_fit_breakdown(_full_analysis(), 2)
+        assert result is not None
+        for dim in result:
+            assert "key" in dim
+            assert "label" in dim
+            assert "score" in dim
+            assert "weight" in dim
+            assert "confidence" in dim
+            assert isinstance(dim["score"], int)
+            assert 0 <= dim["score"] <= 100
+            assert isinstance(dim["weight"], int)
+            assert 0.0 <= dim["confidence"] <= 1.0
+
+    def test_weights_match_global_weights(self):
+        result = compute_fit_breakdown(_full_analysis(), 2)
+        assert result is not None
+        for dim in result:
+            assert dim["weight"] == int(WEIGHTS[dim["key"]])
+
+    def test_labels_are_human_readable(self):
+        result = compute_fit_breakdown(_full_analysis(), 2)
+        assert result is not None
+        labels = {d["label"] for d in result}
+        assert "Workspace" in labels
+        assert "Kitchen" in labels
+        assert "Sound" in labels
+
+    def test_zero_confidence_analysis_returns_none(self):
+        """Analysis with only unknown fields should return None."""
+        analysis = {
+            "kitchen": {"overall_quality": "unknown", "hob_type": "unknown"},
+            "bedroom": {"can_fit_desk": "unknown"},
+            "space": {"is_spacious_enough": None},
+            "flooring_noise": {"building_construction": "unknown", "has_double_glazing": "unknown"},
+            "listing_extraction": {"property_type": "unknown"},
+            "light_space": {"ceiling_height": "unknown"},
+        }
+        assert compute_fit_breakdown(analysis, 1) is None

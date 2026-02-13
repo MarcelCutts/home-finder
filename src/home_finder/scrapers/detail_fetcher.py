@@ -49,6 +49,9 @@ class DetailPageData:
     gallery_urls: list[str] | None = None
     description: str | None = None
     features: list[str] | None = None  # Key features like "Gas central heating"
+    latitude: float | None = None
+    longitude: float | None = None
+    postcode: str | None = None
 
 
 class DetailFetcher:
@@ -249,11 +252,32 @@ class DetailFetcher:
             if key_features:
                 features.extend(key_features)
 
+            # Extract location coordinates
+            latitude: float | None = None
+            longitude: float | None = None
+            location = property_data.get("location", {})
+            lat_raw = location.get("latitude")
+            lng_raw = location.get("longitude")
+            if lat_raw is not None and lng_raw is not None:
+                latitude = float(lat_raw)
+                longitude = float(lng_raw)
+
+            # Extract full postcode from address data
+            postcode: str | None = None
+            address_data = property_data.get("address", {})
+            outcode = address_data.get("outcode", "")
+            incode = address_data.get("incode", "")
+            if outcode and incode:
+                postcode = f"{outcode} {incode}"
+
             return DetailPageData(
                 floorplan_url=floorplan_url,
                 gallery_urls=gallery_urls if gallery_urls else None,
                 description=description,
                 features=features if features else None,
+                latitude=latitude,
+                longitude=longitude,
+                postcode=postcode,
             )
 
         except Exception as e:

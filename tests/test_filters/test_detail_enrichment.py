@@ -193,6 +193,67 @@ class TestEnrichMergedProperties:
         assert len(result.enriched[0].images) == 1
         assert result.enriched[0].floorplan is not None
 
+    async def test_backfills_coordinates_from_detail_page(self) -> None:
+        """Should update canonical with lat/lon when missing and detail page has them."""
+        prop = _make_property(postcode="E8")  # outcode only, no coords
+        merged = _make_merged(canonical=prop)
+        detail_data = DetailPageData(
+            gallery_urls=["https://example.com/img1.jpg"],
+            latitude=51.5465,
+            longitude=-0.0553,
+            postcode="E8 3RH",
+        )
+
+        fetcher = DetailFetcher()
+        with patch.object(
+            fetcher, "fetch_detail_page", new_callable=AsyncMock, return_value=detail_data
+        ):
+            result = await enrich_merged_properties([merged], fetcher)
+
+        enriched = result.enriched[0]
+        assert enriched.canonical.latitude == 51.5465
+        assert enriched.canonical.longitude == -0.0553
+        assert enriched.canonical.postcode == "E8 3RH"
+
+    async def test_does_not_overwrite_existing_coordinates(self) -> None:
+        """Should keep existing canonical coordinates if present."""
+        prop = _make_property(postcode="E8 3RH")
+        prop = prop.model_copy(update={"latitude": 51.0, "longitude": -0.1})
+        merged = _make_merged(canonical=prop)
+        detail_data = DetailPageData(
+            gallery_urls=["https://example.com/img1.jpg"],
+            latitude=51.9999,
+            longitude=-0.9999,
+        )
+
+        fetcher = DetailFetcher()
+        with patch.object(
+            fetcher, "fetch_detail_page", new_callable=AsyncMock, return_value=detail_data
+        ):
+            result = await enrich_merged_properties([merged], fetcher)
+
+        enriched = result.enriched[0]
+        assert enriched.canonical.latitude == 51.0
+        assert enriched.canonical.longitude == -0.1
+
+    async def test_does_not_overwrite_full_postcode_with_another(self) -> None:
+        """Should not replace an existing full postcode."""
+        prop = _make_property(postcode="E8 3RH")
+        merged = _make_merged(canonical=prop)
+        detail_data = DetailPageData(
+            gallery_urls=["https://example.com/img1.jpg"],
+            postcode="E8 9ZZ",
+        )
+
+        fetcher = DetailFetcher()
+        with patch.object(
+            fetcher, "fetch_detail_page", new_callable=AsyncMock, return_value=detail_data
+        ):
+            result = await enrich_merged_properties([merged], fetcher)
+
+        enriched = result.enriched[0]
+        assert enriched.canonical.postcode == "E8 3RH"
+
     async def test_caches_downloaded_images(self, tmp_path: Path) -> None:
         """Should download and cache images when data_dir is set."""
         merged = _make_merged()

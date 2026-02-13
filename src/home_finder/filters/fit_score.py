@@ -13,6 +13,26 @@ from __future__ import annotations
 
 from typing import Any, TypedDict
 
+# ── Dimension labels (for UI display) ─────────────────────────────────────────
+_DIMENSION_LABELS: dict[str, str] = {
+    "workspace": "Workspace",
+    "hosting": "Hosting",
+    "sound": "Sound",
+    "kitchen": "Kitchen",
+    "vibe": "Vibe",
+    "condition": "Condition",
+}
+
+
+class FitDimension(TypedDict):
+    """Per-dimension breakdown for Marcel Fit Score UI."""
+
+    key: str  # "workspace", "hosting", etc.
+    label: str  # "Workspace", "Hosting", etc.
+    score: int  # 0-100 (the dimension's raw score)
+    weight: int  # 25, 20, 15, etc.
+    confidence: float  # 0.0-1.0
+
 # ── Dimension weights ──────────────────────────────────────────────────────────
 WEIGHTS: dict[str, float] = {
     "workspace": 25,
@@ -370,6 +390,39 @@ def compute_fit_score(analysis: dict[str, Any] | None, bedrooms: int) -> int | N
         return None
 
     return round(weighted_sum / weight_confidence_sum)
+
+
+def compute_fit_breakdown(
+    analysis: dict[str, Any] | None, bedrooms: int
+) -> list[FitDimension] | None:
+    """Compute per-dimension breakdown for Marcel Fit Score UI.
+
+    Returns None if no analysis data or all dimensions have zero confidence.
+    """
+    if not analysis:
+        return None
+
+    dimensions: list[FitDimension] = []
+    any_confidence = False
+
+    for dim, weight in WEIGHTS.items():
+        result = _SCORERS[dim](analysis, bedrooms)
+        if result.confidence > 0:
+            any_confidence = True
+        dimensions.append(
+            FitDimension(
+                key=dim,
+                label=_DIMENSION_LABELS[dim],
+                score=round(result.score),
+                weight=int(weight),
+                confidence=round(result.confidence, 2),
+            )
+        )
+
+    if not any_confidence:
+        return None
+
+    return dimensions
 
 
 # ── Lifestyle Icons ────────────────────────────────────────────────────────────

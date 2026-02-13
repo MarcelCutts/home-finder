@@ -7,6 +7,7 @@ Requires: pytest-playwright, `uv run playwright install chromium`
 """
 
 import asyncio
+import socket
 import threading
 import time
 from datetime import datetime
@@ -17,10 +18,14 @@ from playwright.sync_api import expect
 from home_finder.config import Settings
 from home_finder.db import PropertyStorage
 from home_finder.models import (
+    BedroomAnalysis,
     ConditionAnalysis,
+    FlooringNoiseAnalysis,
     KitchenAnalysis,
     LightSpaceAnalysis,
+    ListingExtraction,
     MergedProperty,
+    OutdoorSpaceAnalysis,
     Property,
     PropertyImage,
     PropertyQualityAnalysis,
@@ -30,9 +35,11 @@ from home_finder.models import (
     ValueAnalysis,
 )
 
-# Port for test server — avoid conflicts with dev server (8765)
-TEST_PORT = 18765
-BASE_URL = f"http://127.0.0.1:{TEST_PORT}"
+def _find_free_port() -> int:
+    """Find an available port by binding to port 0."""
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.bind(("127.0.0.1", 0))
+        return s.getsockname()[1]
 
 
 def _make_test_property(
@@ -110,8 +117,35 @@ def _make_analyzed_property(
             maintenance_concerns=[],
             confidence="high",
         ),
-        light_space=LightSpaceAnalysis(natural_light="good", feels_spacious=True, notes="Bright"),
-        space=SpaceAnalysis(living_room_sqm=20.0, is_spacious_enough=True, confidence="high"),
+        light_space=LightSpaceAnalysis(
+            natural_light="good",
+            feels_spacious=True,
+            notes="Bright",
+            ceiling_height="high",
+            floor_level="upper",
+        ),
+        space=SpaceAnalysis(
+            living_room_sqm=20.0,
+            is_spacious_enough=True,
+            confidence="high",
+            hosting_layout="good",
+        ),
+        bedroom=BedroomAnalysis(
+            primary_is_double="yes",
+            can_fit_desk="yes",
+            office_separation="separate_area",
+        ),
+        outdoor_space=OutdoorSpaceAnalysis(
+            has_balcony=True,
+            has_garden=False,
+            has_terrace=False,
+            has_shared_garden=False,
+        ),
+        flooring_noise=FlooringNoiseAnalysis(
+            building_construction="solid_brick",
+            has_double_glazing="yes",
+            hosting_noise_risk="low",
+        ),
         condition_concerns=False,
         value=ValueAnalysis(
             area_average=2200,
@@ -121,6 +155,8 @@ def _make_analyzed_property(
         ),
         overall_rating=rating,
         summary=f"Well-maintained {bedrooms}-bed flat with modern kitchen and good light.",
+        highlights=["Gas hob", "Solid brick"],
+        listing_extraction=ListingExtraction(property_type="victorian"),
     )
 
     return merged, analysis
@@ -196,10 +232,13 @@ def server_url(tmp_path_factory):
 
     app = create_app(settings)
 
+    port = _find_free_port()
+    base_url = f"http://127.0.0.1:{port}"
+
     config = uvicorn.Config(
         app,
         host="127.0.0.1",
-        port=TEST_PORT,
+        port=port,
         log_level="error",
     )
     server = uvicorn.Server(config)
@@ -212,7 +251,7 @@ def server_url(tmp_path_factory):
 
     for _ in range(50):
         try:
-            resp = httpx.get(f"{BASE_URL}/health", timeout=1)
+            resp = httpx.get(f"{base_url}/health", timeout=1)
             if resp.status_code == 200:
                 break
         except Exception:
@@ -221,7 +260,7 @@ def server_url(tmp_path_factory):
     else:
         pytest.fail("Test server did not start")
 
-    yield BASE_URL
+    yield base_url
 
     server.should_exit = True
     thread.join(timeout=5)
@@ -597,3 +636,187 @@ class TestFilterBehavior:
 
         expect(nav_count).to_contain_text("5 properties")
         assert "area=E8" not in page.url
+
+
+@pytest.mark.browser
+class TestFitScorePopover:
+    """Phase 1: Fit score badge popover and detail breakdown."""
+
+    def test_fit_badge_visible_on_analyzed_cards(self, server_url, page):
+        """Fit badge appears on cards that have quality analysis."""
+        page.goto(server_url)
+        page.wait_for_load_state("networkidle")
+        badges = page.locator(".fit-badge")
+        assert badges.count() >= 1
+
+    def test_fit_badge_not_on_unanalyzed_cards(self, server_url, page):
+        """Unanalyzed cards (1001, 1002, 1005) should not have fit badge."""
+        page.goto(server_url)
+        page.wait_for_load_state("networkidle")
+        # Property 1001 has no analysis
+        card_1001 = page.locator('article[data-property-id="openrent:1001"]')
+        assert card_1001.locator(".fit-badge").count() == 0
+
+    def test_clicking_badge_opens_popover(self, server_url, page):
+        """Clicking the fit badge opens a popover with dimension bars."""
+        page.goto(server_url)
+        page.wait_for_load_state("networkidle")
+        details = page.locator("details.fit-popover-wrap").first
+        details.locator(".fit-badge").click()
+        popover = details.locator(".fit-popover")
+        expect(popover).to_be_visible()
+        # Should show 6 dimension rows within this popover
+        dim_rows = details.locator(".fit-dim-row")
+        assert dim_rows.count() == 6
+
+    def test_clicking_badge_does_not_navigate(self, server_url, page):
+        """Clicking the fit badge does NOT navigate to the detail page."""
+        page.goto(server_url)
+        page.wait_for_load_state("networkidle")
+        original_url = page.url
+        badge = page.locator(".fit-badge").first
+        badge.click()
+        page.wait_for_timeout(500)
+        assert page.url == original_url
+
+    def test_click_outside_closes_popover(self, server_url, page):
+        """Clicking outside an open popover closes it."""
+        page.goto(server_url)
+        page.wait_for_load_state("networkidle")
+        badge = page.locator(".fit-badge").first
+        badge.click()
+        expect(page.locator(".fit-popover").first).to_be_visible()
+        # Click on body (outside)
+        page.locator("body").click(position={"x": 10, "y": 10})
+        page.wait_for_timeout(300)
+        # Popover should be closed (details not open)
+        open_popovers = page.locator("details.fit-popover-wrap[open]")
+        assert open_popovers.count() == 0
+
+    def test_detail_page_shows_fit_breakdown(self, server_url, page):
+        """Detail page for analyzed property shows fit breakdown card."""
+        page.goto(f"{server_url}/property/openrent:1003")
+        page.wait_for_load_state("networkidle")
+        breakdown = page.locator(".fit-breakdown-card")
+        expect(breakdown).to_be_visible()
+        # Should have 6 dimension rows
+        rows = page.locator(".fit-breakdown-row")
+        assert rows.count() == 6
+
+    def test_detail_breakdown_labels(self, server_url, page):
+        """Detail breakdown shows correct dimension labels."""
+        page.goto(f"{server_url}/property/openrent:1003")
+        page.wait_for_load_state("networkidle")
+        labels = page.locator(".fit-breakdown-label")
+        label_texts = [labels.nth(i).text_content().strip() for i in range(labels.count())]
+        assert "Workspace" in label_texts
+        assert "Kitchen" in label_texts
+        assert "Hosting" in label_texts
+        assert "Sound" in label_texts
+        assert "Vibe" in label_texts
+        assert "Condition" in label_texts
+
+
+@pytest.mark.browser
+class TestMobileViewport:
+    """Phase 2: Mobile viewport optimizations."""
+
+    def test_filter_bar_not_sticky_on_mobile(self, server_url, page):
+        """Filter bar should NOT be position:sticky on 375px viewport."""
+        page.set_viewport_size({"width": 375, "height": 812})
+        page.goto(server_url)
+        page.wait_for_load_state("networkidle")
+        position = page.locator(".filter-bar").evaluate(
+            "el => getComputedStyle(el).position"
+        )
+        assert position == "static"
+
+    def test_filter_bar_sticky_on_desktop(self, server_url, page):
+        """Filter bar should be position:sticky on 1440px viewport."""
+        page.set_viewport_size({"width": 1440, "height": 900})
+        page.goto(server_url)
+        page.wait_for_load_state("networkidle")
+        position = page.locator(".filter-bar").evaluate(
+            "el => getComputedStyle(el).position"
+        )
+        assert position == "sticky"
+
+    def test_animation_delay_capped(self, server_url, page):
+        """Card animation delay should be capped at index 8."""
+        page.goto(server_url)
+        page.wait_for_load_state("networkidle")
+        cards = page.locator(".card-entrance")
+        count = cards.count()
+        if count > 1:
+            # The last card (index 4, zero-based) should have index capped at 4
+            # since we only have 5 items. Check the style attribute.
+            last_style = cards.nth(count - 1).get_attribute("style")
+            # Extract --card-index value
+            assert last_style is not None
+            # With 5 items, all should be < 8
+            for i in range(count):
+                style = cards.nth(i).get_attribute("style")
+                assert style is not None
+                # Parse the index value
+                idx = int(style.split("--card-index:")[1].strip().rstrip(";").strip())
+                assert idx <= 8
+
+    def test_view_toggle_icons_only_on_mobile(self, server_url, page):
+        """View toggle shows icons but no text labels on mobile."""
+        page.set_viewport_size({"width": 375, "height": 812})
+        page.goto(server_url)
+        page.wait_for_load_state("networkidle")
+        labels = page.locator(".view-toggle-label")
+        if labels.count() > 0:
+            visible = labels.first.evaluate("el => getComputedStyle(el).display")
+            assert visible == "none"
+
+
+@pytest.mark.browser
+class TestSourceBadgeClickTarget:
+    """Phase 3: Source badges inside card link."""
+
+    def test_source_badges_inside_card_link(self, server_url, page):
+        """Source badge elements are descendants of .card-link."""
+        page.goto(server_url)
+        page.wait_for_load_state("networkidle")
+        # Source badges should be inside .card-link
+        badges_inside_link = page.locator(".card-link .card-sources")
+        assert badges_inside_link.count() >= 1
+
+    def test_clicking_source_badge_area_navigates(self, server_url, page):
+        """Clicking the source badge area navigates to detail page."""
+        page.goto(server_url)
+        page.wait_for_load_state("networkidle")
+        badge = page.locator(".card-sources .source-badge").first
+        badge.click()
+        page.wait_for_load_state("networkidle")
+        assert "/property/" in page.url
+
+
+@pytest.mark.browser
+class TestDetailPagePolish:
+    """Phase 4: Detail page scroll-to-top link."""
+
+    def test_section_nav_has_top_link(self, server_url, page):
+        """Section nav contains a 'Top' link."""
+        page.goto(f"{server_url}/property/openrent:1003")
+        page.wait_for_load_state("networkidle")
+        top_link = page.locator(".section-nav-top a")
+        expect(top_link).to_be_visible()
+        expect(top_link).to_have_text("Top")
+
+    def test_top_link_scrolls_to_top(self, server_url, page):
+        """Clicking 'Top' scrolls page to top."""
+        page.goto(f"{server_url}/property/openrent:1003")
+        page.wait_for_load_state("networkidle")
+        # Scroll down first
+        page.evaluate("window.scrollTo(0, 1000)")
+        page.wait_for_timeout(300)
+        scroll_before = page.evaluate("window.scrollY")
+        assert scroll_before > 0
+
+        page.locator(".section-nav-top a").click()
+        page.wait_for_timeout(800)
+        scroll_after = page.evaluate("window.scrollY")
+        assert scroll_after < scroll_before
