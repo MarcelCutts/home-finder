@@ -20,6 +20,7 @@ echo "==> Replacing database..."
 fly ssh console -C "sh -c 'rm -f /app/data/properties.db /app/data/properties.db-shm /app/data/properties.db-wal'" \
   --app "$APP" 2>/dev/null || true
 fly sftp put "$DATA_DIR/properties.db" /app/data/properties.db --app "$APP" -q
+fly ssh console --app "$APP" -C "sh -c 'chown appuser:appuser /app/data/properties.db'" 2>/dev/null || true
 
 echo "==> Syncing image cache (incremental)..."
 REMOTE_DIRS=$(fly ssh console --app "$APP" -C "ls /app/data/image_cache/" 2>/dev/null | tr -d '\r' || echo "")

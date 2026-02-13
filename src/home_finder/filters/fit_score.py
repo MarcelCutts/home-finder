@@ -272,48 +272,176 @@ def _score_kitchen(analysis: dict[str, Any], _bedrooms: int) -> _DimensionResult
 
 
 def _score_vibe(analysis: dict[str, Any], _bedrooms: int) -> _DimensionResult:
-    score = 0.0
-    signals = 0
+    """Multi-cluster vibe scorer using rich signals from Claude's vision analysis.
 
+    Six signal clusters contribute raw points, then clamped to 0-100.
+    Confidence scales with the number of clusters that have at least one signal.
+    """
+    clusters_with_signal: set[str] = set()
+
+    # === Cluster 1: Architectural Character (0-35 raw) ===
+    cluster1 = 0.0
     listing_ext = analysis.get("listing_extraction") or {}
     prop_type = listing_ext.get("property_type")
     if prop_type == "warehouse":
-        score += 40
-        signals += 1
+        cluster1 += 35
+        clusters_with_signal.add("architecture")
     elif prop_type == "period_conversion":
-        score += 30
-        signals += 1
+        cluster1 += 28
+        clusters_with_signal.add("architecture")
     elif prop_type in ("victorian", "edwardian", "georgian"):
-        score += 20
-        signals += 1
-    elif prop_type and prop_type != "unknown":
-        signals += 1
+        cluster1 += 20
+        clusters_with_signal.add("architecture")
 
+    # === Cluster 2: Space & Light Feel (0-30 raw, can go negative) ===
+    cluster2 = 0.0
     light_space = analysis.get("light_space") or {}
+    natural_light = light_space.get("natural_light")
+    if natural_light == "excellent":
+        cluster2 += 15
+        clusters_with_signal.add("light")
+    elif natural_light == "good":
+        cluster2 += 8
+        clusters_with_signal.add("light")
+
+    window_sizes = light_space.get("window_sizes")
+    if window_sizes == "large":
+        cluster2 += 10
+        clusters_with_signal.add("light")
+
     ceiling = light_space.get("ceiling_height")
     if ceiling == "high":
-        score += 20
-        signals += 1
-    elif ceiling and ceiling not in ("unknown", None):
-        signals += 1
+        cluster2 += 10
+        clusters_with_signal.add("light")
+    elif ceiling == "low":
+        cluster2 -= 5
+        clusters_with_signal.add("light")
 
-    # Highlight bonuses for period features / high ceilings
+    feels_spacious = light_space.get("feels_spacious")
+    if feels_spacious is True:
+        cluster2 += 5
+        clusters_with_signal.add("light")
+
+    # === Cluster 3: Material Character (0-15 raw, can go negative) ===
+    cluster3 = 0.0
+    flooring = analysis.get("flooring_noise") or {}
+    primary_flooring = flooring.get("primary_flooring")
+    if primary_flooring == "hardwood":
+        cluster3 += 12
+        clusters_with_signal.add("material")
+    elif primary_flooring == "tile":
+        cluster3 += 6
+        clusters_with_signal.add("material")
+    elif primary_flooring == "mixed":
+        cluster3 += 4
+        clusters_with_signal.add("material")
+
+    construction = flooring.get("building_construction")
+    if construction == "solid_brick":
+        cluster3 += 8
+        clusters_with_signal.add("material")
+    elif construction == "concrete":
+        cluster3 += 4
+        clusters_with_signal.add("material")
+    elif construction == "timber_frame":
+        cluster3 -= 3
+        clusters_with_signal.add("material")
+
+    # === Cluster 4: Position & Outlook (0-12 raw, can go negative) ===
+    cluster4 = 0.0
+    floor_level = light_space.get("floor_level")
+    if floor_level == "top":
+        cluster4 += 10
+        clusters_with_signal.add("position")
+    elif floor_level == "upper":
+        cluster4 += 6
+        clusters_with_signal.add("position")
+    elif floor_level == "ground":
+        cluster4 += 2
+        clusters_with_signal.add("position")
+    elif floor_level == "basement":
+        cluster4 -= 5
+        clusters_with_signal.add("position")
+
+    # View highlights (exact enum value match)
     highlights = analysis.get("highlights") or []
     if isinstance(highlights, list):
-        highlight_bonus = 0.0
-        for h in highlights:
-            if not isinstance(h, str):
-                continue
-            hl = h.lower()
-            if any(kw in hl for kw in ("period", "original", "character", "heritage")):
-                highlight_bonus += 15
-            if any(kw in hl for kw in ("high ceiling", "tall ceiling", "double height")):
-                highlight_bonus += 10
-        score += min(25.0, highlight_bonus)
-        if highlight_bonus > 0:
-            signals += 1
+        view_bonus = 0.0
+        if "Canal views" in highlights:
+            view_bonus += 6
+        if "Park views" in highlights:
+            view_bonus += 6
+        if view_bonus > 0:
+            cluster4 += min(8.0, view_bonus)
+            clusters_with_signal.add("position")
 
-    confidence = min(1.0, signals * 0.5) if signals > 0 else 0.0
+    # === Cluster 5: Layout Flow (0-12 raw, can go negative) ===
+    cluster5 = 0.0
+    space = analysis.get("space") or {}
+    hosting_layout = space.get("hosting_layout")
+    if hosting_layout == "excellent":
+        cluster5 += 12
+        clusters_with_signal.add("layout")
+    elif hosting_layout == "good":
+        cluster5 += 8
+        clusters_with_signal.add("layout")
+    elif hosting_layout == "awkward":
+        clusters_with_signal.add("layout")
+    elif hosting_layout == "poor":
+        cluster5 -= 3
+        clusters_with_signal.add("layout")
+
+    # === Cluster 6: Highlight/Lowlight Signals (capped at 20 raw) ===
+    cluster6 = 0.0
+    if isinstance(highlights, list):
+        # Positive highlight signals (exact enum value match)
+        _HIGHLIGHT_SCORES: dict[str, float] = {
+            "Period features": 10,
+            "Open-plan layout": 6,
+            "Floor-to-ceiling windows": 8,
+            "Spacious living room": 4,
+            "Canal views": 6,
+            "Park views": 4,
+            "Roof terrace": 6,
+            "Recently refurbished": 3,
+        }
+        for h in highlights:
+            if isinstance(h, str) and h in _HIGHLIGHT_SCORES:
+                cluster6 += _HIGHLIGHT_SCORES[h]
+                clusters_with_signal.add("highlights")
+
+    lowlights = analysis.get("lowlights") or []
+    if isinstance(lowlights, list):
+        # Negative lowlight signals (exact enum value match)
+        _LOWLIGHT_SCORES: dict[str, float] = {
+            "Needs updating": -8,
+            "Compact living room": -4,
+            "Small living room": -4,
+        }
+        for l in lowlights:
+            if isinstance(l, str) and l in _LOWLIGHT_SCORES:
+                cluster6 += _LOWLIGHT_SCORES[l]
+                clusters_with_signal.add("highlights")
+
+    cluster6 = min(20.0, cluster6)
+
+    # === Final calculation ===
+    raw_total = cluster1 + cluster2 + cluster3 + cluster4 + cluster5 + cluster6
+    score = max(0.0, min(100.0, raw_total))
+
+    # Confidence: count of clusters with at least one signal
+    n_clusters = len(clusters_with_signal)
+    if n_clusters == 0:
+        confidence = 0.0
+    elif n_clusters == 1:
+        confidence = 0.25
+    elif n_clusters == 2:
+        confidence = 0.5
+    elif n_clusters == 3:
+        confidence = 0.7
+    else:
+        confidence = 1.0
+
     return _DimensionResult(score, confidence)
 
 

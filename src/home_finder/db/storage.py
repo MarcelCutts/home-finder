@@ -1869,10 +1869,9 @@ class PropertyStorage:
         for row in rows:
             prop_dict = dict(row)
             self._parse_json_fields(prop_dict)
-            # Use gallery image only as fallback when scraper thumbnail is missing
-            # Scraper image_url comes from search results (always a real property photo),
-            # while first gallery image may be an EPC chart
-            if not prop_dict.get("image_url") and prop_dict.get("first_gallery_url"):
+            # Prefer enriched gallery image (EPC URLs already filtered by subquery)
+            # over scraper thumbnail which may be low-res or expired
+            if prop_dict.get("first_gallery_url"):
                 prop_dict["image_url"] = prop_dict["first_gallery_url"]
             # Extract quality fields from analysis_json
             if prop_dict.get("analysis_json"):

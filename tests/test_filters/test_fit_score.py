@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from home_finder.filters.fit_score import (
     WEIGHTS,
+    _score_vibe,
     compute_fit_breakdown,
     compute_fit_score,
     compute_lifestyle_icons,
@@ -32,6 +33,7 @@ def _full_analysis(**overrides: object) -> dict:
             "feels_spacious": True,
             "ceiling_height": "high",
             "floor_level": "upper",
+            "window_sizes": "medium",
         },
         "space": {
             "living_room_sqm": 20,
@@ -52,6 +54,7 @@ def _full_analysis(**overrides: object) -> dict:
             "has_double_glazing": "yes",
             "building_construction": "solid_brick",
             "noise_indicators": [],
+            "primary_flooring": "hardwood",
         },
         "listing_extraction": {
             "property_type": "victorian",
@@ -569,3 +572,278 @@ class TestComputeFitBreakdown:
             "light_space": {"ceiling_height": "unknown"},
         }
         assert compute_fit_breakdown(analysis, 1) is None
+
+
+# ── Vibe scorer (multi-cluster) ──────────────────────────────────────────────
+
+
+def _vibe_analysis(**overrides: object) -> dict:
+    """Build a minimal analysis dict for vibe scorer testing."""
+    base: dict = {
+        "listing_extraction": {"property_type": "unknown"},
+        "light_space": {},
+        "flooring_noise": {},
+        "space": {},
+        "highlights": [],
+        "lowlights": [],
+    }
+    for key, val in overrides.items():
+        if isinstance(val, dict) and key in base and isinstance(base[key], dict):
+            base[key].update(val)
+        else:
+            base[key] = val
+    return base
+
+
+class TestVibeScorer:
+    """Tests for the rewritten multi-cluster _score_vibe()."""
+
+    def test_warehouse_all_positives_scores_high(self):
+        """Warehouse with all positive signals should score ~90+."""
+        analysis = _vibe_analysis(
+            listing_extraction={"property_type": "warehouse"},
+            light_space={
+                "natural_light": "excellent",
+                "window_sizes": "large",
+                "ceiling_height": "high",
+                "feels_spacious": True,
+                "floor_level": "top",
+            },
+            flooring_noise={
+                "primary_flooring": "hardwood",
+                "building_construction": "solid_brick",
+            },
+            space={"hosting_layout": "excellent"},
+            highlights=[
+                "Period features",
+                "Open-plan layout",
+                "Floor-to-ceiling windows",
+                "Canal views",
+            ],
+        )
+        result = _score_vibe(analysis, 2)
+        assert result.score >= 90
+
+    def test_nice_victorian_scores_mid_high(self):
+        """Victorian with period features and good light should score ~70s."""
+        analysis = _vibe_analysis(
+            listing_extraction={"property_type": "victorian"},
+            light_space={
+                "natural_light": "good",
+                "ceiling_height": "high",
+                "feels_spacious": True,
+                "floor_level": "upper",
+            },
+            flooring_noise={
+                "primary_flooring": "hardwood",
+                "building_construction": "solid_brick",
+            },
+            highlights=["Period features"],
+        )
+        result = _score_vibe(analysis, 2)
+        assert 60 <= result.score <= 85
+
+    def test_decent_new_build_scores_moderate(self):
+        """New-build with some positives (light, layout) should score ~30s."""
+        analysis = _vibe_analysis(
+            listing_extraction={"property_type": "new_build"},
+            light_space={
+                "natural_light": "excellent",
+                "window_sizes": "large",
+            },
+            space={"hosting_layout": "good"},
+        )
+        result = _score_vibe(analysis, 2)
+        assert 25 <= result.score <= 45
+
+    def test_dark_basement_negatives_clamped_to_zero(self):
+        """Dark basement with all negatives should clamp to 0."""
+        analysis = _vibe_analysis(
+            listing_extraction={"property_type": "purpose_built"},
+            light_space={
+                "ceiling_height": "low",
+                "floor_level": "basement",
+            },
+            flooring_noise={
+                "primary_flooring": "carpet",
+                "building_construction": "timber_frame",
+            },
+            space={"hosting_layout": "poor"},
+            lowlights=["Needs updating", "Compact living room"],
+        )
+        result = _score_vibe(analysis, 2)
+        assert result.score == 0
+
+    def test_empty_analysis_zero_with_zero_confidence(self):
+        """Empty/unknown analysis should return 0 score and 0 confidence."""
+        result = _score_vibe({}, 2)
+        assert result.score == 0
+        assert result.confidence == 0.0
+
+    def test_unknown_fields_zero_with_zero_confidence(self):
+        """Analysis with only unknown values should return 0 confidence."""
+        analysis = _vibe_analysis(
+            listing_extraction={"property_type": "unknown"},
+            light_space={"ceiling_height": "unknown", "natural_light": "unknown"},
+            flooring_noise={"primary_flooring": "unknown", "building_construction": "unknown"},
+        )
+        result = _score_vibe(analysis, 2)
+        assert result.score == 0
+        assert result.confidence == 0.0
+
+    # ── Cluster independence ──
+
+    def test_cluster1_architecture_only(self):
+        """Only architectural character signals should contribute."""
+        analysis = _vibe_analysis(listing_extraction={"property_type": "warehouse"})
+        result = _score_vibe(analysis, 2)
+        assert result.score == 35
+        assert result.confidence == 0.25  # 1 cluster
+
+    def test_cluster2_light_only(self):
+        """Only light signals should contribute."""
+        analysis = _vibe_analysis(
+            light_space={"natural_light": "excellent", "window_sizes": "large", "ceiling_height": "high"}
+        )
+        result = _score_vibe(analysis, 2)
+        assert result.score == 35  # 15 + 10 + 10
+        assert result.confidence == 0.25
+
+    def test_cluster3_material_only(self):
+        """Only material signals should contribute."""
+        analysis = _vibe_analysis(
+            flooring_noise={"primary_flooring": "hardwood", "building_construction": "solid_brick"}
+        )
+        result = _score_vibe(analysis, 2)
+        assert result.score == 20  # 12 + 8
+        assert result.confidence == 0.25
+
+    def test_cluster4_position_only(self):
+        """Only position signals should contribute."""
+        analysis = _vibe_analysis(light_space={"floor_level": "top"})
+        result = _score_vibe(analysis, 2)
+        assert result.score == 10
+        assert result.confidence == 0.25
+
+    def test_cluster4_view_highlights(self):
+        """View highlights contribute to position (capped at 8) AND highlight cluster."""
+        analysis = _vibe_analysis(highlights=["Canal views", "Park views"])
+        result = _score_vibe(analysis, 2)
+        # Cluster 4: 6+6 = 12 capped at 8
+        # Cluster 6: "Canal views" +6 + "Park views" +4 = 10
+        assert result.score == 18
+
+    def test_cluster5_layout_only(self):
+        """Only layout signals should contribute."""
+        analysis = _vibe_analysis(space={"hosting_layout": "excellent"})
+        result = _score_vibe(analysis, 2)
+        assert result.score == 12
+        assert result.confidence == 0.25
+
+    def test_cluster6_highlights_only(self):
+        """Only highlight signals should contribute (capped at 20)."""
+        analysis = _vibe_analysis(
+            highlights=["Period features", "Open-plan layout", "Floor-to-ceiling windows"]
+        )
+        result = _score_vibe(analysis, 2)
+        # 10 + 6 + 8 = 24, but capped at 20
+        assert result.score == 20
+
+    def test_cluster6_lowlights_reduce_score(self):
+        """Lowlight signals should reduce the highlight cluster score."""
+        analysis = _vibe_analysis(
+            highlights=["Period features"],
+            lowlights=["Needs updating"],
+        )
+        result = _score_vibe(analysis, 2)
+        # highlight cluster: 10 + (-8) = 2
+        assert result.score == 2
+
+    # ── Confidence scaling ──
+
+    def test_confidence_zero_clusters(self):
+        result = _score_vibe({}, 2)
+        assert result.confidence == 0.0
+
+    def test_confidence_one_cluster(self):
+        analysis = _vibe_analysis(listing_extraction={"property_type": "warehouse"})
+        result = _score_vibe(analysis, 2)
+        assert result.confidence == 0.25
+
+    def test_confidence_two_clusters(self):
+        analysis = _vibe_analysis(
+            listing_extraction={"property_type": "warehouse"},
+            light_space={"natural_light": "excellent"},
+        )
+        result = _score_vibe(analysis, 2)
+        assert result.confidence == 0.5
+
+    def test_confidence_three_clusters(self):
+        analysis = _vibe_analysis(
+            listing_extraction={"property_type": "warehouse"},
+            light_space={"natural_light": "excellent"},
+            flooring_noise={"primary_flooring": "hardwood"},
+        )
+        result = _score_vibe(analysis, 2)
+        assert result.confidence == 0.7
+
+    def test_confidence_four_plus_clusters(self):
+        analysis = _vibe_analysis(
+            listing_extraction={"property_type": "warehouse"},
+            light_space={"natural_light": "excellent", "floor_level": "top"},
+            flooring_noise={"primary_flooring": "hardwood"},
+            space={"hosting_layout": "excellent"},
+        )
+        result = _score_vibe(analysis, 2)
+        assert result.confidence == 1.0
+
+    # ── Edge cases ──
+
+    def test_non_list_highlights_handled(self):
+        """Non-list highlights shouldn't crash."""
+        analysis = _vibe_analysis(highlights="not a list")
+        result = _score_vibe(analysis, 2)
+        assert result.score == 0
+
+    def test_non_list_lowlights_handled(self):
+        """Non-list lowlights shouldn't crash."""
+        analysis = _vibe_analysis(lowlights="not a list")
+        result = _score_vibe(analysis, 2)
+        assert result.score == 0
+
+    def test_period_conversion_scores_between_warehouse_and_victorian(self):
+        """Period conversion should score between warehouse and Victorian."""
+        warehouse = _score_vibe(_vibe_analysis(listing_extraction={"property_type": "warehouse"}), 2)
+        period = _score_vibe(_vibe_analysis(listing_extraction={"property_type": "period_conversion"}), 2)
+        victorian = _score_vibe(_vibe_analysis(listing_extraction={"property_type": "victorian"}), 2)
+        assert warehouse.score > period.score > victorian.score
+
+    def test_score_never_exceeds_100(self):
+        """Even with all max signals, score shouldn't exceed 100."""
+        analysis = _vibe_analysis(
+            listing_extraction={"property_type": "warehouse"},
+            light_space={
+                "natural_light": "excellent",
+                "window_sizes": "large",
+                "ceiling_height": "high",
+                "feels_spacious": True,
+                "floor_level": "top",
+            },
+            flooring_noise={
+                "primary_flooring": "hardwood",
+                "building_construction": "solid_brick",
+            },
+            space={"hosting_layout": "excellent"},
+            highlights=[
+                "Period features",
+                "Open-plan layout",
+                "Floor-to-ceiling windows",
+                "Spacious living room",
+                "Canal views",
+                "Park views",
+                "Roof terrace",
+                "Recently refurbished",
+            ],
+        )
+        result = _score_vibe(analysis, 2)
+        assert result.score == 100
