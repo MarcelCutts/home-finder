@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Any, Final, Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 from home_finder.data.area_context import (
+    ACOUSTIC_PROFILES,
     COUNCIL_TAX_MONTHLY,
     CRIME_RATES,
     DEFAULT_BENCHMARK,
@@ -1035,6 +1036,32 @@ class PropertyQualityFilter:
                 indices=detected_indices,
             )
 
+        # Map building_construction from Phase 1 to acoustic profile for Phase 2
+        acoustic_context: str | None = None
+        flooring_raw = visual_data.get("flooring_noise")
+        construction: str | None = (
+            flooring_raw.get("building_construction")
+            if isinstance(flooring_raw, dict)
+            else None
+        )
+        if construction:
+            _CONSTRUCTION_TO_PROFILE: dict[str, str] = {
+                "timber_frame": "victorian",
+                "concrete": "ex_council",
+                "solid_brick": "purpose_built",
+            }
+            profile_key = _CONSTRUCTION_TO_PROFILE.get(construction)
+            if profile_key:
+                profile = ACOUSTIC_PROFILES.get(profile_key)
+                if profile:
+                    db_range = profile["airborne_insulation_db"]
+                    acoustic_context = (
+                        f"Building construction: {construction}\n"
+                        f"Typical sound insulation: {db_range} dB airborne\n"
+                        f"Hosting safety: {profile['hosting_safety']}\n"
+                        f"{profile['summary']}"
+                    )
+
         # ── Phase 2: Evaluation ───────────────────────────────────────
         eval_data: dict[str, Any] = {}
         try:
@@ -1051,6 +1078,7 @@ class PropertyQualityFilter:
                 council_tax_band_c=council_tax_band_c,
                 crime_summary=crime_summary,
                 rent_trend=rent_trend,
+                acoustic_context=acoustic_context,
             )
 
             eval_response = await client.messages.create(

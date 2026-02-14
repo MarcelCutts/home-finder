@@ -64,11 +64,11 @@ Analyze property images (gallery photos and optional floorplan) together with li
 
 <stock_types>
 First, identify the property type — this fundamentally affects expected pricing and what condition issues to look for:
-- Victorian/Edwardian conversion: Period features, high ceilings, sash windows. Baseline East London stock. Watch for awkward subdivisions, original single glazing, rising damp, uneven floors.
-- Purpose-built new-build / Build-to-Rent: Clean lines, uniform finish, large windows. Commands 15-30% premium but check for small rooms, thin partition walls, developer-grade finishes that wear quickly.
-- Warehouse/industrial conversion: High ceilings, exposed brick, large windows. Premium pricing (especially E9 canalside). Watch for draughts, echo/noise, damp from inadequate conversion.
-- Ex-council / post-war estate: Concrete construction, uniform exteriors, communal corridors. Should be 20-40% below area average. Communal area quality signals management standards.
-- Georgian terrace: Grand proportions, original features. Premium stock.
+- Victorian/Edwardian conversion: Period features, high ceilings, sash windows. Baseline East London stock. Watch for awkward subdivisions, original single glazing, rising damp, uneven floors. Acoustic: ~35–40 dB airborne (below Part E 45 dB). High hosting noise risk unless converted post-2003 with acoustic treatment.
+- Purpose-built new-build / Build-to-Rent: Clean lines, uniform finish, large windows. Commands 15-30% premium but check for small rooms, thin partition walls, developer-grade finishes that wear quickly. Acoustic: 45–55 dB (Part E compliant). Concrete floors good; lightweight timber-frame can underperform.
+- Warehouse/industrial conversion: High ceilings, exposed brick, large windows. Premium pricing (especially E9 canalside). Watch for draughts, echo/noise, damp from inadequate conversion. Acoustic: Variable 30–50 dB — original concrete/masonry excellent but new stud partition walls between units often only 30–35 dB.
+- Ex-council / post-war estate: Concrete construction, uniform exteriors, communal corridors. Should be 20-40% below area average. Communal area quality signals management standards. Acoustic: 42–48 dB airborne — concrete mass outperforms many newer builds. Weak on impact noise without carpet.
+- Georgian terrace: Grand proportions, original features. Premium stock. Acoustic: Thick walls (~50–55 dB) but timber joist floors only 38–42 dB. Listed status may prevent acoustic upgrades.
 </stock_types>
 
 <listing_signals>
@@ -1065,3 +1065,45 @@ class TestFloorplanNoteInUserPrompt:
         note_pos = prompt.index("<floorplan_note>")
         tool_pos = prompt.index("property_visual_analysis tool")
         assert note_pos < tool_pos
+
+
+class TestAcousticContextInEvaluationPrompt:
+    """Tests for the acoustic_context parameter in build_evaluation_prompt."""
+
+    def test_evaluation_prompt_with_acoustic_context(self) -> None:
+        """Acoustic context should appear as XML block when provided."""
+        prompt = build_evaluation_prompt(
+            visual_data={"summary": "test"},
+            price_pcm=1800,
+            bedrooms=1,
+            area_average=1900,
+            acoustic_context="Building construction: concrete\nHosting safety: moderate",
+        )
+        assert "<acoustic_context>" in prompt
+        assert "Building construction: concrete" in prompt
+        assert "Hosting safety: moderate" in prompt
+        assert "</acoustic_context>" in prompt
+
+    def test_evaluation_prompt_without_acoustic_context(self) -> None:
+        """Acoustic context block should be absent when None."""
+        prompt = build_evaluation_prompt(
+            visual_data={"summary": "test"},
+            price_pcm=1800,
+            bedrooms=1,
+            area_average=1900,
+            acoustic_context=None,
+        )
+        assert "<acoustic_context>" not in prompt
+
+    def test_evaluation_prompt_acoustic_context_before_tool_instruction(self) -> None:
+        """Acoustic context should appear before the tool call instruction."""
+        prompt = build_evaluation_prompt(
+            visual_data={"summary": "test"},
+            price_pcm=1800,
+            bedrooms=1,
+            area_average=1900,
+            acoustic_context="Building construction: timber_frame",
+        )
+        acoustic_pos = prompt.index("<acoustic_context>")
+        tool_pos = prompt.index("property_evaluation tool")
+        assert acoustic_pos < tool_pos

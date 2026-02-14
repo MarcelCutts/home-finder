@@ -152,6 +152,7 @@ async with AsyncSession() as session:
 - Common fixtures in `tests/conftest.py`: `sample_property`, `sample_property_no_coords`, `default_search_criteria`
 - Use `Property.model_copy()` for variations; `hypothesis` for property-based testing
 - Integration tests in `tests/integration/` reset Crawlee global state with autouse fixtures
+- **Concurrent-safe:** All tests use in-memory SQLite, no shared state — multiple agents/processes can run `pytest` simultaneously without interference
 
 **Test structure:**
 - `tests/test_scrapers/` — per-platform scraper tests

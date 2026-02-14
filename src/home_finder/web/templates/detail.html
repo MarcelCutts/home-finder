@@ -327,6 +327,40 @@
             </div>
             {% endif %}
 
+            {% if area_context.acoustic_profile %}
+            {% set ap = area_context.acoustic_profile %}
+            <div>
+                <h4>Sound &amp; Hosting
+                    <span class="badge
+                        {% if ap.hosting_safety == 'good' %}badge-green
+                        {% elif ap.hosting_safety == 'moderate' %}badge-amber
+                        {% else %}badge-red{% endif %}">{{ ap.hosting_safety }}</span>
+                </h4>
+                <p><strong>{{ ap.label }}</strong> &mdash; {{ ap.airborne_insulation_db }} airborne insulation</p>
+                <p>{{ ap.summary }}</p>
+                {% if ap.viewing_checks %}
+                <details>
+                    <summary>Viewing checks</summary>
+                    <ul>
+                        {% for check in ap.viewing_checks %}
+                        <li>{{ check }}</li>
+                        {% endfor %}
+                    </ul>
+                </details>
+                {% endif %}
+            </div>
+            {% endif %}
+
+            {% if area_context.noise_enforcement %}
+            {% set ne = area_context.noise_enforcement %}
+            <div>
+                <h4>Noise Enforcement ({{ area_context.borough }})</h4>
+                <p>{{ ne.process }}</p>
+                <p><small>{{ ne.threshold_info }}</small></p>
+                <p class="crime-note">{{ ne.response_time }}</p>
+            </div>
+            {% endif %}
+
             {% if area_context.rent_trend %}
             <div>
                 <h4>Rent Trend</h4>

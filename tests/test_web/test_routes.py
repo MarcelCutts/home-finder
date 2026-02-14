@@ -1480,3 +1480,95 @@ class TestReanalysisEndpoint:
 
         queue = await storage.get_reanalysis_queue()
         assert len(queue) == 1
+
+
+class TestAcousticCard:
+    """Tests for acoustic profile and noise enforcement on detail page."""
+
+    @pytest.mark.asyncio
+    async def test_acoustic_card_renders(
+        self,
+        client: TestClient,
+        storage: PropertyStorage,
+        merged_a: MergedProperty,
+        prop_a: Property,
+    ) -> None:
+        """Property with matching property_type should show Sound & Hosting card."""
+        from home_finder.models import (
+            ConditionAnalysis,
+            KitchenAnalysis,
+            LightSpaceAnalysis,
+            ListingExtraction,
+            PropertyQualityAnalysis,
+            SpaceAnalysis,
+        )
+
+        await storage.save_merged_property(merged_a)
+        analysis = PropertyQualityAnalysis(
+            kitchen=KitchenAnalysis(overall_quality="modern"),
+            condition=ConditionAnalysis(overall_condition="good", confidence="high"),
+            light_space=LightSpaceAnalysis(natural_light="good"),
+            space=SpaceAnalysis(confidence="high"),
+            listing_extraction=ListingExtraction(property_type="victorian"),
+            overall_rating=4,
+            summary="Victorian flat.",
+        )
+        await storage.save_quality_analysis(prop_a.unique_id, analysis)
+
+        resp = client.get(f"/property/{merged_a.unique_id}")
+        assert resp.status_code == 200
+        assert "Sound" in resp.text
+        assert "Hosting" in resp.text
+        assert "Victorian conversion" in resp.text
+        assert "35\u201340 dB" in resp.text
+
+    @pytest.mark.asyncio
+    async def test_acoustic_card_absent_without_quality(
+        self,
+        client: TestClient,
+        storage: PropertyStorage,
+        merged_a: MergedProperty,
+    ) -> None:
+        """No crash and no acoustic card when property has no quality analysis."""
+        await storage.save_merged_property(merged_a)
+
+        resp = client.get(f"/property/{merged_a.unique_id}")
+        assert resp.status_code == 200
+        assert "Sound &amp; Hosting" not in resp.text
+        assert "Noise Enforcement" not in resp.text
+
+    @pytest.mark.asyncio
+    async def test_noise_enforcement_card_renders_for_hackney(
+        self,
+        client: TestClient,
+        storage: PropertyStorage,
+        merged_a: MergedProperty,
+        prop_a: Property,
+    ) -> None:
+        """E8 property in Hackney should show noise enforcement card."""
+        from home_finder.models import (
+            ConditionAnalysis,
+            KitchenAnalysis,
+            LightSpaceAnalysis,
+            ListingExtraction,
+            PropertyQualityAnalysis,
+            SpaceAnalysis,
+        )
+
+        await storage.save_merged_property(merged_a)
+        analysis = PropertyQualityAnalysis(
+            kitchen=KitchenAnalysis(overall_quality="modern"),
+            condition=ConditionAnalysis(overall_condition="good", confidence="high"),
+            light_space=LightSpaceAnalysis(natural_light="good"),
+            space=SpaceAnalysis(confidence="high"),
+            listing_extraction=ListingExtraction(property_type="victorian"),
+            overall_rating=4,
+            summary="Victorian flat.",
+        )
+        await storage.save_quality_analysis(prop_a.unique_id, analysis)
+
+        resp = client.get(f"/property/{merged_a.unique_id}")
+        assert resp.status_code == 200
+        assert "Noise Enforcement" in resp.text
+        assert "Hackney" in resp.text
+        assert "NoiseWorks" in resp.text

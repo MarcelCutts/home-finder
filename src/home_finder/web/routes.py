@@ -696,6 +696,27 @@ async def property_detail(
             area_context["rent_trend"] = RENT_TRENDS.get(borough)
         area_context["crime"] = CRIME_RATES.get(outcode)
 
+    # Look up acoustic profile from quality analysis property_type
+    qa = prop.get("quality_analysis")
+    if qa is not None:
+        le = getattr(qa, "listing_extraction", None)
+        if le:
+            prop_type = getattr(le, "property_type", None)
+            if prop_type:
+                from home_finder.data.area_context import ACOUSTIC_PROFILES
+
+                acoustic = ACOUSTIC_PROFILES.get(str(prop_type))
+                if acoustic:
+                    area_context["acoustic_profile"] = acoustic
+
+        borough = area_context.get("borough")
+        if borough:
+            from home_finder.data.area_context import NOISE_ENFORCEMENT
+
+            enforcement = NOISE_ENFORCEMENT.get(borough)
+            if enforcement:
+                area_context["noise_enforcement"] = enforcement
+
     # Build URL mapping: original CDN URL -> local /images/ URL for cached images
     image_url_map: dict[str, str] = {}
     safe_id = safe_dir_name(unique_id)

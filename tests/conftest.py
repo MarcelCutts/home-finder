@@ -1,14 +1,12 @@
 """Shared pytest fixtures."""
 
 import os
-import tempfile
 import threading
 from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-import filelock
 import pytest
 from hypothesis import HealthCheck, settings
 from pydantic import HttpUrl
@@ -42,19 +40,6 @@ settings.register_profile(
     suppress_health_check=[HealthCheck.too_slow, HealthCheck.differing_executors],
 )
 settings.load_profile(os.getenv("HYPOTHESIS_PROFILE", "fast"))
-
-
-@pytest.fixture(scope="session", autouse=True)
-def _serialize_test_runs():
-    """Prevent multiple test runners from executing simultaneously.
-
-    aiosqlite worker threads and Crawlee global state can cause
-    interference when multiple pytest processes run concurrently.
-    """
-    lock_path = Path(tempfile.gettempdir()) / "home-finder-tests.lock"
-    lock = filelock.FileLock(lock_path, timeout=120)
-    with lock:
-        yield
 
 
 @pytest.fixture(autouse=True)

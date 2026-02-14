@@ -3,7 +3,9 @@
 import pytest
 
 from home_finder.data.area_context import (
+    ACOUSTIC_PROFILES,
     AREA_CONTEXT,
+    NOISE_ENFORCEMENT,
     get_area_overview,
     get_micro_areas,
 )
@@ -91,3 +93,58 @@ class TestAccessors:
 
     def test_get_micro_areas_unknown_outcode(self) -> None:
         assert get_micro_areas("ZZ99") is None
+
+
+class TestAcousticProfiles:
+    def test_acoustic_profiles_loaded(self) -> None:
+        assert isinstance(ACOUSTIC_PROFILES, dict)
+        expected_keys = {
+            "victorian",
+            "edwardian",
+            "georgian",
+            "new_build",
+            "purpose_built",
+            "warehouse",
+            "ex_council",
+            "period_conversion",
+        }
+        assert set(ACOUSTIC_PROFILES.keys()) == expected_keys
+
+    def test_acoustic_profiles_have_valid_hosting_safety(self) -> None:
+        valid_values = {"good", "moderate", "poor"}
+        for key, profile in ACOUSTIC_PROFILES.items():
+            assert profile["hosting_safety"] in valid_values, (
+                f"{key}: invalid hosting_safety '{profile['hosting_safety']}'"
+            )
+
+    def test_acoustic_profiles_have_required_fields(self) -> None:
+        required = {
+            "label", "airborne_insulation_db", "hosting_safety",
+            "summary", "viewing_checks",
+        }
+        for key, profile in ACOUSTIC_PROFILES.items():
+            missing = required - set(profile.keys())
+            assert not missing, f"{key} missing fields: {missing}"
+
+    def test_acoustic_profile_viewing_checks_are_lists(self) -> None:
+        for key, profile in ACOUSTIC_PROFILES.items():
+            assert isinstance(profile["viewing_checks"], list), f"{key}: viewing_checks not a list"
+            assert len(profile["viewing_checks"]) > 0, f"{key}: empty viewing_checks"
+
+
+class TestNoiseEnforcement:
+    def test_noise_enforcement_loaded(self) -> None:
+        assert isinstance(NOISE_ENFORCEMENT, dict)
+        expected_boroughs = {"Hackney", "Haringey", "Tower Hamlets", "Waltham Forest", "Newham"}
+        assert set(NOISE_ENFORCEMENT.keys()) == expected_boroughs
+
+    def test_hackney_has_process_field(self) -> None:
+        hackney = NOISE_ENFORCEMENT["Hackney"]
+        assert "process" in hackney
+        assert "NoiseWorks" in hackney["process"]
+
+    def test_noise_enforcement_have_required_fields(self) -> None:
+        required = {"process", "threshold_info", "response_time"}
+        for borough, data in NOISE_ENFORCEMENT.items():
+            missing = required - set(data.keys())
+            assert not missing, f"{borough} missing fields: {missing}"

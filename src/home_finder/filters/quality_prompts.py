@@ -36,17 +36,27 @@ First, identify the property type — this fundamentally affects expected pricin
 and what condition issues to look for:
 - Victorian/Edwardian conversion: Period features, high ceilings, sash windows. \
 Baseline East London stock. Watch for awkward subdivisions, original single \
-glazing, rising damp, uneven floors.
+glazing, rising damp, uneven floors. \
+Acoustic: ~35–40 dB airborne (below Part E 45 dB). High hosting noise risk \
+unless converted post-2003 with acoustic treatment.
 - Purpose-built new-build / Build-to-Rent: Clean lines, uniform finish, large \
 windows. Commands 15-30% premium but check for small rooms, thin partition \
-walls, developer-grade finishes that wear quickly.
+walls, developer-grade finishes that wear quickly. \
+Acoustic: 45–55 dB (Part E compliant). Concrete floors good; lightweight \
+timber-frame can underperform.
 - Warehouse/industrial conversion: High ceilings, exposed brick, large windows. \
 Premium pricing (especially E9 canalside). Watch for draughts, echo/noise, \
-damp from inadequate conversion.
+damp from inadequate conversion. \
+Acoustic: Variable 30–50 dB — original concrete/masonry excellent but new \
+stud partition walls between units often only 30–35 dB.
 - Ex-council / post-war estate: Concrete construction, uniform exteriors, \
 communal corridors. Should be 20-40% below area average. Communal area \
-quality signals management standards.
-- Georgian terrace: Grand proportions, original features. Premium stock.
+quality signals management standards. \
+Acoustic: 42–48 dB airborne — concrete mass outperforms many newer builds. \
+Weak on impact noise without carpet.
+- Georgian terrace: Grand proportions, original features. Premium stock. \
+Acoustic: Thick walls (~50–55 dB) but timber joist floors only 38–42 dB. \
+Listed status may prevent acoustic upgrades.
 </stock_types>
 
 <listing_signals>
@@ -320,6 +330,7 @@ def build_evaluation_prompt(
     council_tax_band_c: int | None = None,
     crime_summary: str | None = None,
     rent_trend: str | None = None,
+    acoustic_context: str | None = None,
 ) -> str:
     """Build the Phase 2 evaluation prompt with Phase 1 output and property context."""
     prompt = "<visual_analysis>\n"
@@ -337,6 +348,11 @@ def build_evaluation_prompt(
         crime_summary=crime_summary,
         rent_trend=rent_trend,
     )
+
+    if acoustic_context:
+        prompt += "\n\n<acoustic_context>\n"
+        prompt += acoustic_context
+        prompt += "\n</acoustic_context>"
 
     prompt += "\n\nBased on the visual analysis observations above, provide your "
     prompt += "evaluation using the property_evaluation tool."
