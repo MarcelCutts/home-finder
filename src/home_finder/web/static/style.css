@@ -1668,6 +1668,128 @@ nav.container-fluid li {
     border-top: 1px solid var(--border);
 }
 
+/* Side-by-side pair: cost + fit */
+.overview-pair {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0.75rem;
+}
+.overview-pair > .overview-card {
+    margin-bottom: 0;
+}
+@media (max-width: 768px) {
+    .overview-pair {
+        grid-template-columns: 1fr;
+    }
+    .overview-card {
+        padding: 1rem 1.15rem;
+    }
+    .cost-header {
+        flex-wrap: wrap;
+    }
+    .cost-line {
+        font-size: 0.82rem;
+    }
+    .cost-line-note {
+        display: block;
+        margin-top: 0.05rem;
+    }
+    .fit-breakdown-label {
+        min-width: 68px;
+        font-size: 0.78rem;
+    }
+    .fit-breakdown-weight {
+        display: none;
+    }
+}
+
+/* Cost breakdown card — compact receipt style */
+.cost-header {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 0.75rem;
+    margin-bottom: 0.6rem;
+}
+.cost-header h4 {
+    margin: 0;
+    white-space: nowrap;
+}
+.cost-extras-badge {
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: var(--commute-amber-text);
+    background: var(--commute-amber-bg);
+    padding: 0.15rem 0.5rem;
+    border-radius: 4px;
+    white-space: nowrap;
+}
+.cost-receipt {
+    display: flex;
+    flex-direction: column;
+}
+.cost-line {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    padding: 0.25rem 0;
+    font-size: 0.84rem;
+    gap: 1rem;
+}
+.cost-line-label {
+    color: var(--text-muted);
+    min-width: 0;
+}
+.cost-line-note {
+    font-size: 0.72rem;
+    color: var(--text-dim);
+    font-weight: 400;
+}
+.cost-line-amount {
+    font-variant-numeric: tabular-nums;
+    color: var(--text);
+    white-space: nowrap;
+    text-align: right;
+}
+.cost-line-rent {
+    padding-bottom: 0.35rem;
+    border-bottom: 1px dashed var(--border);
+}
+.cost-line-rent .cost-line-label {
+    color: var(--text);
+    font-weight: 600;
+}
+.cost-line-rent .cost-line-amount {
+    font-weight: 600;
+}
+.cost-line-bills .cost-line-amount {
+    color: var(--text-dim);
+}
+.cost-line-total {
+    border-top: 1px solid var(--border);
+    padding-top: 0.45rem;
+    margin-top: 0.15rem;
+}
+.cost-line-total .cost-line-label {
+    font-weight: 700;
+    color: var(--text);
+    font-size: 0.88rem;
+}
+.cost-line-total .cost-line-amount {
+    font-weight: 700;
+    font-size: 1rem;
+}
+.cost-line-range {
+    color: var(--text-muted);
+    font-weight: 600;
+}
+.cost-line-per {
+    font-size: 0.75rem;
+    font-weight: 400;
+    color: var(--text-dim);
+    margin-left: 0.1rem;
+}
+
 /* ===== Quality section ===== */
 .quality-section { margin-top: 0; }
 .quality-grid {
@@ -1983,6 +2105,70 @@ nav.container-fluid li {
     .micro-area-grid {
         grid-template-columns: 1fr;
     }
+}
+
+/* ===== Featured neighbourhood card (detail page single match) ===== */
+.neighbourhood-feature {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-left: 3px solid var(--accent);
+    border-radius: 10px;
+    padding: 1.25rem 1.5rem;
+    margin-bottom: 1rem;
+}
+.neighbourhood-feature .micro-area-header {
+    margin-bottom: 0.75rem;
+}
+.neighbourhood-feature .micro-area-header strong {
+    font-size: 1.05rem;
+}
+.neighbourhood-feature > p {
+    font-size: 0.88rem;
+    color: var(--text-muted);
+    line-height: 1.6;
+    margin: 0 0 0.4rem 0;
+}
+.neighbourhood-feature .micro-area-detail {
+    font-size: 0.82rem !important;
+}
+.neighbourhood-feature .micro-area-badges .badge {
+    font-size: 0.72rem;
+    padding: 0.12rem 0.5rem;
+}
+.area-explore-link {
+    margin-top: 0.5rem;
+    margin-bottom: 1.5rem;
+}
+.area-explore-link a {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: var(--accent);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 0.5rem 1rem;
+    transition: border-color 0.2s, background 0.2s;
+    text-decoration: none;
+}
+.area-explore-link a:hover {
+    border-color: var(--accent);
+    background: var(--accent-subtle);
+}
+
+/* ===== Highlighted card on area page ===== */
+.micro-area-card.micro-area-highlighted {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 1px var(--accent), 0 0 16px rgba(139, 92, 246, 0.1);
+}
+
+/* ===== Area page layout ===== */
+.area-page-header {
+    margin-bottom: 1.5rem;
+}
+.area-page-header h3 {
+    margin-bottom: 0.5rem;
 }
 
 /* ===== Detail page map ===== */
@@ -2578,5 +2764,30 @@ nav.container-fluid li {
     }
     .listing-kv-grid {
         grid-template-columns: 1fr;
+    }
+    .overview-card {
+        padding: 0.85rem 1rem;
+    }
+    .cost-header h4 {
+        font-size: 0.9rem;
+    }
+    .cost-extras-badge {
+        font-size: 0.68rem;
+        padding: 0.1rem 0.4rem;
+    }
+    .cost-line-total .cost-line-amount {
+        font-size: 0.92rem;
+    }
+    .fit-breakdown-card h4 {
+        font-size: 0.9rem;
+        flex-wrap: wrap;
+    }
+    .fit-breakdown-label {
+        min-width: 58px;
+        font-size: 0.75rem;
+    }
+    .fit-breakdown-value {
+        font-size: 0.75rem;
+        min-width: 22px;
     }
 }

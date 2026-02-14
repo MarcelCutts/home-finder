@@ -134,9 +134,11 @@ class TestSaveOne:
 # ---------------------------------------------------------------------------
 
 
+@patch("home_finder.main._lookup_wards", new_callable=AsyncMock)
 class TestRunQualityAndSave:
     async def test_processes_all_properties(
         self,
+        _mock_wards: AsyncMock,
         storage: PropertyStorage,
         make_property: Callable[..., Property],
         make_merged_property: Callable[..., MergedProperty],
@@ -161,6 +163,7 @@ class TestRunQualityAndSave:
 
     async def test_callback_receives_correct_args(
         self,
+        _mock_wards: AsyncMock,
         storage: PropertyStorage,
         make_property: Callable[..., Property],
         make_merged_property: Callable[..., MergedProperty],
@@ -196,6 +199,7 @@ class TestRunQualityAndSave:
 
     async def test_continues_on_analysis_error(
         self,
+        _mock_wards: AsyncMock,
         storage: PropertyStorage,
         make_merged_property: Callable[..., MergedProperty],
     ) -> None:

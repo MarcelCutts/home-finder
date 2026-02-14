@@ -231,6 +231,7 @@ def _format_property_context(
     council_tax_band_c: int | None = None,
     crime_summary: str | None = None,
     rent_trend: str | None = None,
+    energy_estimate: int | None = None,
 ) -> str:
     """Format shared property/area/description context for prompts."""
     diff = price_pcm - area_average
@@ -246,6 +247,9 @@ def _format_property_context(
     if council_tax_band_c:
         true_cost = price_pcm + council_tax_band_c
         parts.append(f"\nCouncil tax (Band C est.): £{council_tax_band_c}/month")
+        if energy_estimate:
+            true_cost += energy_estimate
+            parts.append(f" + energy ~£{energy_estimate}/mo")
         parts.append(f" → True monthly cost: ~£{true_cost:,}")
     parts.append("\n</property>")
 
@@ -276,6 +280,7 @@ def build_user_prompt(
     crime_summary: str | None = None,
     rent_trend: str | None = None,
     *,
+    energy_estimate: int | None = None,
     has_labeled_floorplan: bool = True,
 ) -> str:
     """Build the user prompt with property-specific context.
@@ -294,6 +299,7 @@ def build_user_prompt(
         council_tax_band_c=council_tax_band_c,
         crime_summary=crime_summary,
         rent_trend=rent_trend,
+        energy_estimate=energy_estimate,
     )
 
     if features:
@@ -330,6 +336,7 @@ def build_evaluation_prompt(
     council_tax_band_c: int | None = None,
     crime_summary: str | None = None,
     rent_trend: str | None = None,
+    energy_estimate: int | None = None,
     acoustic_context: str | None = None,
 ) -> str:
     """Build the Phase 2 evaluation prompt with Phase 1 output and property context."""
@@ -347,6 +354,7 @@ def build_evaluation_prompt(
         council_tax_band_c=council_tax_band_c,
         crime_summary=crime_summary,
         rent_trend=rent_trend,
+        energy_estimate=energy_estimate,
     )
 
     if acoustic_context:

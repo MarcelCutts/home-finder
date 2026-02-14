@@ -238,15 +238,17 @@ class TestPropertyDetail:
         assert "E8" in resp.text
 
     @pytest.mark.asyncio
-    async def test_micro_area_grid_renders_for_e8(
+    async def test_micro_area_renders_matched_card_with_ward(
         self, client: TestClient, storage: PropertyStorage, merged_a: MergedProperty
     ) -> None:
-        await storage.save_merged_property(merged_a)
+        """With a ward set, detail page shows single matched micro-area card."""
+        await storage.save_merged_property(merged_a, ward="London Fields")
         resp = client.get(f"/property/{merged_a.unique_id}")
         assert resp.status_code == 200
-        assert "micro-area-grid" in resp.text
-        assert "Dalston core" in resp.text
-        assert "Haggerston" in resp.text
+        assert "Your Neighbourhood" in resp.text
+        assert "London Fields / Broadway Market" in resp.text
+        # Explore link to area page
+        assert "/area/E8" in resp.text
         # Check badges render
         assert "Hosting:" in resp.text
         assert "WFH:" in resp.text
@@ -1482,6 +1484,84 @@ class TestReanalysisEndpoint:
         assert len(queue) == 1
 
 
+class TestCostBreakdown:
+    """Tests for the True Monthly Cost card on detail page."""
+
+    @pytest.mark.asyncio
+    async def test_cost_breakdown_renders(
+        self,
+        client: TestClient,
+        storage: PropertyStorage,
+        merged_a: MergedProperty,
+        prop_a: Property,
+    ) -> None:
+        """Detail page should show cost breakdown when quality analysis exists."""
+        from home_finder.models import (
+            ConditionAnalysis,
+            KitchenAnalysis,
+            LightSpaceAnalysis,
+            ListingExtraction,
+            PropertyQualityAnalysis,
+            SpaceAnalysis,
+        )
+
+        await storage.save_merged_property(merged_a)
+        analysis = PropertyQualityAnalysis(
+            kitchen=KitchenAnalysis(overall_quality="modern"),
+            condition=ConditionAnalysis(overall_condition="good", confidence="high"),
+            light_space=LightSpaceAnalysis(natural_light="good"),
+            space=SpaceAnalysis(confidence="high"),
+            listing_extraction=ListingExtraction(
+                property_type="victorian",
+                epc_rating="D",
+                council_tax_band="C",
+            ),
+            overall_rating=4,
+            summary="Nice flat.",
+        )
+        await storage.save_quality_analysis(prop_a.unique_id, analysis)
+
+        resp = client.get(f"/property/{merged_a.unique_id}")
+        assert resp.status_code == 200
+        assert "True Monthly Cost" in resp.text
+        assert "cost-breakdown-card" in resp.text
+
+    @pytest.mark.asyncio
+    async def test_cost_breakdown_shows_rent(
+        self,
+        client: TestClient,
+        storage: PropertyStorage,
+        merged_a: MergedProperty,
+        prop_a: Property,
+    ) -> None:
+        """Cost breakdown should always show the rent line item."""
+        from home_finder.models import (
+            ConditionAnalysis,
+            KitchenAnalysis,
+            LightSpaceAnalysis,
+            ListingExtraction,
+            PropertyQualityAnalysis,
+            SpaceAnalysis,
+        )
+
+        await storage.save_merged_property(merged_a)
+        analysis = PropertyQualityAnalysis(
+            kitchen=KitchenAnalysis(overall_quality="modern"),
+            condition=ConditionAnalysis(overall_condition="good", confidence="high"),
+            light_space=LightSpaceAnalysis(natural_light="good"),
+            space=SpaceAnalysis(confidence="high"),
+            listing_extraction=ListingExtraction(),
+            overall_rating=4,
+            summary="Nice flat.",
+        )
+        await storage.save_quality_analysis(prop_a.unique_id, analysis)
+
+        resp = client.get(f"/property/{merged_a.unique_id}")
+        assert resp.status_code == 200
+        assert "Rent" in resp.text
+        assert "Total" in resp.text
+
+
 class TestAcousticCard:
     """Tests for acoustic profile and noise enforcement on detail page."""
 
@@ -1611,3 +1691,79 @@ class TestAcousticCard:
         resp = client.get(f"/property/{merged_a.unique_id}")
         assert resp.status_code == 200
         assert "Sound &amp; Hosting" not in resp.text
+
+
+class TestAreaRoute:
+    def test_area_page_returns_200(self, client: TestClient) -> None:
+        resp = client.get("/area/E8")
+        assert resp.status_code == 200
+        assert "Dalston core" in resp.text
+        assert "Haggerston" in resp.text
+
+    def test_area_page_case_insensitive(self, client: TestClient) -> None:
+        resp = client.get("/area/e8")
+        assert resp.status_code == 200
+
+    def test_area_page_unknown_outcode_404(self, client: TestClient) -> None:
+        resp = client.get("/area/ZZ99")
+        assert resp.status_code == 404
+
+    def test_area_page_highlight(self, client: TestClient) -> None:
+        resp = client.get("/area/E8?highlight=Dalston+core")
+        assert resp.status_code == 200
+        assert "micro-area-highlighted" in resp.text
+
+    def test_area_page_no_highlight(self, client: TestClient) -> None:
+        resp = client.get("/area/E8")
+        assert resp.status_code == 200
+        assert "micro-area-highlighted" not in resp.text
+
+    def test_area_page_has_benchmarks(self, client: TestClient) -> None:
+        resp = client.get("/area/E8")
+        assert resp.status_code == 200
+        assert "Rental Benchmarks" in resp.text
+
+
+class TestDetailMicroAreaMatching:
+    @pytest.mark.asyncio
+    async def test_detail_shows_matched_micro_area_via_ward(
+        self,
+        client: TestClient,
+        storage: PropertyStorage,
+        merged_a: MergedProperty,
+    ) -> None:
+        """When a property has a ward, it should show the matched micro-area."""
+        await storage.save_merged_property(merged_a, ward="London Fields")
+        resp = client.get(f"/property/{merged_a.unique_id}")
+        assert resp.status_code == 200
+        assert "Your Neighbourhood" in resp.text
+        assert "London Fields / Broadway Market" in resp.text
+
+    @pytest.mark.asyncio
+    async def test_detail_shows_explore_link(
+        self,
+        client: TestClient,
+        storage: PropertyStorage,
+        merged_a: MergedProperty,
+    ) -> None:
+        """Detail page should always link to the area exploration page."""
+        await storage.save_merged_property(merged_a, ward="London Fields")
+        resp = client.get(f"/property/{merged_a.unique_id}")
+        assert resp.status_code == 200
+        assert "/area/E8" in resp.text
+        assert "Explore all" in resp.text
+
+    @pytest.mark.asyncio
+    async def test_detail_text_fallback_when_no_ward(
+        self,
+        client: TestClient,
+        storage: PropertyStorage,
+        merged_a: MergedProperty,
+    ) -> None:
+        """Without a ward, text-based matching is used as fallback."""
+        await storage.save_merged_property(merged_a)
+        resp = client.get(f"/property/{merged_a.unique_id}")
+        assert resp.status_code == 200
+        # The property address is "10 Mare Street" which may or may not
+        # match via text fallback. At minimum the explore link should show.
+        assert "Explore all" in resp.text

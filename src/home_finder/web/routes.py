@@ -12,13 +12,18 @@ from fastapi.templating import Jinja2Templates
 from starlette.responses import Response
 
 from home_finder.data.area_context import (
+    ACOUSTIC_PROFILES,
+    AREA_CONTEXT,
     COUNCIL_TAX_MONTHLY,
     CRIME_RATES,
+    NOISE_ENFORCEMENT,
     OUTCODE_BOROUGH,
     RENT_TRENDS,
     RENTAL_BENCHMARKS,
     get_area_overview,
+    get_micro_area_for_ward,
     get_micro_areas,
+    match_micro_area,
 )
 from home_finder.db import PropertyStorage
 from home_finder.filters.fit_score import compute_fit_breakdown, compute_fit_score
@@ -687,7 +692,19 @@ async def property_detail(
     area_context: dict[str, Any] = {}
     if outcode:
         area_context["description"] = get_area_overview(outcode)
-        area_context["micro_areas"] = get_micro_areas(outcode)
+        all_micro = get_micro_areas(outcode)
+        if all_micro:
+            # Try ward-based matching first (reliable), fall back to text matching
+            ward = str(prop["ward"]) if prop.get("ward") else None
+            matched_name = get_micro_area_for_ward(ward, outcode) if ward else None
+            if not matched_name:
+                matched_name = match_micro_area(prop.get("address", ""), outcode)
+            if matched_name and matched_name in all_micro:
+                area_context["matched_micro_area"] = {
+                    "name": matched_name,
+                    "data": all_micro[matched_name],
+                }
+            area_context["micro_area_count"] = len(all_micro)
         area_context["benchmarks"] = RENTAL_BENCHMARKS.get(outcode)
         borough = OUTCODE_BOROUGH.get(outcode)
         if borough:
@@ -703,16 +720,12 @@ async def property_detail(
         if le:
             prop_type = getattr(le, "property_type", None)
             if prop_type:
-                from home_finder.data.area_context import ACOUSTIC_PROFILES
-
                 acoustic = ACOUSTIC_PROFILES.get(str(prop_type))
                 if acoustic:
                     area_context["acoustic_profile"] = acoustic
 
         borough = area_context.get("borough")
         if borough:
-            from home_finder.data.area_context import NOISE_ENFORCEMENT
-
             enforcement = NOISE_ENFORCEMENT.get(borough)
             if enforcement:
                 area_context["noise_enforcement"] = enforcement
@@ -751,6 +764,34 @@ async def property_detail(
         fit_score = compute_fit_score(analysis_dict, bedrooms)
         fit_breakdown = compute_fit_breakdown(analysis_dict, bedrooms)
 
+    # Compute True Monthly Cost breakdown
+    cost_breakdown = None
+    if qa is not None:
+        le = getattr(qa, "listing_extraction", None)
+        if le:
+            from home_finder.utils.cost_calculator import estimate_true_monthly_cost
+
+            epc_rating = getattr(le, "epc_rating", None)
+            prop_type = getattr(le, "property_type", None)
+            service_charge_pcm = getattr(le, "service_charge_pcm", None)
+            bills_included_raw = getattr(le, "bills_included", "unknown")
+            bills_included = bills_included_raw == "yes"
+            broadband_type = getattr(le, "broadband_type", None)
+            council_tax_band = getattr(le, "council_tax_band", None)
+            borough = area_context.get("borough")
+
+            cost_breakdown = estimate_true_monthly_cost(
+                rent_pcm=prop.get("price_pcm", 0),
+                borough=borough,
+                council_tax_band=council_tax_band,
+                epc_rating=epc_rating,
+                bedrooms=prop.get("bedrooms", 1) or 1,
+                broadband_type=broadband_type,
+                property_type=prop_type,
+                service_charge_pcm=service_charge_pcm,
+                bills_included=bills_included,
+            )
+
     return templates.TemplateResponse(
         "detail.html",
         {
@@ -764,6 +805,51 @@ async def property_detail(
             "image_url_map": image_url_map,
             "fit_score": fit_score,
             "fit_breakdown": fit_breakdown,
+            "cost_breakdown": cost_breakdown,
+        },
+    )
+
+
+@router.get("/area/{outcode}", response_class=HTMLResponse)
+async def area_detail(
+    request: Request,
+    outcode: str,
+    highlight: str | None = None,
+) -> HTMLResponse:
+    """Area exploration page showing all micro-areas and reference data."""
+    outcode = outcode.upper()
+
+    if outcode not in AREA_CONTEXT:
+        return templates.TemplateResponse(
+            "error.html",
+            {"request": request, "message": f"No area data for {outcode}."},
+            status_code=404,
+        )
+
+    area_context: dict[str, Any] = {
+        "description": get_area_overview(outcode),
+        "micro_areas": get_micro_areas(outcode),
+        "benchmarks": RENTAL_BENCHMARKS.get(outcode),
+    }
+
+    borough = OUTCODE_BOROUGH.get(outcode)
+    if borough:
+        area_context["borough"] = borough
+        area_context["council_tax"] = COUNCIL_TAX_MONTHLY.get(borough)
+        area_context["rent_trend"] = RENT_TRENDS.get(borough)
+        enforcement = NOISE_ENFORCEMENT.get(borough)
+        if enforcement:
+            area_context["noise_enforcement"] = enforcement
+
+    area_context["crime"] = CRIME_RATES.get(outcode)
+
+    return templates.TemplateResponse(
+        "area.html",
+        {
+            "request": request,
+            "outcode": outcode,
+            "area_context": area_context,
+            "highlight": highlight,
         },
     )
 

@@ -774,3 +774,110 @@ class TestUpdateMergedSources:
         )
         # Should not raise
         await storage.update_merged_sources("nonexistent:999", merged)
+
+
+class TestWardOperations:
+    @pytest.mark.asyncio
+    async def test_save_with_ward(
+        self,
+        storage: PropertyStorage,
+        storage_sample_property: Property,
+    ) -> None:
+        merged = MergedProperty(
+            canonical=storage_sample_property,
+            sources=(PropertySource.OPENRENT,),
+            source_urls={PropertySource.OPENRENT: storage_sample_property.url},
+            min_price=1900,
+            max_price=1900,
+        )
+        await storage.save_merged_property(merged, ward="London Fields")
+
+        detail = await storage.get_property_detail(storage_sample_property.unique_id)
+        assert detail is not None
+        assert detail["ward"] == "London Fields"
+
+    @pytest.mark.asyncio
+    async def test_save_without_ward(
+        self,
+        storage: PropertyStorage,
+        storage_sample_property: Property,
+    ) -> None:
+        merged = MergedProperty(
+            canonical=storage_sample_property,
+            sources=(PropertySource.OPENRENT,),
+            source_urls={PropertySource.OPENRENT: storage_sample_property.url},
+            min_price=1900,
+            max_price=1900,
+        )
+        await storage.save_merged_property(merged)
+
+        detail = await storage.get_property_detail(storage_sample_property.unique_id)
+        assert detail is not None
+        assert detail.get("ward") is None
+
+    @pytest.mark.asyncio
+    async def test_get_properties_without_ward(
+        self,
+        storage: PropertyStorage,
+        storage_sample_property: Property,
+        sample_property_2: Property,
+    ) -> None:
+        m1 = MergedProperty(
+            canonical=storage_sample_property,
+            sources=(PropertySource.OPENRENT,),
+            source_urls={PropertySource.OPENRENT: storage_sample_property.url},
+            min_price=1900,
+            max_price=1900,
+        )
+        m2 = MergedProperty(
+            canonical=sample_property_2,
+            sources=(PropertySource.RIGHTMOVE,),
+            source_urls={PropertySource.RIGHTMOVE: sample_property_2.url},
+            min_price=2100,
+            max_price=2100,
+        )
+        await storage.save_merged_property(m1, ward="London Fields")
+        await storage.save_merged_property(m2)  # no ward
+
+        without = await storage.get_properties_without_ward()
+        assert len(without) == 1
+        assert without[0]["unique_id"] == sample_property_2.unique_id
+
+    @pytest.mark.asyncio
+    async def test_update_wards(
+        self,
+        storage: PropertyStorage,
+        storage_sample_property: Property,
+        sample_property_2: Property,
+    ) -> None:
+        m1 = MergedProperty(
+            canonical=storage_sample_property,
+            sources=(PropertySource.OPENRENT,),
+            source_urls={PropertySource.OPENRENT: storage_sample_property.url},
+            min_price=1900,
+            max_price=1900,
+        )
+        m2 = MergedProperty(
+            canonical=sample_property_2,
+            sources=(PropertySource.RIGHTMOVE,),
+            source_urls={PropertySource.RIGHTMOVE: sample_property_2.url},
+            min_price=2100,
+            max_price=2100,
+        )
+        await storage.save_merged_property(m1)
+        await storage.save_merged_property(m2)
+
+        updated = await storage.update_wards({
+            storage_sample_property.unique_id: "London Fields",
+            sample_property_2.unique_id: "Dalston",
+        })
+        assert updated == 2
+
+        d1 = await storage.get_property_detail(storage_sample_property.unique_id)
+        d2 = await storage.get_property_detail(sample_property_2.unique_id)
+        assert d1 is not None and d1["ward"] == "London Fields"
+        assert d2 is not None and d2["ward"] == "Dalston"
+
+    @pytest.mark.asyncio
+    async def test_update_wards_empty_map(self, storage: PropertyStorage) -> None:
+        assert await storage.update_wards({}) == 0

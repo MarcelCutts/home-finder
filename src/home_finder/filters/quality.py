@@ -12,6 +12,7 @@ from home_finder.data.area_context import (
     COUNCIL_TAX_MONTHLY,
     CRIME_RATES,
     DEFAULT_BENCHMARK,
+    ENERGY_COSTS_MONTHLY,
     OUTCODE_BOROUGH,
     RENT_TRENDS,
     RENTAL_BENCHMARKS,
@@ -626,6 +627,8 @@ class PropertyQualityFilter:
         # Look up new contextual data
         borough = OUTCODE_BOROUGH.get(outcode) if outcode else None
         council_tax_c = COUNCIL_TAX_MONTHLY.get(borough, {}).get("C") if borough else None
+        bed_key = f"{min(max(prop.bedrooms, 1), 2)}_bed"
+        energy_estimate = ENERGY_COSTS_MONTHLY.get("D", {}).get(bed_key)
         crime = CRIME_RATES.get(outcode) if outcode else None
         crime_summary: str | None = None
         if crime:
@@ -681,6 +684,7 @@ class PropertyQualityFilter:
                 area_context=area_context,
                 outcode=outcode,
                 council_tax_band_c=council_tax_c,
+                energy_estimate=energy_estimate,
                 crime_summary=crime_summary,
                 rent_trend=rent_trend,
                 gallery_cached_paths=gallery_cached[: self._max_images],
@@ -800,6 +804,7 @@ class PropertyQualityFilter:
         area_context: str | None = None,
         outcode: str | None = None,
         council_tax_band_c: int | None = None,
+        energy_estimate: int | None = None,
         crime_summary: str | None = None,
         rent_trend: str | None = None,
         gallery_cached_paths: list[Path | None] | None = None,
@@ -895,6 +900,7 @@ class PropertyQualityFilter:
             council_tax_band_c=council_tax_band_c,
             crime_summary=crime_summary,
             rent_trend=rent_trend,
+            energy_estimate=energy_estimate,
             has_labeled_floorplan=has_floorplan,
         )
         content.append(TextBlockParam(type="text", text=user_prompt))
@@ -1076,6 +1082,7 @@ class PropertyQualityFilter:
                 council_tax_band_c=council_tax_band_c,
                 crime_summary=crime_summary,
                 rent_trend=rent_trend,
+                energy_estimate=energy_estimate,
                 acoustic_context=acoustic_context,
             )
 

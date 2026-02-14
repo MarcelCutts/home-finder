@@ -76,6 +76,7 @@ class PropertyDetailItem(PropertyListItem, total=False):
     """
 
     description: str | None
+    ward: str | None
     quality_analysis: PropertyQualityAnalysis | None
     gallery_images: list[PropertyImage]
     floorplan_images: list[PropertyImage]
@@ -212,6 +213,7 @@ class PropertyStorage:
             ("descriptions_json", "TEXT", None),
             ("enrichment_status", "TEXT", "'enriched'"),
             ("enrichment_attempts", "INTEGER", "0"),
+            ("ward", "TEXT", None),
         ]:
             with contextlib.suppress(Exception):
                 default_clause = f" DEFAULT {default}" if default is not None else ""
@@ -895,6 +897,7 @@ class PropertyStorage:
         *,
         commute_minutes: int | None = None,
         transport_mode: TransportMode | None = None,
+        ward: str | None = None,
     ) -> None:
         """Save a merged property with multi-source data.
 
@@ -902,6 +905,7 @@ class PropertyStorage:
             merged: Merged property to save.
             commute_minutes: Commute time in minutes (if calculated).
             transport_mode: Transport mode used for commute calculation.
+            ward: Official ward name from postcodes.io lookup.
         """
         prop = merged.canonical
         conn = await self._get_connection()
@@ -922,8 +926,9 @@ class PropertyStorage:
                 bedrooms, address, postcode, latitude, longitude,
                 description, image_url, available_from, first_seen,
                 commute_minutes, transport_mode, notification_status,
-                sources, source_urls, min_price, max_price, descriptions_json
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                sources, source_urls, min_price, max_price, descriptions_json,
+                ward
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(unique_id) DO UPDATE SET
                 price_pcm = excluded.price_pcm,
                 title = excluded.title,
@@ -935,7 +940,8 @@ class PropertyStorage:
                 source_urls = excluded.source_urls,
                 min_price = excluded.min_price,
                 max_price = excluded.max_price,
-                descriptions_json = COALESCE(excluded.descriptions_json, descriptions_json)
+                descriptions_json = COALESCE(excluded.descriptions_json, descriptions_json),
+                ward = COALESCE(excluded.ward, ward)
         """,
             (
                 prop.unique_id,
@@ -961,6 +967,7 @@ class PropertyStorage:
                 merged.min_price,
                 merged.max_price,
                 descriptions_json,
+                ward,
             ),
         )
         await conn.commit()
@@ -970,6 +977,46 @@ class PropertyStorage:
             unique_id=prop.unique_id,
             sources=[s.value for s in merged.sources],
         )
+
+    async def update_wards(self, ward_map: dict[str, str]) -> int:
+        """Batch update ward column for multiple properties.
+
+        Args:
+            ward_map: Mapping of unique_id → ward name.
+
+        Returns:
+            Number of rows updated.
+        """
+        if not ward_map:
+            return 0
+        conn = await self._get_connection()
+        updated = 0
+        for unique_id, ward in ward_map.items():
+            cursor = await conn.execute(
+                "UPDATE properties SET ward = ? WHERE unique_id = ?",
+                (ward, unique_id),
+            )
+            updated += cursor.rowcount
+        await conn.commit()
+        return updated
+
+    async def get_properties_without_ward(
+        self,
+    ) -> list[dict[str, Any]]:
+        """Get properties that don't have a ward set yet.
+
+        Returns dicts with unique_id, postcode, latitude, longitude.
+        """
+        conn = await self._get_connection()
+        cursor = await conn.execute(
+            """
+            SELECT unique_id, postcode, latitude, longitude
+            FROM properties
+            WHERE ward IS NULL
+            """
+        )
+        rows = await cursor.fetchall()
+        return [dict(row) for row in rows]
 
     async def save_property_images(self, unique_id: str, images: list[PropertyImage]) -> None:
         """Save property images to the database.

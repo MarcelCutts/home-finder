@@ -154,6 +154,40 @@
         </div>
         {% endif %}
 
+        {% if cost_breakdown or (fit_score is not none and fit_breakdown) %}
+        <div class="overview-pair">
+        {% if cost_breakdown %}
+        <div class="overview-card cost-breakdown-card">
+            <div class="cost-header">
+                <h4>True Monthly Cost</h4>
+                {% if cost_breakdown.extras > 0 %}
+                <span class="cost-extras-badge">+&pound;{{ "{:,}".format(cost_breakdown.extras) }}{% if cost_breakdown.extras_high %}&ndash;{{ "{:,}".format(cost_breakdown.extras_high) }}{% endif %} beyond rent</span>
+                {% endif %}
+            </div>
+            <div class="cost-receipt">
+                {% for item in cost_breakdown.line_items %}
+                {% if item.label != 'Bills' %}
+                <div class="cost-line{% if item.label == 'Rent' %} cost-line-rent{% endif %}">
+                    <span class="cost-line-label">{{ item.label }}{% if item.note %} <span class="cost-line-note">{{ item.note }}</span>{% endif %}</span>
+                    <span class="cost-line-amount">
+                        {% if item.amount is not none %}&pound;{{ "{:,}".format(item.amount) }}{% elif item.range_low is defined %}&pound;{{ item.range_low }}&ndash;{{ item.range_high }}{% endif %}
+                    </span>
+                </div>
+                {% else %}
+                <div class="cost-line cost-line-bills">
+                    <span class="cost-line-label">Bills <span class="cost-line-note">included in rent</span></span>
+                    <span class="cost-line-amount">&pound;0</span>
+                </div>
+                {% endif %}
+                {% endfor %}
+                <div class="cost-line cost-line-total">
+                    <span class="cost-line-label">Total</span>
+                    <span class="cost-line-amount">&pound;{{ "{:,}".format(cost_breakdown.total) }}{% if cost_breakdown.total_high %}<span class="cost-line-range">&ndash;{{ "{:,}".format(cost_breakdown.total_high) }}</span>{% endif %}<span class="cost-line-per">/mo</span></span>
+                </div>
+            </div>
+        </div>
+        {% endif %}
+
         {% if fit_score is not none and fit_breakdown %}
         <div class="overview-card fit-breakdown-card">
             <h4>
@@ -176,6 +210,8 @@
                 {% endfor %}
             </div>
             <p class="fit-breakdown-legend">Score 0-100 per dimension, weighted by importance to Marcel's WFH + hosting lifestyle.</p>
+        </div>
+        {% endif %}
         </div>
         {% endif %}
 
@@ -249,30 +285,31 @@
         <h3>Area: {{ outcode }}</h3>
         <p class="area-description">{{ area_context.description }}</p>
 
-        {% if area_context.micro_areas %}
-        <h4 class="section-subhead">Neighbourhoods</h4>
-        <div class="micro-area-grid">
-            {% for name, ma in area_context.micro_areas.items() %}
-            <div class="micro-area-card">
-                <div class="micro-area-header">
-                    <strong>{{ name }}</strong>
-                    <span class="micro-area-badges">
-                        {% if ma.hosting_tolerance %}
-                        <span class="badge {% if ma.hosting_tolerance == 'high' %}badge-green{% elif ma.hosting_tolerance == 'moderate' %}badge-amber{% else %}badge-red{% endif %}">Hosting: {{ ma.hosting_tolerance }}</span>
-                        {% endif %}
-                        {% if ma.wfh_suitability %}
-                        <span class="badge {% if ma.wfh_suitability == 'good' %}badge-green{% elif ma.wfh_suitability == 'moderate' %}badge-amber{% else %}badge-red{% endif %}">WFH: {{ ma.wfh_suitability }}</span>
-                        {% endif %}
-                    </span>
-                </div>
-                {% if ma.character %}<p>{{ ma.character }}</p>{% endif %}
-                {% if ma.transport %}<p class="micro-area-detail"><span class="micro-area-detail-label">Transport</span> {{ ma.transport }}</p>{% endif %}
-                {% if ma.broadband %}<p class="micro-area-detail"><span class="micro-area-detail-label">Broadband</span> {{ ma.broadband }}</p>{% endif %}
-                {% if ma.creative_scene %}<p class="micro-area-detail"><span class="micro-area-detail-label">Creative</span> {{ ma.creative_scene }}</p>{% endif %}
-                {% if ma.value %}<p class="micro-area-detail"><span class="micro-area-detail-label">Value</span> {{ ma.value }}</p>{% endif %}
+        {% if area_context.matched_micro_area %}
+        {% set ma_name = area_context.matched_micro_area.name %}
+        {% set ma = area_context.matched_micro_area.data %}
+        <h4 class="section-subhead">Your Neighbourhood</h4>
+        <div class="neighbourhood-feature">
+            <div class="micro-area-header">
+                <strong>{{ ma_name }}</strong>
+                <span class="micro-area-badges">
+                    {% if ma.hosting_tolerance %}
+                    <span class="badge {% if ma.hosting_tolerance == 'high' %}badge-green{% elif ma.hosting_tolerance == 'moderate' %}badge-amber{% else %}badge-red{% endif %}">Hosting: {{ ma.hosting_tolerance }}</span>
+                    {% endif %}
+                    {% if ma.wfh_suitability %}
+                    <span class="badge {% if ma.wfh_suitability == 'good' %}badge-green{% elif ma.wfh_suitability == 'moderate' %}badge-amber{% else %}badge-red{% endif %}">WFH: {{ ma.wfh_suitability }}</span>
+                    {% endif %}
+                </span>
             </div>
-            {% endfor %}
+            {% if ma.character %}<p>{{ ma.character }}</p>{% endif %}
+            {% if ma.transport %}<p class="micro-area-detail"><span class="micro-area-detail-label">Transport</span> {{ ma.transport }}</p>{% endif %}
+            {% if ma.broadband %}<p class="micro-area-detail"><span class="micro-area-detail-label">Broadband</span> {{ ma.broadband }}</p>{% endif %}
+            {% if ma.creative_scene %}<p class="micro-area-detail"><span class="micro-area-detail-label">Creative</span> {{ ma.creative_scene }}</p>{% endif %}
+            {% if ma.value %}<p class="micro-area-detail"><span class="micro-area-detail-label">Value</span> {{ ma.value }}</p>{% endif %}
         </div>
+        {% endif %}
+        {% if area_context.micro_area_count %}
+        <p class="area-explore-link"><a href="/area/{{ outcode }}{% if area_context.matched_micro_area %}?highlight={{ area_context.matched_micro_area.name | urlencode }}{% endif %}">Explore all {{ area_context.micro_area_count }} neighbourhoods in {{ outcode }} &rarr;</a></p>
         {% endif %}
 
         {% if area_context.benchmarks %}

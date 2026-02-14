@@ -567,6 +567,51 @@ _OnResult = Callable[
 ]
 
 
+async def _lookup_wards(storage: PropertyStorage) -> None:
+    """Look up ward names via postcodes.io for properties missing them."""
+    from home_finder.utils.postcode_lookup import (
+        bulk_reverse_lookup_wards,
+        lookup_ward,
+    )
+
+    props = await storage.get_properties_without_ward()
+    if not props:
+        return
+
+    # Split into coordinate-based (reverse geocode) and full-postcode (forward)
+    coord_props: list[dict[str, object]] = []
+    postcode_props: list[dict[str, object]] = []
+    for p in props:
+        if p.get("latitude") and p.get("longitude"):
+            coord_props.append(p)
+        elif p.get("postcode") and " " in str(p["postcode"]):
+            # Full postcode has a space (e.g. "E8 3RH")
+            postcode_props.append(p)
+
+    ward_map: dict[str, str] = {}
+
+    # Bulk reverse geocode for properties with coordinates
+    if coord_props:
+        coords = [
+            (float(p["latitude"]), float(p["longitude"]))  # type: ignore[arg-type]
+            for p in coord_props
+        ]
+        wards = await bulk_reverse_lookup_wards(coords)
+        for p, ward in zip(coord_props, wards, strict=True):
+            if ward:
+                ward_map[str(p["unique_id"])] = ward
+
+    # Forward lookup for properties with full postcodes (no coordinates)
+    for p in postcode_props:
+        ward = await lookup_ward(str(p["postcode"]))
+        if ward:
+            ward_map[str(p["unique_id"])] = ward
+
+    if ward_map:
+        updated = await storage.update_wards(ward_map)
+        logger.info("ward_lookup_complete", updated=updated, total=len(props))
+
+
 async def _run_quality_and_save(
     pre: PreAnalysisResult,
     settings: Settings,
@@ -590,6 +635,9 @@ async def _run_quality_and_save(
     """
     # Save all properties to DB before analysis (crash recovery checkpoint)
     await storage.save_pre_analysis_properties(pre.merged_to_process, pre.commute_lookup)
+
+    # Ward lookup: populate ward column for properties with coordinates
+    await _lookup_wards(storage)
 
     # Reset properties with fallback analysis (API failed previously)
     # so they get re-analyzed this run

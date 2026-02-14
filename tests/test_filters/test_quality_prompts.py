@@ -1048,6 +1048,58 @@ class TestToolSchemaSnapshots:
         assert fp_field["items"]["type"] == "integer"
 
 
+class TestEnergyEstimateInPrompts:
+    """Tests for energy_estimate parameter in prompt builders."""
+
+    def test_true_cost_includes_energy_estimate(self) -> None:
+        """When energy_estimate is provided with council tax, true cost includes both."""
+        prompt = build_user_prompt(
+            price_pcm=1800,
+            bedrooms=1,
+            area_average=1900,
+            council_tax_band_c=150,
+            energy_estimate=106,
+        )
+        assert "energy ~£106/mo" in prompt
+        # True cost: 1800 + 150 + 106 = 2,056
+        assert "£2,056" in prompt
+
+    def test_true_cost_without_energy(self) -> None:
+        """When energy_estimate is None, true cost only includes council tax."""
+        prompt = build_user_prompt(
+            price_pcm=1800,
+            bedrooms=1,
+            area_average=1900,
+            council_tax_band_c=150,
+        )
+        assert "energy" not in prompt
+        # True cost: 1800 + 150 = 1,950
+        assert "£1,950" in prompt
+
+    def test_energy_estimate_in_evaluation_prompt(self) -> None:
+        """Energy estimate should flow through to evaluation prompt."""
+        prompt = build_evaluation_prompt(
+            visual_data={"summary": "test"},
+            price_pcm=1800,
+            bedrooms=1,
+            area_average=1900,
+            council_tax_band_c=150,
+            energy_estimate=106,
+        )
+        assert "energy ~£106/mo" in prompt
+        assert "£2,056" in prompt
+
+    def test_energy_estimate_without_council_tax(self) -> None:
+        """Energy estimate alone (no council tax) should not appear."""
+        prompt = build_user_prompt(
+            price_pcm=1800,
+            bedrooms=1,
+            area_average=1900,
+            energy_estimate=106,
+        )
+        assert "energy" not in prompt
+
+
 class TestFloorplanNoteInUserPrompt:
     """Tests for has_labeled_floorplan parameter in build_user_prompt."""
 

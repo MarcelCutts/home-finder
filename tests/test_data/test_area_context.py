@@ -5,9 +5,16 @@ import pytest
 from home_finder.data.area_context import (
     ACOUSTIC_PROFILES,
     AREA_CONTEXT,
+    BROADBAND_COSTS_MONTHLY,
+    ENERGY_COSTS_MONTHLY,
     NOISE_ENFORCEMENT,
+    SERVICE_CHARGE_RANGES,
+    WARD_TO_MICRO_AREA,
+    WATER_COSTS_MONTHLY,
     get_area_overview,
+    get_micro_area_for_ward,
     get_micro_areas,
+    match_micro_area,
 )
 
 VALID_HOSTING_VALUES = {"high", "moderate", "low"}
@@ -31,11 +38,13 @@ class TestDataLoading:
             assert len(entry["overview"]) > 50, f"{outcode} overview too short"
 
     def test_outcodes_with_micro_areas(self) -> None:
-        """9 outcodes should have micro_areas, 2 should not."""
+        """All outcodes should have micro_areas."""
         with_micro = {k for k, v in AREA_CONTEXT.items() if "micro_areas" in v}
         without_micro = set(AREA_CONTEXT.keys()) - with_micro
-        assert with_micro == {"E3", "E5", "E8", "E9", "E10", "E17", "N15", "N16", "N17"}
-        assert without_micro == {"E2", "E15"}
+        assert with_micro == {
+            "E2", "E3", "E5", "E8", "E9", "E10", "E15", "E17", "N15", "N16", "N17",
+        }
+        assert without_micro == set()
 
 
 class TestMicroAreaValidation:
@@ -86,10 +95,19 @@ class TestAccessors:
         assert "Dalston core" in result
         assert "Haggerston" in result
 
-    def test_get_micro_areas_no_micro_areas(self) -> None:
-        """E2 and E15 have no micro_areas."""
-        assert get_micro_areas("E2") is None
-        assert get_micro_areas("E15") is None
+    def test_get_micro_areas_e2(self) -> None:
+        """E2 has micro_areas with expected neighborhoods."""
+        result = get_micro_areas("E2")
+        assert result is not None
+        assert "Bethnal Green / Cambridge Heath" in result
+        assert "Haggerston / Queensbridge" in result
+
+    def test_get_micro_areas_e15(self) -> None:
+        """E15 has micro_areas with expected neighborhoods."""
+        result = get_micro_areas("E15")
+        assert result is not None
+        assert "Stratford Village / The Grove" in result
+        assert "Maryland / Forest Gate Border" in result
 
     def test_get_micro_areas_unknown_outcode(self) -> None:
         assert get_micro_areas("ZZ99") is None
@@ -151,3 +169,111 @@ class TestNoiseEnforcement:
         for borough, data in NOISE_ENFORCEMENT.items():
             missing = required - set(data.keys())
             assert not missing, f"{borough} missing fields: {missing}"
+
+
+class TestWardMapping:
+    def test_all_mapped_micro_areas_exist(self) -> None:
+        """Every micro-area name in WARD_TO_MICRO_AREA must exist in area_context.json."""
+        for (outcode, ward), micro_area_name in WARD_TO_MICRO_AREA.items():
+            micro_areas = get_micro_areas(outcode)
+            assert micro_areas is not None, f"No micro-areas for {outcode} (ward={ward})"
+            assert micro_area_name in micro_areas, (
+                f"Ward ({outcode}, {ward}) maps to '{micro_area_name}' "
+                f"but that doesn't exist in {outcode}'s micro-areas: {list(micro_areas.keys())}"
+            )
+
+    def test_all_outcodes_with_micro_areas_have_ward_mappings(self) -> None:
+        """Every outcode that has micro-areas should have at least one ward mapping."""
+        outcodes_with_micro = {
+            k for k, v in AREA_CONTEXT.items()
+            if isinstance(v, dict) and "micro_areas" in v
+        }
+        outcodes_with_wards = {outcode for outcode, _ in WARD_TO_MICRO_AREA.keys()}
+        missing = outcodes_with_micro - outcodes_with_wards
+        assert not missing, f"Outcodes with micro-areas but no ward mappings: {missing}"
+
+    def test_get_micro_area_for_ward_known(self) -> None:
+        assert get_micro_area_for_ward("London Fields", "E8") == "London Fields / Broadway Market"
+        assert get_micro_area_for_ward("Dalston", "E8") == "Dalston core"
+        assert get_micro_area_for_ward("Hackney Wick", "E9") == "Hackney Wick core"
+
+    def test_get_micro_area_for_ward_unknown(self) -> None:
+        assert get_micro_area_for_ward("Nonexistent Ward", "E8") is None
+        assert get_micro_area_for_ward("Dalston", "ZZ99") is None
+
+    def test_lea_bridge_disambiguation(self) -> None:
+        """Lea Bridge exists in both Hackney (E5) and Waltham Forest (E10)."""
+        assert get_micro_area_for_ward("Lea Bridge", "E5") == "Lea Bridge fringe"
+        assert get_micro_area_for_ward("Lea Bridge", "E10") == "Lea Bridge Road"
+
+    def test_e2_cross_borough(self) -> None:
+        """E2 straddles Hackney and Tower Hamlets."""
+        assert get_micro_area_for_ward("Haggerston", "E2") == "Haggerston / Queensbridge"
+        assert get_micro_area_for_ward("Weavers", "E2") == "Weavers / Brick Lane Fringe"
+        assert get_micro_area_for_ward("Bethnal Green West", "E2") == "Bethnal Green / Cambridge Heath"
+
+
+class TestTextMicroAreaMatching:
+    def test_match_by_neighbourhood_name(self) -> None:
+        """Address containing a neighbourhood name should match."""
+        result = match_micro_area("Flat 2, Roman Road, London E3", "E3")
+        assert result == "Roman Road / Old Ford"
+
+    def test_match_broadway_market(self) -> None:
+        result = match_micro_area("125 Broadway Market, London E8", "E8")
+        assert result == "London Fields / Broadway Market"
+
+    def test_match_by_street_in_prose(self) -> None:
+        """Street names mentioned in character/value fields should match."""
+        result = match_micro_area("15 Mare Street, Hackney E8", "E8")
+        assert result is not None
+
+    def test_no_match_generic_address(self) -> None:
+        """Generic addresses with no neighbourhood signals may return None."""
+        result = match_micro_area("Flat 3, Tower House, E8", "E8")
+        # May or may not match — just shouldn't crash
+        assert result is None or result in (get_micro_areas("E8") or {})
+
+    def test_no_match_empty_address(self) -> None:
+        assert match_micro_area("", "E8") is None
+
+    def test_no_match_unknown_outcode(self) -> None:
+        assert match_micro_area("123 Some Street", "ZZ99") is None
+
+
+class TestCostData:
+    def test_energy_costs_loaded(self) -> None:
+        """Energy costs should have A-G ratings with 1_bed/2_bed keys."""
+        assert isinstance(ENERGY_COSTS_MONTHLY, dict)
+        expected_ratings = {"A", "B", "C", "D", "E", "F", "G"}
+        assert set(ENERGY_COSTS_MONTHLY.keys()) == expected_ratings
+        for rating, costs in ENERGY_COSTS_MONTHLY.items():
+            assert "1_bed" in costs, f"{rating} missing 1_bed"
+            assert "2_bed" in costs, f"{rating} missing 2_bed"
+            assert costs["1_bed"] > 0
+            assert costs["2_bed"] > costs["1_bed"]
+
+    def test_water_costs_loaded(self) -> None:
+        """Water costs should have 1_bed/2_bed keys."""
+        assert isinstance(WATER_COSTS_MONTHLY, dict)
+        assert "1_bed" in WATER_COSTS_MONTHLY
+        assert "2_bed" in WATER_COSTS_MONTHLY
+        assert WATER_COSTS_MONTHLY["1_bed"] > 0
+        assert WATER_COSTS_MONTHLY["2_bed"] >= WATER_COSTS_MONTHLY["1_bed"]
+
+    def test_broadband_costs_loaded(self) -> None:
+        """Broadband costs should have expected type keys."""
+        assert isinstance(BROADBAND_COSTS_MONTHLY, dict)
+        assert "fttp" in BROADBAND_COSTS_MONTHLY
+        assert BROADBAND_COSTS_MONTHLY["fttp"] > 0
+
+    def test_service_charge_ranges_loaded(self) -> None:
+        """Service charge ranges should have property type keys with valid ranges."""
+        assert isinstance(SERVICE_CHARGE_RANGES, dict)
+        assert "new_build" in SERVICE_CHARGE_RANGES
+        for prop_type, sc_range in SERVICE_CHARGE_RANGES.items():
+            assert "typical_low" in sc_range, f"{prop_type} missing typical_low"
+            assert "typical_high" in sc_range, f"{prop_type} missing typical_high"
+            assert sc_range["typical_low"] < sc_range["typical_high"], (
+                f"{prop_type}: typical_low >= typical_high"
+            )

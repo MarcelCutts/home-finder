@@ -180,7 +180,10 @@ uv run pytest tests/test_models.py    # Run specific test file
 uv run pytest -k "test_openrent"      # Run tests matching pattern
 uv run pytest --cov=src               # Run with coverage
 uv run pytest -m slow                 # Run slow tests (real scraping)
+uv run pytest -m browser              # Run browser E2E tests (requires Playwright)
 ```
+
+> **Note:** Don't pass `--timeout` on the command line — it's already configured in `pyproject.toml` (30s default).
 
 ## Architecture
 

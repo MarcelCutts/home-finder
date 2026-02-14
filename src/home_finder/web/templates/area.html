@@ -1,0 +1,126 @@
+{% extends "base.html" %}
+
+{% block title %}Area: {{ outcode }} — Home Finder{% endblock %}
+
+{% block nav_info %}<a href="/">&larr; Dashboard</a>{% endblock %}
+
+{% block content %}
+<article>
+    <section class="detail-section area-page-header">
+        <h3>Area Guide: {{ outcode }}</h3>
+        {% if area_context.description %}
+        <p class="area-description">{{ area_context.description }}</p>
+        {% endif %}
+    </section>
+
+    {% if area_context.micro_areas %}
+    <section class="detail-section">
+        <h4 class="section-subhead">Neighbourhoods</h4>
+        <div class="micro-area-grid">
+            {% for name, ma in area_context.micro_areas.items() %}
+            <div class="micro-area-card{% if highlight and name == highlight %} micro-area-highlighted{% endif %}" {% if highlight and name == highlight %}id="highlighted"{% endif %}>
+                <div class="micro-area-header">
+                    <strong>{{ name }}</strong>
+                    <span class="micro-area-badges">
+                        {% if ma.hosting_tolerance %}
+                        <span class="badge {% if ma.hosting_tolerance == 'high' %}badge-green{% elif ma.hosting_tolerance == 'moderate' %}badge-amber{% else %}badge-red{% endif %}">Hosting: {{ ma.hosting_tolerance }}</span>
+                        {% endif %}
+                        {% if ma.wfh_suitability %}
+                        <span class="badge {% if ma.wfh_suitability == 'good' %}badge-green{% elif ma.wfh_suitability == 'moderate' %}badge-amber{% else %}badge-red{% endif %}">WFH: {{ ma.wfh_suitability }}</span>
+                        {% endif %}
+                    </span>
+                </div>
+                {% if ma.character %}<p>{{ ma.character }}</p>{% endif %}
+                {% if ma.transport %}<p class="micro-area-detail"><span class="micro-area-detail-label">Transport</span> {{ ma.transport }}</p>{% endif %}
+                {% if ma.broadband %}<p class="micro-area-detail"><span class="micro-area-detail-label">Broadband</span> {{ ma.broadband }}</p>{% endif %}
+                {% if ma.creative_scene %}<p class="micro-area-detail"><span class="micro-area-detail-label">Creative</span> {{ ma.creative_scene }}</p>{% endif %}
+                {% if ma.value %}<p class="micro-area-detail"><span class="micro-area-detail-label">Value</span> {{ ma.value }}</p>{% endif %}
+            </div>
+            {% endfor %}
+        </div>
+    </section>
+    {% endif %}
+
+    {% if area_context.benchmarks %}
+    <section class="detail-section">
+        <h4 class="section-subhead">Rental Benchmarks ({{ outcode }})</h4>
+        {% set max_rent = area_context.benchmarks.values() | max %}
+        <div class="benchmark-list">
+            {% for beds, rent in area_context.benchmarks.items() %}
+            {% set pct = (rent / max_rent * 100) | round | int %}
+            <div class="benchmark-row">
+                <span class="benchmark-label">{{ beds }} bed</span>
+                <div class="benchmark-track">
+                    <div class="benchmark-fill" style="--bar-pct: {{ pct }}%"></div>
+                </div>
+                <span class="benchmark-value">&pound;{{ "{:,}".format(rent) }}/mo</span>
+            </div>
+            {% endfor %}
+        </div>
+    </section>
+    {% endif %}
+
+    <section class="detail-section">
+        <div class="area-details">
+            {% if area_context.borough and area_context.council_tax %}
+            <div>
+                <h4>Council Tax ({{ area_context.borough }})</h4>
+                <table>
+                    <thead><tr><th>Band</th><th>Monthly</th></tr></thead>
+                    <tbody>
+                        {% for band, amount in area_context.council_tax.items() %}
+                        <tr><td>{{ band }}</td><td>&pound;{{ amount }}/mo</td></tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% endif %}
+
+            {% if area_context.crime %}
+            <div>
+                <h4>Crime
+                    <span class="badge
+                        {% if area_context.crime.risk in ('low', 'low-medium') %}badge-green
+                        {% elif area_context.crime.risk == 'medium' %}badge-amber
+                        {% else %}badge-red{% endif %}">{{ area_context.crime.risk }}</span>
+                </h4>
+                <p class="crime-rate">{{ area_context.crime.rate }} <small>crimes per 1,000 residents/yr</small></p>
+                <p class="crime-context">{{ area_context.crime.vs_london }} vs London avg (~85).
+                    {% if area_context.crime.rate <= 80 %}Quieter than most of London.
+                    {% elif area_context.crime.rate <= 110 %}Typical for London.
+                    {% elif area_context.crime.rate <= 150 %}Above average — often driven by nearby high streets or transport hubs rather than residential crime.
+                    {% else %}Well above average — check <a href="https://data.police.uk" target="_blank" rel="noopener">data.police.uk</a> for a street-level breakdown.
+                    {% endif %}</p>
+                {% if area_context.crime.note %}<p class="crime-note">{{ area_context.crime.note }}</p>{% endif %}
+            </div>
+            {% endif %}
+
+            {% if area_context.noise_enforcement %}
+            {% set ne = area_context.noise_enforcement %}
+            <div>
+                <h4>Noise Enforcement ({{ area_context.borough }})</h4>
+                <p>{{ ne.process }}</p>
+                <p><small>{{ ne.threshold_info }}</small></p>
+                <p class="crime-note">{{ ne.response_time }}</p>
+            </div>
+            {% endif %}
+
+            {% if area_context.rent_trend %}
+            <div>
+                <h4>Rent Trend</h4>
+                <p>+{{ area_context.rent_trend.yoy_pct }}% YoY ({{ area_context.rent_trend.direction }})</p>
+            </div>
+            {% endif %}
+        </div>
+    </section>
+</article>
+
+{% if highlight %}
+<script>
+document.addEventListener('DOMContentLoaded', function() {
+    var el = document.getElementById('highlighted');
+    if (el) el.scrollIntoView({behavior: 'smooth', block: 'center'});
+});
+</script>
+{% endif %}
+{% endblock %}
