@@ -1040,9 +1040,7 @@ class PropertyQualityFilter:
         acoustic_context: str | None = None
         flooring_raw = visual_data.get("flooring_noise")
         construction: str | None = (
-            flooring_raw.get("building_construction")
-            if isinstance(flooring_raw, dict)
-            else None
+            flooring_raw.get("building_construction") if isinstance(flooring_raw, dict) else None
         )
         if construction:
             _CONSTRUCTION_TO_PROFILE: dict[str, str] = {

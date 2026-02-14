@@ -51,7 +51,8 @@ class TestVisualSystemPromptSnapshot:
 
     def test_prompt_snapshot(self) -> None:
         """Full system prompt text should be stable."""
-        assert VISUAL_ANALYSIS_SYSTEM_PROMPT == snapshot("""\
+        assert (
+            snapshot("""\
 You are an expert London rental property analyst with perfect vision and meticulous attention to detail.
 
 Your task is to observe and assess property quality from images and cross-reference with listing text. A separate evaluation step will handle value assessment, viewing preparation, and curation — focus purely on what you can see and verify.
@@ -64,11 +65,11 @@ Analyze property images (gallery photos and optional floorplan) together with li
 
 <stock_types>
 First, identify the property type — this fundamentally affects expected pricing and what condition issues to look for:
-- Victorian/Edwardian conversion: Period features, high ceilings, sash windows. Baseline East London stock. Watch for awkward subdivisions, original single glazing, rising damp, uneven floors. Acoustic: ~35–40 dB airborne (below Part E 45 dB). High hosting noise risk unless converted post-2003 with acoustic treatment.
-- Purpose-built new-build / Build-to-Rent: Clean lines, uniform finish, large windows. Commands 15-30% premium but check for small rooms, thin partition walls, developer-grade finishes that wear quickly. Acoustic: 45–55 dB (Part E compliant). Concrete floors good; lightweight timber-frame can underperform.
-- Warehouse/industrial conversion: High ceilings, exposed brick, large windows. Premium pricing (especially E9 canalside). Watch for draughts, echo/noise, damp from inadequate conversion. Acoustic: Variable 30–50 dB — original concrete/masonry excellent but new stud partition walls between units often only 30–35 dB.
-- Ex-council / post-war estate: Concrete construction, uniform exteriors, communal corridors. Should be 20-40% below area average. Communal area quality signals management standards. Acoustic: 42–48 dB airborne — concrete mass outperforms many newer builds. Weak on impact noise without carpet.
-- Georgian terrace: Grand proportions, original features. Premium stock. Acoustic: Thick walls (~50–55 dB) but timber joist floors only 38–42 dB. Listed status may prevent acoustic upgrades.
+- Victorian/Edwardian conversion: Period features, high ceilings, sash windows. Baseline East London stock. Watch for awkward subdivisions, original single glazing, rising damp, uneven floors. Acoustic: ~35-40 dB airborne (below Part E 45 dB). High hosting noise risk unless converted post-2003 with acoustic treatment.
+- Purpose-built new-build / Build-to-Rent: Clean lines, uniform finish, large windows. Commands 15-30% premium but check for small rooms, thin partition walls, developer-grade finishes that wear quickly. Acoustic: 45-55 dB (Part E compliant). Concrete floors good; lightweight timber-frame can underperform.
+- Warehouse/industrial conversion: High ceilings, exposed brick, large windows. Premium pricing (especially E9 canalside). Watch for draughts, echo/noise, damp from inadequate conversion. Acoustic: Variable 30-50 dB — original concrete/masonry excellent but new stud partition walls between units often only 30-35 dB.
+- Ex-council / post-war estate: Concrete construction, uniform exteriors, communal corridors. Should be 20-40% below area average. Communal area quality signals management standards. Acoustic: 42-48 dB airborne — concrete mass outperforms many newer builds. Weak on impact noise without carpet.
+- Georgian terrace: Grand proportions, original features. Premium stock. Acoustic: Thick walls (~50-55 dB) but timber joist floors only 38-42 dB. Listed status may prevent acoustic upgrades.
 </stock_types>
 
 <listing_signals>
@@ -127,6 +128,8 @@ If a fact belongs in one field, don't repeat it in another.
 
 Always use the property_visual_analysis tool to return your assessment.\
 """)
+            == VISUAL_ANALYSIS_SYSTEM_PROMPT
+        )
 
 
 class TestEvaluationSystemPromptSnapshot:
@@ -156,7 +159,8 @@ class TestEvaluationSystemPromptSnapshot:
 
     def test_prompt_snapshot(self) -> None:
         """Full evaluation system prompt text should be stable."""
-        assert EVALUATION_SYSTEM_PROMPT == snapshot("""\
+        assert (
+            snapshot("""\
 You are an expert London rental property evaluator. You have been given structured visual analysis observations from a detailed property inspection. Your job is to evaluate, synthesize, and prepare actionable information.
 
 When you cannot determine something from the available data, use the appropriate sentinel value: "unknown" for enum/string fields. For bills_included and pets_allowed use "yes"/"no"/"unknown" — these are tri-state string fields. Only extract what is explicitly stated in the listing.
@@ -194,6 +198,8 @@ Value-for-quality rating:
 
 Always use the property_evaluation tool to return your assessment.\
 """)
+            == EVALUATION_SYSTEM_PROMPT
+        )
 
 
 class TestBuildUserPromptSnapshot:
@@ -402,596 +408,619 @@ class TestToolSchemaSnapshots:
 
     def test_visual_analysis_tool_snapshot(self) -> None:
         """Full visual analysis tool schema should be stable."""
-        assert VISUAL_ANALYSIS_TOOL == snapshot(
-            {
-                "name": "property_visual_analysis",
-                "description": "Return visual property quality analysis results from images",
-                "input_schema": {
-                    "additionalProperties": False,
-                    "properties": {
-                        "kitchen": {
-                            "additionalProperties": False,
-                            "properties": {
-                                "overall_quality": {
-                                    "description": "Overall kitchen quality/age assessment",
-                                    "enum": ["modern", "decent", "dated", "unknown"],
-                                    "type": "string",
+        assert (
+            snapshot(
+                {
+                    "name": "property_visual_analysis",
+                    "description": "Return visual property quality analysis results from images",
+                    "input_schema": {
+                        "additionalProperties": False,
+                        "properties": {
+                            "kitchen": {
+                                "additionalProperties": False,
+                                "properties": {
+                                    "overall_quality": {
+                                        "description": "Overall kitchen quality/age assessment",
+                                        "enum": ["modern", "decent", "dated", "unknown"],
+                                        "type": "string",
+                                    },
+                                    "hob_type": {
+                                        "description": "Type of hob if visible or mentioned",
+                                        "enum": ["gas", "electric", "induction", "unknown"],
+                                        "type": "string",
+                                    },
+                                    "has_dishwasher": {
+                                        "enum": ["yes", "no", "unknown"],
+                                        "type": "string",
+                                    },
+                                    "has_washing_machine": {
+                                        "enum": ["yes", "no", "unknown"],
+                                        "type": "string",
+                                    },
+                                    "notes": {
+                                        "description": "Notable kitchen features or concerns",
+                                        "type": "string",
+                                    },
                                 },
-                                "hob_type": {
-                                    "description": "Type of hob if visible or mentioned",
-                                    "enum": ["gas", "electric", "induction", "unknown"],
-                                    "type": "string",
-                                },
-                                "has_dishwasher": {
-                                    "enum": ["yes", "no", "unknown"],
-                                    "type": "string",
-                                },
-                                "has_washing_machine": {
-                                    "enum": ["yes", "no", "unknown"],
-                                    "type": "string",
-                                },
-                                "notes": {
-                                    "description": "Notable kitchen features or concerns",
-                                    "type": "string",
-                                },
+                                "required": [
+                                    "overall_quality",
+                                    "hob_type",
+                                    "has_dishwasher",
+                                    "has_washing_machine",
+                                    "notes",
+                                ],
+                                "type": "object",
                             },
-                            "required": [
-                                "overall_quality",
-                                "hob_type",
-                                "has_dishwasher",
-                                "has_washing_machine",
-                                "notes",
-                            ],
-                            "type": "object",
-                        },
-                        "condition": {
-                            "additionalProperties": False,
-                            "properties": {
-                                "overall_condition": {
-                                    "enum": ["excellent", "good", "fair", "poor", "unknown"],
-                                    "type": "string",
+                            "condition": {
+                                "additionalProperties": False,
+                                "properties": {
+                                    "overall_condition": {
+                                        "enum": ["excellent", "good", "fair", "poor", "unknown"],
+                                        "type": "string",
+                                    },
+                                    "has_visible_damp": {
+                                        "enum": ["yes", "no", "unknown"],
+                                        "type": "string",
+                                    },
+                                    "has_visible_mold": {
+                                        "enum": ["yes", "no", "unknown"],
+                                        "type": "string",
+                                    },
+                                    "has_worn_fixtures": {
+                                        "enum": ["yes", "no", "unknown"],
+                                        "type": "string",
+                                    },
+                                    "maintenance_concerns": {
+                                        "description": "List of specific maintenance concerns",
+                                        "items": {"type": "string"},
+                                        "type": "array",
+                                    },
+                                    "confidence": {
+                                        "enum": ["high", "medium", "low"],
+                                        "type": "string",
+                                    },
                                 },
-                                "has_visible_damp": {
-                                    "enum": ["yes", "no", "unknown"],
-                                    "type": "string",
-                                },
-                                "has_visible_mold": {
-                                    "enum": ["yes", "no", "unknown"],
-                                    "type": "string",
-                                },
-                                "has_worn_fixtures": {
-                                    "enum": ["yes", "no", "unknown"],
-                                    "type": "string",
-                                },
-                                "maintenance_concerns": {
-                                    "description": "List of specific maintenance concerns",
-                                    "items": {"type": "string"},
-                                    "type": "array",
-                                },
-                                "confidence": {"enum": ["high", "medium", "low"], "type": "string"},
+                                "required": [
+                                    "overall_condition",
+                                    "has_visible_damp",
+                                    "has_visible_mold",
+                                    "has_worn_fixtures",
+                                    "maintenance_concerns",
+                                    "confidence",
+                                ],
+                                "type": "object",
                             },
-                            "required": [
-                                "overall_condition",
-                                "has_visible_damp",
-                                "has_visible_mold",
-                                "has_worn_fixtures",
-                                "maintenance_concerns",
-                                "confidence",
-                            ],
-                            "type": "object",
-                        },
-                        "light_space": {
-                            "additionalProperties": False,
-                            "properties": {
-                                "natural_light": {
-                                    "enum": ["excellent", "good", "fair", "poor", "unknown"],
-                                    "type": "string",
+                            "light_space": {
+                                "additionalProperties": False,
+                                "properties": {
+                                    "natural_light": {
+                                        "enum": ["excellent", "good", "fair", "poor", "unknown"],
+                                        "type": "string",
+                                    },
+                                    "window_sizes": {
+                                        "enum": ["large", "medium", "small", "unknown"],
+                                        "type": "string",
+                                    },
+                                    "feels_spacious": {
+                                        "description": "Whether the property feels spacious",
+                                        "type": "boolean",
+                                    },
+                                    "ceiling_height": {
+                                        "enum": ["high", "standard", "low", "unknown"],
+                                        "type": "string",
+                                    },
+                                    "floor_level": {
+                                        "description": "Estimated floor level from photos/description/floorplan",
+                                        "enum": [
+                                            "basement",
+                                            "ground",
+                                            "lower",
+                                            "upper",
+                                            "top",
+                                            "unknown",
+                                        ],
+                                        "type": "string",
+                                    },
+                                    "notes": {"type": "string"},
                                 },
-                                "window_sizes": {
-                                    "enum": ["large", "medium", "small", "unknown"],
-                                    "type": "string",
-                                },
-                                "feels_spacious": {
-                                    "description": "Whether the property feels spacious",
-                                    "type": "boolean",
-                                },
-                                "ceiling_height": {
-                                    "enum": ["high", "standard", "low", "unknown"],
-                                    "type": "string",
-                                },
-                                "floor_level": {
-                                    "description": "Estimated floor level from photos/description/floorplan",
-                                    "enum": [
-                                        "basement",
-                                        "ground",
-                                        "lower",
-                                        "upper",
-                                        "top",
-                                        "unknown",
-                                    ],
-                                    "type": "string",
-                                },
-                                "notes": {"type": "string"},
+                                "required": [
+                                    "natural_light",
+                                    "window_sizes",
+                                    "feels_spacious",
+                                    "ceiling_height",
+                                    "floor_level",
+                                    "notes",
+                                ],
+                                "type": "object",
                             },
-                            "required": [
-                                "natural_light",
-                                "window_sizes",
-                                "feels_spacious",
-                                "ceiling_height",
-                                "floor_level",
-                                "notes",
-                            ],
-                            "type": "object",
-                        },
-                        "space": {
-                            "additionalProperties": False,
-                            "properties": {
-                                "living_room_sqm": {
-                                    "anyOf": [{"type": "number"}, {"type": "null"}],
-                                    "description": "Estimated living room size in sqm from floorplan",
+                            "space": {
+                                "additionalProperties": False,
+                                "properties": {
+                                    "living_room_sqm": {
+                                        "anyOf": [{"type": "number"}, {"type": "null"}],
+                                        "description": "Estimated living room size in sqm from floorplan",
+                                    },
+                                    "is_spacious_enough": {
+                                        "description": "True if can fit office AND host 8+ people",
+                                        "type": "boolean",
+                                    },
+                                    "confidence": {
+                                        "enum": ["high", "medium", "low"],
+                                        "type": "string",
+                                    },
+                                    "hosting_layout": {
+                                        "description": "Layout flow for hosting: excellent = open-plan kitchen/living + accessible bathroom + practical entrance; good = mostly good flow; awkward = hosting friction (disconnected kitchen, narrow entrance, guests pass bedrooms); poor = fundamentally unsuitable (through-rooms, isolated kitchen)",
+                                        "enum": ["excellent", "good", "awkward", "poor", "unknown"],
+                                        "type": "string",
+                                    },
                                 },
-                                "is_spacious_enough": {
-                                    "description": "True if can fit office AND host 8+ people",
-                                    "type": "boolean",
-                                },
-                                "confidence": {"enum": ["high", "medium", "low"], "type": "string"},
-                                "hosting_layout": {
-                                    "description": "Layout flow for hosting: excellent = open-plan kitchen/living + accessible bathroom + practical entrance; good = mostly good flow; awkward = hosting friction (disconnected kitchen, narrow entrance, guests pass bedrooms); poor = fundamentally unsuitable (through-rooms, isolated kitchen)",
-                                    "enum": ["excellent", "good", "awkward", "poor", "unknown"],
-                                    "type": "string",
-                                },
+                                "required": [
+                                    "living_room_sqm",
+                                    "is_spacious_enough",
+                                    "confidence",
+                                    "hosting_layout",
+                                ],
+                                "type": "object",
                             },
-                            "required": [
-                                "living_room_sqm",
-                                "is_spacious_enough",
-                                "confidence",
-                                "hosting_layout",
-                            ],
-                            "type": "object",
-                        },
-                        "bathroom": {
-                            "additionalProperties": False,
-                            "properties": {
-                                "overall_condition": {
-                                    "enum": ["modern", "decent", "dated", "unknown"],
-                                    "type": "string",
+                            "bathroom": {
+                                "additionalProperties": False,
+                                "properties": {
+                                    "overall_condition": {
+                                        "enum": ["modern", "decent", "dated", "unknown"],
+                                        "type": "string",
+                                    },
+                                    "has_bathtub": {
+                                        "enum": ["yes", "no", "unknown"],
+                                        "type": "string",
+                                    },
+                                    "shower_type": {
+                                        "enum": [
+                                            "overhead",
+                                            "separate_cubicle",
+                                            "electric",
+                                            "none",
+                                            "unknown",
+                                        ],
+                                        "type": "string",
+                                    },
+                                    "is_ensuite": {
+                                        "enum": ["yes", "no", "unknown"],
+                                        "type": "string",
+                                    },
+                                    "notes": {"type": "string"},
                                 },
-                                "has_bathtub": {"enum": ["yes", "no", "unknown"], "type": "string"},
-                                "shower_type": {
-                                    "enum": [
-                                        "overhead",
-                                        "separate_cubicle",
-                                        "electric",
-                                        "none",
-                                        "unknown",
-                                    ],
-                                    "type": "string",
-                                },
-                                "is_ensuite": {"enum": ["yes", "no", "unknown"], "type": "string"},
-                                "notes": {"type": "string"},
+                                "required": [
+                                    "overall_condition",
+                                    "has_bathtub",
+                                    "shower_type",
+                                    "is_ensuite",
+                                    "notes",
+                                ],
+                                "type": "object",
                             },
-                            "required": [
-                                "overall_condition",
-                                "has_bathtub",
-                                "shower_type",
-                                "is_ensuite",
-                                "notes",
-                            ],
-                            "type": "object",
-                        },
-                        "bedroom": {
-                            "additionalProperties": False,
-                            "properties": {
-                                "primary_is_double": {
-                                    "enum": ["yes", "no", "unknown"],
-                                    "type": "string",
+                            "bedroom": {
+                                "additionalProperties": False,
+                                "properties": {
+                                    "primary_is_double": {
+                                        "enum": ["yes", "no", "unknown"],
+                                        "type": "string",
+                                    },
+                                    "has_built_in_wardrobe": {
+                                        "enum": ["yes", "no", "unknown"],
+                                        "type": "string",
+                                    },
+                                    "can_fit_desk": {
+                                        "enum": ["yes", "no", "unknown"],
+                                        "type": "string",
+                                    },
+                                    "office_separation": {
+                                        "description": "Quality of work-life separation: dedicated_room = closable room for office (2-bed with non-through second room); separate_area = alcove, mezzanine, or partitioned nook; shared_space = desk in living room, no separation; none = studio or nowhere viable",
+                                        "enum": [
+                                            "dedicated_room",
+                                            "separate_area",
+                                            "shared_space",
+                                            "none",
+                                            "unknown",
+                                        ],
+                                        "type": "string",
+                                    },
+                                    "notes": {"type": "string"},
                                 },
-                                "has_built_in_wardrobe": {
-                                    "enum": ["yes", "no", "unknown"],
-                                    "type": "string",
-                                },
-                                "can_fit_desk": {
-                                    "enum": ["yes", "no", "unknown"],
-                                    "type": "string",
-                                },
-                                "office_separation": {
-                                    "description": "Quality of work-life separation: dedicated_room = closable room for office (2-bed with non-through second room); separate_area = alcove, mezzanine, or partitioned nook; shared_space = desk in living room, no separation; none = studio or nowhere viable",
-                                    "enum": [
-                                        "dedicated_room",
-                                        "separate_area",
-                                        "shared_space",
-                                        "none",
-                                        "unknown",
-                                    ],
-                                    "type": "string",
-                                },
-                                "notes": {"type": "string"},
+                                "required": [
+                                    "primary_is_double",
+                                    "has_built_in_wardrobe",
+                                    "can_fit_desk",
+                                    "office_separation",
+                                    "notes",
+                                ],
+                                "type": "object",
                             },
-                            "required": [
-                                "primary_is_double",
-                                "has_built_in_wardrobe",
-                                "can_fit_desk",
-                                "office_separation",
-                                "notes",
-                            ],
-                            "type": "object",
-                        },
-                        "outdoor_space": {
-                            "additionalProperties": False,
-                            "properties": {
-                                "has_balcony": {"type": "boolean"},
-                                "has_garden": {"type": "boolean"},
-                                "has_terrace": {"type": "boolean"},
-                                "has_shared_garden": {"type": "boolean"},
-                                "notes": {"type": "string"},
+                            "outdoor_space": {
+                                "additionalProperties": False,
+                                "properties": {
+                                    "has_balcony": {"type": "boolean"},
+                                    "has_garden": {"type": "boolean"},
+                                    "has_terrace": {"type": "boolean"},
+                                    "has_shared_garden": {"type": "boolean"},
+                                    "notes": {"type": "string"},
+                                },
+                                "required": [
+                                    "has_balcony",
+                                    "has_garden",
+                                    "has_terrace",
+                                    "has_shared_garden",
+                                    "notes",
+                                ],
+                                "type": "object",
                             },
-                            "required": [
-                                "has_balcony",
-                                "has_garden",
-                                "has_terrace",
-                                "has_shared_garden",
-                                "notes",
-                            ],
-                            "type": "object",
-                        },
-                        "storage": {
-                            "additionalProperties": False,
-                            "properties": {
-                                "has_built_in_wardrobes": {
-                                    "enum": ["yes", "no", "unknown"],
-                                    "type": "string",
+                            "storage": {
+                                "additionalProperties": False,
+                                "properties": {
+                                    "has_built_in_wardrobes": {
+                                        "enum": ["yes", "no", "unknown"],
+                                        "type": "string",
+                                    },
+                                    "has_hallway_cupboard": {
+                                        "enum": ["yes", "no", "unknown"],
+                                        "type": "string",
+                                    },
+                                    "storage_rating": {
+                                        "enum": ["good", "adequate", "poor", "unknown"],
+                                        "type": "string",
+                                    },
                                 },
-                                "has_hallway_cupboard": {
-                                    "enum": ["yes", "no", "unknown"],
-                                    "type": "string",
-                                },
-                                "storage_rating": {
-                                    "enum": ["good", "adequate", "poor", "unknown"],
-                                    "type": "string",
-                                },
+                                "required": [
+                                    "has_built_in_wardrobes",
+                                    "has_hallway_cupboard",
+                                    "storage_rating",
+                                ],
+                                "type": "object",
                             },
-                            "required": [
-                                "has_built_in_wardrobes",
-                                "has_hallway_cupboard",
-                                "storage_rating",
-                            ],
-                            "type": "object",
-                        },
-                        "flooring_noise": {
-                            "additionalProperties": False,
-                            "properties": {
-                                "primary_flooring": {
-                                    "enum": [
-                                        "hardwood",
-                                        "laminate",
-                                        "carpet",
-                                        "tile",
-                                        "mixed",
-                                        "unknown",
-                                    ],
-                                    "type": "string",
+                            "flooring_noise": {
+                                "additionalProperties": False,
+                                "properties": {
+                                    "primary_flooring": {
+                                        "enum": [
+                                            "hardwood",
+                                            "laminate",
+                                            "carpet",
+                                            "tile",
+                                            "mixed",
+                                            "unknown",
+                                        ],
+                                        "type": "string",
+                                    },
+                                    "has_double_glazing": {
+                                        "enum": ["yes", "no", "unknown"],
+                                        "type": "string",
+                                    },
+                                    "building_construction": {
+                                        "description": "Building construction type estimated from visual cues",
+                                        "enum": [
+                                            "solid_brick",
+                                            "concrete",
+                                            "timber_frame",
+                                            "mixed",
+                                            "unknown",
+                                        ],
+                                        "type": "string",
+                                    },
+                                    "noise_indicators": {
+                                        "items": {"type": "string"},
+                                        "type": "array",
+                                    },
+                                    "hosting_noise_risk": {
+                                        "description": "Risk of disturbing neighbours when hosting: low = solid construction + carpet + top floor/detached; moderate = mixed signals; high = timber frame + hard floors + lower floor + shared walls",
+                                        "enum": ["low", "moderate", "high", "unknown"],
+                                        "type": "string",
+                                    },
+                                    "notes": {"type": "string"},
                                 },
-                                "has_double_glazing": {
-                                    "enum": ["yes", "no", "unknown"],
-                                    "type": "string",
-                                },
-                                "building_construction": {
-                                    "description": "Building construction type estimated from visual cues",
-                                    "enum": [
-                                        "solid_brick",
-                                        "concrete",
-                                        "timber_frame",
-                                        "mixed",
-                                        "unknown",
-                                    ],
-                                    "type": "string",
-                                },
-                                "noise_indicators": {"items": {"type": "string"}, "type": "array"},
-                                "hosting_noise_risk": {
-                                    "description": "Risk of disturbing neighbours when hosting: low = solid construction + carpet + top floor/detached; moderate = mixed signals; high = timber frame + hard floors + lower floor + shared walls",
-                                    "enum": ["low", "moderate", "high", "unknown"],
-                                    "type": "string",
-                                },
-                                "notes": {"type": "string"},
+                                "required": [
+                                    "primary_flooring",
+                                    "has_double_glazing",
+                                    "building_construction",
+                                    "noise_indicators",
+                                    "hosting_noise_risk",
+                                    "notes",
+                                ],
+                                "type": "object",
                             },
-                            "required": [
-                                "primary_flooring",
-                                "has_double_glazing",
-                                "building_construction",
-                                "noise_indicators",
-                                "hosting_noise_risk",
-                                "notes",
-                            ],
-                            "type": "object",
-                        },
-                        "listing_red_flags": {
-                            "additionalProperties": False,
-                            "properties": {
-                                "missing_room_photos": {
-                                    "description": "Rooms not shown in photos (e.g. 'bathroom', 'kitchen')",
-                                    "items": {"type": "string"},
-                                    "type": "array",
+                            "listing_red_flags": {
+                                "additionalProperties": False,
+                                "properties": {
+                                    "missing_room_photos": {
+                                        "description": "Rooms not shown in photos (e.g. 'bathroom', 'kitchen')",
+                                        "items": {"type": "string"},
+                                        "type": "array",
+                                    },
+                                    "too_few_photos": {"type": "boolean"},
+                                    "selective_angles": {"type": "boolean"},
+                                    "description_concerns": {
+                                        "items": {"type": "string"},
+                                        "type": "array",
+                                    },
+                                    "red_flag_count": {
+                                        "description": "Total number of red flags identified",
+                                        "type": "integer",
+                                    },
                                 },
-                                "too_few_photos": {"type": "boolean"},
-                                "selective_angles": {"type": "boolean"},
-                                "description_concerns": {
-                                    "items": {"type": "string"},
-                                    "type": "array",
-                                },
-                                "red_flag_count": {
-                                    "description": "Total number of red flags identified",
-                                    "type": "integer",
-                                },
+                                "required": [
+                                    "missing_room_photos",
+                                    "too_few_photos",
+                                    "selective_angles",
+                                    "description_concerns",
+                                    "red_flag_count",
+                                ],
+                                "type": "object",
                             },
-                            "required": [
-                                "missing_room_photos",
-                                "too_few_photos",
-                                "selective_angles",
-                                "description_concerns",
-                                "red_flag_count",
-                            ],
-                            "type": "object",
+                            "floorplan_detected_in_gallery": {
+                                "description": "1-based gallery image indices that appear to be floorplans or floor plan diagrams. Empty list if no gallery images look like floorplans.",
+                                "items": {"type": "integer"},
+                                "type": "array",
+                            },
+                            "overall_rating": {
+                                "description": "Overall 1-5 star rating for rental desirability (1=worst, 5=best)",
+                                "type": "integer",
+                            },
+                            "condition_concerns": {
+                                "description": "True if any significant condition issues found",
+                                "type": "boolean",
+                            },
+                            "concern_severity": {
+                                "enum": ["minor", "moderate", "serious", "none"],
+                                "type": "string",
+                            },
+                            "summary": {
+                                "description": "1-2 sentence property overview for notification. Focus on what it's like to live here: character, standout features, layout feel. Do NOT restate condition concerns (already listed separately).",
+                                "type": "string",
+                            },
                         },
-                        "floorplan_detected_in_gallery": {
-                            "description": "1-based gallery image indices that appear to be floorplans or floor plan diagrams. Empty list if no gallery images look like floorplans.",
-                            "items": {"type": "integer"},
-                            "type": "array",
-                        },
-                        "overall_rating": {
-                            "description": "Overall 1-5 star rating for rental desirability (1=worst, 5=best)",
-                            "type": "integer",
-                        },
-                        "condition_concerns": {
-                            "description": "True if any significant condition issues found",
-                            "type": "boolean",
-                        },
-                        "concern_severity": {
-                            "enum": ["minor", "moderate", "serious", "none"],
-                            "type": "string",
-                        },
-                        "summary": {
-                            "description": "1-2 sentence property overview for notification. Focus on what it's like to live here: character, standout features, layout feel. Do NOT restate condition concerns (already listed separately).",
-                            "type": "string",
-                        },
+                        "required": [
+                            "kitchen",
+                            "condition",
+                            "light_space",
+                            "space",
+                            "bathroom",
+                            "bedroom",
+                            "outdoor_space",
+                            "storage",
+                            "flooring_noise",
+                            "listing_red_flags",
+                            "overall_rating",
+                            "condition_concerns",
+                            "concern_severity",
+                            "summary",
+                        ],
+                        "type": "object",
                     },
-                    "required": [
-                        "kitchen",
-                        "condition",
-                        "light_space",
-                        "space",
-                        "bathroom",
-                        "bedroom",
-                        "outdoor_space",
-                        "storage",
-                        "flooring_noise",
-                        "listing_red_flags",
-                        "overall_rating",
-                        "condition_concerns",
-                        "concern_severity",
-                        "summary",
-                    ],
-                    "type": "object",
-                },
-            }
+                }
+            )
+            == VISUAL_ANALYSIS_TOOL
         )
 
     def test_evaluation_tool_snapshot(self) -> None:
         """Full evaluation tool schema should be stable."""
-        assert EVALUATION_TOOL == snapshot(
-            {
-                "name": "property_evaluation",
-                "description": "Return property evaluation based on visual analysis observations",
-                "input_schema": {
-                    "additionalProperties": False,
-                    "properties": {
-                        "listing_extraction": {
-                            "additionalProperties": False,
-                            "properties": {
-                                "epc_rating": {
-                                    "enum": ["A", "B", "C", "D", "E", "F", "G", "unknown"],
-                                    "type": "string",
+        assert (
+            snapshot(
+                {
+                    "name": "property_evaluation",
+                    "description": "Return property evaluation based on visual analysis observations",
+                    "input_schema": {
+                        "additionalProperties": False,
+                        "properties": {
+                            "listing_extraction": {
+                                "additionalProperties": False,
+                                "properties": {
+                                    "epc_rating": {
+                                        "enum": ["A", "B", "C", "D", "E", "F", "G", "unknown"],
+                                        "type": "string",
+                                    },
+                                    "service_charge_pcm": {
+                                        "anyOf": [{"type": "integer"}, {"type": "null"}]
+                                    },
+                                    "deposit_weeks": {
+                                        "anyOf": [{"type": "integer"}, {"type": "null"}]
+                                    },
+                                    "bills_included": {
+                                        "enum": ["yes", "no", "unknown"],
+                                        "type": "string",
+                                    },
+                                    "pets_allowed": {
+                                        "enum": ["yes", "no", "unknown"],
+                                        "type": "string",
+                                    },
+                                    "parking": {
+                                        "enum": ["dedicated", "street", "none", "unknown"],
+                                        "type": "string",
+                                    },
+                                    "council_tax_band": {
+                                        "enum": ["A", "B", "C", "D", "E", "F", "G", "H", "unknown"],
+                                        "type": "string",
+                                    },
+                                    "property_type": {
+                                        "enum": [
+                                            "victorian",
+                                            "edwardian",
+                                            "georgian",
+                                            "new_build",
+                                            "purpose_built",
+                                            "warehouse",
+                                            "ex_council",
+                                            "period_conversion",
+                                            "unknown",
+                                        ],
+                                        "type": "string",
+                                    },
+                                    "furnished_status": {
+                                        "enum": [
+                                            "furnished",
+                                            "unfurnished",
+                                            "part_furnished",
+                                            "unknown",
+                                        ],
+                                        "type": "string",
+                                    },
+                                    "broadband_type": {
+                                        "description": "Broadband type from listing: fttp = fibre/FTTP/FTTH/Hyperoptic/Community Fibre/full fibre/1Gbps; fttc = superfast/FTTC/up to 80Mbps; cable = Virgin Media/cable; standard = broadband alone/ADSL",
+                                        "enum": ["fttp", "fttc", "cable", "standard", "unknown"],
+                                        "type": "string",
+                                    },
                                 },
-                                "service_charge_pcm": {
-                                    "anyOf": [{"type": "integer"}, {"type": "null"}]
+                                "required": [
+                                    "epc_rating",
+                                    "service_charge_pcm",
+                                    "deposit_weeks",
+                                    "bills_included",
+                                    "pets_allowed",
+                                    "parking",
+                                    "council_tax_band",
+                                    "property_type",
+                                    "furnished_status",
+                                    "broadband_type",
+                                ],
+                                "type": "object",
+                            },
+                            "viewing_notes": {
+                                "additionalProperties": False,
+                                "properties": {
+                                    "check_items": {
+                                        "description": "Property-specific things to inspect during viewing",
+                                        "items": {"type": "string"},
+                                        "type": "array",
+                                    },
+                                    "questions_for_agent": {
+                                        "description": "Questions to ask the letting agent",
+                                        "items": {"type": "string"},
+                                        "type": "array",
+                                    },
+                                    "deal_breaker_tests": {
+                                        "description": "Quick tests to determine deal-breakers",
+                                        "items": {"type": "string"},
+                                        "type": "array",
+                                    },
                                 },
-                                "deposit_weeks": {"anyOf": [{"type": "integer"}, {"type": "null"}]},
-                                "bills_included": {
-                                    "enum": ["yes", "no", "unknown"],
-                                    "type": "string",
-                                },
-                                "pets_allowed": {
-                                    "enum": ["yes", "no", "unknown"],
-                                    "type": "string",
-                                },
-                                "parking": {
-                                    "enum": ["dedicated", "street", "none", "unknown"],
-                                    "type": "string",
-                                },
-                                "council_tax_band": {
-                                    "enum": ["A", "B", "C", "D", "E", "F", "G", "H", "unknown"],
-                                    "type": "string",
-                                },
-                                "property_type": {
+                                "required": [
+                                    "check_items",
+                                    "questions_for_agent",
+                                    "deal_breaker_tests",
+                                ],
+                                "type": "object",
+                            },
+                            "highlights": {
+                                "description": "Top 3-5 positive features from the allowed highlight tags",
+                                "items": {
                                     "enum": [
-                                        "victorian",
-                                        "edwardian",
-                                        "georgian",
-                                        "new_build",
-                                        "purpose_built",
-                                        "warehouse",
-                                        "ex_council",
-                                        "period_conversion",
-                                        "unknown",
+                                        "Gas hob",
+                                        "Induction hob",
+                                        "Dishwasher included",
+                                        "Washing machine",
+                                        "Modern kitchen",
+                                        "Modern bathroom",
+                                        "Two bathrooms",
+                                        "Ensuite bathroom",
+                                        "Excellent natural light",
+                                        "Good natural light",
+                                        "Floor-to-ceiling windows",
+                                        "High ceilings",
+                                        "Spacious living room",
+                                        "Open-plan layout",
+                                        "Built-in wardrobes",
+                                        "Good storage",
+                                        "Private balcony",
+                                        "Private garden",
+                                        "Private terrace",
+                                        "Shared garden",
+                                        "Communal gardens",
+                                        "Roof terrace",
+                                        "Excellent condition",
+                                        "Recently refurbished",
+                                        "Period features",
+                                        "Double glazing",
+                                        "On-site gym",
+                                        "Concierge",
+                                        "Bike storage",
+                                        "Parking included",
+                                        "Pets allowed",
+                                        "Bills included",
+                                        "Canal views",
+                                        "Park views",
+                                        "Ultrafast broadband (FTTP)",
+                                        "Dedicated office room",
+                                        "Separate work area",
+                                        "Great hosting layout",
                                     ],
                                     "type": "string",
                                 },
-                                "furnished_status": {
+                                "type": "array",
+                            },
+                            "lowlights": {
+                                "description": "Top 1-3 concerns from the allowed lowlight tags",
+                                "items": {
                                     "enum": [
-                                        "furnished",
-                                        "unfurnished",
-                                        "part_furnished",
-                                        "unknown",
+                                        "No dishwasher",
+                                        "No washing machine",
+                                        "Dated kitchen",
+                                        "Electric hob",
+                                        "Compact living room",
+                                        "Small living room",
+                                        "Small bedroom",
+                                        "Compact bedroom",
+                                        "Poor storage",
+                                        "No storage",
+                                        "Dated bathroom",
+                                        "No outdoor space",
+                                        "No interior photos",
+                                        "No bathroom photos",
+                                        "Missing key photos",
+                                        "Potential traffic noise",
+                                        "New-build acoustics",
+                                        "Service charge unstated",
+                                        "Balcony cracking",
+                                        "Needs updating",
+                                        "Basic broadband only",
+                                        "No work-life separation",
+                                        "Poor hosting layout",
                                     ],
                                     "type": "string",
                                 },
-                                "broadband_type": {
-                                    "description": "Broadband type from listing: fttp = fibre/FTTP/FTTH/Hyperoptic/Community Fibre/full fibre/1Gbps; fttc = superfast/FTTC/up to 80Mbps; cable = Virgin Media/cable; standard = broadband alone/ADSL",
-                                    "enum": ["fttp", "fttc", "cable", "standard", "unknown"],
-                                    "type": "string",
-                                },
+                                "type": "array",
                             },
-                            "required": [
-                                "epc_rating",
-                                "service_charge_pcm",
-                                "deposit_weeks",
-                                "bills_included",
-                                "pets_allowed",
-                                "parking",
-                                "council_tax_band",
-                                "property_type",
-                                "furnished_status",
-                                "broadband_type",
-                            ],
-                            "type": "object",
-                        },
-                        "viewing_notes": {
-                            "additionalProperties": False,
-                            "properties": {
-                                "check_items": {
-                                    "description": "Property-specific things to inspect during viewing",
-                                    "items": {"type": "string"},
-                                    "type": "array",
-                                },
-                                "questions_for_agent": {
-                                    "description": "Questions to ask the letting agent",
-                                    "items": {"type": "string"},
-                                    "type": "array",
-                                },
-                                "deal_breaker_tests": {
-                                    "description": "Quick tests to determine deal-breakers",
-                                    "items": {"type": "string"},
-                                    "type": "array",
-                                },
-                            },
-                            "required": [
-                                "check_items",
-                                "questions_for_agent",
-                                "deal_breaker_tests",
-                            ],
-                            "type": "object",
-                        },
-                        "highlights": {
-                            "description": "Top 3-5 positive features from the allowed highlight tags",
-                            "items": {
-                                "enum": [
-                                    "Gas hob",
-                                    "Induction hob",
-                                    "Dishwasher included",
-                                    "Washing machine",
-                                    "Modern kitchen",
-                                    "Modern bathroom",
-                                    "Two bathrooms",
-                                    "Ensuite bathroom",
-                                    "Excellent natural light",
-                                    "Good natural light",
-                                    "Floor-to-ceiling windows",
-                                    "High ceilings",
-                                    "Spacious living room",
-                                    "Open-plan layout",
-                                    "Built-in wardrobes",
-                                    "Good storage",
-                                    "Private balcony",
-                                    "Private garden",
-                                    "Private terrace",
-                                    "Shared garden",
-                                    "Communal gardens",
-                                    "Roof terrace",
-                                    "Excellent condition",
-                                    "Recently refurbished",
-                                    "Period features",
-                                    "Double glazing",
-                                    "On-site gym",
-                                    "Concierge",
-                                    "Bike storage",
-                                    "Parking included",
-                                    "Pets allowed",
-                                    "Bills included",
-                                    "Canal views",
-                                    "Park views",
-                                    "Ultrafast broadband (FTTP)",
-                                    "Dedicated office room",
-                                    "Separate work area",
-                                    "Great hosting layout",
-                                ],
+                            "one_line": {
+                                "description": "6-12 word tagline capturing the property's character",
                                 "type": "string",
                             },
-                            "type": "array",
-                        },
-                        "lowlights": {
-                            "description": "Top 1-3 concerns from the allowed lowlight tags",
-                            "items": {
-                                "enum": [
-                                    "No dishwasher",
-                                    "No washing machine",
-                                    "Dated kitchen",
-                                    "Electric hob",
-                                    "Compact living room",
-                                    "Small living room",
-                                    "Small bedroom",
-                                    "Compact bedroom",
-                                    "Poor storage",
-                                    "No storage",
-                                    "Dated bathroom",
-                                    "No outdoor space",
-                                    "No interior photos",
-                                    "No bathroom photos",
-                                    "Missing key photos",
-                                    "Potential traffic noise",
-                                    "New-build acoustics",
-                                    "Service charge unstated",
-                                    "Balcony cracking",
-                                    "Needs updating",
-                                    "Basic broadband only",
-                                    "No work-life separation",
-                                    "Poor hosting layout",
-                                ],
-                                "type": "string",
-                            },
-                            "type": "array",
-                        },
-                        "one_line": {
-                            "description": "6-12 word tagline capturing the property's character",
-                            "type": "string",
-                        },
-                        "value_for_quality": {
-                            "additionalProperties": False,
-                            "properties": {
-                                "rating": {
-                                    "description": "Value rating considering quality vs price",
-                                    "enum": ["excellent", "good", "fair", "poor"],
-                                    "type": "string",
+                            "value_for_quality": {
+                                "additionalProperties": False,
+                                "properties": {
+                                    "rating": {
+                                        "description": "Value rating considering quality vs price",
+                                        "enum": ["excellent", "good", "fair", "poor"],
+                                        "type": "string",
+                                    },
+                                    "reasoning": {
+                                        "description": "Value justification: why this price is or isn't fair for what you get. Focus on price factors: stock type premium/discount, true monthly cost, area rent trajectory, service charges, incentives. Reference condition only as 'condition justifies/doesn't justify price' — don't restate specific issues.",
+                                        "type": "string",
+                                    },
                                 },
-                                "reasoning": {
-                                    "description": "Value justification: why this price is or isn't fair for what you get. Focus on price factors: stock type premium/discount, true monthly cost, area rent trajectory, service charges, incentives. Reference condition only as 'condition justifies/doesn't justify price' — don't restate specific issues.",
-                                    "type": "string",
-                                },
+                                "required": ["rating", "reasoning"],
+                                "type": "object",
                             },
-                            "required": ["rating", "reasoning"],
-                            "type": "object",
                         },
+                        "required": [
+                            "listing_extraction",
+                            "viewing_notes",
+                            "highlights",
+                            "lowlights",
+                            "one_line",
+                            "value_for_quality",
+                        ],
+                        "type": "object",
                     },
-                    "required": [
-                        "listing_extraction",
-                        "viewing_notes",
-                        "highlights",
-                        "lowlights",
-                        "one_line",
-                        "value_for_quality",
-                    ],
-                    "type": "object",
-                },
-                "strict": True,
-            }
+                    "strict": True,
+                }
+            )
+            == EVALUATION_TOOL
         )
 
     def test_visual_tool_name(self) -> None:

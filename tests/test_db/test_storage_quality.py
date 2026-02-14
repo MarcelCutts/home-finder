@@ -487,7 +487,7 @@ class TestGetPropertiesPaginated:
     ) -> None:
         await storage.save_merged_property(merged_a)
         # Invalid sort should use default (newest)
-        props, total = await storage.get_properties_paginated(sort="bogus")
+        _props, total = await storage.get_properties_paginated(sort="bogus")
         assert total == 1
 
 

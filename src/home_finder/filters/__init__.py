@@ -19,10 +19,10 @@ __all__ = [
     "CriteriaFilter",
     "Deduplicator",
     "EnrichmentResult",
-    "enrich_merged_properties",
-    "filter_by_floorplan",
     "LocationFilter",
     "PropertyQualityAnalysis",
     "PropertyQualityFilter",
     "ValueAnalysis",
+    "enrich_merged_properties",
+    "filter_by_floorplan",
 ]

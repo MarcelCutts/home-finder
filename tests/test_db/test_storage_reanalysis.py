@@ -54,7 +54,7 @@ def _make_merged(
     return MergedProperty(
         canonical=prop,
         sources=sources,
-        source_urls={s: prop.url for s in sources},
+        source_urls=dict.fromkeys(sources, prop.url),
         images=images,
         floorplan=floorplan,
         min_price=prop.price_pcm,
@@ -420,9 +420,7 @@ class TestReanalysisFeatureInteractions:
     """Tests that reanalysis flags don't interfere with other storage features."""
 
     @pytest.mark.asyncio
-    async def test_flagged_not_in_pending_analysis_queue(
-        self, storage: PropertyStorage
-    ) -> None:
+    async def test_flagged_not_in_pending_analysis_queue(self, storage: PropertyStorage) -> None:
         """Reanalysis-flagged properties should not appear in pending_analysis queue."""
         merged = await _save_analyzed_property(storage)
         await storage.request_reanalysis([merged.unique_id])

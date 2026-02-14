@@ -2,7 +2,6 @@
 
 from io import BytesIO
 
-import pytest
 from PIL import Image
 
 from home_finder.utils.image_processing import (

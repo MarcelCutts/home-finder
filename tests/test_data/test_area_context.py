@@ -119,8 +119,11 @@ class TestAcousticProfiles:
 
     def test_acoustic_profiles_have_required_fields(self) -> None:
         required = {
-            "label", "airborne_insulation_db", "hosting_safety",
-            "summary", "viewing_checks",
+            "label",
+            "airborne_insulation_db",
+            "hosting_safety",
+            "summary",
+            "viewing_checks",
         }
         for key, profile in ACOUSTIC_PROFILES.items():
             missing = required - set(profile.keys())

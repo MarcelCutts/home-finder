@@ -4,11 +4,11 @@ import importlib
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from home_finder.scrapers.base import BaseScraper  # noqa: F401
-    from home_finder.scrapers.onthemarket import OnTheMarketScraper  # noqa: F401
-    from home_finder.scrapers.openrent import OpenRentScraper  # noqa: F401
-    from home_finder.scrapers.rightmove import RightmoveScraper  # noqa: F401
-    from home_finder.scrapers.zoopla import ZooplaScraper  # noqa: F401
+    from home_finder.scrapers.base import BaseScraper
+    from home_finder.scrapers.onthemarket import OnTheMarketScraper
+    from home_finder.scrapers.openrent import OpenRentScraper
+    from home_finder.scrapers.rightmove import RightmoveScraper
+    from home_finder.scrapers.zoopla import ZooplaScraper
 
 __all__ = [
     "BaseScraper",

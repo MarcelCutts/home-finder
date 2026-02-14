@@ -36,7 +36,7 @@ def _analyze(image_bytes: bytes) -> tuple[bool, float]:
     """Core analysis — separated for cleaner error handling."""
     from PIL import Image, ImageFilter, ImageStat
 
-    img = Image.open(BytesIO(image_bytes))
+    img: Image.Image = Image.open(BytesIO(image_bytes))
     # Thumbnail to 256x256 for speed — we only need statistics
     img.thumbnail((256, 256))
     img = img.convert("RGB")
@@ -63,7 +63,8 @@ def _analyze(image_bytes: bytes) -> tuple[bool, float]:
     # ── Heuristic 2: Brightness / white pixel ratio (weight 0.25) ──
     # Floorplans have lots of white/near-white background
     grayscale = img.convert("L")
-    bright_pixels = sum(1 for p in grayscale.get_flattened_data() if p > 200)
+    pixel_data: tuple[int, ...] = grayscale.get_flattened_data()  # type: ignore[assignment]
+    bright_pixels = sum(1 for p in pixel_data if p > 200)
     bright_ratio = bright_pixels / total_pixels
     # 60-90% bright pixels → floorplan; <30% → definitely photo
     if bright_ratio > 0.7:
@@ -91,7 +92,8 @@ def _analyze(image_bytes: bytes) -> tuple[bool, float]:
     # ── Heuristic 4: Edge density (weight 0.20) ──
     # Floorplans have moderate-high edge density (thin lines on white)
     edges = grayscale.filter(ImageFilter.FIND_EDGES)
-    edge_pixels = sum(1 for p in edges.get_flattened_data() if p > 30)
+    edge_data: tuple[int, ...] = edges.get_flattened_data()  # type: ignore[assignment]
+    edge_pixels = sum(1 for p in edge_data if p > 30)
     edge_ratio = edge_pixels / total_pixels
     # Floorplans: ~5-25% edge pixels; photos: very variable
     if 0.03 <= edge_ratio <= 0.30:

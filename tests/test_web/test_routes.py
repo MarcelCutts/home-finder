@@ -1572,3 +1572,42 @@ class TestAcousticCard:
         assert "Noise Enforcement" in resp.text
         assert "Hackney" in resp.text
         assert "NoiseWorks" in resp.text
+
+    @pytest.mark.asyncio
+    async def test_acoustic_card_absent_for_unknown_property_type(
+        self,
+        client: TestClient,
+        storage: PropertyStorage,
+        merged_a: MergedProperty,
+        prop_a: Property,
+    ) -> None:
+        """property_type='unknown' should not render acoustic card."""
+        from home_finder.models import (
+            ConditionAnalysis,
+            KitchenAnalysis,
+            LightSpaceAnalysis,
+            ListingExtraction,
+            PropertyQualityAnalysis,
+            SpaceAnalysis,
+        )
+
+        await storage.save_merged_property(merged_a)
+        analysis = PropertyQualityAnalysis(
+            kitchen=KitchenAnalysis(overall_quality="modern"),
+            condition=ConditionAnalysis(
+                overall_condition="good",
+                confidence="high",
+            ),
+            light_space=LightSpaceAnalysis(natural_light="good"),
+            space=SpaceAnalysis(confidence="high"),
+            listing_extraction=ListingExtraction(
+                property_type="unknown",
+            ),
+            overall_rating=4,
+            summary="Unknown type.",
+        )
+        await storage.save_quality_analysis(prop_a.unique_id, analysis)
+
+        resp = client.get(f"/property/{merged_a.unique_id}")
+        assert resp.status_code == 200
+        assert "Sound &amp; Hosting" not in resp.text

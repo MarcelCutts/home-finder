@@ -164,7 +164,7 @@ class CommuteFilter:
                 )
 
                 response = await client.time_filter(
-                    locations=[arrival_location] + departure_locations,
+                    locations=[arrival_location, *departure_locations],
                     departure_searches=[],
                     arrival_searches=[arrival_search],
                 )

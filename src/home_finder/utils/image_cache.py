@@ -46,7 +46,7 @@ def url_to_filename(url: str, image_type: str, index: int) -> str:
 
     E.g. "gallery_003_a1b2c3d4.jpg"
     """
-    url_hash = hashlib.md5(url.encode()).hexdigest()[:8]  # noqa: S324
+    url_hash = hashlib.md5(url.encode()).hexdigest()[:8]
     # Guess extension from URL
     path = url.split("?")[0].lower()
     ext = "jpg"

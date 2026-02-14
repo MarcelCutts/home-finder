@@ -477,7 +477,7 @@ class PropertyStorage:
             chunk = unique_ids[i : i + chunk_size]
             placeholders = ",".join("?" * len(chunk))
             cursor = await conn.execute(
-                f"SELECT unique_id FROM properties WHERE unique_id IN ({placeholders})",  # noqa: S608
+                f"SELECT unique_id FROM properties WHERE unique_id IN ({placeholders})",
                 chunk,
             )
             rows = await cursor.fetchall()
@@ -1169,7 +1169,7 @@ class PropertyStorage:
         values = list(counts.values())
         values.append(run_id)
         await conn.execute(
-            f"UPDATE pipeline_runs SET {set_clauses} WHERE id = ?",  # noqa: S608
+            f"UPDATE pipeline_runs SET {set_clauses} WHERE id = ?",
             values,
         )
         await conn.commit()
@@ -1477,14 +1477,14 @@ class PropertyStorage:
         placeholders = ",".join("?" * len(ids))
 
         await conn.execute(
-            f"DELETE FROM quality_analyses WHERE property_unique_id IN ({placeholders})",  # noqa: S608
+            f"DELETE FROM quality_analyses WHERE property_unique_id IN ({placeholders})",
             ids,
         )
         await conn.execute(
             f"""
             UPDATE properties SET notification_status = ?
             WHERE unique_id IN ({placeholders})
-            """,  # noqa: S608
+            """,
             [NotificationStatus.PENDING_ANALYSIS.value, *ids],
         )
         await conn.commit()
@@ -1522,7 +1522,7 @@ class PropertyStorage:
                 UPDATE quality_analyses
                 SET reanalysis_requested_at = ?
                 WHERE property_unique_id IN ({placeholders})
-                """,  # noqa: S608
+                """,
                 [now, *chunk],
             )
             total += cursor.rowcount
@@ -1579,7 +1579,7 @@ class PropertyStorage:
                     SELECT p.unique_id FROM properties p
                     WHERE {or_clause}
                 )
-                """,  # noqa: S608
+                """,
                 params,
             )
 
@@ -1873,7 +1873,7 @@ class PropertyStorage:
             SELECT COUNT(*) FROM properties p
             LEFT JOIN quality_analyses q ON p.unique_id = q.property_unique_id
             WHERE {where_sql}
-            """,  # noqa: S608
+            """,
             params,
         )
         row = await cursor.fetchone()
@@ -1942,7 +1942,7 @@ class PropertyStorage:
             LEFT JOIN quality_analyses q ON p.unique_id = q.property_unique_id
             WHERE {where_sql}
               AND p.latitude IS NOT NULL AND p.longitude IS NOT NULL
-            """,  # noqa: S608
+            """,
             params,
         )
         rows = await cursor.fetchall()
@@ -2033,7 +2033,7 @@ class PropertyStorage:
             SELECT COUNT(*) FROM properties p
             LEFT JOIN quality_analyses q ON p.unique_id = q.property_unique_id
             WHERE {where_sql}
-            """,  # noqa: S608
+            """,
             params,
         )
         count_row = await count_cursor.fetchone()
@@ -2062,7 +2062,7 @@ class PropertyStorage:
                 FROM properties p
                 LEFT JOIN quality_analyses q ON p.unique_id = q.property_unique_id
                 WHERE {where_sql}
-                """,  # noqa: S608
+                """,
                 params,
             )
         else:
@@ -2080,7 +2080,7 @@ class PropertyStorage:
                 WHERE {where_sql}
                 ORDER BY {order_sql}
                 LIMIT ? OFFSET ?
-                """,  # noqa: S608
+                """,
                 [*params, per_page, offset],
             )
         rows = await cursor.fetchall()

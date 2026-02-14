@@ -48,7 +48,7 @@ WEIGHTS: dict[str, float] = {
 class _DimensionResult:
     """Score (0-100) and confidence (0.0-1.0) for a single dimension."""
 
-    __slots__ = ("score", "confidence")
+    __slots__ = ("confidence", "score")
 
     def __init__(self, score: float, confidence: float) -> None:
         self.score = max(0.0, min(100.0, score))
@@ -419,9 +419,9 @@ def _score_vibe(analysis: dict[str, Any], _bedrooms: int) -> _DimensionResult:
             "Compact living room": -4,
             "Small living room": -4,
         }
-        for l in lowlights:
-            if isinstance(l, str) and l in _LOWLIGHT_SCORES:
-                cluster6 += _LOWLIGHT_SCORES[l]
+        for lowlight in lowlights:
+            if isinstance(lowlight, str) and lowlight in _LOWLIGHT_SCORES:
+                cluster6 += _LOWLIGHT_SCORES[lowlight]
                 clusters_with_signal.add("highlights")
 
     cluster6 = min(20.0, cluster6)

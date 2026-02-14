@@ -59,7 +59,7 @@ async def _pipeline_loop(settings: Settings, interval_minutes: int) -> None:
                 except Exception:
                     logger.error("pipeline_scheduler_error", exc_info=True)
 
-        jitter = random.uniform(-_JITTER_SECONDS, _JITTER_SECONDS)  # noqa: S311
+        jitter = random.uniform(-_JITTER_SECONDS, _JITTER_SECONDS)
         sleep_seconds = interval_minutes * 60 + jitter
         logger.info(
             "pipeline_scheduler_sleeping",

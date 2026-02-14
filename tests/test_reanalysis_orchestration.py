@@ -138,9 +138,7 @@ class TestRunReanalysisRequestOnly:
             prop = _make_property(source_id=f"z-e8-{i}", postcode="E8 3RH")
             merged = _make_merged(prop)
             await populated_storage.save_pre_analysis_properties([merged], {})
-            await populated_storage.complete_analysis(
-                merged.unique_id, _make_quality_analysis()
-            )
+            await populated_storage.complete_analysis(merged.unique_id, _make_quality_analysis())
             await populated_storage.mark_notified(merged.unique_id)
 
         with patch("home_finder.main.PropertyQualityFilter") as mock_qf_cls:
@@ -165,9 +163,7 @@ class TestRunReanalysisRequestOnly:
             prop = _make_property(source_id=sid, postcode=pc)
             merged = _make_merged(prop)
             await populated_storage.save_pre_analysis_properties([merged], {})
-            await populated_storage.complete_analysis(
-                merged.unique_id, _make_quality_analysis()
-            )
+            await populated_storage.complete_analysis(merged.unique_id, _make_quality_analysis())
             await populated_storage.mark_notified(merged.unique_id)
 
         with patch("home_finder.main.PropertyQualityFilter") as mock_qf_cls:
@@ -243,9 +239,7 @@ class TestRunReanalysisSuccess:
         new_analysis = _make_quality_analysis(rating=5)
 
         mock_filter = AsyncMock()
-        mock_filter.analyze_single_merged = AsyncMock(
-            return_value=(merged, new_analysis)
-        )
+        mock_filter.analyze_single_merged = AsyncMock(return_value=(merged, new_analysis))
         mock_filter.close = AsyncMock()
 
         with patch("home_finder.main.PropertyQualityFilter", return_value=mock_filter):
@@ -272,9 +266,7 @@ class TestRunReanalysisSuccess:
         """Multiple properties all reanalyzed successfully."""
         merged_list = []
         for i in range(3):
-            m = await _save_and_flag(
-                populated_storage, source_id=f"z-{i}", postcode="E8 3RH"
-            )
+            m = await _save_and_flag(populated_storage, source_id=f"z-{i}", postcode="E8 3RH")
             merged_list.append(m)
 
         async def _mock_analyze(merged: MergedProperty, *, data_dir: str | None = None):
@@ -305,9 +297,7 @@ class TestRunReanalysisSuccess:
 
         new_analysis = _make_quality_analysis(rating=5)
         mock_filter = AsyncMock()
-        mock_filter.analyze_single_merged = AsyncMock(
-            return_value=(merged, new_analysis)
-        )
+        mock_filter.analyze_single_merged = AsyncMock(return_value=(merged, new_analysis))
         mock_filter.close = AsyncMock()
 
         with patch("home_finder.main.PropertyQualityFilter", return_value=mock_filter):
@@ -332,9 +322,7 @@ class TestRunReanalysisErrorHandling:
         """APIUnavailableError triggers circuit breaker — cancels remaining tasks."""
         merged_list = []
         for i in range(3):
-            m = await _save_and_flag(
-                populated_storage, source_id=f"z-{i}", postcode="E8 3RH"
-            )
+            m = await _save_and_flag(populated_storage, source_id=f"z-{i}", postcode="E8 3RH")
             merged_list.append(m)
 
         call_count = 0
@@ -367,12 +355,8 @@ class TestRunReanalysisErrorHandling:
         capsys: pytest.CaptureFixture[str],
     ) -> None:
         """RuntimeError on one property doesn't stop the rest."""
-        await _save_and_flag(
-            populated_storage, source_id="z-fail", postcode="E8 3RH"
-        )
-        await _save_and_flag(
-            populated_storage, source_id="z-ok", postcode="E8 4AA"
-        )
+        await _save_and_flag(populated_storage, source_id="z-fail", postcode="E8 3RH")
+        await _save_and_flag(populated_storage, source_id="z-ok", postcode="E8 4AA")
 
         call_count = 0
 
@@ -404,9 +388,7 @@ class TestRunReanalysisErrorHandling:
         merged = await _save_and_flag(populated_storage)
 
         mock_filter = AsyncMock()
-        mock_filter.analyze_single_merged = AsyncMock(
-            return_value=(merged, None)
-        )
+        mock_filter.analyze_single_merged = AsyncMock(return_value=(merged, None))
         mock_filter.close = AsyncMock()
 
         with patch("home_finder.main.PropertyQualityFilter", return_value=mock_filter):
@@ -429,9 +411,7 @@ class TestRunReanalysisErrorHandling:
         await _save_and_flag(populated_storage)
 
         mock_filter = AsyncMock()
-        mock_filter.analyze_single_merged = AsyncMock(
-            side_effect=APIUnavailableError("down")
-        )
+        mock_filter.analyze_single_merged = AsyncMock(side_effect=APIUnavailableError("down"))
         mock_filter.close = AsyncMock()
 
         with patch("home_finder.main.PropertyQualityFilter", return_value=mock_filter):

@@ -249,7 +249,7 @@ class TestOpenRentParser:
         """
         soup = BeautifulSoup(html, "html.parser")
         link = soup.find("a")
-        title, address, postcode = openrent_scraper._parse_link_text(link)
+        title, _address, postcode = openrent_scraper._parse_link_text(link)
 
         assert "Mare Street" in title
         assert postcode is not None

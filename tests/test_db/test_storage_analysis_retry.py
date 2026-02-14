@@ -55,7 +55,7 @@ def _make_merged(
     return MergedProperty(
         canonical=prop,
         sources=sources,
-        source_urls={s: prop.url for s in sources},
+        source_urls=dict.fromkeys(sources, prop.url),
         images=images,
         floorplan=floorplan,
         min_price=prop.price_pcm,

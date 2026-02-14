@@ -1,6 +1,5 @@
 """Tests for unenriched property storage and retry lifecycle."""
 
-import json
 from collections.abc import AsyncGenerator
 
 import pytest
@@ -49,7 +48,7 @@ def _make_merged(
     return MergedProperty(
         canonical=prop,
         sources=sources,
-        source_urls={s: prop.url for s in sources},
+        source_urls=dict.fromkeys(sources, prop.url),
         images=(),
         floorplan=None,
         min_price=prop.price_pcm,

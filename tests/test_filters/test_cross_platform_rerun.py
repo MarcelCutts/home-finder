@@ -249,7 +249,7 @@ class TestCrossPlatformRerun:
         merged_diff = _make_merged(DIFFERENT_FLAT)
 
         db_anchors = await storage.get_recent_properties_for_dedup(days=30)
-        genuinely_new, anchors_updated = await _split_dedup_results([merged_diff], db_anchors)
+        genuinely_new, _anchors_updated = await _split_dedup_results([merged_diff], db_anchors)
         assert len(genuinely_new) == 1
         assert genuinely_new[0].canonical.unique_id == DIFFERENT_FLAT.unique_id
 

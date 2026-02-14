@@ -26,7 +26,6 @@ from home_finder.models import (
     PropertySource,
 )
 
-
 # ---------------------------------------------------------------------------
 # Golden HTTP response payloads (matching real Anthropic API format)
 # ---------------------------------------------------------------------------
@@ -114,7 +113,10 @@ PHASE1_VISUAL_RESPONSE: dict[str, Any] = {
                 "overall_rating": 4,
                 "condition_concerns": False,
                 "concern_severity": "none",
-                "summary": "Well-maintained Victorian conversion with modern kitchen and good natural light. Spacious living room suits WFH and hosting.",
+                "summary": (
+                    "Well-maintained Victorian conversion with modern kitchen"
+                    " and good natural light. Spacious living room suits WFH and hosting."
+                ),
             },
         }
     ],
@@ -466,7 +468,7 @@ class TestHTTPErrorHandling:
         self, test_merged_property: MergedProperty
     ) -> None:
         """Phase 2 HTTP failure should return partial analysis with Phase 1 data."""
-        route = respx.post("https://api.anthropic.com/v1/messages").mock(
+        respx.post("https://api.anthropic.com/v1/messages").mock(
             side_effect=[
                 httpx.Response(200, json=PHASE1_VISUAL_RESPONSE),
                 httpx.Response(

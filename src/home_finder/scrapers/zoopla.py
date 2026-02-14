@@ -325,7 +325,10 @@ class ZooplaScraper(BaseScraper):
             self._warmed_up = True  # Don't retry on failure
 
     def _is_cloudflare_challenge(self, response: Any) -> bool:
-        """Detect Cloudflare challenge pages (403/503 with challenge HTML, or cf-mitigated header)."""
+        """Detect Cloudflare challenge pages.
+
+        Matches 403/503 with challenge HTML, or cf-mitigated header.
+        """
         if response.headers.get("cf-mitigated") == "challenge":
             return True
         if response.status_code in (403, 503):
@@ -461,7 +464,8 @@ class ZooplaScraper(BaseScraper):
                 if response.status_code == 200:
                     if not self._is_cloudflare_challenge(response):
                         self._consecutive_blocks = 0
-                        return response.text
+                        text: str = response.text
+                        return text
                     # Soft challenge (200 with challenge HTML) — treat as challenge
                     logger.warning("zoopla_soft_challenge", url=url, attempt=attempt + 1)
 

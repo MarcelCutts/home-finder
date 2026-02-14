@@ -4,17 +4,12 @@ Tests invariants of core algorithms: dedup scoring, address normalization,
 postcode extraction. These discover edge cases that example-based tests miss.
 """
 
-import math
-
-import pytest
-from hypothesis import assume, given, settings
+from hypothesis import assume, given
 from hypothesis import strategies as st
 
 from home_finder.filters.scoring import (
-    COORDINATE_DISTANCE_METERS,
     MATCH_THRESHOLD,
     MINIMUM_SIGNALS,
-    PRICE_TOLERANCE,
     MatchScore,
     calculate_match_score,
     graduated_coordinate_score,
@@ -24,7 +19,6 @@ from home_finder.filters.scoring import (
 )
 from home_finder.models import Property, PropertySource
 from home_finder.utils.address import extract_outcode, is_outcode, normalize_street_name
-
 
 # ---------------------------------------------------------------------------
 # Strategies

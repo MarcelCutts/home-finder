@@ -6,11 +6,10 @@ storage, and mock notifiers. Focuses on wiring correctness and stage ordering.
 
 from collections.abc import Callable
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 import pytest_asyncio
-from pydantic import HttpUrl
 
 from home_finder.config import Settings
 from home_finder.db import PropertyStorage
@@ -29,7 +28,6 @@ from home_finder.models import (
     PropertySource,
     TransportMode,
 )
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -167,7 +165,6 @@ class TestRunQualityAndSave:
         make_property: Callable[..., Property],
         make_merged_property: Callable[..., MergedProperty],
     ) -> None:
-        prop = make_property()
         merged = make_merged_property()
         commute = (15, TransportMode.PUBLIC_TRANSPORT)
         pre = PreAnalysisResult(
@@ -309,7 +306,7 @@ class TestScrapeAllPlatforms:
         ]:
             mock_cls.return_value = _mock_scraper(src)
 
-        result = await scrape_all_platforms(
+        await scrape_all_platforms(
             min_price=1500,
             max_price=2500,
             min_bedrooms=1,
@@ -500,7 +497,6 @@ class TestPreAnalysisPipeline:
         make_merged_property: Callable[..., MergedProperty],
     ) -> None:
         prop = make_property(source_id="seen")
-        merged = make_merged_property()
         # Use the same canonical property for consistent unique_id
         merged_with_prop = MergedProperty(
             canonical=prop,

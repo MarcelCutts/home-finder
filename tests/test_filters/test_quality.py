@@ -8,11 +8,11 @@ from anthropic.types import ToolUseBlock
 from pydantic import HttpUrl, ValidationError
 
 from home_finder.filters.quality import (
+    _CIRCUIT_BREAKER_THRESHOLD,
     EVALUATION_TOOL,
     VISUAL_ANALYSIS_TOOL,
     APIUnavailableError,
     PropertyQualityFilter,
-    _CIRCUIT_BREAKER_THRESHOLD,
     assess_value,
     build_evaluation_prompt,
 )
@@ -902,7 +902,7 @@ class TestPropertyQualityFilter:
         call_args = quality_filter._client.messages.create.call_args_list[0]
         content = call_args.kwargs["messages"][0]["content"]
 
-        # 3 gallery × (label + image) + 1 floorplan × (label + image) + 1 text = 9
+        # 3 gallery x (label + image) + 1 floorplan x (label + image) + 1 text = 9
         assert len(content) == 9
         assert content[0]["type"] == "text"  # "Gallery image 1:"
         assert content[1]["type"] == "image"
@@ -957,8 +957,7 @@ class TestPropertyQualityFilter:
         label_blocks = [
             c
             for c in content
-            if c.get("type") == "text"
-            and "image" in c.get("text", "").lower()
+            if (c.get("type") == "text" and "image" in c.get("text", "").lower())
             or "Floorplan" in c.get("text", "")
         ]
         assert len(label_blocks) >= 4  # at least 4 gallery labels
@@ -1747,7 +1746,7 @@ class TestCircuitBreaker:
 
         assert not quality_filter._circuit_open
 
-        for i in range(_CIRCUIT_BREAKER_THRESHOLD):
+        for _ in range(_CIRCUIT_BREAKER_THRESHOLD):
             with pytest.raises(APIUnavailableError):
                 await quality_filter.analyze_single_merged(sample_merged_property)
 
@@ -1876,7 +1875,7 @@ class TestCircuitBreaker:
 
         # Exceed threshold — circuit should NOT open (BadRequestError is request-specific)
         for _ in range(_CIRCUIT_BREAKER_THRESHOLD + 1):
-            merged, analysis = await quality_filter.analyze_single_merged(sample_merged_property)
+            _merged, analysis = await quality_filter.analyze_single_merged(sample_merged_property)
             assert "No images available" in analysis.summary
 
         assert not quality_filter._circuit_open
@@ -1894,7 +1893,102 @@ class TestCircuitBreaker:
         )
 
         for _ in range(_CIRCUIT_BREAKER_THRESHOLD + 1):
-            merged, analysis = await quality_filter.analyze_single_merged(sample_merged_property)
+            _merged, analysis = await quality_filter.analyze_single_merged(sample_merged_property)
             assert "No images available" in analysis.summary
 
         assert not quality_filter._circuit_open
+
+
+class TestAcousticContextMapping:
+    """Tests for building_construction → acoustic profile mapping."""
+
+    def _build_acoustic_context(self, visual_data: dict[str, Any]) -> str | None:
+        """Replicate the mapping logic from _analyze_property."""
+        from home_finder.data.area_context import ACOUSTIC_PROFILES
+
+        flooring_raw = visual_data.get("flooring_noise")
+        construction: str | None = (
+            flooring_raw.get("building_construction") if isinstance(flooring_raw, dict) else None
+        )
+        if not construction:
+            return None
+        mapping = {
+            "timber_frame": "victorian",
+            "concrete": "ex_council",
+            "solid_brick": "purpose_built",
+        }
+        profile_key = mapping.get(construction)
+        if not profile_key:
+            return None
+        profile = ACOUSTIC_PROFILES.get(profile_key)
+        if not profile:
+            return None
+        db_range = profile["airborne_insulation_db"]
+        return (
+            f"Building construction: {construction}\n"
+            f"Typical sound insulation: {db_range} dB airborne\n"
+            f"Hosting safety: {profile['hosting_safety']}\n"
+            f"{profile['summary']}"
+        )
+
+    def test_timber_frame_maps_to_victorian(self) -> None:
+        visual = {
+            "flooring_noise": {"building_construction": "timber_frame"},
+        }
+        ctx = self._build_acoustic_context(visual)
+        assert ctx is not None
+        assert "timber_frame" in ctx
+        assert "poor" in ctx  # victorian hosting_safety
+
+    def test_concrete_maps_to_ex_council(self) -> None:
+        visual = {
+            "flooring_noise": {"building_construction": "concrete"},
+        }
+        ctx = self._build_acoustic_context(visual)
+        assert ctx is not None
+        assert "concrete" in ctx
+        assert "moderate" in ctx  # ex_council hosting_safety
+
+    def test_solid_brick_maps_to_purpose_built(self) -> None:
+        visual = {
+            "flooring_noise": {"building_construction": "solid_brick"},
+        }
+        ctx = self._build_acoustic_context(visual)
+        assert ctx is not None
+        assert "solid_brick" in ctx
+        assert "moderate" in ctx  # purpose_built hosting_safety
+
+    def test_mixed_returns_none(self) -> None:
+        visual = {
+            "flooring_noise": {"building_construction": "mixed"},
+        }
+        assert self._build_acoustic_context(visual) is None
+
+    def test_unknown_returns_none(self) -> None:
+        visual = {
+            "flooring_noise": {"building_construction": "unknown"},
+        }
+        assert self._build_acoustic_context(visual) is None
+
+    def test_missing_flooring_noise_returns_none(self) -> None:
+        assert self._build_acoustic_context({}) is None
+
+    def test_flooring_noise_not_dict_returns_none(self) -> None:
+        visual = {"flooring_noise": "some string"}
+        assert self._build_acoustic_context(visual) is None
+
+    def test_context_injected_into_evaluation_prompt(self) -> None:
+        """Acoustic context flows through to build_evaluation_prompt."""
+        visual = {
+            "flooring_noise": {"building_construction": "concrete"},
+        }
+        ctx = self._build_acoustic_context(visual)
+        prompt = build_evaluation_prompt(
+            visual_data=visual,
+            price_pcm=1800,
+            bedrooms=1,
+            area_average=1900,
+            acoustic_context=ctx,
+        )
+        assert "<acoustic_context>" in prompt
+        assert "concrete" in prompt

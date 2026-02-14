@@ -2,7 +2,6 @@
 
 from io import BytesIO
 
-import pytest
 from PIL import Image, ImageDraw
 
 from home_finder.utils.floorplan_detector import CONFIDENCE_THRESHOLD, detect_floorplan
@@ -76,15 +75,15 @@ class TestDetectFloorplan:
     def test_pure_white_image(self) -> None:
         """Pure white image has high brightness/low saturation but no edges."""
         img_bytes = _make_image_bytes(bg_color=(255, 255, 255))
-        is_fp, confidence = detect_floorplan(img_bytes)
-        # May or may not be detected — the important thing is it doesn't crash
+        _is_fp, confidence = detect_floorplan(img_bytes)
+        # May or may not be detected -- the important thing is it doesn't crash
         # and confidence is reasonable (high brightness + low saturation but no edges)
         assert 0.0 <= confidence <= 1.0
 
     def test_dark_image_not_detected(self) -> None:
         """A dark image should not be detected as a floorplan."""
         img_bytes = _make_image_bytes(bg_color=(30, 30, 30))
-        is_fp, confidence = detect_floorplan(img_bytes)
+        is_fp, _confidence = detect_floorplan(img_bytes)
         assert is_fp is False
 
     def test_corrupt_bytes_returns_false(self) -> None:
@@ -146,5 +145,5 @@ class TestDetectFloorplan:
             draw.rectangle([200, h // 2 + 10, 300, h - 10], fill=(200, 60, 60))  # red table
 
         img_bytes = _make_image_bytes(draw_fn=draw_3d)
-        is_fp, confidence = detect_floorplan(img_bytes)
+        is_fp, _confidence = detect_floorplan(img_bytes)
         assert is_fp is False

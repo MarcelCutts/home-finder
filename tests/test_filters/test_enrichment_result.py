@@ -4,7 +4,7 @@ from unittest.mock import AsyncMock, patch
 
 from pydantic import HttpUrl
 
-from home_finder.filters.detail_enrichment import EnrichmentResult, enrich_merged_properties
+from home_finder.filters.detail_enrichment import enrich_merged_properties
 from home_finder.models import MergedProperty, Property, PropertySource
 from home_finder.scrapers.detail_fetcher import DetailFetcher, DetailPageData
 
