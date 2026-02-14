@@ -33,6 +33,7 @@ class FitDimension(TypedDict):
     weight: int  # 25, 20, 15, etc.
     confidence: float  # 0.0-1.0
 
+
 # ── Dimension weights ──────────────────────────────────────────────────────────
 WEIGHTS: dict[str, float] = {
     "workspace": 25,

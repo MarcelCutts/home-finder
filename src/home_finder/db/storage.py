@@ -258,6 +258,7 @@ class PropertyStorage:
             ("epc_rating", "TEXT"),
             ("has_outdoor_space", "BOOLEAN"),
             ("red_flag_count", "INTEGER"),
+            ("reanalysis_requested_at", "TEXT"),
         ]:
             with contextlib.suppress(Exception):
                 await conn.execute(f"ALTER TABLE quality_analyses ADD COLUMN {column} {col_type}")
@@ -1490,6 +1491,216 @@ class PropertyStorage:
 
         logger.info("reset_failed_analyses", count=len(ids), unique_ids=ids)
         return len(ids)
+
+    # ------------------------------------------------------------------
+    # Re-analysis support
+    # ------------------------------------------------------------------
+
+    async def request_reanalysis(self, unique_ids: list[str]) -> int:
+        """Mark specific properties for re-analysis.
+
+        Sets reanalysis_requested_at on matching quality_analyses rows.
+        Idempotent — re-requesting just updates the timestamp.
+
+        Args:
+            unique_ids: Property unique IDs to flag for re-analysis.
+
+        Returns:
+            Number of rows updated.
+        """
+        if not unique_ids:
+            return 0
+        conn = await self._get_connection()
+        now = datetime.now(UTC).isoformat()
+        total = 0
+        chunk_size = 500
+        for i in range(0, len(unique_ids), chunk_size):
+            chunk = unique_ids[i : i + chunk_size]
+            placeholders = ",".join("?" * len(chunk))
+            cursor = await conn.execute(
+                f"""
+                UPDATE quality_analyses
+                SET reanalysis_requested_at = ?
+                WHERE property_unique_id IN ({placeholders})
+                """,  # noqa: S608
+                [now, *chunk],
+            )
+            total += cursor.rowcount
+        await conn.commit()
+        logger.info("reanalysis_requested", count=total, ids=unique_ids)
+        return total
+
+    async def request_reanalysis_by_filter(
+        self,
+        *,
+        outcodes: list[str] | None = None,
+        all_properties: bool = False,
+    ) -> int:
+        """Bulk-mark properties for re-analysis by outcode or all.
+
+        Only targets properties that already have a quality analysis.
+
+        Args:
+            outcodes: Outcode prefixes to match (e.g. ["E2", "E8"]).
+            all_properties: If True, mark all analyzed properties.
+
+        Returns:
+            Number of rows updated.
+        """
+        if not outcodes and not all_properties:
+            return 0
+        conn = await self._get_connection()
+        now = datetime.now(UTC).isoformat()
+
+        if all_properties:
+            cursor = await conn.execute(
+                """
+                UPDATE quality_analyses
+                SET reanalysis_requested_at = ?
+                WHERE property_unique_id IN (
+                    SELECT unique_id FROM properties
+                )
+                """,
+                (now,),
+            )
+        else:
+            # Build OR conditions for outcode prefix matching
+            conditions = []
+            params: list[str] = [now]
+            for outcode in outcodes or []:
+                conditions.append("UPPER(p.postcode) LIKE ?")
+                params.append(f"{outcode.upper()}%")
+            or_clause = " OR ".join(conditions)
+            cursor = await conn.execute(
+                f"""
+                UPDATE quality_analyses
+                SET reanalysis_requested_at = ?
+                WHERE property_unique_id IN (
+                    SELECT p.unique_id FROM properties p
+                    WHERE {or_clause}
+                )
+                """,  # noqa: S608
+                params,
+            )
+
+        await conn.commit()
+        count = cursor.rowcount
+        logger.info(
+            "reanalysis_requested_by_filter",
+            count=count,
+            outcodes=outcodes,
+            all_properties=all_properties,
+        )
+        return count
+
+    async def get_reanalysis_queue(self, *, outcode: str | None = None) -> list[MergedProperty]:
+        """Load properties flagged for re-analysis.
+
+        Reconstructs MergedProperty objects from DB rows, same pattern
+        as get_pending_analysis_properties().
+
+        Args:
+            outcode: Optional outcode filter (prefix match).
+
+        Returns:
+            List of MergedProperty objects needing re-analysis.
+        """
+        conn = await self._get_connection()
+
+        if outcode:
+            query = """
+                SELECT p.* FROM properties p
+                JOIN quality_analyses q ON p.unique_id = q.property_unique_id
+                WHERE q.reanalysis_requested_at IS NOT NULL
+                  AND UPPER(p.postcode) LIKE ?
+                ORDER BY p.first_seen ASC
+            """
+            params: list[str] = [f"{outcode.upper()}%"]
+            cursor = await conn.execute(query, params)
+        else:
+            cursor = await conn.execute("""
+                SELECT p.* FROM properties p
+                JOIN quality_analyses q ON p.unique_id = q.property_unique_id
+                WHERE q.reanalysis_requested_at IS NOT NULL
+                ORDER BY p.first_seen ASC
+            """)
+
+        rows = await cursor.fetchall()
+
+        results: list[MergedProperty] = []
+        for row in rows:
+            prop = self._row_to_tracked_property(row).property
+
+            sources_list: list[PropertySource] = []
+            source_urls: dict[PropertySource, HttpUrl] = {}
+            descriptions: dict[PropertySource, str] = {}
+
+            if row["sources"]:
+                for s in json.loads(row["sources"]):
+                    sources_list.append(PropertySource(s))
+            else:
+                sources_list.append(prop.source)
+
+            if row["source_urls"]:
+                for s, url in json.loads(row["source_urls"]).items():
+                    source_urls[PropertySource(s)] = HttpUrl(url)
+            else:
+                source_urls[prop.source] = prop.url
+
+            if row["descriptions_json"]:
+                for s, desc in json.loads(row["descriptions_json"]).items():
+                    descriptions[PropertySource(s)] = desc
+
+            # Load images
+            images = await self.get_property_images(prop.unique_id)
+            gallery = tuple(img for img in images if img.image_type == "gallery")
+            floorplan_img = next((img for img in images if img.image_type == "floorplan"), None)
+
+            min_price = row["min_price"] if row["min_price"] is not None else prop.price_pcm
+            max_price = row["max_price"] if row["max_price"] is not None else prop.price_pcm
+
+            results.append(
+                MergedProperty(
+                    canonical=prop,
+                    sources=tuple(sources_list),
+                    source_urls=source_urls,
+                    images=gallery,
+                    floorplan=floorplan_img,
+                    min_price=min_price,
+                    max_price=max_price,
+                    descriptions=descriptions,
+                )
+            )
+
+        logger.info("loaded_reanalysis_queue", count=len(results))
+        return results
+
+    async def complete_reanalysis(
+        self,
+        unique_id: str,
+        analysis: PropertyQualityAnalysis,
+    ) -> None:
+        """Save updated quality analysis and clear the re-analysis flag.
+
+        Does NOT touch notification_status — property stays 'sent'.
+
+        Args:
+            unique_id: Property unique ID.
+            analysis: New quality analysis result.
+        """
+        await self.save_quality_analysis(unique_id, analysis)
+
+        conn = await self._get_connection()
+        await conn.execute(
+            """
+            UPDATE quality_analyses
+            SET reanalysis_requested_at = NULL
+            WHERE property_unique_id = ?
+            """,
+            (unique_id,),
+        )
+        await conn.commit()
+        logger.debug("reanalysis_completed", unique_id=unique_id)
 
     @staticmethod
     def _build_filter_clauses(

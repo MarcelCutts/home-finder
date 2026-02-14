@@ -405,9 +405,7 @@ class TestZooplaEarlyStop:
         assert "results_sort=newest_listings" in url
 
     @pytest.mark.asyncio
-    async def test_stops_when_all_results_known(
-        self, zoopla_scraper: ZooplaScraper
-    ) -> None:
+    async def test_stops_when_all_results_known(self, zoopla_scraper: ZooplaScraper) -> None:
         """When all page-1 properties are already in DB, stop without fetching page 2."""
         listings_data = [
             {
@@ -451,9 +449,7 @@ class TestZooplaEarlyStop:
         assert result == []  # All known → nothing returned
 
     @pytest.mark.asyncio
-    async def test_continues_when_some_results_new(
-        self, zoopla_scraper: ZooplaScraper
-    ) -> None:
+    async def test_continues_when_some_results_new(self, zoopla_scraper: ZooplaScraper) -> None:
         """When only some results are known, don't early-stop — fetch next page."""
         listings_data = [
             {
@@ -533,7 +529,7 @@ class TestCloudflareDetection:
         """503 with Cloudflare markers is a challenge."""
         resp = _make_response(
             status_code=503,
-            text='<html><body>Cloudflare Ray ID: abc123</body></html>',
+            text="<html><body>Cloudflare Ray ID: abc123</body></html>",
         )
         assert zoopla_scraper._is_cloudflare_challenge(resp) is True
 
@@ -541,7 +537,7 @@ class TestCloudflareDetection:
         """403 with _cf_chl_opt script is a challenge."""
         resp = _make_response(
             status_code=403,
-            text='<script>window._cf_chl_opt={}</script>',
+            text="<script>window._cf_chl_opt={}</script>",
         )
         assert zoopla_scraper._is_cloudflare_challenge(resp) is True
 
@@ -676,9 +672,7 @@ class TestFetchPageRetry:
         mock_session.get = AsyncMock(return_value=ok_resp)
 
         with patch.object(zoopla_scraper, "_get_session", return_value=mock_session):
-            await zoopla_scraper._fetch_page(
-                "https://example.com", impersonate_target="safari"
-            )
+            await zoopla_scraper._fetch_page("https://example.com", impersonate_target="safari")
 
         call_kwargs = mock_session.get.call_args[1]
         assert call_kwargs["impersonate"] == "safari"
@@ -694,9 +688,7 @@ class TestProfileRotation:
             assert target in ZooplaScraper._IMPERSONATE_TARGETS
 
     @pytest.mark.asyncio
-    async def test_scrape_passes_impersonate_to_fetch(
-        self, zoopla_scraper: ZooplaScraper
-    ) -> None:
+    async def test_scrape_passes_impersonate_to_fetch(self, zoopla_scraper: ZooplaScraper) -> None:
         """scrape() should pass a chosen impersonate target to _fetch_page."""
         mock_fetch = AsyncMock(return_value="<html></html>")
         with patch.object(zoopla_scraper, "_fetch_page", mock_fetch):
@@ -712,3 +704,273 @@ class TestProfileRotation:
         call_kwargs = mock_fetch.call_args[1]
         assert "impersonate_target" in call_kwargs
         assert call_kwargs["impersonate_target"] in ZooplaScraper._IMPERSONATE_TARGETS
+
+
+class TestWarmUp:
+    """Tests for homepage warm-up before searching."""
+
+    @pytest.mark.asyncio
+    async def test_warm_up_visits_homepage(self) -> None:
+        """Warm-up should GET the homepage to establish cookies."""
+        scraper = ZooplaScraper()
+        mock_session = AsyncMock()
+        mock_session.get = AsyncMock(return_value=_make_response(200))
+
+        with (
+            patch.object(scraper, "_get_session", return_value=mock_session),
+            patch("home_finder.scrapers.zoopla.asyncio.sleep", new_callable=AsyncMock),
+        ):
+            await scraper._warm_up()
+
+        mock_session.get.assert_called_once()
+        call_args = mock_session.get.call_args
+        assert call_args[0][0] == "https://www.zoopla.co.uk/"
+        assert scraper._warmed_up is True
+
+    @pytest.mark.asyncio
+    async def test_warm_up_only_once(self) -> None:
+        """Warm-up should not re-run if already done."""
+        scraper = ZooplaScraper()
+        scraper._warmed_up = True
+        mock_session = AsyncMock()
+
+        with patch.object(scraper, "_get_session", return_value=mock_session):
+            await scraper._warm_up()
+
+        mock_session.get.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_warm_up_failure_is_graceful(self) -> None:
+        """Warm-up failure should not prevent scraping."""
+        scraper = ZooplaScraper()
+        mock_session = AsyncMock()
+        mock_session.get = AsyncMock(side_effect=ConnectionError("timeout"))
+
+        with patch.object(scraper, "_get_session", return_value=mock_session):
+            await scraper._warm_up()
+
+        # Should be marked as warmed up (won't retry)
+        assert scraper._warmed_up is True
+
+    @pytest.mark.asyncio
+    async def test_scrape_calls_warm_up(self) -> None:
+        """scrape() should call _warm_up before fetching pages."""
+        scraper = ZooplaScraper()
+        warm_up_called = False
+
+        async def mock_warm_up() -> None:
+            nonlocal warm_up_called
+            warm_up_called = True
+
+        mock_fetch = AsyncMock(return_value="<html></html>")
+        with (
+            patch.object(scraper, "_warm_up", side_effect=mock_warm_up),
+            patch.object(scraper, "_fetch_page", mock_fetch),
+        ):
+            await scraper.scrape(
+                min_price=1800,
+                max_price=2500,
+                min_bedrooms=1,
+                max_bedrooms=2,
+                area="e8",
+            )
+
+        assert warm_up_called
+
+
+class TestAdaptiveDelay:
+    """Tests for adaptive inter-area delay based on consecutive blocks."""
+
+    @pytest.mark.asyncio
+    async def test_normal_delay_no_blocks(self) -> None:
+        """With 0 consecutive blocks, delay should be 10-20s."""
+        scraper = ZooplaScraper()
+        scraper._consecutive_blocks = 0
+
+        sleep_patch = patch("home_finder.scrapers.zoopla.asyncio.sleep", new_callable=AsyncMock)
+        with sleep_patch as mock_sleep:
+            await scraper.area_delay()
+
+        delay = mock_sleep.call_args[0][0]
+        assert 10.0 <= delay <= 20.0
+
+    @pytest.mark.asyncio
+    async def test_slowdown_delay_1_block(self) -> None:
+        """With 1 consecutive block, delay should be 20-40s."""
+        scraper = ZooplaScraper()
+        scraper._consecutive_blocks = 1
+
+        sleep_patch = patch("home_finder.scrapers.zoopla.asyncio.sleep", new_callable=AsyncMock)
+        with sleep_patch as mock_sleep:
+            await scraper.area_delay()
+
+        delay = mock_sleep.call_args[0][0]
+        assert 20.0 <= delay <= 40.0
+
+    @pytest.mark.asyncio
+    async def test_extended_cooldown_3_blocks(self) -> None:
+        """With 3+ consecutive blocks, delay should be 45-75s."""
+        scraper = ZooplaScraper()
+        scraper._consecutive_blocks = 3
+
+        sleep_patch = patch("home_finder.scrapers.zoopla.asyncio.sleep", new_callable=AsyncMock)
+        with sleep_patch as mock_sleep:
+            await scraper.area_delay()
+
+        delay = mock_sleep.call_args[0][0]
+        assert 45.0 <= delay <= 75.0
+
+
+class TestConsecutiveBlockTracking:
+    """Tests for consecutive block counter and session refresh."""
+
+    @pytest.mark.asyncio
+    async def test_success_resets_counter(self) -> None:
+        """Successful fetch should reset consecutive block counter."""
+        scraper = ZooplaScraper()
+        scraper._consecutive_blocks = 3
+
+        ok_resp = _make_response(status_code=200, text="<html>data</html>")
+        mock_session = AsyncMock()
+        mock_session.get = AsyncMock(return_value=ok_resp)
+
+        with patch.object(scraper, "_get_session", return_value=mock_session):
+            result = await scraper._fetch_page("https://example.com")
+
+        assert result == "<html>data</html>"
+        assert scraper._consecutive_blocks == 0
+
+    @pytest.mark.asyncio
+    async def test_exhaustion_increments_counter(self) -> None:
+        """Exhausted retries should increment consecutive block counter."""
+        scraper = ZooplaScraper()
+        assert scraper._consecutive_blocks == 0
+
+        challenge_resp = _make_response(
+            status_code=403,
+            text="<html><title>Just a moment...</title></html>",
+        )
+        mock_session = AsyncMock()
+        mock_session.get = AsyncMock(return_value=challenge_resp)
+
+        with (
+            patch.object(scraper, "_get_session", return_value=mock_session),
+            patch("home_finder.scrapers.zoopla.asyncio.sleep", new_callable=AsyncMock),
+        ):
+            result = await scraper._fetch_page("https://example.com")
+
+        assert result is None
+        assert scraper._consecutive_blocks == 1
+
+    @pytest.mark.asyncio
+    async def test_session_reset_at_2_blocks(self) -> None:
+        """Session should be reset after 2 consecutive blocks."""
+        scraper = ZooplaScraper()
+        scraper._consecutive_blocks = 1  # Will become 2 after this exhaustion
+
+        challenge_resp = _make_response(
+            status_code=403,
+            text="<html><title>Just a moment...</title></html>",
+        )
+        mock_session = AsyncMock()
+        mock_session.get = AsyncMock(return_value=challenge_resp)
+        mock_session.close = AsyncMock()
+
+        with (
+            patch.object(scraper, "_get_session", return_value=mock_session),
+            patch("home_finder.scrapers.zoopla.asyncio.sleep", new_callable=AsyncMock),
+        ):
+            scraper._session = mock_session
+            await scraper._fetch_page("https://example.com")
+
+        assert scraper._consecutive_blocks == 2
+        assert scraper._session is None
+        assert scraper._warmed_up is False
+
+    @pytest.mark.asyncio
+    async def test_no_session_reset_at_1_block(self) -> None:
+        """Session should NOT be reset after only 1 block."""
+        scraper = ZooplaScraper()
+        scraper._consecutive_blocks = 0
+
+        challenge_resp = _make_response(
+            status_code=403,
+            text="<html><title>Just a moment...</title></html>",
+        )
+        mock_session = AsyncMock()
+        mock_session.get = AsyncMock(return_value=challenge_resp)
+
+        with (
+            patch.object(scraper, "_get_session", return_value=mock_session),
+            patch("home_finder.scrapers.zoopla.asyncio.sleep", new_callable=AsyncMock),
+        ):
+            scraper._session = mock_session
+            await scraper._fetch_page("https://example.com")
+
+        assert scraper._consecutive_blocks == 1
+        assert scraper._session is mock_session  # Not reset
+
+
+class TestSkipRemainingAreas:
+    """Tests for should_skip_remaining_areas property."""
+
+    def test_skip_at_5_blocks(self) -> None:
+        """Should skip when consecutive blocks >= 5."""
+        scraper = ZooplaScraper()
+        scraper._consecutive_blocks = 5
+        assert scraper.should_skip_remaining_areas is True
+
+    def test_no_skip_at_4_blocks(self) -> None:
+        """Should not skip when consecutive blocks < 5."""
+        scraper = ZooplaScraper()
+        scraper._consecutive_blocks = 4
+        assert scraper.should_skip_remaining_areas is False
+
+    def test_no_skip_at_0_blocks(self) -> None:
+        """Should not skip with no blocks."""
+        scraper = ZooplaScraper()
+        assert scraper.should_skip_remaining_areas is False
+
+
+class TestMaxAreasPerRun:
+    """Tests for max_areas_per_run property."""
+
+    def test_default_none(self) -> None:
+        """Default max_areas should be None (unlimited)."""
+        scraper = ZooplaScraper()
+        assert scraper.max_areas_per_run is None
+
+    def test_custom_value(self) -> None:
+        """Custom max_areas should be reflected."""
+        scraper = ZooplaScraper(max_areas=4)
+        assert scraper.max_areas_per_run == 4
+
+
+class TestSessionReset:
+    """Tests for session reset."""
+
+    @pytest.mark.asyncio
+    async def test_reset_clears_session_and_warmup(self) -> None:
+        """_reset_session should close session and clear warmed_up flag."""
+        scraper = ZooplaScraper()
+        mock_session = AsyncMock()
+        mock_session.close = AsyncMock()
+        scraper._session = mock_session
+        scraper._warmed_up = True
+
+        await scraper._reset_session()
+
+        mock_session.close.assert_called_once()
+        assert scraper._session is None
+        assert scraper._warmed_up is False
+
+    @pytest.mark.asyncio
+    async def test_reset_noop_without_session(self) -> None:
+        """_reset_session should be safe to call without an active session."""
+        scraper = ZooplaScraper()
+        scraper._warmed_up = True
+
+        await scraper._reset_session()
+
+        assert scraper._session is None
+        assert scraper._warmed_up is False

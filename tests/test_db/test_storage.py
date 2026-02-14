@@ -327,6 +327,7 @@ class TestGetMapMarkers:
                 postcode="E8 3RH",
                 latitude=51.5465 + i * 0.001,
                 longitude=-0.0553,
+                image_url=HttpUrl("https://example.com/img.jpg"),
             )
             await storage.save_property(prop)
 
@@ -355,6 +356,7 @@ class TestGetMapMarkers:
             postcode="E8 3RH",
             latitude=51.5465,
             longitude=-0.0553,
+            image_url=HttpUrl("https://example.com/img.jpg"),
         )
         without_coords = Property(
             source=PropertySource.RIGHTMOVE,
@@ -387,6 +389,7 @@ class TestGetMapMarkers:
             postcode="E8 3RH",
             latitude=51.5465,
             longitude=-0.0553,
+            image_url=HttpUrl("https://example.com/img.jpg"),
         )
         two_bed = Property(
             source=PropertySource.OPENRENT,
@@ -399,6 +402,7 @@ class TestGetMapMarkers:
             postcode="E8 3RH",
             latitude=51.5470,
             longitude=-0.0550,
+            image_url=HttpUrl("https://example.com/img.jpg"),
         )
         await storage.save_property(one_bed)
         await storage.save_property(two_bed)

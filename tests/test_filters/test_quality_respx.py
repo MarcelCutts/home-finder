@@ -255,9 +255,7 @@ class TestTwoPhaseAnalysisViaHTTP:
     """Test the full two-phase analysis through the HTTP layer with respx."""
 
     @respx.mock
-    async def test_full_two_phase_analysis(
-        self, test_merged_property: MergedProperty
-    ) -> None:
+    async def test_full_two_phase_analysis(self, test_merged_property: MergedProperty) -> None:
         """Full two-phase analysis through real HTTP layer."""
         route = respx.post("https://api.anthropic.com/v1/messages").mock(
             side_effect=[
@@ -325,9 +323,7 @@ class TestTwoPhaseAnalysisViaHTTP:
         assert phase1_request.headers["content-type"] == "application/json"
 
     @respx.mock
-    async def test_request_body_structure(
-        self, test_merged_property: MergedProperty
-    ) -> None:
+    async def test_request_body_structure(self, test_merged_property: MergedProperty) -> None:
         """Phase 1 request body should contain images, system prompt, and tools."""
         route = respx.post("https://api.anthropic.com/v1/messages").mock(
             side_effect=[
@@ -369,9 +365,7 @@ class TestTwoPhaseAnalysisViaHTTP:
         assert phase1_body["tool_choice"] == {"type": "auto"}
 
     @respx.mock
-    async def test_phase2_request_is_text_only(
-        self, test_merged_property: MergedProperty
-    ) -> None:
+    async def test_phase2_request_is_text_only(self, test_merged_property: MergedProperty) -> None:
         """Phase 2 should send text-only (no images) with forced tool choice."""
         route = respx.post("https://api.anthropic.com/v1/messages").mock(
             side_effect=[
@@ -412,9 +406,7 @@ class TestHTTPErrorHandling:
     """Test error handling at the HTTP level."""
 
     @respx.mock
-    async def test_phase1_server_error_graceful(
-        self, test_merged_property: MergedProperty
-    ) -> None:
+    async def test_phase1_server_error_graceful(self, test_merged_property: MergedProperty) -> None:
         """500 error on Phase 1 should fail gracefully (after SDK retries)."""
         respx.post("https://api.anthropic.com/v1/messages").mock(
             return_value=httpx.Response(
@@ -427,9 +419,7 @@ class TestHTTPErrorHandling:
         # Disable retries to speed up test
         import anthropic
 
-        quality_filter._client = anthropic.AsyncAnthropic(
-            api_key="test-key", max_retries=0
-        )
+        quality_filter._client = anthropic.AsyncAnthropic(api_key="test-key", max_retries=0)
 
         try:
             from home_finder.filters.quality import APIUnavailableError
@@ -458,9 +448,7 @@ class TestHTTPErrorHandling:
         quality_filter = PropertyQualityFilter(api_key="test-key")
         import anthropic
 
-        quality_filter._client = anthropic.AsyncAnthropic(
-            api_key="test-key", max_retries=0
-        )
+        quality_filter._client = anthropic.AsyncAnthropic(api_key="test-key", max_retries=0)
 
         try:
             from home_finder.filters.quality import APIUnavailableError
@@ -494,9 +482,7 @@ class TestHTTPErrorHandling:
         quality_filter = PropertyQualityFilter(api_key="test-key")
         import anthropic
 
-        quality_filter._client = anthropic.AsyncAnthropic(
-            api_key="test-key", max_retries=0
-        )
+        quality_filter._client = anthropic.AsyncAnthropic(api_key="test-key", max_retries=0)
 
         try:
             results = await quality_filter.analyze_merged_properties([test_merged_property])
@@ -521,9 +507,7 @@ class TestTokenUsageParsing:
     """Test that token usage from HTTP responses is handled correctly."""
 
     @respx.mock
-    async def test_cache_tokens_parsed(
-        self, test_merged_property: MergedProperty
-    ) -> None:
+    async def test_cache_tokens_parsed(self, test_merged_property: MergedProperty) -> None:
         """Cache read/creation tokens should be parsed from the HTTP response."""
         respx.post("https://api.anthropic.com/v1/messages").mock(
             side_effect=[

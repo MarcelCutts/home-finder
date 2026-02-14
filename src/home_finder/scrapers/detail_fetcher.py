@@ -119,9 +119,7 @@ class DetailFetcher:
         response.raise_for_status()  # raise the 429 on final failure
         return response  # unreachable but satisfies type checker
 
-    async def _throttle(
-        self, lock: asyncio.Lock, attr: str, interval: float
-    ) -> None:
+    async def _throttle(self, lock: asyncio.Lock, attr: str, interval: float) -> None:
         """Ensure minimum interval between requests for a specific throttle."""
         async with lock:
             now = asyncio.get_event_loop().time()
@@ -664,9 +662,7 @@ class DetailFetcher:
         """
         try:
             if "zoocdn.com" in url or "onthemarket.com" in url:
-                response = await self._curl_get_with_retry(
-                    url, min_interval=_IMAGE_MIN_INTERVAL
-                )
+                response = await self._curl_get_with_retry(url, min_interval=_IMAGE_MIN_INTERVAL)
                 if response.status_code != 200:
                     logger.debug("image_download_failed", url=url, status=response.status_code)
                     return None

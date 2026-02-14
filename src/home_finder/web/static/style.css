@@ -1926,6 +1926,65 @@ nav.container-fluid li {
     color: var(--text-muted);
 }
 
+/* ===== Micro-area neighbourhood cards ===== */
+.micro-area-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+    gap: 0.75rem;
+    margin-bottom: 1.5rem;
+}
+.micro-area-card {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 1rem 1.25rem;
+}
+.micro-area-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 0.5rem;
+    margin-bottom: 0.5rem;
+    flex-wrap: wrap;
+}
+.micro-area-header strong {
+    font-size: 0.92rem;
+    color: var(--text);
+}
+.micro-area-badges {
+    display: flex;
+    gap: 0.3rem;
+    flex-wrap: wrap;
+}
+.micro-area-badges .badge {
+    font-size: 0.68rem;
+    padding: 0.08rem 0.4rem;
+}
+.micro-area-card > p {
+    font-size: 0.82rem;
+    color: var(--text-muted);
+    line-height: 1.55;
+    margin: 0 0 0.35rem 0;
+}
+.micro-area-detail {
+    font-size: 0.78rem !important;
+    color: var(--text-dim) !important;
+    line-height: 1.5;
+}
+.micro-area-detail-label {
+    font-weight: 700;
+    font-size: 0.68rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--text-muted);
+    margin-right: 0.3rem;
+}
+@media (max-width: 768px) {
+    .micro-area-grid {
+        grid-template-columns: 1fr;
+    }
+}
+
 /* ===== Detail page map ===== */
 #map {
     height: 380px;

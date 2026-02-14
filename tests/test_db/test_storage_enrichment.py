@@ -34,6 +34,7 @@ def _make_property(
         postcode=postcode,
         latitude=51.5465,
         longitude=-0.0553,
+        image_url=HttpUrl("https://example.com/img.jpg"),
     )
 
 
@@ -70,7 +71,9 @@ class TestSaveUnenrichedProperty:
     async def test_saves_with_pending_status(self, storage: PropertyStorage) -> None:
         """First save creates a pending row with attempts=1."""
         merged = _make_merged()
-        await storage.save_unenriched_property(merged, commute_minutes=15, transport_mode=TransportMode.CYCLING)
+        await storage.save_unenriched_property(
+            merged, commute_minutes=15, transport_mode=TransportMode.CYCLING
+        )
 
         conn = await storage._get_connection()
         cursor = await conn.execute(

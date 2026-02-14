@@ -8,6 +8,8 @@ import asyncio
 
 import pytest
 
+pytestmark = pytest.mark.usefixtures("reset_crawlee_state", "set_crawlee_storage_dir")
+
 from home_finder.filters.deduplication import Deduplicator
 from home_finder.filters.detail_enrichment import enrich_merged_properties
 from home_finder.models import Property

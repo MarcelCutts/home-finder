@@ -37,6 +37,7 @@ pytestmark = [
 # Golden test properties
 # ---------------------------------------------------------------------------
 
+
 def _golden_2bed_with_images() -> MergedProperty:
     """2-bed property with multiple gallery images and floorplan."""
     prop = Property(
@@ -68,7 +69,9 @@ def _golden_2bed_with_images() -> MergedProperty:
             # Using a known public domain image as a placeholder
             # In real usage, these would be cached locally
             PropertyImage(
-                url=HttpUrl("https://upload.wikimedia.org/wikipedia/commons/thumb/6/65/No-Image-Placeholder.svg/330px-No-Image-Placeholder.svg.png"),
+                url=HttpUrl(
+                    "https://upload.wikimedia.org/wikipedia/commons/thumb/6/65/No-Image-Placeholder.svg/330px-No-Image-Placeholder.svg.png"
+                ),
                 source=PropertySource.OPENRENT,
                 image_type="gallery",
             ),
@@ -104,7 +107,9 @@ def _golden_1bed_minimal() -> MergedProperty:
         source_urls={PropertySource.RIGHTMOVE: prop.url},
         images=(
             PropertyImage(
-                url=HttpUrl("https://upload.wikimedia.org/wikipedia/commons/thumb/6/65/No-Image-Placeholder.svg/330px-No-Image-Placeholder.svg.png"),
+                url=HttpUrl(
+                    "https://upload.wikimedia.org/wikipedia/commons/thumb/6/65/No-Image-Placeholder.svg/330px-No-Image-Placeholder.svg.png"
+                ),
                 source=PropertySource.RIGHTMOVE,
                 image_type="gallery",
             ),
@@ -161,7 +166,11 @@ class TestQualityAnalysisStructural:
         assert analysis.kitchen.overall_quality in ("modern", "decent", "dated", "unknown")
         assert analysis.condition is not None
         assert analysis.condition.overall_condition in (
-            "excellent", "good", "fair", "poor", "unknown"
+            "excellent",
+            "good",
+            "fair",
+            "poor",
+            "unknown",
         )
         assert analysis.light_space is not None
         assert analysis.space is not None
@@ -185,7 +194,14 @@ class TestQualityAnalysisStructural:
         # Phase 2: Evaluation fields populated
         assert analysis.listing_extraction is not None
         assert analysis.listing_extraction.epc_rating in (
-            "A", "B", "C", "D", "E", "F", "G", "unknown"
+            "A",
+            "B",
+            "C",
+            "D",
+            "E",
+            "F",
+            "G",
+            "unknown",
         )
 
         assert analysis.one_line is not None
@@ -196,9 +212,7 @@ class TestQualityAnalysisStructural:
 
         # Value assessment
         assert analysis.value is not None
-        assert analysis.value.quality_adjusted_rating in (
-            "excellent", "good", "fair", "poor"
-        )
+        assert analysis.value.quality_adjusted_rating in ("excellent", "good", "fair", "poor")
 
     async def test_2bed_space_override(self, quality_filter: PropertyQualityFilter) -> None:
         """2-bed property should have is_spacious_enough=True (office goes in spare room)."""

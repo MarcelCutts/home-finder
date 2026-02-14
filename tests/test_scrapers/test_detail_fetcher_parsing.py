@@ -475,9 +475,7 @@ class TestOpenRentParsing:
         for url in result.gallery_urls:
             assert "floorplan" not in url.lower()
 
-    async def test_gallery_has_full_urls(
-        self, fetcher: DetailFetcher, with_floorplan: str
-    ) -> None:
+    async def test_gallery_has_full_urls(self, fetcher: DetailFetcher, with_floorplan: str) -> None:
         fetcher._httpx_get_with_retry = AsyncMock(  # type: ignore[method-assign]
             return_value=_mock_httpx_response(with_floorplan)
         )

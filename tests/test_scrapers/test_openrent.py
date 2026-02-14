@@ -126,16 +126,20 @@ class TestOpenRentParser:
         assert "2729497" in str(prop1.url)
         assert prop1.latitude is not None
         assert prop1.longitude is not None
+        assert prop1.image_url is not None
+        assert "imagescdn.openrent.co.uk" in str(prop1.image_url)
 
         # Check second property
         prop2 = next(p for p in properties if p.source_id == "2732258")
         assert prop2.price_pcm == 1950
         assert prop2.bedrooms == 2
+        assert prop2.image_url is not None
 
         # Check third property
         prop3 = next(p for p in properties if p.source_id == "2745123")
         assert prop3.price_pcm == 2100
         assert prop3.bedrooms == 1
+        assert prop3.image_url is not None
 
     def test_parse_search_results_deduplicates(self, openrent_scraper: OpenRentScraper) -> None:
         """Test that duplicate property links are deduplicated."""

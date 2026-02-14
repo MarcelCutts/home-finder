@@ -47,13 +47,10 @@ def _source_counts(properties: list[Property] | list[MergedProperty]) -> dict[st
     """Count properties by source for diagnostic logging."""
     counts: dict[str, int] = {}
     for p in properties:
-        src = (
-            p.source.value
-            if isinstance(p, Property)
-            else p.canonical.source.value
-        )
+        src = p.source.value if isinstance(p, Property) else p.canonical.source.value
         counts[src] = counts.get(src, 0) + 1
     return counts
+
 
 _QUALITY_CONCURRENCY: Final = 15
 
@@ -72,6 +69,7 @@ async def scrape_all_platforms(
     known_ids_by_source: dict[str, set[str]] | None = None,
     proxy_url: str = "",
     only_scrapers: set[str] | None = None,
+    zoopla_max_areas: int | None = None,
 ) -> list[Property]:
     """Scrape all platforms for matching properties.
 
@@ -87,6 +85,7 @@ async def scrape_all_platforms(
         max_per_scraper: Maximum properties per scraper (None for unlimited).
         known_ids_by_source: Known source IDs per platform for early-stop pagination.
         only_scrapers: If set, only run scrapers whose source value is in this set.
+        zoopla_max_areas: Max areas for Zoopla scraper (None for unlimited).
 
     Returns:
         Combined list of properties from all platforms.
@@ -100,7 +99,7 @@ async def scrape_all_platforms(
     scrapers = [
         OpenRentScraper(),
         RightmoveScraper(),
-        ZooplaScraper(),
+        ZooplaScraper(proxy_url=proxy_url, max_areas=zoopla_max_areas),
         OnTheMarketScraper(proxy_url=proxy_url),
     ]
     if only_scrapers:
@@ -115,9 +114,32 @@ async def scrape_all_platforms(
             )
             scraper_count = 0
             scraper_seen_ids: set[str] = set()
-            for i, area in enumerate(areas):
+
+            # Apply per-scraper area limit (e.g. Zoopla rotates a subset)
+            scraper_areas = areas
+            if scraper.max_areas_per_run is not None:
+                scraper_areas = areas[: scraper.max_areas_per_run]
+                if len(scraper_areas) < len(areas):
+                    logger.info(
+                        "area_subset_applied",
+                        platform=scraper.source.value,
+                        total_areas=len(areas),
+                        subset_size=len(scraper_areas),
+                    )
+
+            for i, area in enumerate(scraper_areas):
                 if max_per_scraper is not None and scraper_count >= max_per_scraper:
                     break
+
+                if scraper.should_skip_remaining_areas:
+                    logger.warning(
+                        "skipping_remaining_areas",
+                        platform=scraper.source.value,
+                        skipped_from=area,
+                        areas_remaining=len(scraper_areas) - i,
+                    )
+                    break
+
                 try:
                     logger.info(
                         "scraping_platform",
@@ -172,9 +194,9 @@ async def scrape_all_platforms(
                         area=area,
                         error=str(e),
                     )
-                # Delay between areas to avoid rate limiting (jittered)
-                if i < len(areas) - 1:
-                    await asyncio.sleep(random.uniform(2.0, 5.0))
+                # Delegate inter-area delay to the scraper
+                if i < len(scraper_areas) - 1:
+                    await scraper.area_delay()
     finally:
         for scraper in scrapers:
             await scraper.close()
@@ -230,8 +252,13 @@ async def _run_pre_analysis_pipeline(
         known_ids_by_source=known_ids_by_source,
         proxy_url=settings.proxy_url,
         only_scrapers=only_scrapers,
+        zoopla_max_areas=settings.zoopla_max_areas_per_run,
     )
-    logger.info("scraping_summary", total_found=len(all_properties), by_source=_source_counts(all_properties))
+    logger.info(
+        "scraping_summary",
+        total_found=len(all_properties),
+        by_source=_source_counts(all_properties),
+    )
 
     if not all_properties:
         logger.info("no_properties_found")
@@ -241,7 +268,9 @@ async def _run_pre_analysis_pipeline(
     logger.info("pipeline_started", phase="criteria_filtering")
     criteria_filter = CriteriaFilter(criteria)
     filtered = criteria_filter.filter_properties(all_properties)
-    logger.info("criteria_filter_summary", matched=len(filtered), by_source=_source_counts(filtered))
+    logger.info(
+        "criteria_filter_summary", matched=len(filtered), by_source=_source_counts(filtered)
+    )
 
     if not filtered:
         logger.info("no_properties_match_criteria")
@@ -251,7 +280,9 @@ async def _run_pre_analysis_pipeline(
     logger.info("pipeline_started", phase="location_filtering")
     location_filter = LocationFilter(search_areas, strict=False)
     filtered = location_filter.filter_properties(filtered)
-    logger.info("location_filter_summary", matched=len(filtered), by_source=_source_counts(filtered))
+    logger.info(
+        "location_filter_summary", matched=len(filtered), by_source=_source_counts(filtered)
+    )
 
     if not filtered:
         logger.info("no_properties_in_search_areas")
@@ -264,12 +295,18 @@ async def _run_pre_analysis_pipeline(
         enable_image_hashing=settings.enable_image_hash_matching,
     )
     merged_properties = deduplicator.properties_to_merged(filtered)
-    logger.info("wrap_merged_summary", count=len(merged_properties), by_source=_source_counts(merged_properties))
+    logger.info(
+        "wrap_merged_summary",
+        count=len(merged_properties),
+        by_source=_source_counts(merged_properties),
+    )
 
     # Step 4: Filter to new properties only
     logger.info("pipeline_started", phase="new_property_filter")
     new_merged = await storage.filter_new_merged(merged_properties)
-    logger.info("new_property_summary", new_count=len(new_merged), by_source=_source_counts(new_merged))
+    logger.info(
+        "new_property_summary", new_count=len(new_merged), by_source=_source_counts(new_merged)
+    )
 
     # Step 4.5: Load unenriched properties for retry
     max_attempts = settings.max_enrichment_attempts
@@ -552,9 +589,7 @@ async def _run_quality_and_save(
         Number of properties processed.
     """
     # Save all properties to DB before analysis (crash recovery checkpoint)
-    await storage.save_pre_analysis_properties(
-        pre.merged_to_process, pre.commute_lookup
-    )
+    await storage.save_pre_analysis_properties(pre.merged_to_process, pre.commute_lookup)
 
     # Reset properties with fallback analysis (API failed previously)
     # so they get re-analyzed this run
@@ -564,9 +599,7 @@ async def _run_quality_and_save(
 
     # Load any pending_analysis properties from previous crashed runs
     current_ids = {m.unique_id for m in pre.merged_to_process}
-    pending_from_prev = await storage.get_pending_analysis_properties(
-        exclude_ids=current_ids
-    )
+    pending_from_prev = await storage.get_pending_analysis_properties(exclude_ids=current_ids)
     retried = list(pending_from_prev)
     if retried:
         logger.info("retrying_pending_analysis_from_previous_run", count=len(retried))
@@ -742,9 +775,7 @@ async def run_pipeline(
         logger.info("pipeline_complete", notified=notified_count)
 
     except Exception as exc:
-        await storage.complete_pipeline_run(
-            run_id, "failed", error_message=str(exc)
-        )
+        await storage.complete_pipeline_run(run_id, "failed", error_message=str(exc))
         raise
     finally:
         await notifier.close()
@@ -780,6 +811,7 @@ async def run_scrape_only(
         max_per_scraper=max_per_scraper,
         proxy_url=settings.proxy_url,
         only_scrapers=only_scrapers,
+        zoopla_max_areas=settings.zoopla_max_areas_per_run,
     )
 
     print(f"\n{'=' * 60}")
@@ -899,6 +931,111 @@ async def run_dry_run(
         await storage.close()
 
 
+async def run_reanalysis(
+    settings: Settings,
+    *,
+    outcodes: list[str] | None = None,
+    reanalyze_all: bool = False,
+    request_only: bool = False,
+) -> None:
+    """Re-run quality analysis on flagged properties.
+
+    Args:
+        settings: Application settings.
+        outcodes: Outcodes to flag for re-analysis.
+        reanalyze_all: Flag all analyzed properties.
+        request_only: Only flag, don't run analysis.
+    """
+    storage = PropertyStorage(settings.database_path)
+    await storage.initialize()
+
+    try:
+        # Step 1: Flag properties if outcodes or --all provided
+        if outcodes or reanalyze_all:
+            flagged = await storage.request_reanalysis_by_filter(
+                outcodes=outcodes, all_properties=reanalyze_all
+            )
+            target = "all properties" if reanalyze_all else f"outcodes {', '.join(outcodes or [])}"
+            print(f"Marked {flagged} properties for re-analysis ({target}).")
+
+        if request_only:
+            return
+
+        # Step 2: Load queue
+        queue = await storage.get_reanalysis_queue()
+
+        if not queue:
+            print("No properties queued for re-analysis.")
+            return
+
+        # Step 3: Cost estimate
+        est_cost = len(queue) * 0.06
+        print(f"Re-analyzing {len(queue)} properties (est. ~${est_cost:.2f})")
+
+        # Step 4: Run quality analysis
+        use_quality = (
+            settings.anthropic_api_key.get_secret_value() and settings.enable_quality_filter
+        )
+        if not use_quality:
+            print("Error: Quality analysis not configured (need ANTHROPIC_API_KEY).")
+            return
+
+        quality_filter = PropertyQualityFilter(
+            api_key=settings.anthropic_api_key.get_secret_value(),
+            max_images=settings.quality_filter_max_images,
+            enable_extended_thinking=settings.enable_extended_thinking,
+            thinking_budget_tokens=settings.thinking_budget_tokens,
+        )
+
+        semaphore = asyncio.Semaphore(_QUALITY_CONCURRENCY)
+        completed = 0
+        failed = 0
+
+        try:
+
+            async def _analyze_one(
+                merged: MergedProperty,
+            ) -> tuple[MergedProperty, PropertyQualityAnalysis | None]:
+                async with semaphore:
+                    return await quality_filter.analyze_single_merged(
+                        merged, data_dir=settings.data_dir
+                    )
+
+            tasks = [asyncio.create_task(_analyze_one(m)) for m in queue]
+
+            for coro in asyncio.as_completed(tasks):
+                try:
+                    merged, quality_analysis = await coro
+                except APIUnavailableError:
+                    remaining = [t for t in tasks if not t.done()]
+                    for t in remaining:
+                        t.cancel()
+                    await asyncio.gather(*remaining, return_exceptions=True)
+                    logger.warning(
+                        "reanalysis_api_circuit_breaker",
+                        deferred=len(remaining),
+                        completed=completed,
+                    )
+                    break
+                except Exception:
+                    logger.error("reanalysis_failed", exc_info=True)
+                    failed += 1
+                    continue
+
+                if quality_analysis:
+                    await storage.complete_reanalysis(merged.unique_id, quality_analysis)
+                    completed += 1
+                else:
+                    failed += 1
+        finally:
+            await quality_filter.close()
+
+        print(f"\nRe-analysis complete: {completed} updated, {failed} failed.")
+
+    finally:
+        await storage.close()
+
+
 def main() -> None:
     """Main entry point."""
     parser = argparse.ArgumentParser(
@@ -926,6 +1063,28 @@ def main() -> None:
         default=None,
         help="Comma-separated list of scrapers to run (e.g. openrent,zoopla). "
         "Options: openrent, rightmove, zoopla, onthemarket",
+    )
+    parser.add_argument(
+        "--reanalyze",
+        action="store_true",
+        help="Re-run quality analysis on flagged properties",
+    )
+    parser.add_argument(
+        "--outcode",
+        type=str,
+        default=None,
+        help="Comma-separated outcodes to flag for re-analysis (e.g. E2,E8). Use with --reanalyze",
+    )
+    parser.add_argument(
+        "--request-only",
+        action="store_true",
+        help="Only flag properties for re-analysis, don't run analysis. Use with --reanalyze",
+    )
+    parser.add_argument(
+        "--all",
+        action="store_true",
+        dest="reanalyze_all",
+        help="Flag ALL analyzed properties for re-analysis. Use with --reanalyze",
     )
     parser.add_argument(
         "--serve",
@@ -982,7 +1141,17 @@ def main() -> None:
             print(f"Valid options: {', '.join(sorted(valid))}")
             sys.exit(1)
 
-    if args.serve:
+    if args.reanalyze:
+        outcodes = [o.strip().upper() for o in args.outcode.split(",")] if args.outcode else None
+        asyncio.run(
+            run_reanalysis(
+                settings,
+                outcodes=outcodes,
+                reanalyze_all=args.reanalyze_all,
+                request_only=args.request_only,
+            )
+        )
+    elif args.serve:
         import uvicorn
 
         from home_finder.web.app import create_app

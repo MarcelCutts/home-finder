@@ -265,8 +265,15 @@ def build_user_prompt(
     council_tax_band_c: int | None = None,
     crime_summary: str | None = None,
     rent_trend: str | None = None,
+    *,
+    has_labeled_floorplan: bool = True,
 ) -> str:
-    """Build the user prompt with property-specific context."""
+    """Build the user prompt with property-specific context.
+
+    Args:
+        has_labeled_floorplan: Whether a dedicated floorplan image is included.
+            When False, adds a note asking Claude to identify floorplans in gallery.
+    """
     prompt = _format_property_context(
         price_pcm=price_pcm,
         bedrooms=bedrooms,
@@ -283,6 +290,17 @@ def build_user_prompt(
         prompt += "\n\n<listing_features>\n"
         prompt += "\n".join(f"- {f}" for f in features[:15])
         prompt += "\n</listing_features>"
+
+    if not has_labeled_floorplan:
+        prompt += (
+            "\n\n<floorplan_note>\n"
+            "No dedicated floorplan was provided for this listing. Some gallery images may be "
+            "unlabeled floorplans (floor plan diagrams showing room layouts, dimensions, and "
+            "labels on a white/light background). If you spot any, report their 1-based indices "
+            "in floorplan_detected_in_gallery and use them for room size estimates and layout "
+            "assessment as you would a labeled floorplan.\n"
+            "</floorplan_note>"
+        )
 
     prompt += "\n\nProvide your visual quality assessment using the "
     prompt += "property_visual_analysis tool."

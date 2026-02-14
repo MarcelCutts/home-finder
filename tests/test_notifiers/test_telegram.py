@@ -657,7 +657,8 @@ class TestTelegramNotifier:
 
         with patch.object(notifier, "_get_bot", return_value=mock_bot):
             result = await notifier.send_merged_property_notification(
-                merged, quality_analysis=sample_quality_analysis  # rating=4
+                merged,
+                quality_analysis=sample_quality_analysis,  # rating=4
             )
 
         assert result is True
@@ -795,9 +796,7 @@ class TestTelegramNotifier:
         mock_bot.send_venue = AsyncMock(return_value=MagicMock(message_id=3))
 
         with patch.object(notifier, "_get_bot", return_value=mock_bot):
-            await notifier.send_merged_property_notification(
-                merged, quality_analysis=analysis
-            )
+            await notifier.send_merged_property_notification(merged, quality_analysis=analysis)
 
         followup_text = mock_bot.send_message.call_args[1]["text"]
         # Should be the minimal pointer text
@@ -915,31 +914,23 @@ class TestGetGalleryUrls:
 class TestFormatQualityBlock:
     """Tests for _format_quality_block (full detail for text messages)."""
 
-    def test_expandable_blockquote(
-        self, sample_quality_analysis: PropertyQualityAnalysis
-    ) -> None:
+    def test_expandable_blockquote(self, sample_quality_analysis: PropertyQualityAnalysis) -> None:
         """Test that quality block uses expandable blockquote."""
         lines = _format_quality_block(sample_quality_analysis)
         text = "\n".join(lines)
         assert "<blockquote expandable>" in text
 
-    def test_includes_highlights(
-        self, sample_quality_analysis: PropertyQualityAnalysis
-    ) -> None:
+    def test_includes_highlights(self, sample_quality_analysis: PropertyQualityAnalysis) -> None:
         lines = _format_quality_block(sample_quality_analysis)
         text = "\n".join(lines)
         assert "✅ Gas hob · Good light · Spacious living room" in text
 
-    def test_includes_lowlights(
-        self, sample_quality_analysis: PropertyQualityAnalysis
-    ) -> None:
+    def test_includes_lowlights(self, sample_quality_analysis: PropertyQualityAnalysis) -> None:
         lines = _format_quality_block(sample_quality_analysis)
         text = "\n".join(lines)
         assert "⛔ No garden · Street noise" in text
 
-    def test_includes_viewing_notes(
-        self, sample_quality_analysis: PropertyQualityAnalysis
-    ) -> None:
+    def test_includes_viewing_notes(self, sample_quality_analysis: PropertyQualityAnalysis) -> None:
         lines = _format_quality_block(sample_quality_analysis)
         text = "\n".join(lines)
         assert "👁" in text
@@ -983,9 +974,7 @@ class TestFormatQualityBlock:
 class TestFormatViewingNotes:
     """Tests for _format_viewing_notes."""
 
-    def test_formats_all_note_types(
-        self, sample_quality_analysis: PropertyQualityAnalysis
-    ) -> None:
+    def test_formats_all_note_types(self, sample_quality_analysis: PropertyQualityAnalysis) -> None:
         lines = _format_viewing_notes(sample_quality_analysis)
         assert len(lines) == 3
         assert "👁" in lines[0]
@@ -1040,9 +1029,7 @@ class TestMergedHeaderFormat:
         else:
             pytest.fail("No line found with star rating")
 
-    def test_no_rating_still_shows_price(
-        self, sample_merged_property: MergedProperty
-    ) -> None:
+    def test_no_rating_still_shows_price(self, sample_merged_property: MergedProperty) -> None:
         """Without quality analysis, price line should still work."""
         message = format_merged_property_message(sample_merged_property)
         assert "£" in message
@@ -1070,9 +1057,7 @@ class TestLinkPreviewOptions:
     """Tests for LinkPreviewOptions usage."""
 
     @pytest.mark.asyncio
-    async def test_send_property_uses_link_preview_options(
-        self, sample_property: Property
-    ) -> None:
+    async def test_send_property_uses_link_preview_options(self, sample_property: Property) -> None:
         """Test that send_property_notification uses LinkPreviewOptions."""
         notifier = TelegramNotifier(bot_token="123456:ABC-DEF", chat_id=12345678)
         mock_bot = AsyncMock()
@@ -1161,9 +1146,7 @@ class TestFormatValueInfoBrief:
                 note="£200 above average",
             ),
         )
-        caption = format_merged_property_caption(
-            sample_merged_property, quality_analysis=analysis
-        )
+        caption = format_merged_property_caption(sample_merged_property, quality_analysis=analysis)
         assert "£200 above average" in caption
         assert "very long essay" not in caption
 
@@ -1188,9 +1171,7 @@ class TestFormatValueInfoBrief:
 class TestFormatFollowupDetail:
     """Tests for _format_followup_detail."""
 
-    def test_contains_viewing_notes(
-        self, sample_quality_analysis: PropertyQualityAnalysis
-    ) -> None:
+    def test_contains_viewing_notes(self, sample_quality_analysis: PropertyQualityAnalysis) -> None:
         """Follow-up should contain viewing notes."""
         result = _format_followup_detail(quality_analysis=sample_quality_analysis)
         assert "👁" in result

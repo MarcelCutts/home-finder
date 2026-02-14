@@ -78,9 +78,7 @@ class TestCompletePipelineRun:
     @pytest.mark.asyncio
     async def test_marks_failed_with_error(self, storage: PropertyStorage) -> None:
         run_id = await storage.create_pipeline_run()
-        await storage.complete_pipeline_run(
-            run_id, "failed", error_message="Connection timeout"
-        )
+        await storage.complete_pipeline_run(run_id, "failed", error_message="Connection timeout")
 
         conn = await storage._get_connection()
         cursor = await conn.execute(
@@ -123,9 +121,7 @@ class TestGetLastPipelineRun:
     @pytest.mark.asyncio
     async def test_returns_failed_runs(self, storage: PropertyStorage) -> None:
         run_id = await storage.create_pipeline_run()
-        await storage.complete_pipeline_run(
-            run_id, "failed", error_message="boom"
-        )
+        await storage.complete_pipeline_run(run_id, "failed", error_message="boom")
 
         result = await storage.get_last_pipeline_run()
         assert result is not None

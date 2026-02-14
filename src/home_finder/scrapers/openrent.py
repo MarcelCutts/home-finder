@@ -103,9 +103,7 @@ class OpenRentScraper(BaseScraper):
             # Adaptive backoff: normal requests complete in ~300ms.
             # If significantly slower, crawlee was retrying 429s internally.
             if elapsed > self.RETRY_THRESHOLD_SECONDS:
-                current_delay = min(
-                    current_delay * self.BACKOFF_FACTOR, self.MAX_DELAY_SECONDS
-                )
+                current_delay = min(current_delay * self.BACKOFF_FACTOR, self.MAX_DELAY_SECONDS)
                 logger.warning(
                     "openrent_rate_limit_backoff",
                     area=area,
@@ -270,6 +268,16 @@ class OpenRentScraper(BaseScraper):
             if lat is None or lon is None:
                 lat, lon = None, None
 
+            # Extract thumbnail image URL
+            image_url: str | None = None
+            img_tag = link.find("img")
+            if img_tag and img_tag.get("src"):
+                img_src = img_tag["src"]
+                # OpenRent uses protocol-relative URLs (//imagescdn.openrent.co.uk/...)
+                if img_src.startswith("//"):
+                    img_src = "https:" + img_src
+                image_url = img_src
+
             # Parse title/address from link text
             title, address, postcode = self._parse_link_text(link)
 
@@ -305,6 +313,7 @@ class OpenRentScraper(BaseScraper):
                     postcode=postcode,
                     latitude=float(lat) if lat else None,
                     longitude=float(lon) if lon else None,
+                    image_url=HttpUrl(image_url) if image_url else None,
                 )
                 properties.append(prop)
             except Exception as e:

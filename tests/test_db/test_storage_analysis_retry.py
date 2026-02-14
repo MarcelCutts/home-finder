@@ -38,6 +38,7 @@ def _make_property(
         postcode=postcode,
         latitude=51.5465,
         longitude=-0.0553,
+        image_url=HttpUrl("https://example.com/img.jpg"),
     )
 
 
@@ -149,10 +150,7 @@ class TestSavePreAnalysisProperties:
 
     @pytest.mark.asyncio
     async def test_batch_save_multiple(self, storage: PropertyStorage) -> None:
-        props = [
-            _make_merged(_make_property(source_id=f"z-{i}"))
-            for i in range(3)
-        ]
+        props = [_make_merged(_make_property(source_id=f"z-{i}")) for i in range(3)]
         await storage.save_pre_analysis_properties(props, {})
 
         conn = await storage._get_connection()

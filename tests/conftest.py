@@ -1,11 +1,14 @@
 """Shared pytest fixtures."""
 
 import os
+import tempfile
+import threading
 from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+import filelock
 import pytest
 from hypothesis import HealthCheck, settings
 from pydantic import HttpUrl
@@ -41,6 +44,19 @@ settings.register_profile(
 settings.load_profile(os.getenv("HYPOTHESIS_PROFILE", "fast"))
 
 
+@pytest.fixture(scope="session", autouse=True)
+def _serialize_test_runs():
+    """Prevent multiple test runners from executing simultaneously.
+
+    aiosqlite worker threads and Crawlee global state can cause
+    interference when multiple pytest processes run concurrently.
+    """
+    lock_path = Path(tempfile.gettempdir()) / "home-finder-tests.lock"
+    lock = filelock.FileLock(lock_path, timeout=120)
+    with lock:
+        yield
+
+
 @pytest.fixture(autouse=True)
 def _isolate_settings_from_dotenv(monkeypatch: pytest.MonkeyPatch) -> None:
     """Prevent the local .env file from leaking into test Settings instances."""
@@ -49,6 +65,26 @@ def _isolate_settings_from_dotenv(monkeypatch: pytest.MonkeyPatch) -> None:
         "model_config",
         {**Settings.model_config, "env_file": None},
     )
+
+
+@pytest.fixture(autouse=True)
+def _cleanup_aiosqlite_threads():
+    """Detect leaked aiosqlite connection worker threads after each test.
+
+    aiosqlite v0.22+ no longer inherits from Thread, so unclosed connections
+    leave orphaned worker threads that block on tx.get() indefinitely.
+    With function-scoped event loops, this can accumulate and cause stalls.
+    """
+    yield
+    for thread in threading.enumerate():
+        if "_connection_worker_thread" in (thread.name or "") and thread.is_alive():
+            import warnings
+
+            warnings.warn(
+                f"Leaked aiosqlite worker thread: {thread}",
+                ResourceWarning,
+                stacklevel=1,
+            )
 
 
 @pytest.fixture
@@ -183,9 +219,7 @@ def make_property() -> Callable[..., Property]:
         nonlocal _counter
         _counter += 1
         source_id = overrides.pop("source_id", f"test-{_counter}")
-        url = overrides.pop(
-            "url", HttpUrl(f"https://example.com/{source.value}/{source_id}")
-        )
+        url = overrides.pop("url", HttpUrl(f"https://example.com/{source.value}/{source_id}"))
         title = overrides.pop("title", f"Test Property {_counter}")
         defaults: dict[str, Any] = {
             "source": source,
@@ -216,9 +250,7 @@ def make_merged_property(
         price_pcm: int = 1850,
         **property_overrides: Any,
     ) -> MergedProperty:
-        canonical = make_property(
-            source=sources[0], price_pcm=price_pcm, **property_overrides
-        )
+        canonical = make_property(source=sources[0], price_pcm=price_pcm, **property_overrides)
         source_urls = {sources[0]: canonical.url}
         for extra_source in sources[1:]:
             source_urls[extra_source] = HttpUrl(

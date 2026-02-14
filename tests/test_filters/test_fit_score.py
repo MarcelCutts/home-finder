@@ -703,7 +703,11 @@ class TestVibeScorer:
     def test_cluster2_light_only(self):
         """Only light signals should contribute."""
         analysis = _vibe_analysis(
-            light_space={"natural_light": "excellent", "window_sizes": "large", "ceiling_height": "high"}
+            light_space={
+                "natural_light": "excellent",
+                "window_sizes": "large",
+                "ceiling_height": "high",
+            }
         )
         result = _score_vibe(analysis, 2)
         assert result.score == 35  # 15 + 10 + 10
@@ -813,9 +817,15 @@ class TestVibeScorer:
 
     def test_period_conversion_scores_between_warehouse_and_victorian(self):
         """Period conversion should score between warehouse and Victorian."""
-        warehouse = _score_vibe(_vibe_analysis(listing_extraction={"property_type": "warehouse"}), 2)
-        period = _score_vibe(_vibe_analysis(listing_extraction={"property_type": "period_conversion"}), 2)
-        victorian = _score_vibe(_vibe_analysis(listing_extraction={"property_type": "victorian"}), 2)
+        warehouse = _score_vibe(
+            _vibe_analysis(listing_extraction={"property_type": "warehouse"}), 2
+        )
+        period = _score_vibe(
+            _vibe_analysis(listing_extraction={"property_type": "period_conversion"}), 2
+        )
+        victorian = _score_vibe(
+            _vibe_analysis(listing_extraction={"property_type": "victorian"}), 2
+        )
         assert warehouse.score > period.score > victorian.score
 
     def test_score_never_exceeds_100(self):

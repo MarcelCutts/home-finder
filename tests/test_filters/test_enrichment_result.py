@@ -57,9 +57,7 @@ class TestEnrichmentResultSplit:
         merged = _make_merged()
 
         fetcher = DetailFetcher()
-        with patch.object(
-            fetcher, "fetch_detail_page", new_callable=AsyncMock, return_value=None
-        ):
+        with patch.object(fetcher, "fetch_detail_page", new_callable=AsyncMock, return_value=None):
             result = await enrich_merged_properties([merged], fetcher)
 
         assert len(result.enriched) == 0
@@ -93,9 +91,7 @@ class TestEnrichmentResultSplit:
 
         fetcher = DetailFetcher()
         with patch.object(fetcher, "fetch_detail_page", side_effect=mock_fetch):
-            result = await enrich_merged_properties(
-                [success_merged, fail_merged], fetcher
-            )
+            result = await enrich_merged_properties([success_merged, fail_merged], fetcher)
 
         assert len(result.enriched) == 1
         assert len(result.failed) == 1

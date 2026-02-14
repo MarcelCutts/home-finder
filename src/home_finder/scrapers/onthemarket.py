@@ -286,7 +286,6 @@ class OnTheMarketScraper(BaseScraper):
             f"max-bedrooms={max_bedrooms}",
             f"min-price={min_price}",
             f"max-price={max_price}",
-            "prop-types=flat",
             "price-per=pcm",
             "shared=false",
             "let-length=long-term",

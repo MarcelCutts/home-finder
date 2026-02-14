@@ -12,12 +12,13 @@ from fastapi.templating import Jinja2Templates
 from starlette.responses import Response
 
 from home_finder.data.area_context import (
-    AREA_CONTEXT,
     COUNCIL_TAX_MONTHLY,
     CRIME_RATES,
     OUTCODE_BOROUGH,
     RENT_TRENDS,
     RENTAL_BENCHMARKS,
+    get_area_overview,
+    get_micro_areas,
 )
 from home_finder.db import PropertyStorage
 from home_finder.filters.fit_score import compute_fit_breakdown, compute_fit_score
@@ -685,7 +686,8 @@ async def property_detail(
     outcode = extract_outcode(prop.get("postcode"))
     area_context: dict[str, Any] = {}
     if outcode:
-        area_context["description"] = AREA_CONTEXT.get(outcode)
+        area_context["description"] = get_area_overview(outcode)
+        area_context["micro_areas"] = get_micro_areas(outcode)
         area_context["benchmarks"] = RENTAL_BENCHMARKS.get(outcode)
         borough = OUTCODE_BOROUGH.get(outcode)
         if borough:
@@ -743,3 +745,18 @@ async def property_detail(
             "fit_breakdown": fit_breakdown,
         },
     )
+
+
+@router.post("/property/{unique_id}/reanalyze")
+async def request_reanalysis(unique_id: str, storage: StorageDep) -> JSONResponse:
+    """Flag a property for quality re-analysis.
+
+    The actual analysis runs on next `--reanalyze` CLI invocation.
+    """
+    count = await storage.request_reanalysis([unique_id])
+    if count == 0:
+        return JSONResponse(
+            {"error": "not found or no existing analysis"},
+            status_code=404,
+        )
+    return JSONResponse({"status": "queued"})

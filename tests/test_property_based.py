@@ -141,9 +141,7 @@ class TestGraduatedCoordinateScoreProperties:
         assert graduated_coordinate_score(prop1, prop2) == graduated_coordinate_score(prop2, prop1)
 
     @given(london_lat, london_lon, london_lat, london_lon)
-    def test_range_is_zero_to_one(
-        self, lat1: float, lon1: float, lat2: float, lon2: float
-    ) -> None:
+    def test_range_is_zero_to_one(self, lat1: float, lon1: float, lat2: float, lon2: float) -> None:
         prop1 = Property(
             source=PropertySource.OPENRENT,
             source_id="a",

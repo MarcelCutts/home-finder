@@ -249,9 +249,12 @@ class ZooplaScraper(BaseScraper):
     # Browser profiles to rotate between areas (avoids single-fingerprint detection)
     _IMPERSONATE_TARGETS = ("chrome", "safari", "chrome131", "safari184")
 
-    def __init__(self, *, proxy_url: str = "") -> None:
+    def __init__(self, *, proxy_url: str = "", max_areas: int | None = None) -> None:
         self._session: AsyncSession | None = None  # type: ignore[type-arg]
         self._proxy_url = proxy_url
+        self._max_areas = max_areas
+        self._consecutive_blocks: int = 0
+        self._warmed_up: bool = False
 
     async def _get_session(self) -> AsyncSession:  # type: ignore[type-arg]
         """Get or create a reusable curl_cffi session."""
@@ -265,13 +268,61 @@ class ZooplaScraper(BaseScraper):
             await self._session.close()
             self._session = None
 
+    async def _reset_session(self) -> None:
+        """Close and discard the current session to get a fresh TLS fingerprint."""
+        if self._session is not None:
+            await self._session.close()
+            self._session = None
+        self._warmed_up = False
+        logger.info("zoopla_session_reset")
+
     async def _page_delay(self) -> None:
         """Random delay between page fetches (human-like pacing)."""
         await asyncio.sleep(random.uniform(1.5, 3.5))
 
-    async def _area_delay(self) -> None:
-        """Random delay between area searches (longer to avoid Cloudflare blocks)."""
-        await asyncio.sleep(random.uniform(4.0, 8.0))
+    async def area_delay(self) -> None:
+        """Adaptive delay between area searches based on consecutive blocks."""
+        if self._consecutive_blocks >= 3:
+            delay = random.uniform(45.0, 75.0)
+        elif self._consecutive_blocks >= 1:
+            delay = random.uniform(20.0, 40.0)
+        else:
+            delay = random.uniform(10.0, 20.0)
+        logger.info(
+            "zoopla_area_delay",
+            delay=f"{delay:.1f}s",
+            consecutive_blocks=self._consecutive_blocks,
+        )
+        await asyncio.sleep(delay)
+
+    @property
+    def max_areas_per_run(self) -> int | None:
+        return self._max_areas
+
+    @property
+    def should_skip_remaining_areas(self) -> bool:
+        return self._consecutive_blocks >= 5
+
+    async def _warm_up(self) -> None:
+        """Visit the Zoopla homepage to establish cookies before searching."""
+        if self._warmed_up:
+            return
+        try:
+            session = await self._get_session()
+            target = self._pick_impersonate_target()
+            await session.get(
+                f"{self.BASE_URL}/",
+                impersonate=target,  # type: ignore[arg-type]
+                headers=BROWSER_HEADERS,
+                timeout=15,
+            )
+            self._warmed_up = True
+            delay = random.uniform(2.0, 4.0)
+            logger.info("zoopla_warmup_success", delay=f"{delay:.1f}s")
+            await asyncio.sleep(delay)
+        except Exception as e:
+            logger.warning("zoopla_warmup_failed", error=str(e))
+            self._warmed_up = True  # Don't retry on failure
 
     def _is_cloudflare_challenge(self, response: Any) -> bool:
         """Detect Cloudflare challenge pages (403/503 with challenge HTML, or cf-mitigated header)."""
@@ -307,6 +358,9 @@ class ZooplaScraper(BaseScraper):
         """Scrape Zoopla for matching properties (all pages)."""
         all_properties: list[Property] = []
         seen_ids: set[str] = set()
+
+        # Establish cookies on first search of the session
+        await self._warm_up()
 
         # Pick one browser profile per area (switching mid-session is suspicious)
         impersonate_target = self._pick_impersonate_target()
@@ -406,6 +460,7 @@ class ZooplaScraper(BaseScraper):
 
                 if response.status_code == 200:
                     if not self._is_cloudflare_challenge(response):
+                        self._consecutive_blocks = 0
                         return response.text
                     # Soft challenge (200 with challenge HTML) — treat as challenge
                     logger.warning("zoopla_soft_challenge", url=url, attempt=attempt + 1)
@@ -440,7 +495,18 @@ class ZooplaScraper(BaseScraper):
                     logger.error("zoopla_fetch_exception", error=str(e), url=url)
                     return None
 
-        logger.warning("zoopla_fetch_exhausted", url=url)
+        # All retries exhausted — this area was blocked
+        self._consecutive_blocks += 1
+        logger.warning(
+            "zoopla_fetch_exhausted",
+            url=url,
+            consecutive_blocks=self._consecutive_blocks,
+        )
+
+        # Reset session after 2 consecutive blocks to get a fresh TLS fingerprint
+        if self._consecutive_blocks == 2:
+            await self._reset_session()
+
         return None
 
     def _extract_rsc_listings(self, html: str) -> list[ZooplaListing]:
@@ -631,7 +697,6 @@ class ZooplaScraper(BaseScraper):
             "price_min": str(min_price),
             "price_max": str(max_price),
             "price_frequency": "per_month",
-            "property_sub_type": "flats",
             "is_shared_accommodation": "false",
             "is_retirement_home": "false",
             "is_student_accommodation": "false",

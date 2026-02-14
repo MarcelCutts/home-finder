@@ -1243,6 +1243,72 @@ class TestPropertyQualityFilter:
         assert isinstance(phase2_content, str)
 
 
+class TestFloorplanNoteWiring:
+    """Tests that has_labeled_floorplan flows from _analyze_property to the prompt."""
+
+    async def test_no_floorplan_includes_note_in_api_call(
+        self,
+        sample_property: Property,
+        sample_visual_response: dict[str, Any],
+        sample_evaluation_response: dict[str, Any],
+    ) -> None:
+        """Property with no floorplan → Phase 1 prompt contains <floorplan_note>."""
+        merged = MergedProperty(
+            canonical=sample_property,
+            sources=(sample_property.source,),
+            source_urls={sample_property.source: sample_property.url},
+            images=(
+                PropertyImage(
+                    url=HttpUrl("https://example.com/img1.jpg"),
+                    source=sample_property.source,
+                    image_type="gallery",
+                ),
+            ),
+            floorplan=None,
+            min_price=sample_property.price_pcm,
+            max_price=sample_property.price_pcm,
+        )
+
+        quality_filter = PropertyQualityFilter(api_key="test-key")
+        quality_filter._client = MagicMock()
+        quality_filter._client.messages.create = _make_two_phase_mock(
+            sample_visual_response, sample_evaluation_response
+        )
+
+        await quality_filter.analyze_merged_properties([merged])
+
+        # Inspect the Phase 1 API call's user prompt (last text block)
+        call_args = quality_filter._client.messages.create.call_args_list[0]
+        content = call_args.kwargs["messages"][0]["content"]
+        text_blocks = [c for c in content if c.get("type") == "text"]
+        prompt_text = text_blocks[-1]["text"]
+
+        assert "<floorplan_note>" in prompt_text
+        assert "floorplan_detected_in_gallery" in prompt_text
+
+    async def test_with_floorplan_excludes_note_in_api_call(
+        self,
+        sample_merged_property: MergedProperty,
+        sample_visual_response: dict[str, Any],
+        sample_evaluation_response: dict[str, Any],
+    ) -> None:
+        """Property with floorplan → Phase 1 prompt does NOT contain <floorplan_note>."""
+        quality_filter = PropertyQualityFilter(api_key="test-key")
+        quality_filter._client = MagicMock()
+        quality_filter._client.messages.create = _make_two_phase_mock(
+            sample_visual_response, sample_evaluation_response
+        )
+
+        await quality_filter.analyze_merged_properties([sample_merged_property])
+
+        call_args = quality_filter._client.messages.create.call_args_list[0]
+        content = call_args.kwargs["messages"][0]["content"]
+        text_blocks = [c for c in content if c.get("type") == "text"]
+        prompt_text = text_blocks[-1]["text"]
+
+        assert "<floorplan_note>" not in prompt_text
+
+
 class TestBuildEvaluationPrompt:
     """Tests for the build_evaluation_prompt function."""
 

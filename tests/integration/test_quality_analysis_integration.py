@@ -287,13 +287,9 @@ class TestQualityAnalysisIntegration:
         assert detail["quality_analysis"] is not None
         assert detail["quality_analysis"].summary == analysis.summary
 
-    async def test_two_bed_space_override(
-        self, make_property: Callable[..., Property]
-    ) -> None:
+    async def test_two_bed_space_override(self, make_property: Callable[..., Property]) -> None:
         """2-bed property should override is_spacious_enough to True."""
-        prop = make_property(
-            source_id="qa-2bed", bedrooms=2, price_pcm=1900, postcode="E8 3RH"
-        )
+        prop = make_property(source_id="qa-2bed", bedrooms=2, price_pcm=1900, postcode="E8 3RH")
         merged = _make_merged_with_images(prop)
 
         visual_data = _sample_visual_response()
@@ -316,9 +312,7 @@ class TestQualityAnalysisIntegration:
         assert analysis.space.is_spacious_enough is True
         assert analysis.space.confidence == "high"
 
-    async def test_no_images_skips_api_call(
-        self, make_property: Callable[..., Property]
-    ) -> None:
+    async def test_no_images_skips_api_call(self, make_property: Callable[..., Property]) -> None:
         """Property without images should not call Claude API."""
         prop = make_property(source_id="qa-noimg", price_pcm=1900, postcode="E8 3RH")
         merged = _make_merged_with_images(prop, with_images=False, with_floorplan=False)
@@ -335,9 +329,7 @@ class TestQualityAnalysisIntegration:
         # API should not be called
         quality_filter._client.messages.create.assert_not_called()
 
-    async def test_zoopla_images_as_base64(
-        self, make_property: Callable[..., Property]
-    ) -> None:
+    async def test_zoopla_images_as_base64(self, make_property: Callable[..., Property]) -> None:
         """Zoopla CDN images should be downloaded and sent as base64."""
         from unittest.mock import patch
 

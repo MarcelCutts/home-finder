@@ -445,9 +445,7 @@ class TestRightmoveEarlyStop:
     """Tests for early-stop pagination (requires newest-first sort)."""
 
     @pytest.mark.asyncio
-    async def test_search_url_sorts_by_newest(
-        self, rightmove_scraper: RightmoveScraper
-    ) -> None:
+    async def test_search_url_sorts_by_newest(self, rightmove_scraper: RightmoveScraper) -> None:
         """Verify sortType=6 (newest listed) — required for early-stop correctness."""
         url = await rightmove_scraper._build_search_url(
             area="hackney",

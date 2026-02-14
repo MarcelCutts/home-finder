@@ -109,8 +109,16 @@ class Settings(BaseSettings):
 
     # Search areas (boroughs or outcodes)
     search_areas: str = Field(
-        default="e3,e5,e9,e10,e15,e17,n15,n16,n17",
+        default="e2,e3,e5,e9,e10,e15,e17,n15,n16,n17",
         description="Comma-separated list of boroughs or outcodes to search",
+    )
+
+    # Zoopla anti-bot tuning
+    zoopla_max_areas_per_run: int = Field(
+        default=4,
+        ge=1,
+        le=20,
+        description="Max search areas per Zoopla run (rotate subset to avoid Cloudflare blocks)",
     )
 
     # Proxy (for accessing geo-restricted sites like Zoopla from outside the UK)

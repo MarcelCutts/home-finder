@@ -12,10 +12,13 @@ from home_finder.logging import get_logger
 from home_finder.models import MergedProperty, Property, PropertyImage, PropertySource
 from home_finder.scrapers.detail_fetcher import DetailFetcher
 from home_finder.utils.address import is_outcode
+from home_finder.utils.floorplan_detector import detect_floorplan
 from home_finder.utils.image_cache import (
+    clear_image_cache,
     get_cached_image_path,
     is_property_cached,
     is_valid_image_url,
+    read_image_bytes,
     save_image_bytes,
 )
 
@@ -34,6 +37,52 @@ class EnrichmentResult:
 
 
 _ENRICHMENT_CONCURRENCY: Final = 5
+
+
+def _detect_floorplan_in_gallery(
+    images: list[PropertyImage],
+    unique_id: str,
+    data_dir: str,
+) -> tuple[PropertyImage | None, list[PropertyImage], int]:
+    """Try to detect a floorplan among gallery images using PIL heuristics.
+
+    Iterates gallery images in reverse order (floorplans are often last),
+    reads cached bytes from disk, and runs the floorplan detector.
+
+    Args:
+        images: Gallery images to check.
+        unique_id: Property unique ID for cache path lookup.
+        data_dir: Data directory for image cache.
+
+    Returns:
+        Tuple of (detected_floorplan_image or None, remaining_gallery_images,
+        original_gallery_index). Index is -1 when no floorplan was detected.
+    """
+    # Iterate in reverse — floorplans are commonly placed at the end
+    for idx in range(len(images) - 1, -1, -1):
+        img = images[idx]
+        cache_path = get_cached_image_path(data_dir, unique_id, str(img.url), "gallery", idx)
+        img_bytes = read_image_bytes(cache_path)
+        if img_bytes is None:
+            continue
+
+        is_floorplan, confidence = detect_floorplan(img_bytes)
+        if is_floorplan:
+            logger.info(
+                "floorplan_detected_by_heuristic",
+                property_id=unique_id,
+                image_index=idx,
+                confidence=confidence,
+            )
+            floorplan = PropertyImage(
+                url=img.url,
+                source=img.source,
+                image_type="floorplan",
+            )
+            remaining = [im for j, im in enumerate(images) if j != idx]
+            return floorplan, remaining, idx
+
+    return None, images, -1
 
 
 async def _enrich_single(
@@ -137,6 +186,26 @@ async def _enrich_single(
                     if not current_pc or is_outcode(current_pc):
                         canon_updates["postcode"] = detail_data.postcode
 
+        # If no floorplan found by structural extraction, try PIL heuristic on gallery images
+        if floorplan_image is None and data_dir and all_images:
+            floorplan_image, all_images, detected_idx = _detect_floorplan_in_gallery(
+                all_images, merged.unique_id, data_dir
+            )
+            # Copy the cached image to the floorplan cache path so quality analysis finds it
+            if floorplan_image is not None and detected_idx >= 0:
+                old_path = get_cached_image_path(
+                    data_dir,
+                    merged.unique_id,
+                    str(floorplan_image.url),
+                    "gallery",
+                    detected_idx,
+                )
+                new_path = get_cached_image_path(
+                    data_dir, merged.unique_id, str(floorplan_image.url), "floorplan", 0
+                )
+                if old_path.is_file() and not new_path.is_file():
+                    save_image_bytes(new_path, old_path.read_bytes())
+
         canonical = prop.model_copy(update=canon_updates) if canon_updates else prop
 
         updated = MergedProperty(
@@ -215,9 +284,19 @@ async def enrich_merged_properties(
 
     for merged in merged_properties:
         if data_dir and storage and is_property_cached(data_dir, merged.unique_id):
-            logger.info("skipping_enriched_property", property_id=merged.unique_id)
             loaded = await _load_cached_property(merged, storage)
-            result.enriched.append(loaded)
+            if loaded.images or loaded.floorplan:
+                logger.info("skipping_enriched_property", property_id=merged.unique_id)
+                result.enriched.append(loaded)
+            else:
+                # Images cached on disk but no DB records — stale cache from a
+                # previous run that crashed before saving. Clear and re-enrich.
+                logger.warning(
+                    "stale_image_cache_cleared",
+                    property_id=merged.unique_id,
+                )
+                clear_image_cache(data_dir, merged.unique_id)
+                to_enrich.append(merged)
         else:
             to_enrich.append(merged)
 

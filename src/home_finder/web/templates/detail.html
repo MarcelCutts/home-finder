@@ -249,6 +249,32 @@
         <h3>Area: {{ outcode }}</h3>
         <p class="area-description">{{ area_context.description }}</p>
 
+        {% if area_context.micro_areas %}
+        <h4 class="section-subhead">Neighbourhoods</h4>
+        <div class="micro-area-grid">
+            {% for name, ma in area_context.micro_areas.items() %}
+            <div class="micro-area-card">
+                <div class="micro-area-header">
+                    <strong>{{ name }}</strong>
+                    <span class="micro-area-badges">
+                        {% if ma.hosting_tolerance %}
+                        <span class="badge {% if ma.hosting_tolerance == 'high' %}badge-green{% elif ma.hosting_tolerance == 'moderate' %}badge-amber{% else %}badge-red{% endif %}">Hosting: {{ ma.hosting_tolerance }}</span>
+                        {% endif %}
+                        {% if ma.wfh_suitability %}
+                        <span class="badge {% if ma.wfh_suitability == 'good' %}badge-green{% elif ma.wfh_suitability == 'moderate' %}badge-amber{% else %}badge-red{% endif %}">WFH: {{ ma.wfh_suitability }}</span>
+                        {% endif %}
+                    </span>
+                </div>
+                {% if ma.character %}<p>{{ ma.character }}</p>{% endif %}
+                {% if ma.transport %}<p class="micro-area-detail"><span class="micro-area-detail-label">Transport</span> {{ ma.transport }}</p>{% endif %}
+                {% if ma.broadband %}<p class="micro-area-detail"><span class="micro-area-detail-label">Broadband</span> {{ ma.broadband }}</p>{% endif %}
+                {% if ma.creative_scene %}<p class="micro-area-detail"><span class="micro-area-detail-label">Creative</span> {{ ma.creative_scene }}</p>{% endif %}
+                {% if ma.value %}<p class="micro-area-detail"><span class="micro-area-detail-label">Value</span> {{ ma.value }}</p>{% endif %}
+            </div>
+            {% endfor %}
+        </div>
+        {% endif %}
+
         {% if area_context.benchmarks %}
         <h4 class="section-subhead">Rental Benchmarks ({{ outcode }})</h4>
         {% set max_rent = area_context.benchmarks.values() | max %}

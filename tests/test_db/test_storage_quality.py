@@ -34,6 +34,7 @@ def prop_a() -> Property:
         postcode="E8 3RH",
         latitude=51.5465,
         longitude=-0.0553,
+        image_url=HttpUrl("https://example.com/img.jpg"),
     )
 
 
@@ -50,6 +51,7 @@ def prop_b() -> Property:
         postcode="E3 5LU",
         latitude=51.5300,
         longitude=-0.0400,
+        image_url=HttpUrl("https://example.com/img.jpg"),
     )
 
 
@@ -64,6 +66,7 @@ def prop_c() -> Property:
         bedrooms=0,
         address="30 Stoke Newington Rd",
         postcode="N16 7XJ",
+        image_url=HttpUrl("https://example.com/img.jpg"),
     )
 
 
@@ -368,6 +371,7 @@ class TestGetPropertiesPaginated:
                 bedrooms=1,
                 address=f"{i} Test St",
                 postcode="E8 1AA",
+                image_url=HttpUrl("https://example.com/img.jpg"),
             )
             merged = MergedProperty(
                 canonical=prop,
@@ -629,9 +633,7 @@ class TestThumbnailEpcFiltering:
         assert "kitchen" in props[0]["image_url"]
 
     @pytest.mark.asyncio
-    async def test_gallery_preferred_over_scraper_thumbnail(
-        self, storage: PropertyStorage
-    ) -> None:
+    async def test_gallery_preferred_over_scraper_thumbnail(self, storage: PropertyStorage) -> None:
         """Gallery image (higher quality) is preferred over scraper thumbnail."""
         prop = Property(
             source=PropertySource.RIGHTMOVE,
@@ -707,13 +709,32 @@ class TestThumbnailEpcFiltering:
 
     @pytest.mark.asyncio
     async def test_gallery_image_used_when_no_scraper_thumbnail(
-        self, storage: PropertyStorage, prop_a: Property, merged_a: MergedProperty
+        self, storage: PropertyStorage
     ) -> None:
         """When scraper image_url is absent, gallery image is used."""
-        assert prop_a.image_url is None
-        await storage.save_merged_property(merged_a)
+        prop = Property(
+            source=PropertySource.OPENRENT,
+            source_id="no-thumb",
+            url=HttpUrl("https://openrent.com/no-thumb"),
+            title="No thumbnail flat",
+            price_pcm=1900,
+            bedrooms=1,
+            address="10 Mare Street",
+            postcode="E8 3RH",
+            latitude=51.5465,
+            longitude=-0.0553,
+        )
+        assert prop.image_url is None
+        merged = MergedProperty(
+            canonical=prop,
+            sources=(PropertySource.OPENRENT,),
+            source_urls={PropertySource.OPENRENT: prop.url},
+            min_price=1900,
+            max_price=1900,
+        )
+        await storage.save_merged_property(merged)
         await storage.save_property_images(
-            prop_a.unique_id,
+            prop.unique_id,
             [
                 PropertyImage(
                     url=HttpUrl("https://example.com/gallery/bedroom.jpg"),

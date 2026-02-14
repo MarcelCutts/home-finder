@@ -7,6 +7,8 @@ the test skips rather than fails.
 
 import pytest
 
+pytestmark = pytest.mark.usefixtures("reset_crawlee_state", "set_crawlee_storage_dir")
+
 from home_finder.models import Property
 from home_finder.scrapers import (
     OnTheMarketScraper,

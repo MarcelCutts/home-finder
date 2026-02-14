@@ -89,9 +89,7 @@ def _format_space_info(analysis: PropertyQualityAnalysis) -> str:
     return "Size unknown"
 
 
-def _format_value_info(
-    analysis: PropertyQualityAnalysis, *, brief: bool = False
-) -> str | None:
+def _format_value_info(analysis: PropertyQualityAnalysis, *, brief: bool = False) -> str | None:
     """Format value assessment for display.
 
     Args:
@@ -509,9 +507,7 @@ def format_merged_property_caption(
             quality_analysis.listing_red_flags
             and quality_analysis.listing_red_flags.red_flag_count >= 2
         ):
-            alert_lines.append(
-                f"⚠️ {quality_analysis.listing_red_flags.red_flag_count} red flags"
-            )
+            alert_lines.append(f"⚠️ {quality_analysis.listing_red_flags.red_flag_count} red flags")
         if alert_lines:
             sections.append("\n".join(alert_lines))
 
@@ -821,11 +817,7 @@ class TelegramNotifier:
 
             # Venue pin only for high-rated properties (reduces message sprawl)
             prop = merged.canonical
-            if (
-                is_high_rated
-                and prop.latitude is not None
-                and prop.longitude is not None
-            ):
+            if is_high_rated and prop.latitude is not None and prop.longitude is not None:
                 await bot.send_venue(
                     chat_id=self.chat_id,
                     latitude=prop.latitude,

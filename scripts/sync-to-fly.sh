@@ -8,6 +8,15 @@ DATA_DIR="$(cd "$(dirname "$0")/.." && pwd)/data"
 MACHINE_ID=$(fly machine list --app "$APP" --json | python3 -c "import sys,json; print(json.load(sys.stdin)[0]['id'])")
 echo "    Machine: $MACHINE_ID"
 
+echo "==> Checkpointing local WAL..."
+python3 -c "
+import sqlite3
+c = sqlite3.connect('$DATA_DIR/properties.db')
+c.execute('PRAGMA wal_checkpoint(TRUNCATE)')
+c.close()
+print('    WAL flushed to main DB')
+"
+
 echo "==> Stopping app to release DB locks..."
 fly machine stop "$MACHINE_ID" --app "$APP" 2>/dev/null || true
 sleep 2

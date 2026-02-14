@@ -62,6 +62,20 @@ def test_settings() -> Settings:
     )
 
 
+def _mock_scraper(source: PropertySource, **kwargs: Any) -> AsyncMock:
+    """Create a mock scraper with BaseScraper's new properties set correctly."""
+    s = AsyncMock()
+    s.source = source
+    s.should_skip_remaining_areas = False
+    s.max_areas_per_run = None
+    s.area_delay = AsyncMock()
+    s.scrape = AsyncMock(return_value=kwargs.get("return_value", []))
+    s.close = AsyncMock()
+    if "side_effect" in kwargs:
+        s.scrape.side_effect = kwargs["side_effect"]
+    return s
+
+
 # ---------------------------------------------------------------------------
 # _save_one
 # ---------------------------------------------------------------------------
@@ -93,9 +107,7 @@ class TestSaveOne:
         merged = make_merged_property()
         commute_info = (18, TransportMode.CYCLING)
         # Pre-save with commute data
-        await storage.save_pre_analysis_properties(
-            [merged], {merged.unique_id: commute_info}
-        )
+        await storage.save_pre_analysis_properties([merged], {merged.unique_id: commute_info})
         await _save_one(merged, commute_info, None, storage)
 
         tracked = await storage.get_property(merged.unique_id)
@@ -131,10 +143,7 @@ class TestRunQualityAndSave:
         make_property: Callable[..., Property],
         make_merged_property: Callable[..., MergedProperty],
     ) -> None:
-        props = [
-            make_merged_property(price_pcm=1800 + i * 10)
-            for i in range(3)
-        ]
+        props = [make_merged_property(price_pcm=1800 + i * 10) for i in range(3)]
         pre = PreAnalysisResult(merged_to_process=props, commute_lookup={})
         settings = Settings(
             telegram_bot_token="fake:token",
@@ -194,10 +203,7 @@ class TestRunQualityAndSave:
         make_merged_property: Callable[..., MergedProperty],
     ) -> None:
         """If one property's analysis fails, others should still be processed."""
-        props = [
-            make_merged_property(price_pcm=1800 + i * 10)
-            for i in range(3)
-        ]
+        props = [make_merged_property(price_pcm=1800 + i * 10) for i in range(3)]
         pre = PreAnalysisResult(merged_to_process=props, commute_lookup={})
 
         settings = Settings(
@@ -255,20 +261,17 @@ class TestScrapeAllPlatforms:
         make_property: Callable[..., Property],
     ) -> None:
         # Setup mock scrapers
+        sources = [
+            PropertySource.OPENRENT,
+            PropertySource.RIGHTMOVE,
+            PropertySource.ZOOPLA,
+            PropertySource.ONTHEMARKET,
+        ]
         for i, mock_cls in enumerate([mock_or_cls, mock_rm_cls, mock_zoopla_cls, mock_otm_cls]):
-            sources = [
-                PropertySource.OPENRENT,
-                PropertySource.RIGHTMOVE,
-                PropertySource.ZOOPLA,
-                PropertySource.ONTHEMARKET,
-            ]
-            scraper = AsyncMock()
-            scraper.source = sources[i]
-            scraper.scrape = AsyncMock(
-                return_value=[make_property(source=sources[i], source_id=f"s{i}")]
+            mock_cls.return_value = _mock_scraper(
+                sources[i],
+                return_value=[make_property(source=sources[i], source_id=f"s{i}")],
             )
-            scraper.close = AsyncMock()
-            mock_cls.return_value = scraper
 
         result = await scrape_all_platforms(
             min_price=1500,
@@ -293,12 +296,10 @@ class TestScrapeAllPlatforms:
         make_property: Callable[..., Property],
     ) -> None:
         # Only configure OpenRent to return results (simpler)
-        or_scraper = AsyncMock()
-        or_scraper.source = PropertySource.OPENRENT
-        or_scraper.scrape = AsyncMock(
-            return_value=[make_property(source_id=str(i)) for i in range(10)]
+        or_scraper = _mock_scraper(
+            PropertySource.OPENRENT,
+            return_value=[make_property(source_id=str(i)) for i in range(10)],
         )
-        or_scraper.close = AsyncMock()
         mock_or_cls.return_value = or_scraper
 
         for mock_cls, src in [
@@ -306,11 +307,7 @@ class TestScrapeAllPlatforms:
             (mock_zoopla_cls, PropertySource.ZOOPLA),
             (mock_otm_cls, PropertySource.ONTHEMARKET),
         ]:
-            s = AsyncMock()
-            s.source = src
-            s.scrape = AsyncMock(return_value=[])
-            s.close = AsyncMock()
-            mock_cls.return_value = s
+            mock_cls.return_value = _mock_scraper(src)
 
         result = await scrape_all_platforms(
             min_price=1500,
@@ -339,10 +336,10 @@ class TestScrapeAllPlatforms:
         make_property: Callable[..., Property],
     ) -> None:
         # OpenRent fails
-        or_scraper = AsyncMock()
-        or_scraper.source = PropertySource.OPENRENT
-        or_scraper.scrape = AsyncMock(side_effect=Exception("Scraper crash"))
-        or_scraper.close = AsyncMock()
+        or_scraper = _mock_scraper(
+            PropertySource.OPENRENT,
+            side_effect=Exception("Scraper crash"),
+        )
         mock_or_cls.return_value = or_scraper
 
         # Others succeed
@@ -351,13 +348,10 @@ class TestScrapeAllPlatforms:
             (mock_zoopla_cls, PropertySource.ZOOPLA),
             (mock_otm_cls, PropertySource.ONTHEMARKET),
         ]:
-            s = AsyncMock()
-            s.source = src
-            s.scrape = AsyncMock(
-                return_value=[make_property(source=src, source_id=f"ok-{src.value}")]
+            mock_cls.return_value = _mock_scraper(
+                src,
+                return_value=[make_property(source=src, source_id=f"ok-{src.value}")],
             )
-            s.close = AsyncMock()
-            mock_cls.return_value = s
 
         result = await scrape_all_platforms(
             min_price=1500,
@@ -385,22 +379,16 @@ class TestScrapeAllPlatforms:
         """Same property from multiple areas should be deduped."""
         shared_prop = make_property(source_id="shared-1")
 
-        or_scraper = AsyncMock()
-        or_scraper.source = PropertySource.OPENRENT
-        or_scraper.scrape = AsyncMock(return_value=[shared_prop])
-        or_scraper.close = AsyncMock()
-        mock_or_cls.return_value = or_scraper
+        mock_or_cls.return_value = _mock_scraper(
+            PropertySource.OPENRENT, return_value=[shared_prop]
+        )
 
         for mock_cls, src in [
             (mock_rm_cls, PropertySource.RIGHTMOVE),
             (mock_zoopla_cls, PropertySource.ZOOPLA),
             (mock_otm_cls, PropertySource.ONTHEMARKET),
         ]:
-            s = AsyncMock()
-            s.source = src
-            s.scrape = AsyncMock(return_value=[])
-            s.close = AsyncMock()
-            mock_cls.return_value = s
+            mock_cls.return_value = _mock_scraper(src)
 
         result = await scrape_all_platforms(
             min_price=1500,
@@ -426,26 +414,18 @@ class TestScrapeAllPlatforms:
         make_property: Callable[..., Property],
     ) -> None:
         """Properties without postcodes get outcode backfilled when searching by outcode."""
-        no_postcode = make_property(
-            source_id="no-pc", postcode=None, latitude=None, longitude=None
-        )
+        no_postcode = make_property(source_id="no-pc", postcode=None, latitude=None, longitude=None)
 
-        or_scraper = AsyncMock()
-        or_scraper.source = PropertySource.OPENRENT
-        or_scraper.scrape = AsyncMock(return_value=[no_postcode])
-        or_scraper.close = AsyncMock()
-        mock_or_cls.return_value = or_scraper
+        mock_or_cls.return_value = _mock_scraper(
+            PropertySource.OPENRENT, return_value=[no_postcode]
+        )
 
         for mock_cls, src in [
             (mock_rm_cls, PropertySource.RIGHTMOVE),
             (mock_zoopla_cls, PropertySource.ZOOPLA),
             (mock_otm_cls, PropertySource.ONTHEMARKET),
         ]:
-            s = AsyncMock()
-            s.source = src
-            s.scrape = AsyncMock(return_value=[])
-            s.close = AsyncMock()
-            mock_cls.return_value = s
+            mock_cls.return_value = _mock_scraper(src)
 
         result = await scrape_all_platforms(
             min_price=1500,
@@ -485,9 +465,7 @@ class TestPreAnalysisPipeline:
         make_property: Callable[..., Property],
     ) -> None:
         # Price way above max
-        mock_scrape.return_value = [
-            make_property(source_id="expensive", price_pcm=99999)
-        ]
+        mock_scrape.return_value = [make_property(source_id="expensive", price_pcm=99999)]
         result = await _run_pre_analysis_pipeline(test_settings, storage)
         assert result is None
 

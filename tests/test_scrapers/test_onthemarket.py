@@ -258,9 +258,7 @@ class TestOnTheMarketParser:
 class TestOnTheMarketEarlyStop:
     """Tests for early-stop pagination (requires newest-first sort)."""
 
-    def test_search_url_sorts_by_newest(
-        self, onthemarket_scraper: OnTheMarketScraper
-    ) -> None:
+    def test_search_url_sorts_by_newest(self, onthemarket_scraper: OnTheMarketScraper) -> None:
         """Verify sort-field=update_date — required for early-stop correctness."""
         url = onthemarket_scraper._build_search_url(
             area="e8",
@@ -299,9 +297,7 @@ class TestOnTheMarketEarlyStop:
         """When only some results are known, don't early-stop — fetch next page."""
         known_ids = {"15234567"}  # Only one known — should not early-stop
 
-        empty_data = json.dumps(
-            {"props": {"initialReduxState": {"results": {"list": []}}}}
-        )
+        empty_data = json.dumps({"props": {"initialReduxState": {"results": {"list": []}}}})
         empty_html = (
             '<html><body><script id="__NEXT_DATA__" type="application/json">'
             f"{empty_data}</script></body></html>"

@@ -8,6 +8,8 @@ Run with: uv run pytest -m slow -v
 
 import pytest
 
+pytestmark = pytest.mark.usefixtures("reset_crawlee_state", "set_crawlee_storage_dir")
+
 from home_finder.models import PropertySource
 from home_finder.scrapers.onthemarket import OnTheMarketScraper
 from home_finder.scrapers.openrent import OpenRentScraper

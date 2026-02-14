@@ -14,7 +14,7 @@ from home_finder.config import Settings
 from home_finder.db import PropertyStorage
 
 
-@pytest.fixture(autouse=True)
+@pytest.fixture
 def reset_crawlee_state() -> Generator[None, None, None]:
     """Reset Crawlee's global state between tests.
 
@@ -23,6 +23,9 @@ def reset_crawlee_state() -> Generator[None, None, None]:
     different event loops will fail with "attached to a different event loop".
 
     This follows the pattern used in Crawlee's own test suite.
+
+    Not autouse — only tests that exercise real Crawlee scrapers need this.
+    Use via @pytest.mark.usefixtures("reset_crawlee_state").
     """
     # Reset before test
     _clear_crawlee_caches()
@@ -77,11 +80,14 @@ def _clear_crawlee_caches() -> None:
         pass
 
 
-@pytest.fixture(autouse=True)
+@pytest.fixture
 def set_crawlee_storage_dir(tmp_path: Path) -> Generator[None, None, None]:
     """Use a temporary directory for Crawlee storage during tests.
 
     This prevents tests from interfering with each other through shared storage.
+
+    Not autouse — only tests that exercise real Crawlee scrapers need this.
+    Use via @pytest.mark.usefixtures("set_crawlee_storage_dir").
     """
     old_value = os.environ.get("CRAWLEE_STORAGE_DIR")
     os.environ["CRAWLEE_STORAGE_DIR"] = str(tmp_path / "crawlee_storage")

@@ -35,6 +35,7 @@ from home_finder.models import (
     ValueAnalysis,
 )
 
+
 def _find_free_port() -> int:
     """Find an available port by binding to port 0."""
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
@@ -726,9 +727,7 @@ class TestMobileViewport:
         page.set_viewport_size({"width": 375, "height": 812})
         page.goto(server_url)
         page.wait_for_load_state("networkidle")
-        position = page.locator(".filter-bar").evaluate(
-            "el => getComputedStyle(el).position"
-        )
+        position = page.locator(".filter-bar").evaluate("el => getComputedStyle(el).position")
         assert position == "static"
 
     def test_filter_bar_sticky_on_desktop(self, server_url, page):
@@ -736,9 +735,7 @@ class TestMobileViewport:
         page.set_viewport_size({"width": 1440, "height": 900})
         page.goto(server_url)
         page.wait_for_load_state("networkidle")
-        position = page.locator(".filter-bar").evaluate(
-            "el => getComputedStyle(el).position"
-        )
+        position = page.locator(".filter-bar").evaluate("el => getComputedStyle(el).position")
         assert position == "sticky"
 
     def test_animation_delay_capped(self, server_url, page):

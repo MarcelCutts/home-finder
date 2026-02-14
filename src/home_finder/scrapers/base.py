@@ -1,5 +1,7 @@
 """Base scraper interface."""
 
+import asyncio
+import random
 from abc import ABC, abstractmethod
 
 from home_finder.models import FurnishType, Property, PropertySource
@@ -47,6 +49,20 @@ class BaseScraper(ABC):
             List of Property objects found.
         """
         ...
+
+    async def area_delay(self) -> None:
+        """Delay between area searches. Override for scraper-specific pacing."""
+        await asyncio.sleep(random.uniform(2.0, 5.0))
+
+    @property
+    def max_areas_per_run(self) -> int | None:
+        """Max areas to scrape per run. None means unlimited."""
+        return None
+
+    @property
+    def should_skip_remaining_areas(self) -> bool:
+        """Whether the scraper wants to abort remaining areas (e.g. too many blocks)."""
+        return False
 
     async def close(self) -> None:  # noqa: B027
         """Clean up scraper resources (e.g. HTTP sessions)."""

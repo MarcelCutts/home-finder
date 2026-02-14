@@ -60,6 +60,7 @@ def prop_a() -> Property:
         postcode="E8 3RH",
         latitude=51.5465,
         longitude=-0.0553,
+        image_url=HttpUrl("https://example.com/img.jpg"),
     )
 
 
@@ -88,6 +89,7 @@ def prop_b() -> Property:
         postcode="N16 0AP",
         latitude=51.5615,
         longitude=-0.0750,
+        image_url=HttpUrl("https://example.com/img.jpg"),
     )
 
 
@@ -234,6 +236,38 @@ class TestPropertyDetail:
         assert resp.status_code == 200
         # E8 should have area context data
         assert "E8" in resp.text
+
+    @pytest.mark.asyncio
+    async def test_micro_area_grid_renders_for_e8(
+        self, client: TestClient, storage: PropertyStorage, merged_a: MergedProperty
+    ) -> None:
+        await storage.save_merged_property(merged_a)
+        resp = client.get(f"/property/{merged_a.unique_id}")
+        assert resp.status_code == 200
+        assert "micro-area-grid" in resp.text
+        assert "Dalston core" in resp.text
+        assert "Haggerston" in resp.text
+        # Check badges render
+        assert "Hosting:" in resp.text
+        assert "WFH:" in resp.text
+
+    @pytest.mark.asyncio
+    async def test_micro_area_graceful_for_unknown_outcode(
+        self, client: TestClient, storage: PropertyStorage, prop_a: Property
+    ) -> None:
+        """Properties with unknown outcodes should not show micro-area grid."""
+        prop_unknown = prop_a.model_copy(update={"postcode": "ZZ9 9ZZ"})
+        merged = MergedProperty(
+            canonical=prop_unknown,
+            sources=(PropertySource.OPENRENT,),
+            source_urls={PropertySource.OPENRENT: prop_unknown.url},
+            min_price=1900,
+            max_price=1900,
+        )
+        await storage.save_merged_property(merged)
+        resp = client.get(f"/property/{merged.unique_id}")
+        assert resp.status_code == 200
+        assert "micro-area-grid" not in resp.text
 
     @pytest.mark.asyncio
     async def test_description_rendered(
@@ -910,6 +944,7 @@ class TestStudioSupport:
             postcode="E8 3RH",
             latitude=51.5465,
             longitude=-0.0553,
+            image_url=HttpUrl("https://example.com/img.jpg"),
         )
         merged_studio = MergedProperty(
             canonical=studio,
@@ -936,6 +971,7 @@ class TestStudioSupport:
             postcode="E8 3RH",
             latitude=51.5465,
             longitude=-0.0553,
+            image_url=HttpUrl("https://example.com/img.jpg"),
         )
         merged_studio = MergedProperty(
             canonical=studio,
@@ -1325,3 +1361,122 @@ class TestSecondaryFilterCount:
         assert "filter-badge" in resp.text
         # Badge should show "2"
         assert ">2<" in resp.text
+
+
+class TestReanalysisEndpoint:
+    """Tests for POST /property/{id}/reanalyze."""
+
+    @pytest.mark.asyncio
+    async def test_reanalyze_returns_queued(
+        self,
+        client: TestClient,
+        storage: PropertyStorage,
+        prop_a: Property,
+        merged_a: MergedProperty,
+    ) -> None:
+        from home_finder.models import (
+            ConditionAnalysis,
+            KitchenAnalysis,
+            LightSpaceAnalysis,
+            PropertyQualityAnalysis,
+            SpaceAnalysis,
+        )
+
+        await storage.save_merged_property(merged_a)
+        analysis = PropertyQualityAnalysis(
+            kitchen=KitchenAnalysis(overall_quality="modern"),
+            condition=ConditionAnalysis(overall_condition="good"),
+            light_space=LightSpaceAnalysis(natural_light="good"),
+            space=SpaceAnalysis(confidence="high"),
+            overall_rating=4,
+            summary="Nice place.",
+        )
+        await storage.save_quality_analysis(prop_a.unique_id, analysis)
+
+        resp = client.post(f"/property/{prop_a.unique_id}/reanalyze")
+        assert resp.status_code == 200
+        assert resp.json() == {"status": "queued"}
+
+    @pytest.mark.asyncio
+    async def test_reanalyze_unknown_property_404(self, client: TestClient) -> None:
+        resp = client.post("/property/nonexistent-999/reanalyze")
+        assert resp.status_code == 404
+
+    @pytest.mark.asyncio
+    async def test_reanalyze_no_analysis_404(
+        self,
+        client: TestClient,
+        storage: PropertyStorage,
+        merged_a: MergedProperty,
+    ) -> None:
+        """Property without quality analysis returns 404."""
+        await storage.save_merged_property(merged_a)
+        resp = client.post(f"/property/{merged_a.unique_id}/reanalyze")
+        assert resp.status_code == 404
+
+    @pytest.mark.asyncio
+    async def test_reanalyze_sets_flag_in_db(
+        self,
+        client: TestClient,
+        storage: PropertyStorage,
+        prop_a: Property,
+        merged_a: MergedProperty,
+    ) -> None:
+        from home_finder.models import (
+            ConditionAnalysis,
+            KitchenAnalysis,
+            LightSpaceAnalysis,
+            PropertyQualityAnalysis,
+            SpaceAnalysis,
+        )
+
+        await storage.save_merged_property(merged_a)
+        analysis = PropertyQualityAnalysis(
+            kitchen=KitchenAnalysis(overall_quality="modern"),
+            condition=ConditionAnalysis(overall_condition="good"),
+            light_space=LightSpaceAnalysis(natural_light="good"),
+            space=SpaceAnalysis(confidence="high"),
+            overall_rating=4,
+            summary="Nice place.",
+        )
+        await storage.save_quality_analysis(prop_a.unique_id, analysis)
+
+        client.post(f"/property/{prop_a.unique_id}/reanalyze")
+        queue = await storage.get_reanalysis_queue()
+        assert len(queue) == 1
+        assert queue[0].unique_id == prop_a.unique_id
+
+    @pytest.mark.asyncio
+    async def test_reanalyze_idempotent(
+        self,
+        client: TestClient,
+        storage: PropertyStorage,
+        prop_a: Property,
+        merged_a: MergedProperty,
+    ) -> None:
+        from home_finder.models import (
+            ConditionAnalysis,
+            KitchenAnalysis,
+            LightSpaceAnalysis,
+            PropertyQualityAnalysis,
+            SpaceAnalysis,
+        )
+
+        await storage.save_merged_property(merged_a)
+        analysis = PropertyQualityAnalysis(
+            kitchen=KitchenAnalysis(overall_quality="modern"),
+            condition=ConditionAnalysis(overall_condition="good"),
+            light_space=LightSpaceAnalysis(natural_light="good"),
+            space=SpaceAnalysis(confidence="high"),
+            overall_rating=4,
+            summary="Nice place.",
+        )
+        await storage.save_quality_analysis(prop_a.unique_id, analysis)
+
+        resp1 = client.post(f"/property/{prop_a.unique_id}/reanalyze")
+        resp2 = client.post(f"/property/{prop_a.unique_id}/reanalyze")
+        assert resp1.status_code == 200
+        assert resp2.status_code == 200
+
+        queue = await storage.get_reanalysis_queue()
+        assert len(queue) == 1

@@ -8,13 +8,13 @@ from typing import TYPE_CHECKING, Any, Final, Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 from home_finder.data.area_context import (
-    AREA_CONTEXT,
     COUNCIL_TAX_MONTHLY,
     CRIME_RATES,
     DEFAULT_BENCHMARK,
     OUTCODE_BOROUGH,
     RENT_TRENDS,
     RENTAL_BENCHMARKS,
+    get_area_overview,
 )
 from home_finder.logging import get_logger
 from home_finder.models import (
@@ -259,6 +259,13 @@ class _VisualAnalysisResponse(BaseModel):
     storage: Storage
     flooring_noise: FlooringNoise
     listing_red_flags: RedFlags
+    floorplan_detected_in_gallery: list[int] = Field(
+        default_factory=list,
+        description=(
+            "1-based gallery image indices that appear to be floorplans or floor plan diagrams. "
+            "Empty list if no gallery images look like floorplans."
+        ),
+    )
     overall_rating: int = Field(
         description="Overall 1-5 star rating for rental desirability (1=worst, 5=best)"
     )
@@ -462,8 +469,8 @@ class PropertyQualityFilter:
         For these sites, we need to download the images locally using curl_cffi
         (which can impersonate Chrome's TLS fingerprint) and send as base64.
         """
-        # Zoopla image CDNs use anti-bot protection
-        return "zoocdn.com" in url
+        # Zoopla and OpenRent image CDNs block non-browser requests
+        return "zoocdn.com" in url or "imagescdn.openrent.co.uk" in url
 
     @staticmethod
     def _get_media_type(url: str) -> ImageMediaType:
@@ -613,7 +620,7 @@ class PropertyQualityFilter:
             outcode = (
                 prop.postcode.split()[0].upper() if " " in prop.postcode else prop.postcode.upper()
             )
-        area_context = AREA_CONTEXT.get(outcode) if outcode else None
+        area_context = get_area_overview(outcode) if outcode else None
 
         # Look up new contextual data
         borough = OUTCODE_BOROUGH.get(outcode) if outcode else None
@@ -887,6 +894,7 @@ class PropertyQualityFilter:
             council_tax_band_c=council_tax_band_c,
             crime_summary=crime_summary,
             rent_trend=rent_trend,
+            has_labeled_floorplan=has_floorplan,
         )
         content.append(TextBlockParam(type="text", text=user_prompt))
 
@@ -989,7 +997,9 @@ class PropertyQualityFilter:
                 property_id=property_id,
                 phase="visual",
                 error=str(e),
-                request_id=getattr(e, "_request_id", None) if not isinstance(e, APIConnectionError) else None,
+                request_id=getattr(e, "_request_id", None)
+                if not isinstance(e, APIConnectionError)
+                else None,
             )
             raise APIUnavailableError(str(e)) from e
 
@@ -1015,6 +1025,15 @@ class PropertyQualityFilter:
             return None
 
         logger.info("visual_analysis_complete", property_id=property_id)
+
+        # Log any Claude-detected floorplans in gallery images
+        detected_indices = visual_data.get("floorplan_detected_in_gallery", [])
+        if detected_indices:
+            logger.info(
+                "floorplan_detected_by_claude",
+                property_id=property_id,
+                indices=detected_indices,
+            )
 
         # ── Phase 2: Evaluation ───────────────────────────────────────
         eval_data: dict[str, Any] = {}
