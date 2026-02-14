@@ -2,6 +2,7 @@
 
 import json
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -497,3 +498,217 @@ class TestZooplaEarlyStop:
 
         assert mock_fetch.call_count >= 2  # Continued past page 1
         assert len(result) == 2  # Both page 1 properties returned
+
+
+def _make_response(
+    status_code: int = 200,
+    text: str = "<html></html>",
+    headers: dict[str, str] | None = None,
+) -> SimpleNamespace:
+    """Create a fake curl_cffi response for testing."""
+    return SimpleNamespace(
+        status_code=status_code,
+        text=text,
+        headers=headers or {},
+    )
+
+
+class TestCloudflareDetection:
+    """Tests for Cloudflare challenge detection."""
+
+    def test_detects_cf_mitigated_header(self, zoopla_scraper: ZooplaScraper) -> None:
+        """cf-mitigated: challenge header should be detected."""
+        resp = _make_response(status_code=403, headers={"cf-mitigated": "challenge"})
+        assert zoopla_scraper._is_cloudflare_challenge(resp) is True
+
+    def test_detects_403_with_challenge_html(self, zoopla_scraper: ZooplaScraper) -> None:
+        """403 with 'Just a moment' in body is a Cloudflare challenge."""
+        resp = _make_response(
+            status_code=403,
+            text="<html><title>Just a moment...</title></html>",
+        )
+        assert zoopla_scraper._is_cloudflare_challenge(resp) is True
+
+    def test_detects_503_with_challenge_html(self, zoopla_scraper: ZooplaScraper) -> None:
+        """503 with Cloudflare markers is a challenge."""
+        resp = _make_response(
+            status_code=503,
+            text='<html><body>Cloudflare Ray ID: abc123</body></html>',
+        )
+        assert zoopla_scraper._is_cloudflare_challenge(resp) is True
+
+    def test_detects_cf_chl_opt_marker(self, zoopla_scraper: ZooplaScraper) -> None:
+        """403 with _cf_chl_opt script is a challenge."""
+        resp = _make_response(
+            status_code=403,
+            text='<script>window._cf_chl_opt={}</script>',
+        )
+        assert zoopla_scraper._is_cloudflare_challenge(resp) is True
+
+    def test_normal_403_is_not_challenge(self, zoopla_scraper: ZooplaScraper) -> None:
+        """403 without Cloudflare markers is NOT a challenge."""
+        resp = _make_response(
+            status_code=403,
+            text="<html><body>Access Denied</body></html>",
+        )
+        assert zoopla_scraper._is_cloudflare_challenge(resp) is False
+
+    def test_200_is_not_challenge(self, zoopla_scraper: ZooplaScraper) -> None:
+        """Normal 200 response is not a challenge."""
+        resp = _make_response(status_code=200, text="<html>OK</html>")
+        assert zoopla_scraper._is_cloudflare_challenge(resp) is False
+
+    def test_200_with_cf_mitigated_is_challenge(self, zoopla_scraper: ZooplaScraper) -> None:
+        """200 with cf-mitigated header is a soft challenge."""
+        resp = _make_response(
+            status_code=200,
+            text="<html>challenge page</html>",
+            headers={"cf-mitigated": "challenge"},
+        )
+        assert zoopla_scraper._is_cloudflare_challenge(resp) is True
+
+
+class TestFetchPageRetry:
+    """Tests for _fetch_page retry logic with Cloudflare handling."""
+
+    @pytest.mark.asyncio
+    async def test_retries_on_403_challenge(self, zoopla_scraper: ZooplaScraper) -> None:
+        """403 Cloudflare challenge should be retried, then succeed on 200."""
+        challenge_resp = _make_response(
+            status_code=403,
+            text="<html><title>Just a moment...</title></html>",
+        )
+        ok_resp = _make_response(status_code=200, text="<html>property data</html>")
+
+        mock_session = AsyncMock()
+        mock_session.get = AsyncMock(side_effect=[challenge_resp, ok_resp])
+
+        with (
+            patch.object(zoopla_scraper, "_get_session", return_value=mock_session),
+            patch("home_finder.scrapers.zoopla.asyncio.sleep", new_callable=AsyncMock),
+        ):
+            result = await zoopla_scraper._fetch_page("https://example.com")
+
+        assert result == "<html>property data</html>"
+        assert mock_session.get.call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_retries_on_soft_200_challenge(self, zoopla_scraper: ZooplaScraper) -> None:
+        """200 response with cf-mitigated header should be retried."""
+        soft_challenge = _make_response(
+            status_code=200,
+            text="<html>challenge</html>",
+            headers={"cf-mitigated": "challenge"},
+        )
+        ok_resp = _make_response(status_code=200, text="<html>real data</html>")
+
+        mock_session = AsyncMock()
+        mock_session.get = AsyncMock(side_effect=[soft_challenge, ok_resp])
+
+        with (
+            patch.object(zoopla_scraper, "_get_session", return_value=mock_session),
+            patch("home_finder.scrapers.zoopla.asyncio.sleep", new_callable=AsyncMock),
+        ):
+            result = await zoopla_scraper._fetch_page("https://example.com")
+
+        assert result == "<html>real data</html>"
+        assert mock_session.get.call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_does_not_retry_hard_404(self, zoopla_scraper: ZooplaScraper) -> None:
+        """404 without challenge markers should NOT be retried."""
+        resp = _make_response(status_code=404, text="Not Found")
+
+        mock_session = AsyncMock()
+        mock_session.get = AsyncMock(return_value=resp)
+
+        with patch.object(zoopla_scraper, "_get_session", return_value=mock_session):
+            result = await zoopla_scraper._fetch_page("https://example.com")
+
+        assert result is None
+        assert mock_session.get.call_count == 1
+
+    @pytest.mark.asyncio
+    async def test_retries_on_exception(self, zoopla_scraper: ZooplaScraper) -> None:
+        """Network exceptions should be retried with backoff."""
+        ok_resp = _make_response(status_code=200, text="<html>data</html>")
+
+        mock_session = AsyncMock()
+        mock_session.get = AsyncMock(
+            side_effect=[ConnectionError("timeout"), ok_resp],
+        )
+
+        with (
+            patch.object(zoopla_scraper, "_get_session", return_value=mock_session),
+            patch("home_finder.scrapers.zoopla.asyncio.sleep", new_callable=AsyncMock),
+        ):
+            result = await zoopla_scraper._fetch_page("https://example.com")
+
+        assert result == "<html>data</html>"
+        assert mock_session.get.call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_exhausted_after_4_attempts(self, zoopla_scraper: ZooplaScraper) -> None:
+        """After 4 failed challenge attempts, return None."""
+        challenge_resp = _make_response(
+            status_code=403,
+            text="<html><title>Just a moment...</title></html>",
+        )
+
+        mock_session = AsyncMock()
+        mock_session.get = AsyncMock(return_value=challenge_resp)
+
+        with (
+            patch.object(zoopla_scraper, "_get_session", return_value=mock_session),
+            patch("home_finder.scrapers.zoopla.asyncio.sleep", new_callable=AsyncMock),
+        ):
+            result = await zoopla_scraper._fetch_page("https://example.com")
+
+        assert result is None
+        assert mock_session.get.call_count == 4
+
+    @pytest.mark.asyncio
+    async def test_passes_impersonate_target(self, zoopla_scraper: ZooplaScraper) -> None:
+        """impersonate_target kwarg should be forwarded to session.get."""
+        ok_resp = _make_response(status_code=200, text="<html>ok</html>")
+
+        mock_session = AsyncMock()
+        mock_session.get = AsyncMock(return_value=ok_resp)
+
+        with patch.object(zoopla_scraper, "_get_session", return_value=mock_session):
+            await zoopla_scraper._fetch_page(
+                "https://example.com", impersonate_target="safari"
+            )
+
+        call_kwargs = mock_session.get.call_args[1]
+        assert call_kwargs["impersonate"] == "safari"
+
+
+class TestProfileRotation:
+    """Tests for browser profile rotation."""
+
+    def test_pick_impersonate_target_returns_valid(self, zoopla_scraper: ZooplaScraper) -> None:
+        """Returned target should be from the known list."""
+        for _ in range(20):
+            target = zoopla_scraper._pick_impersonate_target()
+            assert target in ZooplaScraper._IMPERSONATE_TARGETS
+
+    @pytest.mark.asyncio
+    async def test_scrape_passes_impersonate_to_fetch(
+        self, zoopla_scraper: ZooplaScraper
+    ) -> None:
+        """scrape() should pass a chosen impersonate target to _fetch_page."""
+        mock_fetch = AsyncMock(return_value="<html></html>")
+        with patch.object(zoopla_scraper, "_fetch_page", mock_fetch):
+            await zoopla_scraper.scrape(
+                min_price=1800,
+                max_price=2500,
+                min_bedrooms=1,
+                max_bedrooms=2,
+                area="e8",
+            )
+
+        # _fetch_page should have been called with impersonate_target kwarg
+        call_kwargs = mock_fetch.call_args[1]
+        assert "impersonate_target" in call_kwargs
+        assert call_kwargs["impersonate_target"] in ZooplaScraper._IMPERSONATE_TARGETS

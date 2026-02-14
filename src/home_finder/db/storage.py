@@ -693,13 +693,17 @@ class PropertyStorage:
         return count
 
     async def delete_property(self, unique_id: str) -> None:
-        """Delete a property and its images from the database.
+        """Delete a property and all related rows from the database.
 
         Used to clean up unenriched rows consumed by cross-platform anchor merges.
         """
         conn = await self._get_connection()
         await conn.execute(
             "DELETE FROM property_images WHERE property_unique_id = ?",
+            (unique_id,),
+        )
+        await conn.execute(
+            "DELETE FROM quality_analyses WHERE property_unique_id = ?",
             (unique_id,),
         )
         await conn.execute(
@@ -1521,6 +1525,11 @@ class PropertyStorage:
             # A fallback has a quality_analyses row but NULL overall_rating.
             # Properties with no analysis row at all (q.property_unique_id IS NULL) are fine.
             "(q.overall_rating IS NOT NULL OR q.property_unique_id IS NULL)",
+            # Hide properties with no images — not worth viewing without photos
+            """(p.image_url IS NOT NULL OR EXISTS (
+                SELECT 1 FROM property_images pi
+                WHERE pi.property_unique_id = p.unique_id
+                AND pi.image_type = 'gallery'))""",
         ]
         params: list[Any] = []
 

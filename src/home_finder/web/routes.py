@@ -672,6 +672,15 @@ async def property_detail(
             status_code=404,
         )
 
+    # Hide properties with no images — not worth viewing without photos
+    has_images = prop.get("image_url") or prop.get("gallery_images") or prop.get("floorplan_images")
+    if not has_images:
+        return templates.TemplateResponse(
+            "error.html",
+            {"request": request, "message": "Property not found."},
+            status_code=404,
+        )
+
     # Extract outcode for area context
     outcode = extract_outcode(prop.get("postcode"))
     area_context: dict[str, Any] = {}

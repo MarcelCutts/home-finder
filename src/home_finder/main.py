@@ -2,6 +2,7 @@
 
 import argparse
 import asyncio
+import random
 import sys
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
@@ -25,6 +26,7 @@ from home_finder.models import (
     MergedProperty,
     Property,
     PropertyQualityAnalysis,
+    PropertySource,
     TransportMode,
 )
 from home_finder.notifiers import TelegramNotifier
@@ -69,6 +71,7 @@ async def scrape_all_platforms(
     max_per_scraper: int | None = None,
     known_ids_by_source: dict[str, set[str]] | None = None,
     proxy_url: str = "",
+    only_scrapers: set[str] | None = None,
 ) -> list[Property]:
     """Scrape all platforms for matching properties.
 
@@ -83,20 +86,25 @@ async def scrape_all_platforms(
         include_let_agreed: Whether to include already-let properties.
         max_per_scraper: Maximum properties per scraper (None for unlimited).
         known_ids_by_source: Known source IDs per platform for early-stop pagination.
+        only_scrapers: If set, only run scrapers whose source value is in this set.
 
     Returns:
         Combined list of properties from all platforms.
     """
-    areas = search_areas or []
+    areas = list(search_areas or [])
     if not areas:
         logger.warning("no_search_areas_configured")
         return []
+    # Shuffle so rate-limited scrapers (Zoopla) don't always block the same areas
+    random.shuffle(areas)
     scrapers = [
         OpenRentScraper(),
         RightmoveScraper(),
         ZooplaScraper(),
         OnTheMarketScraper(proxy_url=proxy_url),
     ]
+    if only_scrapers:
+        scrapers = [s for s in scrapers if s.source.value in only_scrapers]
 
     all_properties: list[Property] = []
 
@@ -164,9 +172,9 @@ async def scrape_all_platforms(
                         area=area,
                         error=str(e),
                     )
-                # Delay between areas to avoid rate limiting
+                # Delay between areas to avoid rate limiting (jittered)
                 if i < len(areas) - 1:
-                    await asyncio.sleep(2)
+                    await asyncio.sleep(random.uniform(2.0, 5.0))
     finally:
         for scraper in scrapers:
             await scraper.close()
@@ -190,6 +198,7 @@ async def _run_pre_analysis_pipeline(
     storage: PropertyStorage,
     *,
     max_per_scraper: int | None = None,
+    only_scrapers: set[str] | None = None,
 ) -> PreAnalysisResult | None:
     """Run the pre-analysis pipeline: scrape, filter, deduplicate, enrich.
 
@@ -220,6 +229,7 @@ async def _run_pre_analysis_pipeline(
         max_per_scraper=max_per_scraper,
         known_ids_by_source=known_ids_by_source,
         proxy_url=settings.proxy_url,
+        only_scrapers=only_scrapers,
     )
     logger.info("scraping_summary", total_found=len(all_properties), by_source=_source_counts(all_properties))
 
@@ -621,7 +631,12 @@ async def _run_quality_and_save(
     return count
 
 
-async def run_pipeline(settings: Settings, *, max_per_scraper: int | None = None) -> None:
+async def run_pipeline(
+    settings: Settings,
+    *,
+    max_per_scraper: int | None = None,
+    only_scrapers: set[str] | None = None,
+) -> None:
     """Run the full scraping and notification pipeline.
 
     Quality analysis runs concurrently (bounded by semaphore), and each
@@ -630,6 +645,7 @@ async def run_pipeline(settings: Settings, *, max_per_scraper: int | None = None
     Args:
         settings: Application settings.
         max_per_scraper: Maximum properties per scraper (None for unlimited).
+        only_scrapers: If set, only run these scrapers (by source value).
     """
     storage = PropertyStorage(settings.database_path)
     await storage.initialize()
@@ -663,7 +679,9 @@ async def run_pipeline(settings: Settings, *, max_per_scraper: int | None = None
                     )
                 await asyncio.sleep(1)
 
-        pre = await _run_pre_analysis_pipeline(settings, storage, max_per_scraper=max_per_scraper)
+        pre = await _run_pre_analysis_pipeline(
+            settings, storage, max_per_scraper=max_per_scraper, only_scrapers=only_scrapers
+        )
         if pre is None:
             await storage.complete_pipeline_run(run_id, "completed")
             return
@@ -690,6 +708,12 @@ async def run_pipeline(settings: Settings, *, max_per_scraper: int | None = None
             quality_analysis: PropertyQualityAnalysis | None,
         ) -> None:
             nonlocal notified_count
+
+            # Skip notification for properties with no images — not useful
+            if not merged.images and not merged.canonical.image_url:
+                await storage.mark_notified(merged.unique_id)
+                return
+
             commute_minutes = commute_info[0] if commute_info else None
             transport_mode = commute_info[1] if commute_info else None
 
@@ -727,12 +751,18 @@ async def run_pipeline(settings: Settings, *, max_per_scraper: int | None = None
         await storage.close()
 
 
-async def run_scrape_only(settings: Settings, *, max_per_scraper: int | None = None) -> None:
+async def run_scrape_only(
+    settings: Settings,
+    *,
+    max_per_scraper: int | None = None,
+    only_scrapers: set[str] | None = None,
+) -> None:
     """Run scraping only and print results (no filtering, storage, or notifications).
 
     Args:
         settings: Application settings.
         max_per_scraper: Maximum properties per scraper (None for unlimited).
+        only_scrapers: If set, only run these scrapers (by source value).
     """
     criteria = settings.get_search_criteria()
     search_areas = settings.get_search_areas()
@@ -749,6 +779,7 @@ async def run_scrape_only(settings: Settings, *, max_per_scraper: int | None = N
         include_let_agreed=settings.include_let_agreed,
         max_per_scraper=max_per_scraper,
         proxy_url=settings.proxy_url,
+        only_scrapers=only_scrapers,
     )
 
     print(f"\n{'=' * 60}")
@@ -765,18 +796,26 @@ async def run_scrape_only(settings: Settings, *, max_per_scraper: int | None = N
         print()
 
 
-async def run_dry_run(settings: Settings, *, max_per_scraper: int | None = None) -> None:
+async def run_dry_run(
+    settings: Settings,
+    *,
+    max_per_scraper: int | None = None,
+    only_scrapers: set[str] | None = None,
+) -> None:
     """Run the full pipeline without sending Telegram notifications.
 
     Args:
         settings: Application settings.
         max_per_scraper: Maximum properties per scraper (None for unlimited).
+        only_scrapers: If set, only run these scrapers (by source value).
     """
     storage = PropertyStorage(settings.database_path)
     await storage.initialize()
 
     try:
-        pre = await _run_pre_analysis_pipeline(settings, storage, max_per_scraper=max_per_scraper)
+        pre = await _run_pre_analysis_pipeline(
+            settings, storage, max_per_scraper=max_per_scraper, only_scrapers=only_scrapers
+        )
         if pre is None:
             print("\nNo new properties to report.")
             return
@@ -882,6 +921,13 @@ def main() -> None:
         help="Limit properties per scraper (for faster dev/test runs)",
     )
     parser.add_argument(
+        "--scrapers",
+        type=str,
+        default=None,
+        help="Comma-separated list of scrapers to run (e.g. openrent,zoopla). "
+        "Options: openrent, rightmove, zoopla, onthemarket",
+    )
+    parser.add_argument(
         "--serve",
         action="store_true",
         help="Start web server with background pipeline scheduler",
@@ -925,6 +971,17 @@ def main() -> None:
         scrape_only=args.scrape_only,
     )
 
+    # Parse --scrapers into a set of source values
+    only_scrapers: set[str] | None = None
+    if args.scrapers:
+        valid = {s.value for s in PropertySource}
+        only_scrapers = {s.strip().lower() for s in args.scrapers.split(",")}
+        unknown = only_scrapers - valid
+        if unknown:
+            print(f"Error: Unknown scraper(s): {', '.join(sorted(unknown))}")
+            print(f"Valid options: {', '.join(sorted(valid))}")
+            sys.exit(1)
+
     if args.serve:
         import uvicorn
 
@@ -933,11 +990,21 @@ def main() -> None:
         app = create_app(settings, run_pipeline=not args.no_pipeline)
         uvicorn.run(app, host=settings.web_host, port=settings.web_port, log_level="info")
     elif args.scrape_only:
-        asyncio.run(run_scrape_only(settings, max_per_scraper=args.max_per_scraper))
+        asyncio.run(
+            run_scrape_only(
+                settings, max_per_scraper=args.max_per_scraper, only_scrapers=only_scrapers
+            )
+        )
     elif args.dry_run:
-        asyncio.run(run_dry_run(settings, max_per_scraper=args.max_per_scraper))
+        asyncio.run(
+            run_dry_run(settings, max_per_scraper=args.max_per_scraper, only_scrapers=only_scrapers)
+        )
     else:
-        asyncio.run(run_pipeline(settings, max_per_scraper=args.max_per_scraper))
+        asyncio.run(
+            run_pipeline(
+                settings, max_per_scraper=args.max_per_scraper, only_scrapers=only_scrapers
+            )
+        )
 
 
 if __name__ == "__main__":

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import random
 import re
 import urllib.parse
 from contextlib import suppress
@@ -236,7 +237,17 @@ class ZooplaScraper(BaseScraper):
 
     # Pagination constants
     MAX_PAGES = 20
-    PAGE_DELAY_SECONDS = 0.5
+
+    # Cloudflare challenge markers in response body
+    _CF_CHALLENGE_MARKERS = (
+        "Just a moment",
+        "Cloudflare Ray ID",
+        "cf-browser-verification",
+        "_cf_chl_opt",
+    )
+
+    # Browser profiles to rotate between areas (avoids single-fingerprint detection)
+    _IMPERSONATE_TARGETS = ("chrome", "safari", "chrome131", "safari184")
 
     def __init__(self, *, proxy_url: str = "") -> None:
         self._session: AsyncSession | None = None  # type: ignore[type-arg]
@@ -253,6 +264,27 @@ class ZooplaScraper(BaseScraper):
         if self._session is not None:
             await self._session.close()
             self._session = None
+
+    async def _page_delay(self) -> None:
+        """Random delay between page fetches (human-like pacing)."""
+        await asyncio.sleep(random.uniform(1.5, 3.5))
+
+    async def _area_delay(self) -> None:
+        """Random delay between area searches (longer to avoid Cloudflare blocks)."""
+        await asyncio.sleep(random.uniform(4.0, 8.0))
+
+    def _is_cloudflare_challenge(self, response: Any) -> bool:
+        """Detect Cloudflare challenge pages (403/503 with challenge HTML, or cf-mitigated header)."""
+        if response.headers.get("cf-mitigated") == "challenge":
+            return True
+        if response.status_code in (403, 503):
+            text = response.text[:2000]
+            return any(marker in text for marker in self._CF_CHALLENGE_MARKERS)
+        return False
+
+    def _pick_impersonate_target(self) -> str:
+        """Pick a random browser profile for TLS fingerprint rotation."""
+        return random.choice(self._IMPERSONATE_TARGETS)
 
     @property
     def source(self) -> PropertySource:
@@ -276,6 +308,9 @@ class ZooplaScraper(BaseScraper):
         all_properties: list[Property] = []
         seen_ids: set[str] = set()
 
+        # Pick one browser profile per area (switching mid-session is suspicious)
+        impersonate_target = self._pick_impersonate_target()
+
         for page in range(1, self.MAX_PAGES + 1):
             url = self._build_search_url(
                 area=area,
@@ -289,7 +324,7 @@ class ZooplaScraper(BaseScraper):
                 page=page,
             )
 
-            html = await self._fetch_page(url)
+            html = await self._fetch_page(url, impersonate_target=impersonate_target)
             if not html:
                 logger.warning("zoopla_fetch_failed", url=url, page=page)
                 break
@@ -341,9 +376,9 @@ class ZooplaScraper(BaseScraper):
                 all_properties = all_properties[:max_results]
                 break
 
-            # Be polite - delay between pages
+            # Be polite - jittered delay between pages
             if page < self.MAX_PAGES:
-                await asyncio.sleep(self.PAGE_DELAY_SECONDS)
+                await self._page_delay()
 
         logger.info(
             "scraped_zoopla_complete",
@@ -354,43 +389,58 @@ class ZooplaScraper(BaseScraper):
 
         return all_properties
 
-    async def _fetch_page(self, url: str) -> str | None:
-        """Fetch page using curl_cffi with Chrome impersonation."""
+    async def _fetch_page(self, url: str, *, impersonate_target: str = "chrome") -> str | None:
+        """Fetch page using curl_cffi with TLS impersonation and Cloudflare retry."""
         session = await self._get_session()
         kwargs: dict[str, object] = {
-            "impersonate": "chrome",
+            "impersonate": impersonate_target,
             "headers": BROWSER_HEADERS,
             "timeout": 30,
         }
         if self._proxy_url:
             kwargs["proxy"] = self._proxy_url
 
-        for attempt in range(3):
+        for attempt in range(4):
             try:
                 response = await session.get(url, **kwargs)  # type: ignore[arg-type]
+
                 if response.status_code == 200:
-                    text: str = response.text
-                    return text
-                if response.status_code == 429:
-                    delay = 2.0 * (2**attempt)
-                    logger.debug(
-                        "zoopla_rate_limited",
+                    if not self._is_cloudflare_challenge(response):
+                        return response.text
+                    # Soft challenge (200 with challenge HTML) — treat as challenge
+                    logger.warning("zoopla_soft_challenge", url=url, attempt=attempt + 1)
+
+                if response.status_code == 429 or self._is_cloudflare_challenge(response):
+                    delay = 2.0 * (2**attempt) + random.uniform(0, 2.0)
+                    logger.info(
+                        "zoopla_cf_backoff",
                         url=url,
+                        status=response.status_code,
                         attempt=attempt + 1,
-                        delay=delay,
+                        delay=f"{delay:.1f}s",
                     )
                     await asyncio.sleep(delay)
                     continue
-                logger.warning(
-                    "zoopla_http_error",
-                    status=response.status_code,
-                    url=url,
-                )
-                return None
-            except Exception as e:
-                logger.error("zoopla_fetch_exception", error=str(e), url=url)
+
+                # Hard HTTP error (404, 500, etc.) — don't retry
+                logger.warning("zoopla_http_error", status=response.status_code, url=url)
                 return None
 
+            except Exception as e:
+                if attempt < 3:
+                    delay = 2.0 * (2**attempt) + random.uniform(0, 1.0)
+                    logger.warning(
+                        "zoopla_fetch_exception_retrying",
+                        error=str(e),
+                        attempt=attempt + 1,
+                        delay=f"{delay:.1f}s",
+                    )
+                    await asyncio.sleep(delay)
+                else:
+                    logger.error("zoopla_fetch_exception", error=str(e), url=url)
+                    return None
+
+        logger.warning("zoopla_fetch_exhausted", url=url)
         return None
 
     def _extract_rsc_listings(self, html: str) -> list[ZooplaListing]:

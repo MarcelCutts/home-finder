@@ -1,6 +1,7 @@
 """OpenRent property scraper."""
 
 import re
+import time
 from urllib.parse import urljoin
 
 from crawlee.crawlers import BeautifulSoupCrawler, BeautifulSoupCrawlingContext
@@ -30,6 +31,10 @@ class OpenRentScraper(BaseScraper):
     RESULTS_PER_PAGE = 20
     MAX_PAGES = 20
     PAGE_DELAY_SECONDS = 2.0
+    MAX_DELAY_SECONDS = 30.0
+    BACKOFF_FACTOR = 2.0
+    # Requests normally complete in ~300ms; if >1s, retries likely happened
+    RETRY_THRESHOLD_SECONDS = 1.0
 
     # Search radius in km (appended as within= URL parameter)
     SEARCH_RADIUS_KM = 2
@@ -57,6 +62,7 @@ class OpenRentScraper(BaseScraper):
 
         all_properties: list[Property] = []
         seen_ids: set[str] = set()
+        current_delay = self.PAGE_DELAY_SECONDS
 
         base_url = self._build_search_url(
             area=area,
@@ -90,7 +96,26 @@ class OpenRentScraper(BaseScraper):
             )
             crawler.router.default_handler(handle_page)
 
+            start = time.monotonic()
             await crawler.run([url])
+            elapsed = time.monotonic() - start
+
+            # Adaptive backoff: normal requests complete in ~300ms.
+            # If significantly slower, crawlee was retrying 429s internally.
+            if elapsed > self.RETRY_THRESHOLD_SECONDS:
+                current_delay = min(
+                    current_delay * self.BACKOFF_FACTOR, self.MAX_DELAY_SECONDS
+                )
+                logger.warning(
+                    "openrent_rate_limit_backoff",
+                    area=area,
+                    page=page + 1,
+                    elapsed=round(elapsed, 1),
+                    new_delay=round(current_delay, 1),
+                )
+            elif current_delay > self.PAGE_DELAY_SECONDS:
+                # Gradually recover when requests are healthy again
+                current_delay = max(current_delay * 0.75, self.PAGE_DELAY_SECONDS)
 
             logger.info(
                 "scraped_openrent_page",
@@ -128,9 +153,9 @@ class OpenRentScraper(BaseScraper):
                 all_properties = all_properties[:max_results]
                 break
 
-            # Be polite - delay between pages
+            # Delay between pages (adaptive)
             if page < self.MAX_PAGES - 1:
-                await asyncio.sleep(self.PAGE_DELAY_SECONDS)
+                await asyncio.sleep(current_delay)
 
         logger.info(
             "scraped_openrent_complete",
