@@ -508,7 +508,17 @@ _SCORERS: dict[str, Any] = {
 }
 
 
-# ── Main entry point ──────────────────────────────────────────────────────────
+# ── Shared dimension computation ─────────────────────────────────────────────
+
+
+def _compute_dimension_results(
+    analysis: dict[str, Any], bedrooms: int
+) -> dict[str, _DimensionResult]:
+    """Run all dimension scorers once and return results keyed by dimension name."""
+    return {dim: _SCORERS[dim](analysis, bedrooms) for dim in WEIGHTS}
+
+
+# ── Main entry points ─────────────────────────────────────────────────────────
 
 
 def compute_fit_score(analysis: dict[str, Any] | None, bedrooms: int) -> int | None:
@@ -519,11 +529,13 @@ def compute_fit_score(analysis: dict[str, Any] | None, bedrooms: int) -> int | N
     if not analysis:
         return None
 
+    results = _compute_dimension_results(analysis, bedrooms)
+
     weighted_sum = 0.0
     weight_confidence_sum = 0.0
 
     for dim, weight in WEIGHTS.items():
-        result = _SCORERS[dim](analysis, bedrooms)
+        result = results[dim]
         weighted_sum += result.score * weight * result.confidence
         weight_confidence_sum += weight * result.confidence
 
@@ -543,11 +555,12 @@ def compute_fit_breakdown(
     if not analysis:
         return None
 
+    results = _compute_dimension_results(analysis, bedrooms)
     dimensions: list[FitDimension] = []
     any_confidence = False
 
     for dim, weight in WEIGHTS.items():
-        result = _SCORERS[dim](analysis, bedrooms)
+        result = results[dim]
         if result.confidence > 0:
             any_confidence = True
         dimensions.append(
@@ -564,6 +577,51 @@ def compute_fit_breakdown(
         return None
 
     return dimensions
+
+
+def compute_fit_score_and_breakdown(
+    analysis: dict[str, Any] | None, bedrooms: int
+) -> tuple[int | None, list[FitDimension] | None]:
+    """Compute both fit score and breakdown in a single pass over all scorers.
+
+    Use this instead of calling compute_fit_score + compute_fit_breakdown separately
+    to avoid scoring each dimension twice.
+
+    Returns:
+        Tuple of (fit_score, breakdown). Either or both may be None if no analysis
+        data or all dimensions have zero confidence.
+    """
+    if not analysis:
+        return None, None
+
+    results = _compute_dimension_results(analysis, bedrooms)
+
+    weighted_sum = 0.0
+    weight_confidence_sum = 0.0
+    dimensions: list[FitDimension] = []
+    any_confidence = False
+
+    for dim, weight in WEIGHTS.items():
+        result = results[dim]
+        weighted_sum += result.score * weight * result.confidence
+        weight_confidence_sum += weight * result.confidence
+        if result.confidence > 0:
+            any_confidence = True
+        dimensions.append(
+            FitDimension(
+                key=dim,
+                label=_DIMENSION_LABELS[dim],
+                score=round(result.score),
+                weight=int(weight),
+                confidence=round(result.confidence, 2),
+            )
+        )
+
+    if not any_confidence:
+        return None, None
+
+    score = round(weighted_sum / weight_confidence_sum)
+    return score, dimensions
 
 
 # ── Lifestyle Icons ────────────────────────────────────────────────────────────

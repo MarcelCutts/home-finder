@@ -406,6 +406,54 @@ EVALUATION_TOOL: Final[dict[str, Any]] = _build_tool_schema(
 )
 
 
+import json as _json
+
+
+def _clean_value(val: Any) -> Any:
+    """Clean a single response value — parse JSON strings that should be dicts/lists."""
+    if not isinstance(val, str):
+        return val
+    s = val.strip()
+    if (s.startswith("{") and s.endswith("}")) or (s.startswith("[") and s.endswith("]")):
+        try:
+            parsed = _json.loads(s)
+            if isinstance(parsed, (dict, list)):
+                return parsed
+        except (ValueError, _json.JSONDecodeError):
+            pass
+    return s
+
+
+def _clean_list(lst: list[Any]) -> list[Any]:
+    """Clean list values and remove junk entries (bare commas, empty strings)."""
+    cleaned = []
+    for item in lst:
+        item = _clean_value(item)
+        if isinstance(item, str) and item.strip() in ("", ","):
+            continue
+        cleaned.append(item)
+    return cleaned
+
+
+def _clean_dict(d: dict[str, Any]) -> dict[str, Any]:
+    """Clean a dict of response data — parse JSON strings and remove junk."""
+    out: dict[str, Any] = {}
+    for k, v in d.items():
+        if isinstance(v, list):
+            out[k] = _clean_list(v)
+        else:
+            out[k] = _clean_value(v)
+    return out
+
+
+# Construction type → acoustic profile key mapping
+_CONSTRUCTION_TO_PROFILE: dict[str, str] = {
+    "timber_frame": "victorian",
+    "concrete": "ex_council",
+    "solid_brick": "purpose_built",
+}
+
+
 class PropertyQualityFilter:
     """Analyze property quality using Claude vision API."""
 
@@ -799,52 +847,22 @@ class PropertyQualityFilter:
             summary="No images available for quality analysis",
         )
 
-    async def _analyze_property(
+    async def _run_visual_analysis(
         self,
+        content: list[Any],
         property_id: str,
-        *,
-        gallery_urls: list[str],
-        floorplan_url: str | None,
-        bedrooms: int,
-        price_pcm: int,
-        area_average: int | None,
-        description: str | None = None,
-        features: list[str] | None = None,
-        area_context: str | None = None,
-        outcode: str | None = None,
-        council_tax_band_c: int | None = None,
-        energy_estimate: int | None = None,
-        crime_summary: str | None = None,
-        rent_trend: str | None = None,
-        hosting_tolerance: str | None = None,
-        gallery_cached_paths: list[Path | None] | None = None,
-        floorplan_cached_path: Path | None = None,
-    ) -> PropertyQualityAnalysis | None:
-        """Analyze a single property using two-phase chained Claude analysis.
-
-        Phase 1 (Visual): Images + text → structured observations (extended thinking)
-        Phase 2 (Evaluation): Phase 1 output + text → value/viewing/curation (text-only)
+    ) -> dict[str, Any] | None:
+        """Run Phase 1 visual analysis API call.
 
         Args:
+            content: Image and text content blocks for the API.
             property_id: Property ID for logging.
-            gallery_urls: List of gallery image URLs.
-            floorplan_url: Floorplan URL if available.
-            bedrooms: Number of bedrooms (for space assessment).
-            price_pcm: Monthly rent price.
-            area_average: Average rent for this area and bedroom count.
-            description: Listing description text for cross-reference.
-            features: Listed features for cross-reference.
-            area_context: Area context string for the outcode.
-            outcode: Property outcode (e.g., "E8").
-            council_tax_band_c: Estimated monthly council tax (Band C).
-            crime_summary: Crime rate summary string.
-            rent_trend: YoY rent trend string.
-            hosting_tolerance: Area hosting tolerance summary string.
-            gallery_cached_paths: Paths to cached gallery images on disk.
-            floorplan_cached_path: Path to cached floorplan image on disk.
 
         Returns:
-            Analysis result or None if Phase 1 failed.
+            Raw visual analysis dict, or None if the call failed.
+
+        Raises:
+            APIUnavailableError: If circuit breaker trips (outage-indicating errors).
         """
         from anthropic import (
             APIConnectionError,
@@ -853,84 +871,13 @@ class PropertyQualityFilter:
             InternalServerError,
             RateLimitError,
         )
-        from anthropic.types import (
-            ImageBlockParam,
-            TextBlockParam,
-            ToolParam,
-            ToolUseBlock,
-        )
-
-        # Fast-fail if circuit breaker is already open
-        if self._circuit_open:
-            raise APIUnavailableError("Circuit breaker is open — API unavailable")
+        from anthropic.types import ToolParam, ToolUseBlock
 
         client = self._get_client()
 
-        # Build image content blocks (images first for best vision performance)
-        # For anti-bot sites (Zoopla), download images locally and send as base64
-        content: list[ImageBlockParam | TextBlockParam] = []
-
-        # Cap gallery count so total images (gallery + floorplan) stays <= max_images.
-        # >20 images triggers Anthropic's stricter 2000px dimension limit.
-        has_floorplan = floorplan_url is not None and is_valid_image_url(floorplan_url)
-        effective_max = self._max_images - (1 if has_floorplan else 0)
-
-        # Add gallery images with labels (up to effective_max)
-        gallery_num = 0
-        cached_paths = gallery_cached_paths or [None] * len(gallery_urls)
-        for idx, url in enumerate(gallery_urls[:effective_max]):
-            cached = cached_paths[idx] if idx < len(cached_paths) else None
-            image_block = await self._build_image_block(url, cached_path=cached)
-            if image_block:
-                gallery_num += 1
-                content.append(TextBlockParam(type="text", text=f"Gallery image {gallery_num}:"))
-                content.append(image_block)
-
-        # Add floorplan with label if available and is a supported image format
-        # (PDFs are not supported by Claude Vision API)
-        if floorplan_url and is_valid_image_url(floorplan_url):
-            floorplan_block = await self._build_image_block(
-                floorplan_url, cached_path=floorplan_cached_path
-            )
-            if floorplan_block:
-                content.append(TextBlockParam(type="text", text="Floorplan:"))
-                content.append(floorplan_block)
-        elif floorplan_url:
-            logger.debug("skipping_pdf_floorplan", url=floorplan_url)
-
-        # Build user prompt with property context and listing text
-        effective_average = area_average or DEFAULT_BENCHMARK.get(min(bedrooms, 3), 1800)
-        user_prompt = build_user_prompt(
-            price_pcm,
-            bedrooms,
-            effective_average,
-            description,
-            features,
-            area_context=area_context,
-            outcode=outcode,
-            council_tax_band_c=council_tax_band_c,
-            crime_summary=crime_summary,
-            rent_trend=rent_trend,
-            energy_estimate=energy_estimate,
-            hosting_tolerance=hosting_tolerance,
-            has_labeled_floorplan=has_floorplan,
-        )
-        content.append(TextBlockParam(type="text", text=user_prompt))
-
-        has_usable_floorplan = floorplan_url is not None and is_valid_image_url(floorplan_url)
-        logger.info(
-            "analyzing_property",
-            property_id=property_id,
-            gallery_count=len(gallery_urls),
-            has_floorplan=has_usable_floorplan,
-        )
-
-        # ── Phase 1: Visual Analysis ──────────────────────────────────
-        visual_data: dict[str, Any] | None = None
         try:
             visual_tool: ToolParam = VISUAL_ANALYSIS_TOOL  # type: ignore[assignment]
 
-            # Build API call kwargs
             create_kwargs: dict[str, Any] = {
                 "model": "claude-sonnet-4-5-20250929",
                 "max_tokens": 16384,
@@ -938,15 +885,13 @@ class PropertyQualityFilter:
                     {
                         "type": "text",
                         "text": VISUAL_ANALYSIS_SYSTEM_PROMPT,
-                        "cache_control": {"type": "ephemeral"},  # Cache for 5 mins
+                        "cache_control": {"type": "ephemeral"},
                     }
                 ],
                 "messages": [{"role": "user", "content": content}],
                 "tools": [visual_tool],
             }
 
-            # Extended thinking is incompatible with forced tool use;
-            # use tool_choice: auto and rely on system prompt instruction
             if self._enable_extended_thinking:
                 create_kwargs["thinking"] = {
                     "type": "enabled",
@@ -961,7 +906,6 @@ class PropertyQualityFilter:
 
             response = await client.messages.create(**create_kwargs)
 
-            # Log cache performance for monitoring
             if hasattr(response, "usage"):
                 usage = response.usage
                 cache_read = getattr(usage, "cache_read_input_tokens", 0)
@@ -975,8 +919,6 @@ class PropertyQualityFilter:
                         cache_creation_tokens=cache_creation,
                     )
 
-            # Find ToolUseBlock regardless of stop_reason
-            # (thinking blocks may appear first, then tool_use)
             tool_use_block = next(
                 (block for block in response.content if isinstance(block, ToolUseBlock)),
                 None,
@@ -990,11 +932,10 @@ class PropertyQualityFilter:
                 )
                 return None
 
-            visual_data = tool_use_block.input
             self._record_api_success()
+            return tool_use_block.input
 
         except BadRequestError as e:
-            # Request-specific error — NOT an outage signal, don't trip circuit
             logger.warning(
                 "visual_analysis_bad_request",
                 property_id=property_id,
@@ -1004,7 +945,6 @@ class PropertyQualityFilter:
             return None
 
         except (RateLimitError, InternalServerError, APIConnectionError) as e:
-            # Outage-indicating errors — record failure and trip circuit
             self._record_api_failure()
             log_event = {
                 RateLimitError: "rate_limit_exhausted",
@@ -1023,7 +963,6 @@ class PropertyQualityFilter:
             raise APIUnavailableError(str(e)) from e
 
         except APIStatusError as e:
-            # Other status errors (e.g. 401, 403) — not outage signals
             logger.warning(
                 "api_status_error",
                 property_id=property_id,
@@ -1044,16 +983,46 @@ class PropertyQualityFilter:
             )
             return None
 
-        logger.info("visual_analysis_complete", property_id=property_id)
+    async def _run_evaluation(
+        self,
+        visual_data: dict[str, Any],
+        property_id: str,
+        *,
+        description: str | None,
+        price_pcm: int,
+        bedrooms: int,
+        effective_average: int,
+        area_context: str | None,
+        outcode: str | None,
+        council_tax_band_c: int | None,
+        crime_summary: str | None,
+        rent_trend: str | None,
+        energy_estimate: int | None,
+        hosting_tolerance: str | None,
+    ) -> dict[str, Any]:
+        """Run Phase 2 evaluation API call.
 
-        # Log any Claude-detected floorplans in gallery images
-        detected_indices = visual_data.get("floorplan_detected_in_gallery", [])
-        if detected_indices:
-            logger.info(
-                "floorplan_detected_by_claude",
-                property_id=property_id,
-                indices=detected_indices,
-            )
+        Args:
+            visual_data: Phase 1 visual analysis output.
+            property_id: Property ID for logging.
+            description: Listing description text.
+            price_pcm: Monthly rent price.
+            bedrooms: Number of bedrooms.
+            effective_average: Area average rent for comparison.
+            area_context: Area context string.
+            outcode: Property outcode.
+            council_tax_band_c: Monthly council tax estimate.
+            crime_summary: Crime rate summary.
+            rent_trend: Rent trend string.
+            energy_estimate: Energy cost estimate.
+            hosting_tolerance: Hosting tolerance string.
+
+        Returns:
+            Evaluation data dict (empty if Phase 2 failed).
+        """
+        from anthropic.types import ToolParam, ToolUseBlock
+
+        client = self._get_client()
 
         # Map building_construction from Phase 1 to acoustic profile for Phase 2
         acoustic_context: str | None = None
@@ -1062,11 +1031,6 @@ class PropertyQualityFilter:
             flooring_raw.get("building_construction") if isinstance(flooring_raw, dict) else None
         )
         if construction:
-            _CONSTRUCTION_TO_PROFILE: dict[str, str] = {
-                "timber_frame": "victorian",
-                "concrete": "ex_council",
-                "solid_brick": "purpose_built",
-            }
             profile_key = _CONSTRUCTION_TO_PROFILE.get(construction)
             if profile_key:
                 profile = ACOUSTIC_PROFILES.get(profile_key)
@@ -1079,7 +1043,6 @@ class PropertyQualityFilter:
                         f"{profile['summary']}"
                     )
 
-        # ── Phase 2: Evaluation ───────────────────────────────────────
         eval_data: dict[str, Any] = {}
         try:
             eval_tool: ToolParam = EVALUATION_TOOL  # type: ignore[assignment]
@@ -1137,7 +1100,6 @@ class PropertyQualityFilter:
                 error_type=type(e).__name__,
                 exc_info=True,
             )
-            # Continue with partial analysis (visual data only)
 
         logger.info(
             "evaluation_complete",
@@ -1145,63 +1107,43 @@ class PropertyQualityFilter:
             has_eval=bool(eval_data),
         )
 
-        # ── Clean up response data ──
-        # Non-strict mode: Claude sometimes returns nested objects as JSON
-        # strings instead of dicts, or wraps string values in {"..."}.
-        import json as _json
+        return eval_data
 
-        def _clean_value(val: Any) -> Any:
-            if not isinstance(val, str):
-                return val
-            s = val.strip()
-            # Try to parse JSON strings that should be dicts/lists
-            if (s.startswith("{") and s.endswith("}")) or (s.startswith("[") and s.endswith("]")):
-                try:
-                    parsed = _json.loads(s)
-                    if isinstance(parsed, (dict, list)):
-                        return parsed
-                except (ValueError, _json.JSONDecodeError):
-                    pass
-            return s
+    @staticmethod
+    def _merge_analysis_results(
+        visual_data: dict[str, Any],
+        eval_data: dict[str, Any],
+        bedrooms: int,
+        property_id: str,
+    ) -> PropertyQualityAnalysis | None:
+        """Merge Phase 1 + Phase 2 results into a PropertyQualityAnalysis.
 
-        def _clean_list(lst: list[Any]) -> list[Any]:
-            """Clean list values and remove junk entries (bare commas, empty strings)."""
-            cleaned = []
-            for item in lst:
-                item = _clean_value(item)
-                if isinstance(item, str) and item.strip() in ("", ","):
-                    continue
-                cleaned.append(item)
-            return cleaned
+        Cleans response data, validates with Pydantic, and applies post-processing
+        (e.g. 2+ bed space override).
 
-        def _clean_dict(d: dict[str, Any]) -> dict[str, Any]:
-            out: dict[str, Any] = {}
-            for k, v in d.items():
-                if isinstance(v, list):
-                    out[k] = _clean_list(v)
-                else:
-                    out[k] = _clean_value(v)
-            return out
+        Args:
+            visual_data: Phase 1 visual analysis output.
+            eval_data: Phase 2 evaluation output.
+            bedrooms: Number of bedrooms (for space assessment override).
+            property_id: Property ID for logging.
 
+        Returns:
+            Validated analysis, or None if validation failed.
+        """
         visual_data = _clean_dict(visual_data)
         eval_data = _clean_dict(eval_data)
-
-        # ── Merge both phases into PropertyQualityAnalysis ─────────────
 
         # Extract value_for_quality from Phase 2 response
         value_for_quality = eval_data.pop("value_for_quality", {})
         quality_adjusted_rating = value_for_quality.get("rating")
         quality_adjusted_note = value_for_quality.get("reasoning", "")
 
-        # Build value analysis with LLM assessment
         value = ValueAnalysis(
             quality_adjusted_rating=quality_adjusted_rating,
             quality_adjusted_note=quality_adjusted_note,
         )
 
-        # Build the full analysis (with validation error handling)
         try:
-            # Merge both phases and let Pydantic coerce nested dicts → models
             merged_data = {**visual_data, **eval_data, "value": value}
             merged_data.setdefault("summary", "Analysis completed")
             analysis = PropertyQualityAnalysis.model_validate(merged_data)
@@ -1229,6 +1171,146 @@ class PropertyQualityFilter:
             )
 
         return analysis
+
+    async def _analyze_property(
+        self,
+        property_id: str,
+        *,
+        gallery_urls: list[str],
+        floorplan_url: str | None,
+        bedrooms: int,
+        price_pcm: int,
+        area_average: int | None,
+        description: str | None = None,
+        features: list[str] | None = None,
+        area_context: str | None = None,
+        outcode: str | None = None,
+        council_tax_band_c: int | None = None,
+        energy_estimate: int | None = None,
+        crime_summary: str | None = None,
+        rent_trend: str | None = None,
+        hosting_tolerance: str | None = None,
+        gallery_cached_paths: list[Path | None] | None = None,
+        floorplan_cached_path: Path | None = None,
+    ) -> PropertyQualityAnalysis | None:
+        """Analyze a single property using two-phase chained Claude analysis.
+
+        Phase 1 (Visual): Images + text → structured observations (extended thinking)
+        Phase 2 (Evaluation): Phase 1 output + text → value/viewing/curation (text-only)
+
+        Args:
+            property_id: Property ID for logging.
+            gallery_urls: List of gallery image URLs.
+            floorplan_url: Floorplan URL if available.
+            bedrooms: Number of bedrooms (for space assessment).
+            price_pcm: Monthly rent price.
+            area_average: Average rent for this area and bedroom count.
+            description: Listing description text for cross-reference.
+            features: Listed features for cross-reference.
+            area_context: Area context string for the outcode.
+            outcode: Property outcode (e.g., "E8").
+            council_tax_band_c: Estimated monthly council tax (Band C).
+            crime_summary: Crime rate summary string.
+            rent_trend: YoY rent trend string.
+            hosting_tolerance: Area hosting tolerance summary string.
+            gallery_cached_paths: Paths to cached gallery images on disk.
+            floorplan_cached_path: Path to cached floorplan image on disk.
+
+        Returns:
+            Analysis result or None if Phase 1 failed.
+        """
+        from anthropic.types import ImageBlockParam, TextBlockParam
+
+        # Fast-fail if circuit breaker is already open
+        if self._circuit_open:
+            raise APIUnavailableError("Circuit breaker is open — API unavailable")
+
+        # Build image content blocks
+        content: list[ImageBlockParam | TextBlockParam] = []
+
+        has_floorplan = floorplan_url is not None and is_valid_image_url(floorplan_url)
+        effective_max = self._max_images - (1 if has_floorplan else 0)
+
+        gallery_num = 0
+        cached_paths = gallery_cached_paths or [None] * len(gallery_urls)
+        for idx, url in enumerate(gallery_urls[:effective_max]):
+            cached = cached_paths[idx] if idx < len(cached_paths) else None
+            image_block = await self._build_image_block(url, cached_path=cached)
+            if image_block:
+                gallery_num += 1
+                content.append(TextBlockParam(type="text", text=f"Gallery image {gallery_num}:"))
+                content.append(image_block)
+
+        if floorplan_url and is_valid_image_url(floorplan_url):
+            floorplan_block = await self._build_image_block(
+                floorplan_url, cached_path=floorplan_cached_path
+            )
+            if floorplan_block:
+                content.append(TextBlockParam(type="text", text="Floorplan:"))
+                content.append(floorplan_block)
+        elif floorplan_url:
+            logger.debug("skipping_pdf_floorplan", url=floorplan_url)
+
+        effective_average = area_average or DEFAULT_BENCHMARK.get(min(bedrooms, 3), 1800)
+        user_prompt = build_user_prompt(
+            price_pcm,
+            bedrooms,
+            effective_average,
+            description,
+            features,
+            area_context=area_context,
+            outcode=outcode,
+            council_tax_band_c=council_tax_band_c,
+            crime_summary=crime_summary,
+            rent_trend=rent_trend,
+            energy_estimate=energy_estimate,
+            hosting_tolerance=hosting_tolerance,
+            has_labeled_floorplan=has_floorplan,
+        )
+        content.append(TextBlockParam(type="text", text=user_prompt))
+
+        has_usable_floorplan = floorplan_url is not None and is_valid_image_url(floorplan_url)
+        logger.info(
+            "analyzing_property",
+            property_id=property_id,
+            gallery_count=len(gallery_urls),
+            has_floorplan=has_usable_floorplan,
+        )
+
+        # Phase 1: Visual Analysis
+        visual_data = await self._run_visual_analysis(content, property_id)
+        if visual_data is None:
+            return None
+
+        logger.info("visual_analysis_complete", property_id=property_id)
+
+        detected_indices = visual_data.get("floorplan_detected_in_gallery", [])
+        if detected_indices:
+            logger.info(
+                "floorplan_detected_by_claude",
+                property_id=property_id,
+                indices=detected_indices,
+            )
+
+        # Phase 2: Evaluation
+        eval_data = await self._run_evaluation(
+            visual_data,
+            property_id,
+            description=description,
+            price_pcm=price_pcm,
+            bedrooms=bedrooms,
+            effective_average=effective_average,
+            area_context=area_context,
+            outcode=outcode,
+            council_tax_band_c=council_tax_band_c,
+            crime_summary=crime_summary,
+            rent_trend=rent_trend,
+            energy_estimate=energy_estimate,
+            hosting_tolerance=hosting_tolerance,
+        )
+
+        # Phase 3: Merge and validate
+        return self._merge_analysis_results(visual_data, eval_data, bedrooms, property_id)
 
     async def close(self) -> None:
         """Close clients."""

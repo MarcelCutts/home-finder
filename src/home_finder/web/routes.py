@@ -28,7 +28,7 @@ from home_finder.data.area_context import (
     match_micro_area,
 )
 from home_finder.db import PropertyStorage
-from home_finder.filters.fit_score import compute_fit_breakdown, compute_fit_score
+from home_finder.filters.fit_score import compute_fit_score_and_breakdown
 from home_finder.logging import get_logger
 from home_finder.models import (
     SOURCE_BADGES,
@@ -771,8 +771,7 @@ async def property_detail(
             if ht:
                 analysis_dict["_area_hosting_tolerance"] = ht.get("rating")
         bedrooms = prop.get("bedrooms", 0) or 0
-        fit_score = compute_fit_score(analysis_dict, bedrooms)
-        fit_breakdown = compute_fit_breakdown(analysis_dict, bedrooms)
+        fit_score, fit_breakdown = compute_fit_score_and_breakdown(analysis_dict, bedrooms)
 
     # Compute True Monthly Cost breakdown
     cost_breakdown = None

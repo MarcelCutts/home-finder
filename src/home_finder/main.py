@@ -206,6 +206,14 @@ async def scrape_all_platforms(
 
 
 @dataclass
+class CrossRunDedupResult:
+    """Result of cross-run deduplication against DB anchors."""
+
+    genuinely_new: list[MergedProperty] = field(default_factory=list)
+    anchors_updated: int = 0
+
+
+@dataclass
 class PreAnalysisResult:
     """Result of the pre-analysis pipeline (scrape -> filter -> enrich)."""
 
@@ -214,6 +222,93 @@ class PreAnalysisResult:
     scraped_count: int = 0
     enriched_count: int = 0
     anchors_updated: int = 0
+
+
+async def _cross_run_deduplicate(
+    deduplicator: Deduplicator,
+    merged_to_notify: list[MergedProperty],
+    storage: PropertyStorage,
+    re_enrichment_ids: set[str],
+) -> CrossRunDedupResult:
+    """Deduplicate new properties against recent DB anchors (cross-run detection).
+
+    Loads recent DB properties as anchors so a property appearing on platform B
+    today can be matched against platform A stored last week. Updates anchors
+    that gained new sources and cleans up consumed retry rows.
+
+    Args:
+        deduplicator: Deduplicator instance for cross-platform matching.
+        merged_to_notify: New/re-enriched properties to check.
+        storage: Database storage for anchor lookup and updates.
+        re_enrichment_ids: IDs of properties being re-enriched (for cleanup).
+
+    Returns:
+        CrossRunDedupResult with genuinely new properties and update count.
+    """
+    db_anchors = await storage.get_recent_properties_for_dedup(days=30)
+    logger.info("loaded_dedup_anchors", anchor_count=len(db_anchors))
+
+    # Map each anchor's source URLs to its DB unique_id so we can detect
+    # merges even when the deduplicator picks a different canonical.
+    anchor_url_to_id: dict[str, str] = {}
+    anchor_by_id: dict[str, MergedProperty] = {}
+    for anchor in db_anchors:
+        anchor_by_id[anchor.canonical.unique_id] = anchor
+        for url in anchor.source_urls.values():
+            anchor_url_to_id[str(url)] = anchor.canonical.unique_id
+
+    # Combine new properties with DB anchors for dedup comparison
+    combined_for_dedup = merged_to_notify + db_anchors
+    dedup_results = await deduplicator.deduplicate_merged_async(combined_for_dedup)
+
+    # Split: anchors that gained new sources vs genuinely new properties
+    genuinely_new: list[MergedProperty] = []
+    anchors_updated = 0
+    for merged in dedup_results:
+        # Check if this result involves any DB anchor (by URL match)
+        matched_anchor_id: str | None = None
+        for url in merged.source_urls.values():
+            aid = anchor_url_to_id.get(str(url))
+            if aid is not None:
+                matched_anchor_id = aid
+                break
+
+        if matched_anchor_id is not None:
+            original_anchor = anchor_by_id[matched_anchor_id]
+            if set(merged.sources) != set(original_anchor.sources):
+                await storage.update_merged_sources(matched_anchor_id, merged)
+                anchors_updated += 1
+                logger.info(
+                    "cross_run_duplicate_detected",
+                    anchor_id=matched_anchor_id,
+                    new_sources=[s.value for s in merged.sources],
+                    original_sources=[s.value for s in original_anchor.sources],
+                )
+        else:
+            genuinely_new.append(merged)
+
+    # Clean up unenriched DB rows consumed by anchor merges.
+    # When a re-enriched property merges into an existing anchor,
+    # update_merged_sources adds data to the anchor but the old
+    # unenriched row still exists — delete it.
+    genuinely_new_ids = {m.unique_id for m in genuinely_new}
+    consumed_retries = re_enrichment_ids - genuinely_new_ids
+    for uid in consumed_retries:
+        await storage.delete_property(uid)
+        logger.debug("consumed_retry_cleaned", unique_id=uid)
+
+    logger.info(
+        "deduplication_merge_summary",
+        dedup_input=len(combined_for_dedup),
+        dedup_output=len(dedup_results),
+        genuinely_new=len(genuinely_new),
+        anchors_updated=anchors_updated,
+        consumed_retries=len(consumed_retries),
+        multi_source_count=sum(1 for m in genuinely_new if len(m.sources) > 1),
+        by_source=_source_counts(genuinely_new),
+    )
+
+    return CrossRunDedupResult(genuinely_new=genuinely_new, anchors_updated=anchors_updated)
 
 
 async def _run_pre_analysis_pipeline(
@@ -440,77 +535,11 @@ async def _run_pre_analysis_pipeline(
 
     # Step 5.6: Cross-platform dedup (including DB anchors for cross-run detection)
     logger.info("pipeline_started", phase="deduplication_merge")
-
-    # Load recent DB properties as dedup anchors so that a property appearing
-    # on platform B today can be matched against platform A stored last week.
-    # Note: unenriched properties are excluded from anchors (no useful data).
-    db_anchors = await storage.get_recent_properties_for_dedup(days=30)
-    logger.info(
-        "loaded_dedup_anchors",
-        anchor_count=len(db_anchors),
+    dedup_result = await _cross_run_deduplicate(
+        deduplicator, merged_to_notify, storage, re_enrichment_ids
     )
-
-    # Map each anchor's source URLs to its DB unique_id so we can detect
-    # merges even when the deduplicator picks a different canonical.
-    anchor_url_to_id: dict[str, str] = {}
-    anchor_by_id: dict[str, MergedProperty] = {}
-    for anchor in db_anchors:
-        anchor_by_id[anchor.canonical.unique_id] = anchor
-        for url in anchor.source_urls.values():
-            anchor_url_to_id[str(url)] = anchor.canonical.unique_id
-
-    # Combine new properties with DB anchors for dedup comparison
-    combined_for_dedup = merged_to_notify + db_anchors
-    dedup_results = await deduplicator.deduplicate_merged_async(combined_for_dedup)
-
-    # Split: anchors that gained new sources vs genuinely new properties
-    genuinely_new: list[MergedProperty] = []
-    anchors_updated = 0
-    for merged in dedup_results:
-        # Check if this result involves any DB anchor (by URL match)
-        matched_anchor_id: str | None = None
-        for url in merged.source_urls.values():
-            aid = anchor_url_to_id.get(str(url))
-            if aid is not None:
-                matched_anchor_id = aid
-                break
-
-        if matched_anchor_id is not None:
-            original_anchor = anchor_by_id[matched_anchor_id]
-            if set(merged.sources) != set(original_anchor.sources):
-                await storage.update_merged_sources(matched_anchor_id, merged)
-                anchors_updated += 1
-                logger.info(
-                    "cross_run_duplicate_detected",
-                    anchor_id=matched_anchor_id,
-                    new_sources=[s.value for s in merged.sources],
-                    original_sources=[s.value for s in original_anchor.sources],
-                )
-        else:
-            genuinely_new.append(merged)
-
-    # Clean up unenriched DB rows consumed by anchor merges.
-    # When a re-enriched property merges into an existing anchor,
-    # update_merged_sources adds data to the anchor but the old
-    # unenriched row still exists — delete it.
-    genuinely_new_ids = {m.unique_id for m in genuinely_new}
-    consumed_retries = re_enrichment_ids - genuinely_new_ids
-    for uid in consumed_retries:
-        await storage.delete_property(uid)
-        logger.debug("consumed_retry_cleaned", unique_id=uid)
-
-    logger.info(
-        "deduplication_merge_summary",
-        dedup_input=len(combined_for_dedup),
-        dedup_output=len(dedup_results),
-        genuinely_new=len(genuinely_new),
-        anchors_updated=anchors_updated,
-        consumed_retries=len(consumed_retries),
-        multi_source_count=sum(1 for m in genuinely_new if len(m.sources) > 1),
-        by_source=_source_counts(genuinely_new),
-    )
-
-    merged_to_notify = genuinely_new
+    merged_to_notify = dedup_result.genuinely_new
+    anchors_updated = dedup_result.anchors_updated
 
     if not merged_to_notify:
         logger.info("no_new_properties_after_cross_run_dedup")
@@ -560,10 +589,18 @@ async def _save_one(
     await storage.mark_enriched(merged.unique_id)
 
 
-# Type alias for the per-property callback in quality analysis
+# Type aliases for quality analysis callbacks
 _CommInfo = tuple[int, TransportMode] | None
 _OnResult = Callable[
     [MergedProperty, _CommInfo, PropertyQualityAnalysis | None],
+    Awaitable[None],
+]
+_AnalyzeFn = Callable[
+    [MergedProperty],
+    Awaitable[tuple[MergedProperty, PropertyQualityAnalysis | None]],
+]
+_OnAnalysisResult = Callable[
+    [MergedProperty, PropertyQualityAnalysis | None],
     Awaitable[None],
 ]
 
@@ -611,6 +648,66 @@ async def _lookup_wards(storage: PropertyStorage) -> None:
     if ward_map:
         updated = await storage.update_wards(ward_map)
         logger.info("ward_lookup_complete", updated=updated, total=len(props))
+
+
+async def _run_concurrent_analysis(
+    items: list[MergedProperty],
+    analyze_fn: _AnalyzeFn,
+    on_result: _OnAnalysisResult,
+    *,
+    on_error: Callable[[], None] | None = None,
+    breaker_log_event: str = "api_circuit_breaker_activated",
+    error_log_event: str = "analysis_failed",
+) -> int:
+    """Run quality analysis concurrently with circuit breaker protection.
+
+    Executes analyze_fn for each item under a semaphore, using as_completed
+    for streaming results. On APIUnavailableError, cancels remaining tasks.
+
+    Args:
+        items: Properties to analyze.
+        analyze_fn: Async function that analyzes a single property.
+        on_result: Async callback invoked with (merged, analysis) for each success.
+        on_error: Optional sync callback invoked on per-property errors.
+        breaker_log_event: Log event name for circuit breaker activation.
+        error_log_event: Log event name for per-property errors.
+
+    Returns:
+        Number of properties successfully processed.
+    """
+    semaphore = asyncio.Semaphore(_QUALITY_CONCURRENCY)
+    count = 0
+
+    async def _bounded(merged: MergedProperty) -> tuple[MergedProperty, PropertyQualityAnalysis | None]:
+        async with semaphore:
+            return await analyze_fn(merged)
+
+    tasks = [asyncio.create_task(_bounded(m)) for m in items]
+
+    for coro in asyncio.as_completed(tasks):
+        try:
+            merged, quality_analysis = await coro
+        except APIUnavailableError:
+            remaining = [t for t in tasks if not t.done()]
+            for t in remaining:
+                t.cancel()
+            await asyncio.gather(*remaining, return_exceptions=True)
+            logger.warning(
+                breaker_log_event,
+                deferred_properties=len(remaining),
+                processed=count,
+            )
+            break
+        except Exception:
+            logger.error(error_log_event, exc_info=True)
+            if on_error:
+                on_error()
+            continue
+
+        await on_result(merged, quality_analysis)
+        count += 1
+
+    return count
 
 
 async def _run_quality_and_save(
@@ -667,45 +764,24 @@ async def _run_quality_and_save(
     else:
         logger.info("skipping_quality_analysis", reason="not_configured")
 
-    semaphore = asyncio.Semaphore(_QUALITY_CONCURRENCY)
-    count = 0
+    async def _analyze(merged: MergedProperty) -> tuple[MergedProperty, PropertyQualityAnalysis | None]:
+        if quality_filter:
+            return await quality_filter.analyze_single_merged(merged, data_dir=settings.data_dir)
+        return merged, None
+
+    async def _handle_result(merged: MergedProperty, quality_analysis: PropertyQualityAnalysis | None) -> None:
+        commute_info = pre.commute_lookup.get(merged.canonical.unique_id)
+        await _save_one(merged, commute_info, quality_analysis, storage)
+        await on_result(merged, commute_info, quality_analysis)
 
     try:
-
-        async def _analyze_one(
-            merged: MergedProperty,
-        ) -> tuple[MergedProperty, PropertyQualityAnalysis | None]:
-            async with semaphore:
-                if quality_filter:
-                    return await quality_filter.analyze_single_merged(
-                        merged, data_dir=settings.data_dir
-                    )
-                return merged, None
-
-        tasks = [asyncio.create_task(_analyze_one(m)) for m in all_to_analyze]
-
-        for coro in asyncio.as_completed(tasks):
-            try:
-                merged, quality_analysis = await coro
-            except APIUnavailableError:
-                remaining = [t for t in tasks if not t.done()]
-                for t in remaining:
-                    t.cancel()
-                await asyncio.gather(*remaining, return_exceptions=True)
-                logger.warning(
-                    "api_circuit_breaker_activated",
-                    deferred_properties=len(remaining),
-                    processed=count,
-                )
-                break
-            except Exception:
-                logger.error("property_processing_failed", exc_info=True)
-                continue
-
-            commute_info = pre.commute_lookup.get(merged.canonical.unique_id)
-            await _save_one(merged, commute_info, quality_analysis, storage)
-            await on_result(merged, commute_info, quality_analysis)
-            count += 1
+        count = await _run_concurrent_analysis(
+            all_to_analyze,
+            _analyze,
+            _handle_result,
+            breaker_log_event="api_circuit_breaker_activated",
+            error_log_event="property_processing_failed",
+        )
     finally:
         if quality_filter:
             await quality_filter.close()
@@ -1036,46 +1112,33 @@ async def run_reanalysis(
             thinking_budget_tokens=settings.thinking_budget_tokens,
         )
 
-        semaphore = asyncio.Semaphore(_QUALITY_CONCURRENCY)
         completed = 0
         failed = 0
 
+        async def _analyze(merged: MergedProperty) -> tuple[MergedProperty, PropertyQualityAnalysis | None]:
+            return await quality_filter.analyze_single_merged(merged, data_dir=settings.data_dir)
+
+        async def _handle_result(merged: MergedProperty, quality_analysis: PropertyQualityAnalysis | None) -> None:
+            nonlocal completed, failed
+            if quality_analysis:
+                await storage.complete_reanalysis(merged.unique_id, quality_analysis)
+                completed += 1
+            else:
+                failed += 1
+
+        def _count_error() -> None:
+            nonlocal failed
+            failed += 1
+
         try:
-
-            async def _analyze_one(
-                merged: MergedProperty,
-            ) -> tuple[MergedProperty, PropertyQualityAnalysis | None]:
-                async with semaphore:
-                    return await quality_filter.analyze_single_merged(
-                        merged, data_dir=settings.data_dir
-                    )
-
-            tasks = [asyncio.create_task(_analyze_one(m)) for m in queue]
-
-            for coro in asyncio.as_completed(tasks):
-                try:
-                    merged, quality_analysis = await coro
-                except APIUnavailableError:
-                    remaining = [t for t in tasks if not t.done()]
-                    for t in remaining:
-                        t.cancel()
-                    await asyncio.gather(*remaining, return_exceptions=True)
-                    logger.warning(
-                        "reanalysis_api_circuit_breaker",
-                        deferred=len(remaining),
-                        completed=completed,
-                    )
-                    break
-                except Exception:
-                    logger.error("reanalysis_failed", exc_info=True)
-                    failed += 1
-                    continue
-
-                if quality_analysis:
-                    await storage.complete_reanalysis(merged.unique_id, quality_analysis)
-                    completed += 1
-                else:
-                    failed += 1
+            await _run_concurrent_analysis(
+                queue,
+                _analyze,
+                _handle_result,
+                on_error=_count_error,
+                breaker_log_event="reanalysis_api_circuit_breaker",
+                error_log_event="reanalysis_failed",
+            )
         finally:
             await quality_filter.close()
 

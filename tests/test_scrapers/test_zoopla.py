@@ -1,6 +1,7 @@
 """Tests for Zoopla scraper."""
 
 import json
+from collections.abc import Generator
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
@@ -20,9 +21,19 @@ def zoopla_search_html(fixtures_path: Path) -> str:
 
 
 @pytest.fixture
-def zoopla_scraper() -> ZooplaScraper:
-    """Create a Zoopla scraper instance."""
-    return ZooplaScraper()
+def zoopla_scraper() -> Generator[ZooplaScraper, None, None]:
+    """Create a Zoopla scraper instance with session cleanup.
+
+    curl_cffi's AsyncCurl spawns a ``_force_timeout`` background task that runs
+    every 100 ms.  Without explicit cancellation the event loop blocks for 20-46 s
+    during pytest-asyncio shutdown.
+    """
+    scraper = ZooplaScraper()
+    yield scraper
+    if scraper._session is not None:
+        acurl = getattr(scraper._session, "_acurl", None)
+        if acurl is not None and hasattr(acurl, "_timeout_checker"):
+            acurl._timeout_checker.cancel()
 
 
 class TestZooplaScraper:
@@ -434,6 +445,9 @@ class TestZooplaEarlyStop:
 
         known_ids = {"100", "200"}
 
+        # Skip _warm_up to avoid creating a real AsyncSession (curl_cffi bypasses
+        # pytest-socket since libcurl operates at the C level).
+        zoopla_scraper._warmed_up = True
         mock_fetch = AsyncMock(return_value=page1_html)
         with patch.object(zoopla_scraper, "_fetch_page", mock_fetch):
             result = await zoopla_scraper.scrape(
@@ -478,6 +492,9 @@ class TestZooplaEarlyStop:
 
         known_ids = {"100"}  # Only one known — should not early-stop
 
+        # Skip _warm_up to avoid creating a real AsyncSession (curl_cffi bypasses
+        # pytest-socket since libcurl operates at the C level).
+        zoopla_scraper._warmed_up = True
         mock_fetch = AsyncMock(side_effect=[page1_html, "<html></html>"])
         with (
             patch.object(zoopla_scraper, "_fetch_page", mock_fetch),
@@ -690,6 +707,9 @@ class TestProfileRotation:
     @pytest.mark.asyncio
     async def test_scrape_passes_impersonate_to_fetch(self, zoopla_scraper: ZooplaScraper) -> None:
         """scrape() should pass a chosen impersonate target to _fetch_page."""
+        # Skip _warm_up to avoid creating a real AsyncSession (curl_cffi bypasses
+        # pytest-socket since libcurl operates at the C level).
+        zoopla_scraper._warmed_up = True
         mock_fetch = AsyncMock(return_value="<html></html>")
         with patch.object(zoopla_scraper, "_fetch_page", mock_fetch):
             await zoopla_scraper.scrape(

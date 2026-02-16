@@ -11,8 +11,7 @@ from pydantic import HttpUrl
 
 from home_finder.data.area_context import HOSTING_TOLERANCE
 from home_finder.filters.fit_score import (
-    compute_fit_breakdown,
-    compute_fit_score,
+    compute_fit_score_and_breakdown,
     compute_lifestyle_icons,
 )
 from home_finder.logging import get_logger
@@ -536,61 +535,27 @@ class PropertyStorage:
         notification_status='pending_enrichment'.
         On CONFLICT: just increments enrichment_attempts (preserves other fields).
         """
-        prop = merged.canonical
         conn = await self._get_connection()
-
-        sources_json = json.dumps([s.value for s in merged.sources])
-        source_urls_json = json.dumps({s.value: str(url) for s, url in merged.source_urls.items()})
-        descriptions_json = (
-            json.dumps({s.value: d for s, d in merged.descriptions.items()})
-            if merged.descriptions
-            else None
+        columns, values = self._build_merged_insert_columns(
+            merged,
+            commute_minutes=commute_minutes,
+            transport_mode=transport_mode,
+            notification_status=NotificationStatus.PENDING_ENRICHMENT,
         )
+        col_list = ", ".join(columns)
+        placeholders = ", ".join("?" for _ in columns)
 
         await conn.execute(
-            """
-            INSERT INTO properties (
-                unique_id, source, source_id, url, title, price_pcm,
-                bedrooms, address, postcode, latitude, longitude,
-                description, image_url, available_from, first_seen,
-                commute_minutes, transport_mode, notification_status,
-                sources, source_urls, min_price, max_price, descriptions_json,
-                enrichment_status, enrichment_attempts
-            ) VALUES (
-                ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-                ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 1
-            )
+            f"""
+            INSERT INTO properties ({col_list}, enrichment_status, enrichment_attempts)
+            VALUES ({placeholders}, 'pending', 1)
             ON CONFLICT(unique_id) DO UPDATE SET
                 enrichment_attempts = enrichment_attempts + 1
         """,
-            (
-                prop.unique_id,
-                prop.source.value,
-                prop.source_id,
-                str(prop.url),
-                prop.title,
-                prop.price_pcm,
-                prop.bedrooms,
-                prop.address,
-                prop.postcode,
-                prop.latitude,
-                prop.longitude,
-                prop.description,
-                str(prop.image_url) if prop.image_url else None,
-                prop.available_from.isoformat() if prop.available_from else None,
-                prop.first_seen.isoformat(),
-                commute_minutes,
-                transport_mode.value if transport_mode else None,
-                NotificationStatus.PENDING_ENRICHMENT.value,
-                sources_json,
-                source_urls_json,
-                merged.min_price,
-                merged.max_price,
-                descriptions_json,
-            ),
+            values,
         )
         await conn.commit()
-        logger.debug("unenriched_property_saved", unique_id=prop.unique_id)
+        logger.debug("unenriched_property_saved", unique_id=merged.canonical.unique_id)
 
     async def get_unenriched_properties(self, max_attempts: int = 3) -> list[MergedProperty]:
         """Load properties that failed enrichment for retry.
@@ -613,45 +578,9 @@ class PropertyStorage:
         )
         rows = await cursor.fetchall()
 
-        results: list[MergedProperty] = []
-        for row in rows:
-            prop = self._row_to_tracked_property(row).property
-
-            sources_list: list[PropertySource] = []
-            source_urls: dict[PropertySource, HttpUrl] = {}
-            descriptions: dict[PropertySource, str] = {}
-
-            if row["sources"]:
-                for s in json.loads(row["sources"]):
-                    sources_list.append(PropertySource(s))
-            else:
-                sources_list.append(prop.source)
-
-            if row["source_urls"]:
-                for s, url in json.loads(row["source_urls"]).items():
-                    source_urls[PropertySource(s)] = HttpUrl(url)
-            else:
-                source_urls[prop.source] = prop.url
-
-            if row["descriptions_json"]:
-                for s, desc in json.loads(row["descriptions_json"]).items():
-                    descriptions[PropertySource(s)] = desc
-
-            min_price = row["min_price"] if row["min_price"] is not None else prop.price_pcm
-            max_price = row["max_price"] if row["max_price"] is not None else prop.price_pcm
-
-            results.append(
-                MergedProperty(
-                    canonical=prop,
-                    sources=tuple(sources_list),
-                    source_urls=source_urls,
-                    images=(),
-                    floorplan=None,
-                    min_price=min_price,
-                    max_price=max_price,
-                    descriptions=descriptions,
-                )
-            )
+        results = [
+            await self._row_to_merged_property(row, load_images=False) for row in rows
+        ]
 
         logger.info("loaded_unenriched_properties", count=len(results))
         return results
@@ -755,51 +684,7 @@ class PropertyStorage:
         )
         rows = await cursor.fetchall()
 
-        results: list[MergedProperty] = []
-        for row in rows:
-            prop = self._row_to_tracked_property(row).property
-
-            # Parse multi-source fields from DB
-            sources_list: list[PropertySource] = []
-            source_urls: dict[PropertySource, HttpUrl] = {}
-            descriptions: dict[PropertySource, str] = {}
-
-            if row["sources"]:
-                for s in json.loads(row["sources"]):
-                    sources_list.append(PropertySource(s))
-            else:
-                sources_list.append(prop.source)
-
-            if row["source_urls"]:
-                for s, url in json.loads(row["source_urls"]).items():
-                    source_urls[PropertySource(s)] = HttpUrl(url)
-            else:
-                source_urls[prop.source] = prop.url
-
-            if row["descriptions_json"]:
-                for s, desc in json.loads(row["descriptions_json"]).items():
-                    descriptions[PropertySource(s)] = desc
-
-            # Load images for this property
-            images = await self.get_property_images(prop.unique_id)
-            gallery = tuple(img for img in images if img.image_type == "gallery")
-            floorplan_img = next((img for img in images if img.image_type == "floorplan"), None)
-
-            min_price = row["min_price"] if row["min_price"] is not None else prop.price_pcm
-            max_price = row["max_price"] if row["max_price"] is not None else prop.price_pcm
-
-            results.append(
-                MergedProperty(
-                    canonical=prop,
-                    sources=tuple(sources_list),
-                    source_urls=source_urls,
-                    images=gallery,
-                    floorplan=floorplan_img,
-                    min_price=min_price,
-                    max_price=max_price,
-                    descriptions=descriptions,
-                )
-            )
+        results = [await self._row_to_merged_property(row) for row in rows]
 
         logger.debug(
             "loaded_dedup_anchors",
@@ -917,28 +802,21 @@ class PropertyStorage:
             transport_mode: Transport mode used for commute calculation.
             ward: Official ward name from postcodes.io lookup.
         """
-        prop = merged.canonical
         conn = await self._get_connection()
-
-        # Serialize sources, source_urls, and descriptions as JSON
-        sources_json = json.dumps([s.value for s in merged.sources])
-        source_urls_json = json.dumps({s.value: str(url) for s, url in merged.source_urls.items()})
-        descriptions_json = (
-            json.dumps({s.value: d for s, d in merged.descriptions.items()})
-            if merged.descriptions
-            else None
+        columns, values = self._build_merged_insert_columns(
+            merged,
+            commute_minutes=commute_minutes,
+            transport_mode=transport_mode,
+            notification_status=NotificationStatus.PENDING,
+            extra={"ward": ward},
         )
+        col_list = ", ".join(columns)
+        placeholders = ", ".join("?" for _ in columns)
 
         await conn.execute(
-            """
-            INSERT INTO properties (
-                unique_id, source, source_id, url, title, price_pcm,
-                bedrooms, address, postcode, latitude, longitude,
-                description, image_url, available_from, first_seen,
-                commute_minutes, transport_mode, notification_status,
-                sources, source_urls, min_price, max_price, descriptions_json,
-                ward
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            f"""
+            INSERT INTO properties ({col_list})
+            VALUES ({placeholders})
             ON CONFLICT(unique_id) DO UPDATE SET
                 price_pcm = excluded.price_pcm,
                 title = excluded.title,
@@ -953,38 +831,13 @@ class PropertyStorage:
                 descriptions_json = COALESCE(excluded.descriptions_json, descriptions_json),
                 ward = COALESCE(excluded.ward, ward)
         """,
-            (
-                prop.unique_id,
-                prop.source.value,
-                prop.source_id,
-                str(prop.url),
-                prop.title,
-                prop.price_pcm,
-                prop.bedrooms,
-                prop.address,
-                prop.postcode,
-                prop.latitude,
-                prop.longitude,
-                prop.description,
-                str(prop.image_url) if prop.image_url else None,
-                prop.available_from.isoformat() if prop.available_from else None,
-                prop.first_seen.isoformat(),
-                commute_minutes,
-                transport_mode.value if transport_mode else None,
-                NotificationStatus.PENDING.value,
-                sources_json,
-                source_urls_json,
-                merged.min_price,
-                merged.max_price,
-                descriptions_json,
-                ward,
-            ),
+            values,
         )
         await conn.commit()
 
         logger.debug(
             "merged_property_saved",
-            unique_id=prop.unique_id,
+            unique_id=merged.canonical.unique_id,
             sources=[s.value for s in merged.sources],
         )
 
@@ -1000,15 +853,12 @@ class PropertyStorage:
         if not ward_map:
             return 0
         conn = await self._get_connection()
-        updated = 0
-        for unique_id, ward in ward_map.items():
-            cursor = await conn.execute(
-                "UPDATE properties SET ward = ? WHERE unique_id = ?",
-                (ward, unique_id),
-            )
-            updated += cursor.rowcount
+        cursor = await conn.executemany(
+            "UPDATE properties SET ward = ? WHERE unique_id = ?",
+            [(ward, uid) for uid, ward in ward_map.items()],
+        )
         await conn.commit()
-        return updated
+        return cursor.rowcount
 
     async def get_properties_without_ward(
         self,
@@ -1310,57 +1160,23 @@ class PropertyStorage:
             commute_minutes = commute_info[0] if commute_info else None
             transport_mode = commute_info[1] if commute_info else None
 
-            sources_json = json.dumps([s.value for s in merged.sources])
-            source_urls_json = json.dumps(
-                {s.value: str(url) for s, url in merged.source_urls.items()}
+            columns, values = self._build_merged_insert_columns(
+                merged,
+                commute_minutes=commute_minutes,
+                transport_mode=transport_mode,
+                notification_status=NotificationStatus.PENDING_ANALYSIS,
             )
-            descriptions_json = (
-                json.dumps({s.value: d for s, d in merged.descriptions.items()})
-                if merged.descriptions
-                else None
-            )
+            col_list = ", ".join(columns)
+            placeholders = ", ".join("?" for _ in columns)
 
             await conn.execute(
-                """
-                INSERT INTO properties (
-                    unique_id, source, source_id, url, title, price_pcm,
-                    bedrooms, address, postcode, latitude, longitude,
-                    description, image_url, available_from, first_seen,
-                    commute_minutes, transport_mode, notification_status,
-                    sources, source_urls, min_price, max_price, descriptions_json,
-                    enrichment_status
-                ) VALUES (
-                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-                    ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'enriched'
-                )
+                f"""
+                INSERT INTO properties ({col_list}, enrichment_status)
+                VALUES ({placeholders}, 'enriched')
                 ON CONFLICT(unique_id) DO UPDATE SET
                     notification_status = excluded.notification_status
                 """,
-                (
-                    prop.unique_id,
-                    prop.source.value,
-                    prop.source_id,
-                    str(prop.url),
-                    prop.title,
-                    prop.price_pcm,
-                    prop.bedrooms,
-                    prop.address,
-                    prop.postcode,
-                    prop.latitude,
-                    prop.longitude,
-                    prop.description,
-                    str(prop.image_url) if prop.image_url else None,
-                    prop.available_from.isoformat() if prop.available_from else None,
-                    prop.first_seen.isoformat(),
-                    commute_minutes,
-                    transport_mode.value if transport_mode else None,
-                    NotificationStatus.PENDING_ANALYSIS.value,
-                    sources_json,
-                    source_urls_json,
-                    merged.min_price,
-                    merged.max_price,
-                    descriptions_json,
-                ),
+                values,
             )
 
             # Save images
@@ -1368,7 +1184,7 @@ class PropertyStorage:
             if merged.floorplan:
                 images.append(merged.floorplan)
             if images:
-                rows = [
+                img_rows = [
                     (prop.unique_id, img.source.value, str(img.url), img.image_type)
                     for img in images
                 ]
@@ -1378,7 +1194,7 @@ class PropertyStorage:
                     (property_unique_id, source, url, image_type)
                     VALUES (?, ?, ?, ?)
                     """,
-                    rows,
+                    img_rows,
                 )
 
         await conn.commit()
@@ -1418,50 +1234,7 @@ class PropertyStorage:
         cursor = await conn.execute(query, params)
         rows = await cursor.fetchall()
 
-        results: list[MergedProperty] = []
-        for row in rows:
-            prop = self._row_to_tracked_property(row).property
-
-            sources_list: list[PropertySource] = []
-            source_urls: dict[PropertySource, HttpUrl] = {}
-            descriptions: dict[PropertySource, str] = {}
-
-            if row["sources"]:
-                for s in json.loads(row["sources"]):
-                    sources_list.append(PropertySource(s))
-            else:
-                sources_list.append(prop.source)
-
-            if row["source_urls"]:
-                for s, url in json.loads(row["source_urls"]).items():
-                    source_urls[PropertySource(s)] = HttpUrl(url)
-            else:
-                source_urls[prop.source] = prop.url
-
-            if row["descriptions_json"]:
-                for s, desc in json.loads(row["descriptions_json"]).items():
-                    descriptions[PropertySource(s)] = desc
-
-            # Load images
-            images = await self.get_property_images(prop.unique_id)
-            gallery = tuple(img for img in images if img.image_type == "gallery")
-            floorplan_img = next((img for img in images if img.image_type == "floorplan"), None)
-
-            min_price = row["min_price"] if row["min_price"] is not None else prop.price_pcm
-            max_price = row["max_price"] if row["max_price"] is not None else prop.price_pcm
-
-            results.append(
-                MergedProperty(
-                    canonical=prop,
-                    sources=tuple(sources_list),
-                    source_urls=source_urls,
-                    images=gallery,
-                    floorplan=floorplan_img,
-                    min_price=min_price,
-                    max_price=max_price,
-                    descriptions=descriptions,
-                )
-            )
+        results = [await self._row_to_merged_property(row) for row in rows]
 
         if results:
             logger.info(
@@ -1684,50 +1457,7 @@ class PropertyStorage:
 
         rows = await cursor.fetchall()
 
-        results: list[MergedProperty] = []
-        for row in rows:
-            prop = self._row_to_tracked_property(row).property
-
-            sources_list: list[PropertySource] = []
-            source_urls: dict[PropertySource, HttpUrl] = {}
-            descriptions: dict[PropertySource, str] = {}
-
-            if row["sources"]:
-                for s in json.loads(row["sources"]):
-                    sources_list.append(PropertySource(s))
-            else:
-                sources_list.append(prop.source)
-
-            if row["source_urls"]:
-                for s, url in json.loads(row["source_urls"]).items():
-                    source_urls[PropertySource(s)] = HttpUrl(url)
-            else:
-                source_urls[prop.source] = prop.url
-
-            if row["descriptions_json"]:
-                for s, desc in json.loads(row["descriptions_json"]).items():
-                    descriptions[PropertySource(s)] = desc
-
-            # Load images
-            images = await self.get_property_images(prop.unique_id)
-            gallery = tuple(img for img in images if img.image_type == "gallery")
-            floorplan_img = next((img for img in images if img.image_type == "floorplan"), None)
-
-            min_price = row["min_price"] if row["min_price"] is not None else prop.price_pcm
-            max_price = row["max_price"] if row["max_price"] is not None else prop.price_pcm
-
-            results.append(
-                MergedProperty(
-                    canonical=prop,
-                    sources=tuple(sources_list),
-                    source_urls=source_urls,
-                    images=gallery,
-                    floorplan=floorplan_img,
-                    min_price=min_price,
-                    max_price=max_price,
-                    descriptions=descriptions,
-                )
-            )
+        results = [await self._row_to_merged_property(row) for row in rows]
 
         logger.info("loaded_reanalysis_queue", count=len(results))
         return results
@@ -2187,8 +1917,9 @@ class PropertyStorage:
                         if ht:
                             analysis["_area_hosting_tolerance"] = ht.get("rating")
                     bedrooms = prop_dict.get("bedrooms", 0) or 0
-                    prop_dict["fit_score"] = compute_fit_score(analysis, bedrooms)
-                    prop_dict["fit_breakdown"] = compute_fit_breakdown(analysis, bedrooms)
+                    fit_score, fit_breakdown = compute_fit_score_and_breakdown(analysis, bedrooms)
+                    prop_dict["fit_score"] = fit_score
+                    prop_dict["fit_breakdown"] = fit_breakdown
                     prop_dict["lifestyle_icons"] = compute_lifestyle_icons(analysis, bedrooms)
                 except (json.JSONDecodeError, TypeError):
                     prop_dict["quality_summary"] = ""
@@ -2280,6 +2011,69 @@ class PropertyStorage:
         return row[0] if row else 0
 
     @staticmethod
+    def _build_merged_insert_columns(
+        merged: MergedProperty,
+        *,
+        commute_minutes: int | None = None,
+        transport_mode: TransportMode | None = None,
+        notification_status: NotificationStatus,
+        extra: dict[str, Any] | None = None,
+    ) -> tuple[list[str], list[Any]]:
+        """Build INSERT column names and values for a MergedProperty.
+
+        Returns (columns, values) lists that are guaranteed to stay in sync.
+        Callers can add extra columns via the ``extra`` dict, then build their
+        own SQL INSERT + ON CONFLICT using the returned lists.
+        """
+        prop = merged.canonical
+        sources_json = json.dumps([s.value for s in merged.sources])
+        source_urls_json = json.dumps(
+            {s.value: str(url) for s, url in merged.source_urls.items()}
+        )
+        descriptions_json = (
+            json.dumps({s.value: d for s, d in merged.descriptions.items()})
+            if merged.descriptions
+            else None
+        )
+        columns: list[str] = [
+            "unique_id", "source", "source_id", "url", "title", "price_pcm",
+            "bedrooms", "address", "postcode", "latitude", "longitude",
+            "description", "image_url", "available_from", "first_seen",
+            "commute_minutes", "transport_mode", "notification_status",
+            "sources", "source_urls", "min_price", "max_price", "descriptions_json",
+        ]
+        values: list[Any] = [
+            prop.unique_id,
+            prop.source.value,
+            prop.source_id,
+            str(prop.url),
+            prop.title,
+            prop.price_pcm,
+            prop.bedrooms,
+            prop.address,
+            prop.postcode,
+            prop.latitude,
+            prop.longitude,
+            prop.description,
+            str(prop.image_url) if prop.image_url else None,
+            prop.available_from.isoformat() if prop.available_from else None,
+            prop.first_seen.isoformat(),
+            commute_minutes,
+            transport_mode.value if transport_mode else None,
+            notification_status.value,
+            sources_json,
+            source_urls_json,
+            merged.min_price,
+            merged.max_price,
+            descriptions_json,
+        ]
+        if extra:
+            for col, val in extra.items():
+                columns.append(col)
+                values.append(val)
+        return columns, values
+
+    @staticmethod
     def _parse_json_fields(prop_dict: dict[str, Any]) -> None:
         """Parse common JSON-encoded fields in a property dict (mutates in place)."""
         if prop_dict.get("sources"):
@@ -2297,24 +2091,21 @@ class PropertyStorage:
         else:
             prop_dict["descriptions_dict"] = {}
 
-    def _row_to_tracked_property(self, row: aiosqlite.Row) -> TrackedProperty:
-        """Convert a database row to a TrackedProperty.
+    @staticmethod
+    def _row_to_property(row: aiosqlite.Row) -> Property:
+        """Convert a database row to a Property.
 
         Args:
-            row: Database row.
+            row: Database row from the properties table.
 
         Returns:
-            TrackedProperty instance.
+            Property instance.
         """
-        # Parse datetime fields
         first_seen = datetime.fromisoformat(row["first_seen"])
         available_from = (
             datetime.fromisoformat(row["available_from"]) if row["available_from"] else None
         )
-        notified_at = datetime.fromisoformat(row["notified_at"]) if row["notified_at"] else None
-
-        # Build Property
-        prop = Property(
+        return Property(
             source=PropertySource(row["source"]),
             source_id=row["source_id"],
             url=row["url"],
@@ -2331,13 +2122,83 @@ class PropertyStorage:
             first_seen=first_seen,
         )
 
-        # Build TrackedProperty
+    def _row_to_tracked_property(self, row: aiosqlite.Row) -> TrackedProperty:
+        """Convert a database row to a TrackedProperty.
+
+        Args:
+            row: Database row.
+
+        Returns:
+            TrackedProperty instance.
+        """
+        notified_at = datetime.fromisoformat(row["notified_at"]) if row["notified_at"] else None
         return TrackedProperty(
-            property=prop,
+            property=self._row_to_property(row),
             commute_minutes=row["commute_minutes"],
             transport_mode=(
                 TransportMode(row["transport_mode"]) if row["transport_mode"] else None
             ),
             notification_status=NotificationStatus(row["notification_status"]),
             notified_at=notified_at,
+        )
+
+    async def _row_to_merged_property(
+        self, row: aiosqlite.Row, *, load_images: bool = True
+    ) -> MergedProperty:
+        """Convert a database row to a MergedProperty.
+
+        Parses multi-source JSON fields and optionally loads images.
+
+        Note: When ``load_images=True``, each call issues a separate
+        ``get_property_images()`` query (N+1 pattern). Acceptable for current
+        data volumes but a batch-loading approach would be needed at scale.
+
+        Args:
+            row: Database row from the properties table.
+            load_images: Whether to load images from property_images table.
+
+        Returns:
+            Reconstructed MergedProperty.
+        """
+        prop = self._row_to_property(row)
+
+        sources_list: list[PropertySource] = []
+        source_urls: dict[PropertySource, HttpUrl] = {}
+        descriptions: dict[PropertySource, str] = {}
+
+        if row["sources"]:
+            for s in json.loads(row["sources"]):
+                sources_list.append(PropertySource(s))
+        else:
+            sources_list.append(prop.source)
+
+        if row["source_urls"]:
+            for s, url in json.loads(row["source_urls"]).items():
+                source_urls[PropertySource(s)] = HttpUrl(url)
+        else:
+            source_urls[prop.source] = prop.url
+
+        if row["descriptions_json"]:
+            for s, desc in json.loads(row["descriptions_json"]).items():
+                descriptions[PropertySource(s)] = desc
+
+        gallery: tuple[PropertyImage, ...] = ()
+        floorplan_img: PropertyImage | None = None
+        if load_images:
+            images = await self.get_property_images(prop.unique_id)
+            gallery = tuple(img for img in images if img.image_type == "gallery")
+            floorplan_img = next((img for img in images if img.image_type == "floorplan"), None)
+
+        min_price = row["min_price"] if row["min_price"] is not None else prop.price_pcm
+        max_price = row["max_price"] if row["max_price"] is not None else prop.price_pcm
+
+        return MergedProperty(
+            canonical=prop,
+            sources=tuple(sources_list),
+            source_urls=source_urls,
+            images=gallery,
+            floorplan=floorplan_img,
+            min_price=min_price,
+            max_price=max_price,
+            descriptions=descriptions,
         )

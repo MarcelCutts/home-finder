@@ -1,6 +1,7 @@
 """Tests for OnTheMarket scraper."""
 
 import json
+from collections.abc import Generator
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -12,9 +13,17 @@ from home_finder.scrapers.parsing import extract_bedrooms, extract_postcode, ext
 
 
 @pytest.fixture
-def onthemarket_scraper() -> OnTheMarketScraper:
-    """Create an OnTheMarket scraper instance."""
-    return OnTheMarketScraper()
+def onthemarket_scraper() -> Generator[OnTheMarketScraper, None, None]:
+    """Create an OnTheMarket scraper instance with session cleanup.
+
+    Preventive: cancel curl_cffi's background task if a real session was created.
+    """
+    scraper = OnTheMarketScraper()
+    yield scraper
+    if scraper._session is not None:
+        acurl = getattr(scraper._session, "_acurl", None)
+        if acurl is not None and hasattr(acurl, "_timeout_checker"):
+            acurl._timeout_checker.cancel()
 
 
 @pytest.fixture
