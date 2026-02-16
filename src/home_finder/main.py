@@ -29,6 +29,7 @@ from home_finder.models import (
     Property,
     PropertyQualityAnalysis,
     PropertySource,
+    SearchCriteria,
     TransportMode,
 )
 from home_finder.notifiers import TelegramNotifier
@@ -313,29 +314,23 @@ async def _cross_run_deduplicate(
     return CrossRunDedupResult(genuinely_new=genuinely_new, anchors_updated=anchors_updated)
 
 
-async def _run_pre_analysis_pipeline(
+async def _run_scrape(
     settings: Settings,
     storage: PropertyStorage,
     *,
     max_per_scraper: int | None = None,
     only_scrapers: set[str] | None = None,
-) -> PreAnalysisResult | None:
-    """Run the pre-analysis pipeline: scrape, filter, deduplicate, enrich.
-
-    Returns None if pipeline ends early (no properties at any stage).
-    Quality analysis is handled separately by the caller for concurrency.
-    """
+) -> list[Property] | None:
+    """Scrape all platforms and return results, or None if nothing found."""
     criteria = settings.get_search_criteria()
     search_areas = settings.get_search_areas()
 
-    # Load known source IDs for early-stop pagination
     known_ids_by_source = await storage.get_all_known_source_ids()
     logger.info(
         "loaded_known_ids",
         total=sum(len(v) for v in known_ids_by_source.values()),
     )
 
-    # Step 1: Scrape all platforms
     logger.info("pipeline_started", phase="scraping")
     all_properties = await scrape_all_platforms(
         min_price=criteria.min_price,
@@ -362,10 +357,18 @@ async def _run_pre_analysis_pipeline(
         logger.info("no_properties_found")
         return None
 
-    # Step 2: Apply criteria filter
+    return all_properties
+
+
+def _run_criteria_and_location_filters(
+    properties: list[Property],
+    criteria: SearchCriteria,
+    search_areas: list[str],
+) -> list[Property] | None:
+    """Apply criteria and location filters. Returns None if nothing passes."""
     logger.info("pipeline_started", phase="criteria_filtering")
     criteria_filter = CriteriaFilter(criteria)
-    filtered = criteria_filter.filter_properties(all_properties)
+    filtered = criteria_filter.filter_properties(properties)
     logger.info(
         "criteria_filter_summary", matched=len(filtered), by_source=_source_counts(filtered)
     )
@@ -374,7 +377,6 @@ async def _run_pre_analysis_pipeline(
         logger.info("no_properties_match_criteria")
         return None
 
-    # Step 2.5: Apply location filter (catch scraper leakage)
     logger.info("pipeline_started", phase="location_filtering")
     location_filter = LocationFilter(search_areas, strict=False)
     filtered = location_filter.filter_properties(filtered)
@@ -386,27 +388,14 @@ async def _run_pre_analysis_pipeline(
         logger.info("no_properties_in_search_areas")
         return None
 
-    # Step 3: Wrap as single-source MergedProperties for downstream pipeline
-    logger.info("pipeline_started", phase="wrap_merged")
-    deduplicator = Deduplicator(
-        enable_cross_platform=True,
-        enable_image_hashing=settings.enable_image_hash_matching,
-    )
-    merged_properties = deduplicator.properties_to_merged(filtered)
-    logger.info(
-        "wrap_merged_summary",
-        count=len(merged_properties),
-        by_source=_source_counts(merged_properties),
-    )
+    return filtered
 
-    # Step 4: Filter to new properties only
-    logger.info("pipeline_started", phase="new_property_filter")
-    new_merged = await storage.filter_new_merged(merged_properties)
-    logger.info(
-        "new_property_summary", new_count=len(new_merged), by_source=_source_counts(new_merged)
-    )
 
-    # Step 4.5: Load unenriched properties for retry
+async def _load_unenriched(
+    storage: PropertyStorage,
+    settings: Settings,
+) -> tuple[list[MergedProperty], set[str]]:
+    """Load unenriched properties for retry, clearing stale image caches."""
     max_attempts = settings.max_enrichment_attempts
     unenriched = await storage.get_unenriched_properties(max_attempts=max_attempts)
     re_enrichment_ids: set[str] = set()
@@ -416,17 +405,19 @@ async def _run_pre_analysis_pipeline(
             count=len(unenriched),
             by_source=_source_counts(unenriched),
         )
-        # Clear image caches so partial downloads don't fool is_property_cached()
         for m in unenriched:
             if settings.data_dir:
                 clear_image_cache(settings.data_dir, m.unique_id)
         re_enrichment_ids = {m.unique_id for m in unenriched}
+    return unenriched, re_enrichment_ids
 
-    if not new_merged and not unenriched:
-        logger.info("no_new_properties")
-        return None
 
-    # Step 5: Filter by commute time (if TravelTime configured)
+async def _run_commute_filter(
+    merged: list[MergedProperty],
+    criteria: SearchCriteria,
+    settings: Settings,
+) -> tuple[list[MergedProperty], dict[str, tuple[int, TransportMode]]]:
+    """Filter by commute time if TravelTime is configured, otherwise pass through."""
     commute_lookup: dict[str, tuple[int, TransportMode]] = {}
     if settings.traveltime_app_id and settings.traveltime_api_key:
         logger.info("pipeline_started", phase="commute_filtering")
@@ -436,14 +427,13 @@ async def _run_pre_analysis_pipeline(
             destination_postcode=criteria.destination_postcode,
         )
 
-        # Geocode properties that have postcode but no coordinates
-        new_merged = await commute_filter.geocode_properties(new_merged)
+        merged = await commute_filter.geocode_properties(merged)
 
         merged_with_coords = [
-            m for m in new_merged if m.canonical.latitude and m.canonical.longitude
+            m for m in merged if m.canonical.latitude and m.canonical.longitude
         ]
         merged_without_coords = [
-            m for m in new_merged if not (m.canonical.latitude and m.canonical.longitude)
+            m for m in merged if not (m.canonical.latitude and m.canonical.longitude)
         ]
 
         props_with_coords = [m.canonical for m in merged_with_coords]
@@ -481,17 +471,19 @@ async def _run_pre_analysis_pipeline(
             by_source=_source_counts(merged_to_notify),
         )
     else:
-        merged_to_notify = new_merged
+        merged_to_notify = list(merged)
         logger.info("skipping_commute_filter", reason="no_traveltime_credentials")
 
-    # Merge unenriched retries into enrichment batch (already have commute data from first run)
-    merged_to_notify.extend(unenriched)
+    return merged_to_notify, commute_lookup
 
-    if not merged_to_notify:
-        logger.info("no_properties_within_commute_limit")
-        return None
 
-    # Step 5.5: Enrich with detail page data (gallery, floorplan, descriptions)
+async def _run_enrichment(
+    merged: list[MergedProperty],
+    settings: Settings,
+    storage: PropertyStorage,
+    commute_lookup: dict[str, tuple[int, TransportMode]],
+) -> list[MergedProperty] | None:
+    """Enrich with detail page data and handle failures. Returns None if nothing enriched."""
     logger.info("pipeline_started", phase="detail_enrichment")
     detail_fetcher = DetailFetcher(
         max_gallery_images=settings.quality_filter_max_images,
@@ -499,7 +491,7 @@ async def _run_pre_analysis_pipeline(
     )
     try:
         enrichment_result = await enrich_merged_properties(
-            merged_to_notify,
+            merged,
             detail_fetcher,
             data_dir=settings.data_dir,
             storage=storage,
@@ -507,9 +499,8 @@ async def _run_pre_analysis_pipeline(
     finally:
         await detail_fetcher.close()
 
-    merged_to_notify = enrichment_result.enriched
+    enriched = enrichment_result.enriched
 
-    # Save failures for retry on next run
     for failed in enrichment_result.failed:
         commute_info = commute_lookup.get(failed.canonical.unique_id)
         await storage.save_unenriched_property(
@@ -518,7 +509,7 @@ async def _run_pre_analysis_pipeline(
             transport_mode=commute_info[1] if commute_info else None,
         )
 
-    # Give up on properties that exceeded max attempts
+    max_attempts = settings.max_enrichment_attempts
     expired = await storage.expire_unenriched(max_attempts=max_attempts)
 
     logger.info(
@@ -526,19 +517,29 @@ async def _run_pre_analysis_pipeline(
         enriched=len(enrichment_result.enriched),
         failed=len(enrichment_result.failed),
         expired=expired,
-        with_floorplan=sum(1 for m in merged_to_notify if m.floorplan),
-        with_images=sum(1 for m in merged_to_notify if m.images),
-        by_source=_source_counts(merged_to_notify),
+        with_floorplan=sum(1 for m in enriched if m.floorplan),
+        with_images=sum(1 for m in enriched if m.images),
+        by_source=_source_counts(enriched),
     )
 
-    if not merged_to_notify:
+    if not enriched:
         logger.info("no_enriched_properties")
         return None
 
-    # Step 5.6: Cross-platform dedup (including DB anchors for cross-run detection)
+    return enriched
+
+
+async def _run_post_enrichment(
+    merged: list[MergedProperty],
+    deduplicator: Deduplicator,
+    storage: PropertyStorage,
+    settings: Settings,
+    re_enrichment_ids: set[str],
+) -> tuple[list[MergedProperty], int] | None:
+    """Cross-run dedup and floorplan gate. Returns None if nothing remains."""
     logger.info("pipeline_started", phase="deduplication_merge")
     dedup_result = await _cross_run_deduplicate(
-        deduplicator, merged_to_notify, storage, re_enrichment_ids
+        deduplicator, merged, storage, re_enrichment_ids
     )
     merged_to_notify = dedup_result.genuinely_new
     anchors_updated = dedup_result.anchors_updated
@@ -547,7 +548,6 @@ async def _run_pre_analysis_pipeline(
         logger.info("no_new_properties_after_cross_run_dedup")
         return None
 
-    # Step 5.7: Floorplan gate (if configured)
     if settings.require_floorplan:
         before_count = len(merged_to_notify)
         merged_to_notify = filter_by_floorplan(merged_to_notify)
@@ -563,11 +563,87 @@ async def _run_pre_analysis_pipeline(
             logger.info("no_properties_with_floorplans")
             return None
 
+    return merged_to_notify, anchors_updated
+
+
+async def _run_pre_analysis_pipeline(
+    settings: Settings,
+    storage: PropertyStorage,
+    *,
+    max_per_scraper: int | None = None,
+    only_scrapers: set[str] | None = None,
+) -> PreAnalysisResult | None:
+    """Run the pre-analysis pipeline: scrape, filter, deduplicate, enrich.
+
+    Returns None if pipeline ends early (no properties at any stage).
+    Quality analysis is handled separately by the caller for concurrency.
+    """
+    # Step 1: Scrape all platforms
+    all_properties = await _run_scrape(
+        settings, storage, max_per_scraper=max_per_scraper, only_scrapers=only_scrapers
+    )
+    if all_properties is None:
+        return None
+
+    # Step 2: Criteria + location filters
+    criteria = settings.get_search_criteria()
+    search_areas = settings.get_search_areas()
+    filtered = _run_criteria_and_location_filters(all_properties, criteria, search_areas)
+    if filtered is None:
+        return None
+
+    # Step 3: Wrap as single-source MergedProperties + filter to new only
+    logger.info("pipeline_started", phase="wrap_merged")
+    deduplicator = Deduplicator(
+        enable_cross_platform=True,
+        enable_image_hashing=settings.enable_image_hash_matching,
+    )
+    merged_properties = deduplicator.properties_to_merged(filtered)
+    logger.info(
+        "wrap_merged_summary",
+        count=len(merged_properties),
+        by_source=_source_counts(merged_properties),
+    )
+
+    logger.info("pipeline_started", phase="new_property_filter")
+    new_merged = await storage.filter_new_merged(merged_properties)
+    logger.info(
+        "new_property_summary", new_count=len(new_merged), by_source=_source_counts(new_merged)
+    )
+
+    # Step 4: Load unenriched retries
+    unenriched, re_enrichment_ids = await _load_unenriched(storage, settings)
+    if not new_merged and not unenriched:
+        logger.info("no_new_properties")
+        return None
+
+    # Step 5: Commute filter
+    merged_to_notify, commute_lookup = await _run_commute_filter(
+        new_merged, criteria, settings
+    )
+    merged_to_notify.extend(unenriched)
+    if not merged_to_notify:
+        logger.info("no_properties_within_commute_limit")
+        return None
+
+    # Step 6: Enrichment
+    enriched = await _run_enrichment(merged_to_notify, settings, storage, commute_lookup)
+    if enriched is None:
+        return None
+
+    # Step 7: Post-enrichment dedup + floorplan gate
+    post_result = await _run_post_enrichment(
+        enriched, deduplicator, storage, settings, re_enrichment_ids
+    )
+    if post_result is None:
+        return None
+
+    final_merged, anchors_updated = post_result
     return PreAnalysisResult(
-        merged_to_process=merged_to_notify,
+        merged_to_process=final_merged,
         commute_lookup=commute_lookup,
         scraped_count=len(all_properties),
-        enriched_count=len(enrichment_result.enriched),
+        enriched_count=len(enriched),
         anchors_updated=anchors_updated,
     )
 

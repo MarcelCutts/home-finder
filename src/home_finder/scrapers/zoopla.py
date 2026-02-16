@@ -14,6 +14,7 @@ from bs4 import BeautifulSoup, Tag
 from curl_cffi.requests import AsyncSession
 from pydantic import BaseModel, ConfigDict, Field, HttpUrl, TypeAdapter, ValidationError
 
+from home_finder.data.location_mappings import BOROUGH_AREAS
 from home_finder.logging import get_logger
 from home_finder.models import FurnishType, Property, PropertySource
 from home_finder.scrapers.base import BaseScraper
@@ -169,44 +170,6 @@ class ZooplaListing(BaseModel):
 
 # TypeAdapter for parsing lists of listings directly (for RSC format)
 ZooplaListingsAdapter = TypeAdapter(list[ZooplaListing])
-
-# Known London borough slugs and their Zoopla query values.
-# Using the borough path format gives proper geographic boundaries.
-# Maps: slug -> (path_segment, q_param)
-BOROUGH_AREAS: dict[str, tuple[str, str]] = {
-    "hackney": ("hackney-london-borough", "Hackney (London Borough), London"),
-    "islington": ("islington-london-borough", "Islington (London Borough), London"),
-    "tower-hamlets": ("tower-hamlets-london-borough", "Tower Hamlets (London Borough), London"),
-    "camden": ("camden-london-borough", "Camden (London Borough), London"),
-    "lambeth": ("lambeth-london-borough", "Lambeth (London Borough), London"),
-    "southwark": ("southwark-london-borough", "Southwark (London Borough), London"),
-    "haringey": ("haringey-london-borough", "Haringey (London Borough), London"),
-    "lewisham": ("lewisham-london-borough", "Lewisham (London Borough), London"),
-    "newham": ("newham-london-borough", "Newham (London Borough), London"),
-    "waltham-forest": (
-        "waltham-forest-london-borough",
-        "Waltham Forest (London Borough), London",
-    ),
-    "greenwich": ("greenwich-london-borough", "Greenwich (London Borough), London"),
-    "barnet": ("barnet-london-borough", "Barnet (London Borough), London"),
-    "brent": ("brent-london-borough", "Brent (London Borough), London"),
-    "ealing": ("ealing-london-borough", "Ealing (London Borough), London"),
-    "enfield": ("enfield-london-borough", "Enfield (London Borough), London"),
-    "westminster": (
-        "city-of-westminster-london-borough",
-        "City of Westminster (London Borough), London",
-    ),
-    "kensington": (
-        "kensington-and-chelsea-london-borough",
-        "Kensington and Chelsea (London Borough), London",
-    ),
-    "hammersmith": (
-        "hammersmith-and-fulham-london-borough",
-        "Hammersmith and Fulham (London Borough), London",
-    ),
-    "wandsworth": ("wandsworth-london-borough", "Wandsworth (London Borough), London"),
-}
-
 
 _SHARED_ACCOMMODATION_PATTERNS = re.compile(
     r"flat\s*share|house\s*share|room\s+(?:in|to)\s+rent|shared\s+(?:flat|house|accommodation)",

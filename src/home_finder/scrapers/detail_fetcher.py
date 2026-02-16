@@ -5,7 +5,7 @@ import json
 import random
 import re
 from dataclasses import dataclass
-from typing import Any, assert_never
+from typing import Any, NamedTuple, assert_never
 
 import httpx
 from curl_cffi.requests import AsyncSession
@@ -49,6 +49,190 @@ def _find_dict_with_key(data: Any, key: str, depth: int = 0) -> dict[str, Any] |
             if r:
                 return r
     return None
+
+
+# ---------------------------------------------------------------------------
+# Zoopla detail page extraction helpers (pure functions, no self dependency)
+# ---------------------------------------------------------------------------
+
+
+class _NextDataResult(NamedTuple):
+    """Structured result from __NEXT_DATA__ extraction."""
+
+    gallery_urls: list[str]
+    floorplan_url: str | None
+    description: str | None
+    features: list[str]
+
+
+def _zoopla_from_next_data(
+    html: str, max_gallery_images: int
+) -> _NextDataResult | None:
+    """Extract gallery, floorplan, description, features from __NEXT_DATA__."""
+    match = re.search(
+        r'<script id="__NEXT_DATA__"[^>]*>(.*?)</script>',
+        html,
+        re.DOTALL,
+    )
+    if not match:
+        return None
+
+    data = json.loads(match.group(1))
+    listing = data.get("props", {}).get("pageProps", {}).get("listing", {})
+    media = listing.get("propertyMedia", [])
+
+    gallery_urls: list[str] = []
+    floorplan_url: str | None = None
+    for item in media:
+        item_type = item.get("type")
+        if item_type == "floorplan" and floorplan_url is None:
+            floorplan_url = item.get("original")
+        elif item_type == "image" and len(gallery_urls) < max_gallery_images:
+            url = item.get("original")
+            if url:
+                gallery_urls.append(url)
+
+    description = listing.get("detailedDescription")
+
+    features: list[str] = []
+    key_features = listing.get("keyFeatures", [])
+    if key_features:
+        features.extend(key_features)
+    bullets = listing.get("bullets", [])
+    if bullets:
+        features.extend(bullets)
+    tags = listing.get("tags", [])
+    for tag in tags:
+        if isinstance(tag, dict) and tag.get("label"):
+            features.append(tag["label"])
+        elif isinstance(tag, str):
+            features.append(tag)
+
+    return _NextDataResult(gallery_urls, floorplan_url, description, features)
+
+
+def _zoopla_desc_from_rsc(html: str) -> tuple[str | None, list[str]]:
+    """Extract description and features from RSC taxonomy payload.
+
+    Returns (description, features).
+    """
+    rsc_pattern = r"self\.__next_f\.push\(\s*\[(.*?)\]\s*\)"
+    for m in re.finditer(rsc_pattern, html, re.DOTALL):
+        match_text = m.group(1)
+        if "epcRating" not in match_text or "numBaths" not in match_text:
+            continue
+        try:
+            arr = json.loads(f"[{match_text}]")
+            if len(arr) >= 2 and isinstance(arr[1], str):
+                payload = arr[1]
+                colon_idx = payload.find(":")
+                if colon_idx >= 0:
+                    parsed = json.loads(payload[colon_idx + 1 :])
+                    taxonomy = _find_dict_with_key(parsed, "epcRating")
+                    if taxonomy:
+                        desc = taxonomy.get("detailedDescription", "")
+                        description: str | None = None
+                        if desc and not desc.startswith("$"):
+                            desc = re.sub(r"<[^>]+>", " ", desc)
+                            description = re.sub(r"\s+", " ", desc).strip()
+                        kf = taxonomy.get("keyFeatures", [])
+                        features: list[str] = []
+                        if isinstance(kf, list) and kf:
+                            features = [f for f in kf if isinstance(f, str)]
+                        return description, features
+        except (json.JSONDecodeError, TypeError):
+            continue
+    return None, []
+
+
+def _zoopla_desc_from_html(html: str) -> str | None:
+    """Extract description from HTML <p id="detailed-desc"> tag."""
+    desc_match = re.search(
+        r'<p[^>]*id="detailed-desc"[^>]*>(.*?)</p>',
+        html,
+        re.DOTALL,
+    )
+    if desc_match:
+        desc = re.sub(r"<[^>]+>", " ", desc_match.group(1))
+        desc = re.sub(r"\s+", " ", desc).strip()
+        if len(desc) > 20:
+            return desc
+    return None
+
+
+def _zoopla_images_from_rsc_captions(
+    html: str, max_gallery_images: int
+) -> tuple[list[str], set[str]]:
+    """Extract gallery URLs from RSC caption/filename pairs.
+
+    Returns (gallery_urls, seen_hashes) where seen_hashes includes ALL
+    encountered hashes, including EPC images that were filtered from the URL list.
+    """
+    seen_hashes: set[str] = set()
+    gallery_urls: list[str] = []
+    rsc_matches = re.findall(
+        r'\\"caption\\":\\"([^\\]*)\\",\\"filename\\":\\"([a-f0-9]+\.(?:jpg|jpeg|png|webp))\\"',
+        html,
+        re.IGNORECASE,
+    )
+    for caption, filename in rsc_matches:
+        hash_part = filename.split(".")[0]
+        if hash_part in seen_hashes:
+            continue
+        seen_hashes.add(hash_part)
+        caption_lower = caption.lower()
+        # Skip EPC rating graphs and floorplans — not gallery images
+        if "epc" in caption_lower or "floorplan" in caption_lower:
+            continue
+        url = f"https://lid.zoocdn.com/u/1024/768/{filename}"
+        gallery_urls.append(url)
+        if len(gallery_urls) >= max_gallery_images:
+            break
+    return gallery_urls, seen_hashes
+
+
+def _zoopla_images_from_full_urls(
+    html: str,
+    existing_gallery_urls: list[str],
+    seen_hashes: set[str],
+    max_gallery_images: int,
+) -> list[str]:
+    """Extract additional gallery URLs from full lid.zoocdn.com URLs in HTML.
+
+    Returns additional URLs to append (not already in existing_gallery_urls or seen_hashes).
+    """
+    existing_hashes = {u.rsplit("/", 1)[-1].split(".")[0] for u in existing_gallery_urls}
+    existing_hashes |= seen_hashes
+    img_matches = re.findall(
+        r"https://lid\.zoocdn\.com/u/(\d+)/(\d+)/([a-f0-9]+\.(?:jpg|jpeg|png|webp))",
+        html,
+        re.IGNORECASE,
+    )
+    seen_url_hashes: dict[str, tuple[int, str]] = {}
+    for width, height, filename in img_matches:
+        hash_part = filename.split(".")[0]
+        if hash_part in existing_hashes:
+            continue
+        size = int(width) * int(height)
+        if hash_part not in seen_url_hashes or size > seen_url_hashes[hash_part][0]:
+            seen_url_hashes[hash_part] = (
+                size,
+                f"https://lid.zoocdn.com/u/{width}/{height}/{filename}",
+            )
+
+    remaining = max_gallery_images - len(existing_gallery_urls)
+    sorted_imgs = sorted(seen_url_hashes.values(), key=lambda x: -x[0])
+    return [url for _, url in sorted_imgs[:remaining]]
+
+
+def _zoopla_floorplan_from_html(html: str) -> str | None:
+    """Extract floorplan URL from lc.zoocdn.com references in HTML."""
+    floorplan_match = re.search(
+        r'(https://lc\.zoocdn\.com/[^\s"\']+\.(?:jpg|jpeg|png|gif|webp))',
+        html,
+        re.IGNORECASE,
+    )
+    return floorplan_match.group(1) if floorplan_match else None
 
 
 @dataclass
@@ -309,150 +493,37 @@ class DetailFetcher:
                 )
                 return None
             html: str = response.text
+            max_imgs = self._max_gallery_images
 
             floorplan_url: str | None = None
             gallery_urls: list[str] = []
             description: str | None = None
             features: list[str] = []
-
-            # Try __NEXT_DATA__ first (legacy SSR approach)
-            match = re.search(
-                r'<script id="__NEXT_DATA__"[^>]*>(.*?)</script>',
-                html,
-                re.DOTALL,
-            )
-            if match:
-                data = json.loads(match.group(1))
-                listing = data.get("props", {}).get("pageProps", {}).get("listing", {})
-                media = listing.get("propertyMedia", [])
-
-                for item in media:
-                    item_type = item.get("type")
-                    if item_type == "floorplan" and floorplan_url is None:
-                        floorplan_url = item.get("original")
-                    elif item_type == "image" and len(gallery_urls) < self._max_gallery_images:
-                        url = item.get("original")
-                        if url:
-                            gallery_urls.append(url)
-
-                description = listing.get("detailedDescription")
-
-                # Extract features from various Zoopla fields
-                key_features = listing.get("keyFeatures", [])
-                if key_features:
-                    features.extend(key_features)
-                bullets = listing.get("bullets", [])
-                if bullets:
-                    features.extend(bullets)
-                tags = listing.get("tags", [])
-                for tag in tags:
-                    if isinstance(tag, dict) and tag.get("label"):
-                        features.append(tag["label"])
-                    elif isinstance(tag, str):
-                        features.append(tag)
-
-            # Try RSC taxonomy payload for description (contains detailedDescription, etc.)
-            if not description:
-                rsc_pattern = r"self\.__next_f\.push\(\s*\[(.*?)\]\s*\)"
-                for m in re.finditer(rsc_pattern, html, re.DOTALL):
-                    match_text = m.group(1)
-                    if "epcRating" not in match_text or "numBaths" not in match_text:
-                        continue
-                    try:
-                        arr = json.loads(f"[{match_text}]")
-                        if len(arr) >= 2 and isinstance(arr[1], str):
-                            payload = arr[1]
-                            colon_idx = payload.find(":")
-                            if colon_idx >= 0:
-                                parsed = json.loads(payload[colon_idx + 1 :])
-                                taxonomy = _find_dict_with_key(parsed, "epcRating")
-                                if taxonomy:
-                                    desc = taxonomy.get("detailedDescription", "")
-                                    if desc and not desc.startswith("$"):
-                                        desc = re.sub(r"<[^>]+>", " ", desc)
-                                        description = re.sub(r"\s+", " ", desc).strip()
-                                    kf = taxonomy.get("keyFeatures", [])
-                                    if isinstance(kf, list) and kf and not features:
-                                        features = [f for f in kf if isinstance(f, str)]
-                    except (json.JSONDecodeError, TypeError):
-                        continue
-
-            # Fallback: Extract description from HTML <p id="detailed-desc"> tag
-            if not description:
-                desc_match = re.search(
-                    r'<p[^>]*id="detailed-desc"[^>]*>(.*?)</p>',
-                    html,
-                    re.DOTALL,
-                )
-                if desc_match:
-                    desc = re.sub(r"<[^>]+>", " ", desc_match.group(1))
-                    desc = re.sub(r"\s+", " ", desc).strip()
-                    if len(desc) > 20:
-                        description = desc
-
-            # Fallback: Extract from RSC payload caption/filename pairs
-            # Zoopla RSC stores images as escaped JSON:
-            #   \"caption\":\"Room\",\"filename\":\"hash.jpg\"
             seen_hashes: set[str] = set()
+
+            next_data = _zoopla_from_next_data(html, max_imgs)
+            if next_data:
+                gallery_urls, floorplan_url, description, features = next_data
+
+            if not description:
+                rsc_desc, rsc_feats = _zoopla_desc_from_rsc(html)
+                description = rsc_desc
+                if rsc_feats and not features:
+                    features = rsc_feats
+
+            if not description:
+                description = _zoopla_desc_from_html(html)
+
             if not gallery_urls:
-                rsc_matches = re.findall(
-                    r'\\"caption\\":\\"([^\\]*)\\",\\"filename\\":\\"([a-f0-9]+\.(?:jpg|jpeg|png|webp))\\"',
-                    html,
-                    re.IGNORECASE,
-                )
-                for caption, filename in rsc_matches:
-                    hash_part = filename.split(".")[0]
-                    if hash_part in seen_hashes:
-                        continue
-                    seen_hashes.add(hash_part)
-                    caption_lower = caption.lower()
-                    # Skip EPC rating graphs and floorplans — not gallery images
-                    if "epc" in caption_lower or "floorplan" in caption_lower:
-                        continue
-                    url = f"https://lid.zoocdn.com/u/1024/768/{filename}"
-                    gallery_urls.append(url)
-                    if len(gallery_urls) >= self._max_gallery_images:
-                        break
+                gallery_urls, seen_hashes = _zoopla_images_from_rsc_captions(html, max_imgs)
 
-            # Fallback: Extract full URLs from HTML (lid = listing image)
-            # Also runs if previous step found too few images (e.g. only a floorplan)
             if len(gallery_urls) < 3:
-                # Collect hashes already in gallery to avoid duplicates
-                # Union with seen_hashes to exclude EPC images skipped in the RSC pass
-                existing_hashes = {u.rsplit("/", 1)[-1].split(".")[0] for u in gallery_urls}
-                existing_hashes |= seen_hashes
-                img_matches = re.findall(
-                    r"https://lid\.zoocdn\.com/u/(\d+)/(\d+)/([a-f0-9]+\.(?:jpg|jpeg|png|webp))",
-                    html,
-                    re.IGNORECASE,
-                )
-                seen_url_hashes: dict[str, tuple[int, str]] = {}
-                for width, height, filename in img_matches:
-                    hash_part = filename.split(".")[0]
-                    if hash_part in existing_hashes:
-                        continue
-                    size = int(width) * int(height)
-                    if hash_part not in seen_url_hashes or size > seen_url_hashes[hash_part][0]:
-                        seen_url_hashes[hash_part] = (
-                            size,
-                            f"https://lid.zoocdn.com/u/{width}/{height}/{filename}",
-                        )
-
-                sorted_imgs = sorted(seen_url_hashes.values(), key=lambda x: -x[0])
                 gallery_urls.extend(
-                    url for _, url in sorted_imgs[: self._max_gallery_images - len(gallery_urls)]
+                    _zoopla_images_from_full_urls(html, gallery_urls, seen_hashes, max_imgs)
                 )
 
-            # Extract floorplan if not found yet (lc = listing content for floorplans)
-            # Only match image files - PDFs are not supported by Claude Vision API
             if not floorplan_url:
-                floorplan_match = re.search(
-                    r'(https://lc\.zoocdn\.com/[^\s"\']+\.(?:jpg|jpeg|png|gif|webp))',
-                    html,
-                    re.IGNORECASE,
-                )
-                if floorplan_match:
-                    floorplan_url = floorplan_match.group(1)
+                floorplan_url = _zoopla_floorplan_from_html(html)
 
             return DetailPageData(
                 floorplan_url=floorplan_url,

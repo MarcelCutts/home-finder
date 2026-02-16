@@ -23,7 +23,10 @@ from home_finder.data.area_context import (
     match_micro_area,
 )
 from home_finder.db import PropertyStorage
-from home_finder.filters.fit_score import compute_fit_score_and_breakdown
+from home_finder.filters.fit_score import (
+    compute_fit_score_and_breakdown,
+    compute_lifestyle_icons,
+)
 from home_finder.logging import get_logger
 from home_finder.models import (
     SOURCE_BADGES,
@@ -167,6 +170,39 @@ SearchAreasDep = Annotated[list[str], Depends(get_search_areas)]
 DataDirDep = Annotated[str, Depends(get_data_dir)]
 
 
+def _enrich_fit_scores(properties: list[Any]) -> None:
+    """Compute fit_score, fit_breakdown, and lifestyle_icons for each property.
+
+    Mutates dicts in place. Reads analysis_json from each property dict.
+    Sets None defaults for properties without analysis data.
+    """
+    for prop in properties:
+        analysis_json = prop.get("analysis_json")
+        if not analysis_json:
+            prop.setdefault("fit_score", None)
+            prop.setdefault("fit_breakdown", None)
+            prop.setdefault("lifestyle_icons", None)
+            continue
+        try:
+            analysis = json.loads(analysis_json)
+        except (json.JSONDecodeError, TypeError):
+            prop.setdefault("fit_score", None)
+            prop.setdefault("fit_breakdown", None)
+            prop.setdefault("lifestyle_icons", None)
+            continue
+        postcode = prop.get("postcode") or ""
+        outcode = postcode.split()[0] if postcode else None
+        if outcode:
+            ht = HOSTING_TOLERANCE.get(outcode)
+            if ht:
+                analysis["_area_hosting_tolerance"] = ht.get("rating")
+        bedrooms = prop.get("bedrooms", 0) or 0
+        fit_score, fit_breakdown = compute_fit_score_and_breakdown(analysis, bedrooms)
+        prop["fit_score"] = fit_score
+        prop["fit_breakdown"] = fit_breakdown
+        prop["lifestyle_icons"] = compute_lifestyle_icons(analysis, bedrooms)
+
+
 @router.get("/count")
 async def filter_count(storage: StorageDep, filters: FilterDep) -> Response:
     """Lightweight count endpoint for live filter preview in modal."""
@@ -211,6 +247,7 @@ async def dashboard(
         properties, total = await storage.get_properties_paginated(
             filters, sort=sort, page=page_val, per_page=per_page
         )
+        _enrich_fit_scores(properties)
     except Exception:
         logger.error("dashboard_query_failed", exc_info=True)
         return templates.TemplateResponse(

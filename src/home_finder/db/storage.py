@@ -6,17 +6,22 @@ import contextlib
 import json
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Final, TypedDict, cast
+from typing import TYPE_CHECKING, Any, Final
 
 import aiosqlite
-from pydantic import HttpUrl
 
 from home_finder.data.area_context import HOSTING_TOLERANCE
-from home_finder.filters.fit_score import (
-    compute_fit_score,
-    compute_fit_score_and_breakdown,
-    compute_lifestyle_icons,
+from home_finder.db.pipeline_repo import PipelineRepository
+from home_finder.db.row_mappers import (
+    PropertyDetailItem,
+    PropertyListItem,
+    build_base_insert,
+    build_merged_insert_columns,
+    row_to_merged_property,
+    row_to_property,
 )
+from home_finder.db.web_queries import WebQueryService
+from home_finder.filters.fit_score import compute_fit_score
 from home_finder.logging import get_logger
 from home_finder.models import (
     MergedProperty,
@@ -35,58 +40,8 @@ if TYPE_CHECKING:
 # Default lookback window for cross-platform dedup anchors
 _DEDUP_LOOKBACK_DAYS: Final = 30
 
-
-class PropertyListItem(TypedDict, total=False):
-    """Shape of dicts returned by get_properties_paginated.
-
-    Fields from the SQL join plus parsed JSON columns.
-    All fields marked total=False because dict(row) includes the full row.
-    """
-
-    unique_id: str
-    title: str
-    price_pcm: int
-    bedrooms: int
-    address: str
-    postcode: str | None
-    image_url: str | None
-    latitude: float | None
-    longitude: float | None
-    commute_minutes: int | None
-    transport_mode: str | None
-    min_price: int | None
-    max_price: int | None
-    # Quality analysis (from JOIN)
-    quality_rating: int | None
-    quality_concerns: bool | None
-    quality_severity: str | None
-    quality_summary: str
-    # Parsed JSON fields
-    sources_list: list[str]
-    source_urls_dict: dict[str, str]
-    descriptions_dict: dict[str, str]
-    # Value rating from analysis
-    value_rating: str | None
-    # Extended quality fields (from analysis_json)
-    highlights: list[str] | None
-    lowlights: list[str] | None
-    property_type: str | None
-    one_line: str | None
-    epc_rating: str | None
-
-
-class PropertyDetailItem(PropertyListItem, total=False):
-    """Shape of dicts returned by get_property_detail.
-
-    Extends PropertyListItem with images and parsed quality analysis.
-    """
-
-    description: str | None
-    ward: str | None
-    quality_analysis: PropertyQualityAnalysis | None
-    gallery_images: list[PropertyImage]
-    floorplan_images: list[PropertyImage]
-
+# Re-export TypedDicts for backward compatibility
+__all__ = ["PropertyDetailItem", "PropertyListItem", "PropertyStorage"]
 
 logger = get_logger(__name__)
 
@@ -103,6 +58,10 @@ class PropertyStorage:
         self.db_path = db_path
         self._conn: aiosqlite.Connection | None = None
         self._ensure_directory()
+        self._web = WebQueryService(self._get_connection, self.get_property_images)
+        self._pipeline = PipelineRepository(
+            self._get_connection, self.get_property_images, self.save_quality_analysis
+        )
 
     def _ensure_directory(self) -> None:
         """Ensure the directory for the database exists."""
@@ -365,14 +324,18 @@ class PropertyStorage:
             transport_mode: Transport mode used for commute calculation.
         """
         conn = await self._get_connection()
+        columns, values = build_base_insert(
+            prop,
+            commute_minutes=commute_minutes,
+            transport_mode=transport_mode,
+            notification_status=NotificationStatus.PENDING,
+        )
+        col_list = ", ".join(columns)
+        placeholders = ", ".join("?" for _ in columns)
         await conn.execute(
-            """
-            INSERT INTO properties (
-                unique_id, source, source_id, url, title, price_pcm,
-                bedrooms, address, postcode, latitude, longitude,
-                description, image_url, available_from, first_seen,
-                commute_minutes, transport_mode, notification_status
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            f"""
+            INSERT INTO properties ({col_list})
+            VALUES ({placeholders})
             ON CONFLICT(unique_id) DO UPDATE SET
                 price_pcm = excluded.price_pcm,
                 title = excluded.title,
@@ -381,26 +344,7 @@ class PropertyStorage:
                 commute_minutes = COALESCE(excluded.commute_minutes, commute_minutes),
                 transport_mode = COALESCE(excluded.transport_mode, transport_mode)
         """,
-            (
-                prop.unique_id,
-                prop.source.value,
-                prop.source_id,
-                str(prop.url),
-                prop.title,
-                prop.price_pcm,
-                prop.bedrooms,
-                prop.address,
-                prop.postcode,
-                prop.latitude,
-                prop.longitude,
-                prop.description,
-                str(prop.image_url) if prop.image_url else None,
-                prop.available_from.isoformat() if prop.available_from else None,
-                prop.first_seen.isoformat(),
-                commute_minutes,
-                transport_mode.value if transport_mode else None,
-                NotificationStatus.PENDING.value,
-            ),
+            values,
         )
         await conn.commit()
 
@@ -591,7 +535,7 @@ class PropertyStorage:
         On CONFLICT: just increments enrichment_attempts (preserves other fields).
         """
         conn = await self._get_connection()
-        columns, values = self._build_merged_insert_columns(
+        columns, values = build_merged_insert_columns(
             merged,
             commute_minutes=commute_minutes,
             transport_mode=transport_mode,
@@ -633,7 +577,7 @@ class PropertyStorage:
         )
         rows = await cursor.fetchall()
 
-        results = [await self._row_to_merged_property(row, load_images=False) for row in rows]
+        results = [await row_to_merged_property(row, load_images=False) for row in rows]
 
         logger.info("loaded_unenriched_properties", count=len(results))
         return results
@@ -737,7 +681,12 @@ class PropertyStorage:
         )
         rows = await cursor.fetchall()
 
-        results = [await self._row_to_merged_property(row) for row in rows]
+        results = [
+            await row_to_merged_property(
+                row, get_property_images=self.get_property_images
+            )
+            for row in rows
+        ]
 
         logger.debug(
             "loaded_dedup_anchors",
@@ -856,7 +805,7 @@ class PropertyStorage:
             ward: Official ward name from postcodes.io lookup.
         """
         conn = await self._get_connection()
-        columns, values = self._build_merged_insert_columns(
+        columns, values = build_merged_insert_columns(
             merged,
             commute_minutes=commute_minutes,
             transport_mode=transport_mode,
@@ -898,7 +847,7 @@ class PropertyStorage:
         """Batch update ward column for multiple properties.
 
         Args:
-            ward_map: Mapping of unique_id → ward name.
+            ward_map: Mapping of unique_id -> ward name.
 
         Returns:
             Number of rows updated.
@@ -1117,41 +1066,16 @@ class PropertyStorage:
         return PropertyQualityAnalysis.model_validate_json(row["analysis_json"])
 
     # ------------------------------------------------------------------
-    # Pipeline run tracking
+    # Facade: pipeline run tracking (delegates to PipelineRepository)
     # ------------------------------------------------------------------
 
     async def create_pipeline_run(self) -> int:
-        """Create a new pipeline run record.
-
-        Returns:
-            The ID of the new run.
-        """
-        conn = await self._get_connection()
-        cursor = await conn.execute(
-            "INSERT INTO pipeline_runs (started_at, status) VALUES (?, 'running')",
-            (datetime.now(UTC).isoformat(),),
-        )
-        await conn.commit()
-        return cursor.lastrowid  # type: ignore[return-value]
+        """Create a new pipeline run record."""
+        return await self._pipeline.create_pipeline_run()
 
     async def update_pipeline_run(self, run_id: int, **counts: int) -> None:
-        """Update count columns on a pipeline run.
-
-        Args:
-            run_id: The pipeline run ID.
-            **counts: Column name/value pairs to update (e.g. scraped_count=42).
-        """
-        if not counts:
-            return
-        conn = await self._get_connection()
-        set_clauses = ", ".join(f"{k} = ?" for k in counts)
-        values = list(counts.values())
-        values.append(run_id)
-        await conn.execute(
-            f"UPDATE pipeline_runs SET {set_clauses} WHERE id = ?",
-            values,
-        )
-        await conn.commit()
+        """Update count columns on a pipeline run."""
+        await self._pipeline.update_pipeline_run(run_id, **counts)
 
     async def complete_pipeline_run(
         self,
@@ -1160,54 +1084,15 @@ class PropertyStorage:
         *,
         error_message: str | None = None,
     ) -> None:
-        """Mark a pipeline run as completed or failed.
-
-        Args:
-            run_id: The pipeline run ID.
-            status: Final status ('completed' or 'failed').
-            error_message: Error message if status is 'failed'.
-        """
-        conn = await self._get_connection()
-        now = datetime.now(UTC).isoformat()
-        # Calculate duration from started_at
-        cursor = await conn.execute("SELECT started_at FROM pipeline_runs WHERE id = ?", (run_id,))
-        row = await cursor.fetchone()
-        duration = None
-        if row:
-            started = datetime.fromisoformat(row["started_at"])
-            duration = (datetime.fromisoformat(now) - started).total_seconds()
-
-        await conn.execute(
-            """
-            UPDATE pipeline_runs
-            SET completed_at = ?, status = ?, error_message = ?, duration_seconds = ?
-            WHERE id = ?
-            """,
-            (now, status, error_message, duration, run_id),
-        )
-        await conn.commit()
+        """Mark a pipeline run as completed or failed."""
+        await self._pipeline.complete_pipeline_run(run_id, status, error_message=error_message)
 
     async def get_last_pipeline_run(self) -> dict[str, Any] | None:
-        """Get the most recent completed pipeline run.
-
-        Returns:
-            Dict with run data, or None if no runs exist.
-        """
-        conn = await self._get_connection()
-        cursor = await conn.execute(
-            """
-            SELECT * FROM pipeline_runs
-            WHERE status IN ('completed', 'failed')
-            ORDER BY id DESC LIMIT 1
-            """
-        )
-        row = await cursor.fetchone()
-        if row is None:
-            return None
-        return dict(row)
+        """Get the most recent completed pipeline run."""
+        return await self._pipeline.get_last_pipeline_run()
 
     # ------------------------------------------------------------------
-    # Quality analysis retry (save-before-analyze pattern)
+    # Facade: quality analysis retry (delegates to PipelineRepository)
     # ------------------------------------------------------------------
 
     async def save_pre_analysis_properties(
@@ -1215,222 +1100,36 @@ class PropertyStorage:
         merged_list: list[MergedProperty],
         commute_lookup: dict[str, tuple[int, TransportMode]],
     ) -> None:
-        """Batch save properties before quality analysis.
-
-        Saves with notification_status='pending_analysis' and
-        enrichment_status='enriched'. If the process crashes during
-        quality analysis, these can be recovered on next run.
-
-        Args:
-            merged_list: Properties to save.
-            commute_lookup: Commute data keyed by unique_id.
-        """
-        conn = await self._get_connection()
-        for merged in merged_list:
-            prop = merged.canonical
-            commute_info = commute_lookup.get(prop.unique_id)
-            commute_minutes = commute_info[0] if commute_info else None
-            transport_mode = commute_info[1] if commute_info else None
-
-            columns, values = self._build_merged_insert_columns(
-                merged,
-                commute_minutes=commute_minutes,
-                transport_mode=transport_mode,
-                notification_status=NotificationStatus.PENDING_ANALYSIS,
-            )
-            col_list = ", ".join(columns)
-            placeholders = ", ".join("?" for _ in columns)
-
-            await conn.execute(
-                f"""
-                INSERT INTO properties ({col_list}, enrichment_status)
-                VALUES ({placeholders}, 'enriched')
-                ON CONFLICT(unique_id) DO UPDATE SET
-                    notification_status = excluded.notification_status
-                """,
-                values,
-            )
-
-            # Save images
-            images = list(merged.images)
-            if merged.floorplan:
-                images.append(merged.floorplan)
-            if images:
-                img_rows = [
-                    (prop.unique_id, img.source.value, str(img.url), img.image_type)
-                    for img in images
-                ]
-                await conn.executemany(
-                    """
-                    INSERT OR IGNORE INTO property_images
-                    (property_unique_id, source, url, image_type)
-                    VALUES (?, ?, ?, ?)
-                    """,
-                    img_rows,
-                )
-
-        await conn.commit()
-        logger.info("pre_analysis_properties_saved", count=len(merged_list))
+        """Batch save properties before quality analysis."""
+        await self._pipeline.save_pre_analysis_properties(merged_list, commute_lookup)
 
     async def get_pending_analysis_properties(
         self,
         *,
         exclude_ids: set[str] | None = None,
     ) -> list[MergedProperty]:
-        """Load properties needing quality analysis from previous crashed runs.
-
-        Args:
-            exclude_ids: Property IDs to exclude (e.g. current batch just saved).
-
-        Returns:
-            List of MergedProperty objects with notification_status='pending_analysis'.
-        """
-        conn = await self._get_connection()
-        query = """
-            SELECT * FROM properties
-            WHERE notification_status = ?
-            ORDER BY first_seen ASC
-        """
-        params: list[Any] = [NotificationStatus.PENDING_ANALYSIS.value]
-
-        if exclude_ids:
-            placeholders = ",".join("?" * len(exclude_ids))
-            query = f"""
-                SELECT * FROM properties
-                WHERE notification_status = ?
-                  AND unique_id NOT IN ({placeholders})
-                ORDER BY first_seen ASC
-            """
-            params.extend(exclude_ids)
-
-        cursor = await conn.execute(query, params)
-        rows = await cursor.fetchall()
-
-        results = [await self._row_to_merged_property(row) for row in rows]
-
-        if results:
-            logger.info(
-                "loaded_pending_analysis_retries_from_db",
-                count=len(results),
-            )
-        return results
+        """Load properties needing quality analysis from previous crashed runs."""
+        return await self._pipeline.get_pending_analysis_properties(exclude_ids=exclude_ids)
 
     async def complete_analysis(
         self,
         unique_id: str,
         quality_analysis: PropertyQualityAnalysis | None,
     ) -> None:
-        """Complete quality analysis for a property and transition to pending notification.
-
-        Saves quality data (if any) and sets notification_status to 'pending'.
-        Only transitions properties that are currently 'pending_analysis'.
-
-        Args:
-            unique_id: Property unique ID.
-            quality_analysis: Analysis result, or None if analysis was skipped.
-        """
-        if quality_analysis:
-            await self.save_quality_analysis(unique_id, quality_analysis)
-
-        conn = await self._get_connection()
-        await conn.execute(
-            """
-            UPDATE properties
-            SET notification_status = ?
-            WHERE unique_id = ?
-              AND notification_status = ?
-            """,
-            (
-                NotificationStatus.PENDING.value,
-                unique_id,
-                NotificationStatus.PENDING_ANALYSIS.value,
-            ),
-        )
-        await conn.commit()
-        logger.debug("analysis_completed", unique_id=unique_id)
+        """Complete quality analysis for a property and transition to pending notification."""
+        await self._pipeline.complete_analysis(unique_id, quality_analysis)
 
     async def reset_failed_analyses(self) -> int:
-        """Reset properties with fallback analysis for re-analysis.
-
-        Finds properties where quality analysis ran but produced only the
-        minimal fallback (overall_rating IS NULL), indicating the API failed.
-        Deletes the fallback quality data and transitions them back to
-        'pending_analysis' so the next pipeline run re-analyzes them.
-
-        Returns:
-            Number of properties reset.
-        """
-        conn = await self._get_connection()
-
-        cursor = await conn.execute(
-            """
-            SELECT p.unique_id FROM properties p
-            JOIN quality_analyses q ON p.unique_id = q.property_unique_id
-            WHERE q.overall_rating IS NULL
-              AND p.notification_status != ?
-            """,
-            (NotificationStatus.PENDING_ANALYSIS.value,),
-        )
-        rows = await cursor.fetchall()
-        if not rows:
-            return 0
-
-        ids = [row["unique_id"] for row in rows]
-        placeholders = ",".join("?" * len(ids))
-
-        await conn.execute(
-            f"DELETE FROM quality_analyses WHERE property_unique_id IN ({placeholders})",
-            ids,
-        )
-        await conn.execute(
-            f"""
-            UPDATE properties SET notification_status = ?
-            WHERE unique_id IN ({placeholders})
-            """,
-            [NotificationStatus.PENDING_ANALYSIS.value, *ids],
-        )
-        await conn.commit()
-
-        logger.info("reset_failed_analyses", count=len(ids), unique_ids=ids)
-        return len(ids)
+        """Reset properties with fallback analysis for re-analysis."""
+        return await self._pipeline.reset_failed_analyses()
 
     # ------------------------------------------------------------------
-    # Re-analysis support
+    # Facade: re-analysis support (delegates to PipelineRepository)
     # ------------------------------------------------------------------
 
     async def request_reanalysis(self, unique_ids: list[str]) -> int:
-        """Mark specific properties for re-analysis.
-
-        Sets reanalysis_requested_at on matching quality_analyses rows.
-        Idempotent — re-requesting just updates the timestamp.
-
-        Args:
-            unique_ids: Property unique IDs to flag for re-analysis.
-
-        Returns:
-            Number of rows updated.
-        """
-        if not unique_ids:
-            return 0
-        conn = await self._get_connection()
-        now = datetime.now(UTC).isoformat()
-        total = 0
-        chunk_size = 500
-        for i in range(0, len(unique_ids), chunk_size):
-            chunk = unique_ids[i : i + chunk_size]
-            placeholders = ",".join("?" * len(chunk))
-            cursor = await conn.execute(
-                f"""
-                UPDATE quality_analyses
-                SET reanalysis_requested_at = ?
-                WHERE property_unique_id IN ({placeholders})
-                """,
-                [now, *chunk],
-            )
-            total += cursor.rowcount
-        await conn.commit()
-        logger.info("reanalysis_requested", count=total, ids=unique_ids)
-        return total
+        """Mark specific properties for re-analysis."""
+        return await self._pipeline.request_reanalysis(unique_ids)
 
     async def request_reanalysis_by_filter(
         self,
@@ -1438,308 +1137,34 @@ class PropertyStorage:
         outcodes: list[str] | None = None,
         all_properties: bool = False,
     ) -> int:
-        """Bulk-mark properties for re-analysis by outcode or all.
-
-        Only targets properties that already have a quality analysis.
-
-        Args:
-            outcodes: Outcode prefixes to match (e.g. ["E2", "E8"]).
-            all_properties: If True, mark all analyzed properties.
-
-        Returns:
-            Number of rows updated.
-        """
-        if not outcodes and not all_properties:
-            return 0
-        conn = await self._get_connection()
-        now = datetime.now(UTC).isoformat()
-
-        if all_properties:
-            cursor = await conn.execute(
-                """
-                UPDATE quality_analyses
-                SET reanalysis_requested_at = ?
-                WHERE property_unique_id IN (
-                    SELECT unique_id FROM properties
-                )
-                """,
-                (now,),
-            )
-        else:
-            # Build OR conditions for outcode prefix matching
-            conditions = []
-            params: list[str] = [now]
-            for outcode in outcodes or []:
-                conditions.append("UPPER(p.postcode) LIKE ?")
-                params.append(f"{outcode.upper()}%")
-            or_clause = " OR ".join(conditions)
-            cursor = await conn.execute(
-                f"""
-                UPDATE quality_analyses
-                SET reanalysis_requested_at = ?
-                WHERE property_unique_id IN (
-                    SELECT p.unique_id FROM properties p
-                    WHERE {or_clause}
-                )
-                """,
-                params,
-            )
-
-        await conn.commit()
-        count = cursor.rowcount
-        logger.info(
-            "reanalysis_requested_by_filter",
-            count=count,
-            outcodes=outcodes,
-            all_properties=all_properties,
+        """Bulk-mark properties for re-analysis by outcode or all."""
+        return await self._pipeline.request_reanalysis_by_filter(
+            outcodes=outcodes, all_properties=all_properties
         )
-        return count
 
     async def get_reanalysis_queue(self, *, outcode: str | None = None) -> list[MergedProperty]:
-        """Load properties flagged for re-analysis.
-
-        Reconstructs MergedProperty objects from DB rows, same pattern
-        as get_pending_analysis_properties().
-
-        Args:
-            outcode: Optional outcode filter (prefix match).
-
-        Returns:
-            List of MergedProperty objects needing re-analysis.
-        """
-        conn = await self._get_connection()
-
-        if outcode:
-            query = """
-                SELECT p.* FROM properties p
-                JOIN quality_analyses q ON p.unique_id = q.property_unique_id
-                WHERE q.reanalysis_requested_at IS NOT NULL
-                  AND UPPER(p.postcode) LIKE ?
-                ORDER BY p.first_seen ASC
-            """
-            params: list[str] = [f"{outcode.upper()}%"]
-            cursor = await conn.execute(query, params)
-        else:
-            cursor = await conn.execute("""
-                SELECT p.* FROM properties p
-                JOIN quality_analyses q ON p.unique_id = q.property_unique_id
-                WHERE q.reanalysis_requested_at IS NOT NULL
-                ORDER BY p.first_seen ASC
-            """)
-
-        rows = await cursor.fetchall()
-
-        results = [await self._row_to_merged_property(row) for row in rows]
-
-        logger.info("loaded_reanalysis_queue", count=len(results))
-        return results
+        """Load properties flagged for re-analysis."""
+        return await self._pipeline.get_reanalysis_queue(outcode=outcode)
 
     async def complete_reanalysis(
         self,
         unique_id: str,
         analysis: PropertyQualityAnalysis,
     ) -> None:
-        """Save updated quality analysis and clear the re-analysis flag.
+        """Save updated quality analysis and clear the re-analysis flag."""
+        await self._pipeline.complete_reanalysis(unique_id, analysis)
 
-        Does NOT touch notification_status — property stays 'sent'.
+    # ------------------------------------------------------------------
+    # Facade: web dashboard queries (delegates to WebQueryService)
+    # ------------------------------------------------------------------
 
-        Args:
-            unique_id: Property unique ID.
-            analysis: New quality analysis result.
-        """
-        await self.save_quality_analysis(unique_id, analysis)
+    async def get_filter_count(self, filters: PropertyFilter) -> int:
+        """Get count of properties matching filters (no data fetch)."""
+        return await self._web.get_filter_count(filters)
 
-        conn = await self._get_connection()
-        await conn.execute(
-            """
-            UPDATE quality_analyses
-            SET reanalysis_requested_at = NULL
-            WHERE property_unique_id = ?
-            """,
-            (unique_id,),
-        )
-        await conn.commit()
-        logger.debug("reanalysis_completed", unique_id=unique_id)
-
-    @staticmethod
-    def _build_filter_clauses(
-        filters: PropertyFilter,
-    ) -> tuple[str, list[Any]]:
-        """Build WHERE clause and params for property filtering.
-
-        Args:
-            filters: Validated filter parameters.
-
-        Returns:
-            Tuple of (where_sql, params).
-        """
-        where_clauses: list[str] = [
-            "COALESCE(p.enrichment_status, 'enriched') != 'pending'",
-            "p.notification_status != 'pending_analysis'",
-            # Hide properties with fallback analysis (API failed, no real quality data).
-            # A fallback has a quality_analyses row but NULL overall_rating.
-            # Properties with no analysis row at all (q.property_unique_id IS NULL) are fine.
-            "(q.overall_rating IS NOT NULL OR q.property_unique_id IS NULL)",
-            # Hide properties with no images — not worth viewing without photos
-            """(p.image_url IS NOT NULL OR EXISTS (
-                SELECT 1 FROM property_images pi
-                WHERE pi.property_unique_id = p.unique_id
-                AND pi.image_type = 'gallery'))""",
-        ]
-        params: list[Any] = []
-
-        if filters.min_price is not None:
-            where_clauses.append("p.price_pcm >= ?")
-            params.append(filters.min_price)
-        if filters.max_price is not None:
-            where_clauses.append("p.price_pcm <= ?")
-            params.append(filters.max_price)
-        if filters.bedrooms is not None:
-            where_clauses.append("p.bedrooms = ?")
-            params.append(filters.bedrooms)
-        if filters.min_rating is not None:
-            where_clauses.append("q.overall_rating >= ?")
-            params.append(filters.min_rating)
-        if filters.area:
-            where_clauses.append("UPPER(p.postcode) LIKE ?")
-            params.append(f"{filters.area.upper()}%")
-        if filters.property_type:
-            where_clauses.append(
-                "json_extract(q.analysis_json, '$.listing_extraction.property_type') = ?"
-            )
-            params.append(filters.property_type)
-        if filters.outdoor_space == "yes":
-            where_clauses.append("q.has_outdoor_space = 1")
-        elif filters.outdoor_space == "no":
-            where_clauses.append("(q.has_outdoor_space = 0 OR q.has_outdoor_space IS NULL)")
-        if filters.natural_light:
-            where_clauses.append("json_extract(q.analysis_json, '$.light_space.natural_light') = ?")
-            params.append(filters.natural_light)
-        if filters.pets == "yes":
-            where_clauses.append(
-                "json_extract(q.analysis_json, '$.listing_extraction.pets_allowed') = 'yes'"
-            )
-        if filters.value_rating:
-            where_clauses.append(
-                "(json_extract(q.analysis_json, '$.value.quality_adjusted_rating') = ?"
-                " OR json_extract(q.analysis_json, '$.value.rating') = ?)"
-            )
-            params.extend([filters.value_rating, filters.value_rating])
-        if filters.hob_type:
-            where_clauses.append("json_extract(q.analysis_json, '$.kitchen.hob_type') = ?")
-            params.append(filters.hob_type)
-        if filters.floor_level:
-            where_clauses.append("json_extract(q.analysis_json, '$.light_space.floor_level') = ?")
-            params.append(filters.floor_level)
-        if filters.building_construction:
-            where_clauses.append(
-                "json_extract(q.analysis_json, '$.flooring_noise.building_construction') = ?"
-            )
-            params.append(filters.building_construction)
-        if filters.office_separation:
-            where_clauses.append("json_extract(q.analysis_json, '$.bedroom.office_separation') = ?")
-            params.append(filters.office_separation)
-        if filters.hosting_layout:
-            where_clauses.append("json_extract(q.analysis_json, '$.space.hosting_layout') = ?")
-            params.append(filters.hosting_layout)
-        if filters.hosting_noise_risk:
-            where_clauses.append(
-                "json_extract(q.analysis_json, '$.flooring_noise.hosting_noise_risk') = ?"
-            )
-            params.append(filters.hosting_noise_risk)
-        if filters.broadband_type:
-            where_clauses.append(
-                "json_extract(q.analysis_json, '$.listing_extraction.broadband_type') = ?"
-            )
-            params.append(filters.broadband_type)
-        if filters.tags:
-            for t in filters.tags:
-                where_clauses.append(
-                    "(json_extract(q.analysis_json, '$.highlights') LIKE ?"
-                    " OR json_extract(q.analysis_json, '$.lowlights') LIKE ?)"
-                )
-                escaped = t.replace("%", "\\%").replace("_", "\\_")
-                params.extend([f"%{escaped}%", f"%{escaped}%"])
-
-        where_sql = " AND ".join(where_clauses) if where_clauses else "1=1"
-        return where_sql, params
-
-    async def get_filter_count(
-        self,
-        filters: PropertyFilter,
-    ) -> int:
-        """Get count of properties matching filters (no data fetch).
-
-        Args:
-            filters: Validated filter parameters.
-
-        Returns:
-            Total count of matching properties.
-        """
-        conn = await self._get_connection()
-        where_sql, params = self._build_filter_clauses(filters)
-        cursor = await conn.execute(
-            f"""
-            SELECT COUNT(*) FROM properties p
-            LEFT JOIN quality_analyses q ON p.unique_id = q.property_unique_id
-            WHERE {where_sql}
-            """,
-            params,
-        )
-        row = await cursor.fetchone()
-        return row[0] if row else 0
-
-    async def get_map_markers(
-        self,
-        filters: PropertyFilter,
-    ) -> list[dict[str, Any]]:
-        """Get lightweight map marker data for all matching properties with coordinates.
-
-        Same filters as get_properties_paginated but no pagination and only
-        map-relevant columns. Returns only properties that have lat/lon.
-
-        Args:
-            filters: Validated filter parameters.
-
-        Returns:
-            List of dicts with map marker fields.
-        """
-        conn = await self._get_connection()
-        where_sql, params = self._build_filter_clauses(filters)
-        cursor = await conn.execute(
-            f"""
-            SELECT p.unique_id, p.latitude, p.longitude, p.price_pcm,
-                   p.bedrooms, p.title, p.postcode,
-                   p.commute_minutes, p.image_url,
-                   q.overall_rating as quality_rating,
-                   json_extract(q.analysis_json, '$.value.quality_adjusted_rating') as value_rating,
-                   json_extract(q.analysis_json, '$.one_line') as one_line
-            FROM properties p
-            LEFT JOIN quality_analyses q ON p.unique_id = q.property_unique_id
-            WHERE {where_sql}
-              AND p.latitude IS NOT NULL AND p.longitude IS NOT NULL
-            """,
-            params,
-        )
-        rows = await cursor.fetchall()
-        return [
-            {
-                "id": row["unique_id"],
-                "lat": row["latitude"],
-                "lon": row["longitude"],
-                "price": row["price_pcm"],
-                "bedrooms": row["bedrooms"],
-                "rating": row["quality_rating"],
-                "title": row["title"],
-                "url": f"/property/{row['unique_id']}",
-                "image_url": row["image_url"],
-                "postcode": row["postcode"],
-                "commute_minutes": row["commute_minutes"],
-                "value_rating": row["value_rating"],
-                "one_line": row["one_line"],
-            }
-            for row in rows
-        ]
+    async def get_map_markers(self, filters: PropertyFilter) -> list[dict[str, Any]]:
+        """Get lightweight map marker data for all matching properties with coordinates."""
+        return await self._web.get_map_markers(filters)
 
     async def get_properties_paginated(
         self,
@@ -1749,326 +1174,22 @@ class PropertyStorage:
         page: int = 1,
         per_page: int = 24,
     ) -> tuple[list[PropertyListItem], int]:
-        """Get paginated properties with optional filters.
-
-        Args:
-            filters: Validated filter parameters.
-            sort: Sort order key.
-            page: Page number (1-indexed).
-            per_page: Items per page.
-
-        Returns:
-            Tuple of (property dicts, total count).
-        """
-        conn = await self._get_connection()
-
-        where_sql, params = self._build_filter_clauses(filters)
-
-        order_map = {
-            "newest": "p.first_seen DESC",
-            "price_asc": "p.price_pcm ASC",
-            "price_desc": "p.price_pcm DESC",
-            "rating_desc": "COALESCE(q.overall_rating, 0) DESC, p.first_seen DESC",
-            "fit_desc": "COALESCE(q.fit_score, -1) DESC, p.first_seen DESC",
-        }
-        order_sql = order_map.get(sort, "p.first_seen DESC")
-
-        # Count total
-        count_cursor = await conn.execute(
-            f"""
-            SELECT COUNT(*) FROM properties p
-            LEFT JOIN quality_analyses q ON p.unique_id = q.property_unique_id
-            WHERE {where_sql}
-            """,
-            params,
+        """Get paginated properties with optional filters."""
+        return await self._web.get_properties_paginated(
+            filters, sort=sort, page=page, per_page=per_page
         )
-        count_row = await count_cursor.fetchone()
-        total = count_row[0] if count_row else 0
-
-        # Subquery: first non-EPC gallery image as fallback thumbnail
-        gallery_subquery = """
-            (SELECT pi.url FROM property_images pi
-             WHERE pi.property_unique_id = p.unique_id
-             AND pi.image_type = 'gallery'
-             AND LOWER(pi.url) NOT LIKE '%epc%'
-             AND LOWER(pi.url) NOT LIKE '%energy-performance%'
-             AND LOWER(pi.url) NOT LIKE '%energy_performance%'
-             ORDER BY pi.id LIMIT 1) as first_gallery_url
-        """
-
-        offset = (page - 1) * per_page
-        cursor = await conn.execute(
-            f"""
-            SELECT p.*, q.overall_rating as quality_rating,
-                   q.condition_concerns as quality_concerns,
-                   q.concern_severity as quality_severity,
-                   q.analysis_json,
-                   {gallery_subquery}
-            FROM properties p
-            LEFT JOIN quality_analyses q ON p.unique_id = q.property_unique_id
-            WHERE {where_sql}
-            ORDER BY {order_sql}
-            LIMIT ? OFFSET ?
-            """,
-            [*params, per_page, offset],
-        )
-        rows = await cursor.fetchall()
-
-        properties: list[PropertyListItem] = []
-        for row in rows:
-            prop_dict = dict(row)
-            self._parse_json_fields(prop_dict)
-            # Prefer enriched gallery image (EPC URLs already filtered by subquery)
-            # over scraper thumbnail which may be low-res or expired
-            if prop_dict.get("first_gallery_url"):
-                prop_dict["image_url"] = prop_dict["first_gallery_url"]
-            # Extract quality fields from analysis_json
-            if prop_dict.get("analysis_json"):
-                try:
-                    analysis = json.loads(prop_dict["analysis_json"])
-                    prop_dict["quality_summary"] = analysis.get("summary", "")
-                    value = analysis.get("value") or {}
-                    prop_dict["value_rating"] = value.get("quality_adjusted_rating") or value.get(
-                        "rating"
-                    )
-                    # Extended quality fields for card display
-                    # Defensive: filter out junk entries (commas, empties) from
-                    # old analyses where Claude returned malformed lists
-                    raw_hl = analysis.get("highlights")
-                    raw_ll = analysis.get("lowlights")
-                    prop_dict["highlights"] = (
-                        [t for t in raw_hl if isinstance(t, str) and t.strip() not in ("", ",")]
-                        if isinstance(raw_hl, list)
-                        else None
-                    )
-                    prop_dict["lowlights"] = (
-                        [t for t in raw_ll if isinstance(t, str) and t.strip() not in ("", ",")]
-                        if isinstance(raw_ll, list)
-                        else None
-                    )
-                    prop_dict["one_line"] = analysis.get("one_line")
-                    listing_ext = analysis.get("listing_extraction") or {}
-                    prop_dict["property_type"] = listing_ext.get("property_type")
-                    prop_dict["epc_rating"] = listing_ext.get("epc_rating")
-                    # Marcel fit score + breakdown + lifestyle icons
-                    # Inject area hosting tolerance so dashboard matches detail page
-                    postcode = prop_dict.get("postcode") or ""
-                    outcode = postcode.split()[0] if postcode else None
-                    if outcode:
-                        ht = HOSTING_TOLERANCE.get(outcode)
-                        if ht:
-                            analysis["_area_hosting_tolerance"] = ht.get("rating")
-                    bedrooms = prop_dict.get("bedrooms", 0) or 0
-                    fit_score, fit_breakdown = compute_fit_score_and_breakdown(analysis, bedrooms)
-                    prop_dict["fit_score"] = fit_score
-                    prop_dict["fit_breakdown"] = fit_breakdown
-                    prop_dict["lifestyle_icons"] = compute_lifestyle_icons(analysis, bedrooms)
-                except (json.JSONDecodeError, TypeError):
-                    prop_dict["quality_summary"] = ""
-                    prop_dict["value_rating"] = None
-                    prop_dict["highlights"] = None
-                    prop_dict["lowlights"] = None
-                    prop_dict["one_line"] = None
-                    prop_dict["property_type"] = None
-                    prop_dict["epc_rating"] = None
-                    prop_dict["fit_score"] = None
-                    prop_dict["fit_breakdown"] = None
-                    prop_dict["lifestyle_icons"] = None
-            else:
-                prop_dict["quality_summary"] = ""
-                prop_dict["value_rating"] = None
-                prop_dict["highlights"] = None
-                prop_dict["lowlights"] = None
-                prop_dict["one_line"] = None
-                prop_dict["property_type"] = None
-                prop_dict["epc_rating"] = None
-                prop_dict["fit_score"] = None
-                prop_dict["fit_breakdown"] = None
-                prop_dict["lifestyle_icons"] = None
-            properties.append(cast(PropertyListItem, prop_dict))
-
-        return properties, total
 
     async def get_property_detail(self, unique_id: str) -> PropertyDetailItem | None:
-        """Get full property detail including quality analysis and images.
-
-        Args:
-            unique_id: Property unique ID.
-
-        Returns:
-            Dict with property data, quality analysis, and images, or None.
-        """
-        conn = await self._get_connection()
-
-        cursor = await conn.execute(
-            """
-            SELECT p.*, q.analysis_json, q.overall_rating as quality_rating
-            FROM properties p
-            LEFT JOIN quality_analyses q ON p.unique_id = q.property_unique_id
-            WHERE p.unique_id = ?
-            """,
-            (unique_id,),
-        )
-        row = await cursor.fetchone()
-        if row is None:
-            return None
-
-        prop_dict = dict(row)
-        self._parse_json_fields(prop_dict)
-
-        # Parse quality analysis
-        if prop_dict.get("analysis_json"):
-            prop_dict["quality_analysis"] = PropertyQualityAnalysis.model_validate_json(
-                prop_dict["analysis_json"]
-            )
-        else:
-            prop_dict["quality_analysis"] = None
-
-        # Get images
-        images = await self.get_property_images(unique_id)
-        prop_dict["gallery_images"] = [img for img in images if img.image_type == "gallery"]
-        prop_dict["floorplan_images"] = [img for img in images if img.image_type == "floorplan"]
-
-        return cast(PropertyDetailItem, prop_dict)
+        """Get full property detail including quality analysis and images."""
+        return await self._web.get_property_detail(unique_id)
 
     async def get_property_count(self) -> int:
-        """Get total number of tracked properties.
+        """Get total number of tracked properties."""
+        return await self._web.get_property_count()
 
-        Returns:
-            Count of properties in database.
-        """
-        conn = await self._get_connection()
-        cursor = await conn.execute("SELECT COUNT(*) FROM properties")
-        row = await cursor.fetchone()
-        return row[0] if row else 0
-
-    @staticmethod
-    def _build_merged_insert_columns(
-        merged: MergedProperty,
-        *,
-        commute_minutes: int | None = None,
-        transport_mode: TransportMode | None = None,
-        notification_status: NotificationStatus,
-        extra: dict[str, Any] | None = None,
-    ) -> tuple[list[str], list[Any]]:
-        """Build INSERT column names and values for a MergedProperty.
-
-        Returns (columns, values) lists that are guaranteed to stay in sync.
-        Callers can add extra columns via the ``extra`` dict, then build their
-        own SQL INSERT + ON CONFLICT using the returned lists.
-        """
-        prop = merged.canonical
-        sources_json = json.dumps([s.value for s in merged.sources])
-        source_urls_json = json.dumps({s.value: str(url) for s, url in merged.source_urls.items()})
-        descriptions_json = (
-            json.dumps({s.value: d for s, d in merged.descriptions.items()})
-            if merged.descriptions
-            else None
-        )
-        columns: list[str] = [
-            "unique_id",
-            "source",
-            "source_id",
-            "url",
-            "title",
-            "price_pcm",
-            "bedrooms",
-            "address",
-            "postcode",
-            "latitude",
-            "longitude",
-            "description",
-            "image_url",
-            "available_from",
-            "first_seen",
-            "commute_minutes",
-            "transport_mode",
-            "notification_status",
-            "sources",
-            "source_urls",
-            "min_price",
-            "max_price",
-            "descriptions_json",
-        ]
-        values: list[Any] = [
-            prop.unique_id,
-            prop.source.value,
-            prop.source_id,
-            str(prop.url),
-            prop.title,
-            prop.price_pcm,
-            prop.bedrooms,
-            prop.address,
-            prop.postcode,
-            prop.latitude,
-            prop.longitude,
-            prop.description,
-            str(prop.image_url) if prop.image_url else None,
-            prop.available_from.isoformat() if prop.available_from else None,
-            prop.first_seen.isoformat(),
-            commute_minutes,
-            transport_mode.value if transport_mode else None,
-            notification_status.value,
-            sources_json,
-            source_urls_json,
-            merged.min_price,
-            merged.max_price,
-            descriptions_json,
-        ]
-        if extra:
-            for col, val in extra.items():
-                columns.append(col)
-                values.append(val)
-        return columns, values
-
-    @staticmethod
-    def _parse_json_fields(prop_dict: dict[str, Any]) -> None:
-        """Parse common JSON-encoded fields in a property dict (mutates in place)."""
-        if prop_dict.get("sources"):
-            prop_dict["sources_list"] = json.loads(prop_dict["sources"])
-        else:
-            prop_dict["sources_list"] = [prop_dict.get("source", "")]
-
-        if prop_dict.get("source_urls"):
-            prop_dict["source_urls_dict"] = json.loads(prop_dict["source_urls"])
-        else:
-            prop_dict["source_urls_dict"] = {}
-
-        if prop_dict.get("descriptions_json"):
-            prop_dict["descriptions_dict"] = json.loads(prop_dict["descriptions_json"])
-        else:
-            prop_dict["descriptions_dict"] = {}
-
-    @staticmethod
-    def _row_to_property(row: aiosqlite.Row) -> Property:
-        """Convert a database row to a Property.
-
-        Args:
-            row: Database row from the properties table.
-
-        Returns:
-            Property instance.
-        """
-        first_seen = datetime.fromisoformat(row["first_seen"])
-        available_from = (
-            datetime.fromisoformat(row["available_from"]) if row["available_from"] else None
-        )
-        return Property(
-            source=PropertySource(row["source"]),
-            source_id=row["source_id"],
-            url=row["url"],
-            title=row["title"],
-            price_pcm=row["price_pcm"],
-            bedrooms=row["bedrooms"],
-            address=row["address"],
-            postcode=row["postcode"],
-            latitude=row["latitude"],
-            longitude=row["longitude"],
-            description=row["description"],
-            image_url=row["image_url"] if row["image_url"] else None,
-            available_from=available_from,
-            first_seen=first_seen,
-        )
+    # ------------------------------------------------------------------
+    # Internal helpers
+    # ------------------------------------------------------------------
 
     def _row_to_tracked_property(self, row: aiosqlite.Row) -> TrackedProperty:
         """Convert a database row to a TrackedProperty.
@@ -2081,72 +1202,11 @@ class PropertyStorage:
         """
         notified_at = datetime.fromisoformat(row["notified_at"]) if row["notified_at"] else None
         return TrackedProperty(
-            property=self._row_to_property(row),
+            property=row_to_property(row),
             commute_minutes=row["commute_minutes"],
             transport_mode=(
                 TransportMode(row["transport_mode"]) if row["transport_mode"] else None
             ),
             notification_status=NotificationStatus(row["notification_status"]),
             notified_at=notified_at,
-        )
-
-    async def _row_to_merged_property(
-        self, row: aiosqlite.Row, *, load_images: bool = True
-    ) -> MergedProperty:
-        """Convert a database row to a MergedProperty.
-
-        Parses multi-source JSON fields and optionally loads images.
-
-        Note: When ``load_images=True``, each call issues a separate
-        ``get_property_images()`` query (N+1 pattern). Acceptable for current
-        data volumes but a batch-loading approach would be needed at scale.
-
-        Args:
-            row: Database row from the properties table.
-            load_images: Whether to load images from property_images table.
-
-        Returns:
-            Reconstructed MergedProperty.
-        """
-        prop = self._row_to_property(row)
-
-        sources_list: list[PropertySource] = []
-        source_urls: dict[PropertySource, HttpUrl] = {}
-        descriptions: dict[PropertySource, str] = {}
-
-        if row["sources"]:
-            for s in json.loads(row["sources"]):
-                sources_list.append(PropertySource(s))
-        else:
-            sources_list.append(prop.source)
-
-        if row["source_urls"]:
-            for s, url in json.loads(row["source_urls"]).items():
-                source_urls[PropertySource(s)] = HttpUrl(url)
-        else:
-            source_urls[prop.source] = prop.url
-
-        if row["descriptions_json"]:
-            for s, desc in json.loads(row["descriptions_json"]).items():
-                descriptions[PropertySource(s)] = desc
-
-        gallery: tuple[PropertyImage, ...] = ()
-        floorplan_img: PropertyImage | None = None
-        if load_images:
-            images = await self.get_property_images(prop.unique_id)
-            gallery = tuple(img for img in images if img.image_type == "gallery")
-            floorplan_img = next((img for img in images if img.image_type == "floorplan"), None)
-
-        min_price = row["min_price"] if row["min_price"] is not None else prop.price_pcm
-        max_price = row["max_price"] if row["max_price"] is not None else prop.price_pcm
-
-        return MergedProperty(
-            canonical=prop,
-            sources=tuple(sources_list),
-            source_urls=source_urls,
-            images=gallery,
-            floorplan=floorplan_img,
-            min_price=min_price,
-            max_price=max_price,
-            descriptions=descriptions,
         )

@@ -70,6 +70,24 @@ class TestSecurityHeaders:
         assert resp.headers["X-Frame-Options"] == "DENY"
         assert resp.headers["Referrer-Policy"] == "strict-origin-when-cross-origin"
 
+    def test_csp_header_present(self, settings: Settings) -> None:
+        from fastapi.testclient import TestClient
+
+        test_app = FastAPI()
+        test_app.add_middleware(SecurityHeadersMiddleware)
+        mock_storage = AsyncMock()
+        mock_storage.get_last_pipeline_run.return_value = None
+        test_app.state.storage = mock_storage
+        test_app.state.settings = settings
+        test_app.include_router(router)
+
+        client = TestClient(test_app)
+        resp = client.get("/health")
+        csp = resp.headers["Content-Security-Policy"]
+        assert "default-src 'self'" in csp
+        assert "script-src" in csp
+        assert "frame-ancestors 'none'" in csp
+
 
 class TestPipelineConfig:
     def test_initial_delay_configured(self) -> None:
