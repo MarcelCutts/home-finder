@@ -1,5 +1,6 @@
 """OnTheMarket property scraper using curl_cffi for TLS fingerprint impersonation."""
 
+import asyncio
 import json
 import re
 from typing import Any
@@ -60,8 +61,6 @@ class OnTheMarketScraper(BaseScraper):
         known_source_ids: set[str] | None = None,
     ) -> list[Property]:
         """Scrape OnTheMarket for matching properties (all pages)."""
-        import asyncio
-
         all_properties: list[Property] = []
         seen_ids: set[str] = set()
 

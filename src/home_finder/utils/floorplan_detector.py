@@ -29,12 +29,15 @@ def detect_floorplan(image_bytes: bytes) -> tuple[bool, float]:
     try:
         return _analyze(image_bytes)
     except Exception:
+        logger.debug("floorplan_detection_failed", exc_info=True)
         return False, 0.0
 
 
 def _analyze(image_bytes: bytes) -> tuple[bool, float]:
     """Core analysis — separated for cleaner error handling."""
     from PIL import Image, ImageFilter, ImageStat
+
+    Image.MAX_IMAGE_PIXELS = 50_000_000
 
     img: Image.Image = Image.open(BytesIO(image_bytes))
     # Thumbnail to 256x256 for speed — we only need statistics

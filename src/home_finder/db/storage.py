@@ -216,11 +216,14 @@ class PropertyStorage:
             ("enrichment_attempts", "INTEGER", "0"),
             ("ward", "TEXT", None),
         ]:
-            with contextlib.suppress(Exception):
+            try:
                 default_clause = f" DEFAULT {default}" if default is not None else ""
                 await conn.execute(
                     f"ALTER TABLE properties ADD COLUMN {column} {col_type}{default_clause}"
                 )
+            except aiosqlite.OperationalError as e:
+                if "duplicate column" not in str(e).lower():
+                    raise
 
         # Index for efficiently loading unenriched properties
         await conn.execute("""
@@ -250,11 +253,14 @@ class PropertyStorage:
         for column, col_type, default in [
             ("sources_updated_at", "TEXT", None),
         ]:
-            with contextlib.suppress(Exception):
+            try:
                 default_clause = f" DEFAULT {default}" if default is not None else ""
                 await conn.execute(
                     f"ALTER TABLE properties ADD COLUMN {column} {col_type}{default_clause}"
                 )
+            except aiosqlite.OperationalError as e:
+                if "duplicate column" not in str(e).lower():
+                    raise
 
         # Migrate: add denormalized quality columns
         for column, col_type in [
@@ -263,15 +269,18 @@ class PropertyStorage:
             ("red_flag_count", "INTEGER"),
             ("reanalysis_requested_at", "TEXT"),
         ]:
-            with contextlib.suppress(Exception):
+            try:
                 await conn.execute(f"ALTER TABLE quality_analyses ADD COLUMN {column} {col_type}")
+            except aiosqlite.OperationalError as e:
+                if "duplicate column" not in str(e).lower():
+                    raise
 
         # Migrate: fix one_line fields that were stored as JSON objects
         # instead of plain strings (LLM wrapping bug).
-        # Wrapped in suppress() because json_extract/json_type throw on any
-        # row with malformed analysis_json, and the Pydantic unwrap_one_line
+        # Suppresses OperationalError because json_extract/json_type throw on
+        # rows with malformed analysis_json; the Pydantic unwrap_one_line
         # validator already handles this at read time.
-        with contextlib.suppress(Exception):
+        with contextlib.suppress(aiosqlite.OperationalError):
             await conn.execute("""
                 UPDATE quality_analyses
                 SET analysis_json = json_set(

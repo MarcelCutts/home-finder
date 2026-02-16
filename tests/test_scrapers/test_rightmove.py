@@ -103,8 +103,7 @@ class TestRightmoveScraper:
     async def test_build_search_url_outcode_fallback(
         self, rightmove_scraper: RightmoveScraper
     ) -> None:
-        """Test URL building falls back to hackney when outcode not in mapping and API fails."""
-        # ZZ99 is not in hardcoded mapping, so API will be tried
+        """Test URL building returns empty when outcode not found (no silent fallback)."""
         with patch(
             "home_finder.scrapers.rightmove.get_rightmove_outcode_id",
             new_callable=AsyncMock,
@@ -117,8 +116,7 @@ class TestRightmoveScraper:
                 min_bedrooms=1,
                 max_bedrooms=2,
             )
-            # Should fall back to hackney region (correct ID is 93953)
-            assert "REGION%5E93953" in url
+            assert url == ""
 
     @pytest.mark.asyncio
     async def test_build_search_url_all_target_outcodes(

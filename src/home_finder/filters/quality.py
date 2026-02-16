@@ -537,7 +537,7 @@ class PropertyQualityFilter:
                 return image_data, media_type
 
         except Exception as e:
-            logger.warning("image_download_error", url=url, error=str(e))
+            logger.warning("image_download_error", url=url, error=str(e), exc_info=True)
             return None
 
     async def _build_image_block(
@@ -1040,6 +1040,7 @@ class PropertyQualityFilter:
                 property_id=property_id,
                 error=str(e),
                 error_type=type(e).__name__,
+                exc_info=True,
             )
             return None
 
@@ -1134,6 +1135,7 @@ class PropertyQualityFilter:
                 property_id=property_id,
                 error=str(e),
                 error_type=type(e).__name__,
+                exc_info=True,
             )
             # Continue with partial analysis (visual data only)
 
@@ -1208,6 +1210,7 @@ class PropertyQualityFilter:
                 "analysis_validation_failed",
                 property_id=property_id,
                 error=str(e),
+                exc_info=True,
             )
             return None
 

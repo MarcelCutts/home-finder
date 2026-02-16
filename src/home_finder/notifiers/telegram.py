@@ -720,6 +720,7 @@ class TelegramNotifier:
                 "notification_failed",
                 property_id=prop.unique_id,
                 error=str(e),
+                exc_info=True,
             )
             return False
 
@@ -800,6 +801,7 @@ class TelegramNotifier:
                         property_id=merged.unique_id,
                         image_url=gallery_urls[0] if gallery_urls else None,
                         error=str(photo_err),
+                        exc_info=True,
                     )
 
             if not sent_photo:
@@ -864,6 +866,7 @@ class TelegramNotifier:
                 "notification_failed",
                 property_id=merged.unique_id,
                 error=str(e),
+                exc_info=True,
             )
             return False
 
@@ -953,7 +956,7 @@ class TelegramNotifier:
             )
             return True
         except Exception as e:
-            logger.error("status_message_failed", error=str(e))
+            logger.error("status_message_failed", error=str(e), exc_info=True)
             return False
 
     async def close(self) -> None:

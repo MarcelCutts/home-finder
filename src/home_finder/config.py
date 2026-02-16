@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from pydantic import Field, SecretStr
+from pydantic import Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from home_finder.models import FurnishType, SearchCriteria, TransportMode
@@ -142,6 +142,13 @@ class Settings(BaseSettings):
 
     # Database
     database_path: str = Field(default="data/properties.db")
+
+    @model_validator(mode="after")
+    def _validate_csv_fields(self) -> "Settings":
+        """Eagerly validate CSV config fields at startup."""
+        self.get_search_areas()
+        self.get_furnish_types()
+        return self
 
     @property
     def data_dir(self) -> str:

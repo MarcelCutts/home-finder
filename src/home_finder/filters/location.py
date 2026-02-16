@@ -18,7 +18,10 @@ logger = get_logger(__name__)
 
 # Load borough outcodes and aliases from JSON data file
 _DATA_PATH = Path(__file__).resolve().parent.parent / "data" / "borough_outcodes.json"
-_DATA = json.loads(_DATA_PATH.read_text())
+try:
+    _DATA = json.loads(_DATA_PATH.read_text())
+except (FileNotFoundError, json.JSONDecodeError) as e:
+    raise RuntimeError(f"Failed to load {_DATA_PATH}: {e}") from e
 
 BOROUGH_OUTCODES: Final[dict[str, set[str]]] = {
     k: set(v) for k, v in _DATA["borough_outcodes"].items()

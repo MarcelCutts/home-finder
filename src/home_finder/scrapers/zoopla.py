@@ -146,7 +146,7 @@ class ZooplaListing(BaseModel):
                 return beds
 
         # Fallback: parse from title
-        return self._extract_bedrooms_from_text(self.title)
+        return extract_bedrooms(self.title)
 
     def get_image_url(self) -> str | None:
         """Get the image URL, ensuring it has a protocol."""
@@ -165,22 +165,6 @@ class ZooplaListing(BaseModel):
     def get_title(self) -> str:
         """Get title, falling back to address if empty."""
         return self.title or self.address
-
-    @staticmethod
-    def _extract_bedrooms_from_text(text: str) -> int | None:
-        """Extract bedroom count from text like '2 bed flat'."""
-        if not text:
-            return None
-
-        text_lower = text.lower()
-
-        # Handle studio
-        if "studio" in text_lower:
-            return 0
-
-        # Match "1 bed", "2 bedroom", etc.
-        match = re.search(r"(\d+)\s*bed(?:room)?s?", text_lower)
-        return int(match.group(1)) if match else None
 
 
 # TypeAdapter for parsing lists of listings directly (for RSC format)

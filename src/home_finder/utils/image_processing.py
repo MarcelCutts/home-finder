@@ -5,6 +5,14 @@ from typing import Final, Literal, TypeAlias, TypeGuard, get_args
 
 from PIL import Image
 
+from home_finder.logging import get_logger
+
+logger = get_logger(__name__)
+
+# Limit decompression bomb threshold for untrusted image bytes.
+# Default Pillow limit is ~178M pixels; 50M is generous for property photos.
+Image.MAX_IMAGE_PIXELS = 50_000_000
+
 # Valid media types for Claude vision API
 ImageMediaType: TypeAlias = Literal["image/jpeg", "image/png", "image/gif", "image/webp"]
 VALID_MEDIA_TYPES: Final[tuple[str, ...]] = get_args(ImageMediaType)
@@ -35,5 +43,5 @@ def resize_image_bytes(data: bytes, max_dim: int = MAX_IMAGE_DIMENSION) -> bytes
         resized.save(buf, format=fmt, quality=85)
         return buf.getvalue()
     except Exception:
-        # If Pillow can't parse the image, return original bytes unchanged
+        logger.debug("image_resize_failed", exc_info=True)
         return data

@@ -193,6 +193,7 @@ async def scrape_all_platforms(
                         platform=scraper.source.value,
                         area=area,
                         error=str(e),
+                        exc_info=True,
                     )
                 # Delegate inter-area delay to the scraper
                 if i < len(scraper_areas) - 1:
@@ -1159,7 +1160,7 @@ def main() -> None:
     try:
         settings = Settings()
     except Exception as e:
-        logger.error("failed_to_load_settings", error=str(e))
+        logger.error("failed_to_load_settings", error=str(e), exc_info=True)
         print(f"Error: Failed to load settings. {e}")
         print("Make sure you have a .env file with required settings.")
         print("Required: HOME_FINDER_TELEGRAM_BOT_TOKEN, HOME_FINDER_TELEGRAM_CHAT_ID")

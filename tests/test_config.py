@@ -1,6 +1,7 @@
 """Tests for application configuration."""
 
 import pytest
+from pydantic import ValidationError
 
 from home_finder.config import Settings
 from home_finder.models import FurnishType, TransportMode
@@ -88,13 +89,12 @@ class TestGetFurnishTypes:
         assert len(types) == 3
 
     def test_invalid_furnish_type_raises(self) -> None:
-        s = Settings(
-            telegram_bot_token="fake:token",
-            telegram_chat_id=0,
-            furnish_types="invalid_type",
-        )
-        with pytest.raises(ValueError):
-            s.get_furnish_types()
+        with pytest.raises((ValueError, ValidationError)):
+            Settings(
+                telegram_bot_token="fake:token",
+                telegram_chat_id=0,
+                furnish_types="invalid_type",
+            )
 
 
 class TestGetSearchCriteria:

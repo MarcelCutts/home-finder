@@ -15,6 +15,9 @@ if TYPE_CHECKING:
 
 logger = get_logger(__name__)
 
+# Limit decompression bomb threshold for untrusted image bytes.
+Image.MAX_IMAGE_PIXELS = 50_000_000
+
 # Hamming distance threshold for considering images "same"
 # Start conservative (8), tune up based on false negative rate.
 # Research suggests 10-12 for 64-bit pHash, but real estate images
@@ -70,6 +73,7 @@ def hashes_match(hash1: str | None, hash2: str | None) -> bool:
         distance = h1 - h2  # Hamming distance
         return distance <= HASH_DISTANCE_THRESHOLD
     except Exception:
+        logger.debug("hash_comparison_failed", hash1=hash1, hash2=hash2, exc_info=True)
         return False
 
 

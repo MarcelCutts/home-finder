@@ -635,7 +635,9 @@ async def serve_cached_image(unique_id: str, filename: str, data_dir: DataDirDep
 
     Returns the image with immutable cache headers (images never change).
     """
-    # Validate filename — no directory traversal
+    # Validate parameters — no directory traversal
+    if ".." in unique_id or "/" in unique_id or "\\" in unique_id:
+        return JSONResponse({"error": "invalid unique_id"}, status_code=400)
     if ".." in filename or "/" in filename or "\\" in filename:
         return JSONResponse({"error": "invalid filename"}, status_code=400)
 

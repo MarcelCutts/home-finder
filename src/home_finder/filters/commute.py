@@ -171,9 +171,9 @@ class CommuteFilter:
         except Exception as e:
             error_str = str(e).lower()
             if "rate limit" in error_str or "429" in error_str:
-                logger.warning("rate_limit_hit", error=str(e))
+                logger.warning("rate_limit_hit", error=str(e), exc_info=True)
             else:
-                logger.error("traveltime_api_error", error=str(e))
+                logger.error("traveltime_api_error", error=str(e), exc_info=True)
             return []
 
         # Process results
@@ -260,7 +260,7 @@ class CommuteFilter:
                     if coords:
                         coords_lookup[postcode] = coords
         except Exception as e:
-            logger.warning("geocoding_batch_failed", error=str(e))
+            logger.warning("geocoding_batch_failed", error=str(e), exc_info=True)
             return properties
 
         # Build updated list, replacing properties that got coordinates
@@ -310,6 +310,6 @@ class CommuteFilter:
                 self._geocoding_cache[postcode] = result
                 return result
         except Exception as e:
-            logger.warning("geocoding_failed", postcode=postcode, error=str(e))
+            logger.warning("geocoding_failed", postcode=postcode, error=str(e), exc_info=True)
 
         return None

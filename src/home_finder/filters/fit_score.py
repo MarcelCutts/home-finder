@@ -11,7 +11,26 @@ from quality analysis data, weighted to Marcel's priorities:
 
 from __future__ import annotations
 
-from typing import Any, TypedDict
+from typing import Any, Final, TypedDict
+
+# ── Highlight/Lowlight signal scoring (used by _score_vibe cluster 6) ────────
+
+_HIGHLIGHT_SCORES: Final[dict[str, float]] = {
+    "Period features": 10,
+    "Open-plan layout": 6,
+    "Floor-to-ceiling windows": 8,
+    "Spacious living room": 4,
+    "Canal views": 6,
+    "Park views": 4,
+    "Roof terrace": 6,
+    "Recently refurbished": 3,
+}
+
+_LOWLIGHT_SCORES: Final[dict[str, float]] = {
+    "Needs updating": -8,
+    "Compact living room": -4,
+    "Small living room": -4,
+}
 
 # ── Dimension labels (for UI display) ─────────────────────────────────────────
 _DIMENSION_LABELS: dict[str, str] = {
@@ -405,17 +424,6 @@ def _score_vibe(analysis: dict[str, Any], _bedrooms: int) -> _DimensionResult:
     # === Cluster 6: Highlight/Lowlight Signals (capped at 20 raw) ===
     cluster6 = 0.0
     if isinstance(highlights, list):
-        # Positive highlight signals (exact enum value match)
-        _HIGHLIGHT_SCORES: dict[str, float] = {
-            "Period features": 10,
-            "Open-plan layout": 6,
-            "Floor-to-ceiling windows": 8,
-            "Spacious living room": 4,
-            "Canal views": 6,
-            "Park views": 4,
-            "Roof terrace": 6,
-            "Recently refurbished": 3,
-        }
         for h in highlights:
             if isinstance(h, str) and h in _HIGHLIGHT_SCORES:
                 cluster6 += _HIGHLIGHT_SCORES[h]
@@ -423,12 +431,6 @@ def _score_vibe(analysis: dict[str, Any], _bedrooms: int) -> _DimensionResult:
 
     lowlights = analysis.get("lowlights") or []
     if isinstance(lowlights, list):
-        # Negative lowlight signals (exact enum value match)
-        _LOWLIGHT_SCORES: dict[str, float] = {
-            "Needs updating": -8,
-            "Compact living room": -4,
-            "Small living room": -4,
-        }
         for lowlight in lowlights:
             if isinstance(lowlight, str) and lowlight in _LOWLIGHT_SCORES:
                 cluster6 += _LOWLIGHT_SCORES[lowlight]

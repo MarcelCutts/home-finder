@@ -1,9 +1,11 @@
 """OpenRent property scraper."""
 
+import asyncio
 import re
 import time
 from urllib.parse import urljoin
 
+from bs4 import Tag
 from crawlee.crawlers import BeautifulSoupCrawler, BeautifulSoupCrawlingContext
 from crawlee.storage_clients import MemoryStorageClient
 from pydantic import HttpUrl
@@ -58,8 +60,6 @@ class OpenRentScraper(BaseScraper):
         known_source_ids: set[str] | None = None,
     ) -> list[Property]:
         """Scrape OpenRent for matching properties (all pages)."""
-        import asyncio
-
         all_properties: list[Property] = []
         seen_ids: set[str] = set()
         current_delay = self.PAGE_DELAY_SECONDS
@@ -361,7 +361,7 @@ class OpenRentScraper(BaseScraper):
 
         return data
 
-    def _parse_link_text(self, link) -> tuple[str, str | None, str | None]:  # type: ignore[no-untyped-def]
+    def _parse_link_text(self, link: Tag) -> tuple[str, str | None, str | None]:
         """Extract title, address, and postcode from link element.
 
         Returns:
@@ -379,7 +379,7 @@ class OpenRentScraper(BaseScraper):
             # Also try image alt text which often has the title
             img = link.find("img", class_="propertyPic")
             if img and img.get("alt"):
-                title = img.get("alt")
+                title = str(img.get("alt"))
 
         # If still no title, fall back to parsing all text
         if not title:
@@ -423,7 +423,7 @@ class OpenRentScraper(BaseScraper):
 
         return title, address, postcode
 
-    def _extract_price_from_html(self, link) -> int | None:  # type: ignore[no-untyped-def]
+    def _extract_price_from_html(self, link: Tag) -> int | None:
         """Try to extract price from HTML element text."""
         for text in link.stripped_strings:
             if "£" in text and "per month" in text.lower():
@@ -433,7 +433,7 @@ class OpenRentScraper(BaseScraper):
                     return int(match.group(1).replace(",", ""))
         return None
 
-    def _extract_bedrooms_from_html(self, link) -> int | None:  # type: ignore[no-untyped-def]
+    def _extract_bedrooms_from_html(self, link: Tag) -> int | None:
         """Try to extract bedroom count from HTML element text."""
         for text in link.stripped_strings:
             # Studios have 0 bedrooms

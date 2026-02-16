@@ -12,6 +12,7 @@ from curl_cffi.requests import AsyncSession
 
 from home_finder.logging import get_logger
 from home_finder.models import Property, PropertySource
+from home_finder.scrapers.constants import BROWSER_HEADERS
 
 _MAX_RETRIES = 2  # cross-run retry handles persistent failures
 _RETRY_BASE_DELAY = 2.0  # seconds, doubled each retry (2, 4)
@@ -149,11 +150,7 @@ class DetailFetcher:
         session = await self._get_curl_session()
         kwargs: dict[str, object] = {
             "impersonate": "chrome",
-            "headers": {
-                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-                "Accept-Language": "en-GB,en;q=0.9",
-                "Accept-Encoding": "gzip, deflate, br",
-            },
+            "headers": BROWSER_HEADERS,
             "timeout": 30,
         }
         if self._proxy_url:

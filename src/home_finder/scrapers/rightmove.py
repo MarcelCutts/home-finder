@@ -1,5 +1,6 @@
 """Rightmove property scraper."""
 
+import asyncio
 import re
 from urllib.parse import urljoin
 
@@ -179,8 +180,6 @@ class RightmoveScraper(BaseScraper):
         known_source_ids: set[str] | None = None,
     ) -> list[Property]:
         """Scrape Rightmove for matching properties (all pages)."""
-        import asyncio
-
         properties: list[Property] = []
         seen_ids: set[str] = set()
 
@@ -194,6 +193,8 @@ class RightmoveScraper(BaseScraper):
             min_bathrooms=min_bathrooms,
             include_let_agreed=include_let_agreed,
         )
+        if not base_url:
+            return []
 
         for page in range(self.MAX_PAGES):
             index = page * self.RESULTS_PER_PAGE
@@ -296,12 +297,14 @@ class RightmoveScraper(BaseScraper):
                     # URL encoding: ^ becomes %5E
                     location_id = api_id.replace("^", "%5E")
                 else:
-                    logger.warning("rightmove_outcode_lookup_failed", outcode=area)
-                    # Fallback to hackney
-                    location_id = RIGHTMOVE_LOCATIONS.get("hackney", "REGION%5E93965")
+                    logger.error("rightmove_outcode_not_found", outcode=area)
+                    return ""
         else:
             # Borough lookup
-            location_id = RIGHTMOVE_LOCATIONS.get(area_key, RIGHTMOVE_LOCATIONS.get("hackney"))
+            location_id = RIGHTMOVE_LOCATIONS.get(area_key)
+            if not location_id:
+                logger.error("rightmove_borough_not_found", area=area_key)
+                return ""
 
         params = [
             f"locationIdentifier={location_id}",
