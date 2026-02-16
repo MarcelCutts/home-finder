@@ -13,6 +13,8 @@ from home_finder.data.area_context import (
     SERVICE_CHARGE_RANGES,
     WARD_TO_MICRO_AREA,
     WATER_COSTS_MONTHLY,
+    PropertyContext,
+    build_property_context,
     get_area_overview,
     get_micro_area_for_ward,
     get_micro_areas,
@@ -382,3 +384,68 @@ class TestCreativeScene:
             f"Mismatch: creative_scene={set(CREATIVE_SCENE.keys())}, "
             f"hosting_tolerance={set(HOSTING_TOLERANCE.keys())}"
         )
+
+
+class TestBuildPropertyContext:
+    """Tests for build_property_context factory function."""
+
+    def test_returns_property_context_dataclass(self) -> None:
+        ctx = build_property_context("E8 2LX", 2)
+        assert isinstance(ctx, PropertyContext)
+
+    def test_extracts_outcode(self) -> None:
+        ctx = build_property_context("E8 2LX", 2)
+        assert ctx.outcode == "E8"
+
+    def test_extracts_outcode_without_space(self) -> None:
+        ctx = build_property_context("E8", 2)
+        assert ctx.outcode == "E8"
+
+    def test_none_postcode_returns_all_none(self) -> None:
+        ctx = build_property_context(None, 2)
+        assert ctx.outcode is None
+        assert ctx.area_overview is None
+        assert ctx.borough is None
+        assert ctx.council_tax_band_c is None
+        assert ctx.energy_estimate is None
+        assert ctx.crime_summary is None
+        assert ctx.rent_trend is None
+        assert ctx.hosting_tolerance is None
+
+    def test_populates_borough(self) -> None:
+        ctx = build_property_context("E8 2LX", 2)
+        assert ctx.borough is not None  # E8 → Hackney
+
+    def test_populates_area_overview(self) -> None:
+        ctx = build_property_context("E8 2LX", 2)
+        assert ctx.area_overview is not None
+        assert "Hackney" in ctx.area_overview
+
+    def test_formats_crime_summary(self) -> None:
+        ctx = build_property_context("E8 2LX", 2)
+        if ctx.crime_summary:
+            assert "/1,000" in ctx.crime_summary
+
+    def test_formats_rent_trend(self) -> None:
+        ctx = build_property_context("E8 2LX", 2)
+        if ctx.rent_trend:
+            assert "YoY" in ctx.rent_trend
+
+    def test_formats_hosting_tolerance(self) -> None:
+        ctx = build_property_context("E8 2LX", 2)
+        if ctx.hosting_tolerance:
+            assert "—" in ctx.hosting_tolerance or ctx.hosting_tolerance in {
+                "high",
+                "moderate",
+                "low",
+            }
+
+    def test_frozen_dataclass(self) -> None:
+        ctx = build_property_context("E8 2LX", 2)
+        with pytest.raises(AttributeError):
+            ctx.outcode = "N16"  # type: ignore[misc]
+
+    def test_energy_estimate_populated(self) -> None:
+        ctx = build_property_context("E8 2LX", 2)
+        assert ctx.energy_estimate is not None
+        assert ctx.energy_estimate > 0

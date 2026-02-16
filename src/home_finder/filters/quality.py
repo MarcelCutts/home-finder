@@ -10,27 +10,29 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from home_finder.data.area_context import (
     ACOUSTIC_PROFILES,
-    COUNCIL_TAX_MONTHLY,
-    CRIME_RATES,
     DEFAULT_BENCHMARK,
-    ENERGY_COSTS_MONTHLY,
-    HOSTING_TOLERANCE,
-    OUTCODE_BOROUGH,
-    RENT_TRENDS,
     RENTAL_BENCHMARKS,
-    get_area_overview,
+    build_property_context,
 )
 from home_finder.logging import get_logger
 from home_finder.models import (
+    BathroomAnalysis,
+    BedroomAnalysis,
     ConditionAnalysis,
+    FlooringNoiseAnalysis,
     KitchenAnalysis,
     LightSpaceAnalysis,
+    ListingExtraction,
+    ListingRedFlags,
     MergedProperty,
+    OutdoorSpaceAnalysis,
     PropertyHighlight,
     PropertyLowlight,
     PropertyQualityAnalysis,
     SpaceAnalysis,
+    StorageAnalysis,
     ValueAnalysis,
+    ViewingNotes,
 )
 from home_finder.utils.image_cache import is_valid_image_url, read_image_bytes
 from home_finder.utils.image_processing import (
@@ -59,6 +61,7 @@ REQUEST_TIMEOUT: Final = 180.0  # 3 minutes for vision requests
 
 # Circuit breaker: stop hammering the API after consecutive outage-indicating errors
 _CIRCUIT_BREAKER_THRESHOLD: Final = 3
+_CIRCUIT_BREAKER_COOLDOWN: Final = 300  # seconds (5 min)
 
 
 class APIUnavailableError(Exception):
@@ -354,6 +357,32 @@ class _EvaluationResponse(BaseModel):
     value_for_quality: ValueForQuality
 
 
+# ── Cross-reference: API response models ↔ storage models ────────────
+# Each pair maps an API sub-model (used for JSON schema generation) to
+# its storage counterpart (used for DB persistence with defaults/coercion).
+#
+# Intentionally unpaired:
+#   - _EvaluationResponse.ValueForQuality (2 fields) vs ValueAnalysis (6 fields):
+#     different structures by design — ValueAnalysis merges benchmark data with
+#     LLM-assessed quality rating.
+#   - _VisualAnalysisResponse.floorplan_detected_in_gallery: API-only field,
+#     used during analysis but not stored as a separate model.
+_MODEL_PAIRS: Final[list[tuple[type[BaseModel], type[BaseModel]]]] = [
+    (_VisualAnalysisResponse.Kitchen, KitchenAnalysis),
+    (_VisualAnalysisResponse.Condition, ConditionAnalysis),
+    (_VisualAnalysisResponse.LightSpace, LightSpaceAnalysis),
+    (_VisualAnalysisResponse.Space, SpaceAnalysis),
+    (_VisualAnalysisResponse.Bathroom, BathroomAnalysis),
+    (_VisualAnalysisResponse.Bedroom, BedroomAnalysis),
+    (_VisualAnalysisResponse.OutdoorSpace, OutdoorSpaceAnalysis),
+    (_VisualAnalysisResponse.Storage, StorageAnalysis),
+    (_VisualAnalysisResponse.FlooringNoise, FlooringNoiseAnalysis),
+    (_VisualAnalysisResponse.RedFlags, ListingRedFlags),
+    (_EvaluationResponse.ListingExtraction, ListingExtraction),
+    (_EvaluationResponse.ViewingNotes, ViewingNotes),
+]
+
+
 def _inline_refs(schema: dict[str, Any]) -> dict[str, Any]:
     """Resolve $ref/$defs in a Pydantic JSON schema and strip title fields."""
     defs = schema.pop("$defs", {})
@@ -380,7 +409,14 @@ def _build_tool_schema(
     *,
     strict: bool = False,
 ) -> dict[str, Any]:
-    """Build an Anthropic tool schema from a Pydantic model class."""
+    """Build an Anthropic tool schema from a Pydantic model class.
+
+    Schemas are generated from the API response models (``extra="forbid"``,
+    all-required, plain types) rather than the storage models (defaults,
+    coercion validators).  The ``_MODEL_PAIRS`` constant documents the
+    correspondence between each pair, and tests in
+    ``TestModelPairConsistency`` mechanically verify they stay in sync.
+    """
     schema = _inline_refs(model.model_json_schema())
     schema.pop("description", None)  # Strip Pydantic docstring
     tool: dict[str, Any] = {
@@ -480,6 +516,7 @@ class PropertyQualityFilter:
         # Circuit breaker state (asyncio is single-threaded, no lock needed)
         self._consecutive_api_failures = 0
         self._circuit_open = False
+        self._circuit_opened_at: float | None = None
 
     def _get_client(self) -> "anthropic.AsyncAnthropic":
         """Get or create the Anthropic client with optimized settings."""
@@ -504,17 +541,40 @@ class PropertyQualityFilter:
 
     def _record_api_failure(self) -> None:
         """Record a consecutive API failure and open circuit if threshold reached."""
+        import time
+
         self._consecutive_api_failures += 1
-        if not self._circuit_open and self._consecutive_api_failures >= _CIRCUIT_BREAKER_THRESHOLD:
+        if self._consecutive_api_failures >= _CIRCUIT_BREAKER_THRESHOLD:
             self._circuit_open = True
+            self._circuit_opened_at = time.monotonic()
             logger.warning(
                 "api_circuit_breaker_open",
                 consecutive_failures=self._consecutive_api_failures,
             )
 
     def _record_api_success(self) -> None:
-        """Reset consecutive failure counter on successful API response."""
+        """Reset failure counter and close circuit if it was open (half-open recovery)."""
+        if self._circuit_open:
+            logger.info("api_circuit_breaker_closed")
         self._consecutive_api_failures = 0
+        self._circuit_open = False
+        self._circuit_opened_at = None
+
+    def _is_circuit_open(self) -> bool:
+        """Check if circuit breaker is open, with half-open recovery after cooldown."""
+        if not self._circuit_open:
+            return False
+        import time
+
+        elapsed = time.monotonic() - self._circuit_opened_at  # type: ignore[operator]
+        if elapsed >= _CIRCUIT_BREAKER_COOLDOWN:
+            logger.info(
+                "circuit_breaker_half_open",
+                cooldown_seconds=_CIRCUIT_BREAKER_COOLDOWN,
+                elapsed_seconds=round(elapsed, 1),
+            )
+            return False  # Allow one retry attempt
+        return True
 
     @staticmethod
     def _needs_base64_download(url: str) -> bool:
@@ -671,34 +731,7 @@ class PropertyQualityFilter:
         prop = merged.canonical
         value = assess_value(prop.price_pcm, prop.postcode, prop.bedrooms)
 
-        # Extract outcode for area context lookup
-        outcode: str | None = None
-        if prop.postcode:
-            outcode = (
-                prop.postcode.split()[0].upper() if " " in prop.postcode else prop.postcode.upper()
-            )
-        area_context = get_area_overview(outcode) if outcode else None
-
-        # Look up new contextual data
-        borough = OUTCODE_BOROUGH.get(outcode) if outcode else None
-        council_tax_c = COUNCIL_TAX_MONTHLY.get(borough, {}).get("C") if borough else None
-        bed_key = f"{min(max(prop.bedrooms, 1), 2)}_bed"
-        energy_estimate = ENERGY_COSTS_MONTHLY.get("D", {}).get(bed_key)
-        crime = CRIME_RATES.get(outcode) if outcode else None
-        crime_summary: str | None = None
-        if crime:
-            crime_summary = f"{crime['rate']}/1,000 ({crime['vs_london']} vs London avg)"
-            if crime.get("note"):
-                crime_summary += f". {crime['note']}"
-        trend = RENT_TRENDS.get(borough) if borough else None
-        rent_trend = f"+{trend['yoy_pct']}% YoY ({trend['direction']})" if trend else None
-
-        hosting_tolerance_data = HOSTING_TOLERANCE.get(outcode) if outcode else None
-        hosting_tolerance_str: str | None = None
-        if hosting_tolerance_data:
-            rating = hosting_tolerance_data.get("rating", "unknown")
-            notes = hosting_tolerance_data.get("notes", "")
-            hosting_tolerance_str = f"{rating} — {notes}" if notes else rating
+        ctx = build_property_context(prop.postcode, prop.bedrooms)
 
         # Build URL lists from pre-enriched images
         gallery_urls = [str(img.url) for img in merged.images if img.image_type == "gallery"]
@@ -743,13 +776,13 @@ class PropertyQualityFilter:
                 area_average=value.area_average,
                 description=best_description,
                 features=None,
-                area_context=area_context,
-                outcode=outcode,
-                council_tax_band_c=council_tax_c,
-                energy_estimate=energy_estimate,
-                crime_summary=crime_summary,
-                rent_trend=rent_trend,
-                hosting_tolerance=hosting_tolerance_str,
+                area_context=ctx.area_overview,
+                outcode=ctx.outcode,
+                council_tax_band_c=ctx.council_tax_band_c,
+                energy_estimate=ctx.energy_estimate,
+                crime_summary=ctx.crime_summary,
+                rent_trend=ctx.rent_trend,
+                hosting_tolerance=ctx.hosting_tolerance,
                 gallery_cached_paths=gallery_cached[: self._max_images],
                 floorplan_cached_path=floorplan_cached,
             )
@@ -1227,8 +1260,8 @@ class PropertyQualityFilter:
         """
         from anthropic.types import ImageBlockParam, TextBlockParam
 
-        # Fast-fail if circuit breaker is already open
-        if self._circuit_open:
+        # Fast-fail if circuit breaker is open (with half-open recovery after cooldown)
+        if self._is_circuit_open():
             raise APIUnavailableError("Circuit breaker is open — API unavailable")
 
         # Build image content blocks

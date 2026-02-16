@@ -7,8 +7,14 @@ import pytest
 from anthropic.types import ToolUseBlock
 from pydantic import HttpUrl, ValidationError
 
+from pydantic import BaseModel as _BaseModel
+
 from home_finder.filters.quality import (
+    _CIRCUIT_BREAKER_COOLDOWN,
     _CIRCUIT_BREAKER_THRESHOLD,
+    _MODEL_PAIRS,
+    _EvaluationResponse,
+    _VisualAnalysisResponse,
     EVALUATION_TOOL,
     VISUAL_ANALYSIS_TOOL,
     APIUnavailableError,
@@ -17,19 +23,24 @@ from home_finder.filters.quality import (
     build_evaluation_prompt,
 )
 from home_finder.models import (
+    BathroomAnalysis,
     BedroomAnalysis,
     ConditionAnalysis,
     FlooringNoiseAnalysis,
     KitchenAnalysis,
     LightSpaceAnalysis,
     ListingExtraction,
+    ListingRedFlags,
     MergedProperty,
+    OutdoorSpaceAnalysis,
     Property,
     PropertyImage,
     PropertyQualityAnalysis,
     PropertySource,
     SpaceAnalysis,
+    StorageAnalysis,
     ValueAnalysis,
+    ViewingNotes,
 )
 from home_finder.utils.image_cache import is_valid_image_url
 
@@ -1757,9 +1768,12 @@ class TestCircuitBreaker:
         self,
         sample_merged_property: MergedProperty,
     ) -> None:
-        """When circuit is open, should raise APIUnavailableError without calling API."""
+        """When circuit is open (within cooldown), should raise without calling API."""
+        import time
+
         quality_filter = PropertyQualityFilter(api_key="test-key")
         quality_filter._circuit_open = True
+        quality_filter._circuit_opened_at = time.monotonic()  # just opened
         quality_filter._client = MagicMock()
         quality_filter._client.messages.create = AsyncMock()
 
@@ -1898,6 +1912,120 @@ class TestCircuitBreaker:
 
         assert not quality_filter._circuit_open
 
+    async def test_circuit_stays_open_during_cooldown(
+        self,
+        sample_merged_property: MergedProperty,
+    ) -> None:
+        """Circuit should remain open before cooldown expires."""
+        import time
+
+        quality_filter = PropertyQualityFilter(api_key="test-key")
+        quality_filter._circuit_open = True
+        quality_filter._circuit_opened_at = time.monotonic()  # just opened
+        quality_filter._client = MagicMock()
+        quality_filter._client.messages.create = AsyncMock()
+
+        with pytest.raises(APIUnavailableError):
+            await quality_filter.analyze_single_merged(sample_merged_property)
+        quality_filter._client.messages.create.assert_not_called()
+
+    async def test_circuit_allows_retry_after_cooldown(
+        self,
+        sample_merged_property: MergedProperty,
+        sample_visual_response: dict[str, Any],
+        sample_evaluation_response: dict[str, Any],
+    ) -> None:
+        """After cooldown, circuit should allow one retry (half-open)."""
+        import time
+
+        quality_filter = PropertyQualityFilter(api_key="test-key")
+        quality_filter._circuit_open = True
+        quality_filter._circuit_opened_at = time.monotonic() - (_CIRCUIT_BREAKER_COOLDOWN + 1)
+        quality_filter._client = MagicMock()
+        quality_filter._client.messages.create = _make_two_phase_mock(
+            sample_visual_response, sample_evaluation_response
+        )
+
+        # Should NOT raise — half-open allows retry
+        await quality_filter.analyze_single_merged(sample_merged_property)
+        quality_filter._client.messages.create.assert_called()
+
+    async def test_circuit_closes_on_success_after_halfopen(
+        self,
+        sample_merged_property: MergedProperty,
+        sample_visual_response: dict[str, Any],
+        sample_evaluation_response: dict[str, Any],
+    ) -> None:
+        """Successful retry after half-open should fully close circuit."""
+        import time
+
+        quality_filter = PropertyQualityFilter(api_key="test-key")
+        quality_filter._circuit_open = True
+        quality_filter._circuit_opened_at = time.monotonic() - (_CIRCUIT_BREAKER_COOLDOWN + 1)
+        quality_filter._client = MagicMock()
+        quality_filter._client.messages.create = _make_two_phase_mock(
+            sample_visual_response, sample_evaluation_response
+        )
+
+        await quality_filter.analyze_single_merged(sample_merged_property)
+        assert not quality_filter._circuit_open
+        assert quality_filter._circuit_opened_at is None
+        assert quality_filter._consecutive_api_failures == 0
+
+    async def test_circuit_reopens_on_failure_after_halfopen(
+        self,
+        sample_merged_property: MergedProperty,
+    ) -> None:
+        """Failed retry after half-open should re-open with fresh timestamp."""
+        import time
+
+        from anthropic import APIConnectionError
+
+        quality_filter = PropertyQualityFilter(api_key="test-key")
+        quality_filter._circuit_open = True
+        quality_filter._consecutive_api_failures = _CIRCUIT_BREAKER_THRESHOLD
+        old_time = time.monotonic() - (_CIRCUIT_BREAKER_COOLDOWN + 1)
+        quality_filter._circuit_opened_at = old_time
+        quality_filter._client = MagicMock()
+        quality_filter._client.messages.create = AsyncMock(
+            side_effect=APIConnectionError(request=MagicMock())
+        )
+
+        with pytest.raises(APIUnavailableError):
+            await quality_filter.analyze_single_merged(sample_merged_property)
+        assert quality_filter._circuit_open
+        assert quality_filter._circuit_opened_at > old_time  # fresh timestamp
+
+
+class TestHttpClientReuse:
+    """Tests for HTTP client reuse (T2.9)."""
+
+    async def test_curl_session_reused_across_downloads(self) -> None:
+        """Single curl session should be reused across multiple image downloads."""
+        quality_filter = PropertyQualityFilter(api_key="test-key")
+        mock_session = AsyncMock()
+        mock_session.get = AsyncMock(
+            return_value=MagicMock(
+                status_code=200,
+                content=b"fake-image",
+                headers={"content-type": "image/jpeg"},
+            )
+        )
+
+        quality_filter._curl_session = mock_session
+        await quality_filter._download_image_as_base64("https://example.com/1.jpg")
+        await quality_filter._download_image_as_base64("https://example.com/2.jpg")
+        assert mock_session.get.call_count == 2  # same session, two calls
+
+    async def test_close_closes_curl_session(self) -> None:
+        """close() should close the curl session."""
+        quality_filter = PropertyQualityFilter(api_key="test-key")
+        mock_session = AsyncMock()
+        quality_filter._curl_session = mock_session
+        await quality_filter.close()
+        mock_session.close.assert_called_once()
+        assert quality_filter._curl_session is None
+
 
 class TestAcousticContextMapping:
     """Tests for building_construction → acoustic profile mapping."""
@@ -1992,3 +2120,178 @@ class TestAcousticContextMapping:
         )
         assert "<acoustic_context>" in prompt
         assert "concrete" in prompt
+
+
+# ── Helpers for model-pair consistency tests ──────────────────────────
+
+
+def _extract_enum(
+    prop: dict[str, Any], defs: dict[str, Any] | None = None
+) -> list[str] | None:
+    """Extract enum values from a JSON schema property.
+
+    Handles plain ``{"enum": [...]}`` as well as ``anyOf`` wrappers that
+    Pydantic generates for ``Literal[...] | None``, top-level ``$ref``
+    pointers (e.g. ``PropertyType`` StrEnum), and ``$ref`` inside
+    ``anyOf`` variants in the storage models.
+    """
+    if "enum" in prop:
+        return sorted(str(v) for v in prop["enum"] if v is not None)
+
+    # Top-level $ref (e.g. StrEnum field without | None)
+    if "$ref" in prop and defs:
+        ref_name = prop["$ref"].rsplit("/", 1)[-1]
+        ref_schema = defs.get(ref_name, {})
+        if "enum" in ref_schema:
+            return sorted(str(v) for v in ref_schema["enum"] if v is not None)
+
+    for variant in prop.get("anyOf", []):
+        if "$ref" in variant and defs:
+            ref_name = variant["$ref"].rsplit("/", 1)[-1]
+            ref_schema = defs.get(ref_name, {})
+            if "enum" in ref_schema:
+                return sorted(str(v) for v in ref_schema["enum"] if v is not None)
+        if "enum" in variant:
+            vals = [str(v) for v in variant["enum"] if v is not None]
+            if vals:
+                return sorted(vals)
+
+    return None
+
+
+_PAIR_IDS = [
+    f"{api.__qualname__}-{storage.__name__}" for api, storage in _MODEL_PAIRS
+]
+
+
+class TestModelPairConsistency:
+    """Verify API response models and storage models stay in sync.
+
+    The ``_MODEL_PAIRS`` constant in ``quality.py`` maps each API
+    sub-model to its storage counterpart.  These tests mechanically
+    check that the models have matching fields, compatible enum values,
+    and that API output validates against the storage model.
+    """
+
+    @pytest.mark.parametrize("api_model,storage_model", _MODEL_PAIRS, ids=_PAIR_IDS)
+    def test_field_names_match(
+        self,
+        api_model: type[_BaseModel],
+        storage_model: type[_BaseModel],
+    ) -> None:
+        """API and storage models must have identical field names."""
+        api_fields = set(api_model.model_fields.keys())
+        storage_fields = set(storage_model.model_fields.keys())
+        assert api_fields == storage_fields, (
+            f"{api_model.__qualname__} vs {storage_model.__name__}: "
+            f"API-only={api_fields - storage_fields}, "
+            f"storage-only={storage_fields - api_fields}"
+        )
+
+    @pytest.mark.parametrize("api_model,storage_model", _MODEL_PAIRS, ids=_PAIR_IDS)
+    def test_literal_enum_values_match(
+        self,
+        api_model: type[_BaseModel],
+        storage_model: type[_BaseModel],
+    ) -> None:
+        """Literal/enum values must match for every shared field."""
+        api_schema = api_model.model_json_schema()
+        storage_schema = storage_model.model_json_schema()
+        storage_defs = storage_schema.get("$defs", {})
+
+        for field_name in api_model.model_fields:
+            api_prop = api_schema.get("properties", {}).get(field_name, {})
+            storage_prop = storage_schema.get("properties", {}).get(field_name, {})
+
+            api_enum = _extract_enum(api_prop)
+            storage_enum = _extract_enum(storage_prop, defs=storage_defs)
+
+            if api_enum is None and storage_enum is None:
+                continue
+            if api_enum is None or storage_enum is None:
+                # One has enums, the other doesn't — only flag if API has
+                # enums that storage doesn't (the reverse is OK since storage
+                # may use plain types with coercion).
+                if api_enum is not None and storage_enum is None:
+                    pytest.fail(
+                        f"{api_model.__qualname__}.{field_name}: "
+                        f"API has enum {api_enum} but storage has none"
+                    )
+                continue
+            assert api_enum == storage_enum, (
+                f"{api_model.__qualname__}.{field_name}: "
+                f"API enum {api_enum} != storage enum {storage_enum}"
+            )
+
+    def test_all_api_submodels_are_paired(self) -> None:
+        """Every nested BaseModel in the API responses must appear in _MODEL_PAIRS."""
+        paired_api_models = {pair[0] for pair in _MODEL_PAIRS}
+        unpaired_by_design = {_EvaluationResponse.ValueForQuality}
+
+        missing: list[str] = []
+        for parent in (_VisualAnalysisResponse, _EvaluationResponse):
+            for attr_name in dir(parent):
+                attr = getattr(parent, attr_name)
+                if (
+                    isinstance(attr, type)
+                    and issubclass(attr, _BaseModel)
+                    and attr is not parent
+                    and attr not in paired_api_models
+                    and attr not in unpaired_by_design
+                ):
+                    missing.append(f"{parent.__name__}.{attr_name}")
+
+        assert not missing, (
+            f"API sub-models not in _MODEL_PAIRS (add them or document as "
+            f"intentionally unpaired): {missing}"
+        )
+
+    @pytest.mark.parametrize("api_model,storage_model", _MODEL_PAIRS, ids=_PAIR_IDS)
+    def test_api_data_validates_in_storage(
+        self,
+        api_model: type[_BaseModel],
+        storage_model: type[_BaseModel],
+    ) -> None:
+        """A valid API model instance must validate in the storage model."""
+        # Build a minimal valid instance with all required fields populated
+        schema = api_model.model_json_schema()
+        props = schema.get("properties", {})
+        data: dict[str, Any] = {}
+
+        for field_name, prop in props.items():
+            data[field_name] = _minimal_value(prop)
+
+        api_instance = api_model.model_validate(data)
+        dumped = api_instance.model_dump()
+
+        # This must not raise — storage model should accept API output
+        storage_model.model_validate(dumped)
+
+
+def _minimal_value(prop: dict[str, Any]) -> Any:
+    """Produce a minimal valid value for a JSON schema property."""
+    if "enum" in prop:
+        return prop["enum"][0]
+
+    # anyOf: pick first variant that isn't null
+    if "anyOf" in prop:
+        for variant in prop["anyOf"]:
+            if variant.get("type") == "null":
+                continue
+            return _minimal_value(variant)
+        return None
+
+    typ = prop.get("type")
+    if typ == "string":
+        return ""
+    if typ == "integer":
+        return 0
+    if typ == "number":
+        return 0.0
+    if typ == "boolean":
+        return False
+    if typ == "array":
+        return []
+    if typ == "null":
+        return None
+    return ""
