@@ -19,6 +19,7 @@ from home_finder.models import (
     PropertySource,
     SpaceAnalysis,
 )
+from home_finder.web.filters import PropertyFilter
 
 
 def _make_property(
@@ -412,7 +413,7 @@ class TestReanalysisIntegration:
         await storage.request_reanalysis([merged.unique_id])
         await storage.complete_reanalysis(merged.unique_id, _make_quality_analysis(rating=5))
 
-        results, total = await storage.get_properties_paginated(min_rating=4)
+        results, total = await storage.get_properties_paginated(PropertyFilter(min_rating=4))
         assert total == 1
         assert results[0]["quality_rating"] == 5
 

@@ -17,6 +17,7 @@ from home_finder.models import (
     PropertySource,
     TransportMode,
 )
+from home_finder.web.filters import PropertyFilter
 
 
 @pytest.fixture
@@ -409,7 +410,7 @@ class TestGetMapMarkers:
         await storage.save_property(one_bed)
         await storage.save_property(two_bed)
 
-        markers = await storage.get_map_markers(bedrooms=1)
+        markers = await storage.get_map_markers(PropertyFilter(bedrooms=1))
         assert len(markers) == 1
         assert markers[0]["id"] == one_bed.unique_id
 
@@ -869,10 +870,12 @@ class TestWardOperations:
         await storage.save_merged_property(m1)
         await storage.save_merged_property(m2)
 
-        updated = await storage.update_wards({
-            storage_sample_property.unique_id: "London Fields",
-            sample_property_2.unique_id: "Dalston",
-        })
+        updated = await storage.update_wards(
+            {
+                storage_sample_property.unique_id: "London Fields",
+                sample_property_2.unique_id: "Dalston",
+            }
+        )
         assert updated == 2
 
         d1 = await storage.get_property_detail(storage_sample_property.unique_id)

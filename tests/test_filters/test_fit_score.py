@@ -711,14 +711,14 @@ class TestHostingScorer:
         """All positive signals sum correctly."""
         analysis = _hosting_analysis(
             space={
-                "is_spacious_enough": True,     # +25
-                "living_room_sqm": 25,           # +30
-                "hosting_layout": "excellent",   # +25
+                "is_spacious_enough": True,  # +25
+                "living_room_sqm": 25,  # +30
+                "hosting_layout": "excellent",  # +25
             },
             light_space={"feels_spacious": True},  # +10
-            outdoor_space={"has_balcony": True},    # +15
+            outdoor_space={"has_balcony": True},  # +15
             flooring_noise={"hosting_noise_risk": "low"},  # +10
-            _area_hosting_tolerance="high",          # +10
+            _area_hosting_tolerance="high",  # +10
         )
         result = _score_hosting(analysis, 2)
         # Total: 25+30+10+15+25+10+10 = 125, clamped to 100

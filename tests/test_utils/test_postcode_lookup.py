@@ -118,9 +118,7 @@ class TestBulkReverseLookup:
             mock_client.return_value.__aenter__ = AsyncMock(return_value=instance)
             mock_client.return_value.__aexit__ = AsyncMock(return_value=None)
 
-            result = await bulk_reverse_lookup_wards(
-                [(51.549, -0.075), (51.536, -0.076)]
-            )
+            result = await bulk_reverse_lookup_wards([(51.549, -0.075), (51.536, -0.076)])
             assert result == ["Dalston", "Haggerston"]
 
     async def test_partial_results(self) -> None:
@@ -141,9 +139,7 @@ class TestBulkReverseLookup:
             mock_client.return_value.__aenter__ = AsyncMock(return_value=instance)
             mock_client.return_value.__aexit__ = AsyncMock(return_value=None)
 
-            result = await bulk_reverse_lookup_wards(
-                [(51.549, -0.075), (0.0, 0.0)]
-            )
+            result = await bulk_reverse_lookup_wards([(51.549, -0.075), (0.0, 0.0)])
             assert result == ["Dalston", None]
 
     async def test_api_error_returns_nones(self) -> None:

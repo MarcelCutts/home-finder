@@ -6,7 +6,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated, Any, Final, cast
 
-from fastapi import APIRouter, Depends, Query, Request
+from fastapi import APIRouter, Depends, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
 from starlette.responses import Response
@@ -39,32 +39,12 @@ from home_finder.models import (
 )
 from home_finder.utils.address import extract_outcode
 from home_finder.utils.image_cache import get_cache_dir, safe_dir_name, url_to_filename
+from home_finder.web.filters import VALID_SORT_OPTIONS, FilterDep
 
 logger = get_logger(__name__)
 
 router = APIRouter()
 templates = Jinja2Templates(directory=Path(__file__).parent / "templates")
-
-VALID_SORT_OPTIONS: Final = {"newest", "price_asc", "price_desc", "rating_desc", "fit_desc"}
-VALID_PROPERTY_TYPES: Final = {
-    "victorian",
-    "edwardian",
-    "georgian",
-    "new_build",
-    "purpose_built",
-    "warehouse",
-    "ex_council",
-    "period_conversion",
-}
-VALID_NATURAL_LIGHT: Final = {"excellent", "good", "fair", "poor"}
-VALID_HOB_TYPES: Final = {"gas", "induction", "electric"}
-VALID_VALUE_RATINGS: Final = {"excellent", "good", "fair", "poor"}
-VALID_FLOOR_LEVELS: Final = {"basement", "ground", "lower", "upper", "top"}
-VALID_BUILDING_CONSTRUCTION: Final = {"solid_brick", "concrete", "timber_frame", "mixed"}
-VALID_OFFICE_SEPARATION: Final = {"dedicated_room", "separate_area", "shared_space", "none"}
-VALID_HOSTING_LAYOUT: Final = {"excellent", "good", "awkward", "poor"}
-VALID_HOSTING_NOISE_RISK: Final = {"low", "moderate", "high"}
-VALID_BROADBAND_TYPE: Final = {"fttp", "fttc", "cable", "standard"}
 
 TAG_CATEGORIES: Final[dict[str, list[str]]] = {
     "Workspace": [
@@ -205,149 +185,10 @@ SearchAreasDep = Annotated[list[str], Depends(get_search_areas)]
 DataDirDep = Annotated[str, Depends(get_data_dir)]
 
 
-def _validate_filters(
-    *,
-    min_price: str | None,
-    max_price: str | None,
-    bedrooms: str | None,
-    min_rating: str | None,
-    area: str | None,
-    property_type: str | None,
-    outdoor_space: str | None,
-    natural_light: str | None,
-    pets: str | None,
-    value_rating: str | None,
-    hob_type: str | None,
-    floor_level: str | None,
-    building_construction: str | None,
-    office_separation: str | None,
-    hosting_layout: str | None,
-    hosting_noise_risk: str | None,
-    broadband_type: str | None,
-    tag: list[str],
-) -> dict[str, Any]:
-    """Validate and parse all filter params. Returns dict of validated values."""
-    min_price_val = _parse_optional_int(min_price)
-    max_price_val = _parse_optional_int(max_price)
-    bedrooms_val = _parse_optional_int(bedrooms)
-    min_rating_val = _parse_optional_int(min_rating)
-    area_val = area.strip() if area else None
-    if area_val == "":
-        area_val = None
-
-    if min_rating_val is not None:
-        min_rating_val = max(1, min(5, min_rating_val))
-    if bedrooms_val is not None:
-        bedrooms_val = max(0, min(10, bedrooms_val))
-
-    property_type_val = property_type.strip() if property_type else None
-    if property_type_val and property_type_val not in VALID_PROPERTY_TYPES:
-        property_type_val = None
-    outdoor_space_val = outdoor_space.strip().lower() if outdoor_space else None
-    if outdoor_space_val and outdoor_space_val not in ("yes", "no"):
-        outdoor_space_val = None
-    natural_light_val = natural_light.strip().lower() if natural_light else None
-    if natural_light_val and natural_light_val not in VALID_NATURAL_LIGHT:
-        natural_light_val = None
-    pets_val = pets.strip().lower() if pets else None
-    if pets_val and pets_val != "yes":
-        pets_val = None
-    value_rating_val = value_rating.strip().lower() if value_rating else None
-    if value_rating_val and value_rating_val not in VALID_VALUE_RATINGS:
-        value_rating_val = None
-    hob_type_val = hob_type.strip().lower() if hob_type else None
-    if hob_type_val and hob_type_val not in VALID_HOB_TYPES:
-        hob_type_val = None
-    floor_level_val = floor_level.strip().lower() if floor_level else None
-    if floor_level_val and floor_level_val not in VALID_FLOOR_LEVELS:
-        floor_level_val = None
-    building_construction_val = (
-        building_construction.strip().lower() if building_construction else None
-    )
-    if building_construction_val and building_construction_val not in VALID_BUILDING_CONSTRUCTION:
-        building_construction_val = None
-    office_separation_val = office_separation.strip().lower() if office_separation else None
-    if office_separation_val and office_separation_val not in VALID_OFFICE_SEPARATION:
-        office_separation_val = None
-    hosting_layout_val = hosting_layout.strip().lower() if hosting_layout else None
-    if hosting_layout_val and hosting_layout_val not in VALID_HOSTING_LAYOUT:
-        hosting_layout_val = None
-    hosting_noise_risk_val = hosting_noise_risk.strip().lower() if hosting_noise_risk else None
-    if hosting_noise_risk_val and hosting_noise_risk_val not in VALID_HOSTING_NOISE_RISK:
-        hosting_noise_risk_val = None
-    broadband_type_val = broadband_type.strip().lower() if broadband_type else None
-    if broadband_type_val and broadband_type_val not in VALID_BROADBAND_TYPE:
-        broadband_type_val = None
-
-    valid_tags = {v.value for v in PropertyHighlight} | {v.value for v in PropertyLowlight}
-    tags_val = [t for t in tag if t in valid_tags]
-
-    return {
-        "min_price": min_price_val,
-        "max_price": max_price_val,
-        "bedrooms": bedrooms_val,
-        "min_rating": min_rating_val,
-        "area": area_val,
-        "property_type": property_type_val,
-        "outdoor_space": outdoor_space_val,
-        "natural_light": natural_light_val,
-        "pets": pets_val,
-        "value_rating": value_rating_val,
-        "hob_type": hob_type_val,
-        "floor_level": floor_level_val,
-        "building_construction": building_construction_val,
-        "office_separation": office_separation_val,
-        "hosting_layout": hosting_layout_val,
-        "hosting_noise_risk": hosting_noise_risk_val,
-        "broadband_type": broadband_type_val,
-        "tags": tags_val,
-    }
-
-
 @router.get("/count")
-async def filter_count(
-    storage: StorageDep,
-    min_price: str | None = None,
-    max_price: str | None = None,
-    bedrooms: str | None = None,
-    min_rating: str | None = None,
-    area: str | None = None,
-    property_type: str | None = None,
-    outdoor_space: str | None = None,
-    natural_light: str | None = None,
-    pets: str | None = None,
-    value_rating: str | None = None,
-    hob_type: str | None = None,
-    floor_level: str | None = None,
-    building_construction: str | None = None,
-    office_separation: str | None = None,
-    hosting_layout: str | None = None,
-    hosting_noise_risk: str | None = None,
-    broadband_type: str | None = None,
-    tag: list[str] = Query(default=[]),
-) -> Response:
+async def filter_count(storage: StorageDep, filters: FilterDep) -> Response:
     """Lightweight count endpoint for live filter preview in modal."""
-    f = _validate_filters(
-        min_price=min_price,
-        max_price=max_price,
-        bedrooms=bedrooms,
-        min_rating=min_rating,
-        area=area,
-        property_type=property_type,
-        outdoor_space=outdoor_space,
-        natural_light=natural_light,
-        pets=pets,
-        value_rating=value_rating,
-        hob_type=hob_type,
-        floor_level=floor_level,
-        building_construction=building_construction,
-        office_separation=office_separation,
-        hosting_layout=hosting_layout,
-        hosting_noise_risk=hosting_noise_risk,
-        broadband_type=broadband_type,
-        tag=tag,
-    )
-    total = await storage.get_filter_count(**f)
+    total = await storage.get_filter_count(filters)
     return Response(str(total), media_type="text/plain")
 
 
@@ -373,68 +214,11 @@ async def dashboard(
     request: Request,
     storage: StorageDep,
     search_areas: SearchAreasDep,
+    filters: FilterDep,
     sort: str = "newest",
-    min_price: str | None = None,
-    max_price: str | None = None,
-    bedrooms: str | None = None,
-    min_rating: str | None = None,
-    area: str | None = None,
     page: str | None = None,
-    property_type: str | None = None,
-    outdoor_space: str | None = None,
-    natural_light: str | None = None,
-    pets: str | None = None,
-    value_rating: str | None = None,
-    hob_type: str | None = None,
-    floor_level: str | None = None,
-    building_construction: str | None = None,
-    office_separation: str | None = None,
-    hosting_layout: str | None = None,
-    hosting_noise_risk: str | None = None,
-    broadband_type: str | None = None,
-    tag: list[str] = Query(default=[]),
 ) -> HTMLResponse:
     """Dashboard page with property card grid."""
-    f = _validate_filters(
-        min_price=min_price,
-        max_price=max_price,
-        bedrooms=bedrooms,
-        min_rating=min_rating,
-        area=area,
-        property_type=property_type,
-        outdoor_space=outdoor_space,
-        natural_light=natural_light,
-        pets=pets,
-        value_rating=value_rating,
-        hob_type=hob_type,
-        floor_level=floor_level,
-        building_construction=building_construction,
-        office_separation=office_separation,
-        hosting_layout=hosting_layout,
-        hosting_noise_risk=hosting_noise_risk,
-        broadband_type=broadband_type,
-        tag=tag,
-    )
-
-    min_price_val = f["min_price"]
-    max_price_val = f["max_price"]
-    bedrooms_val = f["bedrooms"]
-    min_rating_val = f["min_rating"]
-    area_val = f["area"]
-    property_type_val = f["property_type"]
-    outdoor_space_val = f["outdoor_space"]
-    natural_light_val = f["natural_light"]
-    pets_val = f["pets"]
-    value_rating_val = f["value_rating"]
-    hob_type_val = f["hob_type"]
-    floor_level_val = f["floor_level"]
-    building_construction_val = f["building_construction"]
-    office_separation_val = f["office_separation"]
-    hosting_layout_val = f["hosting_layout"]
-    hosting_noise_risk_val = f["hosting_noise_risk"]
-    broadband_type_val = f["broadband_type"]
-    tags_val = f["tags"]
-
     page_val = _parse_optional_int(page) or 1
     page_val = max(1, page_val)
     sort = sort if sort in VALID_SORT_OPTIONS else "newest"
@@ -443,27 +227,7 @@ async def dashboard(
 
     try:
         properties, total = await storage.get_properties_paginated(
-            sort=sort,
-            min_price=min_price_val,
-            max_price=max_price_val,
-            bedrooms=bedrooms_val,
-            min_rating=min_rating_val,
-            area=area_val,
-            page=page_val,
-            per_page=per_page,
-            property_type=property_type_val,
-            outdoor_space=outdoor_space_val,
-            natural_light=natural_light_val,
-            pets=pets_val,
-            value_rating=value_rating_val,
-            hob_type=hob_type_val,
-            floor_level=floor_level_val,
-            building_construction=building_construction_val,
-            office_separation=office_separation_val,
-            hosting_layout=hosting_layout_val,
-            hosting_noise_risk=hosting_noise_risk_val,
-            broadband_type=broadband_type_val,
-            tags=tags_val,
+            filters, sort=sort, page=page_val, per_page=per_page
         )
     except Exception:
         logger.error("dashboard_query_failed", exc_info=True)
@@ -479,101 +243,11 @@ async def dashboard(
     # Build properties JSON for map view — all matching properties with coords,
     # not just the current page.
     try:
-        map_markers = await storage.get_map_markers(**f)
+        map_markers = await storage.get_map_markers(filters)
     except Exception:
         logger.error("map_markers_query_failed", exc_info=True)
         map_markers = []
     properties_json = json.dumps(map_markers)
-
-    # Build active filter descriptors for chips
-    active_filters: list[dict[str, str]] = []
-    if bedrooms_val is not None:
-        bed_label = "Studio" if bedrooms_val == 0 else f"{bedrooms_val} bed"
-        active_filters.append({"key": "bedrooms", "label": bed_label})
-    if min_price_val is not None:
-        active_filters.append({"key": "min_price", "label": f"Min £{min_price_val:,}"})
-    if max_price_val is not None:
-        active_filters.append({"key": "max_price", "label": f"Max £{max_price_val:,}"})
-    if min_rating_val is not None:
-        active_filters.append({"key": "min_rating", "label": f"{min_rating_val}+ stars"})
-    if area_val:
-        active_filters.append({"key": "area", "label": area_val})
-    if property_type_val:
-        pt_label = property_type_val.replace("_", " ").title()
-        active_filters.append({"key": "property_type", "label": pt_label})
-    if outdoor_space_val:
-        active_filters.append({"key": "outdoor_space", "label": f"Outdoor: {outdoor_space_val}"})
-    if natural_light_val:
-        active_filters.append(
-            {"key": "natural_light", "label": f"{natural_light_val.title()} light"}
-        )
-    if pets_val:
-        active_filters.append({"key": "pets", "label": "Pets allowed"})
-    if value_rating_val:
-        active_filters.append({"key": "value_rating", "label": f"{value_rating_val.title()} value"})
-    if hob_type_val:
-        active_filters.append({"key": "hob_type", "label": f"{hob_type_val.title()} hob"})
-    if floor_level_val:
-        active_filters.append({"key": "floor_level", "label": f"{floor_level_val.title()} floor"})
-    if building_construction_val:
-        bc_label = building_construction_val.replace("_", " ").title()
-        active_filters.append({"key": "building_construction", "label": bc_label})
-    if office_separation_val:
-        os_label = office_separation_val.replace("_", " ").title()
-        active_filters.append({"key": "office_separation", "label": os_label})
-    if hosting_layout_val:
-        active_filters.append(
-            {"key": "hosting_layout", "label": f"{hosting_layout_val.title()} hosting"}
-        )
-    if hosting_noise_risk_val:
-        active_filters.append(
-            {"key": "hosting_noise_risk", "label": f"{hosting_noise_risk_val.title()} noise risk"}
-        )
-    if broadband_type_val:
-        active_filters.append(
-            {"key": "broadband_type", "label": f"{broadband_type_val.upper()} broadband"}
-        )
-
-    for t in tags_val:
-        active_filters.append({"key": "tag", "label": t, "value": t})
-
-    any_quality_filter_active = any(
-        [
-            property_type_val,
-            outdoor_space_val,
-            natural_light_val,
-            pets_val,
-            value_rating_val,
-            hob_type_val,
-            floor_level_val,
-            building_construction_val,
-            office_separation_val,
-            hosting_layout_val,
-            hosting_noise_risk_val,
-            broadband_type_val,
-            tags_val,
-        ]
-    )
-
-    # Count of active secondary (modal) filters for badge display
-    secondary_filter_count = sum(
-        1
-        for v in [
-            property_type_val,
-            outdoor_space_val,
-            natural_light_val,
-            pets_val,
-            value_rating_val,
-            hob_type_val,
-            floor_level_val,
-            building_construction_val,
-            office_separation_val,
-            hosting_layout_val,
-            hosting_noise_risk_val,
-            broadband_type_val,
-        ]
-        if v is not None
-    ) + len(tags_val)
 
     highlight_values = {h.value for h in PropertyHighlight}
 
@@ -584,33 +258,16 @@ async def dashboard(
         "page": page_val,
         "total_pages": total_pages,
         "sort": sort,
-        "min_price": min_price_val,
-        "max_price": max_price_val,
-        "bedrooms": bedrooms_val,
-        "min_rating": min_rating_val,
-        "area": area_val,
         "source_names": SOURCE_NAMES,
         "source_badges": SOURCE_BADGES,
         "properties_json": properties_json,
         "search_areas": search_areas,
-        "active_filters": active_filters,
-        "property_type": property_type_val,
-        "outdoor_space": outdoor_space_val,
-        "natural_light": natural_light_val,
-        "pets": pets_val,
-        "value_rating": value_rating_val,
-        "hob_type": hob_type_val,
-        "floor_level": floor_level_val,
-        "building_construction": building_construction_val,
-        "office_separation": office_separation_val,
-        "hosting_layout": hosting_layout_val,
-        "hosting_noise_risk": hosting_noise_risk_val,
-        "broadband_type": broadband_type_val,
-        "any_quality_filter_active": any_quality_filter_active,
-        "tags": tags_val,
-        "secondary_filter_count": secondary_filter_count,
+        "active_filters": filters.active_filter_chips(),
+        "any_quality_filter_active": filters.quality_fields_active,
+        "secondary_filter_count": filters.secondary_filter_count,
         "tag_categories": TAG_CATEGORIES,
         "highlight_values": highlight_values,
+        **filters.model_dump(),
     }
 
     # HTMX partial rendering

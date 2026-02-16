@@ -19,6 +19,7 @@ from home_finder.models import (
     SpaceAnalysis,
     ValueAnalysis,
 )
+from home_finder.web.filters import PropertyFilter
 
 
 @pytest.fixture
@@ -302,7 +303,7 @@ class TestGetPropertiesPaginated:
         await storage.save_merged_property(merged_a)
         await storage.save_merged_property(merged_b)
 
-        props, total = await storage.get_properties_paginated(bedrooms=1)
+        props, total = await storage.get_properties_paginated(PropertyFilter(bedrooms=1))
         assert total == 1
         assert props[0]["bedrooms"] == 1
 
@@ -313,7 +314,7 @@ class TestGetPropertiesPaginated:
         await storage.save_merged_property(merged_a)
         await storage.save_merged_property(merged_b)
 
-        props, total = await storage.get_properties_paginated(min_price=2000)
+        props, total = await storage.get_properties_paginated(PropertyFilter(min_price=2000))
         assert total == 1
         assert props[0]["price_pcm"] >= 2000
 
@@ -324,7 +325,7 @@ class TestGetPropertiesPaginated:
         await storage.save_merged_property(merged_a)
         await storage.save_merged_property(merged_b)
 
-        props, total = await storage.get_properties_paginated(max_price=1950)
+        props, total = await storage.get_properties_paginated(PropertyFilter(max_price=1950))
         assert total == 1
         assert props[0]["price_pcm"] <= 1950
 
@@ -338,7 +339,7 @@ class TestGetPropertiesPaginated:
         await storage.save_merged_property(merged_a)
         await storage.save_merged_property(merged_b)
 
-        props, total = await storage.get_properties_paginated(area="E3")
+        props, total = await storage.get_properties_paginated(PropertyFilter(area="E3"))
         assert total == 1
         assert "E3" in props[0]["postcode"]
 
@@ -355,7 +356,7 @@ class TestGetPropertiesPaginated:
         await storage.save_merged_property(merged_b)
         await storage.save_quality_analysis(prop_a.unique_id, sample_analysis)
 
-        props, total = await storage.get_properties_paginated(min_rating=4)
+        props, total = await storage.get_properties_paginated(PropertyFilter(min_rating=4))
         assert total == 1
         assert props[0]["quality_rating"] >= 4
 

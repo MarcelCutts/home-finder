@@ -55,19 +55,19 @@ def estimate_true_monthly_cost(
         if borough_rates:
             council_tax = borough_rates.get(band)
     if council_tax is not None and council_tax_band:
-        items.append({
-            "label": "Council tax",
-            "amount": council_tax,
-            "note": f"Band {council_tax_band.upper()}, {borough}",
-        })
+        items.append(
+            {
+                "label": "Council tax",
+                "amount": council_tax,
+                "note": f"Band {council_tax_band.upper()}, {borough}",
+            }
+        )
         total += council_tax
 
     # Energy
     energy: int | None = None
     if not bills_included:
-        has_known_epc = bool(
-            epc_rating and epc_rating.upper() not in ("", "UNKNOWN")
-        )
+        has_known_epc = bool(epc_rating and epc_rating.upper() not in ("", "UNKNOWN"))
         rating = epc_rating.upper() if epc_rating and has_known_epc else "D"
         energy_band = ENERGY_COSTS_MONTHLY.get(rating)
         if energy_band:
@@ -96,32 +96,38 @@ def estimate_true_monthly_cost(
 
     # Service charge
     if service_charge_pcm is not None:
-        items.append({
-            "label": "Service charge",
-            "amount": service_charge_pcm,
-            "note": "from listing",
-        })
+        items.append(
+            {
+                "label": "Service charge",
+                "amount": service_charge_pcm,
+                "note": "from listing",
+            }
+        )
         total += service_charge_pcm
     elif property_type and property_type != "unknown":
         sc_range = SERVICE_CHARGE_RANGES.get(property_type)
         if sc_range:
-            items.append({
-                "label": "Service charge",
-                "amount": None,
-                "note": (
-                    f"~\u00a3{sc_range['typical_low']}-{sc_range['typical_high']}"
-                    f"/mo ({property_type.replace('_', ' ')})"
-                ),
-                "range_low": sc_range["typical_low"],
-                "range_high": sc_range["typical_high"],
-            })
+            items.append(
+                {
+                    "label": "Service charge",
+                    "amount": None,
+                    "note": (
+                        f"~\u00a3{sc_range['typical_low']}-{sc_range['typical_high']}"
+                        f"/mo ({property_type.replace('_', ' ')})"
+                    ),
+                    "range_low": sc_range["typical_low"],
+                    "range_high": sc_range["typical_high"],
+                }
+            )
 
     if bills_included:
-        items.append({
-            "label": "Bills",
-            "amount": 0,
-            "note": "included in rent",
-        })
+        items.append(
+            {
+                "label": "Bills",
+                "amount": 0,
+                "note": "included in rent",
+            }
+        )
 
     # Compute total range when service charge is an estimate range
     total_high: int | None = None

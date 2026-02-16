@@ -28,12 +28,14 @@ uv run home-finder --max-per-scraper 5  # Limit results per scraper (for testing
 uv run home-finder --serve              # Web dashboard + recurring pipeline scheduler
 uv run home-finder --debug              # Enable debug-level logging
 
-# Testing — timeout is already configured in pyproject.toml addopts (30s default).
+# Testing — runs in parallel by default via pytest-xdist (-n auto in addopts).
+# Timeout is already configured in pyproject.toml addopts (30s default).
 # Do NOT pass --timeout on the command line; it's handled automatically.
 # PYTHONUNBUFFERED=1 prevents hanging when stdout is piped (e.g. Claude Code).
-PYTHONUNBUFFERED=1 uv run pytest                         # Run all tests (slow tests excluded by default)
+PYTHONUNBUFFERED=1 uv run pytest                         # Run all tests in parallel (slow tests excluded by default)
 PYTHONUNBUFFERED=1 uv run pytest tests/test_models.py    # Run specific test file
 PYTHONUNBUFFERED=1 uv run pytest -k "test_openrent"      # Run tests matching pattern
+PYTHONUNBUFFERED=1 uv run pytest -n0 tests/test_foo.py   # Run single-threaded (useful for debugging)
 PYTHONUNBUFFERED=1 uv run pytest --cov=src               # Run with coverage
 PYTHONUNBUFFERED=1 uv run pytest -m slow                 # Run slow tests (real network scraping)
 

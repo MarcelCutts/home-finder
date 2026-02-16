@@ -2,6 +2,7 @@
 
 import asyncio
 import base64
+import json as _json
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Final, Literal
 
@@ -404,9 +405,6 @@ EVALUATION_TOOL: Final[dict[str, Any]] = _build_tool_schema(
     _EvaluationResponse,
     strict=True,
 )
-
-
-import json as _json
 
 
 def _clean_value(val: Any) -> Any:

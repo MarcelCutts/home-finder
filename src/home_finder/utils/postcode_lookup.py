@@ -55,9 +55,7 @@ async def reverse_lookup_ward(lat: float, lon: float) -> str | None:
             ward: str | None = result[0].get("admin_ward")
             return ward
         except httpx.HTTPError:
-            logger.warning(
-                "reverse_lookup_failed", lat=lat, lon=lon, exc_info=True
-            )
+            logger.warning("reverse_lookup_failed", lat=lat, lon=lon, exc_info=True)
             return None
 
 
@@ -78,9 +76,7 @@ async def bulk_reverse_lookup_wards(
         # Process in batches of 100 (API limit)
         for batch_start in range(0, len(coords), 100):
             batch = coords[batch_start : batch_start + 100]
-            geolocations = [
-                {"latitude": lat, "longitude": lon} for lat, lon in batch
-            ]
+            geolocations = [{"latitude": lat, "longitude": lon} for lat, lon in batch]
 
             try:
                 resp = await client.post(

@@ -1,10 +1,12 @@
 """SQLite storage for tracked properties."""
 
+from __future__ import annotations
+
 import contextlib
 import json
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Any, Final, TypedDict, cast
+from typing import TYPE_CHECKING, Any, Final, TypedDict, cast
 
 import aiosqlite
 from pydantic import HttpUrl
@@ -25,6 +27,9 @@ from home_finder.models import (
     TrackedProperty,
     TransportMode,
 )
+
+if TYPE_CHECKING:
+    from home_finder.web.filters import PropertyFilter
 
 # Default lookback window for cross-platform dedup anchors
 _DEDUP_LOOKBACK_DAYS: Final = 30
@@ -578,9 +583,7 @@ class PropertyStorage:
         )
         rows = await cursor.fetchall()
 
-        results = [
-            await self._row_to_merged_property(row, load_images=False) for row in rows
-        ]
+        results = [await self._row_to_merged_property(row, load_images=False) for row in rows]
 
         logger.info("loaded_unenriched_properties", count=len(results))
         return results
@@ -1491,27 +1494,12 @@ class PropertyStorage:
 
     @staticmethod
     def _build_filter_clauses(
-        *,
-        min_price: int | None = None,
-        max_price: int | None = None,
-        bedrooms: int | None = None,
-        min_rating: int | None = None,
-        area: str | None = None,
-        property_type: str | None = None,
-        outdoor_space: str | None = None,
-        natural_light: str | None = None,
-        pets: str | None = None,
-        value_rating: str | None = None,
-        hob_type: str | None = None,
-        floor_level: str | None = None,
-        building_construction: str | None = None,
-        office_separation: str | None = None,
-        hosting_layout: str | None = None,
-        hosting_noise_risk: str | None = None,
-        broadband_type: str | None = None,
-        tags: list[str] | None = None,
+        filters: PropertyFilter,
     ) -> tuple[str, list[Any]]:
         """Build WHERE clause and params for property filtering.
+
+        Args:
+            filters: Validated filter parameters.
 
         Returns:
             Tuple of (where_sql, params).
@@ -1531,72 +1519,72 @@ class PropertyStorage:
         ]
         params: list[Any] = []
 
-        if min_price is not None:
+        if filters.min_price is not None:
             where_clauses.append("p.price_pcm >= ?")
-            params.append(min_price)
-        if max_price is not None:
+            params.append(filters.min_price)
+        if filters.max_price is not None:
             where_clauses.append("p.price_pcm <= ?")
-            params.append(max_price)
-        if bedrooms is not None:
+            params.append(filters.max_price)
+        if filters.bedrooms is not None:
             where_clauses.append("p.bedrooms = ?")
-            params.append(bedrooms)
-        if min_rating is not None:
+            params.append(filters.bedrooms)
+        if filters.min_rating is not None:
             where_clauses.append("q.overall_rating >= ?")
-            params.append(min_rating)
-        if area:
+            params.append(filters.min_rating)
+        if filters.area:
             where_clauses.append("UPPER(p.postcode) LIKE ?")
-            params.append(f"{area.upper()}%")
-        if property_type:
+            params.append(f"{filters.area.upper()}%")
+        if filters.property_type:
             where_clauses.append(
                 "json_extract(q.analysis_json, '$.listing_extraction.property_type') = ?"
             )
-            params.append(property_type)
-        if outdoor_space == "yes":
+            params.append(filters.property_type)
+        if filters.outdoor_space == "yes":
             where_clauses.append("q.has_outdoor_space = 1")
-        elif outdoor_space == "no":
+        elif filters.outdoor_space == "no":
             where_clauses.append("(q.has_outdoor_space = 0 OR q.has_outdoor_space IS NULL)")
-        if natural_light:
+        if filters.natural_light:
             where_clauses.append("json_extract(q.analysis_json, '$.light_space.natural_light') = ?")
-            params.append(natural_light)
-        if pets == "yes":
+            params.append(filters.natural_light)
+        if filters.pets == "yes":
             where_clauses.append(
                 "json_extract(q.analysis_json, '$.listing_extraction.pets_allowed') = 'yes'"
             )
-        if value_rating:
+        if filters.value_rating:
             where_clauses.append(
                 "(json_extract(q.analysis_json, '$.value.quality_adjusted_rating') = ?"
                 " OR json_extract(q.analysis_json, '$.value.rating') = ?)"
             )
-            params.extend([value_rating, value_rating])
-        if hob_type:
+            params.extend([filters.value_rating, filters.value_rating])
+        if filters.hob_type:
             where_clauses.append("json_extract(q.analysis_json, '$.kitchen.hob_type') = ?")
-            params.append(hob_type)
-        if floor_level:
+            params.append(filters.hob_type)
+        if filters.floor_level:
             where_clauses.append("json_extract(q.analysis_json, '$.light_space.floor_level') = ?")
-            params.append(floor_level)
-        if building_construction:
+            params.append(filters.floor_level)
+        if filters.building_construction:
             where_clauses.append(
                 "json_extract(q.analysis_json, '$.flooring_noise.building_construction') = ?"
             )
-            params.append(building_construction)
-        if office_separation:
+            params.append(filters.building_construction)
+        if filters.office_separation:
             where_clauses.append("json_extract(q.analysis_json, '$.bedroom.office_separation') = ?")
-            params.append(office_separation)
-        if hosting_layout:
+            params.append(filters.office_separation)
+        if filters.hosting_layout:
             where_clauses.append("json_extract(q.analysis_json, '$.space.hosting_layout') = ?")
-            params.append(hosting_layout)
-        if hosting_noise_risk:
+            params.append(filters.hosting_layout)
+        if filters.hosting_noise_risk:
             where_clauses.append(
                 "json_extract(q.analysis_json, '$.flooring_noise.hosting_noise_risk') = ?"
             )
-            params.append(hosting_noise_risk)
-        if broadband_type:
+            params.append(filters.hosting_noise_risk)
+        if filters.broadband_type:
             where_clauses.append(
                 "json_extract(q.analysis_json, '$.listing_extraction.broadband_type') = ?"
             )
-            params.append(broadband_type)
-        if tags:
-            for t in tags:
+            params.append(filters.broadband_type)
+        if filters.tags:
+            for t in filters.tags:
                 where_clauses.append(
                     "(json_extract(q.analysis_json, '$.highlights') LIKE ?"
                     " OR json_extract(q.analysis_json, '$.lowlights') LIKE ?)"
@@ -1609,52 +1597,18 @@ class PropertyStorage:
 
     async def get_filter_count(
         self,
-        *,
-        min_price: int | None = None,
-        max_price: int | None = None,
-        bedrooms: int | None = None,
-        min_rating: int | None = None,
-        area: str | None = None,
-        property_type: str | None = None,
-        outdoor_space: str | None = None,
-        natural_light: str | None = None,
-        pets: str | None = None,
-        value_rating: str | None = None,
-        hob_type: str | None = None,
-        floor_level: str | None = None,
-        building_construction: str | None = None,
-        office_separation: str | None = None,
-        hosting_layout: str | None = None,
-        hosting_noise_risk: str | None = None,
-        broadband_type: str | None = None,
-        tags: list[str] | None = None,
+        filters: PropertyFilter,
     ) -> int:
         """Get count of properties matching filters (no data fetch).
+
+        Args:
+            filters: Validated filter parameters.
 
         Returns:
             Total count of matching properties.
         """
         conn = await self._get_connection()
-        where_sql, params = self._build_filter_clauses(
-            min_price=min_price,
-            max_price=max_price,
-            bedrooms=bedrooms,
-            min_rating=min_rating,
-            area=area,
-            property_type=property_type,
-            outdoor_space=outdoor_space,
-            natural_light=natural_light,
-            pets=pets,
-            value_rating=value_rating,
-            hob_type=hob_type,
-            floor_level=floor_level,
-            building_construction=building_construction,
-            office_separation=office_separation,
-            hosting_layout=hosting_layout,
-            hosting_noise_risk=hosting_noise_risk,
-            broadband_type=broadband_type,
-            tags=tags,
-        )
+        where_sql, params = self._build_filter_clauses(filters)
         cursor = await conn.execute(
             f"""
             SELECT COUNT(*) FROM properties p
@@ -1668,55 +1622,25 @@ class PropertyStorage:
 
     async def get_map_markers(
         self,
-        *,
-        min_price: int | None = None,
-        max_price: int | None = None,
-        bedrooms: int | None = None,
-        min_rating: int | None = None,
-        area: str | None = None,
-        property_type: str | None = None,
-        outdoor_space: str | None = None,
-        natural_light: str | None = None,
-        pets: str | None = None,
-        value_rating: str | None = None,
-        hob_type: str | None = None,
-        floor_level: str | None = None,
-        building_construction: str | None = None,
-        office_separation: str | None = None,
-        hosting_layout: str | None = None,
-        hosting_noise_risk: str | None = None,
-        broadband_type: str | None = None,
-        tags: list[str] | None = None,
+        filters: PropertyFilter | None = None,
     ) -> list[dict[str, Any]]:
         """Get lightweight map marker data for all matching properties with coordinates.
 
         Same filters as get_properties_paginated but no pagination and only
         map-relevant columns. Returns only properties that have lat/lon.
 
+        Args:
+            filters: Validated filter parameters. Defaults to no filters.
+
         Returns:
             List of dicts with map marker fields.
         """
+        if filters is None:
+            from home_finder.web.filters import PropertyFilter as PF
+
+            filters = PF()
         conn = await self._get_connection()
-        where_sql, params = self._build_filter_clauses(
-            min_price=min_price,
-            max_price=max_price,
-            bedrooms=bedrooms,
-            min_rating=min_rating,
-            area=area,
-            property_type=property_type,
-            outdoor_space=outdoor_space,
-            natural_light=natural_light,
-            pets=pets,
-            value_rating=value_rating,
-            hob_type=hob_type,
-            floor_level=floor_level,
-            building_construction=building_construction,
-            office_separation=office_separation,
-            hosting_layout=hosting_layout,
-            hosting_noise_risk=hosting_noise_risk,
-            broadband_type=broadband_type,
-            tags=tags,
-        )
+        where_sql, params = self._build_filter_clauses(filters)
         cursor = await conn.execute(
             f"""
             SELECT p.unique_id, p.latitude, p.longitude, p.price_pcm,
@@ -1754,56 +1678,30 @@ class PropertyStorage:
 
     async def get_properties_paginated(
         self,
+        filters: PropertyFilter | None = None,
         *,
         sort: str = "newest",
-        min_price: int | None = None,
-        max_price: int | None = None,
-        bedrooms: int | None = None,
-        min_rating: int | None = None,
-        area: str | None = None,
         page: int = 1,
         per_page: int = 24,
-        property_type: str | None = None,
-        outdoor_space: str | None = None,
-        natural_light: str | None = None,
-        pets: str | None = None,
-        value_rating: str | None = None,
-        hob_type: str | None = None,
-        floor_level: str | None = None,
-        building_construction: str | None = None,
-        office_separation: str | None = None,
-        hosting_layout: str | None = None,
-        hosting_noise_risk: str | None = None,
-        broadband_type: str | None = None,
-        tags: list[str] | None = None,
     ) -> tuple[list[PropertyListItem], int]:
         """Get paginated properties with optional filters.
+
+        Args:
+            filters: Validated filter parameters. Defaults to no filters.
+            sort: Sort order key.
+            page: Page number (1-indexed).
+            per_page: Items per page.
 
         Returns:
             Tuple of (property dicts, total count).
         """
+        if filters is None:
+            from home_finder.web.filters import PropertyFilter as PF
+
+            filters = PF()
         conn = await self._get_connection()
 
-        where_sql, params = self._build_filter_clauses(
-            min_price=min_price,
-            max_price=max_price,
-            bedrooms=bedrooms,
-            min_rating=min_rating,
-            area=area,
-            property_type=property_type,
-            outdoor_space=outdoor_space,
-            natural_light=natural_light,
-            pets=pets,
-            value_rating=value_rating,
-            hob_type=hob_type,
-            floor_level=floor_level,
-            building_construction=building_construction,
-            office_separation=office_separation,
-            hosting_layout=hosting_layout,
-            hosting_noise_risk=hosting_noise_risk,
-            broadband_type=broadband_type,
-            tags=tags,
-        )
+        where_sql, params = self._build_filter_clauses(filters)
 
         order_map = {
             "newest": "p.first_seen DESC",
@@ -2027,20 +1925,36 @@ class PropertyStorage:
         """
         prop = merged.canonical
         sources_json = json.dumps([s.value for s in merged.sources])
-        source_urls_json = json.dumps(
-            {s.value: str(url) for s, url in merged.source_urls.items()}
-        )
+        source_urls_json = json.dumps({s.value: str(url) for s, url in merged.source_urls.items()})
         descriptions_json = (
             json.dumps({s.value: d for s, d in merged.descriptions.items()})
             if merged.descriptions
             else None
         )
         columns: list[str] = [
-            "unique_id", "source", "source_id", "url", "title", "price_pcm",
-            "bedrooms", "address", "postcode", "latitude", "longitude",
-            "description", "image_url", "available_from", "first_seen",
-            "commute_minutes", "transport_mode", "notification_status",
-            "sources", "source_urls", "min_price", "max_price", "descriptions_json",
+            "unique_id",
+            "source",
+            "source_id",
+            "url",
+            "title",
+            "price_pcm",
+            "bedrooms",
+            "address",
+            "postcode",
+            "latitude",
+            "longitude",
+            "description",
+            "image_url",
+            "available_from",
+            "first_seen",
+            "commute_minutes",
+            "transport_mode",
+            "notification_status",
+            "sources",
+            "source_urls",
+            "min_price",
+            "max_price",
+            "descriptions_json",
         ]
         values: list[Any] = [
             prop.unique_id,

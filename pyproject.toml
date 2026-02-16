@@ -48,7 +48,7 @@ home-finder = "home_finder.main:main"
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 testpaths = ["tests"]
-addopts = "--tb=short -p no:cacheprovider -m 'not slow and not browser' --disable-socket --allow-unix-socket --timeout=30"
+addopts = "--tb=short -p no:cacheprovider -m 'not slow and not browser' --disable-socket --allow-unix-socket --timeout=30 -n auto"
 timeout_func_only = true
 markers = [
     "unit: Unit tests (fast, no I/O)",
@@ -69,6 +69,7 @@ select = ["E", "F", "I", "UP", "B", "SIM", "RUF", "C4", "PTH"]
 
 [tool.ruff.lint.per-file-ignores]
 "src/home_finder/web/routes.py" = ["B008"]  # FastAPI Depends() in defaults
+"src/home_finder/web/filters.py" = ["B008"]  # FastAPI Query() in defaults
 "tests/integration/*.py" = ["E402"]  # imports after pytestmark for Crawlee state reset
 "tests/test_filters/test_quality_prompts.py" = ["E501", "RUF001"]  # inline-snapshot strings
 

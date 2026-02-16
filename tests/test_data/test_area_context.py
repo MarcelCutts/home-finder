@@ -44,7 +44,17 @@ class TestDataLoading:
         with_micro = {k for k, v in AREA_CONTEXT.items() if "micro_areas" in v}
         without_micro = set(AREA_CONTEXT.keys()) - with_micro
         assert with_micro == {
-            "E2", "E3", "E5", "E8", "E9", "E10", "E15", "E17", "N15", "N16", "N17",
+            "E2",
+            "E3",
+            "E5",
+            "E8",
+            "E9",
+            "E10",
+            "E15",
+            "E17",
+            "N15",
+            "N16",
+            "N17",
         }
         assert without_micro == set()
 
@@ -187,8 +197,7 @@ class TestWardMapping:
     def test_all_outcodes_with_micro_areas_have_ward_mappings(self) -> None:
         """Every outcode that has micro-areas should have at least one ward mapping."""
         outcodes_with_micro = {
-            k for k, v in AREA_CONTEXT.items()
-            if isinstance(v, dict) and "micro_areas" in v
+            k for k, v in AREA_CONTEXT.items() if isinstance(v, dict) and "micro_areas" in v
         }
         outcodes_with_wards = {outcode for outcode, _ in WARD_TO_MICRO_AREA.keys()}
         missing = outcodes_with_micro - outcodes_with_wards
@@ -212,7 +221,9 @@ class TestWardMapping:
         """E2 straddles Hackney and Tower Hamlets."""
         assert get_micro_area_for_ward("Haggerston", "E2") == "Haggerston / Queensbridge"
         assert get_micro_area_for_ward("Weavers", "E2") == "Weavers / Brick Lane Fringe"
-        assert get_micro_area_for_ward("Bethnal Green West", "E2") == "Bethnal Green / Cambridge Heath"
+        assert (
+            get_micro_area_for_ward("Bethnal Green West", "E2") == "Bethnal Green / Cambridge Heath"
+        )
 
 
 class TestTextMicroAreaMatching:
@@ -293,9 +304,7 @@ class TestHostingTolerance:
     def test_ratings_are_valid(self) -> None:
         valid_ratings = {"high", "moderate", "low"}
         for outcode, data in HOSTING_TOLERANCE.items():
-            assert data["rating"] in valid_ratings, (
-                f"{outcode}: invalid rating '{data['rating']}'"
-            )
+            assert data["rating"] in valid_ratings, f"{outcode}: invalid rating '{data['rating']}'"
 
     def test_required_fields_present(self) -> None:
         for outcode, data in HOSTING_TOLERANCE.items():
@@ -352,9 +361,7 @@ class TestCreativeScene:
         for outcode, data in CREATIVE_SCENE.items():
             for field in list_fields:
                 if field in data:
-                    assert isinstance(data[field], list), (
-                        f"{outcode}: {field} not a list"
-                    )
+                    assert isinstance(data[field], list), f"{outcode}: {field} not a list"
 
     def test_e8_has_venues(self) -> None:
         """E8 (Dalston/Hackney) should have multiple venues."""

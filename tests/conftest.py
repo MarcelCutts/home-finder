@@ -73,7 +73,7 @@ def _cleanup_aiosqlite_threads():
     """
     yield
 
-    from aiosqlite.core import Connection, _STOP_RUNNING_SENTINEL
+    from aiosqlite.core import _STOP_RUNNING_SENTINEL, Connection
 
     leaked = False
 

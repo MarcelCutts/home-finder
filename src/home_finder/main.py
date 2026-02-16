@@ -678,7 +678,9 @@ async def _run_concurrent_analysis(
     semaphore = asyncio.Semaphore(_QUALITY_CONCURRENCY)
     count = 0
 
-    async def _bounded(merged: MergedProperty) -> tuple[MergedProperty, PropertyQualityAnalysis | None]:
+    async def _bounded(
+        merged: MergedProperty,
+    ) -> tuple[MergedProperty, PropertyQualityAnalysis | None]:
         async with semaphore:
             return await analyze_fn(merged)
 
@@ -764,12 +766,16 @@ async def _run_quality_and_save(
     else:
         logger.info("skipping_quality_analysis", reason="not_configured")
 
-    async def _analyze(merged: MergedProperty) -> tuple[MergedProperty, PropertyQualityAnalysis | None]:
+    async def _analyze(
+        merged: MergedProperty,
+    ) -> tuple[MergedProperty, PropertyQualityAnalysis | None]:
         if quality_filter:
             return await quality_filter.analyze_single_merged(merged, data_dir=settings.data_dir)
         return merged, None
 
-    async def _handle_result(merged: MergedProperty, quality_analysis: PropertyQualityAnalysis | None) -> None:
+    async def _handle_result(
+        merged: MergedProperty, quality_analysis: PropertyQualityAnalysis | None
+    ) -> None:
         commute_info = pre.commute_lookup.get(merged.canonical.unique_id)
         await _save_one(merged, commute_info, quality_analysis, storage)
         await on_result(merged, commute_info, quality_analysis)
@@ -1115,10 +1121,15 @@ async def run_reanalysis(
         completed = 0
         failed = 0
 
-        async def _analyze(merged: MergedProperty) -> tuple[MergedProperty, PropertyQualityAnalysis | None]:
+        async def _analyze(
+            merged: MergedProperty,
+        ) -> tuple[MergedProperty, PropertyQualityAnalysis | None]:
             return await quality_filter.analyze_single_merged(merged, data_dir=settings.data_dir)
 
-        async def _handle_result(merged: MergedProperty, quality_analysis: PropertyQualityAnalysis | None) -> None:
+        async def _handle_result(
+            merged: MergedProperty,
+            quality_analysis: PropertyQualityAnalysis | None,
+        ) -> None:
             nonlocal completed, failed
             if quality_analysis:
                 await storage.complete_reanalysis(merged.unique_id, quality_analysis)

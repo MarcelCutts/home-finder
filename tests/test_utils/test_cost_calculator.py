@@ -61,9 +61,7 @@ class TestRentOnly:
 
 class TestCouncilTax:
     def test_hackney_band_c(self) -> None:
-        result = estimate_true_monthly_cost(
-            rent_pcm=1800, borough="Hackney", council_tax_band="C"
-        )
+        result = estimate_true_monthly_cost(rent_pcm=1800, borough="Hackney", council_tax_band="C")
         ct = _get_item(result, "Council tax")
         assert ct["amount"] == HACKNEY_BAND_C
         assert ct["note"] == "Band C, Hackney"
@@ -76,12 +74,8 @@ class TestCouncilTax:
         assert ct["amount"] == TOWER_HAMLETS_BAND_A
 
     def test_added_to_total(self) -> None:
-        result = estimate_true_monthly_cost(
-            rent_pcm=1800, borough="Hackney", council_tax_band="D"
-        )
-        assert result["total"] == (
-            1800 + HACKNEY_BAND_D + ENERGY_D_1BED + WATER_1BED + BROADBAND
-        )
+        result = estimate_true_monthly_cost(rent_pcm=1800, borough="Hackney", council_tax_band="D")
+        assert result["total"] == (1800 + HACKNEY_BAND_D + ENERGY_D_1BED + WATER_1BED + BROADBAND)
 
     def test_missing_borough_skips(self) -> None:
         result = estimate_true_monthly_cost(rent_pcm=1800, council_tax_band="C")
@@ -98,15 +92,11 @@ class TestCouncilTax:
         assert "Council tax" not in _get_labels(result)
 
     def test_bogus_borough_skips(self) -> None:
-        result = estimate_true_monthly_cost(
-            rent_pcm=1800, borough="Narnia", council_tax_band="C"
-        )
+        result = estimate_true_monthly_cost(rent_pcm=1800, borough="Narnia", council_tax_band="C")
         assert "Council tax" not in _get_labels(result)
 
     def test_case_insensitive_band(self) -> None:
-        result = estimate_true_monthly_cost(
-            rent_pcm=1800, borough="Hackney", council_tax_band="c"
-        )
+        result = estimate_true_monthly_cost(rent_pcm=1800, borough="Hackney", council_tax_band="c")
         ct = _get_item(result, "Council tax")
         assert ct["amount"] == HACKNEY_BAND_C
 
@@ -119,9 +109,7 @@ class TestEnergy:
         assert energy["note"] == "EPC B est."
 
     def test_epc_c_2bed(self) -> None:
-        result = estimate_true_monthly_cost(
-            rent_pcm=1800, epc_rating="C", bedrooms=2
-        )
+        result = estimate_true_monthly_cost(rent_pcm=1800, epc_rating="C", bedrooms=2)
         energy = _get_item(result, "Energy")
         assert energy["amount"] == ENERGY_C_2BED
         assert energy["note"] == "EPC C est."
@@ -211,18 +199,14 @@ class TestBillsIncluded:
 
 class TestServiceCharge:
     def test_known_amount(self) -> None:
-        result = estimate_true_monthly_cost(
-            rent_pcm=1800, service_charge_pcm=200
-        )
+        result = estimate_true_monthly_cost(rent_pcm=1800, service_charge_pcm=200)
         sc = _get_item(result, "Service charge")
         assert sc["amount"] == 200
         assert sc["note"] == "from listing"
 
     def test_known_zero(self) -> None:
         """Explicitly zero service charge should appear with £0."""
-        result = estimate_true_monthly_cost(
-            rent_pcm=1800, service_charge_pcm=0
-        )
+        result = estimate_true_monthly_cost(rent_pcm=1800, service_charge_pcm=0)
         sc = _get_item(result, "Service charge")
         assert sc["amount"] == 0
 
@@ -237,9 +221,7 @@ class TestServiceCharge:
         assert sc["amount"] == 100  # Not the new_build range
 
     def test_range_estimate_new_build(self) -> None:
-        result = estimate_true_monthly_cost(
-            rent_pcm=1800, property_type="new_build"
-        )
+        result = estimate_true_monthly_cost(rent_pcm=1800, property_type="new_build")
         sc = _get_item(result, "Service charge")
         assert sc["amount"] is None
         assert sc["range_low"] == 200
@@ -248,22 +230,16 @@ class TestServiceCharge:
     def test_range_adds_low_end_to_total(self) -> None:
         """Range estimate adds low-end to total for conservative estimate."""
         base = estimate_true_monthly_cost(rent_pcm=1800)
-        with_range = estimate_true_monthly_cost(
-            rent_pcm=1800, property_type="new_build"
-        )
+        with_range = estimate_true_monthly_cost(rent_pcm=1800, property_type="new_build")
         assert with_range["total"] == base["total"] + 200  # range_low
         assert with_range["total_high"] == base["total"] + 450  # range_high
 
     def test_unknown_type_skips(self) -> None:
-        result = estimate_true_monthly_cost(
-            rent_pcm=1800, property_type="unknown"
-        )
+        result = estimate_true_monthly_cost(rent_pcm=1800, property_type="unknown")
         assert "Service charge" not in _get_labels(result)
 
     def test_bogus_type_skips(self) -> None:
-        result = estimate_true_monthly_cost(
-            rent_pcm=1800, property_type="spaceship"
-        )
+        result = estimate_true_monthly_cost(rent_pcm=1800, property_type="spaceship")
         assert "Service charge" not in _get_labels(result)
 
 
@@ -300,12 +276,12 @@ class TestFullBreakdown:
             service_charge_pcm=150,
         )
         expected = (
-            1800          # rent
-            + HACKNEY_BAND_D   # council tax
-            + ENERGY_C_2BED    # energy
-            + WATER_2BED       # water
-            + BROADBAND        # broadband
-            + 150              # service charge
+            1800  # rent
+            + HACKNEY_BAND_D  # council tax
+            + ENERGY_C_2BED  # energy
+            + WATER_2BED  # water
+            + BROADBAND  # broadband
+            + 150  # service charge
         )
         assert result["total"] == expected
         # Also verify: 1800 + 164 + 110 + 50 + 25 + 150 = 2299
@@ -338,12 +314,8 @@ class TestFullBreakdown:
             ("Tower Hamlets", "A", TOWER_HAMLETS_BAND_A),
         ],
     )
-    def test_council_tax_lookup_matrix(
-        self, borough: str, band: str, expected: int
-    ) -> None:
-        result = estimate_true_monthly_cost(
-            rent_pcm=1800, borough=borough, council_tax_band=band
-        )
+    def test_council_tax_lookup_matrix(self, borough: str, band: str, expected: int) -> None:
+        result = estimate_true_monthly_cost(rent_pcm=1800, borough=borough, council_tax_band=band)
         ct = _get_item(result, "Council tax")
         assert ct["amount"] == expected
 
@@ -357,11 +329,7 @@ class TestFullBreakdown:
             ("G", 1, ENERGY_G_1BED),
         ],
     )
-    def test_energy_lookup_matrix(
-        self, epc: str, bedrooms: int, expected: int
-    ) -> None:
-        result = estimate_true_monthly_cost(
-            rent_pcm=1800, epc_rating=epc, bedrooms=bedrooms
-        )
+    def test_energy_lookup_matrix(self, epc: str, bedrooms: int, expected: int) -> None:
+        result = estimate_true_monthly_cost(rent_pcm=1800, epc_rating=epc, bedrooms=bedrooms)
         energy = _get_item(result, "Energy")
         assert energy["amount"] == expected

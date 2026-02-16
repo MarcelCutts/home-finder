@@ -497,7 +497,10 @@ class TestCardRendering:
 
     @pytest.mark.asyncio
     async def test_commute_pill_rendered(
-        self, client: TestClient, storage: PropertyStorage, merged_a: MergedProperty,
+        self,
+        client: TestClient,
+        storage: PropertyStorage,
+        merged_a: MergedProperty,
     ) -> None:
         await storage.save_merged_property(merged_a, commute_minutes=25)
         resp = client.get("/")
@@ -528,11 +531,16 @@ class TestCardRendering:
         merged_a: MergedProperty,
         base_analysis: PropertyQualityAnalysis,
     ) -> None:
-        analysis = base_analysis.model_copy(update={
-            "value": ValueAnalysis(
-                area_average=2200, difference=-300, rating="excellent", note="Below avg",
-            ),
-        })
+        analysis = base_analysis.model_copy(
+            update={
+                "value": ValueAnalysis(
+                    area_average=2200,
+                    difference=-300,
+                    rating="excellent",
+                    note="Below avg",
+                ),
+            }
+        )
         await storage.save_merged_property(merged_a)
         await storage.save_quality_analysis(prop_a.unique_id, analysis)
         resp = client.get("/")
@@ -728,7 +736,10 @@ class TestCombinedFilters:
 
     @pytest.mark.asyncio
     async def test_all_filters(
-        self, client: TestClient, storage: PropertyStorage, merged_a: MergedProperty,
+        self,
+        client: TestClient,
+        storage: PropertyStorage,
+        merged_a: MergedProperty,
     ) -> None:
         await storage.save_merged_property(merged_a)  # 1 bed, 1900, E8
         resp = client.get("/?bedrooms=1&min_price=1500&max_price=2000&area=E8")
@@ -737,7 +748,10 @@ class TestCombinedFilters:
 
     @pytest.mark.asyncio
     async def test_htmx_partial_with_filters(
-        self, client: TestClient, storage: PropertyStorage, merged_a: MergedProperty,
+        self,
+        client: TestClient,
+        storage: PropertyStorage,
+        merged_a: MergedProperty,
     ) -> None:
         await storage.save_merged_property(merged_a)
         resp = client.get("/?bedrooms=1&area=E8", headers={"HX-Request": "true"})
@@ -756,7 +770,10 @@ class TestFilterChips:
 
     @pytest.mark.asyncio
     async def test_chips_rendered_with_filters(
-        self, client: TestClient, storage: PropertyStorage, merged_a: MergedProperty,
+        self,
+        client: TestClient,
+        storage: PropertyStorage,
+        merged_a: MergedProperty,
     ) -> None:
         await storage.save_merged_property(merged_a)
         resp = client.get("/?bedrooms=1")
@@ -772,7 +789,10 @@ class TestFilterChips:
 
     @pytest.mark.asyncio
     async def test_chips_in_htmx_partial(
-        self, client: TestClient, storage: PropertyStorage, merged_a: MergedProperty,
+        self,
+        client: TestClient,
+        storage: PropertyStorage,
+        merged_a: MergedProperty,
     ) -> None:
         await storage.save_merged_property(merged_a)
         resp = client.get("/?area=E8", headers={"HX-Request": "true"})
@@ -782,7 +802,10 @@ class TestFilterChips:
 
     @pytest.mark.asyncio
     async def test_multiple_chips(
-        self, client: TestClient, storage: PropertyStorage, merged_a: MergedProperty,
+        self,
+        client: TestClient,
+        storage: PropertyStorage,
+        merged_a: MergedProperty,
     ) -> None:
         await storage.save_merged_property(merged_a)
         resp = client.get("/?bedrooms=1&min_price=1500&area=E8")
@@ -836,9 +859,11 @@ class TestQualityFilters:
         merged_a: MergedProperty,
         base_analysis: PropertyQualityAnalysis,
     ) -> None:
-        analysis = base_analysis.model_copy(update={
-            "listing_extraction": ListingExtraction(property_type="warehouse"),
-        })
+        analysis = base_analysis.model_copy(
+            update={
+                "listing_extraction": ListingExtraction(property_type="warehouse"),
+            }
+        )
         await storage.save_merged_property(merged_a)
         await storage.save_quality_analysis(prop_a.unique_id, analysis)
 
@@ -879,11 +904,13 @@ class TestQualityFilters:
         merged_a: MergedProperty,
         base_analysis: PropertyQualityAnalysis,
     ) -> None:
-        analysis = base_analysis.model_copy(update={
-            "listing_extraction": ListingExtraction(property_type="warehouse"),
-            "light_space": LightSpaceAnalysis(natural_light="excellent"),
-            "outdoor_space": OutdoorSpaceAnalysis(has_balcony=True),
-        })
+        analysis = base_analysis.model_copy(
+            update={
+                "listing_extraction": ListingExtraction(property_type="warehouse"),
+                "light_space": LightSpaceAnalysis(natural_light="excellent"),
+                "outdoor_space": OutdoorSpaceAnalysis(has_balcony=True),
+            }
+        )
         await storage.save_merged_property(merged_a)
         await storage.save_quality_analysis(prop_a.unique_id, analysis)
 
@@ -936,7 +963,10 @@ class TestStudioSupport:
 
     @pytest.mark.asyncio
     async def test_studio_filter(
-        self, client: TestClient, storage: PropertyStorage, merged_studio: MergedProperty,
+        self,
+        client: TestClient,
+        storage: PropertyStorage,
+        merged_studio: MergedProperty,
     ) -> None:
         await storage.save_merged_property(merged_studio)
         resp = client.get("/?bedrooms=0")
@@ -945,7 +975,10 @@ class TestStudioSupport:
 
     @pytest.mark.asyncio
     async def test_studio_chip_label(
-        self, client: TestClient, storage: PropertyStorage, merged_studio: MergedProperty,
+        self,
+        client: TestClient,
+        storage: PropertyStorage,
+        merged_studio: MergedProperty,
     ) -> None:
         await storage.save_merged_property(merged_studio)
         resp = client.get("/?bedrooms=0")
@@ -955,7 +988,10 @@ class TestStudioSupport:
 
     @pytest.mark.asyncio
     async def test_studio_card_badge(
-        self, client: TestClient, storage: PropertyStorage, merged_studio: MergedProperty,
+        self,
+        client: TestClient,
+        storage: PropertyStorage,
+        merged_studio: MergedProperty,
     ) -> None:
         await storage.save_merged_property(merged_studio)
         resp = client.get("/")
@@ -973,7 +1009,10 @@ class TestAriaLive:
 
     @pytest.mark.asyncio
     async def test_count_announced_with_results(
-        self, client: TestClient, storage: PropertyStorage, merged_a: MergedProperty,
+        self,
+        client: TestClient,
+        storage: PropertyStorage,
+        merged_a: MergedProperty,
     ) -> None:
         await storage.save_merged_property(merged_a)
         resp = client.get("/")
@@ -1005,9 +1044,11 @@ class TestNewFilters:
         merged_a: MergedProperty,
         base_analysis: PropertyQualityAnalysis,
     ) -> None:
-        analysis = base_analysis.model_copy(update={
-            "bedroom": BedroomAnalysis(office_separation="dedicated_room"),
-        })
+        analysis = base_analysis.model_copy(
+            update={
+                "bedroom": BedroomAnalysis(office_separation="dedicated_room"),
+            }
+        )
         await storage.save_merged_property(merged_a)
         await storage.save_quality_analysis(prop_a.unique_id, analysis)
 
@@ -1028,9 +1069,11 @@ class TestNewFilters:
         merged_a: MergedProperty,
         base_analysis: PropertyQualityAnalysis,
     ) -> None:
-        analysis = base_analysis.model_copy(update={
-            "space": SpaceAnalysis(confidence="high", hosting_layout="excellent"),
-        })
+        analysis = base_analysis.model_copy(
+            update={
+                "space": SpaceAnalysis(confidence="high", hosting_layout="excellent"),
+            }
+        )
         await storage.save_merged_property(merged_a)
         await storage.save_quality_analysis(prop_a.unique_id, analysis)
 
@@ -1051,9 +1094,11 @@ class TestNewFilters:
         merged_a: MergedProperty,
         base_analysis: PropertyQualityAnalysis,
     ) -> None:
-        analysis = base_analysis.model_copy(update={
-            "flooring_noise": FlooringNoiseAnalysis(hosting_noise_risk="low"),
-        })
+        analysis = base_analysis.model_copy(
+            update={
+                "flooring_noise": FlooringNoiseAnalysis(hosting_noise_risk="low"),
+            }
+        )
         await storage.save_merged_property(merged_a)
         await storage.save_quality_analysis(prop_a.unique_id, analysis)
 
@@ -1074,9 +1119,11 @@ class TestNewFilters:
         merged_a: MergedProperty,
         base_analysis: PropertyQualityAnalysis,
     ) -> None:
-        analysis = base_analysis.model_copy(update={
-            "listing_extraction": ListingExtraction(broadband_type="fttp"),
-        })
+        analysis = base_analysis.model_copy(
+            update={
+                "listing_extraction": ListingExtraction(broadband_type="fttp"),
+            }
+        )
         await storage.save_merged_property(merged_a)
         await storage.save_quality_analysis(prop_a.unique_id, analysis)
 
@@ -1299,7 +1346,10 @@ class TestReanalysisEndpoint:
 
     @pytest.mark.asyncio
     async def test_reanalyze_no_analysis_404(
-        self, client: TestClient, storage: PropertyStorage, merged_a: MergedProperty,
+        self,
+        client: TestClient,
+        storage: PropertyStorage,
+        merged_a: MergedProperty,
     ) -> None:
         """Property without quality analysis returns 404."""
         await storage.save_merged_property(merged_a)
@@ -1361,11 +1411,15 @@ class TestCostBreakdown:
         prop_a: Property,
         base_analysis: PropertyQualityAnalysis,
     ) -> None:
-        analysis = base_analysis.model_copy(update={
-            "listing_extraction": ListingExtraction(
-                property_type="victorian", epc_rating="D", council_tax_band="C",
-            ),
-        })
+        analysis = base_analysis.model_copy(
+            update={
+                "listing_extraction": ListingExtraction(
+                    property_type="victorian",
+                    epc_rating="D",
+                    council_tax_band="C",
+                ),
+            }
+        )
         await storage.save_merged_property(merged_a)
         await storage.save_quality_analysis(prop_a.unique_id, analysis)
 
@@ -1382,9 +1436,11 @@ class TestCostBreakdown:
         prop_a: Property,
         base_analysis: PropertyQualityAnalysis,
     ) -> None:
-        analysis = base_analysis.model_copy(update={
-            "listing_extraction": ListingExtraction(),
-        })
+        analysis = base_analysis.model_copy(
+            update={
+                "listing_extraction": ListingExtraction(),
+            }
+        )
         await storage.save_merged_property(merged_a)
         await storage.save_quality_analysis(prop_a.unique_id, analysis)
 
@@ -1412,9 +1468,11 @@ class TestAcousticCard:
         base_analysis: PropertyQualityAnalysis,
     ) -> None:
         """E8 property should show Sound info in compact area summary."""
-        analysis = base_analysis.model_copy(update={
-            "listing_extraction": ListingExtraction(property_type="victorian"),
-        })
+        analysis = base_analysis.model_copy(
+            update={
+                "listing_extraction": ListingExtraction(property_type="victorian"),
+            }
+        )
         await storage.save_merged_property(merged_a)
         await storage.save_quality_analysis(prop_a.unique_id, analysis)
 
@@ -1425,7 +1483,9 @@ class TestAcousticCard:
 
     @pytest.mark.asyncio
     async def test_area_section_absent_without_area_context(
-        self, client: TestClient, storage: PropertyStorage,
+        self,
+        client: TestClient,
+        storage: PropertyStorage,
     ) -> None:
         """Property with unknown outcode should not show area section."""
         prop = Property(
@@ -1462,9 +1522,11 @@ class TestAcousticCard:
         base_analysis: PropertyQualityAnalysis,
     ) -> None:
         """Full acoustic/noise details live on /area/{outcode}, not detail page."""
-        analysis = base_analysis.model_copy(update={
-            "listing_extraction": ListingExtraction(property_type="victorian"),
-        })
+        analysis = base_analysis.model_copy(
+            update={
+                "listing_extraction": ListingExtraction(property_type="victorian"),
+            }
+        )
         await storage.save_merged_property(merged_a)
         await storage.save_quality_analysis(prop_a.unique_id, analysis)
 
@@ -1523,7 +1585,10 @@ class TestAreaRoute:
 class TestDetailMicroAreaMatching:
     @pytest.mark.asyncio
     async def test_detail_shows_matched_micro_area_via_ward(
-        self, client: TestClient, storage: PropertyStorage, merged_a: MergedProperty,
+        self,
+        client: TestClient,
+        storage: PropertyStorage,
+        merged_a: MergedProperty,
     ) -> None:
         """When a property has a ward, compact area card shows micro-area name."""
         await storage.save_merged_property(merged_a, ward="London Fields")
@@ -1533,7 +1598,10 @@ class TestDetailMicroAreaMatching:
 
     @pytest.mark.asyncio
     async def test_detail_shows_area_guide_link(
-        self, client: TestClient, storage: PropertyStorage, merged_a: MergedProperty,
+        self,
+        client: TestClient,
+        storage: PropertyStorage,
+        merged_a: MergedProperty,
     ) -> None:
         """Detail page should link to full area guide."""
         await storage.save_merged_property(merged_a, ward="London Fields")
@@ -1544,7 +1612,10 @@ class TestDetailMicroAreaMatching:
 
     @pytest.mark.asyncio
     async def test_detail_text_fallback_when_no_ward(
-        self, client: TestClient, storage: PropertyStorage, merged_a: MergedProperty,
+        self,
+        client: TestClient,
+        storage: PropertyStorage,
+        merged_a: MergedProperty,
     ) -> None:
         """Without a ward, text-based matching is used as fallback."""
         await storage.save_merged_property(merged_a)
@@ -1563,7 +1634,10 @@ class TestHostingToleranceCard:
 
     @pytest.mark.asyncio
     async def test_hosting_badge_renders_for_e8(
-        self, client: TestClient, storage: PropertyStorage, merged_a: MergedProperty,
+        self,
+        client: TestClient,
+        storage: PropertyStorage,
+        merged_a: MergedProperty,
     ) -> None:
         """E8 property should show Hosting info in compact area summary."""
         await storage.save_merged_property(merged_a, ward="London Fields")
@@ -1580,7 +1654,9 @@ class TestHostingToleranceCard:
 
     @pytest.mark.asyncio
     async def test_hosting_badge_absent_for_unknown_outcode(
-        self, client: TestClient, storage: PropertyStorage,
+        self,
+        client: TestClient,
+        storage: PropertyStorage,
     ) -> None:
         """Property with unknown outcode should not show area summary."""
         prop = Property(
@@ -1616,23 +1692,31 @@ class TestHostingToleranceCard:
         base_analysis: PropertyQualityAnalysis,
     ) -> None:
         """Detail page fit score should reflect area hosting tolerance."""
-        analysis = base_analysis.model_copy(update={
-            "light_space": LightSpaceAnalysis(
-                natural_light="good", feels_spacious=True, ceiling_height="high",
-            ),
-            "space": SpaceAnalysis(
-                living_room_sqm=18.0, is_spacious_enough=True,
-                confidence="high", hosting_layout="good",
-            ),
-            "bedroom": BedroomAnalysis(
-                primary_is_double="yes", can_fit_desk="yes",
-                office_separation="dedicated_room",
-            ),
-            "flooring_noise": FlooringNoiseAnalysis(
-                has_double_glazing="yes", building_construction="solid_brick",
-            ),
-            "listing_extraction": ListingExtraction(property_type="victorian"),
-        })
+        analysis = base_analysis.model_copy(
+            update={
+                "light_space": LightSpaceAnalysis(
+                    natural_light="good",
+                    feels_spacious=True,
+                    ceiling_height="high",
+                ),
+                "space": SpaceAnalysis(
+                    living_room_sqm=18.0,
+                    is_spacious_enough=True,
+                    confidence="high",
+                    hosting_layout="good",
+                ),
+                "bedroom": BedroomAnalysis(
+                    primary_is_double="yes",
+                    can_fit_desk="yes",
+                    office_separation="dedicated_room",
+                ),
+                "flooring_noise": FlooringNoiseAnalysis(
+                    has_double_glazing="yes",
+                    building_construction="solid_brick",
+                ),
+                "listing_extraction": ListingExtraction(property_type="victorian"),
+            }
+        )
         await storage.save_merged_property(merged_a)
         await storage.save_quality_analysis(prop_a.unique_id, analysis)
         resp = client.get(f"/property/{merged_a.unique_id}")
