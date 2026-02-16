@@ -1148,6 +1148,72 @@ class TestFloorplanNoteInUserPrompt:
         assert note_pos < tool_pos
 
 
+class TestHostingToleranceInPrompts:
+    """Tests for the hosting_tolerance parameter in prompt builders."""
+
+    def test_user_prompt_with_hosting_tolerance(self) -> None:
+        """Hosting tolerance should appear in area context when provided."""
+        prompt = build_user_prompt(
+            price_pcm=1800,
+            bedrooms=1,
+            area_average=1900,
+            area_context="Trendy East London",
+            outcode="E8",
+            hosting_tolerance="moderate — Cultural tolerance high but strict enforcement",
+        )
+        assert "Hosting tolerance: moderate" in prompt
+        assert "strict enforcement" in prompt
+
+    def test_user_prompt_without_hosting_tolerance(self) -> None:
+        """Hosting tolerance line should be absent when None."""
+        prompt = build_user_prompt(
+            price_pcm=1800,
+            bedrooms=1,
+            area_average=1900,
+            area_context="Trendy East London",
+            outcode="E8",
+            hosting_tolerance=None,
+        )
+        assert "Hosting tolerance" not in prompt
+
+    def test_user_prompt_hosting_tolerance_without_area_context(self) -> None:
+        """Hosting tolerance should not appear without area context."""
+        prompt = build_user_prompt(
+            price_pcm=1800,
+            bedrooms=1,
+            area_average=1900,
+            hosting_tolerance="high — Best window of opportunity",
+        )
+        assert "Hosting tolerance" not in prompt
+
+    def test_evaluation_prompt_with_hosting_tolerance(self) -> None:
+        """Hosting tolerance should appear in evaluation prompt when provided."""
+        prompt = build_evaluation_prompt(
+            visual_data={"summary": "test"},
+            price_pcm=1800,
+            bedrooms=1,
+            area_average=1900,
+            area_context="Creative corridor",
+            outcode="N15",
+            hosting_tolerance="high — Tottenham Hale creative corridor",
+        )
+        assert "Hosting tolerance: high" in prompt
+        assert "Tottenham Hale" in prompt
+
+    def test_evaluation_prompt_without_hosting_tolerance(self) -> None:
+        """Hosting tolerance should be absent in evaluation prompt when None."""
+        prompt = build_evaluation_prompt(
+            visual_data={"summary": "test"},
+            price_pcm=1800,
+            bedrooms=1,
+            area_average=1900,
+            area_context="Creative corridor",
+            outcode="N15",
+            hosting_tolerance=None,
+        )
+        assert "Hosting tolerance" not in prompt
+
+
 class TestAcousticContextInEvaluationPrompt:
     """Tests for the acoustic_context parameter in build_evaluation_prompt."""
 

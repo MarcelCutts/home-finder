@@ -232,6 +232,7 @@ def _format_property_context(
     crime_summary: str | None = None,
     rent_trend: str | None = None,
     energy_estimate: int | None = None,
+    hosting_tolerance: str | None = None,
 ) -> str:
     """Format shared property/area/description context for prompts."""
     diff = price_pcm - area_average
@@ -259,6 +260,8 @@ def _format_property_context(
             parts.append(f"\nCrime: {crime_summary}")
         if rent_trend:
             parts.append(f"\nRent trend: {rent_trend}")
+        if hosting_tolerance:
+            parts.append(f"\nHosting tolerance: {hosting_tolerance}")
         parts.append("\n</area_context>")
 
     if description:
@@ -281,6 +284,7 @@ def build_user_prompt(
     rent_trend: str | None = None,
     *,
     energy_estimate: int | None = None,
+    hosting_tolerance: str | None = None,
     has_labeled_floorplan: bool = True,
 ) -> str:
     """Build the user prompt with property-specific context.
@@ -300,6 +304,7 @@ def build_user_prompt(
         crime_summary=crime_summary,
         rent_trend=rent_trend,
         energy_estimate=energy_estimate,
+        hosting_tolerance=hosting_tolerance,
     )
 
     if features:
@@ -337,6 +342,7 @@ def build_evaluation_prompt(
     crime_summary: str | None = None,
     rent_trend: str | None = None,
     energy_estimate: int | None = None,
+    hosting_tolerance: str | None = None,
     acoustic_context: str | None = None,
 ) -> str:
     """Build the Phase 2 evaluation prompt with Phase 1 output and property context."""
@@ -355,6 +361,7 @@ def build_evaluation_prompt(
         crime_summary=crime_summary,
         rent_trend=rent_trend,
         energy_estimate=energy_estimate,
+        hosting_tolerance=hosting_tolerance,
     )
 
     if acoustic_context:

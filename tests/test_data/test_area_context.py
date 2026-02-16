@@ -6,7 +6,9 @@ from home_finder.data.area_context import (
     ACOUSTIC_PROFILES,
     AREA_CONTEXT,
     BROADBAND_COSTS_MONTHLY,
+    CREATIVE_SCENE,
     ENERGY_COSTS_MONTHLY,
+    HOSTING_TOLERANCE,
     NOISE_ENFORCEMENT,
     SERVICE_CHARGE_RANGES,
     WARD_TO_MICRO_AREA,
@@ -277,3 +279,99 @@ class TestCostData:
             assert sc_range["typical_low"] < sc_range["typical_high"], (
                 f"{prop_type}: typical_low >= typical_high"
             )
+
+
+class TestHostingTolerance:
+    def test_hosting_tolerance_loaded(self) -> None:
+        assert isinstance(HOSTING_TOLERANCE, dict)
+        assert len(HOSTING_TOLERANCE) > 0
+
+    def test_expected_outcodes_present(self) -> None:
+        expected = {"E2", "E3", "E5", "E8", "E9", "E10", "E15", "E17", "N15", "N16", "N17"}
+        assert set(HOSTING_TOLERANCE.keys()) == expected
+
+    def test_ratings_are_valid(self) -> None:
+        valid_ratings = {"high", "moderate", "low"}
+        for outcode, data in HOSTING_TOLERANCE.items():
+            assert data["rating"] in valid_ratings, (
+                f"{outcode}: invalid rating '{data['rating']}'"
+            )
+
+    def test_required_fields_present(self) -> None:
+        for outcode, data in HOSTING_TOLERANCE.items():
+            assert "rating" in data, f"{outcode} missing 'rating'"
+            assert "notes" in data, f"{outcode} missing 'notes'"
+            assert isinstance(data["notes"], str)
+            assert len(data["notes"]) > 10, f"{outcode} notes too short"
+
+    def test_n15_rated_high(self) -> None:
+        """N15 (Tottenham Hale creative corridor) should be rated high."""
+        assert HOSTING_TOLERANCE["N15"]["rating"] == "high"
+
+    def test_n16_rated_low(self) -> None:
+        """N16 (Stoke Newington families) should be rated low."""
+        assert HOSTING_TOLERANCE["N16"]["rating"] == "low"
+
+    def test_friendly_areas_are_lists(self) -> None:
+        for outcode, data in HOSTING_TOLERANCE.items():
+            if "known_friendly_areas" in data:
+                assert isinstance(data["known_friendly_areas"], list), (
+                    f"{outcode}: known_friendly_areas not a list"
+                )
+
+    def test_sensitive_areas_are_lists(self) -> None:
+        for outcode, data in HOSTING_TOLERANCE.items():
+            if "known_sensitive_areas" in data:
+                assert isinstance(data["known_sensitive_areas"], list), (
+                    f"{outcode}: known_sensitive_areas not a list"
+                )
+
+    def test_all_outcodes_exist_in_area_context(self) -> None:
+        """Every outcode in HOSTING_TOLERANCE must also exist in AREA_CONTEXT."""
+        missing = set(HOSTING_TOLERANCE.keys()) - set(AREA_CONTEXT.keys())
+        assert not missing, f"HOSTING_TOLERANCE outcodes not in AREA_CONTEXT: {missing}"
+
+
+class TestCreativeScene:
+    def test_creative_scene_loaded(self) -> None:
+        assert isinstance(CREATIVE_SCENE, dict)
+        assert len(CREATIVE_SCENE) > 0
+
+    def test_expected_outcodes_present(self) -> None:
+        expected = {"E2", "E3", "E5", "E8", "E9", "E10", "E15", "E17", "N15", "N16", "N17"}
+        assert set(CREATIVE_SCENE.keys()) == expected
+
+    def test_structure_valid(self) -> None:
+        for outcode, data in CREATIVE_SCENE.items():
+            assert "summary" in data, f"{outcode} missing 'summary'"
+            assert isinstance(data["summary"], str)
+            assert len(data["summary"]) > 10, f"{outcode} summary too short"
+
+    def test_list_fields_are_lists(self) -> None:
+        list_fields = ["rehearsal_spaces", "venues", "creative_hubs"]
+        for outcode, data in CREATIVE_SCENE.items():
+            for field in list_fields:
+                if field in data:
+                    assert isinstance(data[field], list), (
+                        f"{outcode}: {field} not a list"
+                    )
+
+    def test_e8_has_venues(self) -> None:
+        """E8 (Dalston/Hackney) should have multiple venues."""
+        assert len(CREATIVE_SCENE["E8"]["venues"]) >= 3
+
+    def test_e2_has_rehearsal_spaces(self) -> None:
+        """E2 should have rehearsal spaces from research."""
+        assert len(CREATIVE_SCENE["E2"]["rehearsal_spaces"]) >= 3
+
+    def test_all_outcodes_exist_in_area_context(self) -> None:
+        """Every outcode in CREATIVE_SCENE must also exist in AREA_CONTEXT."""
+        missing = set(CREATIVE_SCENE.keys()) - set(AREA_CONTEXT.keys())
+        assert not missing, f"CREATIVE_SCENE outcodes not in AREA_CONTEXT: {missing}"
+
+    def test_creative_scene_matches_hosting_tolerance_outcodes(self) -> None:
+        """CREATIVE_SCENE and HOSTING_TOLERANCE should cover the same outcodes."""
+        assert set(CREATIVE_SCENE.keys()) == set(HOSTING_TOLERANCE.keys()), (
+            f"Mismatch: creative_scene={set(CREATIVE_SCENE.keys())}, "
+            f"hosting_tolerance={set(HOSTING_TOLERANCE.keys())}"
+        )

@@ -86,6 +86,7 @@
         <ul class="section-nav-links">
             {% if qa %}<li><a href="#section-overview">Overview</a></li>{% endif %}
             {% if qa %}<li><a href="#section-quality">Quality</a></li>{% endif %}
+            {% if qa and qa.viewing_notes and (qa.viewing_notes.check_items or qa.viewing_notes.questions_for_agent or qa.viewing_notes.deal_breaker_tests) %}<li><a href="#section-viewing">Viewing Prep</a></li>{% endif %}
             {% if prop.floorplan_images %}<li><a href="#section-floorplan">Floorplan</a></li>{% endif %}
             {% if best_description %}<li><a href="#section-description">Description</a></li>{% endif %}
             {% if prop.latitude and prop.longitude %}<li><a href="#section-location">Location</a></li>{% endif %}
@@ -152,6 +153,53 @@
             {% endif %}
             {% endif %}
         </div>
+        {% endif %}
+
+        {# Listing Details — compact KV grid (moved from quality card) #}
+        {% if qa.listing_extraction %}
+        {% set le = qa.listing_extraction %}
+        {% set has_listing_data = (le.epc_rating and le.epc_rating != 'unknown') or le.service_charge_pcm or le.deposit_weeks is not none or le.bills_included != 'unknown' or le.pets_allowed != 'unknown' or (le.parking and le.parking != 'unknown') or (le.council_tax_band and le.council_tax_band != 'unknown') or (le.property_type and le.property_type != 'unknown') or (le.furnished_status and le.furnished_status != 'unknown') or (le.broadband_type and le.broadband_type != 'unknown') %}
+        {% if has_listing_data %}
+        <div class="listing-details-section">
+            <h4 class="section-subhead">Listing Details</h4>
+            <div class="listing-kv-grid">
+                {% if le.property_type and le.property_type != 'unknown' %}
+                <div class="listing-kv-item"><span class="listing-kv-label">Type</span><span class="listing-kv-value">{{ le.property_type | replace("_", " ") | title }}</span></div>
+                {% endif %}
+                {% if le.epc_rating and le.epc_rating != 'unknown' %}
+                <div class="listing-kv-item"><span class="listing-kv-label">EPC</span><span class="listing-kv-value">Band {{ le.epc_rating }}</span></div>
+                {% endif %}
+                {% if le.service_charge_pcm %}
+                <div class="listing-kv-item"><span class="listing-kv-label">Service Charge</span><span class="listing-kv-value">&pound;{{ le.service_charge_pcm }}/mo</span></div>
+                {% endif %}
+                {% if le.deposit_weeks is not none %}
+                <div class="listing-kv-item"><span class="listing-kv-label">Deposit</span><span class="listing-kv-value">{{ le.deposit_weeks }} weeks</span></div>
+                {% endif %}
+                {% if le.bills_included == 'yes' %}
+                <div class="listing-kv-item"><span class="listing-kv-label">Bills</span><span class="listing-kv-value">Included</span></div>
+                {% elif le.bills_included == 'no' %}
+                <div class="listing-kv-item"><span class="listing-kv-label">Bills</span><span class="listing-kv-value">Not included</span></div>
+                {% endif %}
+                {% if le.pets_allowed == 'yes' %}
+                <div class="listing-kv-item"><span class="listing-kv-label">Pets</span><span class="listing-kv-value">Allowed</span></div>
+                {% elif le.pets_allowed == 'no' %}
+                <div class="listing-kv-item"><span class="listing-kv-label">Pets</span><span class="listing-kv-value">Not allowed</span></div>
+                {% endif %}
+                {% if le.parking and le.parking != 'unknown' %}
+                <div class="listing-kv-item"><span class="listing-kv-label">Parking</span><span class="listing-kv-value">{{ le.parking | capitalize }}</span></div>
+                {% endif %}
+                {% if le.council_tax_band and le.council_tax_band != 'unknown' %}
+                <div class="listing-kv-item"><span class="listing-kv-label">Council Tax</span><span class="listing-kv-value">Band {{ le.council_tax_band }}</span></div>
+                {% endif %}
+                {% if le.furnished_status and le.furnished_status != 'unknown' %}
+                <div class="listing-kv-item"><span class="listing-kv-label">Furnished</span><span class="listing-kv-value">{{ le.furnished_status | replace("_", " ") | capitalize }}</span></div>
+                {% endif %}
+                {% if le.broadband_type and le.broadband_type != 'unknown' %}
+                <div class="listing-kv-item"><span class="listing-kv-label">Broadband</span><span class="listing-kv-value">{{ le.broadband_type | upper }}</span></div>
+                {% endif %}
+            </div>
+        </div>
+        {% endif %}
         {% endif %}
 
         {% if cost_breakdown or (fit_score is not none and fit_breakdown) %}
@@ -246,6 +294,61 @@
     {# 2. Quality Analysis — room-by-room breakdown #}
     {% include "_quality_card.html" %}
 
+    {# 2b. Viewing Prep — actionable checklist promoted to top-level section #}
+    {% if qa and qa.viewing_notes %}
+    {% set vn = qa.viewing_notes %}
+    {% if vn.check_items or vn.questions_for_agent or vn.deal_breaker_tests %}
+    <section id="section-viewing" class="detail-section">
+        <h3>Viewing Prep</h3>
+        {% if vn.check_items %}
+        <div class="viewing-checklist-group">
+            <div class="viewing-group-header" onclick="this.nextElementSibling.classList.toggle('open');this.querySelector('.viewing-group-toggle').classList.toggle('expanded')">
+                <h4>Things to Check</h4>
+                <span class="viewing-group-toggle">&#9660;</span>
+            </div>
+            <div class="viewing-group-body open">
+                <ul class="viewing-checklist">
+                {% for item in vn.check_items %}
+                    <li>{{ item }}</li>
+                {% endfor %}
+                </ul>
+            </div>
+        </div>
+        {% endif %}
+        {% if vn.questions_for_agent %}
+        <div class="viewing-checklist-group">
+            <div class="viewing-group-header" onclick="this.nextElementSibling.classList.toggle('open');this.querySelector('.viewing-group-toggle').classList.toggle('expanded')">
+                <h4>Ask the Agent</h4>
+                <span class="viewing-group-toggle">&#9660;</span>
+            </div>
+            <div class="viewing-group-body open">
+                <ul class="viewing-checklist">
+                {% for q in vn.questions_for_agent %}
+                    <li>{{ q }}</li>
+                {% endfor %}
+                </ul>
+            </div>
+        </div>
+        {% endif %}
+        {% if vn.deal_breaker_tests %}
+        <div class="viewing-checklist-group">
+            <div class="viewing-group-header" onclick="this.nextElementSibling.classList.toggle('open');this.querySelector('.viewing-group-toggle').classList.toggle('expanded')">
+                <h4>Quick Tests</h4>
+                <span class="viewing-group-toggle">&#9660;</span>
+            </div>
+            <div class="viewing-group-body open">
+                <ul class="viewing-checklist">
+                {% for t in vn.deal_breaker_tests %}
+                    <li>{{ t }}</li>
+                {% endfor %}
+                </ul>
+            </div>
+        </div>
+        {% endif %}
+    </section>
+    {% endif %}
+    {% endif %}
+
     {# 3. Floorplan — spatial understanding #}
     {% if prop.floorplan_images %}
     <section id="section-floorplan" class="detail-section">
@@ -279,20 +382,17 @@
     </section>
     {% endif %}
 
-    {# 6. Area Context — supplementary info #}
+    {# 6. Area Context — compact summary card (full details on /area/{outcode}) #}
     {% if area_context and area_context.description %}
     <section id="section-area" class="detail-section">
         <h3>Area: {{ outcode }}</h3>
-        <p class="area-description">{{ area_context.description }}</p>
-
-        {% if area_context.matched_micro_area %}
-        {% set ma_name = area_context.matched_micro_area.name %}
-        {% set ma = area_context.matched_micro_area.data %}
-        <h4 class="section-subhead">Your Neighbourhood</h4>
-        <div class="neighbourhood-feature">
-            <div class="micro-area-header">
+        <div class="area-summary-card">
+            {% if area_context.matched_micro_area %}
+            {% set ma_name = area_context.matched_micro_area.name %}
+            {% set ma = area_context.matched_micro_area.data %}
+            <div class="area-summary-header">
                 <strong>{{ ma_name }}</strong>
-                <span class="micro-area-badges">
+                <span class="area-summary-badges">
                     {% if ma.hosting_tolerance %}
                     <span class="badge {% if ma.hosting_tolerance == 'high' %}badge-green{% elif ma.hosting_tolerance == 'moderate' %}badge-amber{% else %}badge-red{% endif %}">Hosting: {{ ma.hosting_tolerance }}</span>
                     {% endif %}
@@ -301,109 +401,40 @@
                     {% endif %}
                 </span>
             </div>
-            {% if ma.character %}<p>{{ ma.character }}</p>{% endif %}
-            {% if ma.transport %}<p class="micro-area-detail"><span class="micro-area-detail-label">Transport</span> {{ ma.transport }}</p>{% endif %}
-            {% if ma.broadband %}<p class="micro-area-detail"><span class="micro-area-detail-label">Broadband</span> {{ ma.broadband }}</p>{% endif %}
-            {% if ma.creative_scene %}<p class="micro-area-detail"><span class="micro-area-detail-label">Creative</span> {{ ma.creative_scene }}</p>{% endif %}
-            {% if ma.value %}<p class="micro-area-detail"><span class="micro-area-detail-label">Value</span> {{ ma.value }}</p>{% endif %}
-        </div>
-        {% endif %}
-        {% if area_context.micro_area_count %}
-        <p class="area-explore-link"><a href="/area/{{ outcode }}{% if area_context.matched_micro_area %}?highlight={{ area_context.matched_micro_area.name | urlencode }}{% endif %}">Explore all {{ area_context.micro_area_count }} neighbourhoods in {{ outcode }} &rarr;</a></p>
-        {% endif %}
-
-        {% if area_context.benchmarks %}
-        <h4 class="section-subhead">Rental Benchmarks ({{ outcode }})</h4>
-        {% set max_rent = area_context.benchmarks.values() | max %}
-        <div class="benchmark-list">
-            {% for beds, rent in area_context.benchmarks.items() %}
-            {% set pct = (rent / max_rent * 100) | round | int %}
-            <div class="benchmark-row{% if beds == prop.bedrooms %} benchmark-current{% endif %}">
-                <span class="benchmark-label">{{ beds }} bed</span>
-                <div class="benchmark-track">
-                    <div class="benchmark-fill" style="--bar-pct: {{ pct }}%"></div>
-                </div>
-                <span class="benchmark-value">&pound;{{ "{:,}".format(rent) }}/mo</span>
-            </div>
-            {% endfor %}
-        </div>
-        {% endif %}
-
-        <div class="area-details">
-            {% if area_context.borough and area_context.council_tax %}
-            <div>
-                <h4>Council Tax ({{ area_context.borough }})</h4>
-                <table>
-                    <thead><tr><th>Band</th><th>Monthly</th></tr></thead>
-                    <tbody>
-                        {% for band, amount in area_context.council_tax.items() %}
-                        <tr><td>{{ band }}</td><td>&pound;{{ amount }}/mo</td></tr>
-                        {% endfor %}
-                    </tbody>
-                </table>
-            </div>
+            {% if ma.character %}<p class="area-summary-character">{{ ma.character }}</p>{% endif %}
             {% endif %}
 
-            {% if area_context.crime %}
-            <div>
-                <h4>Crime
+            <div class="area-summary-stats">
+                {% if area_context.crime %}
+                <div class="area-summary-stat">
+                    <span class="area-summary-stat-label">Crime</span>
                     <span class="badge
                         {% if area_context.crime.risk in ('low', 'low-medium') %}badge-green
                         {% elif area_context.crime.risk == 'medium' %}badge-amber
                         {% else %}badge-red{% endif %}">{{ area_context.crime.risk }}</span>
-                </h4>
-                <p class="crime-rate">{{ area_context.crime.rate }} <small>crimes per 1,000 residents/yr</small></p>
-                <p class="crime-context">{{ area_context.crime.vs_london }} vs London avg (~85).
-                    {% if area_context.crime.rate <= 80 %}Quieter than most of London.
-                    {% elif area_context.crime.rate <= 110 %}Typical for London.
-                    {% elif area_context.crime.rate <= 150 %}Above average — often driven by nearby high streets or transport hubs rather than residential crime.
-                    {% else %}Well above average — check <a href="https://data.police.uk" target="_blank" rel="noopener">data.police.uk</a> for a street-level breakdown.
-                    {% endif %}</p>
-                {% if area_context.crime.note %}<p class="crime-note">{{ area_context.crime.note }}</p>{% endif %}
-                <p class="crime-explainer">Stats include all recorded crime (shoplifting, anti-social behaviour, etc.), not just residential. <a href="https://data.police.uk" target="_blank" rel="noopener">Street-level map&nbsp;&#8599;</a></p>
-            </div>
-            {% endif %}
+                    <span class="area-summary-stat-detail">{{ area_context.crime.rate }}/1k residents</span>
+                </div>
+                {% endif %}
 
-            {% if area_context.acoustic_profile %}
-            {% set ap = area_context.acoustic_profile %}
-            <div>
-                <h4>Sound &amp; Hosting
+                {% if area_context.benchmarks and prop.bedrooms in area_context.benchmarks %}
+                <div class="area-summary-stat">
+                    <span class="area-summary-stat-label">{{ prop.bedrooms }}-bed avg</span>
+                    <span class="area-summary-stat-detail">&pound;{{ "{:,}".format(area_context.benchmarks[prop.bedrooms]) }}/mo</span>
+                </div>
+                {% endif %}
+
+                {% if area_context.acoustic_profile %}
+                <div class="area-summary-stat">
+                    <span class="area-summary-stat-label">Sound</span>
                     <span class="badge
-                        {% if ap.hosting_safety == 'good' %}badge-green
-                        {% elif ap.hosting_safety == 'moderate' %}badge-amber
-                        {% else %}badge-red{% endif %}">{{ ap.hosting_safety }}</span>
-                </h4>
-                <p><strong>{{ ap.label }}</strong> &mdash; {{ ap.airborne_insulation_db }} airborne insulation</p>
-                <p>{{ ap.summary }}</p>
-                {% if ap.viewing_checks %}
-                <details>
-                    <summary>Viewing checks</summary>
-                    <ul>
-                        {% for check in ap.viewing_checks %}
-                        <li>{{ check }}</li>
-                        {% endfor %}
-                    </ul>
-                </details>
+                        {% if area_context.acoustic_profile.hosting_safety == 'good' %}badge-green
+                        {% elif area_context.acoustic_profile.hosting_safety == 'moderate' %}badge-amber
+                        {% else %}badge-red{% endif %}">{{ area_context.acoustic_profile.hosting_safety }}</span>
+                </div>
                 {% endif %}
             </div>
-            {% endif %}
 
-            {% if area_context.noise_enforcement %}
-            {% set ne = area_context.noise_enforcement %}
-            <div>
-                <h4>Noise Enforcement ({{ area_context.borough }})</h4>
-                <p>{{ ne.process }}</p>
-                <p><small>{{ ne.threshold_info }}</small></p>
-                <p class="crime-note">{{ ne.response_time }}</p>
-            </div>
-            {% endif %}
-
-            {% if area_context.rent_trend %}
-            <div>
-                <h4>Rent Trend</h4>
-                <p>+{{ area_context.rent_trend.yoy_pct }}% YoY ({{ area_context.rent_trend.direction }})</p>
-            </div>
-            {% endif %}
+            <a href="/area/{{ outcode }}{% if area_context.matched_micro_area %}?highlight={{ area_context.matched_micro_area.name | urlencode }}{% endif %}" class="area-summary-link">Full area guide &rarr;</a>
         </div>
     </section>
     {% endif %}

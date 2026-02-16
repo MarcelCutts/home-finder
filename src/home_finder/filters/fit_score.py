@@ -171,6 +171,16 @@ def _score_hosting(analysis: dict[str, Any], _bedrooms: int) -> _DimensionResult
         score += 10
         signals += 1
 
+    area_tolerance = analysis.get("_area_hosting_tolerance")
+    if area_tolerance == "high":
+        score += 10
+        signals += 1
+    elif area_tolerance == "low":
+        score -= 10
+        signals += 1
+    elif area_tolerance == "moderate":
+        signals += 1  # neutral score impact
+
     confidence = min(1.0, signals * 0.4) if signals > 0 else 0.0
     return _DimensionResult(score, confidence)
 

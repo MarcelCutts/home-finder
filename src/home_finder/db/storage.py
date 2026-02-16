@@ -9,6 +9,7 @@ from typing import Any, Final, TypedDict, cast
 import aiosqlite
 from pydantic import HttpUrl
 
+from home_finder.data.area_context import HOSTING_TOLERANCE
 from home_finder.filters.fit_score import (
     compute_fit_breakdown,
     compute_fit_score,
@@ -2169,6 +2170,13 @@ class PropertyStorage:
                     prop_dict["property_type"] = listing_ext.get("property_type")
                     prop_dict["epc_rating"] = listing_ext.get("epc_rating")
                     # Marcel fit score + breakdown + lifestyle icons
+                    # Inject area hosting tolerance so dashboard matches detail page
+                    postcode = prop_dict.get("postcode") or ""
+                    outcode = postcode.split()[0] if postcode else None
+                    if outcode:
+                        ht = HOSTING_TOLERANCE.get(outcode)
+                        if ht:
+                            analysis["_area_hosting_tolerance"] = ht.get("rating")
                     bedrooms = prop_dict.get("bedrooms", 0) or 0
                     prop_dict["fit_score"] = compute_fit_score(analysis, bedrooms)
                     prop_dict["fit_breakdown"] = compute_fit_breakdown(analysis, bedrooms)

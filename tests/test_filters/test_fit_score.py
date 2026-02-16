@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from home_finder.filters.fit_score import (
     WEIGHTS,
+    _score_hosting,
     _score_vibe,
     compute_fit_breakdown,
     compute_fit_score,
@@ -461,6 +462,29 @@ class TestEdgeCases:
         )
         assert compute_fit_score(excellent, 2) > compute_fit_score(poor, 2)
 
+    def test_high_area_tolerance_boosts_hosting(self):
+        """High area hosting tolerance should boost the hosting dimension."""
+        high = _full_analysis(_area_hosting_tolerance="high")
+        low = _full_analysis(_area_hosting_tolerance="low")
+        none = _full_analysis()
+        high_score = compute_fit_score(high, 2)
+        low_score = compute_fit_score(low, 2)
+        none_score = compute_fit_score(none, 2)
+        assert high_score is not None and low_score is not None and none_score is not None
+        assert high_score > none_score
+        assert none_score > low_score
+
+    def test_moderate_area_tolerance_neutral(self):
+        """Moderate area hosting tolerance should not change the score vs absent."""
+        moderate = _full_analysis(_area_hosting_tolerance="moderate")
+        none = _full_analysis()
+        mod_score = compute_fit_score(moderate, 2)
+        none_score = compute_fit_score(none, 2)
+        assert mod_score is not None and none_score is not None
+        # Moderate adds a signal but 0 points — score stays same or very close
+        # (confidence weighting may cause minor variation)
+        assert abs(mod_score - none_score) <= 2
+
     def test_low_hosting_noise_boosts_sound_and_hosting(self):
         """Low hosting noise risk benefits both sound and hosting dimensions."""
         low = _full_analysis(
@@ -572,6 +596,158 @@ class TestComputeFitBreakdown:
             "light_space": {"ceiling_height": "unknown"},
         }
         assert compute_fit_breakdown(analysis, 1) is None
+
+
+# ── Hosting scorer (direct unit tests) ────────────────────────────────────────
+
+
+def _hosting_analysis(**overrides: object) -> dict:
+    """Build a minimal analysis dict for hosting scorer testing."""
+    base: dict = {
+        "space": {},
+        "light_space": {},
+        "outdoor_space": {},
+        "flooring_noise": {},
+    }
+    for key, val in overrides.items():
+        if isinstance(val, dict) and key in base and isinstance(base[key], dict):
+            base[key].update(val)
+        else:
+            base[key] = val
+    return base
+
+
+class TestHostingScorer:
+    """Direct tests for _score_hosting() — exact point values and signal counts."""
+
+    def test_empty_analysis_zero_confidence(self):
+        result = _score_hosting({}, 2)
+        assert result.score == 0
+        assert result.confidence == 0.0
+
+    def test_spacious_only(self):
+        analysis = _hosting_analysis(space={"is_spacious_enough": True})
+        result = _score_hosting(analysis, 2)
+        assert result.score == 25
+        assert result.confidence == 0.4  # 1 signal
+
+    def test_not_spacious_counts_signal_no_score(self):
+        analysis = _hosting_analysis(space={"is_spacious_enough": False})
+        result = _score_hosting(analysis, 2)
+        assert result.score == 0
+        assert result.confidence == 0.4  # 1 signal (counts but no points)
+
+    def test_living_sqm_graduated(self):
+        """Living room sqm gives 0-30 points graduated between 10-25sqm."""
+        # At 10sqm: 0 points
+        r10 = _score_hosting(_hosting_analysis(space={"living_room_sqm": 10}), 2)
+        assert r10.score == 0
+        # At 25sqm: 30 points
+        r25 = _score_hosting(_hosting_analysis(space={"living_room_sqm": 25}), 2)
+        assert r25.score == 30
+        # At 17.5sqm: 15 points (midpoint)
+        r17 = _score_hosting(_hosting_analysis(space={"living_room_sqm": 17.5}), 2)
+        assert r17.score == 15
+
+    def test_hosting_layout_excellent(self):
+        analysis = _hosting_analysis(space={"hosting_layout": "excellent"})
+        result = _score_hosting(analysis, 2)
+        assert result.score == 25
+
+    def test_hosting_layout_good(self):
+        analysis = _hosting_analysis(space={"hosting_layout": "good"})
+        result = _score_hosting(analysis, 2)
+        assert result.score == 15
+
+    def test_hosting_layout_awkward_zero_score(self):
+        analysis = _hosting_analysis(space={"hosting_layout": "awkward"})
+        result = _score_hosting(analysis, 2)
+        assert result.score == 0
+        assert result.confidence == 0.4  # signal counted
+
+    def test_hosting_noise_risk_low(self):
+        analysis = _hosting_analysis(flooring_noise={"hosting_noise_risk": "low"})
+        result = _score_hosting(analysis, 2)
+        assert result.score == 10
+
+    def test_area_tolerance_high_adds_10(self):
+        analysis = _hosting_analysis(_area_hosting_tolerance="high")
+        result = _score_hosting(analysis, 2)
+        assert result.score == 10
+        assert result.confidence == 0.4
+
+    def test_area_tolerance_low_subtracts_10(self):
+        analysis = _hosting_analysis(_area_hosting_tolerance="low")
+        result = _score_hosting(analysis, 2)
+        assert result.score == 0  # clamped to 0 (was -10)
+        assert result.confidence == 0.4
+
+    def test_area_tolerance_moderate_zero_points(self):
+        analysis = _hosting_analysis(_area_hosting_tolerance="moderate")
+        result = _score_hosting(analysis, 2)
+        assert result.score == 0
+        assert result.confidence == 0.4  # 1 signal
+
+    def test_area_tolerance_combined_with_spacious(self):
+        """High area tolerance + spacious = 25 + 10 = 35."""
+        analysis = _hosting_analysis(
+            space={"is_spacious_enough": True},
+            _area_hosting_tolerance="high",
+        )
+        result = _score_hosting(analysis, 2)
+        assert result.score == 35
+        assert result.confidence == 0.8  # 2 signals
+
+    def test_low_tolerance_offsets_spacious(self):
+        """Low area tolerance offsets spacious: 25 - 10 = 15."""
+        analysis = _hosting_analysis(
+            space={"is_spacious_enough": True},
+            _area_hosting_tolerance="low",
+        )
+        result = _score_hosting(analysis, 2)
+        assert result.score == 15
+
+    def test_all_positive_signals(self):
+        """All positive signals sum correctly."""
+        analysis = _hosting_analysis(
+            space={
+                "is_spacious_enough": True,     # +25
+                "living_room_sqm": 25,           # +30
+                "hosting_layout": "excellent",   # +25
+            },
+            light_space={"feels_spacious": True},  # +10
+            outdoor_space={"has_balcony": True},    # +15
+            flooring_noise={"hosting_noise_risk": "low"},  # +10
+            _area_hosting_tolerance="high",          # +10
+        )
+        result = _score_hosting(analysis, 2)
+        # Total: 25+30+10+15+25+10+10 = 125, clamped to 100
+        assert result.score == 100
+        assert result.confidence == 1.0  # 7 signals, capped at 1.0
+
+    def test_confidence_scales_with_signals(self):
+        """Confidence = min(1.0, signals * 0.4)."""
+        # 1 signal: 0.4
+        r1 = _score_hosting(_hosting_analysis(space={"is_spacious_enough": True}), 2)
+        assert r1.confidence == 0.4
+        # 2 signals: 0.8
+        r2 = _score_hosting(
+            _hosting_analysis(
+                space={"is_spacious_enough": True},
+                light_space={"feels_spacious": True},
+            ),
+            2,
+        )
+        assert r2.confidence == 0.8
+        # 3+ signals: 1.0
+        r3 = _score_hosting(
+            _hosting_analysis(
+                space={"is_spacious_enough": True, "hosting_layout": "good"},
+                light_space={"feels_spacious": True},
+            ),
+            2,
+        )
+        assert r3.confidence == 1.0
 
 
 # ── Vibe scorer (multi-cluster) ──────────────────────────────────────────────

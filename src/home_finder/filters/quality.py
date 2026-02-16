@@ -13,6 +13,7 @@ from home_finder.data.area_context import (
     CRIME_RATES,
     DEFAULT_BENCHMARK,
     ENERGY_COSTS_MONTHLY,
+    HOSTING_TOLERANCE,
     OUTCODE_BOROUGH,
     RENT_TRENDS,
     RENTAL_BENCHMARKS,
@@ -638,6 +639,13 @@ class PropertyQualityFilter:
         trend = RENT_TRENDS.get(borough) if borough else None
         rent_trend = f"+{trend['yoy_pct']}% YoY ({trend['direction']})" if trend else None
 
+        hosting_tolerance_data = HOSTING_TOLERANCE.get(outcode) if outcode else None
+        hosting_tolerance_str: str | None = None
+        if hosting_tolerance_data:
+            rating = hosting_tolerance_data.get("rating", "unknown")
+            notes = hosting_tolerance_data.get("notes", "")
+            hosting_tolerance_str = f"{rating} — {notes}" if notes else rating
+
         # Build URL lists from pre-enriched images
         gallery_urls = [str(img.url) for img in merged.images if img.image_type == "gallery"]
         floorplan_url = str(merged.floorplan.url) if merged.floorplan else None
@@ -687,6 +695,7 @@ class PropertyQualityFilter:
                 energy_estimate=energy_estimate,
                 crime_summary=crime_summary,
                 rent_trend=rent_trend,
+                hosting_tolerance=hosting_tolerance_str,
                 gallery_cached_paths=gallery_cached[: self._max_images],
                 floorplan_cached_path=floorplan_cached,
             )
@@ -807,6 +816,7 @@ class PropertyQualityFilter:
         energy_estimate: int | None = None,
         crime_summary: str | None = None,
         rent_trend: str | None = None,
+        hosting_tolerance: str | None = None,
         gallery_cached_paths: list[Path | None] | None = None,
         floorplan_cached_path: Path | None = None,
     ) -> PropertyQualityAnalysis | None:
@@ -829,6 +839,7 @@ class PropertyQualityFilter:
             council_tax_band_c: Estimated monthly council tax (Band C).
             crime_summary: Crime rate summary string.
             rent_trend: YoY rent trend string.
+            hosting_tolerance: Area hosting tolerance summary string.
             gallery_cached_paths: Paths to cached gallery images on disk.
             floorplan_cached_path: Path to cached floorplan image on disk.
 
@@ -901,6 +912,7 @@ class PropertyQualityFilter:
             crime_summary=crime_summary,
             rent_trend=rent_trend,
             energy_estimate=energy_estimate,
+            hosting_tolerance=hosting_tolerance,
             has_labeled_floorplan=has_floorplan,
         )
         content.append(TextBlockParam(type="text", text=user_prompt))
@@ -1083,6 +1095,7 @@ class PropertyQualityFilter:
                 crime_summary=crime_summary,
                 rent_trend=rent_trend,
                 energy_estimate=energy_estimate,
+                hosting_tolerance=hosting_tolerance,
                 acoustic_context=acoustic_context,
             )
 

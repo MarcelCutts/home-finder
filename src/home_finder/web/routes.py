@@ -15,7 +15,9 @@ from home_finder.data.area_context import (
     ACOUSTIC_PROFILES,
     AREA_CONTEXT,
     COUNCIL_TAX_MONTHLY,
+    CREATIVE_SCENE,
     CRIME_RATES,
+    HOSTING_TOLERANCE,
     NOISE_ENFORCEMENT,
     OUTCODE_BOROUGH,
     RENT_TRENDS,
@@ -712,6 +714,8 @@ async def property_detail(
             area_context["council_tax"] = COUNCIL_TAX_MONTHLY.get(borough)
             area_context["rent_trend"] = RENT_TRENDS.get(borough)
         area_context["crime"] = CRIME_RATES.get(outcode)
+        area_context["hosting_tolerance"] = HOSTING_TOLERANCE.get(outcode)
+        area_context["creative_scene"] = CREATIVE_SCENE.get(outcode)
 
     # Look up acoustic profile from quality analysis property_type
     qa = prop.get("quality_analysis")
@@ -760,6 +764,10 @@ async def property_detail(
     qa = prop.get("quality_analysis")
     if qa is not None:
         analysis_dict = qa.model_dump()
+        if outcode:
+            ht = HOSTING_TOLERANCE.get(outcode)
+            if ht:
+                analysis_dict["_area_hosting_tolerance"] = ht.get("rating")
         bedrooms = prop.get("bedrooms", 0) or 0
         fit_score = compute_fit_score(analysis_dict, bedrooms)
         fit_breakdown = compute_fit_breakdown(analysis_dict, bedrooms)

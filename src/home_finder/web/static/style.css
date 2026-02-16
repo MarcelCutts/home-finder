@@ -1793,12 +1793,13 @@ nav.container-fluid li {
 /* ===== Quality section ===== */
 .quality-section { margin-top: 0; }
 .quality-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
-    gap: 0.75rem;
+    columns: 4 220px;
+    column-gap: 0.75rem;
     margin-top: 1.25rem;
 }
 .quality-item {
+    break-inside: avoid;
+    margin-bottom: 0.75rem;
     background: var(--bg-card);
     border: 1px solid var(--border);
     border-left: 3px solid var(--border-hover);
@@ -2593,6 +2594,75 @@ nav.container-fluid li {
     display: none;
 }
 
+/* ===== Area summary card (compact, detail page) ===== */
+.area-summary-card {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 1.25rem 1.5rem;
+}
+.area-summary-header {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+    margin-bottom: 0.5rem;
+}
+.area-summary-header strong {
+    font-size: 1rem;
+    font-family: var(--font-heading);
+}
+.area-summary-badges {
+    display: inline-flex;
+    gap: 0.35rem;
+}
+.area-summary-badges .badge {
+    font-size: 0.72rem;
+    padding: 0.1rem 0.4rem;
+}
+.area-summary-character {
+    font-size: 0.85rem;
+    color: var(--text-muted);
+    line-height: 1.5;
+    margin: 0 0 0.75rem 0;
+}
+.area-summary-stats {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 1rem;
+    margin-bottom: 0.75rem;
+}
+.area-summary-stat {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    font-size: 0.82rem;
+}
+.area-summary-stat-label {
+    font-weight: 600;
+    color: var(--text-muted);
+}
+.area-summary-stat-detail {
+    color: var(--text);
+    font-weight: 500;
+}
+.area-summary-stat .badge {
+    font-size: 0.72rem;
+    padding: 0.08rem 0.35rem;
+}
+.area-summary-link {
+    display: inline-block;
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: var(--accent);
+    text-decoration: none;
+    transition: color 0.15s;
+}
+.area-summary-link:hover {
+    color: var(--accent-hover);
+}
+
+
 /* ===== Area section tables ===== */
 .detail-section table {
     font-size: 0.85rem;
@@ -2744,7 +2814,7 @@ nav.container-fluid li {
     }
     /* Quality grid: single column */
     .quality-grid {
-        grid-template-columns: 1fr;
+        columns: 1;
     }
     /* Listing KV: 2 columns */
     .listing-kv-grid {
