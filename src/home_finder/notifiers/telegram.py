@@ -29,6 +29,11 @@ TRANSPORT_MODE_EMOJI: Final[dict[TransportMode, str]] = {
 }
 
 
+def _html_link(url: str, text: str) -> str:
+    """Build an HTML <a> tag with properly escaped URL and text."""
+    return f'<a href="{html.escape(str(url), quote=True)}">{html.escape(text)}</a>'
+
+
 def _format_star_rating(rating: int) -> str:
     """Return filled + empty stars for a 1-5 rating."""
     filled = min(max(rating, 1), 5)
@@ -434,7 +439,7 @@ def format_merged_property_message(
             name = SOURCE_NAMES.get(source.value, source.value)
             url = merged.source_urls.get(source)
             if url:
-                source_links.append(f'<a href="{url}">{name}</a>')
+                source_links.append(_html_link(str(url), name))
             else:
                 source_links.append(name)
         lines.append(f"🔗 Listed on: {', '.join(source_links)}")
@@ -680,26 +685,15 @@ class TelegramNotifier:
 
         try:
             bot = self._get_bot()
-            # Build inline keyboard with source link + map
-            from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
-
-            buttons: list[InlineKeyboardButton] = [
-                InlineKeyboardButton(
-                    text=SOURCE_NAMES.get(prop.source.value, prop.source.value),
-                    url=str(prop.url),
-                )
-            ]
-            if prop.latitude is not None and prop.longitude is not None:
-                map_url = f"https://www.google.com/maps?q={prop.latitude},{prop.longitude}"
-                buttons.append(InlineKeyboardButton(text="Map 📍", url=map_url))
-            elif prop.postcode or prop.address:
-                query = f"{prop.postcode}, London" if prop.postcode else prop.address
-                map_url = (
-                    f"https://www.google.com/maps/search/?api=1&query={urllib.parse.quote(query)}"
-                )
-                buttons.append(InlineKeyboardButton(text="Map 📍", url=map_url))
-
-            keyboard = InlineKeyboardMarkup(inline_keyboard=[buttons])
+            # Build inline keyboard via MergedProperty wrapper
+            temp_merged = MergedProperty(
+                canonical=prop,
+                sources=(prop.source,),
+                source_urls={prop.source: prop.url},
+                min_price=prop.price_pcm,
+                max_price=prop.price_pcm,
+            )
+            keyboard = _build_inline_keyboard(temp_merged, web_base_url=self.web_base_url)
 
             from aiogram.types import LinkPreviewOptions
 

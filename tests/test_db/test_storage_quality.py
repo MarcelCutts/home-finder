@@ -261,7 +261,7 @@ class TestSaveAndGetQualityAnalysis:
 class TestGetPropertiesPaginated:
     @pytest.mark.asyncio
     async def test_empty_database(self, storage: PropertyStorage) -> None:
-        props, total = await storage.get_properties_paginated()
+        props, total = await storage.get_properties_paginated(PropertyFilter())
         assert props == []
         assert total == 0
 
@@ -272,7 +272,7 @@ class TestGetPropertiesPaginated:
         await storage.save_merged_property(merged_a)
         await storage.save_merged_property(merged_b)
 
-        props, total = await storage.get_properties_paginated()
+        props, total = await storage.get_properties_paginated(PropertyFilter())
         assert total == 2
         assert len(props) == 2
 
@@ -283,7 +283,7 @@ class TestGetPropertiesPaginated:
         await storage.save_merged_property(merged_a)
         await storage.save_merged_property(merged_b)
 
-        props, _ = await storage.get_properties_paginated(sort="price_asc")
+        props, _ = await storage.get_properties_paginated(PropertyFilter(), sort="price_asc")
         assert props[0]["price_pcm"] <= props[1]["price_pcm"]
 
     @pytest.mark.asyncio
@@ -293,7 +293,7 @@ class TestGetPropertiesPaginated:
         await storage.save_merged_property(merged_a)
         await storage.save_merged_property(merged_b)
 
-        props, _ = await storage.get_properties_paginated(sort="price_desc")
+        props, _ = await storage.get_properties_paginated(PropertyFilter(), sort="price_desc")
         assert props[0]["price_pcm"] >= props[1]["price_pcm"]
 
     @pytest.mark.asyncio
@@ -384,14 +384,14 @@ class TestGetPropertiesPaginated:
             )
             await storage.save_merged_property(merged)
 
-        props, total = await storage.get_properties_paginated(page=1, per_page=2)
+        props, total = await storage.get_properties_paginated(PropertyFilter(), page=1, per_page=2)
         assert total == 5
         assert len(props) == 2
 
-        props2, _ = await storage.get_properties_paginated(page=2, per_page=2)
+        props2, _ = await storage.get_properties_paginated(PropertyFilter(), page=2, per_page=2)
         assert len(props2) == 2
 
-        props3, _ = await storage.get_properties_paginated(page=3, per_page=2)
+        props3, _ = await storage.get_properties_paginated(PropertyFilter(), page=3, per_page=2)
         assert len(props3) == 1
 
     @pytest.mark.asyncio
@@ -400,7 +400,7 @@ class TestGetPropertiesPaginated:
     ) -> None:
         await storage.save_merged_property(merged_b)
 
-        props, _ = await storage.get_properties_paginated()
+        props, _ = await storage.get_properties_paginated(PropertyFilter())
         assert len(props) == 1
         assert "rightmove" in props[0]["sources_list"]
         assert "zoopla" in props[0]["sources_list"]
@@ -416,7 +416,7 @@ class TestGetPropertiesPaginated:
         await storage.save_merged_property(merged_a)
         await storage.save_quality_analysis(prop_a.unique_id, sample_analysis)
 
-        props, _ = await storage.get_properties_paginated()
+        props, _ = await storage.get_properties_paginated(PropertyFilter())
         assert len(props) == 1
         assert props[0]["quality_summary"] == sample_analysis.summary
 
@@ -426,7 +426,7 @@ class TestGetPropertiesPaginated:
     ) -> None:
         await storage.save_merged_property(merged_a)
 
-        props, _ = await storage.get_properties_paginated()
+        props, _ = await storage.get_properties_paginated(PropertyFilter())
         assert props[0]["quality_summary"] == ""
 
     @pytest.mark.asyncio
@@ -440,7 +440,7 @@ class TestGetPropertiesPaginated:
         await storage.save_merged_property(merged_a)
         await storage.save_quality_analysis(prop_a.unique_id, sample_analysis)
 
-        props, _ = await storage.get_properties_paginated()
+        props, _ = await storage.get_properties_paginated(PropertyFilter())
         assert len(props) == 1
         assert props[0]["value_rating"] == "excellent"
 
@@ -450,7 +450,7 @@ class TestGetPropertiesPaginated:
     ) -> None:
         await storage.save_merged_property(merged_a)
 
-        props, _ = await storage.get_properties_paginated()
+        props, _ = await storage.get_properties_paginated(PropertyFilter())
         assert props[0]["value_rating"] is None
 
     @pytest.mark.asyncio
@@ -480,7 +480,7 @@ class TestGetPropertiesPaginated:
         await storage.save_merged_property(merged_a)
         await storage.save_quality_analysis(prop_a.unique_id, analysis)
 
-        props, _ = await storage.get_properties_paginated()
+        props, _ = await storage.get_properties_paginated(PropertyFilter())
         assert props[0]["value_rating"] == "good"
 
     @pytest.mark.asyncio
@@ -489,7 +489,7 @@ class TestGetPropertiesPaginated:
     ) -> None:
         await storage.save_merged_property(merged_a)
         # Invalid sort should use default (newest)
-        _props, total = await storage.get_properties_paginated(sort="bogus")
+        _props, total = await storage.get_properties_paginated(PropertyFilter(), sort="bogus")
         assert total == 1
 
 
@@ -605,7 +605,7 @@ class TestThumbnailEpcFiltering:
         ]
         await storage.save_property_images(prop_a.unique_id, images)
 
-        props, _ = await storage.get_properties_paginated()
+        props, _ = await storage.get_properties_paginated(PropertyFilter())
         assert len(props) == 1
         # Should pick the second image (living_room), not the EPC chart
         assert "living_room" in props[0]["image_url"]
@@ -630,7 +630,7 @@ class TestThumbnailEpcFiltering:
         ]
         await storage.save_property_images(prop_a.unique_id, images)
 
-        props, _ = await storage.get_properties_paginated()
+        props, _ = await storage.get_properties_paginated(PropertyFilter())
         assert len(props) == 1
         assert "kitchen" in props[0]["image_url"]
 
@@ -666,7 +666,7 @@ class TestThumbnailEpcFiltering:
             ],
         )
 
-        props, _ = await storage.get_properties_paginated()
+        props, _ = await storage.get_properties_paginated(PropertyFilter())
         assert len(props) == 1
         assert "gallery_photo" in props[0]["image_url"]
 
@@ -704,7 +704,7 @@ class TestThumbnailEpcFiltering:
             ],
         )
 
-        props, _ = await storage.get_properties_paginated()
+        props, _ = await storage.get_properties_paginated(PropertyFilter())
         assert len(props) == 1
         # EPC filtered out by subquery, falls back to scraper thumbnail
         assert "scraper_thumb" in props[0]["image_url"]
@@ -746,7 +746,7 @@ class TestThumbnailEpcFiltering:
             ],
         )
 
-        props, _ = await storage.get_properties_paginated()
+        props, _ = await storage.get_properties_paginated(PropertyFilter())
         assert len(props) == 1
         assert "bedroom" in props[0]["image_url"]
 
@@ -768,7 +768,7 @@ class TestThumbnailEpcFiltering:
             ],
         )
 
-        props, _ = await storage.get_properties_paginated()
+        props, _ = await storage.get_properties_paginated(PropertyFilter())
         assert len(props) == 1
         # Hash URL passes through — no way to tell it's an EPC from the URL alone
         assert "5e2020de" in props[0]["image_url"]

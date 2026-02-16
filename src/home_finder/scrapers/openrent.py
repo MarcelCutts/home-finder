@@ -60,8 +60,6 @@ class OpenRentScraper(BaseScraper):
         known_source_ids: set[str] | None = None,
     ) -> list[Property]:
         """Scrape OpenRent for matching properties (all pages)."""
-        all_properties: list[Property] = []
-        seen_ids: set[str] = set()
         current_delay = self.PAGE_DELAY_SECONDS
 
         base_url = self._build_search_url(
@@ -75,9 +73,11 @@ class OpenRentScraper(BaseScraper):
             include_let_agreed=include_let_agreed,
         )
 
-        for page in range(self.MAX_PAGES):
-            skip = page * self.RESULTS_PER_PAGE
-            url = f"{base_url}&skip={skip}" if page > 0 else base_url
+        async def fetch_page(page_idx: int) -> list[Property]:
+            nonlocal current_delay
+
+            skip = page_idx * self.RESULTS_PER_PAGE
+            url = f"{base_url}&skip={skip}" if page_idx > 0 else base_url
 
             page_properties: list[Property] = []
 
@@ -107,7 +107,7 @@ class OpenRentScraper(BaseScraper):
                 logger.warning(
                     "openrent_rate_limit_backoff",
                     area=area,
-                    page=page + 1,
+                    page=page_idx + 1,
                     elapsed=round(elapsed, 1),
                     new_delay=round(current_delay, 1),
                 )
@@ -118,48 +118,26 @@ class OpenRentScraper(BaseScraper):
             logger.info(
                 "scraped_openrent_page",
                 url=url,
-                page=page + 1,
+                page=page_idx + 1,
                 properties_found=len(page_properties),
             )
+            return page_properties
 
-            if not page_properties:
-                break
+        async def delay() -> None:
+            await asyncio.sleep(current_delay)
 
-            # Early-stop: all results on this page are already in DB
-            if known_source_ids is not None and all(
-                p.source_id in known_source_ids for p in page_properties
-            ):
-                logger.info(
-                    "early_stop_all_known",
-                    source=self.source.value,
-                    area=area,
-                    page=page + 1,
-                )
-                break
-
-            # Deduplicate within scraper (OpenRent can repeat listings)
-            new_properties = [p for p in page_properties if p.source_id not in seen_ids]
-            for p in new_properties:
-                seen_ids.add(p.source_id)
-            all_properties.extend(new_properties)
-
-            # If we got fewer new properties than on the page, we might be seeing repeats
-            if len(new_properties) == 0:
-                break
-
-            if max_results is not None and len(all_properties) >= max_results:
-                all_properties = all_properties[:max_results]
-                break
-
-            # Delay between pages (adaptive)
-            if page < self.MAX_PAGES - 1:
-                await asyncio.sleep(current_delay)
+        all_properties = await self._paginate(
+            fetch_page,
+            max_pages=self.MAX_PAGES,
+            known_source_ids=known_source_ids,
+            max_results=max_results,
+            page_delay=delay,
+        )
 
         logger.info(
             "scraped_openrent_complete",
             area=area,
             total_properties=len(all_properties),
-            pages_scraped=page + 1,
         )
 
         return all_properties

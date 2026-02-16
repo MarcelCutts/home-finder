@@ -61,10 +61,7 @@ class OnTheMarketScraper(BaseScraper):
         known_source_ids: set[str] | None = None,
     ) -> list[Property]:
         """Scrape OnTheMarket for matching properties (all pages)."""
-        all_properties: list[Property] = []
-        seen_ids: set[str] = set()
-
-        base_url = self._build_search_url(
+        search_url = self._build_search_url(
             area=area,
             min_price=min_price,
             max_price=max_price,
@@ -75,13 +72,14 @@ class OnTheMarketScraper(BaseScraper):
             include_let_agreed=include_let_agreed,
         )
 
-        for page in range(1, self.MAX_PAGES + 1):
-            url = f"{base_url}&page={page}" if page > 1 else base_url
+        async def fetch_page(page_idx: int) -> list[Property]:
+            page = page_idx + 1  # OnTheMarket uses 1-based pages
+            url = f"{search_url}&page={page}" if page > 1 else search_url
 
             html = await self._fetch_page(url)
             if not html:
                 logger.warning("onthemarket_fetch_failed", url=url, page=page)
-                break
+                return []
 
             # Parse __NEXT_DATA__ JSON
             properties = self._parse_next_data(html)
@@ -91,45 +89,23 @@ class OnTheMarketScraper(BaseScraper):
                 page=page,
                 properties_found=len(properties),
             )
+            return properties
 
-            if not properties:
-                break
+        async def delay() -> None:
+            await asyncio.sleep(self.PAGE_DELAY_SECONDS)
 
-            # Early-stop: all results on this page are already in DB
-            if known_source_ids is not None and all(
-                p.source_id in known_source_ids for p in properties
-            ):
-                logger.info(
-                    "early_stop_all_known",
-                    source=self.source.value,
-                    area=area,
-                    page=page,
-                )
-                break
-
-            # Deduplicate within run (OnTheMarket can return overlapping results)
-            new_properties = [p for p in properties if p.source_id not in seen_ids]
-            for p in new_properties:
-                seen_ids.add(p.source_id)
-
-            if not new_properties:
-                break
-
-            all_properties.extend(new_properties)
-
-            if max_results is not None and len(all_properties) >= max_results:
-                all_properties = all_properties[:max_results]
-                break
-
-            # Be polite - delay between pages
-            if page < self.MAX_PAGES:
-                await asyncio.sleep(self.PAGE_DELAY_SECONDS)
+        all_properties = await self._paginate(
+            fetch_page,
+            max_pages=self.MAX_PAGES,
+            known_source_ids=known_source_ids,
+            max_results=max_results,
+            page_delay=delay,
+        )
 
         logger.info(
             "scraped_onthemarket_complete",
             area=area,
             total_properties=len(all_properties),
-            pages_scraped=page,
         )
 
         return all_properties

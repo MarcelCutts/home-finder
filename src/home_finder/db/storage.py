@@ -13,6 +13,7 @@ from pydantic import HttpUrl
 
 from home_finder.data.area_context import HOSTING_TOLERANCE
 from home_finder.filters.fit_score import (
+    compute_fit_score,
     compute_fit_score_and_breakdown,
     compute_lifestyle_icons,
 )
@@ -296,9 +297,58 @@ class PropertyStorage:
                   AND json_type(json_extract(analysis_json, '$.one_line')) = 'object'
             """)
 
+        # Migrate: add fit_score column for SQL-based sorting
+        try:
+            await conn.execute("ALTER TABLE quality_analyses ADD COLUMN fit_score INTEGER")
+        except aiosqlite.OperationalError as e:
+            if "duplicate column" not in str(e).lower():
+                raise
+        await conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_quality_fit_score ON quality_analyses(fit_score)"
+        )
+
+        # Backfill fit_score for existing rows
+        await self._backfill_fit_scores(conn)
+
         await conn.commit()
 
         logger.info("database_initialized", db_path=self.db_path)
+
+    async def _backfill_fit_scores(self, conn: aiosqlite.Connection) -> None:
+        """Backfill fit_score for existing quality analyses that lack it."""
+        cursor = await conn.execute("""
+            SELECT q.property_unique_id, q.analysis_json, p.bedrooms, p.postcode
+            FROM quality_analyses q
+            JOIN properties p ON p.unique_id = q.property_unique_id
+            WHERE q.fit_score IS NULL AND q.analysis_json IS NOT NULL
+        """)
+        rows = await cursor.fetchall()
+        if not rows:
+            return
+
+        updates: list[tuple[int | None, str]] = []
+        for row in rows:
+            try:
+                analysis = json.loads(row["analysis_json"])
+            except (json.JSONDecodeError, TypeError):
+                continue
+            postcode = row["postcode"] or ""
+            outcode = postcode.split()[0] if postcode else None
+            if outcode:
+                ht = HOSTING_TOLERANCE.get(outcode)
+                if ht:
+                    analysis["_area_hosting_tolerance"] = ht.get("rating")
+            bedrooms = row["bedrooms"] or 0
+            score = compute_fit_score(analysis, bedrooms)
+            if score is not None:
+                updates.append((score, row["property_unique_id"]))
+
+        if updates:
+            await conn.executemany(
+                "UPDATE quality_analyses SET fit_score = ? WHERE property_unique_id = ?",
+                updates,
+            )
+            logger.info("fit_score_backfill_complete", updated=len(updates))
 
     async def save_property(
         self,
@@ -997,13 +1047,30 @@ class PropertyStorage:
             analysis.listing_red_flags.red_flag_count if analysis.listing_red_flags else None
         )
 
+        # Compute fit_score for SQL-based sorting
+        fit_score_val: int | None = None
+        prop_cursor = await conn.execute(
+            "SELECT bedrooms, postcode FROM properties WHERE unique_id = ?",
+            (unique_id,),
+        )
+        prop_row = await prop_cursor.fetchone()
+        if prop_row:
+            analysis_dict = json.loads(analysis_json)
+            postcode = prop_row["postcode"] or ""
+            outcode = postcode.split()[0] if postcode else None
+            if outcode:
+                ht = HOSTING_TOLERANCE.get(outcode)
+                if ht:
+                    analysis_dict["_area_hosting_tolerance"] = ht.get("rating")
+            fit_score_val = compute_fit_score(analysis_dict, prop_row["bedrooms"] or 0)
+
         await conn.execute(
             """
             INSERT INTO quality_analyses (
                 property_unique_id, analysis_json, overall_rating,
                 condition_concerns, concern_severity, epc_rating,
-                has_outdoor_space, red_flag_count, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                has_outdoor_space, red_flag_count, fit_score, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(property_unique_id) DO UPDATE SET
                 analysis_json = excluded.analysis_json,
                 overall_rating = excluded.overall_rating,
@@ -1011,7 +1078,8 @@ class PropertyStorage:
                 concern_severity = excluded.concern_severity,
                 epc_rating = excluded.epc_rating,
                 has_outdoor_space = excluded.has_outdoor_space,
-                red_flag_count = excluded.red_flag_count
+                red_flag_count = excluded.red_flag_count,
+                fit_score = excluded.fit_score
             """,
             (
                 unique_id,
@@ -1022,6 +1090,7 @@ class PropertyStorage:
                 epc_rating,
                 has_outdoor_space,
                 red_flag_count,
+                fit_score_val,
                 datetime.now(UTC).isoformat(),
             ),
         )
@@ -1622,7 +1691,7 @@ class PropertyStorage:
 
     async def get_map_markers(
         self,
-        filters: PropertyFilter | None = None,
+        filters: PropertyFilter,
     ) -> list[dict[str, Any]]:
         """Get lightweight map marker data for all matching properties with coordinates.
 
@@ -1630,15 +1699,11 @@ class PropertyStorage:
         map-relevant columns. Returns only properties that have lat/lon.
 
         Args:
-            filters: Validated filter parameters. Defaults to no filters.
+            filters: Validated filter parameters.
 
         Returns:
             List of dicts with map marker fields.
         """
-        if filters is None:
-            from home_finder.web.filters import PropertyFilter as PF
-
-            filters = PF()
         conn = await self._get_connection()
         where_sql, params = self._build_filter_clauses(filters)
         cursor = await conn.execute(
@@ -1678,7 +1743,7 @@ class PropertyStorage:
 
     async def get_properties_paginated(
         self,
-        filters: PropertyFilter | None = None,
+        filters: PropertyFilter,
         *,
         sort: str = "newest",
         page: int = 1,
@@ -1687,7 +1752,7 @@ class PropertyStorage:
         """Get paginated properties with optional filters.
 
         Args:
-            filters: Validated filter parameters. Defaults to no filters.
+            filters: Validated filter parameters.
             sort: Sort order key.
             page: Page number (1-indexed).
             per_page: Items per page.
@@ -1695,10 +1760,6 @@ class PropertyStorage:
         Returns:
             Tuple of (property dicts, total count).
         """
-        if filters is None:
-            from home_finder.web.filters import PropertyFilter as PF
-
-            filters = PF()
         conn = await self._get_connection()
 
         where_sql, params = self._build_filter_clauses(filters)
@@ -1708,8 +1769,8 @@ class PropertyStorage:
             "price_asc": "p.price_pcm ASC",
             "price_desc": "p.price_pcm DESC",
             "rating_desc": "COALESCE(q.overall_rating, 0) DESC, p.first_seen DESC",
+            "fit_desc": "COALESCE(q.fit_score, -1) DESC, p.first_seen DESC",
         }
-        is_fit_sort = sort == "fit_desc"
         order_sql = order_map.get(sort, "p.first_seen DESC")
 
         # Count total
@@ -1735,39 +1796,22 @@ class PropertyStorage:
              ORDER BY pi.id LIMIT 1) as first_gallery_url
         """
 
-        if is_fit_sort:
-            # Fit sort: fetch all matching rows, sort in Python by computed score
-            cursor = await conn.execute(
-                f"""
-                SELECT p.*, q.overall_rating as quality_rating,
-                       q.condition_concerns as quality_concerns,
-                       q.concern_severity as quality_severity,
-                       q.analysis_json,
-                       {gallery_subquery}
-                FROM properties p
-                LEFT JOIN quality_analyses q ON p.unique_id = q.property_unique_id
-                WHERE {where_sql}
-                """,
-                params,
-            )
-        else:
-            # Standard sort: paginate in SQL
-            offset = (page - 1) * per_page
-            cursor = await conn.execute(
-                f"""
-                SELECT p.*, q.overall_rating as quality_rating,
-                       q.condition_concerns as quality_concerns,
-                       q.concern_severity as quality_severity,
-                       q.analysis_json,
-                       {gallery_subquery}
-                FROM properties p
-                LEFT JOIN quality_analyses q ON p.unique_id = q.property_unique_id
-                WHERE {where_sql}
-                ORDER BY {order_sql}
-                LIMIT ? OFFSET ?
-                """,
-                [*params, per_page, offset],
-            )
+        offset = (page - 1) * per_page
+        cursor = await conn.execute(
+            f"""
+            SELECT p.*, q.overall_rating as quality_rating,
+                   q.condition_concerns as quality_concerns,
+                   q.concern_severity as quality_severity,
+                   q.analysis_json,
+                   {gallery_subquery}
+            FROM properties p
+            LEFT JOIN quality_analyses q ON p.unique_id = q.property_unique_id
+            WHERE {where_sql}
+            ORDER BY {order_sql}
+            LIMIT ? OFFSET ?
+            """,
+            [*params, per_page, offset],
+        )
         rows = await cursor.fetchall()
 
         properties: list[PropertyListItem] = []
@@ -1842,16 +1886,6 @@ class PropertyStorage:
                 prop_dict["fit_breakdown"] = None
                 prop_dict["lifestyle_icons"] = None
             properties.append(cast(PropertyListItem, prop_dict))
-
-        if is_fit_sort:
-            # Sort by fit_score descending (None → bottom), then by first_seen
-            properties.sort(
-                key=lambda p: (p.get("fit_score") is not None, p.get("fit_score") or 0),
-                reverse=True,
-            )
-            # Manual pagination
-            offset = (page - 1) * per_page
-            properties = properties[offset : offset + per_page]
 
         return properties, total
 

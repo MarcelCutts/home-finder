@@ -3,8 +3,12 @@
 import asyncio
 import random
 from abc import ABC, abstractmethod
+from collections.abc import Awaitable, Callable
 
+from home_finder.logging import get_logger
 from home_finder.models import FurnishType, Property, PropertySource
+
+logger = get_logger(__name__)
 
 
 class BaseScraper(ABC):
@@ -49,6 +53,68 @@ class BaseScraper(ABC):
             List of Property objects found.
         """
         ...
+
+    async def _paginate(
+        self,
+        fetch_page: Callable[[int], Awaitable[list[Property]]],
+        *,
+        max_pages: int,
+        known_source_ids: set[str] | None = None,
+        max_results: int | None = None,
+        page_delay: Callable[[], Awaitable[None]] | None = None,
+    ) -> list[Property]:
+        """Generic pagination loop shared by all scrapers.
+
+        Args:
+            fetch_page: Async callable receiving 0-based page index, returns
+                properties for that page (empty list signals end of results).
+            max_pages: Maximum number of pages to fetch.
+            known_source_ids: Source IDs already in DB; enables early-stop.
+            max_results: Maximum total results to return (None = unlimited).
+            page_delay: Optional async callable invoked between pages.
+
+        Returns:
+            Deduplicated list of properties across all pages.
+        """
+        all_properties: list[Property] = []
+        seen_ids: set[str] = set()
+
+        for page_idx in range(max_pages):
+            properties = await fetch_page(page_idx)
+
+            if not properties:
+                break
+
+            # Early-stop: all results on this page are already in DB
+            if known_source_ids is not None and all(
+                p.source_id in known_source_ids for p in properties
+            ):
+                logger.info(
+                    "early_stop_all_known",
+                    source=self.source.value,
+                    page=page_idx + 1,
+                )
+                break
+
+            # Deduplicate across pages
+            new_properties = [p for p in properties if p.source_id not in seen_ids]
+            for p in new_properties:
+                seen_ids.add(p.source_id)
+
+            if not new_properties:
+                break
+
+            all_properties.extend(new_properties)
+
+            if max_results is not None and len(all_properties) >= max_results:
+                all_properties = all_properties[:max_results]
+                break
+
+            # Delay between pages (not after last page)
+            if page_delay is not None and page_idx < max_pages - 1:
+                await page_delay()
+
+        return all_properties
 
     async def area_delay(self) -> None:
         """Delay between area searches. Override for scraper-specific pacing."""

@@ -476,6 +476,7 @@ class PropertyQualityFilter:
         self._enable_extended_thinking = enable_extended_thinking
         self._thinking_budget_tokens = thinking_budget_tokens
         self._client: anthropic.AsyncAnthropic | None = None
+        self._curl_session: Any | None = None  # curl_cffi.requests.AsyncSession
         # Circuit breaker state (asyncio is single-threaded, no lock needed)
         self._consecutive_api_failures = 0
         self._circuit_open = False
@@ -492,6 +493,14 @@ class PropertyQualityFilter:
                 timeout=httpx.Timeout(REQUEST_TIMEOUT),  # 3 min for vision requests
             )
         return self._client
+
+    async def _get_curl_session(self) -> Any:
+        """Get or create the curl_cffi async session for image downloads."""
+        if self._curl_session is None:
+            from curl_cffi.requests import AsyncSession
+
+            self._curl_session = AsyncSession()
+        return self._curl_session
 
     def _record_api_failure(self) -> None:
         """Record a consecutive API failure and open circuit if threshold reached."""
@@ -547,40 +556,38 @@ class PropertyQualityFilter:
             Tuple of (base64_data, media_type) or None if download failed.
         """
         try:
-            from curl_cffi.requests import AsyncSession
-
-            async with AsyncSession() as session:
-                response = await session.get(
-                    url,
-                    impersonate="chrome",
-                    headers={
-                        "Accept": "image/webp,image/apng,image/*,*/*;q=0.8",
-                        "Accept-Language": "en-GB,en;q=0.9",
-                        "Accept-Encoding": "gzip, deflate, br",
-                    },
-                    timeout=30,
+            session = await self._get_curl_session()
+            response = await session.get(
+                url,
+                impersonate="chrome",
+                headers={
+                    "Accept": "image/webp,image/apng,image/*,*/*;q=0.8",
+                    "Accept-Language": "en-GB,en;q=0.9",
+                    "Accept-Encoding": "gzip, deflate, br",
+                },
+                timeout=30,
+            )
+            if response.status_code != 200:
+                logger.warning(
+                    "image_download_failed",
+                    url=url,
+                    status=response.status_code,
                 )
-                if response.status_code != 200:
-                    logger.warning(
-                        "image_download_failed",
-                        url=url,
-                        status=response.status_code,
-                    )
-                    return None
+                return None
 
-                # Get content type from response or guess from URL
-                content_type = response.headers.get("content-type", "")
-                media_type_raw = content_type.split(";")[0] if content_type else ""
+            # Get content type from response or guess from URL
+            content_type = response.headers.get("content-type", "")
+            media_type_raw = content_type.split(";")[0] if content_type else ""
 
-                # Validate and use the media type if valid, otherwise guess from URL
-                if _is_valid_media_type(media_type_raw):
-                    media_type: ImageMediaType = media_type_raw
-                else:
-                    media_type = self._get_media_type(url)
+            # Validate and use the media type if valid, otherwise guess from URL
+            if _is_valid_media_type(media_type_raw):
+                media_type: ImageMediaType = media_type_raw
+            else:
+                media_type = self._get_media_type(url)
 
-                # Encode to base64
-                image_data = base64.standard_b64encode(response.content).decode("utf-8")
-                return image_data, media_type
+            # Encode to base64
+            image_data = base64.standard_b64encode(response.content).decode("utf-8")
+            return image_data, media_type
 
         except Exception as e:
             logger.warning("image_download_error", url=url, error=str(e), exc_info=True)
@@ -608,7 +615,7 @@ class PropertyQualityFilter:
         if cached_path is not None:
             data = read_image_bytes(cached_path)
             if data is not None:
-                data = _resize_image_bytes(data)
+                data = await asyncio.to_thread(_resize_image_bytes, data)
                 media_type = self._get_media_type(url)
                 image_data = base64.standard_b64encode(data).decode("utf-8")
                 return ImageBlockParam(
@@ -625,7 +632,8 @@ class PropertyQualityFilter:
             if result is None:
                 return None
             image_data, media_type = result
-            resized = _resize_image_bytes(base64.standard_b64decode(image_data))
+            decoded = base64.standard_b64decode(image_data)
+            resized = await asyncio.to_thread(_resize_image_bytes, decoded)
             image_data = base64.standard_b64encode(resized).decode("utf-8")
             return ImageBlockParam(
                 type="image",
@@ -1315,3 +1323,6 @@ class PropertyQualityFilter:
         if self._client is not None:
             await self._client.close()
             self._client = None
+        if self._curl_session is not None:
+            await self._curl_session.close()
+            self._curl_session = None

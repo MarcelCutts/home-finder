@@ -1,5 +1,6 @@
 """Tests for detail enrichment pipeline step."""
 
+from collections.abc import Callable
 from io import BytesIO
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
@@ -17,55 +18,14 @@ from home_finder.scrapers.detail_fetcher import DetailFetcher, DetailPageData
 from home_finder.utils.image_cache import get_cache_dir, get_cached_image_path, save_image_bytes
 
 
-def _make_property(
-    source: PropertySource = PropertySource.RIGHTMOVE,
-    source_id: str = "123",
-    bedrooms: int = 2,
-    price_pcm: int = 2000,
-    postcode: str | None = "E8 3RH",
-) -> Property:
-    return Property(
-        source=source,
-        source_id=source_id,
-        url=HttpUrl(f"https://example.com/{source.value}/{source_id}"),
-        title=f"{bedrooms} bed flat",
-        price_pcm=price_pcm,
-        bedrooms=bedrooms,
-        address="123 Test St, London",
-        postcode=postcode,
-    )
-
-
-def _make_merged(
-    canonical: Property | None = None,
-    sources: tuple[PropertySource, ...] | None = None,
-    source_urls: dict[PropertySource, HttpUrl] | None = None,
-    floorplan: PropertyImage | None = None,
-    images: tuple[PropertyImage, ...] = (),
-) -> MergedProperty:
-    if canonical is None:
-        canonical = _make_property()
-    if sources is None:
-        sources = (canonical.source,)
-    if source_urls is None:
-        source_urls = {canonical.source: canonical.url}
-    return MergedProperty(
-        canonical=canonical,
-        sources=sources,
-        source_urls=source_urls,
-        images=images,
-        floorplan=floorplan,
-        min_price=canonical.price_pcm,
-        max_price=canonical.price_pcm,
-    )
-
-
 class TestEnrichMergedProperties:
     """Tests for enrich_merged_properties()."""
 
-    async def test_populates_images_and_floorplan(self) -> None:
+    async def test_populates_images_and_floorplan(
+        self, make_merged_property: Callable[..., MergedProperty]
+    ) -> None:
         """Should populate images and floorplan from detail page."""
-        merged = _make_merged()
+        merged = make_merged_property()
         detail_data = DetailPageData(
             floorplan_url="https://example.com/floor.jpg",
             gallery_urls=["https://example.com/img1.jpg", "https://example.com/img2.jpg"],
@@ -87,14 +47,20 @@ class TestEnrichMergedProperties:
         assert len(enriched.images) == 2
         assert all(img.image_type == "gallery" for img in enriched.images)
 
-    async def test_multi_source_collects_from_all(self) -> None:
+    async def test_multi_source_collects_from_all(
+        self, make_property: Callable[..., Property]
+    ) -> None:
         """Should collect images from all source URLs."""
-        rm_prop = _make_property(source=PropertySource.RIGHTMOVE, source_id="rm1")
+        rm_prop = make_property(source=PropertySource.RIGHTMOVE, source_id="rm1")
         zp_url = HttpUrl("https://zoopla.co.uk/to-rent/details/zp1")
-        merged = _make_merged(
+        merged = MergedProperty(
             canonical=rm_prop,
             sources=(PropertySource.RIGHTMOVE, PropertySource.ZOOPLA),
             source_urls={PropertySource.RIGHTMOVE: rm_prop.url, PropertySource.ZOOPLA: zp_url},
+            images=(),
+            floorplan=None,
+            min_price=rm_prop.price_pcm,
+            max_price=rm_prop.price_pcm,
         )
 
         rm_detail = DetailPageData(gallery_urls=["https://example.com/rm1.jpg"])
@@ -122,14 +88,20 @@ class TestEnrichMergedProperties:
         assert enriched.floorplan is not None
         assert enriched.floorplan.source == PropertySource.ZOOPLA
 
-    async def test_skips_pdf_floorplan_keeps_image_floorplan(self) -> None:
+    async def test_skips_pdf_floorplan_keeps_image_floorplan(
+        self, make_property: Callable[..., Property]
+    ) -> None:
         """Should skip PDF floorplans and keep image-format ones."""
-        rm_prop = _make_property(source=PropertySource.RIGHTMOVE, source_id="rm1")
+        rm_prop = make_property(source=PropertySource.RIGHTMOVE, source_id="rm1")
         zp_url = HttpUrl("https://zoopla.co.uk/to-rent/details/zp1")
-        merged = _make_merged(
+        merged = MergedProperty(
             canonical=rm_prop,
             sources=(PropertySource.RIGHTMOVE, PropertySource.ZOOPLA),
             source_urls={PropertySource.RIGHTMOVE: rm_prop.url, PropertySource.ZOOPLA: zp_url},
+            images=(),
+            floorplan=None,
+            min_price=rm_prop.price_pcm,
+            max_price=rm_prop.price_pcm,
         )
 
         rm_detail = DetailPageData(floorplan_url="https://example.com/floor.pdf")
@@ -148,9 +120,11 @@ class TestEnrichMergedProperties:
         assert enriched.floorplan is not None
         assert str(enriched.floorplan.url).endswith(".jpg")
 
-    async def test_handles_fetch_failure(self) -> None:
+    async def test_handles_fetch_failure(
+        self, make_merged_property: Callable[..., MergedProperty]
+    ) -> None:
         """Should place properties with no images into failed list."""
-        merged = _make_merged()
+        merged = make_merged_property()
         fetcher = DetailFetcher()
         with patch.object(fetcher, "fetch_detail_page", new_callable=AsyncMock, return_value=None):
             result = await enrich_merged_properties([merged], fetcher)
@@ -161,9 +135,11 @@ class TestEnrichMergedProperties:
         assert failed.floorplan is None
         assert len(failed.images) == 0
 
-    async def test_skips_cached_property(self, tmp_path: Path) -> None:
+    async def test_skips_cached_property(
+        self, tmp_path: Path, make_merged_property: Callable[..., MergedProperty]
+    ) -> None:
         """Should skip enrichment for properties with cached images on disk."""
-        merged = _make_merged()
+        merged = make_merged_property()
         data_dir = str(tmp_path)
 
         # Pre-populate cache
@@ -199,9 +175,11 @@ class TestEnrichMergedProperties:
         assert len(result.enriched[0].images) == 1
         assert result.enriched[0].floorplan is not None
 
-    async def test_clears_stale_cache_and_reenriches(self, tmp_path: Path) -> None:
+    async def test_clears_stale_cache_and_reenriches(
+        self, tmp_path: Path, make_merged_property: Callable[..., MergedProperty]
+    ) -> None:
         """Should clear cache and re-enrich when DB has no image records for a cached property."""
-        merged = _make_merged()
+        merged = make_merged_property()
         data_dir = str(tmp_path)
 
         # Pre-populate disk cache (simulates a previous run that cached but didn't save to DB)
@@ -236,10 +214,11 @@ class TestEnrichMergedProperties:
         assert result.enriched[0].floorplan is not None
         assert len(result.enriched[0].images) == 1
 
-    async def test_backfills_coordinates_from_detail_page(self) -> None:
+    async def test_backfills_coordinates_from_detail_page(
+        self, make_merged_property: Callable[..., MergedProperty]
+    ) -> None:
         """Should update canonical with lat/lon when missing and detail page has them."""
-        prop = _make_property(postcode="E8")  # outcode only, no coords
-        merged = _make_merged(canonical=prop)
+        merged = make_merged_property(postcode="E8", latitude=None, longitude=None)
         detail_data = DetailPageData(
             gallery_urls=["https://example.com/img1.jpg"],
             latitude=51.5465,
@@ -258,11 +237,11 @@ class TestEnrichMergedProperties:
         assert enriched.canonical.longitude == -0.0553
         assert enriched.canonical.postcode == "E8 3RH"
 
-    async def test_does_not_overwrite_existing_coordinates(self) -> None:
+    async def test_does_not_overwrite_existing_coordinates(
+        self, make_merged_property: Callable[..., MergedProperty]
+    ) -> None:
         """Should keep existing canonical coordinates if present."""
-        prop = _make_property(postcode="E8 3RH")
-        prop = prop.model_copy(update={"latitude": 51.0, "longitude": -0.1})
-        merged = _make_merged(canonical=prop)
+        merged = make_merged_property(latitude=51.0, longitude=-0.1)
         detail_data = DetailPageData(
             gallery_urls=["https://example.com/img1.jpg"],
             latitude=51.9999,
@@ -279,10 +258,11 @@ class TestEnrichMergedProperties:
         assert enriched.canonical.latitude == 51.0
         assert enriched.canonical.longitude == -0.1
 
-    async def test_does_not_overwrite_full_postcode_with_another(self) -> None:
+    async def test_does_not_overwrite_full_postcode_with_another(
+        self, make_merged_property: Callable[..., MergedProperty]
+    ) -> None:
         """Should not replace an existing full postcode."""
-        prop = _make_property(postcode="E8 3RH")
-        merged = _make_merged(canonical=prop)
+        merged = make_merged_property(postcode="E8 3RH")
         detail_data = DetailPageData(
             gallery_urls=["https://example.com/img1.jpg"],
             postcode="E8 9ZZ",
@@ -297,9 +277,11 @@ class TestEnrichMergedProperties:
         enriched = result.enriched[0]
         assert enriched.canonical.postcode == "E8 3RH"
 
-    async def test_caches_downloaded_images(self, tmp_path: Path) -> None:
+    async def test_caches_downloaded_images(
+        self, tmp_path: Path, make_merged_property: Callable[..., MergedProperty]
+    ) -> None:
         """Should download and cache images when data_dir is set."""
-        merged = _make_merged()
+        merged = make_merged_property()
         data_dir = str(tmp_path)
 
         detail_data = DetailPageData(
@@ -328,28 +310,33 @@ class TestEnrichMergedProperties:
 class TestFilterByFloorplan:
     """Tests for filter_by_floorplan()."""
 
-    def test_drops_properties_without_floorplan(self) -> None:
+    def test_drops_properties_without_floorplan(
+        self, make_merged_property: Callable[..., MergedProperty]
+    ) -> None:
         """Should drop properties that have no floorplan."""
-        with_fp = _make_merged(
+        with_fp = make_merged_property(
+            sources=(PropertySource.RIGHTMOVE,),
             floorplan=PropertyImage(
                 url=HttpUrl("https://example.com/floor.jpg"),
                 source=PropertySource.RIGHTMOVE,
                 image_type="floorplan",
             ),
         )
-        without_fp = _make_merged(
-            canonical=_make_property(source_id="456"),
+        without_fp = make_merged_property(
+            sources=(PropertySource.RIGHTMOVE,), source_id="456"
         )
 
         result = filter_by_floorplan([with_fp, without_fp])
         assert len(result) == 1
         assert result[0].floorplan is not None
 
-    def test_passes_all_when_all_have_floorplans(self) -> None:
+    def test_passes_all_when_all_have_floorplans(
+        self, make_merged_property: Callable[..., MergedProperty]
+    ) -> None:
         """Should pass all properties when all have floorplans."""
         props = [
-            _make_merged(
-                canonical=_make_property(source_id=str(i)),
+            make_merged_property(
+                source_id=str(i),
                 floorplan=PropertyImage(
                     url=HttpUrl(f"https://example.com/floor{i}.jpg"),
                     source=PropertySource.RIGHTMOVE,
@@ -361,30 +348,37 @@ class TestFilterByFloorplan:
         result = filter_by_floorplan(props)
         assert len(result) == 3
 
-    def test_returns_empty_when_none_have_floorplans(self) -> None:
+    def test_returns_empty_when_none_have_floorplans(
+        self, make_merged_property: Callable[..., MergedProperty]
+    ) -> None:
         """Should return empty list when no properties have floorplans."""
-        props = [_make_merged(canonical=_make_property(source_id=str(i))) for i in range(3)]
+        props = [
+            make_merged_property(sources=(PropertySource.RIGHTMOVE,), source_id=str(i))
+            for i in range(3)
+        ]
         result = filter_by_floorplan(props)
         assert len(result) == 0
 
-    def test_exempts_openrent_only_properties(self) -> None:
+    def test_exempts_openrent_only_properties(
+        self, make_merged_property: Callable[..., MergedProperty]
+    ) -> None:
         """OpenRent-only properties should pass without a floorplan."""
-        openrent_prop = _make_merged(
-            canonical=_make_property(source=PropertySource.OPENRENT, source_id="111"),
-            sources=(PropertySource.OPENRENT,),
+        openrent_prop = make_merged_property(
+            sources=(PropertySource.OPENRENT,), source_id="111"
         )
-        rightmove_no_fp = _make_merged(
-            canonical=_make_property(source=PropertySource.RIGHTMOVE, source_id="222"),
+        rightmove_no_fp = make_merged_property(
+            sources=(PropertySource.RIGHTMOVE,), source_id="222"
         )
         result = filter_by_floorplan([openrent_prop, rightmove_no_fp])
         assert len(result) == 1
         assert result[0].canonical.source == PropertySource.OPENRENT
 
-    def test_mixed_source_with_openrent_still_requires_floorplan(self) -> None:
+    def test_mixed_source_with_openrent_still_requires_floorplan(
+        self, make_merged_property: Callable[..., MergedProperty]
+    ) -> None:
         """Properties on OpenRent + another platform should still need a floorplan."""
-        mixed = _make_merged(
-            canonical=_make_property(source=PropertySource.OPENRENT, source_id="333"),
-            sources=(PropertySource.OPENRENT, PropertySource.ZOOPLA),
+        mixed = make_merged_property(
+            sources=(PropertySource.OPENRENT, PropertySource.ZOOPLA), source_id="333"
         )
         result = filter_by_floorplan([mixed])
         assert len(result) == 0
@@ -515,10 +509,13 @@ class TestDetectFloorplanInGallery:
 class TestEnrichSingleFloorplanDetection:
     """Integration tests: _enrich_single detects floorplans via PIL heuristic."""
 
-    async def test_detects_floorplan_when_detail_page_has_none(self, tmp_path: Path) -> None:
-        """OpenRent property with no structural floorplan → PIL detects one in gallery."""
-        prop = _make_property(source=PropertySource.OPENRENT, source_id="or1")
-        merged = _make_merged(canonical=prop, sources=(PropertySource.OPENRENT,))
+    async def test_detects_floorplan_when_detail_page_has_none(
+        self, tmp_path: Path, make_merged_property: Callable[..., MergedProperty]
+    ) -> None:
+        """OpenRent property with no structural floorplan -> PIL detects one in gallery."""
+        merged = make_merged_property(
+            sources=(PropertySource.OPENRENT,), source_id="or1"
+        )
         data_dir = str(tmp_path)
 
         # Detail page returns 3 gallery images, no floorplan
@@ -558,10 +555,13 @@ class TestEnrichSingleFloorplanDetection:
         assert len(enriched.images) == 2
         assert all(img.image_type == "gallery" for img in enriched.images)
 
-    async def test_recaches_detected_floorplan(self, tmp_path: Path) -> None:
+    async def test_recaches_detected_floorplan(
+        self, tmp_path: Path, make_merged_property: Callable[..., MergedProperty]
+    ) -> None:
         """Detected floorplan should be copied to floorplan cache path."""
-        prop = _make_property(source=PropertySource.OPENRENT, source_id="or2")
-        merged = _make_merged(canonical=prop, sources=(PropertySource.OPENRENT,))
+        merged = make_merged_property(
+            sources=(PropertySource.OPENRENT,), source_id="or2"
+        )
         data_dir = str(tmp_path)
 
         floorplan_bytes = _make_floorplan_bytes()
@@ -593,10 +593,13 @@ class TestEnrichSingleFloorplanDetection:
         assert fp_cache.is_file()
         assert fp_cache.read_bytes() == floorplan_bytes
 
-    async def test_skips_detection_when_structural_floorplan_exists(self, tmp_path: Path) -> None:
+    async def test_skips_detection_when_structural_floorplan_exists(
+        self, tmp_path: Path, make_merged_property: Callable[..., MergedProperty]
+    ) -> None:
         """Should not run PIL detection when detail page provides a floorplan."""
-        prop = _make_property(source=PropertySource.OPENRENT, source_id="or3")
-        merged = _make_merged(canonical=prop, sources=(PropertySource.OPENRENT,))
+        merged = make_merged_property(
+            sources=(PropertySource.OPENRENT,), source_id="or3"
+        )
         data_dir = str(tmp_path)
 
         # Detail page returns both gallery images and a dedicated floorplan

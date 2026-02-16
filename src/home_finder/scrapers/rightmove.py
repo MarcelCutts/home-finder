@@ -180,10 +180,7 @@ class RightmoveScraper(BaseScraper):
         known_source_ids: set[str] | None = None,
     ) -> list[Property]:
         """Scrape Rightmove for matching properties (all pages)."""
-        properties: list[Property] = []
-        seen_ids: set[str] = set()
-
-        base_url = await self._build_search_url(
+        search_url = await self._build_search_url(
             area=area,
             min_price=min_price,
             max_price=max_price,
@@ -193,12 +190,12 @@ class RightmoveScraper(BaseScraper):
             min_bathrooms=min_bathrooms,
             include_let_agreed=include_let_agreed,
         )
-        if not base_url:
+        if not search_url:
             return []
 
-        for page in range(self.MAX_PAGES):
-            index = page * self.RESULTS_PER_PAGE
-            url = f"{base_url}&index={index}" if page > 0 else base_url
+        async def fetch_page(page_idx: int) -> list[Property]:
+            index = page_idx * self.RESULTS_PER_PAGE
+            url = f"{search_url}&index={index}" if page_idx > 0 else search_url
 
             page_properties: list[Property] = []
 
@@ -215,54 +212,31 @@ class RightmoveScraper(BaseScraper):
                 storage_client=MemoryStorageClient(),
             )
             crawler.router.default_handler(handle_page)
-
             await crawler.run([url])
 
             logger.info(
                 "scraped_rightmove_page",
                 url=url,
-                page=page + 1,
+                page=page_idx + 1,
                 properties_found=len(page_properties),
             )
+            return page_properties
 
-            if not page_properties:
-                break
+        async def delay() -> None:
+            await asyncio.sleep(self.PAGE_DELAY_SECONDS)
 
-            # Early-stop: all results on this page are already in DB
-            if known_source_ids is not None and all(
-                p.source_id in known_source_ids for p in page_properties
-            ):
-                logger.info(
-                    "early_stop_all_known",
-                    source=self.source.value,
-                    area=area,
-                    page=page + 1,
-                )
-                break
-
-            # Deduplicate within run (Rightmove can return overlapping results)
-            new_properties = [p for p in page_properties if p.source_id not in seen_ids]
-            for p in new_properties:
-                seen_ids.add(p.source_id)
-
-            if not new_properties:
-                break
-
-            properties.extend(new_properties)
-
-            if max_results is not None and len(properties) >= max_results:
-                properties = properties[:max_results]
-                break
-
-            # Be polite - delay between pages
-            if page < self.MAX_PAGES - 1:
-                await asyncio.sleep(self.PAGE_DELAY_SECONDS)
+        properties = await self._paginate(
+            fetch_page,
+            max_pages=self.MAX_PAGES,
+            known_source_ids=known_source_ids,
+            max_results=max_results,
+            page_delay=delay,
+        )
 
         logger.info(
             "scraped_rightmove_complete",
             area=area,
             total_properties=len(properties),
-            pages_scraped=min(page + 1, self.MAX_PAGES),
         )
 
         return properties

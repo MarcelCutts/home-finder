@@ -14,15 +14,10 @@ from starlette.responses import Response
 from home_finder.data.area_context import (
     ACOUSTIC_PROFILES,
     AREA_CONTEXT,
-    COUNCIL_TAX_MONTHLY,
     CREATIVE_SCENE,
-    CRIME_RATES,
     HOSTING_TOLERANCE,
     NOISE_ENFORCEMENT,
-    OUTCODE_BOROUGH,
-    RENT_TRENDS,
-    RENTAL_BENCHMARKS,
-    get_area_overview,
+    build_area_context,
     get_micro_area_for_ward,
     get_micro_areas,
     match_micro_area,
@@ -39,7 +34,7 @@ from home_finder.models import (
 )
 from home_finder.utils.address import extract_outcode
 from home_finder.utils.image_cache import get_cache_dir, safe_dir_name, url_to_filename
-from home_finder.web.filters import VALID_SORT_OPTIONS, FilterDep
+from home_finder.web.filters import VALID_SORT_OPTIONS, FilterDep, _parse_optional_int
 
 logger = get_logger(__name__)
 
@@ -123,19 +118,6 @@ TAG_CATEGORIES: Final[dict[str, list[str]]] = {
         PropertyLowlight.NO_OUTDOOR_SPACE.value,
     ],
 }
-
-
-def _parse_optional_int(value: str | None) -> int | None:
-    """Parse a string to int, returning None for empty/whitespace/non-numeric values."""
-    if value is None:
-        return None
-    value = value.strip()
-    if not value:
-        return None
-    try:
-        return int(value)
-    except (ValueError, TypeError):
-        return None
 
 
 def listing_age_filter(iso_str: str | None) -> str:
@@ -352,7 +334,7 @@ async def property_detail(
     outcode = extract_outcode(prop.get("postcode"))
     area_context: dict[str, Any] = {}
     if outcode:
-        area_context["description"] = get_area_overview(outcode)
+        area_context = build_area_context(outcode)
         all_micro = get_micro_areas(outcode)
         if all_micro:
             # Try ward-based matching first (reliable), fall back to text matching
@@ -366,13 +348,6 @@ async def property_detail(
                     "data": all_micro[matched_name],
                 }
             area_context["micro_area_count"] = len(all_micro)
-        area_context["benchmarks"] = RENTAL_BENCHMARKS.get(outcode)
-        borough = OUTCODE_BOROUGH.get(outcode)
-        if borough:
-            area_context["borough"] = borough
-            area_context["council_tax"] = COUNCIL_TAX_MONTHLY.get(borough)
-            area_context["rent_trend"] = RENT_TRENDS.get(borough)
-        area_context["crime"] = CRIME_RATES.get(outcode)
         area_context["hosting_tolerance"] = HOSTING_TOLERANCE.get(outcode)
         area_context["creative_scene"] = CREATIVE_SCENE.get(outcode)
 
@@ -492,22 +467,13 @@ async def area_detail(
             status_code=404,
         )
 
-    area_context: dict[str, Any] = {
-        "description": get_area_overview(outcode),
-        "micro_areas": get_micro_areas(outcode),
-        "benchmarks": RENTAL_BENCHMARKS.get(outcode),
-    }
-
-    borough = OUTCODE_BOROUGH.get(outcode)
+    area_context = build_area_context(outcode)
+    area_context["micro_areas"] = get_micro_areas(outcode)
+    borough = area_context.get("borough")
     if borough:
-        area_context["borough"] = borough
-        area_context["council_tax"] = COUNCIL_TAX_MONTHLY.get(borough)
-        area_context["rent_trend"] = RENT_TRENDS.get(borough)
         enforcement = NOISE_ENFORCEMENT.get(borough)
         if enforcement:
             area_context["noise_enforcement"] = enforcement
-
-    area_context["crime"] = CRIME_RATES.get(outcode)
 
     return templates.TemplateResponse(
         "area.html",

@@ -343,16 +343,14 @@ class ZooplaScraper(BaseScraper):
         known_source_ids: set[str] | None = None,
     ) -> list[Property]:
         """Scrape Zoopla for matching properties (all pages)."""
-        all_properties: list[Property] = []
-        seen_ids: set[str] = set()
-
         # Establish cookies on first search of the session
         await self._warm_up()
 
         # Pick one browser profile per area (switching mid-session is suspicious)
         impersonate_target = self._pick_impersonate_target()
 
-        for page in range(1, self.MAX_PAGES + 1):
+        async def fetch_page(page_idx: int) -> list[Property]:
+            page = page_idx + 1  # Zoopla uses 1-based pages
             url = self._build_search_url(
                 area=area,
                 min_price=min_price,
@@ -368,7 +366,7 @@ class ZooplaScraper(BaseScraper):
             html = await self._fetch_page(url, impersonate_target=impersonate_target)
             if not html:
                 logger.warning("zoopla_fetch_failed", url=url, page=page)
-                break
+                return []
 
             # Try RSC extraction first (primary method)
             properties = self._parse_rsc_properties(html)
@@ -387,45 +385,20 @@ class ZooplaScraper(BaseScraper):
                 properties_found=len(properties),
                 method=method,
             )
+            return properties
 
-            if not properties:
-                break
-
-            # Early-stop: all results on this page are already in DB
-            if known_source_ids is not None and all(
-                p.source_id in known_source_ids for p in properties
-            ):
-                logger.info(
-                    "early_stop_all_known",
-                    source=self.source.value,
-                    area=area,
-                    page=page,
-                )
-                break
-
-            # Deduplicate (Zoopla can return overlapping results)
-            new_properties = [p for p in properties if p.source_id not in seen_ids]
-            for p in new_properties:
-                seen_ids.add(p.source_id)
-
-            if not new_properties:
-                break
-
-            all_properties.extend(new_properties)
-
-            if max_results is not None and len(all_properties) >= max_results:
-                all_properties = all_properties[:max_results]
-                break
-
-            # Be polite - jittered delay between pages
-            if page < self.MAX_PAGES:
-                await self._page_delay()
+        all_properties = await self._paginate(
+            fetch_page,
+            max_pages=self.MAX_PAGES,
+            known_source_ids=known_source_ids,
+            max_results=max_results,
+            page_delay=self._page_delay,
+        )
 
         logger.info(
             "scraped_zoopla_complete",
             area=area,
             total_properties=len(all_properties),
-            pages_scraped=page,
         )
 
         return all_properties

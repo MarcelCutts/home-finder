@@ -5,74 +5,21 @@ early return paths. Uses file-backed SQLite for realistic DB interaction
 and mocks PropertyQualityFilter as the single I/O boundary.
 """
 
+from collections.abc import Callable
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
 import pytest
 import pytest_asyncio
-from pydantic import HttpUrl
 
 from home_finder.config import Settings
 from home_finder.db import PropertyStorage
 from home_finder.filters.quality import APIUnavailableError
 from home_finder.main import run_reanalysis
 from home_finder.models import (
-    ConditionAnalysis,
-    KitchenAnalysis,
-    LightSpaceAnalysis,
     MergedProperty,
-    Property,
     PropertyQualityAnalysis,
-    PropertySource,
-    SpaceAnalysis,
 )
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-
-def _make_property(
-    source_id: str = "z-1",
-    postcode: str | None = "E8 3RH",
-) -> Property:
-    return Property(
-        source=PropertySource.ZOOPLA,
-        source_id=source_id,
-        url=HttpUrl(f"https://example.com/zoopla/{source_id}"),
-        title="Test flat",
-        price_pcm=2000,
-        bedrooms=2,
-        address="123 Test St",
-        postcode=postcode,
-        latitude=51.5465,
-        longitude=-0.0553,
-        image_url=HttpUrl("https://example.com/img.jpg"),
-    )
-
-
-def _make_merged(prop: Property | None = None) -> MergedProperty:
-    if prop is None:
-        prop = _make_property()
-    return MergedProperty(
-        canonical=prop,
-        sources=(prop.source,),
-        source_urls={prop.source: prop.url},
-        min_price=prop.price_pcm,
-        max_price=prop.price_pcm,
-    )
-
-
-def _make_quality_analysis(rating: int = 4) -> PropertyQualityAnalysis:
-    return PropertyQualityAnalysis(
-        kitchen=KitchenAnalysis(overall_quality="modern"),
-        condition=ConditionAnalysis(overall_condition="good"),
-        light_space=LightSpaceAnalysis(natural_light="good"),
-        space=SpaceAnalysis(living_room_sqm=20.0),
-        overall_rating=rating,
-        summary="A nice flat.",
-    )
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -107,15 +54,16 @@ def reanalysis_settings(db_path: Path) -> Settings:
 
 async def _save_and_flag(
     storage: PropertyStorage,
+    make_merged_property: Callable[..., MergedProperty],
+    make_quality_analysis: Callable[..., PropertyQualityAnalysis],
     source_id: str = "z-1",
-    postcode: str = "E8 3RH",
+    postcode: str | None = "E8 3RH",
     rating: int = 4,
 ) -> MergedProperty:
     """Save an analyzed+notified property and flag it for reanalysis."""
-    prop = _make_property(source_id=source_id, postcode=postcode)
-    merged = _make_merged(prop)
+    merged = make_merged_property(source_id=source_id, postcode=postcode)
     await storage.save_pre_analysis_properties([merged], {})
-    await storage.complete_analysis(merged.unique_id, _make_quality_analysis(rating))
+    await storage.complete_analysis(merged.unique_id, make_quality_analysis(rating=rating))
     await storage.mark_notified(merged.unique_id)
     await storage.request_reanalysis([merged.unique_id])
     return merged
@@ -131,14 +79,15 @@ class TestRunReanalysisRequestOnly:
         self,
         populated_storage: PropertyStorage,
         reanalysis_settings: Settings,
+        make_merged_property: Callable[..., MergedProperty],
+        make_quality_analysis: Callable[..., PropertyQualityAnalysis],
     ) -> None:
         """request_only=True flags properties but never instantiates quality filter."""
         # Pre-populate 2 E8 properties
         for i in range(2):
-            prop = _make_property(source_id=f"z-e8-{i}", postcode="E8 3RH")
-            merged = _make_merged(prop)
+            merged = make_merged_property(source_id=f"z-e8-{i}", postcode="E8 3RH")
             await populated_storage.save_pre_analysis_properties([merged], {})
-            await populated_storage.complete_analysis(merged.unique_id, _make_quality_analysis())
+            await populated_storage.complete_analysis(merged.unique_id, make_quality_analysis())
             await populated_storage.mark_notified(merged.unique_id)
 
         with patch("home_finder.main.PropertyQualityFilter") as mock_qf_cls:
@@ -157,13 +106,14 @@ class TestRunReanalysisRequestOnly:
         self,
         populated_storage: PropertyStorage,
         reanalysis_settings: Settings,
+        make_merged_property: Callable[..., MergedProperty],
+        make_quality_analysis: Callable[..., PropertyQualityAnalysis],
     ) -> None:
         """reanalyze_all=True with request_only flags all properties."""
         for sid, pc in [("z-e8", "E8 3RH"), ("z-e2", "E2 7QA"), ("z-n1", "N1 5AA")]:
-            prop = _make_property(source_id=sid, postcode=pc)
-            merged = _make_merged(prop)
+            merged = make_merged_property(source_id=sid, postcode=pc)
             await populated_storage.save_pre_analysis_properties([merged], {})
-            await populated_storage.complete_analysis(merged.unique_id, _make_quality_analysis())
+            await populated_storage.complete_analysis(merged.unique_id, make_quality_analysis())
             await populated_storage.mark_notified(merged.unique_id)
 
         with patch("home_finder.main.PropertyQualityFilter") as mock_qf_cls:
@@ -202,11 +152,13 @@ class TestRunReanalysisEarlyReturns:
         self,
         populated_storage: PropertyStorage,
         reanalysis_settings: Settings,
+        make_merged_property: Callable[..., MergedProperty],
+        make_quality_analysis: Callable[..., PropertyQualityAnalysis],
         capsys: pytest.CaptureFixture[str],
     ) -> None:
         """Missing API key → early return with error message."""
         # Flag a property
-        await _save_and_flag(populated_storage)
+        await _save_and_flag(populated_storage, make_merged_property, make_quality_analysis)
 
         from pydantic import SecretStr
 
@@ -232,11 +184,15 @@ class TestRunReanalysisSuccess:
         self,
         populated_storage: PropertyStorage,
         reanalysis_settings: Settings,
+        make_merged_property: Callable[..., MergedProperty],
+        make_quality_analysis: Callable[..., PropertyQualityAnalysis],
     ) -> None:
         """Single flagged property gets reanalyzed successfully."""
-        merged = await _save_and_flag(populated_storage)
+        merged = await _save_and_flag(
+            populated_storage, make_merged_property, make_quality_analysis
+        )
 
-        new_analysis = _make_quality_analysis(rating=5)
+        new_analysis = make_quality_analysis(rating=5)
 
         mock_filter = AsyncMock()
         mock_filter.analyze_single_merged = AsyncMock(return_value=(merged, new_analysis))
@@ -261,16 +217,21 @@ class TestRunReanalysisSuccess:
         self,
         populated_storage: PropertyStorage,
         reanalysis_settings: Settings,
+        make_merged_property: Callable[..., MergedProperty],
+        make_quality_analysis: Callable[..., PropertyQualityAnalysis],
         capsys: pytest.CaptureFixture[str],
     ) -> None:
         """Multiple properties all reanalyzed successfully."""
         merged_list = []
         for i in range(3):
-            m = await _save_and_flag(populated_storage, source_id=f"z-{i}", postcode="E8 3RH")
+            m = await _save_and_flag(
+                populated_storage, make_merged_property, make_quality_analysis,
+                source_id=f"z-{i}", postcode="E8 3RH",
+            )
             merged_list.append(m)
 
         async def _mock_analyze(merged: MergedProperty, *, data_dir: str | None = None):
-            return (merged, _make_quality_analysis(rating=5))
+            return (merged, make_quality_analysis(rating=5))
 
         mock_filter = AsyncMock()
         mock_filter.analyze_single_merged = AsyncMock(side_effect=_mock_analyze)
@@ -291,11 +252,15 @@ class TestRunReanalysisSuccess:
         self,
         populated_storage: PropertyStorage,
         reanalysis_settings: Settings,
+        make_merged_property: Callable[..., MergedProperty],
+        make_quality_analysis: Callable[..., PropertyQualityAnalysis],
     ) -> None:
         """Reanalysis does not alter notification_status."""
-        merged = await _save_and_flag(populated_storage)
+        merged = await _save_and_flag(
+            populated_storage, make_merged_property, make_quality_analysis
+        )
 
-        new_analysis = _make_quality_analysis(rating=5)
+        new_analysis = make_quality_analysis(rating=5)
         mock_filter = AsyncMock()
         mock_filter.analyze_single_merged = AsyncMock(return_value=(merged, new_analysis))
         mock_filter.close = AsyncMock()
@@ -318,11 +283,16 @@ class TestRunReanalysisErrorHandling:
         self,
         populated_storage: PropertyStorage,
         reanalysis_settings: Settings,
+        make_merged_property: Callable[..., MergedProperty],
+        make_quality_analysis: Callable[..., PropertyQualityAnalysis],
     ) -> None:
         """APIUnavailableError triggers circuit breaker — cancels remaining tasks."""
         merged_list = []
         for i in range(3):
-            m = await _save_and_flag(populated_storage, source_id=f"z-{i}", postcode="E8 3RH")
+            m = await _save_and_flag(
+                populated_storage, make_merged_property, make_quality_analysis,
+                source_id=f"z-{i}", postcode="E8 3RH",
+            )
             merged_list.append(m)
 
         call_count = 0
@@ -332,7 +302,7 @@ class TestRunReanalysisErrorHandling:
             call_count += 1
             if call_count > 1:
                 raise APIUnavailableError("overloaded")
-            return (merged, _make_quality_analysis(rating=5))
+            return (merged, make_quality_analysis(rating=5))
 
         mock_filter = AsyncMock()
         mock_filter.analyze_single_merged = AsyncMock(side_effect=_mock_analyze)
@@ -352,11 +322,19 @@ class TestRunReanalysisErrorHandling:
         self,
         populated_storage: PropertyStorage,
         reanalysis_settings: Settings,
+        make_merged_property: Callable[..., MergedProperty],
+        make_quality_analysis: Callable[..., PropertyQualityAnalysis],
         capsys: pytest.CaptureFixture[str],
     ) -> None:
         """RuntimeError on one property doesn't stop the rest."""
-        await _save_and_flag(populated_storage, source_id="z-fail", postcode="E8 3RH")
-        await _save_and_flag(populated_storage, source_id="z-ok", postcode="E8 4AA")
+        await _save_and_flag(
+            populated_storage, make_merged_property, make_quality_analysis,
+            source_id="z-fail", postcode="E8 3RH",
+        )
+        await _save_and_flag(
+            populated_storage, make_merged_property, make_quality_analysis,
+            source_id="z-ok", postcode="E8 4AA",
+        )
 
         call_count = 0
 
@@ -365,7 +343,7 @@ class TestRunReanalysisErrorHandling:
             call_count += 1
             if call_count == 1:
                 raise RuntimeError("boom")
-            return (merged, _make_quality_analysis(rating=5))
+            return (merged, make_quality_analysis(rating=5))
 
         mock_filter = AsyncMock()
         mock_filter.analyze_single_merged = AsyncMock(side_effect=_mock_analyze)
@@ -382,10 +360,14 @@ class TestRunReanalysisErrorHandling:
         self,
         populated_storage: PropertyStorage,
         reanalysis_settings: Settings,
+        make_merged_property: Callable[..., MergedProperty],
+        make_quality_analysis: Callable[..., PropertyQualityAnalysis],
         capsys: pytest.CaptureFixture[str],
     ) -> None:
         """analyze_single_merged returning None analysis counts as failure."""
-        merged = await _save_and_flag(populated_storage)
+        merged = await _save_and_flag(
+            populated_storage, make_merged_property, make_quality_analysis
+        )
 
         mock_filter = AsyncMock()
         mock_filter.analyze_single_merged = AsyncMock(return_value=(merged, None))
@@ -406,9 +388,11 @@ class TestRunReanalysisErrorHandling:
         self,
         populated_storage: PropertyStorage,
         reanalysis_settings: Settings,
+        make_merged_property: Callable[..., MergedProperty],
+        make_quality_analysis: Callable[..., PropertyQualityAnalysis],
     ) -> None:
         """close() is called even when every analysis raises APIUnavailableError."""
-        await _save_and_flag(populated_storage)
+        await _save_and_flag(populated_storage, make_merged_property, make_quality_analysis)
 
         mock_filter = AsyncMock()
         mock_filter.analyze_single_merged = AsyncMock(side_effect=APIUnavailableError("down"))

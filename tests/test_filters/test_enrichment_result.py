@@ -1,46 +1,21 @@
 """Tests for EnrichmentResult split behavior in detail enrichment."""
 
+from collections.abc import Callable
 from unittest.mock import AsyncMock, patch
 
-from pydantic import HttpUrl
-
 from home_finder.filters.detail_enrichment import enrich_merged_properties
-from home_finder.models import MergedProperty, Property, PropertySource
+from home_finder.models import MergedProperty, Property
 from home_finder.scrapers.detail_fetcher import DetailFetcher, DetailPageData
-
-
-def _make_property(source_id: str = "123") -> Property:
-    return Property(
-        source=PropertySource.RIGHTMOVE,
-        source_id=source_id,
-        url=HttpUrl(f"https://example.com/rightmove/{source_id}"),
-        title="Test flat",
-        price_pcm=2000,
-        bedrooms=2,
-        address="123 Test St",
-        postcode="E8 3RH",
-    )
-
-
-def _make_merged(source_id: str = "123") -> MergedProperty:
-    prop = _make_property(source_id)
-    return MergedProperty(
-        canonical=prop,
-        sources=(prop.source,),
-        source_urls={prop.source: prop.url},
-        images=(),
-        floorplan=None,
-        min_price=prop.price_pcm,
-        max_price=prop.price_pcm,
-    )
 
 
 class TestEnrichmentResultSplit:
     """Tests that enrichment correctly splits into enriched/failed."""
 
-    async def test_successful_enrichment_goes_to_enriched(self) -> None:
+    async def test_successful_enrichment_goes_to_enriched(
+        self, make_merged_property: Callable[..., MergedProperty]
+    ) -> None:
         """Property with images goes to enriched list."""
-        merged = _make_merged()
+        merged = make_merged_property()
         detail = DetailPageData(gallery_urls=["https://example.com/img.jpg"])
 
         fetcher = DetailFetcher()
@@ -52,9 +27,11 @@ class TestEnrichmentResultSplit:
         assert len(result.enriched) == 1
         assert len(result.failed) == 0
 
-    async def test_failed_enrichment_goes_to_failed(self) -> None:
+    async def test_failed_enrichment_goes_to_failed(
+        self, make_merged_property: Callable[..., MergedProperty]
+    ) -> None:
         """Property with no images goes to failed list."""
-        merged = _make_merged()
+        merged = make_merged_property()
 
         fetcher = DetailFetcher()
         with patch.object(fetcher, "fetch_detail_page", new_callable=AsyncMock, return_value=None):
@@ -63,9 +40,11 @@ class TestEnrichmentResultSplit:
         assert len(result.enriched) == 0
         assert len(result.failed) == 1
 
-    async def test_floorplan_only_counts_as_enriched(self) -> None:
+    async def test_floorplan_only_counts_as_enriched(
+        self, make_merged_property: Callable[..., MergedProperty]
+    ) -> None:
         """Property with only floorplan (no gallery) is enriched."""
-        merged = _make_merged()
+        merged = make_merged_property()
         detail = DetailPageData(floorplan_url="https://example.com/floor.jpg")
 
         fetcher = DetailFetcher()
@@ -77,10 +56,12 @@ class TestEnrichmentResultSplit:
         assert len(result.enriched) == 1
         assert len(result.failed) == 0
 
-    async def test_mixed_batch_splits_correctly(self) -> None:
+    async def test_mixed_batch_splits_correctly(
+        self, make_merged_property: Callable[..., MergedProperty]
+    ) -> None:
         """Batch with successes and failures splits correctly."""
-        success_merged = _make_merged("success-1")
-        fail_merged = _make_merged("fail-1")
+        success_merged = make_merged_property(source_id="success-1")
+        fail_merged = make_merged_property(source_id="fail-1")
 
         success_detail = DetailPageData(gallery_urls=["https://example.com/img.jpg"])
 
@@ -98,9 +79,11 @@ class TestEnrichmentResultSplit:
         assert result.enriched[0].unique_id == success_merged.unique_id
         assert result.failed[0].unique_id == fail_merged.unique_id
 
-    async def test_empty_gallery_goes_to_failed(self) -> None:
+    async def test_empty_gallery_goes_to_failed(
+        self, make_merged_property: Callable[..., MergedProperty]
+    ) -> None:
         """Property with empty gallery list (no actual images) goes to failed."""
-        merged = _make_merged()
+        merged = make_merged_property()
         detail = DetailPageData(gallery_urls=[], description="Some desc")
 
         fetcher = DetailFetcher()

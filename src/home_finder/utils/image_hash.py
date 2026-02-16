@@ -25,29 +25,37 @@ Image.MAX_IMAGE_PIXELS = 50_000_000
 HASH_DISTANCE_THRESHOLD = 8
 
 
-async def fetch_and_hash_image(url: str, timeout: float = 10.0) -> str | None:
+async def fetch_and_hash_image(
+    url: str, timeout: float = 10.0, *, client: httpx.AsyncClient | None = None
+) -> str | None:
     """Fetch image from URL and compute perceptual hash.
 
     Args:
         url: Image URL to fetch.
         timeout: Request timeout in seconds.
+        client: Optional shared HTTP client.
 
     Returns:
         Hex string of perceptual hash, or None if failed.
     """
     try:
-        async with httpx.AsyncClient() as client:
-            # Handle protocol-relative URLs
-            if url.startswith("//"):
-                url = "https:" + url
+        # Handle protocol-relative URLs
+        if url.startswith("//"):
+            url = "https:" + url
 
+        if client is not None:
             response = await client.get(url, timeout=timeout, follow_redirects=True)
-            response.raise_for_status()
+        else:
+            async with httpx.AsyncClient() as c:
+                response = await c.get(url, timeout=timeout, follow_redirects=True)
 
-            # Load image and compute hash
-            image = Image.open(io.BytesIO(response.content))
-            phash = imagehash.phash(image)
-            return str(phash)
+        response.raise_for_status()
+
+        def _compute_hash(data: bytes) -> str:
+            image = Image.open(io.BytesIO(data))
+            return str(imagehash.phash(image))
+
+        return await asyncio.to_thread(_compute_hash, response.content)
 
     except Exception as e:
         logger.debug("image_hash_failed", url=url, error=str(e))
@@ -92,15 +100,19 @@ async def fetch_image_hashes_batch(
     """
     semaphore = asyncio.Semaphore(max_concurrent)
 
-    async def fetch_one(prop: "Property") -> tuple[str, str | None]:
-        async with semaphore:
-            if prop.image_url:
-                hash_val = await fetch_and_hash_image(str(prop.image_url))
-                return (prop.unique_id, hash_val)
-            return (prop.unique_id, None)
+    async with httpx.AsyncClient() as client:
 
-    tasks = [fetch_one(p) for p in properties]
-    results = await asyncio.gather(*tasks, return_exceptions=True)
+        async def fetch_one(prop: "Property") -> tuple[str, str | None]:
+            async with semaphore:
+                if prop.image_url:
+                    hash_val = await fetch_and_hash_image(
+                        str(prop.image_url), client=client
+                    )
+                    return (prop.unique_id, hash_val)
+                return (prop.unique_id, None)
+
+        tasks = [fetch_one(p) for p in properties]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
 
     hashes = {}
     for result in results:

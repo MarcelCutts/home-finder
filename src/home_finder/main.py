@@ -8,6 +8,8 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Final
 
+import httpx
+
 from home_finder.config import Settings
 from home_finder.db import PropertyStorage
 from home_finder.filters import (
@@ -628,22 +630,23 @@ async def _lookup_wards(storage: PropertyStorage) -> None:
 
     ward_map: dict[str, str] = {}
 
-    # Bulk reverse geocode for properties with coordinates
-    if coord_props:
-        coords = [
-            (float(p["latitude"]), float(p["longitude"]))  # type: ignore[arg-type]
-            for p in coord_props
-        ]
-        wards = await bulk_reverse_lookup_wards(coords)
-        for p, ward in zip(coord_props, wards, strict=True):
+    async with httpx.AsyncClient(timeout=30) as client:
+        # Bulk reverse geocode for properties with coordinates
+        if coord_props:
+            coords = [
+                (float(p["latitude"]), float(p["longitude"]))  # type: ignore[arg-type]
+                for p in coord_props
+            ]
+            wards = await bulk_reverse_lookup_wards(coords, client=client)
+            for p, ward in zip(coord_props, wards, strict=True):
+                if ward:
+                    ward_map[str(p["unique_id"])] = ward
+
+        # Forward lookup for properties with full postcodes (no coordinates)
+        for p in postcode_props:
+            ward = await lookup_ward(str(p["postcode"]), client=client)
             if ward:
                 ward_map[str(p["unique_id"])] = ward
-
-    # Forward lookup for properties with full postcodes (no coordinates)
-    for p in postcode_props:
-        ward = await lookup_ward(str(p["postcode"]))
-        if ward:
-            ward_map[str(p["unique_id"])] = ward
 
     if ward_map:
         updated = await storage.update_wards(ward_map)

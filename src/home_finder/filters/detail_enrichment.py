@@ -188,8 +188,8 @@ async def _enrich_single(
 
         # If no floorplan found by structural extraction, try PIL heuristic on gallery images
         if floorplan_image is None and data_dir and all_images:
-            floorplan_image, all_images, detected_idx = _detect_floorplan_in_gallery(
-                all_images, merged.unique_id, data_dir
+            floorplan_image, all_images, detected_idx = await asyncio.to_thread(
+                _detect_floorplan_in_gallery, all_images, merged.unique_id, data_dir
             )
             # Copy the cached image to the floorplan cache path so quality analysis finds it
             if floorplan_image is not None and detected_idx >= 0:

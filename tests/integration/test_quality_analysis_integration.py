@@ -160,43 +160,24 @@ def _make_two_phase_mock() -> AsyncMock:
     return AsyncMock(side_effect=[mock_visual, mock_eval])
 
 
-def _make_merged_with_images(
-    prop: Property,
-    *,
-    with_images: bool = True,
-    with_floorplan: bool = True,
-) -> MergedProperty:
-    """Wrap a Property into a MergedProperty with optional images/floorplan."""
-    images = ()
-    floorplan = None
-    if with_images:
-        images = (
-            PropertyImage(
-                url=HttpUrl("https://example.com/img1.jpg"),
-                source=prop.source,
-                image_type="gallery",
-            ),
-            PropertyImage(
-                url=HttpUrl("https://example.com/img2.jpg"),
-                source=prop.source,
-                image_type="gallery",
-            ),
-        )
-    if with_floorplan:
-        floorplan = PropertyImage(
-            url=HttpUrl("https://example.com/floor.jpg"),
-            source=prop.source,
-            image_type="floorplan",
-        )
-    return MergedProperty(
-        canonical=prop,
-        sources=(prop.source,),
-        source_urls={prop.source: prop.url},
-        images=images,
-        floorplan=floorplan,
-        min_price=prop.price_pcm,
-        max_price=prop.price_pcm,
-    )
+# Standard images/floorplan shared across tests that need enriched MergedProperty
+_GALLERY_IMAGES = (
+    PropertyImage(
+        url=HttpUrl("https://example.com/img1.jpg"),
+        source=PropertySource.OPENRENT,
+        image_type="gallery",
+    ),
+    PropertyImage(
+        url=HttpUrl("https://example.com/img2.jpg"),
+        source=PropertySource.OPENRENT,
+        image_type="gallery",
+    ),
+)
+_FLOORPLAN = PropertyImage(
+    url=HttpUrl("https://example.com/floor.jpg"),
+    source=PropertySource.OPENRENT,
+    image_type="floorplan",
+)
 
 
 @pytest.mark.integration
@@ -204,11 +185,16 @@ class TestQualityAnalysisIntegration:
     """Test quality analysis with mocked Anthropic API and real DB."""
 
     async def test_analyze_parses_tool_response(
-        self, make_property: Callable[..., Property]
+        self, make_merged_property: Callable[..., MergedProperty]
     ) -> None:
         """Two-phase tool use response should be parsed into PropertyQualityAnalysis."""
-        prop = make_property(source_id="qa-123", price_pcm=1900, postcode="E8 3RH")
-        merged = _make_merged_with_images(prop)
+        merged = make_merged_property(
+            images=_GALLERY_IMAGES,
+            floorplan=_FLOORPLAN,
+            source_id="qa-123",
+            price_pcm=1900,
+            postcode="E8 3RH",
+        )
 
         quality_filter = PropertyQualityFilter(api_key="test-key")
         quality_filter._client = MagicMock()
@@ -237,11 +223,16 @@ class TestQualityAnalysisIntegration:
     async def test_analysis_stored_in_db(
         self,
         in_memory_storage: PropertyStorage,
-        make_property: Callable[..., Property],
+        make_merged_property: Callable[..., MergedProperty],
     ) -> None:
         """Analysis should roundtrip through the database."""
-        prop = make_property(source_id="qa-db", price_pcm=1900, postcode="E8 3RH")
-        merged = _make_merged_with_images(prop)
+        merged = make_merged_property(
+            images=_GALLERY_IMAGES,
+            floorplan=_FLOORPLAN,
+            source_id="qa-db",
+            price_pcm=1900,
+            postcode="E8 3RH",
+        )
 
         quality_filter = PropertyQualityFilter(api_key="test-key")
         quality_filter._client = MagicMock()
@@ -264,11 +255,16 @@ class TestQualityAnalysisIntegration:
     async def test_analysis_roundtrip_through_detail(
         self,
         in_memory_storage: PropertyStorage,
-        make_property: Callable[..., Property],
+        make_merged_property: Callable[..., MergedProperty],
     ) -> None:
         """Analysis should be available through get_property_detail."""
-        prop = make_property(source_id="qa-detail", price_pcm=1900, postcode="E8 3RH")
-        merged = _make_merged_with_images(prop)
+        merged = make_merged_property(
+            images=_GALLERY_IMAGES,
+            floorplan=_FLOORPLAN,
+            source_id="qa-detail",
+            price_pcm=1900,
+            postcode="E8 3RH",
+        )
 
         quality_filter = PropertyQualityFilter(api_key="test-key")
         quality_filter._client = MagicMock()
@@ -286,10 +282,18 @@ class TestQualityAnalysisIntegration:
         assert detail["quality_analysis"] is not None
         assert detail["quality_analysis"].summary == analysis.summary
 
-    async def test_two_bed_space_override(self, make_property: Callable[..., Property]) -> None:
+    async def test_two_bed_space_override(
+        self, make_merged_property: Callable[..., MergedProperty]
+    ) -> None:
         """2-bed property should override is_spacious_enough to True."""
-        prop = make_property(source_id="qa-2bed", bedrooms=2, price_pcm=1900, postcode="E8 3RH")
-        merged = _make_merged_with_images(prop)
+        merged = make_merged_property(
+            images=_GALLERY_IMAGES,
+            floorplan=_FLOORPLAN,
+            source_id="qa-2bed",
+            bedrooms=2,
+            price_pcm=1900,
+            postcode="E8 3RH",
+        )
 
         visual_data = _sample_visual_response()
         visual_data["space"]["is_spacious_enough"] = False  # Claude says not spacious
@@ -311,10 +315,11 @@ class TestQualityAnalysisIntegration:
         assert analysis.space.is_spacious_enough is True
         assert analysis.space.confidence == "high"
 
-    async def test_no_images_skips_api_call(self, make_property: Callable[..., Property]) -> None:
+    async def test_no_images_skips_api_call(
+        self, make_merged_property: Callable[..., MergedProperty]
+    ) -> None:
         """Property without images should not call Claude API."""
-        prop = make_property(source_id="qa-noimg", price_pcm=1900, postcode="E8 3RH")
-        merged = _make_merged_with_images(prop, with_images=False, with_floorplan=False)
+        merged = make_merged_property(source_id="qa-noimg", price_pcm=1900, postcode="E8 3RH")
 
         quality_filter = PropertyQualityFilter(api_key="test-key")
         quality_filter._client = MagicMock()
@@ -379,11 +384,16 @@ class TestQualityAnalysisIntegration:
         assert image_blocks[0]["source"]["type"] == "base64"
 
     async def test_phase2_failure_still_returns_analysis(
-        self, make_property: Callable[..., Property]
+        self, make_merged_property: Callable[..., MergedProperty]
     ) -> None:
         """Phase 2 failure should still return analysis with visual data."""
-        prop = make_property(source_id="qa-p2fail", price_pcm=1900, postcode="E8 3RH")
-        merged = _make_merged_with_images(prop)
+        merged = make_merged_property(
+            images=_GALLERY_IMAGES,
+            floorplan=_FLOORPLAN,
+            source_id="qa-p2fail",
+            price_pcm=1900,
+            postcode="E8 3RH",
+        )
 
         mock_visual = _create_mock_response(
             _sample_visual_response(), tool_name="property_visual_analysis"

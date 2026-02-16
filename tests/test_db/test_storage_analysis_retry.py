@@ -1,6 +1,6 @@
 """Tests for quality analysis retry storage methods."""
 
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Callable
 
 import pytest
 import pytest_asyncio
@@ -20,58 +20,7 @@ from home_finder.models import (
     SpaceAnalysis,
     TransportMode,
 )
-
-
-def _make_property(
-    source: PropertySource = PropertySource.ZOOPLA,
-    source_id: str = "z-1",
-    postcode: str | None = "E8 3RH",
-) -> Property:
-    return Property(
-        source=source,
-        source_id=source_id,
-        url=HttpUrl(f"https://example.com/{source.value}/{source_id}"),
-        title="Test flat",
-        price_pcm=2000,
-        bedrooms=2,
-        address="123 Test St",
-        postcode=postcode,
-        latitude=51.5465,
-        longitude=-0.0553,
-        image_url=HttpUrl("https://example.com/img.jpg"),
-    )
-
-
-def _make_merged(
-    prop: Property | None = None,
-    sources: tuple[PropertySource, ...] | None = None,
-    images: tuple[PropertyImage, ...] = (),
-    floorplan: PropertyImage | None = None,
-) -> MergedProperty:
-    if prop is None:
-        prop = _make_property()
-    if sources is None:
-        sources = (prop.source,)
-    return MergedProperty(
-        canonical=prop,
-        sources=sources,
-        source_urls=dict.fromkeys(sources, prop.url),
-        images=images,
-        floorplan=floorplan,
-        min_price=prop.price_pcm,
-        max_price=prop.price_pcm,
-    )
-
-
-def _make_quality_analysis() -> PropertyQualityAnalysis:
-    return PropertyQualityAnalysis(
-        kitchen=KitchenAnalysis(overall_quality="modern"),
-        condition=ConditionAnalysis(overall_condition="good"),
-        light_space=LightSpaceAnalysis(natural_light="good"),
-        space=SpaceAnalysis(living_room_sqm=20.0),
-        overall_rating=4,
-        summary="A nice flat.",
-    )
+from home_finder.web.filters import PropertyFilter
 
 
 def _make_fallback_analysis() -> PropertyQualityAnalysis:
@@ -100,8 +49,12 @@ async def storage() -> AsyncGenerator[PropertyStorage, None]:
 
 class TestSavePreAnalysisProperties:
     @pytest.mark.asyncio
-    async def test_saves_with_pending_analysis_status(self, storage: PropertyStorage) -> None:
-        merged = _make_merged()
+    async def test_saves_with_pending_analysis_status(
+        self,
+        storage: PropertyStorage,
+        make_merged_property: Callable[..., MergedProperty],
+    ) -> None:
+        merged = make_merged_property()
         await storage.save_pre_analysis_properties([merged], {})
 
         conn = await storage._get_connection()
@@ -115,8 +68,12 @@ class TestSavePreAnalysisProperties:
         assert row["enrichment_status"] == "enriched"
 
     @pytest.mark.asyncio
-    async def test_saves_commute_data(self, storage: PropertyStorage) -> None:
-        merged = _make_merged()
+    async def test_saves_commute_data(
+        self,
+        storage: PropertyStorage,
+        make_merged_property: Callable[..., MergedProperty],
+    ) -> None:
+        merged = make_merged_property()
         commute_lookup = {merged.unique_id: (15, TransportMode.CYCLING)}
         await storage.save_pre_analysis_properties([merged], commute_lookup)
 
@@ -130,7 +87,11 @@ class TestSavePreAnalysisProperties:
         assert row["transport_mode"] == "cycling"
 
     @pytest.mark.asyncio
-    async def test_saves_images(self, storage: PropertyStorage) -> None:
+    async def test_saves_images(
+        self,
+        storage: PropertyStorage,
+        make_merged_property: Callable[..., MergedProperty],
+    ) -> None:
         images = (
             PropertyImage(
                 url=HttpUrl("https://example.com/img1.jpg"),
@@ -143,15 +104,19 @@ class TestSavePreAnalysisProperties:
             source=PropertySource.ZOOPLA,
             image_type="floorplan",
         )
-        merged = _make_merged(images=images, floorplan=floorplan)
+        merged = make_merged_property(images=images, floorplan=floorplan)
         await storage.save_pre_analysis_properties([merged], {})
 
         stored = await storage.get_property_images(merged.unique_id)
         assert len(stored) == 2
 
     @pytest.mark.asyncio
-    async def test_batch_save_multiple(self, storage: PropertyStorage) -> None:
-        props = [_make_merged(_make_property(source_id=f"z-{i}")) for i in range(3)]
+    async def test_batch_save_multiple(
+        self,
+        storage: PropertyStorage,
+        make_merged_property: Callable[..., MergedProperty],
+    ) -> None:
+        props = [make_merged_property(source_id=f"z-{i}") for i in range(3)]
         await storage.save_pre_analysis_properties(props, {})
 
         conn = await storage._get_connection()
@@ -163,9 +128,13 @@ class TestSavePreAnalysisProperties:
         assert row[0] == 3
 
     @pytest.mark.asyncio
-    async def test_on_conflict_updates_status(self, storage: PropertyStorage) -> None:
+    async def test_on_conflict_updates_status(
+        self,
+        storage: PropertyStorage,
+        make_merged_property: Callable[..., MergedProperty],
+    ) -> None:
         """Re-saving an existing property should update to pending_analysis."""
-        merged = _make_merged()
+        merged = make_merged_property()
         # First save as normal property
         await storage.save_merged_property(merged)
         tracked = await storage.get_property(merged.unique_id)
@@ -186,8 +155,12 @@ class TestSavePreAnalysisProperties:
 
 class TestGetPendingAnalysisProperties:
     @pytest.mark.asyncio
-    async def test_returns_pending_analysis(self, storage: PropertyStorage) -> None:
-        merged = _make_merged()
+    async def test_returns_pending_analysis(
+        self,
+        storage: PropertyStorage,
+        make_merged_property: Callable[..., MergedProperty],
+    ) -> None:
+        merged = make_merged_property()
         await storage.save_pre_analysis_properties([merged], {})
 
         result = await storage.get_pending_analysis_properties()
@@ -195,24 +168,37 @@ class TestGetPendingAnalysisProperties:
         assert result[0].unique_id == merged.unique_id
 
     @pytest.mark.asyncio
-    async def test_excludes_normal_properties(self, storage: PropertyStorage) -> None:
-        merged = _make_merged()
+    async def test_excludes_normal_properties(
+        self,
+        storage: PropertyStorage,
+        make_merged_property: Callable[..., MergedProperty],
+    ) -> None:
+        merged = make_merged_property()
         await storage.save_merged_property(merged)
 
         result = await storage.get_pending_analysis_properties()
         assert len(result) == 0
 
     @pytest.mark.asyncio
-    async def test_excludes_completed_analysis(self, storage: PropertyStorage) -> None:
-        merged = _make_merged()
+    async def test_excludes_completed_analysis(
+        self,
+        storage: PropertyStorage,
+        make_merged_property: Callable[..., MergedProperty],
+        make_quality_analysis: Callable[..., PropertyQualityAnalysis],
+    ) -> None:
+        merged = make_merged_property()
         await storage.save_pre_analysis_properties([merged], {})
-        await storage.complete_analysis(merged.unique_id, _make_quality_analysis())
+        await storage.complete_analysis(merged.unique_id, make_quality_analysis())
 
         result = await storage.get_pending_analysis_properties()
         assert len(result) == 0
 
     @pytest.mark.asyncio
-    async def test_reconstructs_with_images(self, storage: PropertyStorage) -> None:
+    async def test_reconstructs_with_images(
+        self,
+        storage: PropertyStorage,
+        make_merged_property: Callable[..., MergedProperty],
+    ) -> None:
         images = (
             PropertyImage(
                 url=HttpUrl("https://example.com/img1.jpg"),
@@ -225,7 +211,7 @@ class TestGetPendingAnalysisProperties:
             source=PropertySource.ZOOPLA,
             image_type="floorplan",
         )
-        merged = _make_merged(images=images, floorplan=floorplan)
+        merged = make_merged_property(images=images, floorplan=floorplan)
         await storage.save_pre_analysis_properties([merged], {})
 
         result = await storage.get_pending_analysis_properties()
@@ -234,8 +220,12 @@ class TestGetPendingAnalysisProperties:
         assert result[0].floorplan is not None
 
     @pytest.mark.asyncio
-    async def test_reconstructs_multi_source(self, storage: PropertyStorage) -> None:
-        prop = _make_property()
+    async def test_reconstructs_multi_source(
+        self,
+        storage: PropertyStorage,
+        make_property: Callable[..., Property],
+    ) -> None:
+        prop = make_property(source=PropertySource.ZOOPLA)
         merged = MergedProperty(
             canonical=prop,
             sources=(PropertySource.ZOOPLA, PropertySource.OPENRENT),
@@ -262,11 +252,16 @@ class TestGetPendingAnalysisProperties:
 
 class TestCompleteAnalysis:
     @pytest.mark.asyncio
-    async def test_transitions_to_pending(self, storage: PropertyStorage) -> None:
-        merged = _make_merged()
+    async def test_transitions_to_pending(
+        self,
+        storage: PropertyStorage,
+        make_merged_property: Callable[..., MergedProperty],
+        make_quality_analysis: Callable[..., PropertyQualityAnalysis],
+    ) -> None:
+        merged = make_merged_property()
         await storage.save_pre_analysis_properties([merged], {})
 
-        await storage.complete_analysis(merged.unique_id, _make_quality_analysis())
+        await storage.complete_analysis(merged.unique_id, make_quality_analysis())
 
         conn = await storage._get_connection()
         cursor = await conn.execute(
@@ -277,11 +272,16 @@ class TestCompleteAnalysis:
         assert row["notification_status"] == NotificationStatus.PENDING.value
 
     @pytest.mark.asyncio
-    async def test_saves_quality_analysis(self, storage: PropertyStorage) -> None:
-        merged = _make_merged()
+    async def test_saves_quality_analysis(
+        self,
+        storage: PropertyStorage,
+        make_merged_property: Callable[..., MergedProperty],
+        make_quality_analysis: Callable[..., PropertyQualityAnalysis],
+    ) -> None:
+        merged = make_merged_property()
         await storage.save_pre_analysis_properties([merged], {})
 
-        analysis = _make_quality_analysis()
+        analysis = make_quality_analysis()
         await storage.complete_analysis(merged.unique_id, analysis)
 
         stored = await storage.get_quality_analysis(merged.unique_id)
@@ -289,9 +289,13 @@ class TestCompleteAnalysis:
         assert stored.overall_rating == 4
 
     @pytest.mark.asyncio
-    async def test_works_without_analysis(self, storage: PropertyStorage) -> None:
+    async def test_works_without_analysis(
+        self,
+        storage: PropertyStorage,
+        make_merged_property: Callable[..., MergedProperty],
+    ) -> None:
         """complete_analysis with None quality_analysis just transitions status."""
-        merged = _make_merged()
+        merged = make_merged_property()
         await storage.save_pre_analysis_properties([merged], {})
 
         await storage.complete_analysis(merged.unique_id, None)
@@ -305,13 +309,18 @@ class TestCompleteAnalysis:
         assert row["notification_status"] == NotificationStatus.PENDING.value
 
     @pytest.mark.asyncio
-    async def test_noop_for_already_sent(self, storage: PropertyStorage) -> None:
+    async def test_noop_for_already_sent(
+        self,
+        storage: PropertyStorage,
+        make_merged_property: Callable[..., MergedProperty],
+        make_quality_analysis: Callable[..., PropertyQualityAnalysis],
+    ) -> None:
         """Should not change already-sent notifications."""
-        merged = _make_merged()
+        merged = make_merged_property()
         await storage.save_merged_property(merged)
         await storage.mark_notified(merged.unique_id)
 
-        await storage.complete_analysis(merged.unique_id, _make_quality_analysis())
+        await storage.complete_analysis(merged.unique_id, make_quality_analysis())
 
         tracked = await storage.get_property(merged.unique_id)
         assert tracked is not None
@@ -320,17 +329,26 @@ class TestCompleteAnalysis:
 
 class TestDashboardExcludesPendingAnalysis:
     @pytest.mark.asyncio
-    async def test_excludes_pending_analysis_from_paginated(self, storage: PropertyStorage) -> None:
+    async def test_excludes_pending_analysis_from_paginated(
+        self,
+        storage: PropertyStorage,
+        make_merged_property: Callable[..., MergedProperty],
+    ) -> None:
         # Save pending_analysis
-        pending = _make_merged(_make_property(source_id="pending-1"))
+        pending = make_merged_property(
+            source_id="pending-1", image_url=HttpUrl("https://example.com/img.jpg")
+        )
         await storage.save_pre_analysis_properties([pending], {})
 
         # Save normal enriched
-        enriched_prop = _make_property(source=PropertySource.OPENRENT, source_id="enriched-1")
-        enriched = _make_merged(enriched_prop, sources=(PropertySource.OPENRENT,))
+        enriched = make_merged_property(
+            sources=(PropertySource.OPENRENT,),
+            source_id="enriched-1",
+            image_url=HttpUrl("https://example.com/img.jpg"),
+        )
         await storage.save_merged_property(enriched)
 
-        results, total = await storage.get_properties_paginated()
+        results, total = await storage.get_properties_paginated(PropertyFilter())
         result_ids = {r["unique_id"] for r in results}
 
         assert total == 1
@@ -340,9 +358,13 @@ class TestDashboardExcludesPendingAnalysis:
 
 class TestNotificationRetryExcludesPendingAnalysis:
     @pytest.mark.asyncio
-    async def test_get_unsent_excludes_pending_analysis(self, storage: PropertyStorage) -> None:
+    async def test_get_unsent_excludes_pending_analysis(
+        self,
+        storage: PropertyStorage,
+        make_merged_property: Callable[..., MergedProperty],
+    ) -> None:
         """pending_analysis properties should NOT be returned by get_unsent_notifications."""
-        merged = _make_merged()
+        merged = make_merged_property()
         await storage.save_pre_analysis_properties([merged], {})
 
         unsent = await storage.get_unsent_notifications()
@@ -352,9 +374,13 @@ class TestNotificationRetryExcludesPendingAnalysis:
 
 class TestResetFailedAnalyses:
     @pytest.mark.asyncio
-    async def test_resets_fallback_analysis(self, storage: PropertyStorage) -> None:
+    async def test_resets_fallback_analysis(
+        self,
+        storage: PropertyStorage,
+        make_merged_property: Callable[..., MergedProperty],
+    ) -> None:
         """Properties with fallback analysis should be reset to pending_analysis."""
-        merged = _make_merged()
+        merged = make_merged_property()
         await storage.save_pre_analysis_properties([merged], {})
         await storage.complete_analysis(merged.unique_id, _make_fallback_analysis())
         await storage.mark_notified(merged.unique_id)
@@ -375,11 +401,16 @@ class TestResetFailedAnalyses:
         assert analysis is None
 
     @pytest.mark.asyncio
-    async def test_does_not_reset_real_analysis(self, storage: PropertyStorage) -> None:
+    async def test_does_not_reset_real_analysis(
+        self,
+        storage: PropertyStorage,
+        make_merged_property: Callable[..., MergedProperty],
+        make_quality_analysis: Callable[..., PropertyQualityAnalysis],
+    ) -> None:
         """Properties with real analysis (has overall_rating) should not be reset."""
-        merged = _make_merged()
+        merged = make_merged_property()
         await storage.save_pre_analysis_properties([merged], {})
-        await storage.complete_analysis(merged.unique_id, _make_quality_analysis())
+        await storage.complete_analysis(merged.unique_id, make_quality_analysis())
 
         count = await storage.reset_failed_analyses()
         assert count == 0
@@ -389,9 +420,13 @@ class TestResetFailedAnalyses:
         assert analysis.overall_rating == 4
 
     @pytest.mark.asyncio
-    async def test_does_not_reset_already_pending(self, storage: PropertyStorage) -> None:
+    async def test_does_not_reset_already_pending(
+        self,
+        storage: PropertyStorage,
+        make_merged_property: Callable[..., MergedProperty],
+    ) -> None:
         """Properties already pending_analysis should not be double-counted."""
-        merged = _make_merged()
+        merged = make_merged_property()
         await storage.save_pre_analysis_properties([merged], {})
         # Still pending_analysis, no complete_analysis called
 
@@ -399,19 +434,28 @@ class TestResetFailedAnalyses:
         assert count == 0
 
     @pytest.mark.asyncio
-    async def test_returns_zero_when_no_fallbacks(self, storage: PropertyStorage) -> None:
+    async def test_returns_zero_when_no_fallbacks(
+        self,
+        storage: PropertyStorage,
+        make_merged_property: Callable[..., MergedProperty],
+        make_quality_analysis: Callable[..., PropertyQualityAnalysis],
+    ) -> None:
         """Should return 0 when all analyses are real."""
-        merged = _make_merged()
+        merged = make_merged_property()
         await storage.save_pre_analysis_properties([merged], {})
-        await storage.complete_analysis(merged.unique_id, _make_quality_analysis())
+        await storage.complete_analysis(merged.unique_id, make_quality_analysis())
 
         count = await storage.reset_failed_analyses()
         assert count == 0
 
     @pytest.mark.asyncio
-    async def test_reset_properties_picked_up_by_retry(self, storage: PropertyStorage) -> None:
+    async def test_reset_properties_picked_up_by_retry(
+        self,
+        storage: PropertyStorage,
+        make_merged_property: Callable[..., MergedProperty],
+    ) -> None:
         """After reset, properties appear in get_pending_analysis_properties."""
-        merged = _make_merged()
+        merged = make_merged_property()
         await storage.save_pre_analysis_properties([merged], {})
         await storage.complete_analysis(merged.unique_id, _make_fallback_analysis())
         await storage.mark_notified(merged.unique_id)
@@ -425,20 +469,30 @@ class TestResetFailedAnalyses:
 
 class TestDashboardExcludesFallbackAnalysis:
     @pytest.mark.asyncio
-    async def test_excludes_fallback_from_paginated(self, storage: PropertyStorage) -> None:
+    async def test_excludes_fallback_from_paginated(
+        self,
+        storage: PropertyStorage,
+        make_merged_property: Callable[..., MergedProperty],
+        make_quality_analysis: Callable[..., PropertyQualityAnalysis],
+    ) -> None:
         """Properties with fallback analysis should be hidden from the dashboard."""
         # Save property with fallback analysis
-        fallback = _make_merged(_make_property(source_id="fallback-1"))
+        fallback = make_merged_property(
+            source_id="fallback-1", image_url=HttpUrl("https://example.com/img.jpg")
+        )
         await storage.save_pre_analysis_properties([fallback], {})
         await storage.complete_analysis(fallback.unique_id, _make_fallback_analysis())
 
         # Save property with real analysis
-        real_prop = _make_property(source=PropertySource.OPENRENT, source_id="real-1")
-        real = _make_merged(real_prop, sources=(PropertySource.OPENRENT,))
+        real = make_merged_property(
+            sources=(PropertySource.OPENRENT,),
+            source_id="real-1",
+            image_url=HttpUrl("https://example.com/img.jpg"),
+        )
         await storage.save_pre_analysis_properties([real], {})
-        await storage.complete_analysis(real.unique_id, _make_quality_analysis())
+        await storage.complete_analysis(real.unique_id, make_quality_analysis())
 
-        results, total = await storage.get_properties_paginated()
+        results, total = await storage.get_properties_paginated(PropertyFilter())
         result_ids = {r["unique_id"] for r in results}
 
         assert total == 1
@@ -446,16 +500,26 @@ class TestDashboardExcludesFallbackAnalysis:
         assert fallback.unique_id not in result_ids
 
     @pytest.mark.asyncio
-    async def test_excludes_fallback_from_paginated_total(self, storage: PropertyStorage) -> None:
+    async def test_excludes_fallback_from_paginated_total(
+        self,
+        storage: PropertyStorage,
+        make_merged_property: Callable[..., MergedProperty],
+        make_quality_analysis: Callable[..., PropertyQualityAnalysis],
+    ) -> None:
         """Paginated total should not count fallback-analysis properties."""
-        fallback = _make_merged(_make_property(source_id="fallback-1"))
+        fallback = make_merged_property(
+            source_id="fallback-1", image_url=HttpUrl("https://example.com/img.jpg")
+        )
         await storage.save_pre_analysis_properties([fallback], {})
         await storage.complete_analysis(fallback.unique_id, _make_fallback_analysis())
 
-        real_prop = _make_property(source=PropertySource.OPENRENT, source_id="real-1")
-        real = _make_merged(real_prop, sources=(PropertySource.OPENRENT,))
+        real = make_merged_property(
+            sources=(PropertySource.OPENRENT,),
+            source_id="real-1",
+            image_url=HttpUrl("https://example.com/img.jpg"),
+        )
         await storage.save_pre_analysis_properties([real], {})
-        await storage.complete_analysis(real.unique_id, _make_quality_analysis())
+        await storage.complete_analysis(real.unique_id, make_quality_analysis())
 
-        _, total = await storage.get_properties_paginated()
+        _, total = await storage.get_properties_paginated(PropertyFilter())
         assert total == 1

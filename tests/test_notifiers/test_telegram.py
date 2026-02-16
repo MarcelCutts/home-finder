@@ -1213,3 +1213,26 @@ class TestFormatFollowupDetail:
     def test_returns_empty_without_quality(self) -> None:
         """Should return empty string when no quality analysis provided."""
         assert _format_followup_detail(quality_analysis=None) == ""
+
+
+class TestHtmlLinkEscaping:
+    """Tests for _html_link and HTML escaping in source links."""
+
+    def test_ampersand_in_url_is_escaped(self, sample_property: Property) -> None:
+        """URLs containing & should be escaped as &amp; in href attributes."""
+        url_with_amp = HttpUrl("https://example.com/property?a=1&b=2")
+        merged = MergedProperty(
+            canonical=sample_property,
+            sources=(PropertySource.OPENRENT, PropertySource.ZOOPLA),
+            source_urls={
+                PropertySource.OPENRENT: url_with_amp,
+                PropertySource.ZOOPLA: HttpUrl("https://zoopla.co.uk/details/99"),
+            },
+            min_price=1900,
+            max_price=1900,
+        )
+        message = format_merged_property_message(merged)
+        # The & in the URL should be escaped as &amp; in the HTML href
+        assert "&amp;" in message
+        # Should not have bare & in href (which would be invalid HTML)
+        assert 'href="https://example.com/property?a=1&b=2"' not in message

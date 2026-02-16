@@ -264,6 +264,11 @@ def make_merged_property(
     def _make(
         sources: tuple[PropertySource, ...] = (PropertySource.OPENRENT,),
         price_pcm: int = 1850,
+        images: tuple[PropertyImage, ...] = (),
+        floorplan: PropertyImage | None = None,
+        descriptions: dict[PropertySource, str] | None = None,
+        min_price: int | None = None,
+        max_price: int | None = None,
         **property_overrides: Any,
     ) -> MergedProperty:
         canonical = make_property(source=sources[0], price_pcm=price_pcm, **property_overrides)
@@ -276,11 +281,35 @@ def make_merged_property(
             canonical=canonical,
             sources=sources,
             source_urls=source_urls,
-            images=(),
-            floorplan=None,
-            min_price=price_pcm,
-            max_price=price_pcm,
+            images=images,
+            floorplan=floorplan,
+            min_price=min_price if min_price is not None else price_pcm,
+            max_price=max_price if max_price is not None else price_pcm,
+            descriptions=descriptions or {},
         )
+
+    return _make
+
+
+@pytest.fixture
+def make_quality_analysis() -> Callable[..., PropertyQualityAnalysis]:
+    """Factory for PropertyQualityAnalysis instances with sensible defaults."""
+
+    def _make(
+        rating: int = 4,
+        summary: str = "A nice flat.",
+        **overrides: Any,
+    ) -> PropertyQualityAnalysis:
+        defaults: dict[str, Any] = {
+            "kitchen": KitchenAnalysis(overall_quality="modern"),
+            "condition": ConditionAnalysis(overall_condition="good"),
+            "light_space": LightSpaceAnalysis(natural_light="good"),
+            "space": SpaceAnalysis(living_room_sqm=20.0),
+            "overall_rating": rating,
+            "summary": summary,
+        }
+        defaults.update(overrides)
+        return PropertyQualityAnalysis(**defaults)
 
     return _make
 

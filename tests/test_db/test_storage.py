@@ -334,7 +334,7 @@ class TestGetMapMarkers:
             )
             await storage.save_property(prop)
 
-        markers = await storage.get_map_markers()
+        markers = await storage.get_map_markers(PropertyFilter())
         assert len(markers) == 5
         # Check marker structure
         m = markers[0]
@@ -374,7 +374,7 @@ class TestGetMapMarkers:
         await storage.save_property(with_coords)
         await storage.save_property(without_coords)
 
-        markers = await storage.get_map_markers()
+        markers = await storage.get_map_markers(PropertyFilter())
         assert len(markers) == 1
         assert markers[0]["id"] == with_coords.unique_id
 

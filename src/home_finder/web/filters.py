@@ -362,26 +362,28 @@ def parse_filters(
     tag: list[str] = Query(default=[]),
 ) -> PropertyFilter:
     """FastAPI dependency that parses query params into a PropertyFilter."""
-    return PropertyFilter.model_validate({
-        "min_price": min_price,
-        "max_price": max_price,
-        "bedrooms": bedrooms,
-        "min_rating": min_rating,
-        "area": area,
-        "property_type": property_type,
-        "outdoor_space": outdoor_space,
-        "natural_light": natural_light,
-        "pets": pets,
-        "value_rating": value_rating,
-        "hob_type": hob_type,
-        "floor_level": floor_level,
-        "building_construction": building_construction,
-        "office_separation": office_separation,
-        "hosting_layout": hosting_layout,
-        "hosting_noise_risk": hosting_noise_risk,
-        "broadband_type": broadband_type,
-        "tags": tag,
-    })
+    return PropertyFilter.model_validate(
+        {
+            "min_price": min_price,
+            "max_price": max_price,
+            "bedrooms": bedrooms,
+            "min_rating": min_rating,
+            "area": area,
+            "property_type": property_type,
+            "outdoor_space": outdoor_space,
+            "natural_light": natural_light,
+            "pets": pets,
+            "value_rating": value_rating,
+            "hob_type": hob_type,
+            "floor_level": floor_level,
+            "building_construction": building_construction,
+            "office_separation": office_separation,
+            "hosting_layout": hosting_layout,
+            "hosting_noise_risk": hosting_noise_risk,
+            "broadband_type": broadband_type,
+            "tags": tag,
+        }
+    )
 
 
 FilterDep = Annotated[PropertyFilter, Depends(parse_filters)]

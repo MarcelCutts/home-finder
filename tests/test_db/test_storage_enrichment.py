@@ -1,6 +1,6 @@
 """Tests for unenriched property storage and retry lifecycle."""
 
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Callable
 
 import pytest
 import pytest_asyncio
@@ -15,45 +15,7 @@ from home_finder.models import (
     PropertySource,
     TransportMode,
 )
-
-
-def _make_property(
-    source: PropertySource = PropertySource.ZOOPLA,
-    source_id: str = "z-1",
-    postcode: str | None = "E8 3RH",
-) -> Property:
-    return Property(
-        source=source,
-        source_id=source_id,
-        url=HttpUrl(f"https://example.com/{source.value}/{source_id}"),
-        title="Test flat",
-        price_pcm=2000,
-        bedrooms=2,
-        address="123 Test St",
-        postcode=postcode,
-        latitude=51.5465,
-        longitude=-0.0553,
-        image_url=HttpUrl("https://example.com/img.jpg"),
-    )
-
-
-def _make_merged(
-    prop: Property | None = None,
-    sources: tuple[PropertySource, ...] | None = None,
-) -> MergedProperty:
-    if prop is None:
-        prop = _make_property()
-    if sources is None:
-        sources = (prop.source,)
-    return MergedProperty(
-        canonical=prop,
-        sources=sources,
-        source_urls=dict.fromkeys(sources, prop.url),
-        images=(),
-        floorplan=None,
-        min_price=prop.price_pcm,
-        max_price=prop.price_pcm,
-    )
+from home_finder.web.filters import PropertyFilter
 
 
 @pytest_asyncio.fixture
@@ -68,9 +30,13 @@ class TestSaveUnenrichedProperty:
     """Tests for save_unenriched_property."""
 
     @pytest.mark.asyncio
-    async def test_saves_with_pending_status(self, storage: PropertyStorage) -> None:
+    async def test_saves_with_pending_status(
+        self,
+        storage: PropertyStorage,
+        make_merged_property: Callable[..., MergedProperty],
+    ) -> None:
         """First save creates a pending row with attempts=1."""
-        merged = _make_merged()
+        merged = make_merged_property()
         await storage.save_unenriched_property(
             merged, commute_minutes=15, transport_mode=TransportMode.CYCLING
         )
@@ -89,9 +55,13 @@ class TestSaveUnenrichedProperty:
         assert row["commute_minutes"] == 15
 
     @pytest.mark.asyncio
-    async def test_increments_attempts_on_conflict(self, storage: PropertyStorage) -> None:
+    async def test_increments_attempts_on_conflict(
+        self,
+        storage: PropertyStorage,
+        make_merged_property: Callable[..., MergedProperty],
+    ) -> None:
         """Second save for same property just increments attempts."""
-        merged = _make_merged()
+        merged = make_merged_property()
         await storage.save_unenriched_property(merged)
         await storage.save_unenriched_property(merged)
 
@@ -104,9 +74,13 @@ class TestSaveUnenrichedProperty:
         assert row["enrichment_attempts"] == 2
 
     @pytest.mark.asyncio
-    async def test_preserves_existing_fields_on_conflict(self, storage: PropertyStorage) -> None:
+    async def test_preserves_existing_fields_on_conflict(
+        self,
+        storage: PropertyStorage,
+        make_merged_property: Callable[..., MergedProperty],
+    ) -> None:
         """Conflict update does not overwrite commute data or other fields."""
-        merged = _make_merged()
+        merged = make_merged_property()
         await storage.save_unenriched_property(
             merged, commute_minutes=20, transport_mode=TransportMode.CYCLING
         )
@@ -131,9 +105,13 @@ class TestGetUnenrichedProperties:
     """Tests for get_unenriched_properties."""
 
     @pytest.mark.asyncio
-    async def test_returns_pending_properties(self, storage: PropertyStorage) -> None:
+    async def test_returns_pending_properties(
+        self,
+        storage: PropertyStorage,
+        make_merged_property: Callable[..., MergedProperty],
+    ) -> None:
         """Should return properties with enrichment_status='pending'."""
-        merged = _make_merged()
+        merged = make_merged_property()
         await storage.save_unenriched_property(merged)
 
         result = await storage.get_unenriched_properties(max_attempts=3)
@@ -141,19 +119,27 @@ class TestGetUnenrichedProperties:
         assert result[0].unique_id == merged.unique_id
 
     @pytest.mark.asyncio
-    async def test_excludes_enriched_properties(self, storage: PropertyStorage) -> None:
+    async def test_excludes_enriched_properties(
+        self,
+        storage: PropertyStorage,
+        make_merged_property: Callable[..., MergedProperty],
+    ) -> None:
         """Should not return enriched properties."""
         # Save a normal enriched property
-        merged = _make_merged()
+        merged = make_merged_property()
         await storage.save_merged_property(merged)
 
         result = await storage.get_unenriched_properties(max_attempts=3)
         assert len(result) == 0
 
     @pytest.mark.asyncio
-    async def test_excludes_over_max_attempts(self, storage: PropertyStorage) -> None:
+    async def test_excludes_over_max_attempts(
+        self,
+        storage: PropertyStorage,
+        make_merged_property: Callable[..., MergedProperty],
+    ) -> None:
         """Should exclude properties that hit the max attempts threshold."""
-        merged = _make_merged()
+        merged = make_merged_property()
         await storage.save_unenriched_property(merged)
         await storage.save_unenriched_property(merged)  # attempts=2
         await storage.save_unenriched_property(merged)  # attempts=3
@@ -162,9 +148,13 @@ class TestGetUnenrichedProperties:
         assert len(result) == 0
 
     @pytest.mark.asyncio
-    async def test_reconstructs_merged_property(self, storage: PropertyStorage) -> None:
+    async def test_reconstructs_merged_property(
+        self,
+        storage: PropertyStorage,
+        make_property: Callable[..., Property],
+    ) -> None:
         """Should reconstruct MergedProperty with sources, descriptions, prices."""
-        prop = _make_property()
+        prop = make_property(source=PropertySource.ZOOPLA)
         merged = MergedProperty(
             canonical=prop,
             sources=(PropertySource.ZOOPLA, PropertySource.OPENRENT),
@@ -196,9 +186,13 @@ class TestMarkEnriched:
     """Tests for mark_enriched."""
 
     @pytest.mark.asyncio
-    async def test_transitions_to_enriched(self, storage: PropertyStorage) -> None:
+    async def test_transitions_to_enriched(
+        self,
+        storage: PropertyStorage,
+        make_merged_property: Callable[..., MergedProperty],
+    ) -> None:
         """Should set enrichment_status='enriched' and notification_status='pending'."""
-        merged = _make_merged()
+        merged = make_merged_property()
         await storage.save_unenriched_property(merged)
 
         await storage.mark_enriched(merged.unique_id)
@@ -213,9 +207,13 @@ class TestMarkEnriched:
         assert row["notification_status"] == NotificationStatus.PENDING.value
 
     @pytest.mark.asyncio
-    async def test_noop_for_already_pending(self, storage: PropertyStorage) -> None:
+    async def test_noop_for_already_pending(
+        self,
+        storage: PropertyStorage,
+        make_merged_property: Callable[..., MergedProperty],
+    ) -> None:
         """Should be a no-op for properties with notification_status='pending' (new properties)."""
-        merged = _make_merged()
+        merged = make_merged_property()
         await storage.save_merged_property(merged)  # saves with notification_status='pending'
 
         await storage.mark_enriched(merged.unique_id)
@@ -225,9 +223,13 @@ class TestMarkEnriched:
         assert tracked.notification_status == NotificationStatus.PENDING
 
     @pytest.mark.asyncio
-    async def test_noop_for_sent(self, storage: PropertyStorage) -> None:
+    async def test_noop_for_sent(
+        self,
+        storage: PropertyStorage,
+        make_merged_property: Callable[..., MergedProperty],
+    ) -> None:
         """Should not change already-sent notifications."""
-        merged = _make_merged()
+        merged = make_merged_property()
         await storage.save_merged_property(merged)
         await storage.mark_notified(merged.unique_id)
 
@@ -242,9 +244,13 @@ class TestExpireUnenriched:
     """Tests for expire_unenriched."""
 
     @pytest.mark.asyncio
-    async def test_expires_over_threshold(self, storage: PropertyStorage) -> None:
+    async def test_expires_over_threshold(
+        self,
+        storage: PropertyStorage,
+        make_merged_property: Callable[..., MergedProperty],
+    ) -> None:
         """Should mark properties with >= max_attempts as 'failed'."""
-        merged = _make_merged()
+        merged = make_merged_property()
         await storage.save_unenriched_property(merged)
         await storage.save_unenriched_property(merged)  # attempts=2
         await storage.save_unenriched_property(merged)  # attempts=3
@@ -261,18 +267,26 @@ class TestExpireUnenriched:
         assert row["enrichment_status"] == "failed"
 
     @pytest.mark.asyncio
-    async def test_does_not_expire_below_threshold(self, storage: PropertyStorage) -> None:
+    async def test_does_not_expire_below_threshold(
+        self,
+        storage: PropertyStorage,
+        make_merged_property: Callable[..., MergedProperty],
+    ) -> None:
         """Should not expire properties with fewer attempts."""
-        merged = _make_merged()
+        merged = make_merged_property()
         await storage.save_unenriched_property(merged)  # attempts=1
 
         count = await storage.expire_unenriched(max_attempts=3)
         assert count == 0
 
     @pytest.mark.asyncio
-    async def test_expired_not_returned_by_get_unenriched(self, storage: PropertyStorage) -> None:
+    async def test_expired_not_returned_by_get_unenriched(
+        self,
+        storage: PropertyStorage,
+        make_merged_property: Callable[..., MergedProperty],
+    ) -> None:
         """Expired properties should not be returned by get_unenriched_properties."""
-        merged = _make_merged()
+        merged = make_merged_property()
         await storage.save_unenriched_property(merged)
         await storage.save_unenriched_property(merged)
         await storage.save_unenriched_property(merged)
@@ -287,9 +301,13 @@ class TestDeleteProperty:
     """Tests for delete_property."""
 
     @pytest.mark.asyncio
-    async def test_deletes_property_and_images(self, storage: PropertyStorage) -> None:
+    async def test_deletes_property_and_images(
+        self,
+        storage: PropertyStorage,
+        make_merged_property: Callable[..., MergedProperty],
+    ) -> None:
         """Should delete the property row and its images."""
-        merged = _make_merged()
+        merged = make_merged_property()
         await storage.save_merged_property(merged)
         images = [
             PropertyImage(
@@ -316,15 +334,20 @@ class TestDedupAnchorExclusion:
     """Unenriched properties should be excluded from dedup anchors."""
 
     @pytest.mark.asyncio
-    async def test_excludes_pending_from_anchors(self, storage: PropertyStorage) -> None:
+    async def test_excludes_pending_from_anchors(
+        self,
+        storage: PropertyStorage,
+        make_merged_property: Callable[..., MergedProperty],
+    ) -> None:
         """Pending enrichment properties should not appear as dedup anchors."""
         # Save an unenriched property
-        unenriched = _make_merged(_make_property(source_id="unenriched-1"))
+        unenriched = make_merged_property(source_id="unenriched-1")
         await storage.save_unenriched_property(unenriched)
 
         # Save a normal enriched property
-        enriched_prop = _make_property(source=PropertySource.OPENRENT, source_id="enriched-1")
-        enriched = _make_merged(enriched_prop, sources=(PropertySource.OPENRENT,))
+        enriched = make_merged_property(
+            sources=(PropertySource.RIGHTMOVE,), source_id="enriched-1"
+        )
         await storage.save_merged_property(enriched)
 
         anchors = await storage.get_recent_properties_for_dedup(days=7)
@@ -338,18 +361,25 @@ class TestDashboardExclusion:
     """Unenriched properties should be excluded from the dashboard."""
 
     @pytest.mark.asyncio
-    async def test_excludes_pending_from_paginated(self, storage: PropertyStorage) -> None:
+    async def test_excludes_pending_from_paginated(
+        self,
+        storage: PropertyStorage,
+        make_merged_property: Callable[..., MergedProperty],
+    ) -> None:
         """Pending enrichment properties should not appear on the dashboard."""
         # Save unenriched
-        unenriched = _make_merged(_make_property(source_id="unenriched-1"))
+        unenriched = make_merged_property(source_id="unenriched-1")
         await storage.save_unenriched_property(unenriched)
 
-        # Save enriched
-        enriched_prop = _make_property(source=PropertySource.OPENRENT, source_id="enriched-1")
-        enriched = _make_merged(enriched_prop, sources=(PropertySource.OPENRENT,))
+        # Save enriched (needs image_url to appear on dashboard)
+        enriched = make_merged_property(
+            sources=(PropertySource.RIGHTMOVE,),
+            source_id="enriched-1",
+            image_url=HttpUrl("https://example.com/img.jpg"),
+        )
         await storage.save_merged_property(enriched)
 
-        results, total = await storage.get_properties_paginated()
+        results, total = await storage.get_properties_paginated(PropertyFilter())
         result_ids = {r["unique_id"] for r in results}
 
         assert total == 1
