@@ -37,6 +37,10 @@
                 {% endif %}
             </div>
 
+            {% if prop.title %}
+            <p class="card-title">{{ prop.title }}</p>
+            {% endif %}
+
             {# Rating + property type row #}
             {% if prop.quality_rating or prop.property_type %}
             <div class="card-rating-row">

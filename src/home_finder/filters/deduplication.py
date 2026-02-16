@@ -8,7 +8,7 @@ from home_finder.filters.scoring import calculate_match_score
 from home_finder.logging import get_logger
 from home_finder.models import MergedProperty, Property, PropertyImage, PropertySource
 from home_finder.utils.address import extract_outcode
-from home_finder.utils.image_hash import fetch_image_hashes_batch
+from home_finder.utils.image_hash import fetch_image_hashes_batch, hash_cached_gallery
 from home_finder.utils.union_find import UnionFind
 
 logger = get_logger(__name__)
@@ -43,6 +43,7 @@ class Deduplicator:
         *,
         enable_cross_platform: bool = False,
         enable_image_hashing: bool = False,
+        data_dir: str = "",
     ) -> None:
         """Initialize the deduplicator.
 
@@ -51,9 +52,13 @@ class Deduplicator:
                 listed on multiple platforms (based on postcode + price + beds).
             enable_image_hashing: If True, fetch and compare image hashes
                 for properties that might match.
+            data_dir: Base data directory for reading cached gallery images.
+                When set, gallery images are hashed from disk instead of
+                fetching hero thumbnails from the network.
         """
         self.enable_cross_platform = enable_cross_platform
         self.enable_image_hashing = enable_image_hashing
+        self.data_dir = data_dir
 
     async def deduplicate_and_merge_async(
         self,
@@ -173,18 +178,36 @@ class Deduplicator:
             else:
                 no_outcode.append(mp)
 
-        # Fetch image hashes for hero images
-        image_hashes: dict[str, str] = {}
+        # Build gallery image hashes for dedup comparison
+        image_hashes: dict[str, list[str]] = {}
         if self.enable_image_hashing:
-            props_needing_hashes = [
-                mp.canonical
+            candidate_ids = [
+                mp.canonical.unique_id
                 for candidates in candidates_by_block.values()
                 if len(candidates) > 1
                 for mp in candidates
-                if mp.canonical.image_url
             ]
-            if props_needing_hashes:
-                image_hashes = await fetch_image_hashes_batch(props_needing_hashes)
+
+            # Primary: hash cached gallery images from disk (no network)
+            if self.data_dir and candidate_ids:
+                image_hashes = await hash_cached_gallery(candidate_ids, self.data_dir)
+
+            # Fallback: fetch hero thumbnails for properties without cached galleries
+            ids_without_gallery = {uid for uid in candidate_ids if uid not in image_hashes}
+            if ids_without_gallery:
+                props_needing_fetch = [
+                    mp.canonical
+                    for candidates in candidates_by_block.values()
+                    if len(candidates) > 1
+                    for mp in candidates
+                    if mp.canonical.unique_id in ids_without_gallery
+                    and mp.canonical.image_url
+                ]
+                if props_needing_fetch:
+                    hero_hashes = await fetch_image_hashes_batch(props_needing_fetch)
+                    # Wrap single hashes as lists for interface compatibility
+                    for uid, h in hero_hashes.items():
+                        image_hashes[uid] = [h]
 
         # Score and merge within each block
         results: list[MergedProperty] = []
@@ -301,14 +324,14 @@ class Deduplicator:
 def _group_items_by_weighted_score(
     items: list[_T],
     get_prop: Callable[[_T], Property],
-    image_hashes: dict[str, str],
+    image_hashes: dict[str, list[str]],
 ) -> list[list[_T]]:
     """Group items by weighted match score using union-find.
 
     Args:
         items: Items to group (Property or MergedProperty).
         get_prop: Accessor to get the Property from each item.
-        image_hashes: Dict mapping unique_id to image hash.
+        image_hashes: Dict mapping unique_id to list of gallery hash strings.
 
     Returns:
         List of groups where each group contains matching items.

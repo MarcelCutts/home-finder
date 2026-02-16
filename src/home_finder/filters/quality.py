@@ -3,6 +3,7 @@
 import asyncio
 import base64
 import json as _json
+import re as _re
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Final, Literal
 
@@ -433,6 +434,8 @@ VISUAL_ANALYSIS_TOOL: Final[dict[str, Any]] = _build_tool_schema(
     "property_visual_analysis",
     "Return visual property quality analysis results from images",
     _VisualAnalysisResponse,
+    # No strict=True — schema exceeds Anthropic grammar compilation limits
+    # (55 properties across 10 nested objects, ~7.8KB)
 )
 
 EVALUATION_TOOL: Final[dict[str, Any]] = _build_tool_schema(
@@ -454,7 +457,14 @@ def _clean_value(val: Any) -> Any:
             if isinstance(parsed, (dict, list)):
                 return parsed
         except (ValueError, _json.JSONDecodeError):
-            pass
+            # Retry after stripping trailing commas (common LLM quirk)
+            sanitized = _re.sub(r",\s*([}\]])", r"\1", s)
+            try:
+                parsed = _json.loads(sanitized)
+                if isinstance(parsed, (dict, list)):
+                    return parsed
+            except (ValueError, _json.JSONDecodeError):
+                pass
     return s
 
 
@@ -465,16 +475,20 @@ def _clean_list(lst: list[Any]) -> list[Any]:
         item = _clean_value(item)
         if isinstance(item, str) and item.strip() in ("", ","):
             continue
+        if isinstance(item, dict):
+            item = _clean_dict(item)
         cleaned.append(item)
     return cleaned
 
 
 def _clean_dict(d: dict[str, Any]) -> dict[str, Any]:
-    """Clean a dict of response data — parse JSON strings and remove junk."""
+    """Clean a dict of response data — parse JSON strings, recurse nested dicts, remove junk."""
     out: dict[str, Any] = {}
     for k, v in d.items():
         if isinstance(v, list):
             out[k] = _clean_list(v)
+        elif isinstance(v, dict):
+            out[k] = _clean_dict(v)
         else:
             out[k] = _clean_value(v)
     return out
@@ -665,6 +679,12 @@ class PropertyQualityFilter:
         Returns:
             ImageBlockParam or None if image couldn't be loaded.
         """
+        # Skip non-image URLs (e.g. YouTube embeds in OpenRent galleries)
+        _VIDEO_MARKERS = ("youtube.com/", "youtu.be/", "vimeo.com/")
+        if any(marker in url.lower() for marker in _VIDEO_MARKERS):
+            logger.debug("skipping_video_url", url=url)
+            return None
+
         from anthropic.types import (
             Base64ImageSourceParam,
             ImageBlockParam,
@@ -675,8 +695,32 @@ class PropertyQualityFilter:
         if cached_path is not None:
             data = read_image_bytes(cached_path)
             if data is not None:
-                data = await asyncio.to_thread(_resize_image_bytes, data)
                 media_type = self._get_media_type(url)
+                logger.debug(
+                    "image_block_from_cache",
+                    url=url,
+                    cached_path=str(cached_path),
+                    data_len=len(data),
+                    media_type=media_type,
+                )
+                # Validate image is decodable before sending to API
+                try:
+                    from io import BytesIO
+
+                    from PIL import Image
+
+                    img = Image.open(BytesIO(data))
+                    img.load()  # Force full pixel decode
+                    img.close()
+                except Exception:
+                    logger.warning(
+                        "cached_image_corrupt",
+                        url=url,
+                        cached_path=str(cached_path),
+                    )
+                    data = None  # Fall through to download path
+            if data is not None:
+                data = await asyncio.to_thread(_resize_image_bytes, data)
                 image_data = base64.standard_b64encode(data).decode("utf-8")
                 return ImageBlockParam(
                     type="image",
@@ -785,6 +829,7 @@ class PropertyQualityFilter:
                 hosting_tolerance=ctx.hosting_tolerance,
                 gallery_cached_paths=gallery_cached[: self._max_images],
                 floorplan_cached_path=floorplan_cached,
+                data_dir=data_dir,
             )
         except APIUnavailableError:
             raise  # Propagate to caller for circuit breaker handling
@@ -890,12 +935,15 @@ class PropertyQualityFilter:
         self,
         content: list[Any],
         property_id: str,
+        *,
+        data_dir: str | None = None,
     ) -> dict[str, Any] | None:
         """Run Phase 1 visual analysis API call.
 
         Args:
             content: Image and text content blocks for the API.
             property_id: Property ID for logging.
+            data_dir: Data directory for image cache (used to clear cache on bad request).
 
         Returns:
             Raw visual analysis dict, or None if the call failed.
@@ -981,6 +1029,18 @@ class PropertyQualityFilter:
                 error=str(e),
                 request_id=getattr(e, "_request_id", None),
             )
+            err_msg = str(e)
+            if (
+                "Could not process image" in err_msg
+                or "file format is invalid" in err_msg
+            ) and data_dir:
+                from home_finder.utils.image_cache import clear_image_cache
+
+                clear_image_cache(data_dir, property_id)
+                logger.warning(
+                    "image_cache_cleared_on_bad_request",
+                    property_id=property_id,
+                )
             return None
 
         except (RateLimitError, InternalServerError, APIConnectionError) as e:
@@ -1231,6 +1291,7 @@ class PropertyQualityFilter:
         hosting_tolerance: str | None = None,
         gallery_cached_paths: list[Path | None] | None = None,
         floorplan_cached_path: Path | None = None,
+        data_dir: str | None = None,
     ) -> PropertyQualityAnalysis | None:
         """Analyze a single property using two-phase chained Claude analysis.
 
@@ -1254,6 +1315,7 @@ class PropertyQualityFilter:
             hosting_tolerance: Area hosting tolerance summary string.
             gallery_cached_paths: Paths to cached gallery images on disk.
             floorplan_cached_path: Path to cached floorplan image on disk.
+            data_dir: Data directory for image cache (passed to error handlers).
 
         Returns:
             Analysis result or None if Phase 1 failed.
@@ -1309,15 +1371,20 @@ class PropertyQualityFilter:
         content.append(TextBlockParam(type="text", text=user_prompt))
 
         has_usable_floorplan = floorplan_url is not None and is_valid_image_url(floorplan_url)
+        image_blocks = [c for c in content if hasattr(c, "get") and c.get("type") == "image"]
         logger.info(
             "analyzing_property",
             property_id=property_id,
             gallery_count=len(gallery_urls),
             has_floorplan=has_usable_floorplan,
+            image_blocks_sent=len(image_blocks),
+            total_content_blocks=len(content),
         )
 
         # Phase 1: Visual Analysis
-        visual_data = await self._run_visual_analysis(content, property_id)
+        visual_data = await self._run_visual_analysis(
+            content, property_id, data_dir=data_dir
+        )
         if visual_data is None:
             return None
 

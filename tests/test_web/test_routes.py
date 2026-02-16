@@ -548,13 +548,14 @@ class TestCardRendering:
         assert "excellent value" in resp.text
 
     @pytest.mark.asyncio
-    async def test_no_card_title_class(
+    async def test_card_title_displayed(
         self, client: TestClient, storage: PropertyStorage, merged_a: MergedProperty
     ) -> None:
         await storage.save_merged_property(merged_a)
         resp = client.get("/")
         assert resp.status_code == 200
-        assert "card-title" not in resp.text
+        assert "card-title" in resp.text
+        assert merged_a.canonical.title in resp.text
 
 
 # ---------------------------------------------------------------------------

@@ -80,7 +80,7 @@ class Settings(BaseSettings):
 
     # Deduplication
     enable_image_hash_matching: bool = Field(
-        default=False,
+        default=True,
         description="Enable image hash comparison for cross-platform deduplication",
     )
 

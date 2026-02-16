@@ -481,7 +481,6 @@ async def _run_enrichment(
     merged: list[MergedProperty],
     settings: Settings,
     storage: PropertyStorage,
-    commute_lookup: dict[str, tuple[int, TransportMode]],
 ) -> list[MergedProperty] | None:
     """Enrich with detail page data and handle failures. Returns None if nothing enriched."""
     logger.info("pipeline_started", phase="detail_enrichment")
@@ -502,12 +501,7 @@ async def _run_enrichment(
     enriched = enrichment_result.enriched
 
     for failed in enrichment_result.failed:
-        commute_info = commute_lookup.get(failed.canonical.unique_id)
-        await storage.save_unenriched_property(
-            failed,
-            commute_minutes=commute_info[0] if commute_info else None,
-            transport_mode=commute_info[1] if commute_info else None,
-        )
+        await storage.save_unenriched_property(failed)
 
     max_attempts = settings.max_enrichment_attempts
     expired = await storage.expire_unenriched(max_attempts=max_attempts)
@@ -597,6 +591,7 @@ async def _run_pre_analysis_pipeline(
     deduplicator = Deduplicator(
         enable_cross_platform=True,
         enable_image_hashing=settings.enable_image_hash_matching,
+        data_dir=settings.data_dir,
     )
     merged_properties = deduplicator.properties_to_merged(filtered)
     logger.info(
@@ -617,18 +612,18 @@ async def _run_pre_analysis_pipeline(
         logger.info("no_new_properties")
         return None
 
-    # Step 5: Commute filter
-    merged_to_notify, commute_lookup = await _run_commute_filter(
-        new_merged, criteria, settings
-    )
-    merged_to_notify.extend(unenriched)
-    if not merged_to_notify:
-        logger.info("no_properties_within_commute_limit")
+    # Step 5: Enrichment
+    merged_to_enrich = list(new_merged) + list(unenriched)
+    enriched = await _run_enrichment(merged_to_enrich, settings, storage)
+    if enriched is None:
         return None
 
-    # Step 6: Enrichment
-    enriched = await _run_enrichment(merged_to_notify, settings, storage, commute_lookup)
-    if enriched is None:
+    # Step 6: Commute filter (after enrichment so all properties have full coords)
+    merged_to_notify, commute_lookup = await _run_commute_filter(
+        enriched, criteria, settings
+    )
+    if not merged_to_notify:
+        logger.info("no_properties_within_commute_limit")
         return None
 
     # Step 7: Post-enrichment dedup + floorplan gate

@@ -227,11 +227,43 @@ async def health_check(request: Request) -> JSONResponse:
     )
 
 
+def _rewrite_thumbnail_to_cache(
+    item: dict[str, Any], data_dir: str, *, id_key: str = "unique_id"
+) -> None:
+    """Rewrite an item's image_url from CDN to locally cached image.
+
+    The DB stores the scraper thumbnail URL which often differs from the
+    enrichment gallery URL (different CDN resolution path), so we fall back
+    to finding any ``gallery_000_*`` file in the cache directory.
+    """
+    uid = item.get(id_key, "")
+    url = item.get("image_url")
+    safe_id = safe_dir_name(uid)
+    cache_dir = get_cache_dir(data_dir, uid)
+
+    # Fast path: exact URL match
+    if url and url.startswith("http"):
+        fname = url_to_filename(url, "gallery", 0)
+        if (cache_dir / fname).is_file():
+            item["image_url"] = f"/images/{safe_id}/{fname}"
+            return
+
+    # Fallback: find any gallery_000_* file (thumbnail URL differs from gallery URL)
+    if cache_dir.is_dir():
+        match = next(
+            (f.name for f in cache_dir.iterdir() if f.name.startswith("gallery_000_")),
+            None,
+        )
+        if match:
+            item["image_url"] = f"/images/{safe_id}/{match}"
+
+
 @router.get("/", response_class=HTMLResponse)
 async def dashboard(
     request: Request,
     storage: StorageDep,
     search_areas: SearchAreasDep,
+    data_dir: DataDirDep,
     filters: FilterDep,
     sort: str = "newest",
     page: str | None = None,
@@ -248,6 +280,13 @@ async def dashboard(
             filters, sort=sort, page=page_val, per_page=per_page
         )
         _enrich_fit_scores(properties)
+
+        # Rewrite external CDN thumbnail URLs to locally cached images.
+        # The DB image_url is often a different CDN resolution than the
+        # gallery URL used during caching, so we also try matching any
+        # gallery_000_* file in the cache directory.
+        for prop in properties:
+            _rewrite_thumbnail_to_cache(prop, data_dir)
     except Exception:
         logger.error("dashboard_query_failed", exc_info=True)
         return templates.TemplateResponse(
@@ -266,6 +305,11 @@ async def dashboard(
     except Exception:
         logger.error("map_markers_query_failed", exc_info=True)
         map_markers = []
+
+    # Rewrite external CDN URLs in map markers too
+    for marker in map_markers:
+        _rewrite_thumbnail_to_cache(marker, data_dir, id_key="id")
+
     properties_json = json.dumps(map_markers)
 
     highlight_values = {h.value for h in PropertyHighlight}

@@ -32,6 +32,15 @@ def _is_epc_url(url: str) -> bool:
     return any(marker in url_lower for marker in _EPC_URL_MARKERS)
 
 
+_VIDEO_URL_MARKERS = ("youtube.com/", "youtu.be/", "vimeo.com/", "dailymotion.com/")
+
+
+def _is_video_url(url: str) -> bool:
+    """Check if a URL points to a video embed rather than an image."""
+    url_lower = url.lower()
+    return any(marker in url_lower for marker in _VIDEO_URL_MARKERS)
+
+
 def _find_dict_with_key(data: Any, key: str, depth: int = 0) -> dict[str, Any] | None:
     """Recursively find a dict containing the given key."""
     if depth > 10:
@@ -569,7 +578,12 @@ class DetailFetcher:
                 re.IGNORECASE,
             )
             for url in gallery_matches[: self._max_gallery_images]:
-                if url and "floorplan" not in url.lower() and not _is_epc_url(url):
+                if (
+                    url
+                    and "floorplan" not in url.lower()
+                    and not _is_epc_url(url)
+                    and not _is_video_url(url)
+                ):
                     full_url = f"https:{url}" if url.startswith("//") else url
                     gallery_urls.append(full_url)
 
@@ -581,7 +595,12 @@ class DetailFetcher:
                     re.IGNORECASE,
                 )
                 for url in gallery_matches[: self._max_gallery_images]:
-                    if url and "floorplan" not in url.lower() and not _is_epc_url(url):
+                    if (
+                        url
+                        and "floorplan" not in url.lower()
+                        and not _is_epc_url(url)
+                        and not _is_video_url(url)
+                    ):
                         full_url = f"https:{url}" if url.startswith("//") else url
                         gallery_urls.append(full_url)
 
@@ -719,8 +738,8 @@ class DetailFetcher:
     async def download_image_bytes(self, url: str) -> bytes | None:
         """Download image bytes from a URL.
 
-        Uses curl_cffi for anti-bot CDNs (zoocdn.com, onthemarket.com),
-        httpx for everything else.
+        Uses curl_cffi for anti-bot CDNs (zoocdn.com, onthemarket.com,
+        imagescdn.openrent.co.uk), httpx for everything else.
 
         Args:
             url: Image URL to download.
@@ -729,7 +748,11 @@ class DetailFetcher:
             Raw image bytes, or None if download failed.
         """
         try:
-            if "zoocdn.com" in url or "onthemarket.com" in url:
+            if (
+                "zoocdn.com" in url
+                or "onthemarket.com" in url
+                or "imagescdn.openrent.co.uk" in url
+            ):
                 response = await self._curl_get_with_retry(url, min_interval=_IMAGE_MIN_INTERVAL)
                 if response.status_code != 200:
                     logger.debug("image_download_failed", url=url, status=response.status_code)

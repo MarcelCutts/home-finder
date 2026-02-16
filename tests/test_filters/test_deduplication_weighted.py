@@ -280,7 +280,7 @@ class TestCalculateMatchScore:
         assert score.is_match is False  # Below 60
 
     def test_rightmove_scenario_with_image(self, base_property: Property) -> None:
-        """Rightmove with outcode only CAN match with image hash."""
+        """Rightmove with outcode only CAN match with multiple gallery images."""
         rightmove = Property(
             source=PropertySource.RIGHTMOVE,
             source_id="RM123",
@@ -294,10 +294,10 @@ class TestCalculateMatchScore:
             longitude=None,
         )
 
-        # With image hash: 40 + 20 + 10 + 15 = 85
+        # With 2+ gallery matches: 40 + 20 + 10 + 15 = 85
         image_hashes = {
-            base_property.unique_id: "a" * 16,
-            rightmove.unique_id: "a" * 16,  # Same hash
+            base_property.unique_id: ["a" * 16, "b" * 16],
+            rightmove.unique_id: ["a" * 16, "b" * 16],  # Same gallery
         }
         score = calculate_match_score(base_property, rightmove, image_hashes)
         assert score.image_hash == 40
@@ -554,3 +554,80 @@ class TestGraduatedScoring:
         # 1500 vs 1568: diff=68, avg=1534, pct=4.43% (between 3% and 6%)
         score = graduated_price_score(1500, 1568)
         assert 0.1 < score < 0.4  # Should be ~0.26
+
+
+class TestGalleryImageHashDedup:
+    """Integration tests for gallery-based image hash deduplication."""
+
+    @pytest.fixture
+    def otm_property(self) -> Property:
+        """OnTheMarket property with outcode only (like the Apex Gardens case)."""
+        return Property(
+            source=PropertySource.ONTHEMARKET,
+            source_id="18751817",
+            url="https://onthemarket.com/details/18751817",
+            title="2 bed flat, Apex Gardens, N15",
+            price_pcm=1800,
+            bedrooms=2,
+            address="Apex Gardens, Forster Road, Tottenham",
+            postcode="N15",  # Outcode only
+            latitude=None,
+            longitude=None,
+        )
+
+    @pytest.fixture
+    def rm_property(self) -> Property:
+        """Rightmove property with outcode only and wrong coordinates."""
+        return Property(
+            source=PropertySource.RIGHTMOVE,
+            source_id="172249586",
+            url="https://rightmove.co.uk/properties/172249586",
+            title="2 bed flat, Apex Gardens, N15",
+            price_pcm=1800,
+            bedrooms=2,
+            address="Apex Gardens, Forster Road, Tottenham",
+            postcode="N15",  # Outcode only
+            latitude=51.53,  # Wrong coordinates (Wembley area)
+            longitude=-0.23,
+        )
+
+    def test_without_gallery_hashes_no_match(
+        self, otm_property: Property, rm_property: Property
+    ) -> None:
+        """Without image hashes: street(20) + outcode(10) + price(15) = 45 < 60."""
+        score = calculate_match_score(otm_property, rm_property)
+        assert score.street_name == 20
+        assert score.outcode == 10
+        assert score.price == 15
+        assert score.total == 45
+        assert score.is_match is False
+
+    def test_single_gallery_match_gives_half_credit(
+        self, otm_property: Property, rm_property: Property
+    ) -> None:
+        """Single gallery image match: 20 + 20 + 10 + 15 = 65, is_match."""
+        h = "a" * 16
+        image_hashes = {
+            otm_property.unique_id: [h],
+            rm_property.unique_id: [h],
+        }
+        score = calculate_match_score(otm_property, rm_property, image_hashes)
+        assert score.image_hash == 20  # Half credit for single match
+        assert score.total == 65
+        assert score.is_match is True
+
+    def test_multiple_gallery_matches_gives_full_credit(
+        self, otm_property: Property, rm_property: Property
+    ) -> None:
+        """Multiple gallery image matches: 40 + 20 + 10 + 15 = 85, high confidence."""
+        h1 = "a" * 16
+        h2 = "b" * 16
+        image_hashes = {
+            otm_property.unique_id: [h1, h2],
+            rm_property.unique_id: [h1, h2],
+        }
+        score = calculate_match_score(otm_property, rm_property, image_hashes)
+        assert score.image_hash == 40  # Full credit for 2+ matches
+        assert score.total == 85
+        assert score.is_match is True
+        assert score.confidence == MatchConfidence.HIGH

@@ -199,6 +199,23 @@
   bars.forEach(function (bar) { observer.observe(bar); });
 })();
 
+// Fit factor chips: tap-to-toggle on touch devices
+(function () {
+  if (!window.matchMedia("(pointer: coarse)").matches) return;
+
+  var groups = document.querySelectorAll(".fit-breakdown-group");
+  if (groups.length === 0) return;
+
+  groups.forEach(function (group) {
+    group.addEventListener("click", function () {
+      groups.forEach(function (g) {
+        if (g !== group) g.classList.remove("expanded");
+      });
+      group.classList.toggle("expanded");
+    });
+  });
+})();
+
 // Lightbox with focus trapping, touch/swipe, event delegation, and preloading
 (function () {
   var lightbox = document.getElementById("lightbox");

@@ -1036,7 +1036,7 @@ class TestToolSchemaSnapshots:
         assert EVALUATION_TOOL.get("strict") is True
 
     def test_visual_tool_is_not_strict(self) -> None:
-        """Visual tool should not have strict mode (schema too complex)."""
+        """Visual tool should NOT have strict mode — schema exceeds grammar limits."""
         assert "strict" not in VISUAL_ANALYSIS_TOOL
 
     def test_visual_tool_has_floorplan_detected_field(self) -> None:

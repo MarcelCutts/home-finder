@@ -44,8 +44,10 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
             "https://unpkg.com https://fonts.googleapis.com; "
             "font-src https://fonts.gstatic.com; "
             "img-src 'self' https://*.zoocdn.com https://*.zoopla.com "
-            "https://*.rmimg.com https://*.onthemarket.com "
-            "https://*.openrent.com https://unpkg.com data:; "
+            "https://*.rmimg.com https://*.rightmove.co.uk "
+            "https://*.onthemarket.com "
+            "https://*.openrent.com https://*.openrent.co.uk "
+            "https://*.basemaps.cartocdn.com https://unpkg.com data:; "
             "connect-src 'self'; "
             "frame-ancestors 'none'"
         )

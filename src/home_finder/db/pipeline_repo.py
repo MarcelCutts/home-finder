@@ -247,8 +247,9 @@ class PipelineRepository:
     ) -> None:
         """Complete quality analysis for a property and transition to pending notification.
 
-        Saves quality data (if any) and sets notification_status to 'pending'.
-        Only transitions properties that are currently 'pending_analysis'.
+        Saves quality data (if any), increments ``analysis_attempts``, and
+        sets notification_status to 'pending'.  Only transitions properties
+        that are currently 'pending_analysis'.
 
         Args:
             unique_id: Property unique ID.
@@ -261,7 +262,8 @@ class PipelineRepository:
         await conn.execute(
             """
             UPDATE properties
-            SET notification_status = ?
+            SET notification_status = ?,
+                analysis_attempts = COALESCE(analysis_attempts, 0) + 1
             WHERE unique_id = ?
               AND notification_status = ?
             """,
@@ -274,13 +276,20 @@ class PipelineRepository:
         await conn.commit()
         logger.debug("analysis_completed", unique_id=unique_id)
 
-    async def reset_failed_analyses(self) -> int:
+    async def reset_failed_analyses(self, *, max_analysis_attempts: int = 3) -> int:
         """Reset properties with fallback analysis for re-analysis.
 
         Finds properties where quality analysis ran but produced only the
         minimal fallback (overall_rating IS NULL), indicating the API failed.
         Deletes the fallback quality data and transitions them back to
         'pending_analysis' so the next pipeline run re-analyzes them.
+
+        Properties that have already been retried ``max_analysis_attempts``
+        times are skipped and logged as permanently failed.
+
+        Args:
+            max_analysis_attempts: Maximum number of analysis retries before
+                giving up on a property.
 
         Returns:
             Number of properties reset.
@@ -289,7 +298,7 @@ class PipelineRepository:
 
         cursor = await conn.execute(
             """
-            SELECT p.unique_id FROM properties p
+            SELECT p.unique_id, p.analysis_attempts FROM properties p
             JOIN quality_analyses q ON p.unique_id = q.property_unique_id
             WHERE q.overall_rating IS NULL
               AND p.notification_status != ?
@@ -300,7 +309,29 @@ class PipelineRepository:
         if not rows:
             return 0
 
-        ids = [row["unique_id"] for row in rows]
+        retryable = [
+            row["unique_id"]
+            for row in rows
+            if (row["analysis_attempts"] or 0) < max_analysis_attempts
+        ]
+        exhausted = [
+            row["unique_id"]
+            for row in rows
+            if (row["analysis_attempts"] or 0) >= max_analysis_attempts
+        ]
+
+        if exhausted:
+            logger.warning(
+                "analysis_retries_exhausted",
+                count=len(exhausted),
+                unique_ids=exhausted,
+                max_attempts=max_analysis_attempts,
+            )
+
+        if not retryable:
+            return 0
+
+        ids = retryable
         placeholders = ",".join("?" * len(ids))
 
         await conn.execute(

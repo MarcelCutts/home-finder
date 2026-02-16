@@ -721,6 +721,14 @@ nav.container-fluid li {
     color: var(--text-dim);
     flex-shrink: 0;
 }
+.card-title {
+    font-size: 0.78rem;
+    color: var(--text-dim);
+    margin: 0 0 0.3rem;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
 
 /* Commute pill */
 .commute-pill {
@@ -1178,6 +1186,63 @@ nav.container-fluid li {
     color: var(--text-dim);
     line-height: 1.5;
 }
+.fit-breakdown-group {
+    cursor: default;
+}
+.fit-factors {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.3rem;
+    padding-left: calc(80px + 0.65rem);
+    margin-top: 0;
+    margin-bottom: 0;
+    max-height: 0;
+    overflow: hidden;
+    opacity: 0;
+    transition: max-height 0.25s ease, opacity 0.2s ease, margin 0.25s ease;
+}
+.fit-breakdown-group:hover .fit-factors,
+.fit-breakdown-group.expanded .fit-factors {
+    max-height: 6rem;
+    opacity: 1;
+    margin-top: -0.1rem;
+    margin-bottom: 0.15rem;
+}
+@media (max-width: 768px) {
+    .fit-factors {
+        max-height: none;
+        opacity: 1;
+        overflow: visible;
+        margin-top: -0.1rem;
+        margin-bottom: 0.15rem;
+        padding-left: calc(68px + 0.5rem);
+    }
+    .fit-factor {
+        white-space: normal;
+    }
+}
+.fit-factor {
+    display: inline-block;
+    padding: 0.08rem 0.4rem;
+    border-radius: 4px;
+    font-size: 0.65rem;
+    font-weight: 600;
+    white-space: nowrap;
+    line-height: 1.5;
+}
+.fit-factor-earned {
+    background: rgba(16, 185, 129, 0.1);
+    color: #34d399;
+}
+.fit-factor-missed {
+    background: rgba(255, 255, 255, 0.04);
+    color: var(--text-dim);
+}
+.fit-factor-unknown {
+    background: rgba(255, 255, 255, 0.03);
+    color: var(--text-dim);
+    opacity: 0.55;
+}
 
 /* Lifestyle quick-glance icons */
 .card-lifestyle {
@@ -1624,6 +1689,9 @@ nav.container-fluid li {
     border-radius: 10px;
     padding: 1.25rem 1.5rem;
     margin-bottom: 1.5rem;
+    max-width: 100%;
+    overflow: hidden;
+    box-sizing: border-box;
 }
 .overview-chips {
     display: flex;

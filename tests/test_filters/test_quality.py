@@ -15,6 +15,9 @@ from home_finder.filters.quality import (
     _MODEL_PAIRS,
     _EvaluationResponse,
     _VisualAnalysisResponse,
+    _clean_dict,
+    _clean_list,
+    _clean_value,
     EVALUATION_TOOL,
     VISUAL_ANALYSIS_TOOL,
     APIUnavailableError,
@@ -182,7 +185,7 @@ class TestToolSchema:
         assert "anyOf" in service_charge
 
     def test_strict_mode_on_tools(self) -> None:
-        """Phase 1 is non-strict (too large for grammar); Phase 2 is strict."""
+        """Phase 1 is non-strict (schema too large), Phase 2 is strict."""
         assert "strict" not in VISUAL_ANALYSIS_TOOL
         assert EVALUATION_TOOL.get("strict") is True
 
@@ -2295,3 +2298,147 @@ def _minimal_value(prop: dict[str, Any]) -> Any:
     if typ == "null":
         return None
     return ""
+
+
+class TestCleanValue:
+    """Tests for _clean_value — parsing JSON strings that should be dicts/lists."""
+
+    def test_returns_non_string_as_is(self) -> None:
+        assert _clean_value(42) == 42
+        assert _clean_value(None) is None
+        assert _clean_value(True) is True
+        assert _clean_value({"a": 1}) == {"a": 1}
+
+    def test_parses_valid_json_dict(self) -> None:
+        result = _clean_value('{"key": "value"}')
+        assert result == {"key": "value"}
+
+    def test_parses_valid_json_list(self) -> None:
+        result = _clean_value('["a", "b"]')
+        assert result == ["a", "b"]
+
+    def test_returns_plain_string_as_is(self) -> None:
+        assert _clean_value("hello world") == "hello world"
+        assert _clean_value("  some text  ") == "some text"
+
+    def test_parses_json_with_trailing_commas(self) -> None:
+        """LLMs commonly produce trailing commas in JSON — should be sanitized."""
+        result = _clean_value('{"a": 1, "b": 2,}')
+        assert result == {"a": 1, "b": 2}
+
+    def test_parses_list_with_trailing_comma(self) -> None:
+        result = _clean_value('["x", "y",]')
+        assert result == ["x", "y"]
+
+    def test_parses_nested_trailing_commas(self) -> None:
+        result = _clean_value('{"a": [1, 2,], "b": {"c": 3,},}')
+        assert result == {"a": [1, 2], "b": {"c": 3}}
+
+    def test_unparseable_json_like_string_returned_as_is(self) -> None:
+        """Strings that look like JSON but aren't should pass through."""
+        result = _clean_value("{not valid json at all}")
+        assert result == "{not valid json at all}"
+
+
+class TestCleanList:
+    """Tests for _clean_list — cleaning list values and removing junk."""
+
+    def test_removes_empty_strings_and_bare_commas(self) -> None:
+        assert _clean_list(["a", "", ",", "b"]) == ["a", "b"]
+
+    def test_parses_json_strings_in_list(self) -> None:
+        result = _clean_list(['{"k": "v"}', "plain"])
+        assert result == [{"k": "v"}, "plain"]
+
+    def test_recursively_cleans_nested_dicts(self) -> None:
+        """Dicts inside lists should be recursively cleaned."""
+        result = _clean_list([{"inner": '{"nested": true}'}])
+        assert result == [{"inner": {"nested": True}}]
+
+
+class TestCleanDict:
+    """Tests for _clean_dict — recursive cleaning of response dicts."""
+
+    def test_parses_json_string_values(self) -> None:
+        result = _clean_dict({"key": '{"a": 1}'})
+        assert result == {"key": {"a": 1}}
+
+    def test_cleans_list_values(self) -> None:
+        result = _clean_dict({"items": ["a", "", "b"]})
+        assert result == {"items": ["a", "b"]}
+
+    def test_recurses_into_nested_dicts(self) -> None:
+        """Nested dict values should be cleaned recursively."""
+        result = _clean_dict({
+            "outer": {
+                "inner_str": '{"parsed": true}',
+                "inner_list": ["x", ""],
+            }
+        })
+        assert result == {
+            "outer": {
+                "inner_str": {"parsed": True},
+                "inner_list": ["x"],
+            }
+        }
+
+    def test_stringified_bedroom_parsed_to_dict(self) -> None:
+        """A bedroom value returned as a JSON string should be parsed to dict."""
+        bedroom_json = (
+            '{"primary_is_double": "yes", "has_built_in_wardrobe": "no",'
+            ' "can_fit_desk": "yes", "office_separation": "shared_space",'
+            ' "notes": "Decent room"}'
+        )
+        result = _clean_dict({"bedroom": bedroom_json, "overall_rating": 3})
+        assert isinstance(result["bedroom"], dict)
+        assert result["bedroom"]["primary_is_double"] == "yes"
+        assert result["overall_rating"] == 3
+
+
+class TestMergeAnalysisWithStringifiedNested:
+    """End-to-end: _merge_analysis_results succeeds when nested objects arrive as JSON strings."""
+
+    def test_bedroom_as_json_string_validates(
+        self,
+        sample_visual_response: dict[str, Any],
+        sample_evaluation_response: dict[str, Any],
+    ) -> None:
+        """If Claude returns bedroom as a JSON string, merge should still succeed."""
+        import json
+
+        # Stringify the bedroom dict (simulating the bug)
+        sample_visual_response["bedroom"] = json.dumps(sample_visual_response["bedroom"])
+
+        analysis = PropertyQualityFilter._merge_analysis_results(
+            sample_visual_response,
+            sample_evaluation_response,
+            bedrooms=2,
+            property_id="test-123",
+        )
+
+        assert analysis is not None
+        assert analysis.bedroom.primary_is_double == "yes"
+        assert analysis.bedroom.office_separation == "dedicated_room"
+
+    def test_multiple_stringified_nested_objects(
+        self,
+        sample_visual_response: dict[str, Any],
+        sample_evaluation_response: dict[str, Any],
+    ) -> None:
+        """Multiple nested objects as JSON strings should all be parsed."""
+        import json
+
+        sample_visual_response["bedroom"] = json.dumps(sample_visual_response["bedroom"])
+        sample_visual_response["kitchen"] = json.dumps(sample_visual_response["kitchen"])
+
+        analysis = PropertyQualityFilter._merge_analysis_results(
+            sample_visual_response,
+            sample_evaluation_response,
+            bedrooms=2,
+            property_id="test-123",
+        )
+
+        assert analysis is not None
+        assert analysis.bedroom.primary_is_double == "yes"
+        assert analysis.kitchen.overall_quality == "modern"
+        assert analysis.kitchen.hob_type == "gas"

@@ -37,7 +37,7 @@ def _analyze(image_bytes: bytes) -> tuple[bool, float]:
     """Core analysis — separated for cleaner error handling."""
     from PIL import Image, ImageFilter, ImageStat
 
-    Image.MAX_IMAGE_PIXELS = 50_000_000
+    import home_finder.utils.image_processing  # noqa: F401  (sets MAX_IMAGE_PIXELS)
 
     img: Image.Image = Image.open(BytesIO(image_bytes))
     # Thumbnail to 256x256 for speed — we only need statistics

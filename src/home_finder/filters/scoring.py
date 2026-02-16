@@ -8,7 +8,7 @@ from typing import Final
 
 from home_finder.models import Property
 from home_finder.utils.address import extract_outcode, normalize_street_name
-from home_finder.utils.image_hash import hashes_match
+from home_finder.utils.image_hash import count_gallery_hash_matches
 
 # Price tolerance for fuzzy matching (3% - tighter than before)
 PRICE_TOLERANCE: Final = 0.03
@@ -258,7 +258,7 @@ def graduated_price_score(price1: int, price2: int, tolerance: float = PRICE_TOL
 def calculate_match_score(
     prop1: Property,
     prop2: Property,
-    image_hashes: dict[str, str] | None = None,
+    image_hashes: dict[str, list[str]] | None = None,
 ) -> MatchScore:
     """Calculate weighted match score between two properties.
 
@@ -267,7 +267,7 @@ def calculate_match_score(
     Args:
         prop1: First property.
         prop2: Second property.
-        image_hashes: Optional dict mapping unique_id to image hash.
+        image_hashes: Optional dict mapping unique_id to list of gallery hash strings.
 
     Returns:
         MatchScore with breakdown of all signals.
@@ -278,12 +278,16 @@ def calculate_match_score(
     if prop1.bedrooms != prop2.bedrooms:
         return score
 
-    # Image hash (strong signal)
+    # Image hash (strong signal) — gallery-vs-gallery comparison
+    # 1 matching image = half credit (20), 2+ = full credit (40)
     if image_hashes:
-        hash1 = image_hashes.get(prop1.unique_id)
-        hash2 = image_hashes.get(prop2.unique_id)
-        if hashes_match(hash1, hash2):
+        hashes1 = image_hashes.get(prop1.unique_id)
+        hashes2 = image_hashes.get(prop2.unique_id)
+        match_count = count_gallery_hash_matches(hashes1, hashes2)
+        if match_count >= 2:
             score.image_hash = SCORE_IMAGE_HASH
+        elif match_count == 1:
+            score.image_hash = SCORE_IMAGE_HASH * 0.5
 
     # Full postcode match
     if (

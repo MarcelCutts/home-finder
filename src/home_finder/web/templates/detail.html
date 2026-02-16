@@ -248,16 +248,25 @@
             </h4>
             <div class="fit-breakdown-bars">
                 {% for dim in fit_breakdown %}
-                <div class="fit-breakdown-row{% if dim.confidence is defined and dim.confidence < 0.5 %} fit-dim-low-conf{% endif %}">
-                    <span class="fit-breakdown-label">{{ dim.label }}</span>
-                    <div class="fit-breakdown-track"><div class="fit-breakdown-fill {% if dim.score >= 70 %}fit-dim-green{% elif dim.score >= 40 %}fit-dim-accent{% else %}fit-dim-low{% endif %}" style="--bar-pct: {{ dim.score }}%"></div></div>
-                    <span class="fit-breakdown-value">{{ dim.score }}</span>
-                    <span class="fit-breakdown-weight">{{ dim.weight }}%</span>
-                    {% if dim.confidence is defined and dim.confidence < 0.5 %}<span class="fit-dim-conf-hint" title="Limited data for this dimension">?</span>{% endif %}
+                <div class="fit-breakdown-group">
+                    <div class="fit-breakdown-row{% if dim.confidence is defined and dim.confidence < 0.5 %} fit-dim-low-conf{% endif %}">
+                        <span class="fit-breakdown-label">{{ dim.label }}</span>
+                        <div class="fit-breakdown-track"><div class="fit-breakdown-fill {% if dim.score >= 70 %}fit-dim-green{% elif dim.score >= 40 %}fit-dim-accent{% else %}fit-dim-low{% endif %}" style="--bar-pct: {{ dim.score }}%"></div></div>
+                        <span class="fit-breakdown-value">{{ dim.score }}</span>
+                        <span class="fit-breakdown-weight">{{ dim.weight }}%</span>
+                        {% if dim.confidence is defined and dim.confidence < 0.5 %}<span class="fit-dim-conf-hint" title="Limited data for this dimension">?</span>{% endif %}
+                    </div>
+                    {% if dim.factors and dim.factors | length >= 2 %}
+                    <div class="fit-factors">
+                        {% for f in dim.factors %}
+                        <span class="fit-factor fit-factor-{{ f.state }}">{{ "✓" if f.state == "earned" else ("–" if f.state == "missed" else "?") }} {{ f.label }}</span>
+                        {% endfor %}
+                    </div>
+                    {% endif %}
                 </div>
                 {% endfor %}
             </div>
-            <p class="fit-breakdown-legend">Score 0-100 per dimension, weighted by importance to Marcel's WFH + hosting lifestyle.</p>
+            <p class="fit-breakdown-legend">Score 0-100 per dimension, weighted by importance to Marcel's WFH + hosting lifestyle. ✓ earned · – missing · ? not detected.</p>
         </div>
         {% endif %}
         </div>

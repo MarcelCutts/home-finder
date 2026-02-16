@@ -5,7 +5,9 @@ from __future__ import annotations
 from home_finder.filters.fit_score import (
     WEIGHTS,
     _score_hosting,
+    _score_kitchen,
     _score_vibe,
+    _score_workspace,
     compute_fit_breakdown,
     compute_fit_score,
     compute_lifestyle_icons,
@@ -566,10 +568,12 @@ class TestComputeFitBreakdown:
             assert "score" in dim
             assert "weight" in dim
             assert "confidence" in dim
+            assert "factors" in dim
             assert isinstance(dim["score"], int)
             assert 0 <= dim["score"] <= 100
             assert isinstance(dim["weight"], int)
             assert 0.0 <= dim["confidence"] <= 1.0
+            assert isinstance(dim["factors"], list)
 
     def test_weights_match_global_weights(self):
         result = compute_fit_breakdown(_full_analysis(), 2)
@@ -596,6 +600,112 @@ class TestComputeFitBreakdown:
             "light_space": {"ceiling_height": "unknown"},
         }
         assert compute_fit_breakdown(analysis, 1) is None
+
+
+# ── Factor tags ──────────────────────────────────────────────────────────────
+
+
+class TestFactorTags:
+    """Tests that each dimension returns meaningful factor breakdowns."""
+
+    def test_all_dimensions_have_factors(self):
+        """Every dimension with confidence > 0 should have at least one factor."""
+        result = compute_fit_breakdown(_full_analysis(), 2)
+        assert result is not None
+        for dim in result:
+            if dim["confidence"] > 0:
+                assert len(dim["factors"]) > 0, f"{dim['key']} has no factors"
+
+    def test_factor_states_are_valid(self):
+        """All factor states must be 'earned', 'missed', or 'unknown'."""
+        result = compute_fit_breakdown(_full_analysis(), 2)
+        assert result is not None
+        for dim in result:
+            for f in dim["factors"]:
+                assert f["state"] in ("earned", "missed", "unknown"), (
+                    f"{dim['key']} factor '{f['label']}' has invalid state '{f['state']}'"
+                )
+                assert isinstance(f["label"], str) and len(f["label"]) > 0
+
+    def test_kitchen_factors_gas_modern(self):
+        """Kitchen with gas hob, modern quality, dishwasher, washing machine."""
+        analysis = {
+            "kitchen": {
+                "hob_type": "gas",
+                "overall_quality": "modern",
+                "has_dishwasher": "yes",
+                "has_washing_machine": "yes",
+            }
+        }
+        result = _score_kitchen(analysis, 2)
+        labels = {f["label"] for f in result.factors}
+        states = {f["label"]: f["state"] for f in result.factors}
+        assert "Gas hob" in labels
+        assert states["Gas hob"] == "earned"
+        assert "Modern kitchen" in labels
+        assert states["Modern kitchen"] == "earned"
+        assert "Dishwasher" in labels
+        assert states["Dishwasher"] == "earned"
+        assert "Washing machine" in labels
+        assert states["Washing machine"] == "earned"
+
+    def test_kitchen_factors_electric_missing(self):
+        """Kitchen with electric hob and missing appliances shows missed/unknown."""
+        analysis = {
+            "kitchen": {
+                "hob_type": "electric",
+                "overall_quality": "dated",
+                "has_dishwasher": "no",
+                "has_washing_machine": "no",
+            }
+        }
+        result = _score_kitchen(analysis, 2)
+        states = {f["label"]: f["state"] for f in result.factors}
+        assert any("not gas/induction" in label for label in states)
+        assert any(states[l] == "missed" for l in states if "dishwasher" in l.lower())
+        assert any(states[l] == "missed" for l in states if "washing" in l.lower())
+
+    def test_kitchen_factors_unknown_appliances(self):
+        """Kitchen with no appliance data shows unknown state."""
+        analysis = {"kitchen": {}}
+        result = _score_kitchen(analysis, 2)
+        states = {f["label"]: f["state"] for f in result.factors}
+        assert "Dishwasher" in states
+        assert states["Dishwasher"] == "unknown"
+        assert "Washing machine" in states
+        assert states["Washing machine"] == "unknown"
+
+    def test_workspace_factors_2bed_dedicated_fttp(self):
+        """2-bed with dedicated office and FTTP shows all earned."""
+        analysis = {
+            "bedroom": {"office_separation": "dedicated_room", "can_fit_desk": "yes"},
+            "listing_extraction": {"broadband_type": "fttp"},
+        }
+        result = _score_workspace(analysis, 2)
+        labels = {f["label"] for f in result.factors}
+        states = {f["label"]: f["state"] for f in result.factors}
+        assert "2+ bedrooms" in labels
+        assert states["2+ bedrooms"] == "earned"
+        assert "Dedicated office room" in labels
+        assert states["Dedicated office room"] == "earned"
+        assert "Full fibre (FTTP)" in labels
+        assert states["Full fibre (FTTP)"] == "earned"
+
+    def test_workspace_factors_studio(self):
+        """Studio shows missed bedroom factor."""
+        analysis = {"bedroom": {"can_fit_desk": "no"}}
+        result = _score_workspace(analysis, 0)
+        states = {f["label"]: f["state"] for f in result.factors}
+        assert "Studio (no separation)" in states
+        assert states["Studio (no separation)"] == "missed"
+
+    def test_empty_analysis_returns_empty_factors(self):
+        """Dimensions with no analysis data return empty or unknown-only factors."""
+        result = compute_fit_breakdown({"kitchen": {"hob_type": "gas"}}, 1)
+        assert result is not None
+        for dim in result:
+            for f in dim["factors"]:
+                assert f["state"] in ("earned", "missed", "unknown")
 
 
 # ── Hosting scorer (direct unit tests) ────────────────────────────────────────

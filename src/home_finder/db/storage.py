@@ -179,6 +179,7 @@ class PropertyStorage:
             ("enrichment_status", "TEXT", "'enriched'"),
             ("enrichment_attempts", "INTEGER", "0"),
             ("ward", "TEXT", None),
+            ("analysis_attempts", "INTEGER", "0"),
         ]:
             try:
                 default_clause = f" DEFAULT {default}" if default is not None else ""

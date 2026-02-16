@@ -1,16 +1,22 @@
 """Tests for image hashing utilities."""
 
+import io
+from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
 import imagehash
 import pytest
+from PIL import Image
 from pydantic import HttpUrl
 
 from home_finder.models import Property, PropertySource
 from home_finder.utils.image_hash import (
     HASH_DISTANCE_THRESHOLD,
+    count_gallery_hash_matches,
     fetch_and_hash_image,
     fetch_image_hashes_batch,
+    hash_cached_gallery,
+    hash_from_disk,
     hashes_match,
 )
 
@@ -193,3 +199,188 @@ class TestFetchImageHashesBatch:
             result = await fetch_image_hashes_batch(props)
 
         assert result == {}
+
+
+def _make_test_image(color: str = "red", size: tuple[int, int] = (8, 8)) -> bytes:
+    """Create minimal PNG bytes for testing."""
+    buf = io.BytesIO()
+    Image.new("RGB", size, color=color).save(buf, format="PNG")
+    return buf.getvalue()
+
+
+class TestHashFromDisk:
+    """Tests for hash_from_disk."""
+
+    def test_valid_jpeg(self, tmp_path: Path) -> None:
+        img_path = tmp_path / "gallery_000_abc12345.jpg"
+        img_path.write_bytes(_make_test_image("red"))
+        result = hash_from_disk(img_path)
+        assert result is not None
+        assert len(result) == 16  # 64-bit pHash = 16 hex chars
+
+    def test_svg_extension_skipped(self, tmp_path: Path) -> None:
+        img_path = tmp_path / "floorplan.svg"
+        img_path.write_text("<svg>...</svg>")
+        assert hash_from_disk(img_path) is None
+
+    def test_svg_content_xml_prefix_skipped(self, tmp_path: Path) -> None:
+        img_path = tmp_path / "gallery_000_abc12345.jpg"
+        img_path.write_bytes(b"<?xml version='1.0'?><svg>...</svg>")
+        assert hash_from_disk(img_path) is None
+
+    def test_svg_content_svg_prefix_skipped(self, tmp_path: Path) -> None:
+        img_path = tmp_path / "gallery_000_abc12345.jpg"
+        img_path.write_bytes(b"<svg xmlns='http://www.w3.org/2000/svg'>...</svg>")
+        assert hash_from_disk(img_path) is None
+
+    def test_corrupted_file_returns_none(self, tmp_path: Path) -> None:
+        img_path = tmp_path / "gallery_000_abc12345.jpg"
+        img_path.write_bytes(b"not an image at all")
+        assert hash_from_disk(img_path) is None
+
+    def test_missing_file_returns_none(self, tmp_path: Path) -> None:
+        img_path = tmp_path / "nonexistent.jpg"
+        assert hash_from_disk(img_path) is None
+
+    def test_empty_file_returns_none(self, tmp_path: Path) -> None:
+        img_path = tmp_path / "gallery_000_abc12345.jpg"
+        img_path.write_bytes(b"")
+        assert hash_from_disk(img_path) is None
+
+    def test_two_different_images_get_different_hashes(self, tmp_path: Path) -> None:
+        path1 = tmp_path / "img1.jpg"
+        path2 = tmp_path / "img2.jpg"
+        # Create images with distinct patterns (solid colours produce identical pHash)
+        img1 = Image.new("RGB", (64, 64), color="white")
+        for x in range(32):
+            for y in range(64):
+                img1.putpixel((x, y), (0, 0, 0))
+        img2 = Image.new("RGB", (64, 64), color="white")
+        for x in range(64):
+            for y in range(32):
+                img2.putpixel((x, y), (0, 0, 0))
+        buf1, buf2 = io.BytesIO(), io.BytesIO()
+        img1.save(buf1, format="PNG")
+        img2.save(buf2, format="PNG")
+        path1.write_bytes(buf1.getvalue())
+        path2.write_bytes(buf2.getvalue())
+
+        h1 = hash_from_disk(path1)
+        h2 = hash_from_disk(path2)
+        assert h1 is not None
+        assert h2 is not None
+        assert h1 != h2
+
+
+class TestHashCachedGallery:
+    """Tests for hash_cached_gallery."""
+
+    @staticmethod
+    def _setup_gallery(tmp_path: Path, unique_id: str, files: dict[str, bytes]) -> None:
+        """Create cached gallery files using the same path logic as production."""
+        from home_finder.utils.image_cache import get_cache_dir
+
+        cache_dir = get_cache_dir(str(tmp_path), unique_id)
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        for filename, data in files.items():
+            (cache_dir / filename).write_bytes(data)
+
+    @pytest.mark.asyncio
+    async def test_full_gallery_hashing(self, tmp_path: Path) -> None:
+        self._setup_gallery(tmp_path, "openrent:123", {
+            "gallery_000_abc12345.jpg": _make_test_image("red"),
+            "gallery_001_def67890.jpg": _make_test_image("green"),
+        })
+
+        result = await hash_cached_gallery(["openrent:123"], str(tmp_path))
+        assert "openrent:123" in result
+        assert len(result["openrent:123"]) == 2
+
+    @pytest.mark.asyncio
+    async def test_missing_cache_dir(self, tmp_path: Path) -> None:
+        result = await hash_cached_gallery(["openrent:999"], str(tmp_path))
+        assert result == {}
+
+    @pytest.mark.asyncio
+    async def test_svg_files_skipped(self, tmp_path: Path) -> None:
+        self._setup_gallery(tmp_path, "rightmove:456", {
+            # SVG content in a .jpg file (Rightmove placeholder scenario)
+            "gallery_000_abc12345.jpg": b"<?xml version='1.0'?><svg>placeholder</svg>",
+            "gallery_001_def67890.jpg": _make_test_image("blue"),
+        })
+
+        result = await hash_cached_gallery(["rightmove:456"], str(tmp_path))
+        assert "rightmove:456" in result
+        assert len(result["rightmove:456"]) == 1  # SVG skipped
+
+    @pytest.mark.asyncio
+    async def test_all_svgs_excluded(self, tmp_path: Path) -> None:
+        self._setup_gallery(tmp_path, "rightmove:789", {
+            "gallery_000_abc12345.jpg": b"<?xml version='1.0'?><svg>a</svg>",
+            "gallery_001_def67890.jpg": b"<svg xmlns='http://www.w3.org/2000/svg'/>",
+        })
+
+        result = await hash_cached_gallery(["rightmove:789"], str(tmp_path))
+        assert "rightmove:789" not in result
+
+    @pytest.mark.asyncio
+    async def test_empty_gallery_not_included(self, tmp_path: Path) -> None:
+        self._setup_gallery(tmp_path, "openrent:123", {
+            # Only non-gallery files
+            "floorplan_000_abc12345.jpg": _make_test_image("red"),
+        })
+
+        result = await hash_cached_gallery(["openrent:123"], str(tmp_path))
+        assert "openrent:123" not in result
+
+    @pytest.mark.asyncio
+    async def test_multiple_properties(self, tmp_path: Path) -> None:
+        self._setup_gallery(tmp_path, "openrent:1", {
+            "gallery_000_abc12345.jpg": _make_test_image("red"),
+        })
+        self._setup_gallery(tmp_path, "zoopla:2", {
+            "gallery_000_abc12345.jpg": _make_test_image("blue"),
+        })
+
+        result = await hash_cached_gallery(["openrent:1", "zoopla:2"], str(tmp_path))
+        assert "openrent:1" in result
+        assert "zoopla:2" in result
+
+
+class TestCountGalleryHashMatches:
+    """Tests for count_gallery_hash_matches."""
+
+    def test_matching_galleries(self) -> None:
+        h = "a" * 16
+        assert count_gallery_hash_matches([h], [h]) == 1
+
+    def test_multiple_matches(self) -> None:
+        h1 = "a" * 16
+        h2 = "b" * 16
+        assert count_gallery_hash_matches([h1, h2], [h2, h1]) == 2
+
+    def test_no_overlap(self) -> None:
+        h1 = "0000000000000000"
+        h2 = "ffffffffffffffff"
+        assert count_gallery_hash_matches([h1], [h2]) == 0
+
+    def test_none_inputs(self) -> None:
+        assert count_gallery_hash_matches(None, None) == 0
+        assert count_gallery_hash_matches(["a" * 16], None) == 0
+        assert count_gallery_hash_matches(None, ["a" * 16]) == 0
+
+    def test_empty_lists(self) -> None:
+        assert count_gallery_hash_matches([], ["a" * 16]) == 0
+        assert count_gallery_hash_matches(["a" * 16], []) == 0
+
+    def test_partial_overlap(self) -> None:
+        h1 = "a" * 16
+        h3 = "0000000000000000"
+        h4 = "ffffffffffffffff"
+        # h1 matches h1, h3 doesn't match h4
+        assert count_gallery_hash_matches([h1, h3], [h1, h4]) == 1
+
+    def test_no_double_counting(self) -> None:
+        """Same hash in gallery1 twice should only match once against gallery2."""
+        h = "a" * 16
+        assert count_gallery_hash_matches([h, h], [h]) == 1

@@ -5,11 +5,14 @@ and post-enrichment deduplication using realistic London rental data modeled
 on actual scraper output.
 """
 
+import io
 from datetime import datetime
+from pathlib import Path
 
 import pytest
 from hypothesis import given, settings
 from hypothesis import strategies as st
+from PIL import Image
 from pydantic import HttpUrl
 
 from home_finder.filters.deduplication import Deduplicator
@@ -18,6 +21,7 @@ from home_finder.filters.scoring import (
     calculate_match_score,
 )
 from home_finder.models import MergedProperty, Property, PropertyImage, PropertySource
+from home_finder.utils.image_cache import get_cache_dir
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -1326,3 +1330,188 @@ class TestDedupWithDbAnchors:
         assert len(genuinely_new) == 4, f"Expected 4 genuinely new, got {len(genuinely_new)}"
         assert len(updated_anchors) == 1, "One anchor should have gained a new source"
         assert PropertySource.ZOOPLA in updated_anchors[0].sources
+
+
+# ---------------------------------------------------------------------------
+# Test: Gallery image hashing through the Deduplicator
+# ---------------------------------------------------------------------------
+
+
+def _make_test_image(color: str = "red") -> bytes:
+    """Create minimal PNG bytes for testing."""
+    buf = io.BytesIO()
+    Image.new("RGB", (8, 8), color=color).save(buf, format="PNG")
+    return buf.getvalue()
+
+
+def _setup_gallery(tmp_path: Path, unique_id: str, files: dict[str, bytes]) -> None:
+    """Create cached gallery files using the same path logic as production."""
+    cache_dir = get_cache_dir(str(tmp_path), unique_id)
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    for filename, data in files.items():
+        (cache_dir / filename).write_bytes(data)
+
+
+# Properties modeled on the real Apex Gardens case:
+# outcode only, wrong/missing coords, same street/price — 45 points without images
+APEX_OTM = _make_property(
+    source=PropertySource.ONTHEMARKET,
+    source_id="18751817",
+    price_pcm=1800,
+    bedrooms=2,
+    address="Apex Gardens, Forster Road, Tottenham",
+    postcode="N15",  # Outcode only
+    latitude=None,
+    longitude=None,
+)
+APEX_RM = _make_property(
+    source=PropertySource.RIGHTMOVE,
+    source_id="172249586",
+    price_pcm=1800,
+    bedrooms=2,
+    address="Apex Gardens, Forster Road, Tottenham",
+    postcode="N15",  # Outcode only
+    latitude=51.53,  # Wrong coordinates (Wembley area)
+    longitude=-0.23,
+)
+
+
+class TestGalleryHashDeduplication:
+    """Integration tests for gallery-based image hashing through the Deduplicator.
+
+    These test the full wiring: Deduplicator with data_dir → hash_cached_gallery
+    reads from disk → hashes passed to scoring → merge decision.
+    """
+
+    @pytest.mark.asyncio
+    async def test_shared_gallery_images_merge_properties(self, tmp_path: Path) -> None:
+        """Two properties with shared cached gallery images get merged.
+
+        Without image hashing these two score only 45 points (street + outcode + price)
+        which is below the 60-point threshold. With gallery hashing the shared images
+        push the score above threshold.
+        """
+        shared_img = _make_test_image("red")
+        shared_img2 = _make_test_image("green")
+
+        _setup_gallery(tmp_path, APEX_OTM.unique_id, {
+            "gallery_000_aaa00000.jpg": shared_img,
+            "gallery_001_bbb11111.jpg": shared_img2,
+        })
+        _setup_gallery(tmp_path, APEX_RM.unique_id, {
+            "gallery_000_ccc22222.jpg": shared_img,   # Same image bytes
+            "gallery_001_ddd33333.jpg": shared_img2,   # Same image bytes
+        })
+
+        mp1 = _make_merged(APEX_OTM)
+        mp2 = _make_merged(APEX_RM)
+
+        deduplicator = Deduplicator(
+            enable_cross_platform=True,
+            enable_image_hashing=True,
+            data_dir=str(tmp_path),
+        )
+        result = await deduplicator.deduplicate_merged_async([mp1, mp2])
+
+        assert len(result) == 1
+        assert len(result[0].sources) == 2
+        assert PropertySource.ONTHEMARKET in result[0].sources
+        assert PropertySource.RIGHTMOVE in result[0].sources
+
+    @pytest.mark.asyncio
+    async def test_no_gallery_cache_stays_separate(self, tmp_path: Path) -> None:
+        """Without cached images, the 45-point pair stays unmerged."""
+        # Empty data_dir — no cached images
+        mp1 = _make_merged(APEX_OTM)
+        mp2 = _make_merged(APEX_RM)
+
+        deduplicator = Deduplicator(
+            enable_cross_platform=True,
+            enable_image_hashing=True,
+            data_dir=str(tmp_path),
+        )
+        result = await deduplicator.deduplicate_merged_async([mp1, mp2])
+
+        assert len(result) == 2
+
+    @pytest.mark.asyncio
+    async def test_different_gallery_images_stay_separate(self, tmp_path: Path) -> None:
+        """Different gallery images don't produce a false merge."""
+        # Smooth gradient vs fine checkerboard — maximally different DCT (pHash) content
+        img1 = Image.new("L", (64, 64))
+        for x in range(64):
+            for y in range(64):
+                img1.putpixel((x, y), int(255 * x / 63))
+        img2 = Image.new("L", (64, 64))
+        for x in range(64):
+            for y in range(64):
+                img2.putpixel((x, y), 255 if (x + y) % 2 == 0 else 0)
+        buf1, buf2 = io.BytesIO(), io.BytesIO()
+        img1.save(buf1, format="PNG")
+        img2.save(buf2, format="PNG")
+
+        _setup_gallery(tmp_path, APEX_OTM.unique_id, {
+            "gallery_000_aaa00000.jpg": buf1.getvalue(),
+        })
+        _setup_gallery(tmp_path, APEX_RM.unique_id, {
+            "gallery_000_ccc22222.jpg": buf2.getvalue(),
+        })
+
+        mp1 = _make_merged(APEX_OTM)
+        mp2 = _make_merged(APEX_RM)
+
+        deduplicator = Deduplicator(
+            enable_cross_platform=True,
+            enable_image_hashing=True,
+            data_dir=str(tmp_path),
+        )
+        result = await deduplicator.deduplicate_merged_async([mp1, mp2])
+
+        assert len(result) == 2
+
+    @pytest.mark.asyncio
+    async def test_image_hashing_disabled_ignores_gallery(self, tmp_path: Path) -> None:
+        """With enable_image_hashing=False, gallery images are ignored."""
+        shared_img = _make_test_image("red")
+        shared_img2 = _make_test_image("green")
+
+        _setup_gallery(tmp_path, APEX_OTM.unique_id, {
+            "gallery_000_aaa00000.jpg": shared_img,
+            "gallery_001_bbb11111.jpg": shared_img2,
+        })
+        _setup_gallery(tmp_path, APEX_RM.unique_id, {
+            "gallery_000_ccc22222.jpg": shared_img,
+            "gallery_001_ddd33333.jpg": shared_img2,
+        })
+
+        mp1 = _make_merged(APEX_OTM)
+        mp2 = _make_merged(APEX_RM)
+
+        deduplicator = Deduplicator(
+            enable_cross_platform=True,
+            enable_image_hashing=False,  # Explicitly disabled
+            data_dir=str(tmp_path),
+        )
+        result = await deduplicator.deduplicate_merged_async([mp1, mp2])
+
+        assert len(result) == 2  # No merge without image hashing
+
+    @pytest.mark.asyncio
+    async def test_no_data_dir_falls_back_to_hero_fetch(self, tmp_path: Path) -> None:
+        """Without data_dir, Deduplicator skips disk hashing entirely.
+
+        The fallback path (fetch_image_hashes_batch) would try to fetch hero
+        thumbnails over the network. With no image_url set, nothing gets hashed
+        and the properties stay separate.
+        """
+        mp1 = _make_merged(APEX_OTM)
+        mp2 = _make_merged(APEX_RM)
+
+        deduplicator = Deduplicator(
+            enable_cross_platform=True,
+            enable_image_hashing=True,
+            data_dir="",  # No data dir
+        )
+        result = await deduplicator.deduplicate_merged_async([mp1, mp2])
+
+        assert len(result) == 2
