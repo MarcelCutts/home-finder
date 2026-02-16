@@ -41,7 +41,7 @@ from home_finder.scrapers import (
 )
 from home_finder.scrapers.detail_fetcher import DetailFetcher
 from home_finder.utils.address import is_outcode
-from home_finder.utils.image_cache import clear_image_cache
+from home_finder.utils.image_cache import clear_image_cache, copy_cached_images
 
 logger = get_logger(__name__)
 
@@ -1233,6 +1233,98 @@ async def run_reanalysis(
         await storage.close()
 
 
+async def run_dedup_existing(settings: Settings) -> None:
+    """Retroactively merge duplicate properties already in the database.
+
+    Loads all stored properties, runs the deduplicator, and merges any
+    cross-platform duplicates that were ingested before image hashing was enabled.
+    """
+    storage = PropertyStorage(settings.database_path)
+    await storage.initialize()
+
+    try:
+        # Load all properties from DB
+        all_properties = await storage.get_recent_properties_for_dedup(days=None)
+        if not all_properties:
+            print("No properties in database.")
+            return
+
+        print(f"Found {len(all_properties)} properties, checking for duplicates...")
+
+        # Build lookup of input IDs
+        input_ids = {m.canonical.unique_id for m in all_properties}
+
+        # Run deduplication
+        deduplicator = Deduplicator(
+            enable_cross_platform=True,
+            enable_image_hashing=settings.enable_image_hash_matching,
+            data_dir=settings.data_dir,
+        )
+        dedup_results = await deduplicator.deduplicate_merged_async(all_properties)
+
+        # Determine which IDs survived and which were absorbed
+        output_ids = {m.canonical.unique_id for m in dedup_results}
+        absorbed_ids = input_ids - output_ids
+
+        if not absorbed_ids:
+            print("No duplicates found.")
+            return
+
+        # For each merged result that absorbed other properties, update the DB
+        merged_count = 0
+        for merged in dedup_results:
+            # Find which input properties were absorbed into this result
+            merged_source_urls = {str(u) for u in merged.source_urls.values()}
+            absorbed_into_this: list[str] = []
+            for aid in absorbed_ids:
+                # Check if any of the absorbed property's URLs appear in this merged result
+                for orig in all_properties:
+                    if orig.canonical.unique_id == aid:
+                        orig_urls = {str(u) for u in orig.source_urls.values()}
+                        if orig_urls & merged_source_urls:
+                            absorbed_into_this.append(aid)
+                        break
+
+            if not absorbed_into_this:
+                continue
+
+            anchor_id = merged.canonical.unique_id
+            # Update DB anchor with merged sources
+            await storage.update_merged_sources(anchor_id, merged)
+
+            # Copy cached images and delete absorbed properties
+            for absorbed_id in absorbed_into_this:
+                if settings.data_dir:
+                    copied = copy_cached_images(
+                        settings.data_dir, absorbed_id, anchor_id
+                    )
+                    if copied:
+                        logger.info(
+                            "dedup_images_copied",
+                            from_id=absorbed_id,
+                            to_id=anchor_id,
+                            count=copied,
+                        )
+                await storage.delete_property(absorbed_id)
+                logger.info(
+                    "dedup_property_absorbed",
+                    absorbed_id=absorbed_id,
+                    anchor_id=anchor_id,
+                )
+
+            merged_count += 1
+
+        remaining = len(all_properties) - len(absorbed_ids)
+        print(
+            f"Merged {merged_count} duplicate groups "
+            f"({len(absorbed_ids)} properties absorbed), "
+            f"{remaining} properties remaining."
+        )
+
+    finally:
+        await storage.close()
+
+
 def main() -> None:
     """Main entry point."""
     parser = argparse.ArgumentParser(
@@ -1260,6 +1352,11 @@ def main() -> None:
         default=None,
         help="Comma-separated list of scrapers to run (e.g. openrent,zoopla). "
         "Options: openrent, rightmove, zoopla, onthemarket",
+    )
+    parser.add_argument(
+        "--dedup-existing",
+        action="store_true",
+        help="Retroactively merge duplicate properties already in the database",
     )
     parser.add_argument(
         "--reanalyze",
@@ -1338,7 +1435,9 @@ def main() -> None:
             print(f"Valid options: {', '.join(sorted(valid))}")
             sys.exit(1)
 
-    if args.reanalyze:
+    if args.dedup_existing:
+        asyncio.run(run_dedup_existing(settings))
+    elif args.reanalyze:
         outcodes = [o.strip().upper() for o in args.outcode.split(",")] if args.outcode else None
         asyncio.run(
             run_reanalysis(

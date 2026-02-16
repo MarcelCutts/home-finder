@@ -74,8 +74,6 @@ def _pipeline_mocks(
         enrich_side_effect = _fake_enrich
 
     # -- Storage: intercept PropertyStorage constructor to use in-memory DB --
-    real_storage: PropertyStorage | None = None
-
     class _StorageCapture:
         """Captures the real storage instance so tests can inspect DB state."""
 
@@ -110,11 +108,28 @@ def _pipeline_mocks(
     mock_quality_instance.close = AsyncMock()
 
     with (
-        patch("home_finder.main.scrape_all_platforms", new_callable=AsyncMock, return_value=scrape_return),
-        patch("home_finder.main.enrich_merged_properties", new_callable=AsyncMock, side_effect=enrich_side_effect),
-        patch("home_finder.main.DetailFetcher", return_value=mock_fetcher_instance) as mock_fetcher_cls,
-        patch("home_finder.main.PropertyQualityFilter", return_value=mock_quality_instance) as mock_quality_cls,
-        patch("home_finder.main.TelegramNotifier", return_value=mock_notifier) as mock_notifier_cls,
+        patch(
+            "home_finder.main.scrape_all_platforms",
+            new_callable=AsyncMock,
+            return_value=scrape_return,
+        ),
+        patch(
+            "home_finder.main.enrich_merged_properties",
+            new_callable=AsyncMock,
+            side_effect=enrich_side_effect,
+        ),
+        patch(
+            "home_finder.main.DetailFetcher",
+            return_value=mock_fetcher_instance,
+        ) as mock_fetcher_cls,
+        patch(
+            "home_finder.main.PropertyQualityFilter",
+            return_value=mock_quality_instance,
+        ) as mock_quality_cls,
+        patch(
+            "home_finder.main.TelegramNotifier",
+            return_value=mock_notifier,
+        ) as mock_notifier_cls,
         patch("home_finder.main._lookup_wards", new_callable=AsyncMock),
         patch("home_finder.main.asyncio.sleep", new_callable=AsyncMock),
         patch.object(PropertyStorage, "__init__", _patched_storage_init),
@@ -134,11 +149,10 @@ def _pipeline_mocks(
     # Clean up: close storage if the pipeline's finally block was intercepted
     if _StorageCapture.instance is not None:
         import asyncio
+        import contextlib
 
-        try:
-            loop = asyncio.get_running_loop()
-        except RuntimeError:
-            pass
+        with contextlib.suppress(RuntimeError):
+            asyncio.get_running_loop()
 
 
 # ---------------------------------------------------------------------------
@@ -241,7 +255,10 @@ class TestRunPipelineE2E:
             # Quality filter constructed with correct API key
             ctx.quality_cls.assert_called_once()
             call_kwargs = ctx.quality_cls.call_args
-            assert call_kwargs[1]["api_key"] == "test-anthropic-key" or call_kwargs[0][0] == "test-anthropic-key"
+            assert (
+                call_kwargs[1]["api_key"] == "test-anthropic-key"
+                or call_kwargs[0][0] == "test-anthropic-key"
+            )
 
             # Notifications sent
             assert ctx.notifier.send_merged_property_notification.call_count == 2
@@ -373,9 +390,9 @@ class TestRunPipelineE2E:
                     new_callable=AsyncMock,
                     side_effect=RuntimeError(error_msg),
                 ),
+                pytest.raises(RuntimeError, match=error_msg),
             ):
-                with pytest.raises(RuntimeError, match=error_msg):
-                    await run_pipeline(pipeline_settings)
+                await run_pipeline(pipeline_settings)
 
             storage = ctx.storage_capture.instance
             assert storage is not None

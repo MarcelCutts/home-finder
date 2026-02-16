@@ -654,7 +654,7 @@ class PropertyStorage:
         logger.debug("property_deleted", unique_id=unique_id)
 
     async def get_recent_properties_for_dedup(
-        self, days: int = _DEDUP_LOOKBACK_DAYS
+        self, days: int | None = _DEDUP_LOOKBACK_DAYS
     ) -> list[MergedProperty]:
         """Load recent DB properties as MergedProperty objects for dedup anchoring.
 
@@ -663,23 +663,33 @@ class PropertyStorage:
         from platform A.
 
         Args:
-            days: Lookback window in days (default 30).
+            days: Lookback window in days (default 30). Pass None to load all.
 
         Returns:
             List of MergedProperty objects reconstructed from DB rows.
         """
         conn = await self._get_connection()
-        cutoff = (datetime.now(UTC) - timedelta(days=days)).isoformat()
 
-        cursor = await conn.execute(
-            """
-            SELECT * FROM properties
-            WHERE first_seen >= ?
-              AND COALESCE(enrichment_status, 'enriched') != 'pending'
-            ORDER BY first_seen DESC
-            """,
-            (cutoff,),
-        )
+        if days is not None:
+            cutoff = (datetime.now(UTC) - timedelta(days=days)).isoformat()
+            cursor = await conn.execute(
+                """
+                SELECT * FROM properties
+                WHERE first_seen >= ?
+                  AND COALESCE(enrichment_status, 'enriched') != 'pending'
+                ORDER BY first_seen DESC
+                """,
+                (cutoff,),
+            )
+        else:
+            cursor = await conn.execute(
+                """
+                SELECT * FROM properties
+                WHERE COALESCE(enrichment_status, 'enriched') != 'pending'
+                ORDER BY first_seen DESC
+                """
+            )
+
         rows = await cursor.fetchall()
 
         results = [

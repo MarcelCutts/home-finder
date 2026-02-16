@@ -188,11 +188,15 @@ def _score_hosting(analysis: dict[str, Any], _bedrooms: int) -> _DimensionResult
         score += sqm_score
         signals += 1
         if sqm_score >= 20:
-            factors.append({"label": f"Large living room (~{int(living_sqm)}sqm)", "state": "earned"})
+            factors.append(
+                {"label": f"Large living room (~{int(living_sqm)}sqm)", "state": "earned"}
+            )
         elif sqm_score > 0:
             factors.append({"label": f"Living room ~{int(living_sqm)}sqm", "state": "earned"})
         else:
-            factors.append({"label": f"Small living room (~{int(living_sqm)}sqm)", "state": "missed"})
+            factors.append(
+                {"label": f"Small living room (~{int(living_sqm)}sqm)", "state": "missed"}
+            )
 
     light_space = analysis.get("light_space") or {}
     feels_spacious = light_space.get("feels_spacious")
@@ -304,7 +308,8 @@ def _score_sound(analysis: dict[str, Any], _bedrooms: int) -> _DimensionResult:
             factors.append({"label": "No noise indicators", "state": "earned"})
         else:
             signals += 1
-            factors.append({"label": f"Noise: {', '.join(noise_indicators[:2])}", "state": "missed"})
+            noise_text = ", ".join(noise_indicators[:2])
+            factors.append({"label": f"Noise: {noise_text}", "state": "missed"})
 
     listing_ext = analysis.get("listing_extraction") or {}
     prop_type = listing_ext.get("property_type")
@@ -577,9 +582,7 @@ def _score_condition(analysis: dict[str, Any], _bedrooms: int) -> _DimensionResu
         # Map 1→0, 5→100
         score = (overall - 1) * 25
         signals += 1
-        if overall >= 4:
-            factors.append({"label": f"Rated {overall}/5", "state": "earned"})
-        elif overall >= 3:
+        if overall >= 3:
             factors.append({"label": f"Rated {overall}/5", "state": "earned"})
         else:
             factors.append({"label": f"Rated {overall}/5", "state": "missed"})

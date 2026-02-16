@@ -7,7 +7,6 @@ from home_finder.data.location_mappings import (
     RIGHTMOVE_OUTCODES,
 )
 
-
 # ---------------------------------------------------------------------------
 # Old inline dicts (copied from the deleted code) for regression comparison
 # ---------------------------------------------------------------------------
@@ -203,7 +202,8 @@ class TestAliasCollisions:
                 if alias in canonical_names:
                     # The alias must point to the same area
                     conflicting = next(a for a in AREA_MAPPINGS if a.name == alias)
-                    assert False, (
+                    msg = (
                         f"Alias '{alias}' of '{area.name}' collides with "
                         f"canonical name of '{conflicting.name}'"
                     )
+                    raise AssertionError(msg)

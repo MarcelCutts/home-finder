@@ -662,8 +662,8 @@ class TestFactorTags:
         result = _score_kitchen(analysis, 2)
         states = {f["label"]: f["state"] for f in result.factors}
         assert any("not gas/induction" in label for label in states)
-        assert any(states[l] == "missed" for l in states if "dishwasher" in l.lower())
-        assert any(states[l] == "missed" for l in states if "washing" in l.lower())
+        assert any(states[k] == "missed" for k in states if "dishwasher" in k.lower())
+        assert any(states[k] == "missed" for k in states if "washing" in k.lower())
 
     def test_kitchen_factors_unknown_appliances(self):
         """Kitchen with no appliance data shows unknown state."""

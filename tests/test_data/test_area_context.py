@@ -201,7 +201,7 @@ class TestWardMapping:
         outcodes_with_micro = {
             k for k, v in AREA_CONTEXT.items() if isinstance(v, dict) and "micro_areas" in v
         }
-        outcodes_with_wards = {outcode for outcode, _ in WARD_TO_MICRO_AREA.keys()}
+        outcodes_with_wards = {outcode for outcode, _ in WARD_TO_MICRO_AREA}
         missing = outcodes_with_micro - outcodes_with_wards
         assert not missing, f"Outcodes with micro-areas but no ward mappings: {missing}"
 

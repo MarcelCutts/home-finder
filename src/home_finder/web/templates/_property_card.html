@@ -24,9 +24,15 @@
             {{ fit_badge(prop.fit_score, prop.fit_breakdown) }}
         </div>
         <div class="card-body">
-            {# Meta row: postcode | commute pill | listing age #}
+            {# Meta row: rating | postcode | commute pill | listing age #}
             <div class="card-meta">
                 <div class="card-meta-left">
+                    {% if prop.quality_rating %}
+                    <span class="quality-dots quality-dots-{{ prop.quality_rating }}">
+                        {{ prop.quality_rating }}/5
+                        {% for i in range(1, 6) %}{% if i <= prop.quality_rating %}<span class="dot filled">&#9679;</span>{% else %}<span class="dot empty">&#9679;</span>{% endif %}{% endfor %}
+                    </span>
+                    {% endif %}
                     {% if prop.postcode %}
                     <span class="card-postcode">{{ prop.postcode }}</span>
                     {% endif %}
@@ -37,31 +43,23 @@
                 {% endif %}
             </div>
 
+            {# AI summary text (2-line clamp) #}
+            {% if prop.quality_summary %}
+            <p class="card-summary">{{ prop.quality_summary }}</p>
+            {% endif %}
+
             {% if prop.title %}
             <p class="card-title">{{ prop.title }}</p>
             {% endif %}
 
-            {# Rating + property type row #}
-            {% if prop.quality_rating or prop.property_type %}
+            {# Property type + lifestyle icons row #}
+            {% if prop.property_type and prop.property_type != 'unknown' %}
             <div class="card-rating-row">
-                {% if prop.property_type and prop.property_type != 'unknown' %}
                 <span class="property-type-badge">{{ prop.property_type | replace("_", " ") | title }}</span>
-                {% endif %}
-                {% if prop.quality_rating %}
-                <span class="quality-dots quality-dots-{{ prop.quality_rating }}">
-                    {{ prop.quality_rating }}/5
-                    {% for i in range(1, 6) %}{% if i <= prop.quality_rating %}<span class="dot filled">&#9679;</span>{% else %}<span class="dot empty">&#9679;</span>{% endif %}{% endfor %}
-                </span>
-                {% endif %}
+                {{ lifestyle_icons(prop.lifestyle_icons) }}
             </div>
-            {% endif %}
-
-            {# Lifestyle quick-glance icons #}
+            {% else %}
             {{ lifestyle_icons(prop.lifestyle_icons) }}
-
-            {# AI summary text (2-line clamp) #}
-            {% if prop.quality_summary %}
-            <p class="card-summary">{{ prop.quality_summary }}</p>
             {% endif %}
 
             {# Highlight + lowlight chips #}

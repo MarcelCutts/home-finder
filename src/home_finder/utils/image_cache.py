@@ -57,6 +57,60 @@ def url_to_filename(url: str, image_type: str, index: int) -> str:
     return f"{image_type}_{index:03d}_{url_hash}.{ext}"
 
 
+def find_cached_file(
+    data_dir: str, unique_id: str, url: str, image_type: str
+) -> Path | None:
+    """Find a cached image file by URL hash, regardless of index.
+
+    Extracts the URL hash and globs for any file matching the pattern
+    ``{image_type}_*_{url_hash}.*``, so the result is independent of the
+    index that was used when the file was originally saved.
+
+    Returns:
+        Path to the cached file, or None if not found.
+    """
+    url_hash = hashlib.md5(url.encode()).hexdigest()[:8]
+    cache_dir = get_cache_dir(data_dir, unique_id)
+    if not cache_dir.is_dir():
+        return None
+    matches = list(cache_dir.glob(f"{image_type}_*_{url_hash}.*"))
+    return matches[0] if matches else None
+
+
+def copy_cached_images(data_dir: str, from_id: str, to_id: str) -> int:
+    """Copy all cached image files from one property to another.
+
+    Skips files that already exist in the target directory (by filename).
+
+    Args:
+        data_dir: Base data directory.
+        from_id: Source property unique_id.
+        to_id: Target property unique_id.
+
+    Returns:
+        Number of files copied.
+    """
+    src_dir = get_cache_dir(data_dir, from_id)
+    if not src_dir.is_dir():
+        return 0
+    dst_dir = get_cache_dir(data_dir, to_id)
+    dst_dir.mkdir(parents=True, exist_ok=True)
+    copied = 0
+    for src_file in src_dir.iterdir():
+        if not src_file.is_file():
+            continue
+        dst_file = dst_dir / src_file.name
+        if dst_file.exists():
+            continue
+        shutil.copy2(src_file, dst_file)
+        copied += 1
+    if copied:
+        logger.debug(
+            "cached_images_copied", from_id=from_id, to_id=to_id, count=copied
+        )
+    return copied
+
+
 def is_property_cached(data_dir: str, unique_id: str) -> bool:
     """Check if a property has cached images on disk."""
     cache_dir = get_cache_dir(data_dir, unique_id)

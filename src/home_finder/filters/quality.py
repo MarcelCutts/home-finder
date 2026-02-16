@@ -1093,10 +1093,10 @@ class PropertyQualityFilter:
         effective_average: int,
         area_context: str | None,
         outcode: str | None,
-        council_tax_band_c: int | None,
+        council_tax_band_c: float | None,
         crime_summary: str | None,
         rent_trend: str | None,
-        energy_estimate: int | None,
+        energy_estimate: float | None,
         hosting_tolerance: str | None,
     ) -> dict[str, Any]:
         """Run Phase 2 evaluation API call.
@@ -1284,8 +1284,8 @@ class PropertyQualityFilter:
         features: list[str] | None = None,
         area_context: str | None = None,
         outcode: str | None = None,
-        council_tax_band_c: int | None = None,
-        energy_estimate: int | None = None,
+        council_tax_band_c: float | None = None,
+        energy_estimate: float | None = None,
         crime_summary: str | None = None,
         rent_trend: str | None = None,
         hosting_tolerance: str | None = None,

@@ -63,6 +63,8 @@ uv run home-finder --dry-run            # Full pipeline, save to DB but no notif
 uv run home-finder --scrape-only        # Just scrape and print (no filtering/storage)
 uv run home-finder --max-per-scraper 5  # Limit results per scraper (for testing)
 uv run home-finder --serve              # Web dashboard + recurring pipeline scheduler
+uv run home-finder --reanalyze          # Re-run quality analysis on flagged properties
+uv run home-finder --dedup-existing     # Retroactively merge duplicates already in the DB
 uv run home-finder --debug              # Enable debug-level logging
 ```
 

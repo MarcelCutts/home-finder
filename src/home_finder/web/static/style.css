@@ -711,9 +711,9 @@ nav.container-fluid li {
 }
 .card-postcode {
     font-family: var(--font-heading);
-    font-size: 0.82rem;
-    font-weight: 700;
-    color: var(--text);
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: var(--text-muted);
     letter-spacing: -0.01em;
 }
 .card-age {
@@ -800,8 +800,8 @@ nav.container-fluid li {
 
 /* AI summary text on card */
 .card-summary {
-    font-size: 0.75rem;
-    color: var(--text-muted);
+    font-size: 0.8rem;
+    color: var(--text-dim);
     line-height: 1.4;
     margin: 0 0 0.35rem 0;
     display: -webkit-box;
@@ -1208,19 +1208,6 @@ nav.container-fluid li {
     margin-top: -0.1rem;
     margin-bottom: 0.15rem;
 }
-@media (max-width: 768px) {
-    .fit-factors {
-        max-height: none;
-        opacity: 1;
-        overflow: visible;
-        margin-top: -0.1rem;
-        margin-bottom: 0.15rem;
-        padding-left: calc(68px + 0.5rem);
-    }
-    .fit-factor {
-        white-space: normal;
-    }
-}
 .fit-factor {
     display: inline-block;
     padding: 0.08rem 0.4rem;
@@ -1243,12 +1230,28 @@ nav.container-fluid li {
     color: var(--text-dim);
     opacity: 0.55;
 }
+@media (max-width: 768px) {
+    .fit-factors {
+        max-height: none;
+        opacity: 1;
+        overflow: visible;
+        margin-top: -0.1rem;
+        margin-bottom: 0.15rem;
+        padding-left: calc(68px + 0.5rem);
+    }
+    .fit-factor {
+        white-space: normal;
+    }
+}
 
 /* Lifestyle quick-glance icons */
 .card-lifestyle {
     display: flex;
     gap: 0.35rem;
     margin-bottom: 0.3rem;
+}
+.card-rating-row .card-lifestyle {
+    margin-bottom: 0;
 }
 .lifestyle-icon {
     display: inline-flex;

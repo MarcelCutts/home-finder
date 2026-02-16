@@ -36,7 +36,12 @@ from home_finder.models import (
     PropertyLowlight,
 )
 from home_finder.utils.address import extract_outcode
-from home_finder.utils.image_cache import get_cache_dir, safe_dir_name, url_to_filename
+from home_finder.utils.image_cache import (
+    find_cached_file,
+    get_cache_dir,
+    safe_dir_name,
+    url_to_filename,
+)
 from home_finder.web.filters import VALID_SORT_OPTIONS, FilterDep, _parse_optional_int
 
 logger = get_logger(__name__)
@@ -227,35 +232,34 @@ async def health_check(request: Request) -> JSONResponse:
     )
 
 
-def _rewrite_thumbnail_to_cache(
-    item: dict[str, Any], data_dir: str, *, id_key: str = "unique_id"
-) -> None:
-    """Rewrite an item's image_url from CDN to locally cached image.
+def _resolve_cached_thumbnail(
+    unique_id: str, image_url: str | None, data_dir: str
+) -> str | None:
+    """Resolve a CDN image URL to a locally cached path, or return None.
 
     The DB stores the scraper thumbnail URL which often differs from the
     enrichment gallery URL (different CDN resolution path), so we fall back
     to finding any ``gallery_000_*`` file in the cache directory.
     """
-    uid = item.get(id_key, "")
-    url = item.get("image_url")
-    safe_id = safe_dir_name(uid)
-    cache_dir = get_cache_dir(data_dir, uid)
+    safe_id = safe_dir_name(unique_id)
+    cache_dir = get_cache_dir(data_dir, unique_id)
 
     # Fast path: exact URL match
-    if url and url.startswith("http"):
-        fname = url_to_filename(url, "gallery", 0)
+    if image_url and image_url.startswith("http"):
+        fname = url_to_filename(image_url, "gallery", 0)
         if (cache_dir / fname).is_file():
-            item["image_url"] = f"/images/{safe_id}/{fname}"
-            return
+            return f"/images/{safe_id}/{fname}"
 
-    # Fallback: find any gallery_000_* file (thumbnail URL differs from gallery URL)
+    # Fallback: any gallery_000_* file
     if cache_dir.is_dir():
         match = next(
             (f.name for f in cache_dir.iterdir() if f.name.startswith("gallery_000_")),
             None,
         )
         if match:
-            item["image_url"] = f"/images/{safe_id}/{match}"
+            return f"/images/{safe_id}/{match}"
+
+    return None
 
 
 @router.get("/", response_class=HTMLResponse)
@@ -286,7 +290,9 @@ async def dashboard(
         # gallery URL used during caching, so we also try matching any
         # gallery_000_* file in the cache directory.
         for prop in properties:
-            _rewrite_thumbnail_to_cache(prop, data_dir)
+            resolved = _resolve_cached_thumbnail(prop["unique_id"], prop.get("image_url"), data_dir)
+            if resolved:
+                prop["image_url"] = resolved
     except Exception:
         logger.error("dashboard_query_failed", exc_info=True)
         return templates.TemplateResponse(
@@ -308,7 +314,9 @@ async def dashboard(
 
     # Rewrite external CDN URLs in map markers too
     for marker in map_markers:
-        _rewrite_thumbnail_to_cache(marker, data_dir, id_key="id")
+        resolved = _resolve_cached_thumbnail(marker["id"], marker.get("image_url"), data_dir)
+        if resolved:
+            marker["image_url"] = resolved
 
     properties_json = json.dumps(map_markers)
 
@@ -456,12 +464,11 @@ async def property_detail(
         *prop.get("gallery_images", []),
         *prop.get("floorplan_images", []),
     ]
-    for idx, img in enumerate(all_images):
+    for img in all_images:
         img_url = str(img.url)
-        fname = url_to_filename(img_url, img.image_type, idx)
-        cached = get_cache_dir(data_dir, unique_id) / fname
-        if cached.is_file():
-            image_url_map[img_url] = f"/images/{safe_id}/{fname}"
+        cached = find_cached_file(data_dir, unique_id, img_url, img.image_type)
+        if cached is not None:
+            image_url_map[img_url] = f"/images/{safe_id}/{cached.name}"
 
     # Get the longest description
     descriptions: dict[str, str] = prop.get("descriptions_dict", {})

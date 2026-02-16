@@ -4,6 +4,8 @@ from pathlib import Path
 
 from home_finder.utils.image_cache import (
     clear_image_cache,
+    copy_cached_images,
+    find_cached_file,
     get_cache_dir,
     get_cached_image_path,
     is_property_cached,
@@ -113,3 +115,92 @@ class TestGetCachedImagePath:
         assert path.parent == Path("/data/image_cache/zoopla_xyz")
         assert path.name.startswith("gallery_002_")
         assert path.name.endswith(".jpg")
+
+
+class TestFindCachedFile:
+    def test_finds_file_by_url_hash(self, tmp_path: Path) -> None:
+        """Should find a cached file regardless of the index in the filename."""
+        url = "https://example.com/photo.jpg"
+        uid = "openrent:100"
+        # Save with index 3
+        fname = url_to_filename(url, "gallery", 3)
+        cache_dir = get_cache_dir(str(tmp_path), uid)
+        cache_dir.mkdir(parents=True)
+        (cache_dir / fname).write_bytes(b"image data")
+
+        # find_cached_file should locate it without knowing the index
+        result = find_cached_file(str(tmp_path), uid, url, "gallery")
+        assert result is not None
+        assert result.name == fname
+
+    def test_returns_none_when_not_found(self, tmp_path: Path) -> None:
+        result = find_cached_file(
+            str(tmp_path), "openrent:999", "https://example.com/x.jpg", "gallery"
+        )
+        assert result is None
+
+    def test_returns_none_when_dir_exists_but_no_match(self, tmp_path: Path) -> None:
+        uid = "openrent:100"
+        cache_dir = get_cache_dir(str(tmp_path), uid)
+        cache_dir.mkdir(parents=True)
+        (cache_dir / "gallery_000_ffffffff.jpg").write_bytes(b"other")
+
+        result = find_cached_file(
+            str(tmp_path), uid, "https://example.com/different.jpg", "gallery"
+        )
+        assert result is None
+
+    def test_matches_correct_image_type(self, tmp_path: Path) -> None:
+        """Should not match a floorplan file when looking for gallery."""
+        url = "https://example.com/photo.jpg"
+        uid = "openrent:100"
+        # Save as floorplan
+        fname = url_to_filename(url, "floorplan", 0)
+        cache_dir = get_cache_dir(str(tmp_path), uid)
+        cache_dir.mkdir(parents=True)
+        (cache_dir / fname).write_bytes(b"data")
+
+        # Looking for gallery should not find it
+        result = find_cached_file(str(tmp_path), uid, url, "gallery")
+        assert result is None
+
+        # Looking for floorplan should find it
+        result = find_cached_file(str(tmp_path), uid, url, "floorplan")
+        assert result is not None
+
+
+class TestCopyCachedImages:
+    def test_copies_files(self, tmp_path: Path) -> None:
+        src_id = "openrent:100"
+        dst_id = "rightmove:200"
+        src_dir = get_cache_dir(str(tmp_path), src_id)
+        src_dir.mkdir(parents=True)
+        (src_dir / "gallery_000_aaa.jpg").write_bytes(b"img1")
+        (src_dir / "gallery_001_bbb.jpg").write_bytes(b"img2")
+
+        copied = copy_cached_images(str(tmp_path), src_id, dst_id)
+        assert copied == 2
+
+        dst_dir = get_cache_dir(str(tmp_path), dst_id)
+        assert (dst_dir / "gallery_000_aaa.jpg").read_bytes() == b"img1"
+        assert (dst_dir / "gallery_001_bbb.jpg").read_bytes() == b"img2"
+
+    def test_skips_existing_files(self, tmp_path: Path) -> None:
+        src_id = "openrent:100"
+        dst_id = "rightmove:200"
+        src_dir = get_cache_dir(str(tmp_path), src_id)
+        dst_dir = get_cache_dir(str(tmp_path), dst_id)
+        src_dir.mkdir(parents=True)
+        dst_dir.mkdir(parents=True)
+
+        (src_dir / "gallery_000_aaa.jpg").write_bytes(b"new data")
+        (dst_dir / "gallery_000_aaa.jpg").write_bytes(b"existing data")
+
+        copied = copy_cached_images(str(tmp_path), src_id, dst_id)
+        assert copied == 0
+        # Existing file should not be overwritten
+        assert (dst_dir / "gallery_000_aaa.jpg").read_bytes() == b"existing data"
+
+    def test_empty_source_dir(self, tmp_path: Path) -> None:
+        copied = copy_cached_images(str(tmp_path), "nonexistent:999", "rightmove:200")
+        assert copied == 0

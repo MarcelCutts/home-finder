@@ -22,12 +22,18 @@ from home_finder.models import (
     MergedProperty,
     OutdoorSpaceAnalysis,
     Property,
+    PropertyImage,
     PropertyQualityAnalysis,
     PropertySource,
     SpaceAnalysis,
     ValueAnalysis,
 )
-from home_finder.utils.image_cache import get_cache_dir, safe_dir_name, save_image_bytes
+from home_finder.utils.image_cache import (
+    get_cache_dir,
+    safe_dir_name,
+    save_image_bytes,
+    url_to_filename,
+)
 from home_finder.web.routes import _parse_optional_int, listing_age_filter, router
 
 # ---------------------------------------------------------------------------
@@ -367,6 +373,56 @@ class TestPropertyDetail:
         assert resp.status_code == 200
         assert "<script>" not in resp.text
         assert "&lt;script&gt;" in resp.text
+
+    @pytest.mark.asyncio
+    async def test_image_url_map_index_independent(
+        self, storage: PropertyStorage, prop_a: Property, tmp_path: Path
+    ) -> None:
+        """Image mapping should work regardless of index in filename.
+
+        After merging, inherited images may have different indices than
+        the enumerate() position. The URL-hash lookup must still find them.
+        """
+        img_url = "https://cdn.example.com/gallery/photo1.jpg"
+        merged = MergedProperty(
+            canonical=prop_a,
+            sources=(PropertySource.OPENRENT,),
+            source_urls={PropertySource.OPENRENT: prop_a.url},
+            min_price=1900,
+            max_price=1900,
+        )
+        await storage.save_merged_property(merged)
+        await storage.save_property_images(
+            merged.unique_id,
+            [PropertyImage(source=PropertySource.OPENRENT, url=img_url, image_type="gallery")],
+        )
+
+        # Save cached file with index 7 (not 0 as enumerate would produce)
+        fname = url_to_filename(img_url, "gallery", 7)
+        # data_dir is derived from database_path parent, so use a DB
+        # path inside tmp_path so data_dir == str(tmp_path)
+        test_settings = Settings(
+            telegram_bot_token="fake:token",
+            telegram_chat_id=0,
+            search_areas="e8",
+            database_path=str(tmp_path / "test.db"),
+        )
+        cache_dir = get_cache_dir(test_settings.data_dir, merged.unique_id)
+        save_image_bytes(cache_dir / fname, b"\xff\xd8fake")
+
+        from fastapi import FastAPI
+
+        app = FastAPI()
+        app.state.storage = storage
+        app.state.settings = test_settings
+        app.include_router(router)
+        client = TestClient(app)
+
+        resp = client.get(f"/property/{merged.unique_id}")
+        assert resp.status_code == 200
+        safe_id = safe_dir_name(merged.unique_id)
+        # The image URL should be rewritten to the local cached path
+        assert f"/images/{safe_id}/{fname}" in resp.text
 
 
 # ---------------------------------------------------------------------------

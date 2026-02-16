@@ -5,23 +5,22 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from anthropic.types import ToolUseBlock
-from pydantic import HttpUrl, ValidationError
-
 from pydantic import BaseModel as _BaseModel
+from pydantic import HttpUrl, ValidationError
 
 from home_finder.filters.quality import (
     _CIRCUIT_BREAKER_COOLDOWN,
     _CIRCUIT_BREAKER_THRESHOLD,
     _MODEL_PAIRS,
-    _EvaluationResponse,
-    _VisualAnalysisResponse,
-    _clean_dict,
-    _clean_list,
-    _clean_value,
     EVALUATION_TOOL,
     VISUAL_ANALYSIS_TOOL,
     APIUnavailableError,
     PropertyQualityFilter,
+    _clean_dict,
+    _clean_list,
+    _clean_value,
+    _EvaluationResponse,
+    _VisualAnalysisResponse,
     assess_value,
     build_evaluation_prompt,
 )
@@ -33,17 +32,13 @@ from home_finder.models import (
     KitchenAnalysis,
     LightSpaceAnalysis,
     ListingExtraction,
-    ListingRedFlags,
     MergedProperty,
-    OutdoorSpaceAnalysis,
     Property,
     PropertyImage,
     PropertyQualityAnalysis,
     PropertySource,
     SpaceAnalysis,
-    StorageAnalysis,
     ValueAnalysis,
-    ViewingNotes,
 )
 from home_finder.utils.image_cache import is_valid_image_url
 
@@ -1494,7 +1489,6 @@ class TestBackwardCompatValidators:
 
     def test_bathroom_ensuite_bool_coercion(self) -> None:
         """True→'yes', False→'no', None→'unknown' for ensuite."""
-        from home_finder.models import BathroomAnalysis
 
         assert BathroomAnalysis(is_ensuite=True).is_ensuite == "yes"  # type: ignore[arg-type]
         assert BathroomAnalysis(is_ensuite=False).is_ensuite == "no"  # type: ignore[arg-type]
