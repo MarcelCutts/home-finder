@@ -57,6 +57,7 @@ async def storage() -> AsyncGenerator[PropertyStorage, None]:
     storage = PropertyStorage(":memory:")
     await storage.initialize()
     yield storage
+    await storage.close()
 
 
 class TestPropertyStorage:
@@ -65,8 +66,8 @@ class TestPropertyStorage:
     @pytest.mark.asyncio
     async def test_initialize_creates_tables(self) -> None:
         """Test that initialize creates the required tables."""
-        storage = PropertyStorage(":memory:")
-        await storage.initialize()
+        s = PropertyStorage(":memory:")
+        await s.initialize()
 
         # Should be able to insert without errors
         prop = Property(
@@ -78,7 +79,8 @@ class TestPropertyStorage:
             bedrooms=1,
             address="Test Address",
         )
-        await storage.save_property(prop)
+        await s.save_property(prop)
+        await s.close()
 
     @pytest.mark.asyncio
     async def test_save_property(

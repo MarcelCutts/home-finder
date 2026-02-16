@@ -50,6 +50,7 @@ async def storage() -> AsyncGenerator[PropertyStorage, None]:
     s = PropertyStorage(":memory:")
     await s.initialize()
     yield s
+    await s.close()
 
 
 @pytest.fixture

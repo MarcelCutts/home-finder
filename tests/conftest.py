@@ -1,6 +1,8 @@
 """Shared pytest fixtures."""
 
+import gc
 import os
+import sys
 import threading
 from collections.abc import Callable
 from datetime import datetime
@@ -26,6 +28,15 @@ from home_finder.models import (
     TransportMode,
     ValueAnalysis,
 )
+
+
+def pytest_configure(config: pytest.Config) -> None:
+    """Force line-buffered stdout when piped (e.g. Claude Code Bash tool)."""
+    if hasattr(sys.stdout, "reconfigure") and not sys.stdout.isatty():
+        sys.stdout.reconfigure(line_buffering=True)
+    if hasattr(sys.stderr, "reconfigure") and not sys.stderr.isatty():
+        sys.stderr.reconfigure(line_buffering=True)
+
 
 # Hypothesis settings profiles for different environments
 settings.register_profile("fast", max_examples=10)
@@ -54,22 +65,42 @@ def _isolate_settings_from_dotenv(monkeypatch: pytest.MonkeyPatch) -> None:
 
 @pytest.fixture(autouse=True)
 def _cleanup_aiosqlite_threads():
-    """Detect leaked aiosqlite connection worker threads after each test.
+    """Safety net: detect and stop leaked aiosqlite worker threads.
 
-    aiosqlite v0.22+ no longer inherits from Thread, so unclosed connections
-    leave orphaned worker threads that block on tx.get() indefinitely.
-    With function-scoped event loops, this can accumulate and cause stalls.
+    aiosqlite v0.22+ creates a non-daemon worker thread per connection that
+    blocks on SimpleQueue.get() indefinitely.  If a test leaks a connection
+    (doesn't call ``await conn.close()``), the thread prevents clean process exit.
     """
     yield
+
+    from aiosqlite.core import Connection, _STOP_RUNNING_SENTINEL
+
+    leaked = False
+
+    # Strategy 1: find leaked Connection objects via gc, call stop()
+    gc.collect()
+    for obj in gc.get_objects():
+        if isinstance(obj, Connection) and obj._connection is not None:
+            leaked = True
+            obj.stop()
+
+    # Strategy 2: inject sentinel directly for orphaned threads
     for thread in threading.enumerate():
         if "_connection_worker_thread" in (thread.name or "") and thread.is_alive():
-            import warnings
+            leaked = True
+            tx = getattr(thread, "_args", (None,))[0]
+            if tx is not None and hasattr(tx, "put_nowait"):
+                tx.put_nowait((None, lambda: _STOP_RUNNING_SENTINEL))
+                thread.join(timeout=1.0)
 
-            warnings.warn(
-                f"Leaked aiosqlite worker thread: {thread}",
-                ResourceWarning,
-                stacklevel=1,
-            )
+    if leaked:
+        import warnings
+
+        warnings.warn(
+            "Test leaked aiosqlite connection(s) — add 'await storage.close()' to fixture teardown",
+            ResourceWarning,
+            stacklevel=1,
+        )
 
 
 @pytest.fixture

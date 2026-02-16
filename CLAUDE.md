@@ -30,11 +30,12 @@ uv run home-finder --debug              # Enable debug-level logging
 
 # Testing — timeout is already configured in pyproject.toml addopts (30s default).
 # Do NOT pass --timeout on the command line; it's handled automatically.
-uv run pytest                         # Run all tests (slow tests excluded by default)
-uv run pytest tests/test_models.py    # Run specific test file
-uv run pytest -k "test_openrent"      # Run tests matching pattern
-uv run pytest --cov=src               # Run with coverage
-uv run pytest -m slow                 # Run slow tests (real network scraping)
+# PYTHONUNBUFFERED=1 prevents hanging when stdout is piped (e.g. Claude Code).
+PYTHONUNBUFFERED=1 uv run pytest                         # Run all tests (slow tests excluded by default)
+PYTHONUNBUFFERED=1 uv run pytest tests/test_models.py    # Run specific test file
+PYTHONUNBUFFERED=1 uv run pytest -k "test_openrent"      # Run tests matching pattern
+PYTHONUNBUFFERED=1 uv run pytest --cov=src               # Run with coverage
+PYTHONUNBUFFERED=1 uv run pytest -m slow                 # Run slow tests (real network scraping)
 
 # Linting and type checking
 uv run ruff check src tests           # Check for issues
@@ -171,6 +172,6 @@ async with AsyncSession() as session:
 |------|---------|-------------|
 | `enable_quality_filter` | True | Enable Claude vision property analysis |
 | `require_floorplan` | True | Drop properties without floorplans |
-| `quality_filter_max_images` | 10 | Max gallery images to analyze (1-20) |
+| `quality_filter_max_images` | 20 | Max gallery images to analyze (1-20) |
 | `enable_image_hash_matching` | False | Perceptual image hash for dedup |
 | `proxy_url` | `""` | HTTP/SOCKS5 proxy for geo-restricted sites |
