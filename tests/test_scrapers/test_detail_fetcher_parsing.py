@@ -712,6 +712,61 @@ class TestOnTheMarketParsing:
         assert result.features is not None
         assert "Chain free" in result.features
 
+    async def test_extracts_feature_objects(self, fetcher: DetailFetcher) -> None:
+        """OTM live pages store features as [{id, feature}] objects."""
+        html = """<!DOCTYPE html><html><body>
+        <script id="__NEXT_DATA__" type="application/json">
+        {"props":{"initialReduxState":{"property":{
+            "floorplans":[],
+            "images":[{"original":"https://media.onthemarket.com/img/1.jpg"}],
+            "description":"A nice flat.",
+            "keyFeatures":[],
+            "bullets":[],
+            "features":[
+                {"id":1,"feature":"Alternate deposit option"},
+                {"id":2,"feature":"Suit Couple"},
+                {"id":3,"feature":"No Pets"}
+            ]
+        }}}}
+        </script></body></html>"""
+        fetcher._curl_get_with_retry = AsyncMock(  # type: ignore[method-assign]
+            return_value=_mock_curl_response(html)
+        )
+        prop = _make_property(PropertySource.ONTHEMARKET)
+        result = await fetcher.fetch_detail_page(prop)
+        assert result is not None
+        assert result.features is not None
+        assert result.features == [
+            "Alternate deposit option",
+            "Suit Couple",
+            "No Pets",
+        ]
+
+    async def test_extracts_mixed_features_and_feature_objects(
+        self, fetcher: DetailFetcher
+    ) -> None:
+        """keyFeatures strings and features objects are combined."""
+        html = """<!DOCTYPE html><html><body>
+        <script id="__NEXT_DATA__" type="application/json">
+        {"props":{"initialReduxState":{"property":{
+            "floorplans":[],
+            "images":[{"original":"https://media.onthemarket.com/img/1.jpg"}],
+            "description":"A nice flat.",
+            "keyFeatures":["Chain free"],
+            "features":[{"id":1,"feature":"No Pets"}]
+        }}}}
+        </script></body></html>"""
+        fetcher._curl_get_with_retry = AsyncMock(  # type: ignore[method-assign]
+            return_value=_mock_curl_response(html)
+        )
+        prop = _make_property(PropertySource.ONTHEMARKET)
+        result = await fetcher.fetch_detail_page(prop)
+        assert result is not None
+        assert result.features is not None
+        assert "Chain free" in result.features
+        assert "No Pets" in result.features
+        assert len(result.features) == 2
+
     async def test_no_floorplan(self, fetcher: DetailFetcher, no_floorplan: str) -> None:
         fetcher._curl_get_with_retry = AsyncMock(  # type: ignore[method-assign]
             return_value=_mock_curl_response(no_floorplan)

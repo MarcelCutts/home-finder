@@ -749,6 +749,11 @@ class DetailFetcher:
             bullets = property_data.get("bullets", [])
             if bullets:
                 features.extend(bullets)
+            # Features as array of objects {id, feature}
+            feature_objects = property_data.get("features", [])
+            for feat in feature_objects:
+                if isinstance(feat, dict) and feat.get("feature"):
+                    features.append(feat["feature"])
 
             return DetailPageData(
                 floorplan_url=floorplan_url,

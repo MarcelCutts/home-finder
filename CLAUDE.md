@@ -177,3 +177,30 @@ async with AsyncSession() as session:
 | `quality_filter_max_images` | 20 | Max gallery images to analyze (1-20) |
 | `enable_image_hash_matching` | False | Perceptual image hash for dedup |
 | `proxy_url` | `""` | HTTP/SOCKS5 proxy for geo-restricted sites |
+
+## ADR Writing Guide
+
+Architectural Decision Records live in `docs/adr/`. Number sequentially (`001-`, `002-`, ...). Based on Nygard's original format enhanced with select MADR 4.0 sections.
+
+**Required sections** (in order):
+
+| Section | Guidance |
+|---------|----------|
+| **Title** | `# ADR NNN: Short Noun Phrase` |
+| **Status** | `Proposed`, `Accepted`, `Deprecated`, or `Superseded by ADR NNN` |
+| **Date** | YYYY-MM-DD of last status change |
+| **Context** | Value-neutral facts only. Describe the forces at play — don't justify the decision here. |
+| **Decision Drivers** | Bullet list of forces/constraints that shaped the choice (from MADR) |
+| **Decision** | Active voice: "We add/use/choose..." Full sentences, not fragments. |
+| **Alternatives Considered** | H3 per alternative. 2-3 sentences: what it is, why rejected. |
+| **Consequences** | Split into Positive / Negative / Risks subsections. |
+| **Confirmation** | How to verify the decision holds: test commands, validation steps, what to monitor. |
+
+**Style rules:**
+- **1-2 pages max.** If it's longer, you're writing a design doc, not a decision record.
+- **Decision ≠ design doc.** State *what* we decided and *why*. Don't include implementation-level details (exact thresholds, kernel coefficients, API parameters) — those belong in source code. Reference the source file and line range instead.
+- **Context is neutral.** Describe facts and forces. The justification lives in the Decision section.
+- **Active voice in Decision.** "We will..." / "We add..." — not passive or imperative.
+- **Full sentences.** Bullets are for visual structure, not an excuse for fragments.
+- **Immutable.** Don't edit accepted ADRs. To reverse a decision, write a new ADR that supersedes it.
+- **One decision per ADR.** If a decision has multiple phases, write separate ADRs.

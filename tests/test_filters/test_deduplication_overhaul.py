@@ -852,7 +852,7 @@ _SOURCE_STRATEGY = st.sampled_from(list(PropertySource))
 
 @st.composite
 def _merged_property_st(draw: st.DrawFn) -> MergedProperty:
-    """Generate a random MergedProperty for property-based testing."""
+    """Generate a random single-source MergedProperty for property-based testing."""
     source = draw(_SOURCE_STRATEGY)
     source_id = draw(st.text(min_size=1, max_size=8, alphabet="abcdefghijklmnop0123456789"))
     price = draw(st.integers(min_value=1000, max_value=3000))
@@ -876,6 +876,63 @@ def _merged_property_st(draw: st.DrawFn) -> MergedProperty:
         canonical=prop,
         sources=(source,),
         source_urls={source: prop.url},
+        images=(),
+        floorplan=None,
+        min_price=price,
+        max_price=price,
+        descriptions={},
+    )
+
+
+@st.composite
+def _multi_source_merged_property_st(draw: st.DrawFn) -> MergedProperty:
+    """Generate a MergedProperty with 1-3 sources for multi-source fuzz testing.
+
+    Simulates DB anchors that carry multiple sources (e.g. after a previous
+    merge run). The canonical source is always sources[0].
+    """
+    all_sources = list(PropertySource)
+    num_sources = draw(st.integers(min_value=1, max_value=min(3, len(all_sources))))
+    selected = draw(
+        st.lists(
+            st.sampled_from(all_sources),
+            min_size=num_sources,
+            max_size=num_sources,
+        )
+    )
+    # Deduplicate while preserving draw order
+    seen: set[PropertySource] = set()
+    unique_sources: list[PropertySource] = []
+    for s in selected:
+        if s not in seen:
+            seen.add(s)
+            unique_sources.append(s)
+    sources = tuple(unique_sources)
+    canonical_source = sources[0]
+
+    source_id = draw(st.text(min_size=1, max_size=8, alphabet="abcdefghijklmnop0123456789"))
+    price = draw(st.integers(min_value=1000, max_value=3000))
+    lat = draw(st.floats(min_value=51.54, max_value=51.56))
+    lon = draw(st.floats(min_value=-0.06, max_value=-0.04))
+    postcode = draw(st.sampled_from(["E8 3RH", "E8 4AB", "E8 3RH"]))
+
+    prop = Property(
+        source=canonical_source,
+        source_id=source_id,
+        url=HttpUrl(f"https://example.com/{canonical_source.value}/{source_id}"),
+        title=f"Test {source_id}",
+        price_pcm=price,
+        bedrooms=2,
+        address="123 Mare Street",
+        postcode=postcode,
+        latitude=lat,
+        longitude=lon,
+    )
+    source_urls = {s: prop.url for s in sources}
+    return MergedProperty(
+        canonical=prop,
+        sources=sources,
+        source_urls=source_urls,
         images=(),
         floorplan=None,
         min_price=price,
@@ -1034,3 +1091,388 @@ class TestDeduplicatorIntegration:
         assert canon.longitude == -0.0553
         # Identity stays from RM (earlier first_seen)
         assert canon.source == PropertySource.RIGHTMOVE
+
+
+# ---------------------------------------------------------------------------
+# C8. TestMultiSourceCollisionGuard
+# ---------------------------------------------------------------------------
+
+
+class TestMultiSourceCollisionGuard:
+    """Verify that multi-source MergedProperties (DB anchors) don't collide."""
+
+    async def test_overlapping_source_sets_not_merged(self) -> None:
+        """Two MergedProperties sharing a source (rightmove) stay separate.
+
+        Simulates DB anchors that were already merged in a previous run:
+        - Anchor A: canonical=zoopla, sources=('zoopla', 'rightmove')
+        - Anchor B: canonical=onthemarket, sources=('onthemarket', 'rightmove')
+        These share 'rightmove', so merging them would produce a group with
+        rightmove appearing twice.
+        """
+        p_zp = _make_prop(PropertySource.ZOOPLA, "zp1")
+        p_otm = _make_prop(PropertySource.ONTHEMARKET, "otm1")
+
+        anchor_a = _wrap_merged(
+            p_zp,
+            sources=(PropertySource.ZOOPLA, PropertySource.RIGHTMOVE),
+            source_urls={
+                PropertySource.ZOOPLA: p_zp.url,
+                PropertySource.RIGHTMOVE: p_zp.url,
+            },
+        )
+        anchor_b = _wrap_merged(
+            p_otm,
+            sources=(PropertySource.ONTHEMARKET, PropertySource.RIGHTMOVE),
+            source_urls={
+                PropertySource.ONTHEMARKET: p_otm.url,
+                PropertySource.RIGHTMOVE: p_otm.url,
+            },
+        )
+
+        groups = _group_items_greedy([anchor_a, anchor_b], {})
+
+        # Should be 2 singletons — source sets overlap on RIGHTMOVE
+        assert len(groups) == 2
+        assert all(len(g) == 1 for g in groups)
+
+    async def test_multi_source_anchor_plus_new_single_source(self) -> None:
+        """DB anchor with (zoopla, rightmove) + new openrent → merged OK.
+
+        No source overlap, so this should still merge normally.
+        """
+        p_zp = _make_prop(PropertySource.ZOOPLA, "zp1")
+        p_or = _make_prop(PropertySource.OPENRENT, "or1")
+
+        anchor = _wrap_merged(
+            p_zp,
+            sources=(PropertySource.ZOOPLA, PropertySource.RIGHTMOVE),
+            source_urls={
+                PropertySource.ZOOPLA: p_zp.url,
+                PropertySource.RIGHTMOVE: p_zp.url,
+            },
+        )
+        new_prop = _wrap_merged(p_or)
+
+        groups = _group_items_greedy([anchor, new_prop], {})
+
+        # No overlap → should merge into one group
+        assert len(groups) == 1
+        assert len(groups[0]) == 2
+
+    async def test_new_single_source_blocked_by_anchor_containing_same_source(
+        self,
+    ) -> None:
+        """New rightmove prop blocked from merging with anchor containing rightmove.
+
+        Anchor: canonical=zoopla, sources=('zoopla', 'rightmove')
+        New: canonical=rightmove (different ID)
+        The canonical sources differ (zoopla != rightmove), but the full source
+        sets overlap on rightmove.
+        """
+        p_zp = _make_prop(PropertySource.ZOOPLA, "zp1")
+        p_rm = _make_prop(PropertySource.RIGHTMOVE, "rm_new")
+
+        anchor = _wrap_merged(
+            p_zp,
+            sources=(PropertySource.ZOOPLA, PropertySource.RIGHTMOVE),
+            source_urls={
+                PropertySource.ZOOPLA: p_zp.url,
+                PropertySource.RIGHTMOVE: p_zp.url,
+            },
+        )
+        new_prop = _wrap_merged(p_rm)
+
+        groups = _group_items_greedy([anchor, new_prop], {})
+
+        # rightmove overlaps → 2 singletons
+        assert len(groups) == 2
+        assert all(len(g) == 1 for g in groups)
+
+    async def test_three_anchors_partial_overlap(self) -> None:
+        """Three DB anchors where A overlaps B but not C, B overlaps A but not C.
+
+        A: (zoopla, rightmove)
+        B: (onthemarket, rightmove)
+        C: (openrent,)
+
+        A and C can merge (no overlap). B stays separate (overlaps A on rightmove).
+        """
+        p_zp = _make_prop(PropertySource.ZOOPLA, "zp1")
+        p_otm = _make_prop(PropertySource.ONTHEMARKET, "otm1")
+        p_or = _make_prop(PropertySource.OPENRENT, "or1")
+
+        anchor_a = _wrap_merged(
+            p_zp,
+            sources=(PropertySource.ZOOPLA, PropertySource.RIGHTMOVE),
+            source_urls={
+                PropertySource.ZOOPLA: p_zp.url,
+                PropertySource.RIGHTMOVE: p_zp.url,
+            },
+        )
+        anchor_b = _wrap_merged(
+            p_otm,
+            sources=(PropertySource.ONTHEMARKET, PropertySource.RIGHTMOVE),
+            source_urls={
+                PropertySource.ONTHEMARKET: p_otm.url,
+                PropertySource.RIGHTMOVE: p_otm.url,
+            },
+        )
+        anchor_c = _wrap_merged(p_or)
+
+        groups = _group_items_greedy([anchor_a, anchor_b, anchor_c], {})
+
+        # A+C should merge (no overlap), B stays singleton
+        merged_groups = [g for g in groups if len(g) > 1]
+        singleton_groups = [g for g in groups if len(g) == 1]
+
+        assert len(merged_groups) == 1
+        assert len(singleton_groups) == 1
+
+        # The merged group should contain A and C
+        merged_sources = set()
+        for mp in merged_groups[0]:
+            merged_sources.update(mp.sources)
+        assert PropertySource.ZOOPLA in merged_sources
+        assert PropertySource.OPENRENT in merged_sources
+
+        # The singleton should be B (onthemarket + rightmove)
+        assert PropertySource.ONTHEMARKET in singleton_groups[0][0].sources
+
+
+# ---------------------------------------------------------------------------
+# C9. TestImageEvidenceRequirement
+# ---------------------------------------------------------------------------
+
+
+class TestImageEvidenceRequirement:
+    """Verify MEDIUM matches without image evidence are rejected."""
+
+    async def test_same_building_different_flat_rejected(self) -> None:
+        """Two properties at same coords/street/outcode, similar price, but
+        different gallery images (both have hashes, zero matches) → stay separate.
+
+        This is the "same building, different flat" false positive class.
+        Rightmove only has an outcode (no full postcode match):
+        Score: coords ~31 + street 20 + outcode 10 + price 15 = ~76 (MEDIUM).
+        """
+        from home_finder.filters.scoring import calculate_match_score
+
+        # Rightmove with outcode only (realistic — RM rarely has full postcodes)
+        p_rm = _make_prop(
+            PropertySource.RIGHTMOVE, "rm1",
+            postcode="E8",
+            latitude=51.5465, longitude=-0.0553,
+            price_pcm=1800,
+        )
+        # Zoopla with full postcode
+        p_zp = _make_prop(
+            PropertySource.ZOOPLA, "zp1",
+            postcode="E8 3RH",
+            latitude=51.5467, longitude=-0.0551,
+            price_pcm=1800,
+        )
+
+        # Guard test assumptions: score must be a MEDIUM match (60-79).
+        # If scoring constants change, this will catch drift before the
+        # grouping assertion becomes meaningless.
+        image_hashes: dict[str, list[str]] = {
+            "rightmove:rm1": ["abcdef1234567890"],
+            "zoopla:zp1": ["9876543210fedcba"],
+        }
+        score = calculate_match_score(p_rm, p_zp, image_hashes)
+        assert score.is_match, f"Test assumption: should be a match, got {score.total}"
+        assert score.total < 80, f"Test assumption: should be MEDIUM, got {score.total}"
+
+        items = [_wrap_merged(p_rm), _wrap_merged(p_zp)]
+
+        groups = _group_items_greedy(items, image_hashes)
+
+        # Should stay separate: both have galleries, zero image matches,
+        # and total score is < 80
+        assert len(groups) == 2
+        assert all(len(g) == 1 for g in groups)
+
+    async def test_no_gallery_hashes_still_merges(self) -> None:
+        """Same scenario but neither property has gallery hashes → still merges.
+
+        Can't penalize for missing data — no galleries means we don't know.
+        """
+        p_rm = _make_prop(
+            PropertySource.RIGHTMOVE, "rm1",
+            latitude=51.5465, longitude=-0.0553,
+            price_pcm=1800,
+        )
+        p_zp = _make_prop(
+            PropertySource.ZOOPLA, "zp1",
+            latitude=51.5467, longitude=-0.0551,
+            price_pcm=1800,
+        )
+
+        items = [_wrap_merged(p_rm), _wrap_merged(p_zp)]
+
+        # Empty image_hashes — no galleries available
+        groups = _group_items_greedy(items, {})
+
+        # Should still merge (can't penalize for missing data)
+        assert len(groups) == 1
+        assert len(groups[0]) == 2
+
+    async def test_one_has_gallery_other_doesnt_still_merges(self) -> None:
+        """Only one property has gallery hashes → still merges.
+
+        The "both_have_galleries" check requires BOTH to have hashes.
+        """
+        p_rm = _make_prop(
+            PropertySource.RIGHTMOVE, "rm1",
+            latitude=51.5465, longitude=-0.0553,
+            price_pcm=1800,
+        )
+        p_zp = _make_prop(
+            PropertySource.ZOOPLA, "zp1",
+            latitude=51.5467, longitude=-0.0551,
+            price_pcm=1800,
+        )
+
+        items = [_wrap_merged(p_rm), _wrap_merged(p_zp)]
+
+        # Only RM has gallery hashes
+        image_hashes = {
+            "rightmove:rm1": ["abcdef1234567890"],
+        }
+
+        groups = _group_items_greedy(items, image_hashes)
+
+        # Should still merge (only one has gallery)
+        assert len(groups) == 1
+        assert len(groups[0]) == 2
+
+    async def test_image_match_present_still_merges(self) -> None:
+        """Both have galleries AND images match → merges normally."""
+        p_rm = _make_prop(
+            PropertySource.RIGHTMOVE, "rm1",
+            latitude=51.5465, longitude=-0.0553,
+            price_pcm=1800,
+        )
+        p_zp = _make_prop(
+            PropertySource.ZOOPLA, "zp1",
+            latitude=51.5467, longitude=-0.0551,
+            price_pcm=1800,
+        )
+
+        items = [_wrap_merged(p_rm), _wrap_merged(p_zp)]
+
+        # Same hash → image match will be detected by scoring
+        same_hash = "abcdef1234567890"
+        image_hashes = {
+            "rightmove:rm1": [same_hash, "extra_hash_1"],
+            "zoopla:zp1": [same_hash, "extra_hash_2"],
+        }
+
+        groups = _group_items_greedy(items, image_hashes)
+
+        # Should merge (image evidence present)
+        assert len(groups) == 1
+        assert len(groups[0]) == 2
+
+    async def test_empty_gallery_hashes_rejected(self) -> None:
+        """Both have hash keys but empty lists → treated as "galleries checked,
+        no images hashed". This is the edge case where hashing was attempted
+        but produced nothing (e.g. all images failed to download/hash).
+
+        both_have_galleries=True (keys present), count_gallery_hash_matches=0
+        (empty lists), so the MEDIUM match is rejected.
+        """
+        p_rm = _make_prop(
+            PropertySource.RIGHTMOVE, "rm1",
+            postcode="E8",
+            latitude=51.5465, longitude=-0.0553,
+            price_pcm=1800,
+        )
+        p_zp = _make_prop(
+            PropertySource.ZOOPLA, "zp1",
+            postcode="E8 3RH",
+            latitude=51.5467, longitude=-0.0551,
+            price_pcm=1800,
+        )
+
+        items = [_wrap_merged(p_rm), _wrap_merged(p_zp)]
+
+        # Both keys present but empty lists — hashing attempted, nothing produced
+        image_hashes: dict[str, list[str]] = {
+            "rightmove:rm1": [],
+            "zoopla:zp1": [],
+        }
+
+        groups = _group_items_greedy(items, image_hashes)
+
+        # Should stay separate: both_have_galleries=True, no image matches,
+        # score is MEDIUM (<80)
+        assert len(groups) == 2
+        assert all(len(g) == 1 for g in groups)
+
+    async def test_high_score_without_images_still_merges(self) -> None:
+        """Score >= 80 with galleries but no image match → still merges.
+
+        Full postcode (40) + coords (40) + street (20) + outcode (10) + price (15)
+        = 125 at exact match. Even without image evidence, HIGH confidence merges.
+        """
+        p_rm = _make_prop(
+            PropertySource.RIGHTMOVE, "rm1",
+            price_pcm=1800,
+        )
+        p_zp = _make_prop(
+            PropertySource.ZOOPLA, "zp1",
+            price_pcm=1800,
+        )
+
+        items = [_wrap_merged(p_rm), _wrap_merged(p_zp)]
+
+        # Both have galleries, no image matches, but score is very high
+        image_hashes = {
+            "rightmove:rm1": ["aaaa1111bbbb2222"],
+            "zoopla:zp1": ["cccc3333dddd4444"],
+        }
+
+        groups = _group_items_greedy(items, image_hashes)
+
+        # Should merge: score ~125 (well above 80 threshold)
+        assert len(groups) == 1
+        assert len(groups[0]) == 2
+
+
+# ---------------------------------------------------------------------------
+# C10. Hypothesis invariant: no source appears twice in any merged group
+# ---------------------------------------------------------------------------
+
+
+class TestGreedyInvariantsMultiSource:
+    """Hypothesis tests ensuring source uniqueness across full source tuples.
+
+    Uses _multi_source_merged_property_st so hypothesis generates items with
+    2-3 sources (simulating DB anchors from previous merge runs). This exercises
+    the full source-set overlap check in _group_items_greedy, not just the
+    canonical-source check.
+    """
+
+    @given(items=st.lists(_multi_source_merged_property_st(), min_size=0, max_size=12))
+    @settings(max_examples=50)
+    def test_no_source_appears_twice_in_group(
+        self, items: list[MergedProperty]
+    ) -> None:
+        """No merged group has any PropertySource appearing more than once
+        across all member `sources` tuples."""
+        seen: dict[str, MergedProperty] = {}
+        for mp in items:
+            uid = mp.canonical.unique_id
+            if uid not in seen:
+                seen[uid] = mp
+        unique_items = list(seen.values())
+
+        groups = _group_items_greedy(unique_items, {})
+
+        for group in groups:
+            all_sources = [s for mp in group for s in mp.sources]
+            assert len(all_sources) == len(set(all_sources)), (
+                f"Source collision in group: {[s.value for s in all_sources]}"
+            )

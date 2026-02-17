@@ -55,6 +55,34 @@ def _draw_colorful_photo(img: Image.Image) -> None:
     draw.ellipse([300, h // 3 - 20, 340, h // 3 + 20], fill=(255, 215, 0))
 
 
+def _draw_white_kitchen(img: Image.Image) -> None:
+    """Draw a white kitchen scene with gradual tonal transitions like a real photo.
+
+    This mimics the false positive case (zoopla:70833107) — low saturation, high
+    brightness, few colors, but with smooth gradients from lighting/shadows that
+    produce a unimodal (not bimodal) Laplacian distribution.
+    """
+    import random
+
+    rng = random.Random(42)  # Deterministic for reproducibility
+    w, h = img.size
+    pixels = img.load()
+    # Build a photo-like image pixel by pixel: white kitchen with lighting gradient
+    # and per-pixel noise to simulate camera sensor noise and surface texture
+    for y in range(h):
+        # Vertical lighting gradient: brighter at top (ceiling light), darker at bottom
+        light = 250 - int(40 * (y / h))
+        for x in range(w):
+            # Horizontal vignette: slightly darker at edges
+            dx = abs(x - w / 2) / (w / 2)
+            vignette = int(15 * dx * dx)
+            # Per-pixel noise simulating sensor noise / surface texture
+            noise = rng.randint(-12, 12)
+            v = max(0, min(255, light - vignette + noise))
+            # Slight warm tint (cream-ish white, not pure white)
+            pixels[x, y] = (v, v, max(0, v - 5))
+
+
 class TestDetectFloorplan:
     """Tests for detect_floorplan()."""
 
@@ -147,3 +175,26 @@ class TestDetectFloorplan:
         img_bytes = _make_image_bytes(draw_fn=draw_3d)
         is_fp, _confidence = detect_floorplan(img_bytes)
         assert is_fp is False
+
+    def test_white_kitchen_not_detected(self) -> None:
+        """A white kitchen photo should NOT be detected as floorplan.
+
+        Regression test for zoopla:70833107 false positive — white kitchens have
+        low saturation and high brightness like floorplans, but their Laplacian
+        distribution is unimodal (gradual transitions) not bimodal.
+        """
+        img_bytes = _make_image_bytes(draw_fn=_draw_white_kitchen)
+        is_fp, confidence = detect_floorplan(img_bytes)
+        assert is_fp is False
+        assert confidence < CONFIDENCE_THRESHOLD
+
+    def test_floorplan_bimodal_laplacian(self) -> None:
+        """Floorplans should score well on Laplacian bimodality.
+
+        Black lines on white = bimodal: pixels are either flat (background)
+        or sharp (edges), with very few in between.
+        """
+        img_bytes = _make_image_bytes(draw_fn=_draw_floorplan)
+        is_fp, confidence = detect_floorplan(img_bytes)
+        assert is_fp is True
+        assert confidence >= CONFIDENCE_THRESHOLD

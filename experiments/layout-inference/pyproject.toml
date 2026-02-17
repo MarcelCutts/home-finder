@@ -1,0 +1,22 @@
+[project]
+name = "layout-inference-experiment"
+version = "0.1.0"
+description = "Layout inference experiment - can Claude infer room dimensions from photos alone?"
+requires-python = ">=3.11"
+dependencies = [
+    "home-finder",
+]
+
+[tool.uv]
+package = false
+
+[tool.uv.sources]
+home-finder = { path = "../..", editable = true }
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.2",
+]
+
+[tool.pytest.ini_options]
+addopts = "-v"

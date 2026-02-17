@@ -529,8 +529,11 @@ def _group_items_greedy(
             prop_i = items[i].canonical
             prop_j = items[j].canonical
 
-            # Skip same-source pairs entirely
-            if prop_i.source == prop_j.source:
+            # Skip pairs with ANY overlapping sources (not just canonical).
+            # Multi-source MergedProperties from DB anchors may carry sources
+            # beyond their canonical, e.g. canonical=rightmove but
+            # sources=('rightmove', 'onthemarket').
+            if set(items[i].sources) & set(items[j].sources):
                 continue
 
             score = calculate_match_score(prop_i, prop_j, image_hashes)
@@ -545,6 +548,22 @@ def _group_items_greedy(
                 )
 
             if score.is_match:
+                # When both properties have gallery hashes but images don't
+                # match, require HIGH confidence (80+) to prevent
+                # "same building, different flat" false positives.
+                both_have_galleries = (
+                    image_hashes
+                    and prop_i.unique_id in image_hashes
+                    and prop_j.unique_id in image_hashes
+                )
+                if both_have_galleries and score.image_hash == 0 and score.total < 80:
+                    logger.debug(
+                        "match_rejected_no_image_evidence",
+                        prop1=prop_i.unique_id,
+                        prop2=prop_j.unique_id,
+                        score=score.to_dict(),
+                    )
+                    continue
                 scored_pairs.append(_ScoredPair(-score.total, min(i, j), max(i, j)))
 
     # Sort: best scores first, then by index pair for determinism
@@ -560,7 +579,11 @@ def _group_items_greedy(
         gi, gj = group_id[i], group_id[j]
 
         if gi == -1 and gj == -1:
-            # Neither is in a group — create a new group
+            # Neither is in a group — create a new group.
+            # Defensive: re-check source overlap (belt-and-suspenders with
+            # the pair-level check above — guards against future refactors).
+            if set(items[i].sources) & set(items[j].sources):
+                continue
             new_gid = len(groups)
             groups.append([i, j])
             group_id[i] = new_gid

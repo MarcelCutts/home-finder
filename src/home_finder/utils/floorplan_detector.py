@@ -47,7 +47,7 @@ def _analyze(image_bytes: bytes) -> tuple[bool, float]:
     width, height = img.size
     total_pixels = width * height
 
-    # ── Heuristic 1: Color saturation (weight 0.30) ──
+    # ── Heuristic 1: Color saturation (weight 0.25) ──
     # Floorplans have very low saturation (mostly grayscale/white with thin colored lines)
     hsv = img.convert("HSV")
     hsv_stat = ImageStat.Stat(hsv)
@@ -63,7 +63,7 @@ def _analyze(image_bytes: bytes) -> tuple[bool, float]:
     else:
         sat_score = 0.0
 
-    # ── Heuristic 2: Brightness / white pixel ratio (weight 0.25) ──
+    # ── Heuristic 2: Brightness / white pixel ratio (weight 0.20) ──
     # Floorplans have lots of white/near-white background
     grayscale = img.convert("L")
     pixel_data: tuple[int, ...] = grayscale.get_flattened_data()  # type: ignore[assignment]
@@ -77,7 +77,7 @@ def _analyze(image_bytes: bytes) -> tuple[bool, float]:
     else:
         bright_score = 0.0
 
-    # ── Heuristic 3: Color diversity (weight 0.25) ──
+    # ── Heuristic 3: Color diversity (weight 0.20) ──
     # Floorplans use very few distinct colors; photos have many
     quantized = img.quantize(colors=16, method=Image.Quantize.FASTOCTREE)
     # Count how many of the 16 palette slots are actually used
@@ -92,7 +92,7 @@ def _analyze(image_bytes: bytes) -> tuple[bool, float]:
     else:
         color_score = 0.0
 
-    # ── Heuristic 4: Edge density (weight 0.20) ──
+    # ── Heuristic 4: Edge density (weight 0.15) ──
     # Floorplans have moderate-high edge density (thin lines on white)
     edges = grayscale.filter(ImageFilter.FIND_EDGES)
     edge_data: tuple[int, ...] = edges.get_flattened_data()  # type: ignore[assignment]
@@ -104,8 +104,38 @@ def _analyze(image_bytes: bytes) -> tuple[bool, float]:
     else:
         edge_score = 0.0
 
+    # ── Heuristic 5: Laplacian bimodality (weight 0.20) ──
+    # Floorplans have bimodal Laplacian distributions: pixels are either flat
+    # (uniform white background) or sharp (wall lines). Photos have gradual
+    # transitions throughout (lighting, textures, shadows).
+    laplacian = grayscale.filter(
+        ImageFilter.Kernel((3, 3), [0, 1, 0, 1, -4, 1, 0, 1, 0], scale=1, offset=128)
+    )
+    lap_data: tuple[int, ...] = laplacian.get_flattened_data()  # type: ignore[assignment]
+    flat_count = sum(1 for p in lap_data if abs(p - 128) < 3)
+    sharp_count = sum(1 for p in lap_data if abs(p - 128) > 20)
+    bimodal_ratio = (flat_count + sharp_count) / total_pixels
+    sharp_ratio = sharp_count / total_pixels
+    # Require both modes: flat background AND sharp edges. Uniform images
+    # (all flat, no sharp) are not bimodal — they're unimodal.
+    # Floorplans: >0.90 bimodal AND >2% sharp; photos: <0.75 bimodal
+    if sharp_ratio < 0.02:
+        bimodal_score = 0.0
+    elif bimodal_ratio > 0.90:
+        bimodal_score = 1.0
+    elif bimodal_ratio > 0.75:
+        bimodal_score = (bimodal_ratio - 0.75) / 0.15
+    else:
+        bimodal_score = 0.0
+
     # ── Weighted average ──
-    confidence = 0.30 * sat_score + 0.25 * bright_score + 0.25 * color_score + 0.20 * edge_score
+    confidence = (
+        0.25 * sat_score
+        + 0.20 * bright_score
+        + 0.20 * color_score
+        + 0.15 * edge_score
+        + 0.20 * bimodal_score
+    )
 
     is_floorplan = confidence >= CONFIDENCE_THRESHOLD
 
