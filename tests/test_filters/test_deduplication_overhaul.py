@@ -18,7 +18,13 @@ from home_finder.filters.deduplication import (
     _select_best_floorplan,
 )
 from home_finder.models import MergedProperty, Property, PropertyImage, PropertySource
-from home_finder.utils.image_cache import get_cache_dir, save_image_bytes, url_to_filename
+from home_finder.utils.image_cache import (
+    find_cached_file,
+    get_cache_dir,
+    save_image_bytes,
+    url_to_filename,
+)
+from home_finder.utils.image_hash import hash_from_disk
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -441,6 +447,12 @@ class TestPerceptualImageDedup:
             cache_dir.mkdir(parents=True, exist_ok=True)
             save_image_bytes(cache_dir / fname, same_bytes)
 
+        # Verify caching + hashing works (catches flaky PIL/imagehash failures)
+        for img in [img1, img2]:
+            cached = find_cached_file(data_dir, uid, str(img.url), "gallery")
+            assert cached is not None, f"Cache miss for {img.url}"
+            assert hash_from_disk(cached) is not None, f"Hash failed for {cached}"
+
         result = _perceptual_dedup_images([img1, img2], data_dir, [uid])
 
         assert len(result) == 1
@@ -495,6 +507,12 @@ class TestPerceptualImageDedup:
         for i, img in enumerate([img_or, img_zp]):
             fname = url_to_filename(str(img.url), "gallery", i)
             save_image_bytes(cache_dir / fname, same_bytes)
+
+        # Verify caching + hashing works (catches flaky PIL/imagehash failures)
+        for img in [img_or, img_zp]:
+            cached = find_cached_file(data_dir, uid, str(img.url), "gallery")
+            assert cached is not None, f"Cache miss for {img.url}"
+            assert hash_from_disk(cached) is not None, f"Hash failed for {cached}"
 
         result = _perceptual_dedup_images([img_or, img_zp], data_dir, [uid])
 
