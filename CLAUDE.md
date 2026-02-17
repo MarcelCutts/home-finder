@@ -136,7 +136,7 @@ async with AsyncSession() as session:
 - **Notifier** → `notifiers/telegram.py` — aiogram 3.x, photo cards, quality display, venue pins, web dashboard deep links
 - **Image Cache** → `utils/image_cache.py` — disk-based, deterministic filenames from URL hash
 - **Address Utils** → `utils/address.py` — `normalize_street_name`, `extract_outcode`
-- **Source Knowledge** → `docs/sources/` — per-platform decisions, filter quirks, known bugs, pipeline implications
+- **Source Knowledge** → `docs/sources/` — per-platform decisions, filter quirks, known bugs, pipeline implications. Update the relevant source doc when changing a scraper's HTTP client, filter params, extraction approach, or anti-bot strategy.
 
 ## Web Dashboard Notes
 
