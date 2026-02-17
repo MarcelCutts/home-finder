@@ -153,6 +153,65 @@ class TestSavePreAnalysisProperties:
         assert row["notification_status"] == NotificationStatus.PENDING_ANALYSIS.value
 
 
+    @pytest.mark.asyncio
+    async def test_on_conflict_updates_commute_and_coords(
+        self,
+        storage: PropertyStorage,
+        make_merged_property: Callable[..., MergedProperty],
+    ) -> None:
+        """Re-saving with commute data should update coords and commute on conflict."""
+        # First save as unenriched (no coords, no commute)
+        merged = make_merged_property(latitude=None, longitude=None, postcode="E8")
+        await storage.save_unenriched_property(merged)
+
+        # Re-save as pre-analysis with coords and commute
+        enriched = make_merged_property(
+            source_id=merged.canonical.source_id,
+            latitude=51.5465,
+            longitude=-0.0553,
+            postcode="E8 3RH",
+        )
+        commute_lookup = {enriched.unique_id: (12, TransportMode.CYCLING)}
+        await storage.save_pre_analysis_properties([enriched], commute_lookup)
+
+        conn = await storage._get_connection()
+        cursor = await conn.execute(
+            "SELECT commute_minutes, transport_mode, latitude, longitude, postcode, "
+            "enrichment_status FROM properties WHERE unique_id = ?",
+            (enriched.unique_id,),
+        )
+        row = await cursor.fetchone()
+        assert row["commute_minutes"] == 12
+        assert row["transport_mode"] == "cycling"
+        assert row["latitude"] == 51.5465
+        assert row["longitude"] == -0.0553
+        assert row["postcode"] == "E8 3RH"
+        assert row["enrichment_status"] == "enriched"
+
+    @pytest.mark.asyncio
+    async def test_on_conflict_coalesce_preserves_existing_commute(
+        self,
+        storage: PropertyStorage,
+        make_merged_property: Callable[..., MergedProperty],
+    ) -> None:
+        """Re-saving with empty commute_lookup should preserve existing commute data."""
+        merged = make_merged_property()
+        commute_lookup = {merged.unique_id: (15, TransportMode.CYCLING)}
+        await storage.save_pre_analysis_properties([merged], commute_lookup)
+
+        # Re-save with no commute data
+        await storage.save_pre_analysis_properties([merged], {})
+
+        conn = await storage._get_connection()
+        cursor = await conn.execute(
+            "SELECT commute_minutes, transport_mode FROM properties WHERE unique_id = ?",
+            (merged.unique_id,),
+        )
+        row = await cursor.fetchone()
+        assert row["commute_minutes"] == 15
+        assert row["transport_mode"] == "cycling"
+
+
 class TestGetPendingAnalysisProperties:
     @pytest.mark.asyncio
     async def test_returns_pending_analysis(

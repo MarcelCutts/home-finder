@@ -179,8 +179,23 @@ def _zoopla_images_from_rsc_captions(
     """
     seen_hashes: set[str] = set()
     gallery_urls: list[str] = []
+
+    # Pre-populate seen_hashes with floorplan image hashes (lc.zoocdn.com).
+    # This prevents floorplan images from appearing as gallery photos when they
+    # also show up in the RSC caption/filename data with null caption.
+    fp_hash_matches = re.findall(
+        r"lc\.zoocdn\.com/([a-f0-9]+\.(?:jpg|jpeg|png|webp))",
+        html,
+        re.IGNORECASE,
+    )
+    for fp_filename in fp_hash_matches:
+        seen_hashes.add(fp_filename.split(".")[0])
+
+    # Match both quoted captions and null captions:
+    #   \"caption\":\"Some text\",\"filename\":\"hash.jpg\"
+    #   \"caption\":null,\"filename\":\"hash.jpg\"
     rsc_matches = re.findall(
-        r'\\"caption\\":\\"([^\\]*)\\",\\"filename\\":\\"([a-f0-9]+\.(?:jpg|jpeg|png|webp))\\"',
+        r'\\"caption\\":(?:\\"([^\\]*)\\"|null),\\"filename\\":\\"([a-f0-9]+\.(?:jpg|jpeg|png|webp))\\"',
         html,
         re.IGNORECASE,
     )
@@ -189,10 +204,12 @@ def _zoopla_images_from_rsc_captions(
         if hash_part in seen_hashes:
             continue
         seen_hashes.add(hash_part)
-        caption_lower = caption.lower()
-        # Skip EPC rating graphs and floorplans — not gallery images
-        if "epc" in caption_lower or "floorplan" in caption_lower:
-            continue
+        # null caption (group is empty string from non-matching group) = gallery photo
+        if caption is not None:
+            caption_lower = caption.lower()
+            # Skip EPC rating graphs and floorplans — not gallery images
+            if "epc" in caption_lower or "floorplan" in caption_lower or "ee rating" in caption_lower:
+                continue
         url = f"https://lid.zoocdn.com/u/1024/768/{filename}"
         gallery_urls.append(url)
         if len(gallery_urls) >= max_gallery_images:
@@ -236,12 +253,21 @@ def _zoopla_images_from_full_urls(
 
 def _zoopla_floorplan_from_html(html: str) -> str | None:
     """Extract floorplan URL from lc.zoocdn.com references in HTML."""
-    floorplan_match = re.search(
+    # Try extension-based match first (more specific)
+    match = re.search(
         r'(https://lc\.zoocdn\.com/[^\s"\']+\.(?:jpg|jpeg|png|gif|webp))',
         html,
         re.IGNORECASE,
     )
-    return floorplan_match.group(1) if floorplan_match else None
+    if match:
+        return match.group(1)
+    # Fallback: extension-less URL with "floor" in path
+    match = re.search(
+        r'(https://lc\.zoocdn\.com/[^\s"\']*floor[^\s"\']*)',
+        html,
+        re.IGNORECASE,
+    )
+    return match.group(1) if match else None
 
 
 @dataclass

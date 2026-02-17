@@ -10,10 +10,16 @@ from pydantic import HttpUrl
 
 from home_finder.filters.detail_enrichment import (
     _detect_floorplan_in_gallery,
+    _load_cached_property,
     enrich_merged_properties,
     filter_by_floorplan,
 )
-from home_finder.models import MergedProperty, Property, PropertyImage, PropertySource
+from home_finder.models import (
+    MergedProperty,
+    Property,
+    PropertyImage,
+    PropertySource,
+)
 from home_finder.scrapers.detail_fetcher import DetailFetcher, DetailPageData
 from home_finder.utils.image_cache import get_cache_dir, get_cached_image_path, save_image_bytes
 
@@ -147,7 +153,7 @@ class TestEnrichMergedProperties:
         cache_dir.mkdir(parents=True)
         save_image_bytes(cache_dir / "gallery_000_abc12345.jpg", b"fake")
 
-        # Mock storage to return images from DB
+        # Mock storage to return images and property row from DB
         gallery_img = PropertyImage(
             url=HttpUrl("https://example.com/img1.jpg"),
             source=PropertySource.RIGHTMOVE,
@@ -159,7 +165,9 @@ class TestEnrichMergedProperties:
             image_type="floorplan",
         )
         mock_storage = AsyncMock()
-        mock_storage.get_property_images = AsyncMock(return_value=[gallery_img, floorplan_img])
+        mock_storage.get_property_images_and_row = AsyncMock(
+            return_value=([gallery_img, floorplan_img], merged.canonical)
+        )
 
         fetcher = DetailFetcher()
         mock_fetch = AsyncMock()
@@ -189,7 +197,7 @@ class TestEnrichMergedProperties:
 
         # Mock storage returns NO images (property never saved to DB)
         mock_storage = AsyncMock()
-        mock_storage.get_property_images = AsyncMock(return_value=[])
+        mock_storage.get_property_images_and_row = AsyncMock(return_value=([], None))
 
         # Detail fetcher should be called after cache is cleared
         detail_data = DetailPageData(
@@ -630,3 +638,126 @@ class TestEnrichSingleFloorplanDetection:
         enriched = result.enriched[0]
         assert enriched.floorplan is not None
         assert "real_floor.jpg" in str(enriched.floorplan.url)
+
+
+class TestLoadCachedPropertyBackfillsCoords:
+    """Tests for _load_cached_property coordinate backfill from DB."""
+
+    async def test_backfills_coords_from_db(
+        self, make_merged_property: Callable[..., MergedProperty]
+    ) -> None:
+        """Should backfill coordinates from DB when in-memory canonical lacks them."""
+        merged = make_merged_property(latitude=None, longitude=None, postcode="E8")
+
+        # DB has a row with coordinates (from a previous enrichment)
+        db_prop = merged.canonical.model_copy(
+            update={"latitude": 51.5465, "longitude": -0.0553, "postcode": "E8 3RH"}
+        )
+
+        gallery_img = PropertyImage(
+            url=HttpUrl("https://example.com/img1.jpg"),
+            source=PropertySource.RIGHTMOVE,
+            image_type="gallery",
+        )
+        mock_storage = AsyncMock()
+        mock_storage.get_property_images_and_row = AsyncMock(
+            return_value=([gallery_img], db_prop)
+        )
+
+        result = await _load_cached_property(merged, mock_storage)
+
+        assert result.canonical.latitude == 51.5465
+        assert result.canonical.longitude == -0.0553
+        assert result.canonical.postcode == "E8 3RH"
+
+    async def test_does_not_overwrite_existing_coords(
+        self, make_merged_property: Callable[..., MergedProperty]
+    ) -> None:
+        """Should not overwrite coordinates that already exist in canonical."""
+        merged = make_merged_property(latitude=51.0, longitude=-0.1, postcode="E8 3RH")
+
+        # DB has different coordinates
+        db_prop = merged.canonical.model_copy(
+            update={"latitude": 99.0, "longitude": -99.0}
+        )
+
+        mock_storage = AsyncMock()
+        mock_storage.get_property_images_and_row = AsyncMock(
+            return_value=([], db_prop)
+        )
+
+        result = await _load_cached_property(merged, mock_storage)
+
+        assert result.canonical.latitude == 51.0
+        assert result.canonical.longitude == -0.1
+
+    async def test_backfills_full_postcode_over_outcode(
+        self, make_merged_property: Callable[..., MergedProperty]
+    ) -> None:
+        """Should backfill full postcode from DB when canonical only has outcode."""
+        merged = make_merged_property(
+            latitude=51.5465, longitude=-0.0553, postcode="E8"
+        )
+
+        db_prop = merged.canonical.model_copy(update={"postcode": "E8 3RH"})
+
+        mock_storage = AsyncMock()
+        mock_storage.get_property_images_and_row = AsyncMock(
+            return_value=([], db_prop)
+        )
+
+        result = await _load_cached_property(merged, mock_storage)
+
+        assert result.canonical.postcode == "E8 3RH"
+
+    async def test_handles_no_db_row(
+        self, make_merged_property: Callable[..., MergedProperty]
+    ) -> None:
+        """Should work when DB has no row for the property."""
+        merged = make_merged_property(latitude=None, longitude=None)
+
+        mock_storage = AsyncMock()
+        mock_storage.get_property_images_and_row = AsyncMock(
+            return_value=([], None)
+        )
+
+        result = await _load_cached_property(merged, mock_storage)
+
+        assert result.canonical.latitude is None
+        assert result.canonical.longitude is None
+
+
+class TestFloorplanUrlRejectedLogging:
+    """Test that rejected floorplan URLs are logged."""
+
+    async def test_floorplan_url_rejected_logs_warning(
+        self,
+        make_merged_property: Callable[..., MergedProperty],
+    ) -> None:
+        """When is_valid_image_url rejects a floorplan, verify warning is logged."""
+        merged = make_merged_property()
+        detail_data = DetailPageData(
+            floorplan_url="https://example.com/floor.svg",
+            gallery_urls=["https://example.com/img1.jpg"],
+        )
+
+        fetcher = DetailFetcher()
+        with (
+            patch.object(
+                fetcher, "fetch_detail_page", new_callable=AsyncMock, return_value=detail_data
+            ),
+            patch("home_finder.filters.detail_enrichment.logger") as mock_logger,
+        ):
+            result = await enrich_merged_properties([merged], fetcher)
+
+        # Floorplan should be rejected
+        enriched = result.enriched[0]
+        assert enriched.floorplan is None
+
+        # Warning should be logged via structlog
+        mock_logger.warning.assert_any_call(
+            "floorplan_url_rejected",
+            property_id=merged.unique_id,
+            url="https://example.com/floor.svg",
+            reason="failed_image_url_validation",
+        )

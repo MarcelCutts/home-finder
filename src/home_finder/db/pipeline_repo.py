@@ -166,7 +166,18 @@ class PipelineRepository:
                 INSERT INTO properties ({col_list}, enrichment_status)
                 VALUES ({placeholders}, 'enriched')
                 ON CONFLICT(unique_id) DO UPDATE SET
-                    notification_status = excluded.notification_status
+                    notification_status = excluded.notification_status,
+                    enrichment_status = 'enriched',
+                    commute_minutes = COALESCE(excluded.commute_minutes, commute_minutes),
+                    transport_mode = COALESCE(excluded.transport_mode, transport_mode),
+                    latitude = COALESCE(excluded.latitude, latitude),
+                    longitude = COALESCE(excluded.longitude, longitude),
+                    postcode = COALESCE(excluded.postcode, postcode),
+                    sources = excluded.sources,
+                    source_urls = excluded.source_urls,
+                    min_price = excluded.min_price,
+                    max_price = excluded.max_price,
+                    descriptions_json = COALESCE(excluded.descriptions_json, descriptions_json)
                 """,
                 values,
             )

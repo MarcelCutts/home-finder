@@ -14,18 +14,24 @@ _IMAGE_CACHE_DIR: Final = "image_cache"
 
 VALID_IMAGE_EXTENSIONS: Final = (".jpg", ".jpeg", ".png", ".gif", ".webp")
 
+_REJECTED_EXTENSIONS: Final = (".pdf", ".svg", ".html", ".js", ".css", ".json", ".xml")
+
 
 def is_valid_image_url(url: str) -> bool:
-    """Check if URL points to a supported image format (not PDF).
+    """Check if URL points to a supported image format.
+
+    Rejects known non-image extensions (.pdf, .svg). Extension-less URLs
+    pass through since CDNs commonly serve images without extensions
+    (e.g. ``https://lc.zoocdn.com/u/floor/abc123``).
 
     Args:
         url: Image URL to check.
 
     Returns:
-        True if the URL path ends with a supported image extension.
+        True if the URL is not a known non-image format.
     """
     path = url.split("?")[0].lower()
-    return path.endswith(VALID_IMAGE_EXTENSIONS)
+    return not path.endswith(_REJECTED_EXTENSIONS)
 
 
 def safe_dir_name(unique_id: str) -> str:

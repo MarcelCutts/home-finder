@@ -136,31 +136,35 @@ async def _enrich_single(
                                 if img_bytes:
                                     save_image_bytes(cache_path, img_bytes)
 
-                if (
-                    detail_data.floorplan_url
-                    and not floorplan_image
-                    and is_valid_image_url(detail_data.floorplan_url)
-                ):
-                    floorplan_image = PropertyImage(
-                        url=HttpUrl(detail_data.floorplan_url),
-                        source=source,
-                        image_type="floorplan",
-                    )
-                    # Download and cache floorplan
-                    if data_dir:
-                        cache_path = get_cached_image_path(
-                            data_dir,
-                            merged.unique_id,
-                            detail_data.floorplan_url,
-                            "floorplan",
-                            0,
+                if detail_data.floorplan_url and not floorplan_image:
+                    if is_valid_image_url(detail_data.floorplan_url):
+                        floorplan_image = PropertyImage(
+                            url=HttpUrl(detail_data.floorplan_url),
+                            source=source,
+                            image_type="floorplan",
                         )
-                        if not cache_path.is_file():
-                            fp_bytes = await detail_fetcher.download_image_bytes(
-                                detail_data.floorplan_url
+                        # Download and cache floorplan
+                        if data_dir:
+                            cache_path = get_cached_image_path(
+                                data_dir,
+                                merged.unique_id,
+                                detail_data.floorplan_url,
+                                "floorplan",
+                                0,
                             )
-                            if fp_bytes:
-                                save_image_bytes(cache_path, fp_bytes)
+                            if not cache_path.is_file():
+                                fp_bytes = await detail_fetcher.download_image_bytes(
+                                    detail_data.floorplan_url
+                                )
+                                if fp_bytes:
+                                    save_image_bytes(cache_path, fp_bytes)
+                    else:
+                        logger.warning(
+                            "floorplan_url_rejected",
+                            property_id=merged.unique_id,
+                            url=detail_data.floorplan_url,
+                            reason="failed_image_url_validation",
+                        )
 
                 if detail_data.description and (
                     not best_description or len(detail_data.description) > len(best_description)
@@ -238,13 +242,36 @@ async def _load_cached_property(
 
     This allows downstream steps (floorplan gate, quality analysis) to work
     on properties that were skipped during enrichment.
+
+    Also backfills coordinates and full postcode from the DB row when the
+    in-memory canonical lacks them (e.g. Rightmove retries loaded before
+    the detail page was fetched).
+
+    Uses a single combined storage call to load both images and the property
+    row, avoiding two separate DB round-trips.
     """
-    images = await storage.get_property_images(merged.unique_id)
+    images, db_prop = await storage.get_property_images_and_row(merged.unique_id)
     gallery = tuple(img for img in images if img.image_type == "gallery")
     floorplan = next((img for img in images if img.image_type == "floorplan"), None)
 
+    # Backfill coordinates/postcode from DB if in-memory canonical lacks them
+    canonical = merged.canonical
+    if db_prop is not None:
+        updates: dict[str, float | str] = {}
+        if not canonical.latitude and db_prop.latitude and db_prop.longitude:
+            updates["latitude"] = db_prop.latitude
+            updates["longitude"] = db_prop.longitude
+        if (
+            db_prop.postcode
+            and (not canonical.postcode or is_outcode(canonical.postcode))
+            and not is_outcode(db_prop.postcode)
+        ):
+            updates["postcode"] = db_prop.postcode
+        if updates:
+            canonical = canonical.model_copy(update=updates)
+
     return MergedProperty(
-        canonical=merged.canonical,
+        canonical=canonical,
         sources=merged.sources,
         source_urls=merged.source_urls,
         images=gallery,

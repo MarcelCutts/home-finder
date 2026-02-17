@@ -16,6 +16,7 @@ from home_finder.scrapers.detail_fetcher import (
     DetailPageData,
     _find_dict_with_key,
     _is_epc_url,
+    _zoopla_floorplan_from_html,
 )
 
 # ---------------------------------------------------------------------------
@@ -375,11 +376,51 @@ class TestZooplaParsing:
         assert result is None
 
     async def test_rsc_caption_filters_epc(self, fetcher: DetailFetcher) -> None:
-        """RSC path skips images with 'epc' in caption."""
+        """RSC path skips images with 'epc' in caption, keeps null-caption and normal."""
         html = """<!DOCTYPE html><html><body>
         \\"caption\\":\\"Living room\\",\\"filename\\":\\"aaa111.jpg\\"
         \\"caption\\":\\"EPC Rating\\",\\"filename\\":\\"epc222.jpg\\"
+        \\"caption\\":null,\\"filename\\":\\"ccc444.jpg\\"
         \\"caption\\":\\"Bedroom\\",\\"filename\\":\\"bbb333.jpg\\"
+        </body></html>"""
+        fetcher._curl_get_with_retry = AsyncMock(  # type: ignore[method-assign]
+            return_value=_mock_curl_response(html)
+        )
+        prop = _make_property(PropertySource.ZOOPLA)
+        result = await fetcher.fetch_detail_page(prop)
+        assert result is not None
+        assert result.gallery_urls is not None
+        assert len(result.gallery_urls) == 3
+        hashes = [url.rsplit("/", 1)[-1].split(".")[0] for url in result.gallery_urls]
+        assert "epc222" not in hashes
+        assert "aaa111" in hashes
+        assert "bbb333" in hashes
+        assert "ccc444" in hashes
+
+    async def test_rsc_null_caption_gallery_images(self, fetcher: DetailFetcher) -> None:
+        """Null-caption images are extracted as gallery photos."""
+        html = """<!DOCTYPE html><html><body>
+        \\"caption\\":null,\\"filename\\":\\"aa00aa01.jpg\\"
+        \\"caption\\":null,\\"filename\\":\\"bb00bb02.jpg\\"
+        \\"caption\\":null,\\"filename\\":\\"cc00cc03.jpg\\"
+        </body></html>"""
+        fetcher._curl_get_with_retry = AsyncMock(  # type: ignore[method-assign]
+            return_value=_mock_curl_response(html)
+        )
+        prop = _make_property(PropertySource.ZOOPLA)
+        result = await fetcher.fetch_detail_page(prop)
+        assert result is not None
+        assert result.gallery_urls is not None
+        assert len(result.gallery_urls) == 3
+        hashes = [url.rsplit("/", 1)[-1].split(".")[0] for url in result.gallery_urls]
+        assert hashes == ["aa00aa01", "bb00bb02", "cc00cc03"]
+
+    async def test_rsc_filters_ee_rating_epc(self, fetcher: DetailFetcher) -> None:
+        """'EE Rating' caption (Zoopla's EPC chart label) is filtered out."""
+        html = """<!DOCTYPE html><html><body>
+        \\"caption\\":null,\\"filename\\":\\"aa00aa01.jpg\\"
+        \\"caption\\":\\"EE Rating\\",\\"filename\\":\\"ee00ee01.png\\"
+        \\"caption\\":null,\\"filename\\":\\"bb00bb02.jpg\\"
         </body></html>"""
         fetcher._curl_get_with_retry = AsyncMock(  # type: ignore[method-assign]
             return_value=_mock_curl_response(html)
@@ -390,7 +431,29 @@ class TestZooplaParsing:
         assert result.gallery_urls is not None
         assert len(result.gallery_urls) == 2
         hashes = [url.rsplit("/", 1)[-1].split(".")[0] for url in result.gallery_urls]
-        assert "epc222" not in hashes
+        assert "ee00ee01" not in hashes
+        assert "aa00aa01" in hashes
+        assert "bb00bb02" in hashes
+
+    async def test_rsc_excludes_floorplan_hashes(self, fetcher: DetailFetcher) -> None:
+        """lc.zoocdn.com floorplan hashes are excluded from gallery results."""
+        html = """<!DOCTYPE html><html><body>
+        https://lc.zoocdn.com/8eb377a8.jpg
+        \\"caption\\":null,\\"filename\\":\\"aaa11111.jpg\\"
+        \\"caption\\":null,\\"filename\\":\\"8eb377a8.jpg\\"
+        \\"caption\\":null,\\"filename\\":\\"bbb22222.jpg\\"
+        </body></html>"""
+        fetcher._curl_get_with_retry = AsyncMock(  # type: ignore[method-assign]
+            return_value=_mock_curl_response(html)
+        )
+        prop = _make_property(PropertySource.ZOOPLA)
+        result = await fetcher.fetch_detail_page(prop)
+        assert result is not None
+        assert result.gallery_urls is not None
+        hashes = [url.rsplit("/", 1)[-1].split(".")[0] for url in result.gallery_urls]
+        assert "8eb377a8" not in hashes
+        assert "aaa11111" in hashes
+        assert "bbb22222" in hashes
 
     async def test_html_fallback_excludes_rsc_epc_hashes(self, fetcher: DetailFetcher) -> None:
         """HTML fallback inherits seen_hashes from RSC pass so EPC hashes don't reappear."""
@@ -430,6 +493,30 @@ class TestZooplaParsing:
         assert result.gallery_urls is not None
         # Both pass through — no way to distinguish EPC from photo by hash URL alone
         assert len(result.gallery_urls) == 2
+
+
+class TestZooplaFloorplanFromHtml:
+    """Tests for _zoopla_floorplan_from_html extension-less URL support."""
+
+    def test_extensionless_url_with_floor_in_path(self) -> None:
+        """Extension-less lc.zoocdn.com URL with 'floor' in path -> extracted."""
+        html = '<img src="https://lc.zoocdn.com/u/floor/abc123" />'
+        result = _zoopla_floorplan_from_html(html)
+        assert result == "https://lc.zoocdn.com/u/floor/abc123"
+
+    def test_extension_based_url_preferred(self) -> None:
+        """When both forms present -> extension-based URL returned first."""
+        html = """
+        <img src="https://lc.zoocdn.com/u/floor/abc123" />
+        <img src="https://lc.zoocdn.com/fp/plan.jpg" />
+        """
+        result = _zoopla_floorplan_from_html(html)
+        assert result is not None
+        assert result.endswith(".jpg")
+
+    def test_no_match_returns_none(self) -> None:
+        html = "<html><body>No floorplan here</body></html>"
+        assert _zoopla_floorplan_from_html(html) is None
 
 
 # ---------------------------------------------------------------------------

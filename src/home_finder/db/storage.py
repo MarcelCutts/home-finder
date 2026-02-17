@@ -952,6 +952,101 @@ class PropertyStorage:
             )
         return images
 
+    async def get_property_images_and_row(
+        self, unique_id: str
+    ) -> tuple[list[PropertyImage], Property | None]:
+        """Load property images and the property row in a single call.
+
+        Combines get_property_images() and row_to_property() to avoid two
+        separate round-trips when both are needed (e.g. cache loading).
+
+        Args:
+            unique_id: Property unique ID.
+
+        Returns:
+            Tuple of (images, property_or_none).
+        """
+        conn = await self._get_connection()
+
+        # Images
+        img_cursor = await conn.execute(
+            """
+            SELECT source, url, image_type
+            FROM property_images
+            WHERE property_unique_id = ?
+            ORDER BY image_type, id
+            """,
+            (unique_id,),
+        )
+        img_rows = await img_cursor.fetchall()
+        images = [
+            PropertyImage(
+                source=PropertySource(r["source"]),
+                url=r["url"],
+                image_type=r["image_type"],
+            )
+            for r in img_rows
+        ]
+
+        # Property row
+        prop_cursor = await conn.execute(
+            "SELECT * FROM properties WHERE unique_id = ?",
+            (unique_id,),
+        )
+        prop_row = await prop_cursor.fetchone()
+        prop = row_to_property(prop_row) if prop_row is not None else None
+
+        return images, prop
+
+    async def get_properties_needing_commute(self) -> list[Property]:
+        """Get properties with coordinates but no commute data.
+
+        Used by the --backfill-commute command to find properties that
+        can be sent to the TravelTime API.
+
+        Returns:
+            List of Property objects with lat/lon but no commute_minutes.
+        """
+        conn = await self._get_connection()
+        cursor = await conn.execute(
+            """
+            SELECT * FROM properties
+            WHERE latitude IS NOT NULL AND longitude IS NOT NULL
+              AND commute_minutes IS NULL
+            """
+        )
+        rows = await cursor.fetchall()
+        return [row_to_property(row) for row in rows]
+
+    async def update_commute_data(
+        self,
+        commute_lookup: dict[str, tuple[int, TransportMode]],
+    ) -> int:
+        """Batch update commute_minutes and transport_mode for properties.
+
+        Args:
+            commute_lookup: Mapping of unique_id -> (minutes, transport_mode).
+
+        Returns:
+            Number of rows updated.
+        """
+        if not commute_lookup:
+            return 0
+        conn = await self._get_connection()
+        await conn.executemany(
+            """
+            UPDATE properties
+            SET commute_minutes = ?, transport_mode = ?
+            WHERE unique_id = ?
+            """,
+            [
+                (minutes, mode.value, unique_id)
+                for unique_id, (minutes, mode) in commute_lookup.items()
+            ],
+        )
+        await conn.commit()
+        return len(commute_lookup)
+
     async def get_all_known_source_ids(self) -> dict[str, set[str]]:
         """Get all source_ids grouped by property source.
 

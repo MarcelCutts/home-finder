@@ -9,6 +9,7 @@ from home_finder.utils.image_cache import (
     get_cache_dir,
     get_cached_image_path,
     is_property_cached,
+    is_valid_image_url,
     read_image_bytes,
     safe_dir_name,
     save_image_bytes,
@@ -204,3 +205,34 @@ class TestCopyCachedImages:
     def test_empty_source_dir(self, tmp_path: Path) -> None:
         copied = copy_cached_images(str(tmp_path), "nonexistent:999", "rightmove:200")
         assert copied == 0
+
+
+class TestIsValidImageUrl:
+    def test_extensionless_url_allowed(self) -> None:
+        """CDN URL without extension -> True."""
+        assert is_valid_image_url("https://lc.zoocdn.com/u/floor/abc123") is True
+
+    def test_pdf_rejected(self) -> None:
+        """.pdf -> False."""
+        assert is_valid_image_url("https://example.com/floorplan.pdf") is False
+
+    def test_svg_rejected(self) -> None:
+        """.svg -> False."""
+        assert is_valid_image_url("https://example.com/icon.svg") is False
+
+    def test_jpg_allowed(self) -> None:
+        """.jpg -> True (regression)."""
+        assert is_valid_image_url("https://example.com/photo.jpg") is True
+
+    def test_query_params_ignored(self) -> None:
+        """Extension check strips query params."""
+        assert is_valid_image_url("https://example.com/img.pdf?v=1") is False
+        assert is_valid_image_url("https://example.com/img.jpg?v=1") is True
+
+    def test_non_image_extensions_rejected(self) -> None:
+        """Non-image web extensions -> False."""
+        assert is_valid_image_url("https://example.com/page.html") is False
+        assert is_valid_image_url("https://example.com/script.js") is False
+        assert is_valid_image_url("https://example.com/style.css") is False
+        assert is_valid_image_url("https://example.com/data.json") is False
+        assert is_valid_image_url("https://example.com/feed.xml") is False

@@ -886,3 +886,151 @@ class TestWardOperations:
     @pytest.mark.asyncio
     async def test_update_wards_empty_map(self, storage: PropertyStorage) -> None:
         assert await storage.update_wards({}) == 0
+
+
+class TestGetPropertiesNeedingCommute:
+    """Tests for get_properties_needing_commute."""
+
+    @pytest.mark.asyncio
+    async def test_returns_properties_with_coords_but_no_commute(
+        self, storage: PropertyStorage
+    ) -> None:
+        """Should return properties that have coordinates but no commute_minutes."""
+        prop = Property(
+            source=PropertySource.OPENRENT,
+            source_id="commute-1",
+            url=HttpUrl("https://openrent.com/commute-1"),
+            title="No commute flat",
+            price_pcm=2000,
+            bedrooms=2,
+            address="123 Mare Street",
+            postcode="E8 3RH",
+            latitude=51.5465,
+            longitude=-0.0553,
+        )
+        await storage.save_property(prop)
+
+        result = await storage.get_properties_needing_commute()
+        assert len(result) == 1
+        assert result[0].unique_id == prop.unique_id
+        assert result[0].latitude == 51.5465
+
+    @pytest.mark.asyncio
+    async def test_excludes_properties_with_commute_data(
+        self, storage: PropertyStorage
+    ) -> None:
+        """Should exclude properties that already have commute_minutes."""
+        prop = Property(
+            source=PropertySource.OPENRENT,
+            source_id="has-commute",
+            url=HttpUrl("https://openrent.com/has-commute"),
+            title="Has commute flat",
+            price_pcm=2000,
+            bedrooms=2,
+            address="123 Mare Street",
+            postcode="E8 3RH",
+            latitude=51.5465,
+            longitude=-0.0553,
+        )
+        await storage.save_property(
+            prop, commute_minutes=15, transport_mode=TransportMode.CYCLING
+        )
+
+        result = await storage.get_properties_needing_commute()
+        assert len(result) == 0
+
+    @pytest.mark.asyncio
+    async def test_excludes_properties_without_coords(
+        self, storage: PropertyStorage
+    ) -> None:
+        """Should exclude properties that lack coordinates."""
+        prop = Property(
+            source=PropertySource.RIGHTMOVE,
+            source_id="no-coords",
+            url=HttpUrl("https://rightmove.co.uk/no-coords"),
+            title="No coords flat",
+            price_pcm=2000,
+            bedrooms=2,
+            address="Unknown Street",
+        )
+        await storage.save_property(prop)
+
+        result = await storage.get_properties_needing_commute()
+        assert len(result) == 0
+
+
+class TestUpdateCommuteData:
+    """Tests for update_commute_data."""
+
+    @pytest.mark.asyncio
+    async def test_updates_commute_minutes_and_mode(
+        self, storage: PropertyStorage
+    ) -> None:
+        """Should update commute_minutes and transport_mode for matching properties."""
+        prop = Property(
+            source=PropertySource.OPENRENT,
+            source_id="update-commute",
+            url=HttpUrl("https://openrent.com/update-commute"),
+            title="Update commute flat",
+            price_pcm=2000,
+            bedrooms=2,
+            address="123 Mare Street",
+            postcode="E8 3RH",
+            latitude=51.5465,
+            longitude=-0.0553,
+        )
+        await storage.save_property(prop)
+
+        commute_lookup = {prop.unique_id: (15, TransportMode.CYCLING)}
+        updated = await storage.update_commute_data(commute_lookup)
+        assert updated == 1
+
+        tracked = await storage.get_property(prop.unique_id)
+        assert tracked is not None
+        assert tracked.commute_minutes == 15
+        assert tracked.transport_mode == TransportMode.CYCLING
+
+    @pytest.mark.asyncio
+    async def test_returns_zero_for_empty_lookup(
+        self, storage: PropertyStorage
+    ) -> None:
+        """Should return 0 when given an empty lookup."""
+        assert await storage.update_commute_data({}) == 0
+
+
+class TestGetPropertyImagesAndRow:
+    """Tests for get_property_images_and_row."""
+
+    @pytest.mark.asyncio
+    async def test_returns_images_and_property(
+        self, storage: PropertyStorage, storage_sample_property: Property
+    ) -> None:
+        """Should return both images and property data."""
+        await storage.save_property(storage_sample_property)
+        images = [
+            PropertyImage(
+                url=HttpUrl("https://example.com/img.jpg"),
+                source=PropertySource.OPENRENT,
+                image_type="gallery",
+            ),
+        ]
+        await storage.save_property_images(storage_sample_property.unique_id, images)
+
+        result_images, result_prop = await storage.get_property_images_and_row(
+            storage_sample_property.unique_id
+        )
+        assert len(result_images) == 1
+        assert result_images[0].image_type == "gallery"
+        assert result_prop is not None
+        assert result_prop.unique_id == storage_sample_property.unique_id
+
+    @pytest.mark.asyncio
+    async def test_returns_none_for_missing_property(
+        self, storage: PropertyStorage
+    ) -> None:
+        """Should return empty images and None property for non-existent ID."""
+        result_images, result_prop = await storage.get_property_images_and_row(
+            "nonexistent:999"
+        )
+        assert result_images == []
+        assert result_prop is None

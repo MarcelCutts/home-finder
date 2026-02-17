@@ -412,12 +412,24 @@ async def _load_unenriched(
     return unenriched, re_enrichment_ids
 
 
-async def _run_commute_filter(
+async def _geocode_and_compute_commute(
     merged: list[MergedProperty],
     criteria: SearchCriteria,
     settings: Settings,
 ) -> tuple[list[MergedProperty], dict[str, tuple[int, TransportMode]]]:
-    """Filter by commute time if TravelTime is configured, otherwise pass through."""
+    """Geocode properties and compute commute times via TravelTime API.
+
+    This is NOT a hard filter — it returns all properties (geocoded) plus a
+    lookup of commute times for those within the configured limit.  Properties
+    without coordinates or beyond the commute limit are still returned so that
+    downstream steps receive geocoded data.  The only filtering is an early-exit
+    gate: if TravelTime is configured and zero properties are reachable, the
+    caller can abort the pipeline.
+
+    Returns:
+        Tuple of (all properties with geocoded coordinates, commute lookup
+        mapping unique_id -> (minutes, transport_mode) for reachable properties).
+    """
     commute_lookup: dict[str, tuple[int, TransportMode]] = {}
     if settings.traveltime_app_id and settings.traveltime_api_key:
         logger.info("pipeline_started", phase="commute_filtering")
@@ -458,23 +470,25 @@ async def _run_commute_filter(
                     result.transport_mode,
                 )
 
-        merged_to_notify = [
+        within_limit = [
             m for m in merged_with_coords if m.canonical.unique_id in commute_lookup
         ]
-        merged_to_notify.extend(merged_without_coords)
+        notify_count = len(within_limit) + len(merged_without_coords)
 
         logger.info(
             "commute_filter_summary",
-            within_limit=len(merged_to_notify),
+            within_limit=notify_count,
             total_checked=len(merged_with_coords),
             without_coords=len(merged_without_coords),
-            by_source=_source_counts(merged_to_notify),
+            by_source=_source_counts(merged),
         )
+
+        if not within_limit and not merged_without_coords:
+            return [], commute_lookup
     else:
-        merged_to_notify = list(merged)
         logger.info("skipping_commute_filter", reason="no_traveltime_credentials")
 
-    return merged_to_notify, commute_lookup
+    return merged, commute_lookup
 
 
 async def _run_enrichment(
@@ -618,17 +632,18 @@ async def _run_pre_analysis_pipeline(
     if enriched is None:
         return None
 
-    # Step 6: Commute filter (after enrichment so all properties have full coords)
-    merged_to_notify, commute_lookup = await _run_commute_filter(
+    # Step 6: Geocode + commute (after enrichment so all properties have full coords)
+    geocoded, commute_lookup = await _geocode_and_compute_commute(
         enriched, criteria, settings
     )
-    if not merged_to_notify:
+    if not geocoded:
         logger.info("no_properties_within_commute_limit")
         return None
 
     # Step 7: Post-enrichment dedup + floorplan gate
+    # Use geocoded list (not enriched) so coordinates from geocoding are preserved
     post_result = await _run_post_enrichment(
-        enriched, deduplicator, storage, settings, re_enrichment_ids
+        geocoded, deduplicator, storage, settings, re_enrichment_ids
     )
     if post_result is None:
         return None
@@ -1233,6 +1248,64 @@ async def run_reanalysis(
         await storage.close()
 
 
+async def run_backfill_commute(settings: Settings) -> None:
+    """Backfill commute data for properties that have coordinates but no commute_minutes.
+
+    Queries the DB for such properties, runs the TravelTime API, and updates the DB.
+    """
+    if not settings.traveltime_app_id or not settings.traveltime_api_key:
+        print("Error: TravelTime credentials not configured.")
+        print("Set HOME_FINDER_TRAVELTIME_APP_ID and HOME_FINDER_TRAVELTIME_API_KEY.")
+        return
+
+    storage = PropertyStorage(settings.database_path)
+    await storage.initialize()
+
+    try:
+        criteria = settings.get_search_criteria()
+
+        properties = await storage.get_properties_needing_commute()
+        if not properties:
+            print("No properties need commute backfill.")
+            return
+
+        print(f"Found {len(properties)} properties with coordinates but no commute data.")
+
+        commute_filter = CommuteFilter(
+            app_id=settings.traveltime_app_id,
+            api_key=settings.traveltime_api_key.get_secret_value(),
+            destination_postcode=criteria.destination_postcode,
+        )
+
+        commute_lookup: dict[str, tuple[int, TransportMode]] = {}
+        for mode in criteria.transport_modes:
+            results = await commute_filter.filter_properties(
+                properties,
+                max_minutes=criteria.max_commute_minutes,
+                transport_mode=mode,
+            )
+            for result in results:
+                if result.within_limit and (
+                    result.property_id not in commute_lookup
+                    or result.travel_time_minutes < commute_lookup[result.property_id][0]
+                ):
+                    commute_lookup[result.property_id] = (
+                        result.travel_time_minutes,
+                        result.transport_mode,
+                    )
+
+        if not commute_lookup:
+            print("No properties within commute limit.")
+            return
+
+        updated = await storage.update_commute_data(commute_lookup)
+        print(f"Updated {updated} properties with commute data.")
+        logger.info("backfill_commute_complete", updated=updated, total=len(properties))
+
+    finally:
+        await storage.close()
+
+
 async def run_dedup_existing(settings: Settings) -> None:
     """Retroactively merge duplicate properties already in the database.
 
@@ -1354,6 +1427,11 @@ def main() -> None:
         "Options: openrent, rightmove, zoopla, onthemarket",
     )
     parser.add_argument(
+        "--backfill-commute",
+        action="store_true",
+        help="Backfill commute data for properties with coordinates but no commute_minutes",
+    )
+    parser.add_argument(
         "--dedup-existing",
         action="store_true",
         help="Retroactively merge duplicate properties already in the database",
@@ -1435,7 +1513,9 @@ def main() -> None:
             print(f"Valid options: {', '.join(sorted(valid))}")
             sys.exit(1)
 
-    if args.dedup_existing:
+    if args.backfill_commute:
+        asyncio.run(run_backfill_commute(settings))
+    elif args.dedup_existing:
         asyncio.run(run_dedup_existing(settings))
     elif args.reanalyze:
         outcodes = [o.strip().upper() for o in args.outcode.split(",")] if args.outcode else None

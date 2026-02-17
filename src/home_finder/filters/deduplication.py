@@ -1,19 +1,48 @@
 """Property deduplication and merging logic."""
 
 from collections import defaultdict
-from collections.abc import Callable
-from typing import TypeVar
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Final
 
-from home_finder.filters.scoring import calculate_match_score
+from home_finder.filters.scoring import calculate_match_score, is_full_postcode
 from home_finder.logging import get_logger
 from home_finder.models import MergedProperty, Property, PropertyImage, PropertySource
 from home_finder.utils.address import extract_outcode
-from home_finder.utils.image_hash import fetch_image_hashes_batch, hash_cached_gallery
-from home_finder.utils.union_find import UnionFind
+from home_finder.utils.image_cache import find_cached_file
+from home_finder.utils.image_hash import (
+    fetch_image_hashes_batch,
+    hash_cached_gallery,
+    hash_from_disk,
+    hashes_match,
+)
 
 logger = get_logger(__name__)
 
-_T = TypeVar("_T")
+# Source priority for image quality (higher = better).
+# Zoopla typically has the highest resolution CDN images.
+SOURCE_IMAGE_PRIORITY: Final[dict[PropertySource, int]] = {
+    PropertySource.ZOOPLA: 4,
+    PropertySource.RIGHTMOVE: 3,
+    PropertySource.ONTHEMARKET: 2,
+    PropertySource.OPENRENT: 1,
+}
+
+# Maximum number of properties in a single merged group (one per platform).
+_MAX_GROUP_SIZE: Final = 4
+
+
+@dataclass(frozen=True, order=True)
+class _ScoredPair:
+    """A scored pair of candidate indices for greedy matching.
+
+    Ordered by score descending (negated), then by (min_idx, max_idx) for
+    deterministic tie-breaking.
+    """
+
+    neg_score: float  # negated so higher scores sort first
+    min_idx: int
+    max_idx: int
 
 
 def _dedupe_by_unique_id(properties: list[Property]) -> list[Property]:
@@ -213,9 +242,7 @@ class Deduplicator:
         results: list[MergedProperty] = []
 
         for block_key, candidates in candidates_by_block.items():
-            groups = _group_items_by_weighted_score(
-                candidates, lambda mp: mp.canonical, image_hashes
-            )
+            groups = _group_items_greedy(candidates, image_hashes)
             for group in groups:
                 if len(group) == 1:
                     results.append(group[0])
@@ -247,7 +274,7 @@ class Deduplicator:
         """
         # Sort by canonical first_seen — earliest is the new canonical
         sorted_mps = sorted(merged_list, key=lambda m: m.canonical.first_seen)
-        canonical = sorted_mps[0].canonical
+        canonical = _build_best_canonical(sorted_mps)
 
         # Combine sources and URLs (dedup by source)
         all_sources: list[PropertySource] = []
@@ -275,12 +302,16 @@ class Deduplicator:
                     seen_image_urls.add(url_str)
                     all_images.append(img)
 
-        # Pick first available floorplan
-        floorplan = None
-        for mp in sorted_mps:
-            if mp.floorplan:
-                floorplan = mp.floorplan
-                break
+        # Perceptual dedup: remove visually identical photos from different CDNs.
+        # Pass all unique_ids so images cached under any source's directory are found.
+        if self.data_dir and len(all_images) > 1:
+            all_unique_ids = [mp.canonical.unique_id for mp in sorted_mps]
+            all_images = _perceptual_dedup_images(
+                all_images, self.data_dir, all_unique_ids
+            )
+
+        # Pick best floorplan by source priority
+        floorplan = _select_best_floorplan(sorted_mps)
 
         # Price range across all sources
         prices = [mp.min_price for mp in sorted_mps] + [mp.max_price for mp in sorted_mps]
@@ -321,16 +352,168 @@ class Deduplicator:
         )
 
 
-def _group_items_by_weighted_score(
-    items: list[_T],
-    get_prop: Callable[[_T], Property],
-    image_hashes: dict[str, list[str]],
-) -> list[list[_T]]:
-    """Group items by weighted match score using union-find.
+def _build_best_canonical(sorted_mps: list[MergedProperty]) -> Property:
+    """Build the best canonical Property by upgrading fields from all sources.
+
+    Starts from the earliest first_seen property and backfills:
+    - postcode: prefer full postcode over outcode
+    - coordinates: prefer non-null over null
+    - available_from: pick earliest non-null date
+
+    Identity fields (source, source_id, url, title, first_seen) are never changed.
 
     Args:
-        items: Items to group (Property or MergedProperty).
-        get_prop: Accessor to get the Property from each item.
+        sorted_mps: MergedProperties sorted by canonical.first_seen (earliest first).
+
+    Returns:
+        Best canonical Property with upgraded fields.
+    """
+    base = sorted_mps[0].canonical
+    updates: dict[str, object] = {}
+
+    # Postcode: prefer full postcode from any source
+    if not is_full_postcode(base.postcode):
+        for mp in sorted_mps[1:]:
+            if is_full_postcode(mp.canonical.postcode):
+                updates["postcode"] = mp.canonical.postcode
+                break
+
+    # Coordinates: prefer non-null from any source
+    if base.latitude is None:
+        for mp in sorted_mps[1:]:
+            if mp.canonical.latitude is not None:
+                updates["latitude"] = mp.canonical.latitude
+                updates["longitude"] = mp.canonical.longitude
+                break
+
+    # Available from: pick earliest non-null date across all sources
+    dates = [
+        mp.canonical.available_from
+        for mp in sorted_mps
+        if mp.canonical.available_from is not None
+    ]
+    if dates:
+        earliest = min(dates)
+        if base.available_from is None or earliest < base.available_from:
+            updates["available_from"] = earliest
+
+    if not updates:
+        return base
+    return base.model_copy(update=updates)
+
+
+def _find_cached_across_ids(
+    data_dir: str, unique_ids: list[str], url: str, image_type: str
+) -> Path | None:
+    """Find a cached image file by trying each unique_id's cache directory.
+
+    During merge, images from different sources are still cached under their
+    original unique_ids (e.g. ``image_cache/openrent_100/`` vs
+    ``image_cache/zoopla_456/``).  This helper tries each directory so
+    perceptual dedup can find cross-source images before cache consolidation.
+    """
+    for uid in unique_ids:
+        cached = find_cached_file(data_dir, uid, url, image_type)
+        if cached is not None:
+            return cached
+    return None
+
+
+def _perceptual_dedup_images(
+    images: list[PropertyImage],
+    data_dir: str,
+    all_unique_ids: list[str],
+) -> list[PropertyImage]:
+    """Remove visually identical photos served from different CDN URLs.
+
+    Hashes each image from disk cache and removes duplicates, keeping the
+    version from the higher-priority source.
+
+    Args:
+        images: Combined gallery images from all sources.
+        data_dir: Base data directory for image cache.
+        all_unique_ids: All unique_ids in the merge group, so images cached
+            under any source's directory can be found.
+
+    Returns:
+        Deduplicated image list.
+    """
+    if len(images) <= 1:
+        return images
+
+    # Hash all images that have cached files
+    hashed: list[tuple[PropertyImage, str | None]] = []
+    for img in images:
+        cached = _find_cached_across_ids(
+            data_dir, all_unique_ids, str(img.url), "gallery"
+        )
+        if cached is not None:
+            h = hash_from_disk(cached)
+            hashed.append((img, h))
+        else:
+            hashed.append((img, None))
+
+    # Find duplicates by comparing hashes
+    keep: list[bool] = [True] * len(hashed)
+    for i in range(len(hashed)):
+        if not keep[i]:
+            continue
+        img_i, hash_i = hashed[i]
+        if hash_i is None:
+            continue
+        for j in range(i + 1, len(hashed)):
+            if not keep[j]:
+                continue
+            img_j, hash_j = hashed[j]
+            if hash_j is None:
+                continue
+            if hashes_match(hash_i, hash_j):
+                # Keep the one from the higher-priority source
+                pri_i = SOURCE_IMAGE_PRIORITY.get(img_i.source, 0)
+                pri_j = SOURCE_IMAGE_PRIORITY.get(img_j.source, 0)
+                if pri_j > pri_i:
+                    keep[i] = False
+                    break  # i is removed, stop comparing it
+                else:
+                    keep[j] = False
+
+    return [img for img, kept in zip(images, keep, strict=True) if kept]
+
+
+def _select_best_floorplan(sorted_mps: list[MergedProperty]) -> PropertyImage | None:
+    """Select the best floorplan by source priority.
+
+    Args:
+        sorted_mps: MergedProperties sorted by canonical.first_seen.
+
+    Returns:
+        Best floorplan PropertyImage, or None if none available.
+    """
+    candidates = [mp.floorplan for mp in sorted_mps if mp.floorplan is not None]
+    if not candidates:
+        return None
+    if len(candidates) == 1:
+        return candidates[0]
+    # Sort by source priority descending, pick best
+    return max(candidates, key=lambda fp: SOURCE_IMAGE_PRIORITY.get(fp.source, 0))
+
+
+def _group_items_greedy(
+    items: list[MergedProperty],
+    image_hashes: dict[str, list[str]],
+) -> list[list[MergedProperty]]:
+    """Group items by greedy pairwise matching with same-source collision guard.
+
+    Algorithm:
+    1. Score all cross-source pairs (skip same-source pairs entirely)
+    2. Collect qualifying pairs (score.is_match)
+    3. Sort by score descending (ties broken by index pair for determinism)
+    4. Greedily build groups with two invariants:
+       - No same-source collision (a group never has 2 properties from the same source)
+       - Max group size = 4 (one per platform maximum)
+
+    Args:
+        items: MergedProperty candidates within a single blocking group.
         image_hashes: Dict mapping unique_id to list of gallery hash strings.
 
     Returns:
@@ -339,12 +522,16 @@ def _group_items_by_weighted_score(
     if len(items) <= 1:
         return [items] if items else []
 
-    uf = UnionFind(len(items))
-
+    # Score all cross-source pairs and collect qualifying ones
+    scored_pairs: list[_ScoredPair] = []
     for i in range(len(items)):
         for j in range(i + 1, len(items)):
-            prop_i = get_prop(items[i])
-            prop_j = get_prop(items[j])
+            prop_i = items[i].canonical
+            prop_j = items[j].canonical
+
+            # Skip same-source pairs entirely
+            if prop_i.source == prop_j.source:
+                continue
 
             score = calculate_match_score(prop_i, prop_j, image_hashes)
 
@@ -357,7 +544,65 @@ def _group_items_by_weighted_score(
                     is_match=score.is_match,
                 )
 
-            if score.is_match and prop_i.source != prop_j.source:
-                uf.union(i, j)
+            if score.is_match:
+                scored_pairs.append(_ScoredPair(-score.total, min(i, j), max(i, j)))
 
-    return [[items[i] for i in members] for members in uf.groups().values()]
+    # Sort: best scores first, then by index pair for determinism
+    scored_pairs.sort()
+
+    # Greedy grouping: track which group each item belongs to
+    # group_id[i] = index into `groups` list, or -1 if ungrouped
+    group_id: list[int] = [-1] * len(items)
+    groups: list[list[int]] = []  # each is a list of item indices
+
+    for pair in scored_pairs:
+        i, j = pair.min_idx, pair.max_idx
+        gi, gj = group_id[i], group_id[j]
+
+        if gi == -1 and gj == -1:
+            # Neither is in a group — create a new group
+            new_gid = len(groups)
+            groups.append([i, j])
+            group_id[i] = new_gid
+            group_id[j] = new_gid
+
+        elif gi >= 0 and gj == -1:
+            # i is in a group, try to add j
+            group = groups[gi]
+            if len(group) >= _MAX_GROUP_SIZE:
+                continue
+            # Check same-source collision
+            j_sources = set(items[j].sources)
+            if any(j_sources & set(items[k].sources) for k in group):
+                continue
+            group.append(j)
+            group_id[j] = gi
+
+        elif gi == -1 and gj >= 0:
+            # j is in a group, try to add i
+            group = groups[gj]
+            if len(group) >= _MAX_GROUP_SIZE:
+                continue
+            i_sources = set(items[i].sources)
+            if any(i_sources & set(items[k].sources) for k in group):
+                continue
+            group.append(i)
+            group_id[i] = gj
+
+        else:
+            # Both in groups — skip (don't merge groups to avoid transitive chains)
+            continue
+
+    # Build result: grouped items + singletons
+    result: list[list[MergedProperty]] = []
+    grouped_indices: set[int] = set()
+    for group in groups:
+        result.append([items[idx] for idx in group])
+        grouped_indices.update(group)
+
+    # Add singletons
+    for i, item in enumerate(items):
+        if i not in grouped_indices:
+            result.append([item])
+
+    return result
