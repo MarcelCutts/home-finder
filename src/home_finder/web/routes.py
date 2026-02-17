@@ -429,6 +429,8 @@ async def property_detail(
             # Try ward-based matching first (reliable), fall back to text matching
             ward = str(prop["ward"]) if prop.get("ward") else None
             matched_name = get_micro_area_for_ward(ward, outcode) if ward else None
+            if not matched_name and ward:
+                logger.debug("unmapped_ward", ward=ward, outcode=outcode, unique_id=unique_id)
             if not matched_name:
                 matched_name = match_micro_area(prop.get("address", ""), outcode)
             if matched_name and matched_name in all_micro:

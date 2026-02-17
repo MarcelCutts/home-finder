@@ -9,7 +9,7 @@ from home_finder.filters.scoring import calculate_match_score, is_full_postcode
 from home_finder.logging import get_logger
 from home_finder.models import MergedProperty, Property, PropertyImage, PropertySource
 from home_finder.utils.address import extract_outcode
-from home_finder.utils.image_cache import find_cached_file
+from home_finder.utils.image_cache import copy_cached_images, find_cached_file
 from home_finder.utils.image_hash import (
     fetch_image_hashes_batch,
     hash_cached_gallery,
@@ -316,7 +316,7 @@ class Deduplicator:
         # Price range across all sources
         prices = [mp.min_price for mp in sorted_mps] + [mp.max_price for mp in sorted_mps]
 
-        return MergedProperty(
+        result = MergedProperty(
             canonical=canonical,
             sources=tuple(all_sources),
             source_urls=all_source_urls,
@@ -326,6 +326,16 @@ class Deduplicator:
             max_price=max(prices),
             descriptions=all_descriptions,
         )
+
+        # Consolidate image cache: copy cached files from secondary sources
+        # to the canonical's directory so quality analysis finds all images.
+        if self.data_dir:
+            canonical_id = canonical.unique_id
+            for mp in sorted_mps[1:]:
+                if mp.canonical.unique_id != canonical_id:
+                    copy_cached_images(self.data_dir, mp.canonical.unique_id, canonical_id)
+
+        return result
 
     def _single_to_merged(self, prop: Property) -> MergedProperty:
         """Wrap a single property as a MergedProperty.

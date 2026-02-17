@@ -12,6 +12,7 @@ from home_finder.logging import get_logger
 from home_finder.models import MergedProperty, Property, PropertyImage, PropertySource
 from home_finder.scrapers.detail_fetcher import DetailFetcher
 from home_finder.utils.address import is_outcode
+from home_finder.utils.epc_detector import detect_epc
 from home_finder.utils.floorplan_detector import detect_floorplan
 from home_finder.utils.image_cache import (
     clear_image_cache,
@@ -83,6 +84,56 @@ def _detect_floorplan_in_gallery(
             return floorplan, remaining, idx
 
     return None, images, -1
+
+
+def _detect_epc_in_gallery(
+    images: list[PropertyImage],
+    unique_id: str,
+    data_dir: str,
+) -> tuple[PropertyImage | None, list[PropertyImage]]:
+    """Try to detect EPC charts among gallery images using PIL heuristics.
+
+    Iterates gallery images in forward order (EPCs are often first),
+    reads cached bytes from disk, and runs the EPC detector.
+    Removes **all** detected EPCs (there may be both energy efficiency
+    and environmental impact charts), returning only the first as the
+    representative EPC image.
+
+    Args:
+        images: Gallery images to check.
+        unique_id: Property unique ID for cache path lookup.
+        data_dir: Data directory for image cache.
+
+    Returns:
+        Tuple of (first_detected_epc_image or None, remaining_gallery_images).
+    """
+    first_epc: PropertyImage | None = None
+    epc_indices: set[int] = set()
+
+    for idx, img in enumerate(images):
+        cache_path = get_cached_image_path(data_dir, unique_id, str(img.url), "gallery", idx)
+        img_bytes = read_image_bytes(cache_path)
+        if img_bytes is None:
+            continue
+
+        is_epc, confidence = detect_epc(img_bytes)
+        if is_epc:
+            logger.info(
+                "epc_detected_by_heuristic",
+                property_id=unique_id,
+                image_index=idx,
+                confidence=confidence,
+            )
+            epc_indices.add(idx)
+            if first_epc is None:
+                first_epc = PropertyImage(
+                    url=img.url,
+                    source=img.source,
+                    image_type="epc",
+                )
+
+    remaining = [im for j, im in enumerate(images) if j not in epc_indices]
+    return first_epc, remaining
 
 
 async def _enrich_single(
@@ -190,6 +241,13 @@ async def _enrich_single(
                     if not current_pc or is_outcode(current_pc):
                         canon_updates["postcode"] = detail_data.postcode
 
+        # Detect and remove EPC charts from gallery before floorplan detection
+        epc_image: PropertyImage | None = None
+        if data_dir and all_images:
+            epc_image, all_images = await asyncio.to_thread(
+                _detect_epc_in_gallery, all_images, merged.unique_id, data_dir
+            )
+
         # If no floorplan found by structural extraction, try PIL heuristic on gallery images
         if floorplan_image is None and data_dir and all_images:
             floorplan_image, all_images, detected_idx = await asyncio.to_thread(
@@ -218,6 +276,7 @@ async def _enrich_single(
             source_urls=merged.source_urls,
             images=tuple(all_images),
             floorplan=floorplan_image,
+            epc_image=epc_image,
             min_price=merged.min_price,
             max_price=merged.max_price,
             descriptions=merged.descriptions,
@@ -229,6 +288,7 @@ async def _enrich_single(
             sources=[s.value for s in merged.sources],
             gallery_count=len(all_images),
             has_floorplan=floorplan_image is not None,
+            has_epc=epc_image is not None,
         )
 
         return updated
@@ -253,6 +313,7 @@ async def _load_cached_property(
     images, db_prop = await storage.get_property_images_and_row(merged.unique_id)
     gallery = tuple(img for img in images if img.image_type == "gallery")
     floorplan = next((img for img in images if img.image_type == "floorplan"), None)
+    epc_image = next((img for img in images if img.image_type == "epc"), None)
 
     # Backfill coordinates/postcode from DB if in-memory canonical lacks them
     canonical = merged.canonical
@@ -276,6 +337,7 @@ async def _load_cached_property(
         source_urls=merged.source_urls,
         images=gallery,
         floorplan=floorplan,
+        epc_image=epc_image,
         min_price=merged.min_price,
         max_price=merged.max_price,
         descriptions=merged.descriptions,
@@ -345,21 +407,40 @@ async def enrich_merged_properties(
 _FLOORPLAN_EXEMPT_SOURCES: frozenset[PropertySource] = frozenset({PropertySource.OPENRENT})
 
 
-def filter_by_floorplan(properties: list[MergedProperty]) -> list[MergedProperty]:
+def is_floorplan_exempt(sources: tuple[PropertySource, ...] | set[PropertySource]) -> bool:
+    """Check if the given sources are all floorplan-exempt (e.g. OpenRent-only)."""
+    return set(sources).issubset(_FLOORPLAN_EXEMPT_SOURCES)
+
+
+def filter_by_floorplan(
+    properties: list[MergedProperty],
+    *,
+    min_gallery_for_photo_inference: int = 0,
+) -> list[MergedProperty]:
     """Drop properties that have no valid image-format floorplan.
 
-    Properties exclusively from sources that lack a dedicated floorplan
-    section (e.g. OpenRent) are exempt — they pass through even without
-    a detected floorplan.
+    Properties pass through if any of:
+    - They have a floorplan image
+    - They're exclusively from floorplan-exempt sources (e.g. OpenRent)
+    - They have enough gallery images for photo-based layout inference
+      (when min_gallery_for_photo_inference > 0)
 
     Args:
         properties: Enriched MergedProperty list.
+        min_gallery_for_photo_inference: Minimum gallery images to bypass
+            the floorplan gate. 0 disables this bypass (default).
 
     Returns:
-        Properties that have a floorplan or are exempt.
+        Properties that have a floorplan, are exempt, or have enough photos.
     """
-    return [
-        p
-        for p in properties
-        if p.floorplan is not None or set(p.sources).issubset(_FLOORPLAN_EXEMPT_SOURCES)
-    ]
+
+    def _passes(p: MergedProperty) -> bool:
+        if p.floorplan is not None:
+            return True
+        if set(p.sources).issubset(_FLOORPLAN_EXEMPT_SOURCES):
+            return True
+        return (
+            min_gallery_for_photo_inference > 0 and len(p.images) >= min_gallery_for_photo_inference
+        )
+
+    return [p for p in properties if _passes(p)]

@@ -449,3 +449,114 @@ class TestBuildPropertyContext:
         ctx = build_property_context("E8 2LX", 2)
         assert ctx.energy_estimate is not None
         assert ctx.energy_estimate > 0
+
+
+class TestWardCoverage:
+    """Ensure all known wards from the DB audit have mappings in WARD_TO_MICRO_AREA."""
+
+    # All wards observed in production data, grouped by outcode.
+    KNOWN_WARDS: dict[str, list[str]] = {
+        "E2": [
+            "Bethnal Green West",
+            "Bethnal Green East",
+            "Weavers",
+            "Haggerston",
+            "Hoxton East & Shoreditch",
+        ],
+        "E3": [
+            "Bow West",
+            "Bow East",
+            "Bromley North",
+            "Mile End",
+            "St Dunstan's",
+            "Bromley South",
+            "Lansbury",
+        ],
+        "E5": [
+            "Hackney Downs",
+            "Lea Bridge",
+            "Cazenove",
+            "King's Park",
+            "Homerton",
+            "Springfield",
+        ],
+        "E8": ["Dalston", "Haggerston", "London Fields", "Hackney Central"],
+        "E9": [
+            "Hackney Wick",
+            "Homerton",
+            "Victoria",
+            "King's Park",
+            "Bow East",
+        ],
+        "E10": ["Lea Bridge", "Leyton", "Grove Green", "Forest"],
+        "E15": [
+            "Stratford",
+            "West Ham",
+            "Maryland",
+            "Forest Gate South",
+            "Canning Town North",
+            "Stratford Olympic Park",
+        ],
+        "E17": [
+            "High Street",
+            "William Morris",
+            "Higham Hill",
+            "St James",
+            "Markhouse",
+            "Lea Bridge",
+            "Hoe Street",
+            "Chapel End",
+            "Wood Street",
+            "Upper Walthamstow",
+        ],
+        "N15": [
+            "West Green",
+            "Tottenham Central",
+            "Seven Sisters",
+            "South Tottenham",
+            "St Ann's",
+            "Harringay",
+            "Northumberland Park",
+        ],
+        "N16": [
+            "Stoke Newington",
+            "Clissold",
+            "Shacklewell",
+            "Dalston",
+            "Hackney Downs",
+            "Stamford Hill West",
+            "Cazenove",
+            "Springfield",
+            "Woodberry Down",
+            "Mildmay",
+        ],
+        "N17": [
+            "Tottenham Central",
+            "Northumberland Park",
+            "South Tottenham",
+            "Tottenham Hale",
+            "Bruce Castle",
+            "West Green",
+        ],
+    }
+
+    def test_all_known_wards_are_mapped(self) -> None:
+        """Every observed (outcode, ward) pair should exist in WARD_TO_MICRO_AREA."""
+        missing = []
+        for outcode, wards in self.KNOWN_WARDS.items():
+            for ward in wards:
+                if (outcode, ward) not in WARD_TO_MICRO_AREA:
+                    missing.append((outcode, ward))
+        assert not missing, f"Unmapped wards: {missing}"
+
+    def test_all_mapped_wards_resolve_to_existing_micro_areas(self) -> None:
+        """Every ward in KNOWN_WARDS should resolve to an actual micro-area via get_micro_area_for_ward."""
+        unresolved = []
+        for outcode, wards in self.KNOWN_WARDS.items():
+            for ward in wards:
+                result = get_micro_area_for_ward(ward, outcode)
+                if result is None:
+                    unresolved.append((outcode, ward))
+        assert not unresolved, (
+            f"Wards mapped but micro-area not found in JSON: {unresolved}"
+        )

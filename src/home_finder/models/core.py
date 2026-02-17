@@ -161,7 +161,7 @@ class PropertyImage(BaseModel):
 
     url: HttpUrl
     source: PropertySource
-    image_type: Literal["gallery", "floorplan"]
+    image_type: Literal["gallery", "floorplan", "epc"]
 
 
 class MergedProperty(BaseModel):
@@ -187,6 +187,9 @@ class MergedProperty(BaseModel):
 
     # Best floorplan found (prefer highest resolution)
     floorplan: PropertyImage | None = None
+
+    # EPC chart detected via PIL heuristic (removed from gallery)
+    epc_image: PropertyImage | None = None
 
     # Price range if varies across platforms
     min_price: int

@@ -21,6 +21,7 @@ from home_finder.filters import (
     enrich_merged_properties,
     filter_by_floorplan,
 )
+from home_finder.filters.detail_enrichment import is_floorplan_exempt
 from home_finder.filters.quality import APIUnavailableError
 from home_finder.logging import configure_logging, get_logger
 from home_finder.models import (
@@ -232,6 +233,8 @@ async def _cross_run_deduplicate(
     merged_to_notify: list[MergedProperty],
     storage: PropertyStorage,
     re_enrichment_ids: set[str],
+    *,
+    data_dir: str = "",
 ) -> CrossRunDedupResult:
     """Deduplicate new properties against recent DB anchors (cross-run detection).
 
@@ -239,11 +242,16 @@ async def _cross_run_deduplicate(
     today can be matched against platform A stored last week. Updates anchors
     that gained new sources and cleans up consumed retry rows.
 
+    When a cross-run merge adds a new source to an anchor, the anchor is flagged
+    for quality re-analysis (new images/descriptions warrant a fresh look) and
+    cached images are copied from the new source to the anchor's cache directory.
+
     Args:
         deduplicator: Deduplicator instance for cross-platform matching.
         merged_to_notify: New/re-enriched properties to check.
         storage: Database storage for anchor lookup and updates.
         re_enrichment_ids: IDs of properties being re-enriched (for cleanup).
+        data_dir: Base data directory for image cache operations.
 
     Returns:
         CrossRunDedupResult with genuinely new properties and update count.
@@ -259,6 +267,13 @@ async def _cross_run_deduplicate(
         anchor_by_id[anchor.canonical.unique_id] = anchor
         for url in anchor.source_urls.values():
             anchor_url_to_id[str(url)] = anchor.canonical.unique_id
+
+    # Map source URLs from new properties to their original unique_id so we
+    # can copy cached images from the new source to the anchor after merge.
+    new_url_to_unique_id: dict[str, str] = {}
+    for mp in merged_to_notify:
+        for url in mp.source_urls.values():
+            new_url_to_unique_id[str(url)] = mp.canonical.unique_id
 
     # Combine new properties with DB anchors for dedup comparison
     combined_for_dedup = merged_to_notify + db_anchors
@@ -281,8 +296,20 @@ async def _cross_run_deduplicate(
             if set(merged.sources) != set(original_anchor.sources):
                 await storage.update_merged_sources(matched_anchor_id, merged)
                 anchors_updated += 1
+
+                # Copy cached images from new source(s) to anchor directory
+                if data_dir:
+                    original_urls = {str(u) for u in original_anchor.source_urls.values()}
+                    for url in merged.source_urls.values():
+                        url_str = str(url)
+                        if url_str not in original_urls and url_str in new_url_to_unique_id:
+                            new_source_id = new_url_to_unique_id[url_str]
+                            copy_cached_images(data_dir, new_source_id, matched_anchor_id)
+
+                # Flag for quality re-analysis — new source brings new images/descriptions
+                await storage.request_reanalysis([matched_anchor_id])
                 logger.info(
-                    "cross_run_duplicate_detected",
+                    "cross_run_reanalysis_flagged",
                     anchor_id=matched_anchor_id,
                     new_sources=[s.value for s in merged.sources],
                     original_sources=[s.value for s in original_anchor.sources],
@@ -552,7 +579,7 @@ async def _run_post_enrichment(
     """Cross-run dedup and floorplan gate. Returns None if nothing remains."""
     logger.info("pipeline_started", phase="deduplication_merge")
     dedup_result = await _cross_run_deduplicate(
-        deduplicator, merged, storage, re_enrichment_ids
+        deduplicator, merged, storage, re_enrichment_ids, data_dir=settings.data_dir
     )
     merged_to_notify = dedup_result.genuinely_new
     anchors_updated = dedup_result.anchors_updated
@@ -563,12 +590,21 @@ async def _run_post_enrichment(
 
     if settings.require_floorplan:
         before_count = len(merged_to_notify)
-        merged_to_notify = filter_by_floorplan(merged_to_notify)
+        merged_to_notify = filter_by_floorplan(
+            merged_to_notify,
+            min_gallery_for_photo_inference=settings.min_gallery_for_photo_inference,
+        )
+        photo_inference_eligible = sum(
+            1
+            for m in merged_to_notify
+            if m.floorplan is None and not is_floorplan_exempt(m.sources)
+        )
         logger.info(
             "floorplan_filter",
             before=before_count,
             after=len(merged_to_notify),
             dropped=before_count - len(merged_to_notify),
+            photo_inference_eligible=photo_inference_eligible,
             by_source=_source_counts(merged_to_notify),
         )
 
@@ -894,6 +930,69 @@ async def _run_quality_and_save(
     return count
 
 
+async def _drain_reanalysis_queue(
+    settings: Settings,
+    storage: PropertyStorage,
+) -> int:
+    """Process any pending re-analyses (e.g. from cross-run merges).
+
+    Uses the same concurrent analysis pattern as the main pipeline.
+    Saves via complete_reanalysis() which preserves notification_status='sent'.
+
+    Args:
+        settings: Application settings.
+        storage: Database storage.
+
+    Returns:
+        Number of properties re-analyzed.
+    """
+    if not settings.enable_quality_filter or not settings.anthropic_api_key.get_secret_value():
+        return 0
+
+    queue = await storage.get_reanalysis_queue()
+    if not queue:
+        return 0
+
+    logger.info("reanalysis_queue_drain_started", count=len(queue))
+
+    quality_filter = PropertyQualityFilter(
+        api_key=settings.anthropic_api_key.get_secret_value(),
+        max_images=settings.quality_filter_max_images,
+        enable_extended_thinking=settings.enable_extended_thinking,
+        thinking_budget_tokens=settings.thinking_budget_tokens,
+    )
+
+    completed = 0
+
+    async def _analyze(
+        merged: MergedProperty,
+    ) -> tuple[MergedProperty, PropertyQualityAnalysis | None]:
+        return await quality_filter.analyze_single_merged(merged, data_dir=settings.data_dir)
+
+    async def _handle_result(
+        merged: MergedProperty,
+        quality_analysis: PropertyQualityAnalysis | None,
+    ) -> None:
+        nonlocal completed
+        if quality_analysis:
+            await storage.complete_reanalysis(merged.unique_id, quality_analysis)
+            completed += 1
+
+    try:
+        await _run_concurrent_analysis(
+            queue,
+            _analyze,
+            _handle_result,
+            breaker_log_event="reanalysis_api_circuit_breaker",
+            error_log_event="reanalysis_failed",
+        )
+    finally:
+        await quality_filter.close()
+
+    logger.info("reanalysis_queue_drain_complete", reanalyzed=completed, queued=len(queue))
+    return completed
+
+
 async def run_pipeline(
     settings: Settings,
     *,
@@ -1002,13 +1101,19 @@ async def run_pipeline(
             await asyncio.sleep(1)  # Telegram rate limit
 
         analyzed_count = await _run_quality_and_save(pre, settings, storage, _notify)
+
+        # Re-analyze cross-run merges that gained new source data
+        reanalyzed_count = await _drain_reanalysis_queue(settings, storage)
+
         await storage.update_pipeline_run(
             run_id,
             analyzed_count=analyzed_count,
             notified_count=notified_count,
         )
         await storage.complete_pipeline_run(run_id, "completed")
-        logger.info("pipeline_complete", notified=notified_count)
+        logger.info(
+            "pipeline_complete", notified=notified_count, reanalyzed=reanalyzed_count
+        )
 
     except Exception as exc:
         await storage.complete_pipeline_run(run_id, "failed", error_message=str(exc))
@@ -1167,7 +1272,12 @@ async def run_dry_run(
             print(f"  URL: {prop.url}")
             print()
 
-        logger.info("dry_run_complete", saved=saved_count)
+        # Re-analyze cross-run merges that gained new source data
+        reanalyzed_count = await _drain_reanalysis_queue(settings, storage)
+        if reanalyzed_count:
+            print(f"[DRY RUN] Re-analyzed {reanalyzed_count} cross-run merges.")
+
+        logger.info("dry_run_complete", saved=saved_count, reanalyzed=reanalyzed_count)
 
     finally:
         await storage.close()

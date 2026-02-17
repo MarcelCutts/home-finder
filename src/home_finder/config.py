@@ -59,6 +59,11 @@ class Settings(BaseSettings):
         default=True,
         description="Drop properties without floorplans before quality analysis",
     )
+    min_gallery_for_photo_inference: int = Field(
+        default=8,
+        ge=0,
+        description="Minimum gallery images to bypass floorplan gate (0 disables)",
+    )
     enable_extended_thinking: bool = Field(
         default=True,
         description="Enable extended thinking for deeper quality analysis",

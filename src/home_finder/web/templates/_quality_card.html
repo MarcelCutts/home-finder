@@ -74,6 +74,7 @@
             <h4>Living Room</h4>
             {% if qa.space.living_room_sqm %}
             <span class="badge badge-neutral">~{{ "%.0f" | format(qa.space.living_room_sqm) }}m&sup2;</span>
+            {% if not prop.floorplan_images %}<span class="badge badge-muted">estimated</span>{% endif %}
             {% else %}
             <span class="badge badge-neutral">Size unknown</span>
             {% endif %}

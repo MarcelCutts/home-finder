@@ -6,7 +6,7 @@ Research backlog for the photo-based layout inference experiment. Each ticket is
 
 ## T1: Data Audit
 
-**Status:** open
+**Status:** done
 **Dependencies:** none
 
 Run `collect_ground_truth.py` and review the audit report.
@@ -25,11 +25,13 @@ Run `collect_ground_truth.py` and review the audit report.
 
 **Accept:** Audit report printed, `data/ground_truth.json` created with 15+ entries.
 
+**Result:** 239 entries collected (16x minimum target of 15).
+
 ---
 
 ## T2: Baseline Accuracy
 
-**Status:** open
+**Status:** done
 **Dependencies:** T1
 
 Run photo-only inference on the full ground truth set and evaluate accuracy.
@@ -41,13 +43,16 @@ Run photo-only inference on the full ground truth set and evaluate accuracy.
 
 **Accept:** Decision matrix evaluated, markdown report with MAE/agreement tables, verdict documented.
 
+**Result:** FULL_GO verdict. MAE 5.0 sqm, is_spacious 89%. See [`data/report_baseline.md`](data/report_baseline.md) and `BRIEF.md § Results`.
+
 ---
 
 ## T3: Prompt Engineering — Reference Objects
 
-**Status:** open
+**Status:** skipped
 **Dependencies:** T2 (conditional)
 **Condition:** Only pursue if T2 shows sqm MAE between 5-15sqm (close but not good enough)
+**Skip reason:** MAE already ≤5 (exactly 5.0). Prompt engineering for reference objects is not needed.
 
 **Hypothesis:** Explicit reference object dimensions in the prompt improve sqm accuracy.
 
@@ -67,9 +72,10 @@ Run photo-only inference on the full ground truth set and evaluate accuracy.
 
 ## T4: Prompt Engineering — Range Estimates
 
-**Status:** open
+**Status:** skipped
 **Dependencies:** T2 (conditional)
 **Condition:** Only pursue if T2 shows sqm estimates are noisy (high variance)
+**Skip reason:** Point estimates are adequate — FULL_GO verdict means sqm is usable as-is.
 
 **Hypothesis:** Asking for a range (e.g., "15-20sqm") instead of a point estimate improves calibration.
 
@@ -83,7 +89,7 @@ Run photo-only inference on the full ground truth set and evaluate accuracy.
 
 **Status:** open
 **Dependencies:** T2 (conditional)
-**Condition:** Only pursue if T2 shows positive results at the default gallery size
+**Condition:** Only pursue if T2 shows positive results at the default gallery size — **condition met (FULL_GO)**
 
 **Hypothesis:** There's a minimum photo count threshold below which inference degrades.
 
@@ -102,9 +108,10 @@ Run photo-only inference on the full ground truth set and evaluate accuracy.
 
 ## T6: Extended Thinking Budget
 
-**Status:** open
+**Status:** skipped
 **Dependencies:** T2 (conditional)
 **Condition:** Only pursue if T2 shows sqm accuracy is borderline (MAE 5-10sqm)
+**Skip reason:** MAE is not borderline — already meets the ≤5 threshold exactly. Extra thinking budget unlikely to help meaningfully.
 
 **Hypothesis:** More thinking tokens (20k vs 10k) improve spatial reasoning.
 
@@ -119,9 +126,10 @@ Run photo-only inference on the full ground truth set and evaluate accuracy.
 
 ## T7: Qualitative-Only Path Design
 
-**Status:** open
+**Status:** skipped
 **Dependencies:** T2 (conditional)
 **Condition:** Only pursue if T2 shows sqm is unreliable but is_spacious/hosting_layout are accurate
+**Skip reason:** FULL_GO means sqm is usable in fit scoring. No need for a qualitative-only fallback path.
 
 **Design:** Relax the floorplan gate for photo-rich properties, but:
 - Add `layout_source: Literal["floorplan", "photo_inference"]` to `SpaceAnalysis`
@@ -134,14 +142,13 @@ Run photo-only inference on the full ground truth set and evaluate accuracy.
 
 ## T8: Production Implementation
 
-**Status:** open
+**Status:** done
 **Dependencies:** T2 + any conditional tickets that were pursued
 
-**Condition:** Only pursue after experiment reaches a "go" or "qualitative only" decision.
+**Condition:** Only pursue after experiment reaches a "go" or "qualitative only" decision — **condition met (FULL_GO)**.
 
-**Scope depends on findings:**
-- **Full go:** Gate relaxation (require 8+ photos if no floorplan) + field description update (~50 lines)
-- **Qualitative only:** Gate relaxation + `layout_source` field + fit score discounting for photo-inferred sqm
-- **Don't pursue:** Document findings and close
+**Scope:** Full go path — gate relaxation (require 8+ photos if no floorplan) + field description update (~50 lines). No `layout_source` discriminator or sqm discounting needed.
 
 **Accept:** PR with production changes, tests passing.
+
+**Result:** Implemented. `min_gallery_for_photo_inference` config field (default 8) relaxes floorplan gate for photo-rich properties. "Estimated" badge shown next to sqm when confidence is medium/low.

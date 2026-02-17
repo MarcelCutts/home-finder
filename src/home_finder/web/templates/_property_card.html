@@ -24,7 +24,7 @@
             {{ fit_badge(prop.fit_score, prop.fit_breakdown) }}
         </div>
         <div class="card-body">
-            {# Meta row: rating | postcode | commute pill | listing age #}
+            {# Meta row: rating | postcode | commute pill #}
             <div class="card-meta">
                 <div class="card-meta-left">
                     {% if prop.quality_rating %}
@@ -38,9 +38,6 @@
                     {% endif %}
                     {{ commute_pill(prop.commute_minutes) }}
                 </div>
-                {% if prop.first_seen %}
-                <span class="card-age">{{ prop.first_seen | listing_age }}</span>
-                {% endif %}
             </div>
 
             {# AI summary text (2-line clamp) #}
@@ -63,6 +60,8 @@
             {% endif %}
 
             {# Highlight + lowlight chips #}
+            {% set max_highlights = 3 %}
+            {% set max_lowlights = 2 %}
             {% set has_positive = prop.highlights or (prop.epc_rating and prop.epc_rating != 'unknown') or prop.value_rating %}
             {% set has_negative = prop.quality_concerns or prop.lowlights %}
             {% if has_positive or has_negative %}
@@ -70,11 +69,14 @@
                 {% if has_positive %}
                 <div class="card-chips">
                     {% if prop.highlights %}
-                    {% for tag in prop.highlights[:4] %}
+                    {% for tag in prop.highlights[:max_highlights] %}
                     {% if not (prop.epc_rating and prop.epc_rating != 'unknown' and tag[:3] | upper == "EPC") %}
                     <span class="highlight-chip highlight-positive">{{ tag }}</span>
                     {% endif %}
                     {% endfor %}
+                    {% if prop.highlights | length > max_highlights %}
+                    <span class="highlight-chip highlight-more">+{{ prop.highlights | length - max_highlights }}</span>
+                    {% endif %}
                     {% endif %}
                     {% if prop.epc_rating and prop.epc_rating != 'unknown' %}
                     <span class="highlight-chip highlight-neutral">EPC {{ prop.epc_rating }}</span>
@@ -87,9 +89,12 @@
                 {% if has_negative %}
                 <div class="card-chips card-chips-negative">
                     {% if prop.lowlights %}
-                    {% for tag in prop.lowlights[:3] %}
+                    {% for tag in prop.lowlights[:max_lowlights] %}
                     <span class="highlight-chip highlight-negative">{{ tag }}</span>
                     {% endfor %}
+                    {% if prop.lowlights | length > max_lowlights %}
+                    <span class="highlight-chip highlight-more">+{{ prop.lowlights | length - max_lowlights }}</span>
+                    {% endif %}
                     {% endif %}
                     {% if prop.quality_concerns %}
                     <span class="condition-badge condition-{{ prop.quality_severity if prop.quality_severity in ('minor', 'moderate', 'serious') else 'minor' }}">{%- if prop.quality_severity == 'serious' -%}⚠ Serious concerns{%- elif prop.quality_severity == 'moderate' -%}⚠ Moderate concerns{%- else -%}Minor concerns{%- endif -%}</span>
@@ -104,6 +109,9 @@
             {% set badge = source_badges.get(s, {}) %}
             <span class="source-badge" style="background-color: {{ badge.get('color', '#888') }}" title="{{ badge.get('name', s) }}">{{ badge.get('abbr', s[:1]|upper) }}</span>
             {% endfor %}
+            {% if prop.first_seen %}
+            <span class="card-age">{{ prop.first_seen | listing_age }}</span>
+            {% endif %}
         </div>
     </a>
 </article>

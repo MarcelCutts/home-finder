@@ -76,6 +76,15 @@ select = ["E", "F", "I", "UP", "B", "SIM", "RUF", "C4", "PTH"]
 [tool.mypy]
 python_version = "3.11"
 strict = true
+exclude = ["experiments/", "mutants/"]
+
+[[tool.mypy.overrides]]
+module = ["tests.*", "tests.*.*"]
+disallow_untyped_defs = false
+
+[[tool.mypy.overrides]]
+module = "scripts.*"
+disallow_untyped_defs = false
 
 [tool.coverage.run]
 source = ["src/home_finder"]

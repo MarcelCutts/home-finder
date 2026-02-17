@@ -472,6 +472,44 @@ class TestDetailQualityCards:
         assert "Quality Analysis" in resp.text
         assert "star-rating" in resp.text
 
+    @pytest.mark.asyncio
+    async def test_estimated_badge_absent_with_floorplan(
+        self,
+        client: TestClient,
+        storage: PropertyStorage,
+        prop_a: Property,
+        merged_a: MergedProperty,
+        base_analysis: PropertyQualityAnalysis,
+    ) -> None:
+        """Properties WITH floorplan images should NOT show the 'estimated' badge."""
+        await storage.save_merged_property(merged_a)
+        await storage.save_property_images(
+            merged_a.unique_id,
+            [PropertyImage(source=PropertySource.OPENRENT, url="https://example.com/fp.jpg", image_type="floorplan")],
+        )
+        await storage.save_quality_analysis(prop_a.unique_id, base_analysis)
+        resp = client.get(f"/property/{merged_a.unique_id}")
+        assert resp.status_code == 200
+        assert "Living Room" in resp.text
+        assert "estimated" not in resp.text
+
+    @pytest.mark.asyncio
+    async def test_estimated_badge_shown_without_floorplan(
+        self,
+        client: TestClient,
+        storage: PropertyStorage,
+        prop_a: Property,
+        merged_a: MergedProperty,
+        base_analysis: PropertyQualityAnalysis,
+    ) -> None:
+        """Properties WITHOUT floorplan images should show the 'estimated' badge."""
+        await storage.save_merged_property(merged_a)
+        await storage.save_quality_analysis(prop_a.unique_id, base_analysis)
+        resp = client.get(f"/property/{merged_a.unique_id}")
+        assert resp.status_code == 200
+        assert "Living Room" in resp.text
+        assert "estimated" in resp.text
+
 
 # ---------------------------------------------------------------------------
 # Cached images
