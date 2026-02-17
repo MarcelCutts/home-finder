@@ -20,10 +20,11 @@ to understand the full context — then run the T1 (Data Audit) ticket.
 
 Specifically:
 
-1. `cd experiments/layout-inference`
-2. Run `uv run python collect_ground_truth.py` (you may need to adjust the --db
-   path if the default doesn't find my production database — check `data/properties.db`
-   relative to the repo root, or look for .db files in the project)
+1. Run from the experiment directory:
+   `cd experiments/layout-inference && uv run python collect_ground_truth.py`
+   (you may need to adjust the --db path if the default doesn't find my production
+   database — check `data/properties.db` relative to the repo root, or look for
+   .db files in the project)
 3. Review the printed audit report and tell me:
    - How many properties have floorplans vs don't
    - How many floorplan-less properties have 8+ gallery photos (the opportunity set)
@@ -45,17 +46,18 @@ I'm continuing the layout inference experiment at `experiments/layout-inference/
 Read `experiments/layout-inference/BRIEF.md` and `experiments/layout-inference/TICKETS.md`
 for full context. T1 (Data Audit) is done — `data/ground_truth.json` exists.
 
-Run the T2 (Baseline Accuracy) ticket:
+Run the T2 (Baseline Accuracy) ticket. All `uv run` commands below should
+run from `experiments/layout-inference/` (cd there first).
 
-1. `cd experiments/layout-inference`
-2. First do a smoke test: `uv run python run_inference.py --limit 3`
+1. First do a smoke test:
+   `cd experiments/layout-inference && uv run python run_inference.py --limit 3`
    - This calls the Anthropic API (~$0.18). Confirm it works before the full run.
    - Check the output makes sense (sqm values, hosting layouts, etc.)
-3. If the smoke test looks good, run the full set:
+2. If the smoke test looks good, run the full set:
    `uv run python run_inference.py`
    - This will cost ~$0.06/property. Watch for errors.
-4. Run the evaluation: `uv run python evaluate.py`
-5. Read the generated report in `data/report_baseline.md`
+3. Run the evaluation: `uv run python evaluate.py`
+4. Read the generated report in `data/report_baseline.md`
 6. Tell me:
    - The verdict from the decision matrix (FULL_GO / QUALITATIVE_ONLY / DONT_PURSUE)
    - The key metrics (sqm MAE, is_spacious agreement %, hosting agreement %)
@@ -81,10 +83,11 @@ I'm continuing the layout inference experiment at `experiments/layout-inference/
 Read `experiments/layout-inference/BRIEF.md` and `experiments/layout-inference/TICKETS.md`
 for full context. Also read `data/report_baseline.md` to see the T2 baseline results.
 
-T2 showed the sqm estimates need improvement. Run the T3 (Reference Objects) ticket:
+T2 showed the sqm estimates need improvement. Run the T3 (Reference Objects) ticket.
+All `uv run` commands below should run from `experiments/layout-inference/`.
 
-1. `cd experiments/layout-inference`
-2. Run inference with the reference objects prompt variant:
+1. Run inference with the reference objects prompt variant:
+   `cd experiments/layout-inference`
    `uv run python run_inference.py --prompt-variant reference_objects`
 3. Evaluate: `uv run python evaluate.py --results data/inference_results_reference_objects.json`
 4. Compare the new report against the baseline (`data/report_baseline.md`):
@@ -142,10 +145,11 @@ I'm continuing the layout inference experiment at `experiments/layout-inference/
 Read `experiments/layout-inference/BRIEF.md`, `TICKETS.md`, and the baseline
 report in `data/report_baseline.md`.
 
-Run the T5 (Photo Count Sensitivity) ticket:
+Run the T5 (Photo Count Sensitivity) ticket. All `uv run` commands below
+should run from `experiments/layout-inference/` (cd there first).
 
-1. `cd experiments/layout-inference`
-2. Run inference at different gallery caps:
+1. Run inference at different gallery caps:
+   `cd experiments/layout-inference`
    `uv run python run_inference.py --max-gallery 6`
    `uv run python run_inference.py --max-gallery 8`
    `uv run python run_inference.py --max-gallery 10`
@@ -275,6 +279,11 @@ In both cases:
 
 ## Notes on Session Management
 
+**Open all sessions from the repo root** (`/Users/marcel/projects/labs/home-finder`),
+not from the experiment directory. This ensures CLAUDE.md is picked up (architecture
+context, DB schema, quality filter details). The experiment scripts must run via
+`cd experiments/layout-inference && uv run python ...` to use the experiment's venv.
+
 - **T1 and T2 are always sequential** — run T1 first, then T2 in a new session
 - **T3-T6 are conditional and independent** — after T2, pick the relevant ones
   based on the verdict. They can run in any order.
@@ -282,5 +291,4 @@ In both cases:
   among the conditional tickets
 - **T8 is always last** — requires a firm decision from the experiment
 
-Each session should start in the repo root (`/Users/marcel/projects/labs/home-finder`).
 Sessions that call the Anthropic API (T2, T3, T5, T6) need `ANTHROPIC_API_KEY` set.

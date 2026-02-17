@@ -320,16 +320,21 @@ async def _run_scrape(
     *,
     max_per_scraper: int | None = None,
     only_scrapers: set[str] | None = None,
+    full_scrape: bool = False,
 ) -> list[Property] | None:
     """Scrape all platforms and return results, or None if nothing found."""
     criteria = settings.get_search_criteria()
     search_areas = settings.get_search_areas()
 
-    known_ids_by_source = await storage.get_all_known_source_ids()
-    logger.info(
-        "loaded_known_ids",
-        total=sum(len(v) for v in known_ids_by_source.values()),
-    )
+    if full_scrape:
+        known_ids_by_source = None
+        logger.info("full_scrape_mode", msg="Early-stop disabled — scraping all pages")
+    else:
+        known_ids_by_source = await storage.get_all_known_source_ids()
+        logger.info(
+            "loaded_known_ids",
+            total=sum(len(v) for v in known_ids_by_source.values()),
+        )
 
     logger.info("pipeline_started", phase="scraping")
     all_properties = await scrape_all_platforms(
@@ -580,6 +585,7 @@ async def _run_pre_analysis_pipeline(
     *,
     max_per_scraper: int | None = None,
     only_scrapers: set[str] | None = None,
+    full_scrape: bool = False,
 ) -> PreAnalysisResult | None:
     """Run the pre-analysis pipeline: scrape, filter, deduplicate, enrich.
 
@@ -588,7 +594,11 @@ async def _run_pre_analysis_pipeline(
     """
     # Step 1: Scrape all platforms
     all_properties = await _run_scrape(
-        settings, storage, max_per_scraper=max_per_scraper, only_scrapers=only_scrapers
+        settings,
+        storage,
+        max_per_scraper=max_per_scraper,
+        only_scrapers=only_scrapers,
+        full_scrape=full_scrape,
     )
     if all_properties is None:
         return None
@@ -889,6 +899,7 @@ async def run_pipeline(
     *,
     max_per_scraper: int | None = None,
     only_scrapers: set[str] | None = None,
+    full_scrape: bool = False,
 ) -> None:
     """Run the full scraping and notification pipeline.
 
@@ -899,6 +910,7 @@ async def run_pipeline(
         settings: Application settings.
         max_per_scraper: Maximum properties per scraper (None for unlimited).
         only_scrapers: If set, only run these scrapers (by source value).
+        full_scrape: Disable early-stop pagination (scrape all pages).
     """
     storage = PropertyStorage(settings.database_path)
     await storage.initialize()
@@ -933,7 +945,11 @@ async def run_pipeline(
                 await asyncio.sleep(1)
 
         pre = await _run_pre_analysis_pipeline(
-            settings, storage, max_per_scraper=max_per_scraper, only_scrapers=only_scrapers
+            settings,
+            storage,
+            max_per_scraper=max_per_scraper,
+            only_scrapers=only_scrapers,
+            full_scrape=full_scrape,
         )
         if pre is None:
             await storage.complete_pipeline_run(run_id, "completed")
@@ -1053,6 +1069,7 @@ async def run_dry_run(
     *,
     max_per_scraper: int | None = None,
     only_scrapers: set[str] | None = None,
+    full_scrape: bool = False,
 ) -> None:
     """Run the full pipeline without sending Telegram notifications.
 
@@ -1060,13 +1077,18 @@ async def run_dry_run(
         settings: Application settings.
         max_per_scraper: Maximum properties per scraper (None for unlimited).
         only_scrapers: If set, only run these scrapers (by source value).
+        full_scrape: Disable early-stop pagination (scrape all pages).
     """
     storage = PropertyStorage(settings.database_path)
     await storage.initialize()
 
     try:
         pre = await _run_pre_analysis_pipeline(
-            settings, storage, max_per_scraper=max_per_scraper, only_scrapers=only_scrapers
+            settings,
+            storage,
+            max_per_scraper=max_per_scraper,
+            only_scrapers=only_scrapers,
+            full_scrape=full_scrape,
         )
         if pre is None:
             print("\nNo new properties to report.")
@@ -1469,6 +1491,11 @@ def main() -> None:
         help="With --serve: start web server only, skip background pipeline",
     )
     parser.add_argument(
+        "--full-scrape",
+        action="store_true",
+        help="Disable pagination early-stop — scrape all pages even if properties are already in DB",
+    )
+    parser.add_argument(
         "--debug",
         action="store_true",
         help="Enable debug-level logging for troubleshooting",
@@ -1542,12 +1569,20 @@ def main() -> None:
         )
     elif args.dry_run:
         asyncio.run(
-            run_dry_run(settings, max_per_scraper=args.max_per_scraper, only_scrapers=only_scrapers)
+            run_dry_run(
+                settings,
+                max_per_scraper=args.max_per_scraper,
+                only_scrapers=only_scrapers,
+                full_scrape=args.full_scrape,
+            )
         )
     else:
         asyncio.run(
             run_pipeline(
-                settings, max_per_scraper=args.max_per_scraper, only_scrapers=only_scrapers
+                settings,
+                max_per_scraper=args.max_per_scraper,
+                only_scrapers=only_scrapers,
+                full_scrape=args.full_scrape,
             )
         )
 

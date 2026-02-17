@@ -379,11 +379,16 @@ class TestOpenRentScraperIntegration:
                 mock_parse.assert_called_once()
 
 
-class TestOpenRentEarlyStop:
-    """Tests for early-stop pagination (requires newest-first sort)."""
+class TestOpenRentNoEarlyStop:
+    """Tests verifying OpenRent does NOT use early-stop pagination.
 
-    def test_search_url_sorts_by_newest(self, openrent_scraper: OpenRentScraper) -> None:
-        """Verify sortType=3 (newest first) — required for early-stop correctness."""
+    OpenRent has no "newest first" sort (sortType only supports 0=Distance,
+    1=Price↑, 2=Price↓). The early-stop assumption requires newest-first
+    ordering, so it's intentionally disabled for this scraper.
+    """
+
+    def test_search_url_has_no_sort_type(self, openrent_scraper: OpenRentScraper) -> None:
+        """Verify sortType is not included — OpenRent has no valid 'newest' sort."""
         url = openrent_scraper._build_search_url(
             area="e8",
             min_price=1800,
@@ -391,13 +396,18 @@ class TestOpenRentEarlyStop:
             min_bedrooms=0,
             max_bedrooms=2,
         )
-        assert "sortType=3" in url
+        assert "sortType" not in url
 
     @pytest.mark.asyncio
-    async def test_stops_when_all_results_known(
+    async def test_does_not_early_stop_even_when_all_known(
         self, openrent_scraper: OpenRentScraper, openrent_search_html: str
     ) -> None:
-        """When all page-1 properties are already in DB, stop without fetching page 2."""
+        """Even when all page-1 properties are known, OpenRent fetches page 2.
+
+        Because results are sorted by distance (not newest), all-known on
+        page 1 does NOT imply everything after is older — new listings may
+        appear on later pages.
+        """
         soup = BeautifulSoup(openrent_search_html, "html.parser")
         page1_props = openrent_scraper._parse_search_results(soup, "https://test")
         known_ids = {p.source_id for p in page1_props}
@@ -416,53 +426,10 @@ class TestOpenRentEarlyStop:
 
                 async def run(urls: list[str]) -> None:
                     ctx = MagicMock()
-                    ctx.soup = BeautifulSoup(openrent_search_html, "html.parser")
-                    ctx.request.url = urls[0]
-                    await handler[0](ctx)
-
-                mock.run = run
-                pages_fetched.append(idx)
-                return mock
-
-            MockCrawler.side_effect = make_crawler
-
-            result = await openrent_scraper.scrape(
-                min_price=1800,
-                max_price=2500,
-                min_bedrooms=1,
-                max_bedrooms=2,
-                area="hackney",
-                known_source_ids=known_ids,
-            )
-
-        assert len(pages_fetched) == 1  # Only page 1 fetched
-        assert result == []  # All known → nothing returned
-
-    @pytest.mark.asyncio
-    async def test_continues_when_some_results_new(
-        self, openrent_scraper: OpenRentScraper, openrent_search_html: str
-    ) -> None:
-        """When only some results are known, don't early-stop — fetch next page."""
-        soup = BeautifulSoup(openrent_search_html, "html.parser")
-        page1_props = openrent_scraper._parse_search_results(soup, "https://test")
-        known_ids = {page1_props[0].source_id}
-
-        pages_fetched: list[int] = []
-
-        with patch("home_finder.scrapers.openrent.BeautifulSoupCrawler") as MockCrawler:
-
-            def make_crawler(**kwargs):  # type: ignore[no-untyped-def]
-                idx = len(pages_fetched)
-                mock = MagicMock()
-                handler: list = []
-                mock.router = MagicMock()
-                mock.router.default_handler = handler.append
-
-                async def run(urls: list[str]) -> None:
-                    ctx = MagicMock()
                     if idx == 0:
                         ctx.soup = BeautifulSoup(openrent_search_html, "html.parser")
                     else:
+                        # Page 2 returns empty → pagination stops naturally
                         ctx.soup = BeautifulSoup("<html></html>", "html.parser")
                     ctx.request.url = urls[0]
                     await handler[0](ctx)
@@ -483,5 +450,5 @@ class TestOpenRentEarlyStop:
                     known_source_ids=known_ids,
                 )
 
-        assert len(pages_fetched) >= 2  # Continued past page 1
-        assert len(result) == len(page1_props)  # All page 1 props returned
+        assert len(pages_fetched) >= 2  # Did NOT early-stop on page 1
+        assert len(result) == len(page1_props)  # Page 1 props still returned

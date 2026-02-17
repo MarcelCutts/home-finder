@@ -176,7 +176,7 @@ class TestSearchCriteria:
     def test_valid_criteria(self, default_search_criteria: SearchCriteria) -> None:
         """Test that valid search criteria is created correctly."""
         assert default_search_criteria.min_price == 1800
-        assert default_search_criteria.max_price == 2200
+        assert default_search_criteria.max_price == 2500
         assert default_search_criteria.min_bedrooms == 1
         assert default_search_criteria.max_bedrooms == 2
         assert default_search_criteria.destination_postcode == "N1 5AA"
@@ -260,7 +260,7 @@ class TestSearchCriteria:
             source_id="1",
             url=HttpUrl("https://example.com/1"),
             title="Test",
-            price_pcm=2500,  # Above 2200
+            price_pcm=2800,  # Above 2500
             bedrooms=1,
             address="Test Address",
         )

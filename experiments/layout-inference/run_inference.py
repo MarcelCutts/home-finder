@@ -11,6 +11,8 @@ existing <floorplan_note> prompt path. No production code changes needed.
 Usage:
     uv run python run_inference.py --limit 3                           # Smoke test
     uv run python run_inference.py                                     # Full run
+    uv run python run_inference.py --concurrency 10                    # Parallel (10 workers)
+    uv run python run_inference.py --resume                            # Resume from existing results
     uv run python run_inference.py --max-gallery 8                     # Photo count sensitivity
     uv run python run_inference.py --prompt-variant reference_objects   # Prompt iteration
 """
@@ -180,12 +182,37 @@ def _patch_floorplan_note(variant: str) -> None:
     qp.build_user_prompt = patched_build  # type: ignore[assignment]
 
 
+def _output_path(
+    prompt_variant: str | None, max_gallery: int | None
+) -> Path:
+    suffix = ""
+    if prompt_variant:
+        suffix += f"_{prompt_variant}"
+    if max_gallery:
+        suffix += f"_gallery{max_gallery}"
+    return DATA_DIR / f"inference_results{suffix}.json"
+
+
+def _load_existing_results(out_path: Path) -> tuple[list[dict], list[dict], set[str]]:
+    """Load previously completed results for --resume."""
+    if not out_path.exists():
+        return [], [], set()
+    data = json.loads(out_path.read_text())
+    results = data.get("results", [])
+    errors = data.get("errors", [])
+    done_ids = {r["unique_id"] for r in results}
+    done_ids |= {e["unique_id"] for e in errors}
+    return results, errors, done_ids
+
+
 async def run(
     db_path: str,
     *,
     limit: int | None = None,
     max_gallery: int | None = None,
     prompt_variant: str | None = None,
+    concurrency: int = 1,
+    resume: bool = False,
 ) -> None:
     api_key = os.environ.get("ANTHROPIC_API_KEY", "")
     if not api_key:
@@ -201,8 +228,22 @@ async def run(
     if limit:
         ground_truth = ground_truth[:limit]
 
-    print(f"Properties to analyze: {len(ground_truth)}")
-    print(f"Estimated cost: ~${len(ground_truth) * 0.06:.2f}")
+    out_path = _output_path(prompt_variant, max_gallery)
+
+    # Resume: load existing results and skip already-done properties
+    results: list[dict] = []
+    errors: list[dict] = []
+    skipped_ids: set[str] = set()
+    if resume:
+        results, errors, skipped_ids = _load_existing_results(out_path)
+        if skipped_ids:
+            print(f"Resuming: {len(skipped_ids)} already completed, skipping them")
+
+    todo = [e for e in ground_truth if e["unique_id"] not in skipped_ids]
+
+    print(f"Properties to analyze: {len(todo)} (of {len(ground_truth)} total)")
+    print(f"Estimated cost: ~${len(todo) * 0.06:.2f}")
+    print(f"Concurrency: {concurrency}")
     if max_gallery:
         print(f"Max gallery images: {max_gallery}")
     if prompt_variant:
@@ -218,83 +259,99 @@ async def run(
     data_dir = str(Path(db_path).parent)
     quality_filter = PropertyQualityFilter(api_key=api_key)
 
-    results = []
-    errors = []
+    # Thread-safe counters for progress display
+    completed_count = 0
+    lock = asyncio.Lock()
+    semaphore = asyncio.Semaphore(concurrency)
     start_time = time.time()
 
-    for i, entry in enumerate(ground_truth):
+    async def process_one(
+        idx: int, entry: dict
+    ) -> tuple[dict | None, dict | None]:
+        nonlocal completed_count
         unique_id = entry["unique_id"]
-        print(f"\n[{i + 1}/{len(ground_truth)}] Analyzing {unique_id}...", end=" ", flush=True)
 
-        merged = await load_merged_from_db(
-            db_path,
-            unique_id,
-            strip_floorplan=True,
-            max_gallery=max_gallery,
-        )
-        if merged is None:
-            print("SKIP (not found in DB)")
-            continue
-
-        gallery_count = len(merged.images)
-        print(f"({gallery_count} gallery images)", end=" ", flush=True)
-
-        try:
-            _, analysis = await quality_filter.analyze_single_merged(
-                merged, data_dir=data_dir
+        async with semaphore:
+            merged = await load_merged_from_db(
+                db_path,
+                unique_id,
+                strip_floorplan=True,
+                max_gallery=max_gallery,
             )
+            if merged is None:
+                async with lock:
+                    completed_count += 1
+                    print(f"[{completed_count}/{len(todo)}] {unique_id} SKIP (not in DB)", flush=True)
+                return None, None
 
-            space = analysis.space
-            bedroom = analysis.bedroom
+            gallery_count = len(merged.images)
 
-            result = {
-                "unique_id": unique_id,
-                "gallery_count_used": gallery_count,
-                "max_gallery_cap": max_gallery,
-                "prompt_variant": prompt_variant,
-                "inference": {
-                    "living_room_sqm": space.living_room_sqm if space else None,
-                    "is_spacious_enough": space.is_spacious_enough if space else None,
-                    "hosting_layout": space.hosting_layout if space else None,
-                    "confidence": space.confidence if space else None,
-                    "office_separation": bedroom.office_separation if bedroom else None,
-                },
-                "ground_truth": entry["ground_truth"],
-            }
+            try:
+                _, analysis = await quality_filter.analyze_single_merged(
+                    merged, data_dir=data_dir
+                )
+
+                space = analysis.space
+                bedroom = analysis.bedroom
+
+                result = {
+                    "unique_id": unique_id,
+                    "gallery_count_used": gallery_count,
+                    "max_gallery_cap": max_gallery,
+                    "prompt_variant": prompt_variant,
+                    "inference": {
+                        "living_room_sqm": space.living_room_sqm if space else None,
+                        "is_spacious_enough": space.is_spacious_enough if space else None,
+                        "hosting_layout": space.hosting_layout if space else None,
+                        "confidence": space.confidence if space else None,
+                        "office_separation": bedroom.office_separation if bedroom else None,
+                    },
+                    "ground_truth": entry["ground_truth"],
+                }
+                async with lock:
+                    completed_count += 1
+                    inf = result["inference"]
+                    print(
+                        f"[{completed_count}/{len(todo)}] {unique_id} "
+                        f"OK  sqm={inf['living_room_sqm']}  "
+                        f"spacious={inf['is_spacious_enough']}  "
+                        f"hosting={inf['hosting_layout']}  "
+                        f"office={inf['office_separation']}",
+                        flush=True,
+                    )
+                return result, None
+
+            except Exception as e:
+                async with lock:
+                    completed_count += 1
+                    print(f"[{completed_count}/{len(todo)}] {unique_id} ERROR: {e}", flush=True)
+                return None, {"unique_id": unique_id, "error": str(e)}
+
+    # Launch all tasks, bounded by semaphore
+    tasks = [process_one(i, entry) for i, entry in enumerate(todo)]
+    outcomes = await asyncio.gather(*tasks)
+
+    for result, error in outcomes:
+        if result is not None:
             results.append(result)
-            inf = result["inference"]
-            print(
-                f"OK  sqm={inf['living_room_sqm']}  "
-                f"spacious={inf['is_spacious_enough']}  "
-                f"hosting={inf['hosting_layout']}  "
-                f"office={inf['office_separation']}"
-            )
-
-        except Exception as e:
-            print(f"ERROR: {e}")
-            errors.append({"unique_id": unique_id, "error": str(e)})
-
-        # Rate limit
-        if i < len(ground_truth) - 1:
-            await asyncio.sleep(DELAY_BETWEEN_CALLS)
+        if error is not None:
+            errors.append(error)
 
     elapsed = time.time() - start_time
+    new_count = len(todo)
+    new_ok = sum(1 for r, e in outcomes if r is not None)
+    new_err = sum(1 for r, e in outcomes if e is not None)
     print(f"\n{'=' * 60}")
-    print(f"Completed: {len(results)}/{len(ground_truth)} ({len(errors)} errors)")
-    print(f"Time: {elapsed:.1f}s ({elapsed / max(len(results), 1):.1f}s/property)")
+    print(f"This run: {new_ok}/{new_count} OK, {new_err} errors in {elapsed:.1f}s")
+    if new_ok > 0:
+        print(f"Speed: {elapsed / new_ok:.1f}s/property (wall clock)")
+    print(f"Total results: {len(results)} ({len(errors)} errors)")
 
-    # Save results
-    suffix = ""
-    if prompt_variant:
-        suffix += f"_{prompt_variant}"
-    if max_gallery:
-        suffix += f"_gallery{max_gallery}"
-
-    out_path = DATA_DIR / f"inference_results{suffix}.json"
     output = {
         "config": {
             "max_gallery": max_gallery,
             "prompt_variant": prompt_variant,
+            "concurrency": concurrency,
             "total_properties": len(ground_truth),
             "successful": len(results),
             "errors": len(errors),
@@ -333,6 +390,17 @@ def main() -> None:
         choices=list(PROMPT_VARIANTS.keys()),
         help="Test alternate prompt text",
     )
+    parser.add_argument(
+        "--concurrency",
+        type=int,
+        default=1,
+        help="Number of parallel API calls (default: 1)",
+    )
+    parser.add_argument(
+        "--resume",
+        action="store_true",
+        help="Resume from existing results file, skipping completed properties",
+    )
     args = parser.parse_args()
 
     db_path = str(Path(args.db).resolve()) if not Path(args.db).is_absolute() else args.db
@@ -344,7 +412,14 @@ def main() -> None:
             print(f"Error: Database not found at {db_path}", file=sys.stderr)
             raise SystemExit(1)
 
-    asyncio.run(run(db_path, limit=args.limit, max_gallery=args.max_gallery, prompt_variant=args.prompt_variant))
+    asyncio.run(run(
+        db_path,
+        limit=args.limit,
+        max_gallery=args.max_gallery,
+        prompt_variant=args.prompt_variant,
+        concurrency=args.concurrency,
+        resume=args.resume,
+    ))
 
 
 if __name__ == "__main__":

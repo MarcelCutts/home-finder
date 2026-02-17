@@ -149,7 +149,7 @@ def default_search_criteria() -> SearchCriteria:
     """Default search criteria matching the plan requirements."""
     return SearchCriteria(
         min_price=1800,
-        max_price=2200,
+        max_price=2500,
         min_bedrooms=1,
         max_bedrooms=2,
         destination_postcode="N1 5AA",

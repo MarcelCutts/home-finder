@@ -126,10 +126,14 @@ class OpenRentScraper(BaseScraper):
         async def delay() -> None:
             await asyncio.sleep(current_delay)
 
+        # OpenRent has no "newest first" sort option (sortType only supports
+        # 0=Distance, 1=Price↑, 2=Price↓). Results default to distance order,
+        # so the early-stop assumption (all-known page ⇒ everything after is
+        # older) doesn't hold. Disable early-stop by not passing known_source_ids.
         all_properties = await self._paginate(
             fetch_page,
             max_pages=self.MAX_PAGES,
-            known_source_ids=known_source_ids,
+            known_source_ids=None,
             max_results=max_results,
             page_delay=delay,
         )
@@ -186,7 +190,6 @@ class OpenRentScraper(BaseScraper):
         if not include_let_agreed:
             params.append("isLive=true")
 
-        params.append("sortType=3")
         params.append(f"within={self.SEARCH_RADIUS_KM}")
 
         return f"{self.BASE_URL}/properties-to-rent/{area_slug}?{'&'.join(params)}"
