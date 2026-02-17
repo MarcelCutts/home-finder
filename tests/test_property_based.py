@@ -17,6 +17,8 @@ from home_finder.filters.scoring import (
     haversine_distance,
     is_full_postcode,
 )
+from pydantic import HttpUrl
+
 from home_finder.models import Property, PropertySource
 from home_finder.utils.address import extract_outcode, is_outcode, normalize_street_name
 
@@ -96,7 +98,7 @@ class TestGraduatedCoordinateScoreProperties:
         prop = Property(
             source=PropertySource.OPENRENT,
             source_id="test",
-            url="https://example.com/1",
+            url=HttpUrl("https://example.com/1"),
             title="Test",
             price_pcm=1800,
             bedrooms=1,
@@ -113,7 +115,7 @@ class TestGraduatedCoordinateScoreProperties:
         prop1 = Property(
             source=PropertySource.OPENRENT,
             source_id="a",
-            url="https://example.com/a",
+            url=HttpUrl("https://example.com/a"),
             title="A",
             price_pcm=1800,
             bedrooms=1,
@@ -124,7 +126,7 @@ class TestGraduatedCoordinateScoreProperties:
         prop2 = Property(
             source=PropertySource.ZOOPLA,
             source_id="b",
-            url="https://example.com/b",
+            url=HttpUrl("https://example.com/b"),
             title="B",
             price_pcm=1800,
             bedrooms=1,
@@ -139,7 +141,7 @@ class TestGraduatedCoordinateScoreProperties:
         prop1 = Property(
             source=PropertySource.OPENRENT,
             source_id="a",
-            url="https://example.com/a",
+            url=HttpUrl("https://example.com/a"),
             title="A",
             price_pcm=1800,
             bedrooms=1,
@@ -150,7 +152,7 @@ class TestGraduatedCoordinateScoreProperties:
         prop2 = Property(
             source=PropertySource.ZOOPLA,
             source_id="b",
-            url="https://example.com/b",
+            url=HttpUrl("https://example.com/b"),
             title="B",
             price_pcm=1800,
             bedrooms=1,
@@ -165,7 +167,7 @@ class TestGraduatedCoordinateScoreProperties:
         prop_with = Property(
             source=PropertySource.OPENRENT,
             source_id="a",
-            url="https://example.com/a",
+            url=HttpUrl("https://example.com/a"),
             title="A",
             price_pcm=1800,
             bedrooms=1,
@@ -176,7 +178,7 @@ class TestGraduatedCoordinateScoreProperties:
         prop_without = Property(
             source=PropertySource.ZOOPLA,
             source_id="b",
-            url="https://example.com/b",
+            url=HttpUrl("https://example.com/b"),
             title="B",
             price_pcm=1800,
             bedrooms=1,
@@ -312,7 +314,7 @@ class TestIsOutcodeProperties:
     def test_valid_outcodes_recognized(self, outcode: str) -> None:
         assert is_outcode(outcode) is True
 
-    @given(st.text(alphabet=st.characters(whitelist_categories=("Ll",)), min_size=5, max_size=20))
+    @given(st.text(alphabet=st.characters(whitelist_categories=("Ll",)), min_size=5, max_size=20))  # type: ignore[arg-type]
     def test_lowercase_words_not_outcodes(self, word: str) -> None:
         """Long lowercase-only strings should not be outcodes."""
         assert is_outcode(word) is False
@@ -356,7 +358,7 @@ class TestCalculateMatchScoreProperties:
         return Property(
             source=source,
             source_id=source_id,
-            url=f"https://example.com/{source_id}",
+            url=HttpUrl(f"https://example.com/{source_id}"),
             title="Test",
             price_pcm=price,
             bedrooms=bedrooms,

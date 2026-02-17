@@ -1,5 +1,6 @@
 """Tests for PIL-based floorplan detection."""
 
+from collections.abc import Callable
 from io import BytesIO
 
 from PIL import Image, ImageDraw
@@ -11,7 +12,7 @@ def _make_image_bytes(
     *,
     size: tuple[int, int] = (400, 300),
     bg_color: tuple[int, int, int] = (255, 255, 255),
-    draw_fn: object = None,
+    draw_fn: Callable[[Image.Image], None] | None = None,
     fmt: str = "JPEG",
 ) -> bytes:
     """Create a test image and return bytes."""
@@ -67,6 +68,7 @@ def _draw_white_kitchen(img: Image.Image) -> None:
     rng = random.Random(42)  # Deterministic for reproducibility
     w, h = img.size
     pixels = img.load()
+    assert pixels is not None
     # Build a photo-like image pixel by pixel: white kitchen with lighting gradient
     # and per-pixel noise to simulate camera sensor noise and surface texture
     for y in range(h):

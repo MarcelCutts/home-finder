@@ -30,6 +30,7 @@ class TestBuildInlineKeyboardWithWebUrl:
         all_buttons = [btn for row in keyboard.inline_keyboard for btn in row]
         assert all_buttons[0].text == "Details"
         assert all_buttons[0].web_app is None
+        assert all_buttons[0].url is not None
         assert "/property/" in all_buttons[0].url
 
     def test_without_web_base_url_no_details_button(
@@ -59,6 +60,7 @@ class TestBuildInlineKeyboardWithWebUrl:
         )
         all_buttons = [btn for row in keyboard.inline_keyboard for btn in row]
         # URL should not have double slashes
+        assert all_buttons[0].web_app is not None
         assert "//property" not in all_buttons[0].web_app.url
 
     def test_map_button_present_with_coords(self, sample_merged_property: MergedProperty) -> None:

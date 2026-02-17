@@ -81,6 +81,7 @@ exclude = ["experiments/", "mutants/"]
 [[tool.mypy.overrides]]
 module = ["tests.*", "tests.*.*"]
 disallow_untyped_defs = false
+disallow_incomplete_defs = false
 
 [[tool.mypy.overrides]]
 module = "scripts.*"

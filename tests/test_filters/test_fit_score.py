@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from home_finder.filters.fit_score import (
     WEIGHTS,
     _score_hosting,
@@ -16,9 +18,9 @@ from home_finder.filters.fit_score import (
 # ── Helpers ────────────────────────────────────────────────────────────────────
 
 
-def _full_analysis(**overrides: object) -> dict:
+def _full_analysis(**overrides: object) -> dict[str, Any]:
     """Build a realistic analysis_json dict with sensible defaults."""
-    base: dict = {
+    base: dict[str, Any] = {
         "kitchen": {
             "overall_quality": "decent",
             "hob_type": "gas",
@@ -442,7 +444,11 @@ class TestEdgeCases:
         shared = _full_analysis(
             bedroom={"office_separation": "shared_space", "can_fit_desk": "yes"}
         )
-        assert compute_fit_score(dedicated, 2) > compute_fit_score(shared, 2)
+        dedicated_score = compute_fit_score(dedicated, 2)
+        shared_score = compute_fit_score(shared, 2)
+        assert dedicated_score is not None
+        assert shared_score is not None
+        assert dedicated_score > shared_score
 
     def test_fttp_broadband_boosts_workspace(self):
         """FTTP broadband adds to workspace score."""
@@ -452,7 +458,11 @@ class TestEdgeCases:
         unknown = _full_analysis(
             listing_extraction={"property_type": "victorian", "broadband_type": "unknown"}
         )
-        assert compute_fit_score(fttp, 2) > compute_fit_score(unknown, 2)
+        fttp_score = compute_fit_score(fttp, 2)
+        unknown_score = compute_fit_score(unknown, 2)
+        assert fttp_score is not None
+        assert unknown_score is not None
+        assert fttp_score > unknown_score
 
     def test_excellent_hosting_layout_boosts_hosting(self):
         """Excellent hosting layout scores higher than poor."""
@@ -462,7 +472,11 @@ class TestEdgeCases:
         poor = _full_analysis(
             space={"is_spacious_enough": True, "living_room_sqm": 20, "hosting_layout": "poor"}
         )
-        assert compute_fit_score(excellent, 2) > compute_fit_score(poor, 2)
+        excellent_score = compute_fit_score(excellent, 2)
+        poor_score = compute_fit_score(poor, 2)
+        assert excellent_score is not None
+        assert poor_score is not None
+        assert excellent_score > poor_score
 
     def test_high_area_tolerance_boosts_hosting(self):
         """High area hosting tolerance should boost the hosting dimension."""
@@ -505,7 +519,11 @@ class TestEdgeCases:
                 "hosting_noise_risk": "high",
             }
         )
-        assert compute_fit_score(low, 2) > compute_fit_score(high, 2)
+        low_score = compute_fit_score(low, 2)
+        high_score = compute_fit_score(high, 2)
+        assert low_score is not None
+        assert high_score is not None
+        assert low_score > high_score
 
     def test_unknown_new_fields_still_produce_score(self):
         """Properties with unknown new fields produce a valid score."""
@@ -667,7 +685,7 @@ class TestFactorTags:
 
     def test_kitchen_factors_unknown_appliances(self):
         """Kitchen with no appliance data shows unknown state."""
-        analysis = {"kitchen": {}}
+        analysis: dict[str, Any] = {"kitchen": {}}
         result = _score_kitchen(analysis, 2)
         states = {f["label"]: f["state"] for f in result.factors}
         assert "Dishwasher" in states
@@ -711,9 +729,9 @@ class TestFactorTags:
 # ── Hosting scorer (direct unit tests) ────────────────────────────────────────
 
 
-def _hosting_analysis(**overrides: object) -> dict:
+def _hosting_analysis(**overrides: object) -> dict[str, Any]:
     """Build a minimal analysis dict for hosting scorer testing."""
-    base: dict = {
+    base: dict[str, Any] = {
         "space": {},
         "light_space": {},
         "outdoor_space": {},
@@ -863,9 +881,9 @@ class TestHostingScorer:
 # ── Vibe scorer (multi-cluster) ──────────────────────────────────────────────
 
 
-def _vibe_analysis(**overrides: object) -> dict:
+def _vibe_analysis(**overrides: object) -> dict[str, Any]:
     """Build a minimal analysis dict for vibe scorer testing."""
-    base: dict = {
+    base: dict[str, Any] = {
         "listing_extraction": {"property_type": "unknown"},
         "light_space": {},
         "flooring_noise": {},

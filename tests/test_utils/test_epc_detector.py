@@ -1,5 +1,6 @@
 """Tests for PIL-based EPC chart detection."""
 
+from collections.abc import Callable
 from io import BytesIO
 
 from PIL import Image, ImageDraw
@@ -11,7 +12,7 @@ def _make_image_bytes(
     *,
     size: tuple[int, int] = (400, 300),
     bg_color: tuple[int, int, int] = (255, 255, 255),
-    draw_fn: object = None,
+    draw_fn: Callable[[Image.Image], None] | None = None,
     fmt: str = "JPEG",
 ) -> bytes:
     """Create a test image and return bytes."""
@@ -67,9 +68,10 @@ def _draw_colorful_photo(img: Image.Image) -> None:
     # Add pixel noise to push entropy above 5.5 (like real photos)
     rng = random.Random(42)
     pixels = img.load()
+    assert pixels is not None
     for y in range(h):
         for x in range(w):
-            r, g, b = pixels[x, y]
+            r, g, b = pixels[x, y]  # type: ignore[misc]
             n = rng.randint(-20, 20)
             pixels[x, y] = (
                 max(0, min(255, r + n)),

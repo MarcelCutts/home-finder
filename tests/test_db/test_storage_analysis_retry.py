@@ -83,6 +83,7 @@ class TestSavePreAnalysisProperties:
             (merged.unique_id,),
         )
         row = await cursor.fetchone()
+        assert row is not None
         assert row["commute_minutes"] == 15
         assert row["transport_mode"] == "cycling"
 
@@ -125,6 +126,7 @@ class TestSavePreAnalysisProperties:
             (NotificationStatus.PENDING_ANALYSIS.value,),
         )
         row = await cursor.fetchone()
+        assert row is not None
         assert row[0] == 3
 
     @pytest.mark.asyncio
@@ -150,6 +152,7 @@ class TestSavePreAnalysisProperties:
             (merged.unique_id,),
         )
         row = await cursor.fetchone()
+        assert row is not None
         assert row["notification_status"] == NotificationStatus.PENDING_ANALYSIS.value
 
 
@@ -181,6 +184,7 @@ class TestSavePreAnalysisProperties:
             (enriched.unique_id,),
         )
         row = await cursor.fetchone()
+        assert row is not None
         assert row["commute_minutes"] == 12
         assert row["transport_mode"] == "cycling"
         assert row["latitude"] == 51.5465
@@ -208,6 +212,7 @@ class TestSavePreAnalysisProperties:
             (merged.unique_id,),
         )
         row = await cursor.fetchone()
+        assert row is not None
         assert row["commute_minutes"] == 15
         assert row["transport_mode"] == "cycling"
 
@@ -328,6 +333,7 @@ class TestCompleteAnalysis:
             (merged.unique_id,),
         )
         row = await cursor.fetchone()
+        assert row is not None
         assert row["notification_status"] == NotificationStatus.PENDING.value
 
     @pytest.mark.asyncio
@@ -365,6 +371,7 @@ class TestCompleteAnalysis:
             (merged.unique_id,),
         )
         row = await cursor.fetchone()
+        assert row is not None
         assert row["notification_status"] == NotificationStatus.PENDING.value
 
     @pytest.mark.asyncio
@@ -453,6 +460,7 @@ class TestResetFailedAnalyses:
             (merged.unique_id,),
         )
         row = await cursor.fetchone()
+        assert row is not None
         assert row["notification_status"] == NotificationStatus.PENDING_ANALYSIS.value
 
         # Quality analysis should be deleted

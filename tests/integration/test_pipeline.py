@@ -433,6 +433,7 @@ class TestCrossPlatformPipeline:
             (openrent_prop.unique_id,),
         )
         row = await cursor.fetchone()
+        assert row is not None
         sources = json.loads(row["sources"])
         assert "openrent" in sources
         assert "zoopla" in sources

@@ -42,7 +42,9 @@ class TestRightmoveSortVerification:
         assert sort_select.input_value() == "6"
 
         selected_option = sort_select.locator("option[selected], option:checked")
-        assert "newest" in selected_option.text_content().lower()
+        selected_text = selected_option.text_content()
+        assert selected_text is not None
+        assert "newest" in selected_text.lower()
 
 
 # ---------------------------------------------------------------------------
@@ -73,7 +75,8 @@ class TestOpenRentSortVerification:
         # Look for any element containing sort-related text
         sort_container = page.locator("[id*='sort'], [class*='sort']").first
         if sort_container.is_visible(timeout=10_000):
-            sort_text = sort_container.text_content().lower()
+            raw_text = sort_container.text_content()
+            sort_text = raw_text.lower() if raw_text is not None else ""
         else:
             # Fall back to full page text
             sort_text = page.content().lower()
@@ -111,10 +114,14 @@ class TestOnTheMarketSortVerification:
         )
 
         if sort_button.first.is_visible(timeout=15_000):
-            sort_text = sort_button.first.text_content().lower()
+            raw_text = sort_button.first.text_content()
+            assert raw_text is not None
+            sort_text = raw_text.lower()
         else:
             # Fall back: look for any element mentioning the sort state
-            sort_text = page.locator("text=/sort/i").first.text_content().lower()
+            raw_text = page.locator("text=/sort/i").first.text_content()
+            assert raw_text is not None
+            sort_text = raw_text.lower()
 
         assert "recent" in sort_text, (
             f"Expected 'Recent' sort selection, got: {sort_text!r}"
@@ -146,11 +153,15 @@ class TestZooplaSortVerification:
         if sort_select.is_visible(timeout=15_000):
             assert sort_select.input_value() == "newest_listings"
             selected_option = sort_select.locator("option[selected], option:checked")
-            assert "recent" in selected_option.text_content().lower()
+            selected_text = selected_option.text_content()
+            assert selected_text is not None
+            assert "recent" in selected_text.lower()
         else:
             # Zoopla may use a custom dropdown instead of <select>
             sort_el = page.locator("[data-testid*='sort'], [class*='sort']")
-            sort_text = sort_el.first.text_content().lower()
+            raw_text = sort_el.first.text_content()
+            assert raw_text is not None
+            sort_text = raw_text.lower()
             assert "recent" in sort_text, (
                 f"Expected 'Most recent' sort, got: {sort_text!r}"
             )

@@ -506,9 +506,10 @@ def _make_photo_bytes() -> bytes:
     draw.rectangle([200, 120, 250, 160], fill=(220, 20, 60))
     # Add pixel noise to push entropy above 5.5 (like real photos)
     pixels = img.load()
+    assert pixels is not None
     for y in range(300):
         for x in range(400):
-            r, g, b = pixels[x, y]
+            r, g, b = pixels[x, y]  # type: ignore[misc]
             n = rng.randint(-20, 20)
             pixels[x, y] = (
                 max(0, min(255, r + n)),
@@ -851,11 +852,8 @@ class TestDetectEpcInGallery:
             else:
                 save_image_bytes(path, _make_photo_bytes())
 
-        epc, remaining = _detect_epc_in_gallery(images, unique_id, data_dir)
+        remaining = _detect_epc_in_gallery(images, unique_id, data_dir)
 
-        assert epc is not None
-        assert epc.image_type == "epc"
-        assert str(epc.url) == "https://example.com/img0.jpg"
         assert len(remaining) == 2
 
     def test_no_epc_in_gallery(self, tmp_path: Path) -> None:
@@ -876,9 +874,8 @@ class TestDetectEpcInGallery:
             path = get_cached_image_path(data_dir, unique_id, str(img.url), "gallery", idx)
             save_image_bytes(path, _make_photo_bytes())
 
-        epc, remaining = _detect_epc_in_gallery(images, unique_id, data_dir)
+        remaining = _detect_epc_in_gallery(images, unique_id, data_dir)
 
-        assert epc is None
         assert len(remaining) == 2
 
     def test_removes_multiple_epcs(self, tmp_path: Path) -> None:
@@ -903,10 +900,8 @@ class TestDetectEpcInGallery:
             else:
                 save_image_bytes(path, _make_photo_bytes())
 
-        epc, remaining = _detect_epc_in_gallery(images, unique_id, data_dir)
+        remaining = _detect_epc_in_gallery(images, unique_id, data_dir)
 
-        assert epc is not None
-        assert str(epc.url) == "https://example.com/img0.jpg"  # first detected
         assert len(remaining) == 2  # both EPCs removed
 
 
@@ -946,11 +941,7 @@ class TestEnrichSingleEpcDetection:
         assert len(result.enriched) == 1
         enriched = result.enriched[0]
 
-        assert enriched.epc_image is not None
-        assert enriched.epc_image.image_type == "epc"
-        assert "epc.png" in str(enriched.epc_image.url)
-
-        # Gallery should have only the 2 photos remaining
+        # Gallery should have only the 2 photos remaining (EPC removed)
         assert len(enriched.images) == 2
         assert all(img.image_type == "gallery" for img in enriched.images)
 

@@ -16,12 +16,12 @@ class TestPropertyFilterValidation:
         assert f.tags == []
 
     def test_str_to_int_coercion_prices(self) -> None:
-        f = PropertyFilter(min_price="1500", max_price="2500")
+        f = PropertyFilter(min_price="1500", max_price="2500")  # type: ignore[arg-type]
         assert f.min_price == 1500
         assert f.max_price == 2500
 
     def test_invalid_price_becomes_none(self) -> None:
-        f = PropertyFilter(min_price="abc", max_price="")
+        f = PropertyFilter(min_price="abc", max_price="")  # type: ignore[arg-type]
         assert f.min_price is None
         assert f.max_price is None
 
@@ -31,22 +31,22 @@ class TestPropertyFilterValidation:
         assert f.max_price == 3000
 
     def test_bedrooms_clamped(self) -> None:
-        assert PropertyFilter(bedrooms="0").bedrooms == 0
-        assert PropertyFilter(bedrooms="-1").bedrooms == 0
-        assert PropertyFilter(bedrooms="10").bedrooms == 10
-        assert PropertyFilter(bedrooms="99").bedrooms == 10
+        assert PropertyFilter(bedrooms="0").bedrooms == 0  # type: ignore[arg-type]
+        assert PropertyFilter(bedrooms="-1").bedrooms == 0  # type: ignore[arg-type]
+        assert PropertyFilter(bedrooms="10").bedrooms == 10  # type: ignore[arg-type]
+        assert PropertyFilter(bedrooms="99").bedrooms == 10  # type: ignore[arg-type]
 
     def test_bedrooms_invalid_becomes_none(self) -> None:
-        assert PropertyFilter(bedrooms="abc").bedrooms is None
+        assert PropertyFilter(bedrooms="abc").bedrooms is None  # type: ignore[arg-type]
 
     def test_min_rating_clamped(self) -> None:
-        assert PropertyFilter(min_rating="1").min_rating == 1
-        assert PropertyFilter(min_rating="0").min_rating == 1
-        assert PropertyFilter(min_rating="5").min_rating == 5
-        assert PropertyFilter(min_rating="10").min_rating == 5
+        assert PropertyFilter(min_rating="1").min_rating == 1  # type: ignore[arg-type]
+        assert PropertyFilter(min_rating="0").min_rating == 1  # type: ignore[arg-type]
+        assert PropertyFilter(min_rating="5").min_rating == 5  # type: ignore[arg-type]
+        assert PropertyFilter(min_rating="10").min_rating == 5  # type: ignore[arg-type]
 
     def test_min_rating_invalid_becomes_none(self) -> None:
-        assert PropertyFilter(min_rating="abc").min_rating is None
+        assert PropertyFilter(min_rating="abc").min_rating is None  # type: ignore[arg-type]
 
     def test_area_stripped(self) -> None:
         assert PropertyFilter(area="  E8  ").area == "E8"
@@ -123,7 +123,7 @@ class TestPropertyFilterValidation:
         assert PropertyFilter(tags=[]).tags == []
 
     def test_tags_none_becomes_empty(self) -> None:
-        assert PropertyFilter(tags=None).tags == []
+        assert PropertyFilter(tags=None).tags == []  # type: ignore[arg-type]
 
 
 class TestActiveFilterChips:

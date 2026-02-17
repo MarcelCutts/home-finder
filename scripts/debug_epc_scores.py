@@ -13,9 +13,9 @@ from PIL import Image, ImageStat
 
 def debug_image(path: Path) -> None:
     img_bytes = path.read_bytes()
-    img = Image.open(BytesIO(img_bytes))
-    img.thumbnail((256, 256))
-    img = img.convert("RGB")
+    raw_img = Image.open(BytesIO(img_bytes))
+    raw_img.thumbnail((256, 256))
+    img = raw_img.convert("RGB")
     width, height = img.size
     total_pixels = width * height
 

@@ -4,12 +4,13 @@ Tests the pipeline stages with injected fakes — mock scrapers, in-memory
 storage, and mock notifiers. Focuses on wiring correctness and stage ordering.
 """
 
-from collections.abc import Callable
+from collections.abc import AsyncGenerator, Callable
 from typing import Any
 from unittest.mock import AsyncMock, patch
 
 import pytest
 import pytest_asyncio
+from pydantic import SecretStr
 
 from home_finder.config import Settings
 from home_finder.db import PropertyStorage
@@ -36,17 +37,17 @@ from home_finder.models import (
 
 
 @pytest_asyncio.fixture
-async def storage() -> PropertyStorage:
+async def storage() -> AsyncGenerator[PropertyStorage, None]:
     s = PropertyStorage(":memory:")
     await s.initialize()
-    yield s  # type: ignore[misc]
+    yield s
     await s.close()
 
 
 @pytest.fixture
 def test_settings() -> Settings:
     return Settings(
-        telegram_bot_token="fake:test-token",
+        telegram_bot_token=SecretStr("fake:test-token"),
         telegram_chat_id=0,
         database_path=":memory:",
         search_areas="e8",
@@ -57,7 +58,7 @@ def test_settings() -> Settings:
         enable_quality_filter=False,
         require_floorplan=False,
         traveltime_app_id="",
-        traveltime_api_key="",
+        traveltime_api_key=SecretStr(""),
     )
 
 
@@ -147,13 +148,13 @@ class TestRunQualityAndSave:
         props = [make_merged_property(price_pcm=1800 + i * 10) for i in range(3)]
         pre = PreAnalysisResult(merged_to_process=props, commute_lookup={})
         settings = Settings(
-            telegram_bot_token="fake:token",
+            telegram_bot_token=SecretStr("fake:token"),
             telegram_chat_id=0,
             database_path=":memory:",
             search_areas="e8",
             enable_quality_filter=False,
             traveltime_app_id="",
-            traveltime_api_key="",
+            traveltime_api_key=SecretStr(""),
         )
 
         callback = AsyncMock()
@@ -176,16 +177,16 @@ class TestRunQualityAndSave:
             commute_lookup={merged.canonical.unique_id: commute},
         )
         settings = Settings(
-            telegram_bot_token="fake:token",
+            telegram_bot_token=SecretStr("fake:token"),
             telegram_chat_id=0,
             database_path=":memory:",
             search_areas="e8",
             enable_quality_filter=False,
             traveltime_app_id="",
-            traveltime_api_key="",
+            traveltime_api_key=SecretStr(""),
         )
 
-        received: list[tuple] = []
+        received: list[tuple[Any, Any, Any]] = []
 
         async def capture(m: Any, c: Any, q: Any) -> None:
             received.append((m, c, q))
@@ -209,13 +210,13 @@ class TestRunQualityAndSave:
         pre = PreAnalysisResult(merged_to_process=props, commute_lookup={})
 
         settings = Settings(
-            telegram_bot_token="fake:token",
+            telegram_bot_token=SecretStr("fake:token"),
             telegram_chat_id=0,
             database_path=":memory:",
             search_areas="e8",
             enable_quality_filter=False,
             traveltime_app_id="",
-            traveltime_api_key="",
+            traveltime_api_key=SecretStr(""),
         )
 
         callback = AsyncMock()
@@ -604,7 +605,7 @@ class TestPreAnalysisPipeline:
         make_property: Callable[..., Property],
     ) -> None:
         settings = Settings(
-            telegram_bot_token="fake:token",
+            telegram_bot_token=SecretStr("fake:token"),
             telegram_chat_id=0,
             database_path=":memory:",
             search_areas="e8",
@@ -615,7 +616,7 @@ class TestPreAnalysisPipeline:
             require_floorplan=True,
             enable_quality_filter=False,
             traveltime_app_id="",
-            traveltime_api_key="",
+            traveltime_api_key=SecretStr(""),
         )
         # Use RIGHTMOVE (not OpenRent) since OpenRent is exempt from floorplan requirement
         prop = make_property(source=PropertySource.RIGHTMOVE, source_id="no-fp")

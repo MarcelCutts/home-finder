@@ -10,7 +10,7 @@ from contextlib import contextmanager
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from pydantic import HttpUrl
+from pydantic import HttpUrl, SecretStr
 
 from home_finder.config import Settings
 from home_finder.db import PropertyStorage
@@ -164,7 +164,7 @@ def _pipeline_mocks(
 def pipeline_settings() -> Settings:
     """Settings with quality analysis enabled."""
     return Settings(
-        telegram_bot_token="fake:test-token",
+        telegram_bot_token=SecretStr("fake:test-token"),
         telegram_chat_id=0,
         database_path=":memory:",
         search_areas="e8",
@@ -174,7 +174,7 @@ def pipeline_settings() -> Settings:
         max_bedrooms=2,
         enable_quality_filter=True,
         require_floorplan=False,
-        anthropic_api_key="test-anthropic-key",
+        anthropic_api_key=SecretStr("test-anthropic-key"),
     )
 
 
@@ -413,7 +413,7 @@ class TestRunPipelineE2E:
     ):
         """Quality filter disabled: properties saved and notified without analysis."""
         settings_no_quality = Settings(
-            telegram_bot_token="fake:test-token",
+            telegram_bot_token=SecretStr("fake:test-token"),
             telegram_chat_id=0,
             database_path=":memory:",
             search_areas="e8",
@@ -423,7 +423,7 @@ class TestRunPipelineE2E:
             max_bedrooms=2,
             enable_quality_filter=False,
             require_floorplan=False,
-            anthropic_api_key="",
+            anthropic_api_key=SecretStr(""),
         )
 
         props = [

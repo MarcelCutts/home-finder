@@ -73,8 +73,8 @@ def _build_dummy_analysis() -> PropertyQualityAnalysis:
         kitchen=KitchenAnalysis(
             overall_quality="modern",
             hob_type="gas",
-            has_dishwasher=True,
-            has_washing_machine=True,
+            has_dishwasher="yes",
+            has_washing_machine="yes",
             notes="Recently refurbished with quartz worktops",
         ),
         condition=ConditionAnalysis(

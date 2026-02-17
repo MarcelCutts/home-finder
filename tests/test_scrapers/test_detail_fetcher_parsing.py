@@ -5,6 +5,7 @@ HTTP calls are mocked to return fixture HTML; assertions verify parsing correctn
 """
 
 from pathlib import Path
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -86,8 +87,8 @@ class TestFindDictWithKey:
 
     def test_respects_depth_limit(self) -> None:
         # Build a deeply nested structure
-        data: dict = {"level": 0}
-        current = data
+        data: dict[str, Any] = {"level": 0}
+        current: dict[str, Any] = data
         for i in range(15):
             current["child"] = {"level": i + 1}
             current = current["child"]

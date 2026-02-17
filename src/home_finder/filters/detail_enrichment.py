@@ -90,14 +90,13 @@ def _detect_epc_in_gallery(
     images: list[PropertyImage],
     unique_id: str,
     data_dir: str,
-) -> tuple[PropertyImage | None, list[PropertyImage]]:
-    """Try to detect EPC charts among gallery images using PIL heuristics.
+) -> list[PropertyImage]:
+    """Detect and remove EPC charts from gallery images using PIL heuristics.
 
     Iterates gallery images in forward order (EPCs are often first),
     reads cached bytes from disk, and runs the EPC detector.
     Removes **all** detected EPCs (there may be both energy efficiency
-    and environmental impact charts), returning only the first as the
-    representative EPC image.
+    and environmental impact charts).
 
     Args:
         images: Gallery images to check.
@@ -105,9 +104,8 @@ def _detect_epc_in_gallery(
         data_dir: Data directory for image cache.
 
     Returns:
-        Tuple of (first_detected_epc_image or None, remaining_gallery_images).
+        Gallery images with EPC charts removed.
     """
-    first_epc: PropertyImage | None = None
     epc_indices: set[int] = set()
 
     for idx, img in enumerate(images):
@@ -125,15 +123,8 @@ def _detect_epc_in_gallery(
                 confidence=confidence,
             )
             epc_indices.add(idx)
-            if first_epc is None:
-                first_epc = PropertyImage(
-                    url=img.url,
-                    source=img.source,
-                    image_type="epc",
-                )
 
-    remaining = [im for j, im in enumerate(images) if j not in epc_indices]
-    return first_epc, remaining
+    return [im for j, im in enumerate(images) if j not in epc_indices]
 
 
 async def _enrich_single(
@@ -242,9 +233,8 @@ async def _enrich_single(
                         canon_updates["postcode"] = detail_data.postcode
 
         # Detect and remove EPC charts from gallery before floorplan detection
-        epc_image: PropertyImage | None = None
         if data_dir and all_images:
-            epc_image, all_images = await asyncio.to_thread(
+            all_images = await asyncio.to_thread(
                 _detect_epc_in_gallery, all_images, merged.unique_id, data_dir
             )
 
@@ -276,7 +266,6 @@ async def _enrich_single(
             source_urls=merged.source_urls,
             images=tuple(all_images),
             floorplan=floorplan_image,
-            epc_image=epc_image,
             min_price=merged.min_price,
             max_price=merged.max_price,
             descriptions=merged.descriptions,
@@ -288,7 +277,6 @@ async def _enrich_single(
             sources=[s.value for s in merged.sources],
             gallery_count=len(all_images),
             has_floorplan=floorplan_image is not None,
-            has_epc=epc_image is not None,
         )
 
         return updated
@@ -313,7 +301,6 @@ async def _load_cached_property(
     images, db_prop = await storage.get_property_images_and_row(merged.unique_id)
     gallery = tuple(img for img in images if img.image_type == "gallery")
     floorplan = next((img for img in images if img.image_type == "floorplan"), None)
-    epc_image = next((img for img in images if img.image_type == "epc"), None)
 
     # Backfill coordinates/postcode from DB if in-memory canonical lacks them
     canonical = merged.canonical
@@ -337,7 +324,6 @@ async def _load_cached_property(
         source_urls=merged.source_urls,
         images=gallery,
         floorplan=floorplan,
-        epc_image=epc_image,
         min_price=merged.min_price,
         max_price=merged.max_price,
         descriptions=merged.descriptions,

@@ -3,7 +3,7 @@
 import pytest
 from pydantic import HttpUrl
 
-from home_finder.filters.location import (
+from home_finder.filters.location import (  # type: ignore[attr-defined]
     BOROUGH_OUTCODES,
     LocationFilter,
     extract_outcode,

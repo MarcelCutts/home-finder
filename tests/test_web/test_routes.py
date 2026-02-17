@@ -8,7 +8,7 @@ import pytest
 import pytest_asyncio
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from pydantic import HttpUrl
+from pydantic import HttpUrl, SecretStr
 
 from home_finder.config import Settings
 from home_finder.db.storage import PropertyStorage
@@ -25,6 +25,7 @@ from home_finder.models import (
     PropertyImage,
     PropertyQualityAnalysis,
     PropertySource,
+    PropertyType,
     SpaceAnalysis,
     ValueAnalysis,
 )
@@ -34,7 +35,7 @@ from home_finder.utils.image_cache import (
     save_image_bytes,
     url_to_filename,
 )
-from home_finder.web.routes import _parse_optional_int, listing_age_filter, router
+from home_finder.web.routes import _parse_optional_int, listing_age_filter, router  # type: ignore[attr-defined]
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -44,7 +45,7 @@ from home_finder.web.routes import _parse_optional_int, listing_age_filter, rout
 @pytest.fixture
 def settings() -> Settings:
     return Settings(
-        telegram_bot_token="fake:token",
+        telegram_bot_token=SecretStr("fake:token"),
         telegram_chat_id=0,
         search_areas="e8,e3,n16",
         database_path=":memory:",
@@ -394,7 +395,7 @@ class TestPropertyDetail:
         await storage.save_merged_property(merged)
         await storage.save_property_images(
             merged.unique_id,
-            [PropertyImage(source=PropertySource.OPENRENT, url=img_url, image_type="gallery")],
+            [PropertyImage(source=PropertySource.OPENRENT, url=HttpUrl(img_url), image_type="gallery")],
         )
 
         # Save cached file with index 7 (not 0 as enumerate would produce)
@@ -402,7 +403,7 @@ class TestPropertyDetail:
         # data_dir is derived from database_path parent, so use a DB
         # path inside tmp_path so data_dir == str(tmp_path)
         test_settings = Settings(
-            telegram_bot_token="fake:token",
+            telegram_bot_token=SecretStr("fake:token"),
             telegram_chat_id=0,
             search_areas="e8",
             database_path=str(tmp_path / "test.db"),
@@ -485,7 +486,7 @@ class TestDetailQualityCards:
         await storage.save_merged_property(merged_a)
         await storage.save_property_images(
             merged_a.unique_id,
-            [PropertyImage(source=PropertySource.OPENRENT, url="https://example.com/fp.jpg", image_type="floorplan")],
+            [PropertyImage(source=PropertySource.OPENRENT, url=HttpUrl("https://example.com/fp.jpg"), image_type="floorplan")],
         )
         await storage.save_quality_analysis(prop_a.unique_id, base_analysis)
         resp = client.get(f"/property/{merged_a.unique_id}")
@@ -523,7 +524,7 @@ class TestCachedImages:
     def settings(self, tmp_path: Path) -> Settings:
         """Override module settings to use tmp_path for image cache."""
         return Settings(
-            telegram_bot_token="fake:token",
+            telegram_bot_token=SecretStr("fake:token"),
             telegram_chat_id=0,
             search_areas="e8",
             database_path=str(tmp_path / "properties.db"),
@@ -956,7 +957,7 @@ class TestQualityFilters:
     ) -> None:
         analysis = base_analysis.model_copy(
             update={
-                "listing_extraction": ListingExtraction(property_type="warehouse"),
+                "listing_extraction": ListingExtraction(property_type=PropertyType.WAREHOUSE),
             }
         )
         await storage.save_merged_property(merged_a)
@@ -1001,7 +1002,7 @@ class TestQualityFilters:
     ) -> None:
         analysis = base_analysis.model_copy(
             update={
-                "listing_extraction": ListingExtraction(property_type="warehouse"),
+                "listing_extraction": ListingExtraction(property_type=PropertyType.WAREHOUSE),
                 "light_space": LightSpaceAnalysis(natural_light="excellent"),
                 "outdoor_space": OutdoorSpaceAnalysis(has_balcony=True),
             }
@@ -1509,7 +1510,7 @@ class TestCostBreakdown:
         analysis = base_analysis.model_copy(
             update={
                 "listing_extraction": ListingExtraction(
-                    property_type="victorian",
+                    property_type=PropertyType.VICTORIAN,
                     epc_rating="D",
                     council_tax_band="C",
                 ),
@@ -1565,7 +1566,7 @@ class TestAcousticCard:
         """E8 property should show Sound info in compact area summary."""
         analysis = base_analysis.model_copy(
             update={
-                "listing_extraction": ListingExtraction(property_type="victorian"),
+                "listing_extraction": ListingExtraction(property_type=PropertyType.VICTORIAN),
             }
         )
         await storage.save_merged_property(merged_a)
@@ -1619,7 +1620,7 @@ class TestAcousticCard:
         """Full acoustic/noise details live on /area/{outcode}, not detail page."""
         analysis = base_analysis.model_copy(
             update={
-                "listing_extraction": ListingExtraction(property_type="victorian"),
+                "listing_extraction": ListingExtraction(property_type=PropertyType.VICTORIAN),
             }
         )
         await storage.save_merged_property(merged_a)
@@ -1809,7 +1810,7 @@ class TestHostingToleranceCard:
                     has_double_glazing="yes",
                     building_construction="solid_brick",
                 ),
-                "listing_extraction": ListingExtraction(property_type="victorian"),
+                "listing_extraction": ListingExtraction(property_type=PropertyType.VICTORIAN),
             }
         )
         await storage.save_merged_property(merged_a)

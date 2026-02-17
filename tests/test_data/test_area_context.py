@@ -9,6 +9,7 @@ from home_finder.data.area_context import (
     CREATIVE_SCENE,
     ENERGY_COSTS_MONTHLY,
     HOSTING_TOLERANCE,
+    MicroArea,
     NOISE_ENFORCEMENT,
     SERVICE_CHARGE_RANGES,
     WARD_TO_MICRO_AREA,
@@ -63,9 +64,9 @@ class TestDataLoading:
 
 class TestMicroAreaValidation:
     @pytest.fixture
-    def all_micro_areas(self) -> list[tuple[str, str, dict]]:
+    def all_micro_areas(self) -> list[tuple[str, str, MicroArea]]:
         """Collect all micro-areas as (outcode, name, data) tuples."""
-        result = []
+        result: list[tuple[str, str, MicroArea]] = []
         for outcode, entry in AREA_CONTEXT.items():
             if not isinstance(entry, dict):
                 continue
@@ -73,21 +74,21 @@ class TestMicroAreaValidation:
                 result.append((outcode, name, ma))
         return result
 
-    def test_hosting_tolerance_values(self, all_micro_areas: list) -> None:
+    def test_hosting_tolerance_values(self, all_micro_areas: list[tuple[str, str, MicroArea]]) -> None:
         for outcode, name, ma in all_micro_areas:
             if "hosting_tolerance" in ma:
                 assert ma["hosting_tolerance"] in VALID_HOSTING_VALUES, (
                     f"{outcode}/{name}: invalid hosting_tolerance '{ma['hosting_tolerance']}'"
                 )
 
-    def test_wfh_suitability_values(self, all_micro_areas: list) -> None:
+    def test_wfh_suitability_values(self, all_micro_areas: list[tuple[str, str, MicroArea]]) -> None:
         for outcode, name, ma in all_micro_areas:
             if "wfh_suitability" in ma:
                 assert ma["wfh_suitability"] in VALID_WFH_VALUES, (
                     f"{outcode}/{name}: invalid wfh_suitability '{ma['wfh_suitability']}'"
                 )
 
-    def test_micro_areas_have_required_fields(self, all_micro_areas: list) -> None:
+    def test_micro_areas_have_required_fields(self, all_micro_areas: list[tuple[str, str, MicroArea]]) -> None:
         required = {"character", "transport", "hosting_tolerance", "wfh_suitability"}
         for outcode, name, ma in all_micro_areas:
             missing = required - set(ma.keys())
@@ -363,7 +364,7 @@ class TestCreativeScene:
         for outcode, data in CREATIVE_SCENE.items():
             for field in list_fields:
                 if field in data:
-                    assert isinstance(data[field], list), f"{outcode}: {field} not a list"
+                    assert isinstance(data[field], list), f"{outcode}: {field} not a list"  # type: ignore[literal-required]
 
     def test_e8_has_venues(self) -> None:
         """E8 (Dalston/Hackney) should have multiple venues."""

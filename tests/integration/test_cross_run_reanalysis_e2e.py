@@ -12,7 +12,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 import pytest_asyncio
-from pydantic import HttpUrl
+from pydantic import HttpUrl, SecretStr
 
 from home_finder.config import Settings
 from home_finder.db import PropertyStorage
@@ -303,7 +303,7 @@ def quality_v2(make_quality_analysis: Callable[..., PropertyQualityAnalysis]):
 @pytest.fixture
 def settings_quality_on() -> Settings:
     return Settings(
-        telegram_bot_token="fake:token",
+        telegram_bot_token=SecretStr("fake:token"),
         telegram_chat_id=0,
         database_path=":memory:",
         search_areas="e8",
@@ -313,14 +313,14 @@ def settings_quality_on() -> Settings:
         max_bedrooms=2,
         enable_quality_filter=True,
         require_floorplan=False,
-        anthropic_api_key="test-key",
+        anthropic_api_key=SecretStr("test-key"),
     )
 
 
 @pytest.fixture
 def settings_quality_off() -> Settings:
     return Settings(
-        telegram_bot_token="fake:token",
+        telegram_bot_token=SecretStr("fake:token"),
         telegram_chat_id=0,
         database_path=":memory:",
         search_areas="e8",
@@ -387,6 +387,7 @@ class TestCoreReanalysisFlow:
             (anchor_prop.unique_id,),
         )
         row = await cursor.fetchone()
+        assert row is not None
         assert row["notification_status"] == "sent"
 
         # -- Drain reanalysis queue --
@@ -413,6 +414,7 @@ class TestCoreReanalysisFlow:
             (anchor_prop.unique_id,),
         )
         qa_row = await cursor.fetchone()
+        assert qa_row is not None
         assert qa_row["overall_rating"] == 5
 
         # Notification status still 'sent' (complete_reanalysis preserves it)
@@ -421,6 +423,7 @@ class TestCoreReanalysisFlow:
             (anchor_prop.unique_id,),
         )
         row = await cursor.fetchone()
+        assert row is not None
         assert row["notification_status"] == "sent"
 
     async def test_true_e2e_run_pipeline_twice(
@@ -461,7 +464,7 @@ class TestCoreReanalysisFlow:
             return [prop_z]
 
         settings = Settings(
-            telegram_bot_token="fake:token",
+            telegram_bot_token=SecretStr("fake:token"),
             telegram_chat_id=0,
             database_path=":memory:",
             search_areas="e8",
@@ -471,7 +474,7 @@ class TestCoreReanalysisFlow:
             max_bedrooms=2,
             enable_quality_filter=True,
             require_floorplan=False,
-            anthropic_api_key="test-key",
+            anthropic_api_key=SecretStr("test-key"),
         )
 
         # We need to share the DB across both pipeline calls
@@ -619,6 +622,7 @@ class TestSourceVariety:
             (anchor.unique_id,),
         )
         row = await cursor.fetchone()
+        assert row is not None
         assert row["min_price"] == 1800
         assert row["max_price"] == 1850
 
@@ -723,6 +727,7 @@ class TestDBStateEdgeCases:
             (anchor.unique_id,),
         )
         row = await cursor.fetchone()
+        assert row is not None
         assert row["min_price"] == 1800
         assert row["max_price"] == 2000
 
@@ -876,6 +881,7 @@ class TestDrainReanalysisQueue:
                 (prop.unique_id,),
             )
             qa_row = await cursor.fetchone()
+            assert qa_row is not None
             assert qa_row["overall_rating"] == 5
 
             # Notification status preserved as 'sent'
@@ -884,6 +890,7 @@ class TestDrainReanalysisQueue:
                 (prop.unique_id,),
             )
             row = await cursor.fetchone()
+            assert row is not None
             assert row["notification_status"] == "sent"
 
     async def test_partial_failure_continues(
@@ -1078,7 +1085,7 @@ class TestDryRunPath:
         )
 
         settings = Settings(
-            telegram_bot_token="fake:token",
+            telegram_bot_token=SecretStr("fake:token"),
             telegram_chat_id=0,
             database_path=":memory:",
             search_areas="e8",
@@ -1088,7 +1095,7 @@ class TestDryRunPath:
             max_bedrooms=2,
             enable_quality_filter=True,
             require_floorplan=False,
-            anthropic_api_key="test-key",
+            anthropic_api_key=SecretStr("test-key"),
         )
 
         shared_storage = PropertyStorage(":memory:")
@@ -1117,6 +1124,7 @@ class TestDryRunPath:
                 (anchor.unique_id,),
             )
             qa_row = await cursor.fetchone()
+            assert qa_row is not None
             assert qa_row["overall_rating"] == 5
 
             # Reanalysis flag cleared

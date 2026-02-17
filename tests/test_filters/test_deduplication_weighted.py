@@ -11,6 +11,8 @@ from home_finder.filters.scoring import (
     graduated_coordinate_score,
     graduated_price_score,
 )
+from pydantic import HttpUrl
+
 from home_finder.models import Property, PropertySource
 from home_finder.utils.address import extract_outcode, normalize_street_name
 
@@ -192,7 +194,7 @@ class TestCalculateMatchScore:
         return Property(
             source=PropertySource.OPENRENT,
             source_id="123",
-            url="https://openrent.com/123",
+            url=HttpUrl("https://openrent.com/123"),
             title="2 bed flat",
             price_pcm=1500,
             bedrooms=2,
@@ -261,7 +263,7 @@ class TestCalculateMatchScore:
         rightmove = Property(
             source=PropertySource.RIGHTMOVE,
             source_id="RM123",
-            url="https://rightmove.co.uk/RM123",
+            url=HttpUrl("https://rightmove.co.uk/RM123"),
             title="2 bed flat",
             price_pcm=1500,
             bedrooms=2,
@@ -284,7 +286,7 @@ class TestCalculateMatchScore:
         rightmove = Property(
             source=PropertySource.RIGHTMOVE,
             source_id="RM123",
-            url="https://rightmove.co.uk/RM123",
+            url=HttpUrl("https://rightmove.co.uk/RM123"),
             title="2 bed flat",
             price_pcm=1500,
             bedrooms=2,
@@ -343,7 +345,7 @@ class TestCalculateMatchScoreEdgeCases:
         return Property(
             source=PropertySource.OPENRENT,
             source_id="123",
-            url="https://openrent.com/123",
+            url=HttpUrl("https://openrent.com/123"),
             title="2 bed flat",
             price_pcm=1500,
             bedrooms=2,
@@ -440,7 +442,7 @@ class TestGraduatedScoring:
         prop = Property(
             source=PropertySource.OPENRENT,
             source_id="1",
-            url="https://example.com/1",
+            url=HttpUrl("https://example.com/1"),
             title="test",
             price_pcm=1000,
             bedrooms=1,
@@ -456,7 +458,7 @@ class TestGraduatedScoring:
         prop1 = Property(
             source=PropertySource.OPENRENT,
             source_id="1",
-            url="https://example.com/1",
+            url=HttpUrl("https://example.com/1"),
             title="test",
             price_pcm=1000,
             bedrooms=1,
@@ -474,7 +476,7 @@ class TestGraduatedScoring:
         prop1 = Property(
             source=PropertySource.OPENRENT,
             source_id="1",
-            url="https://example.com/1",
+            url=HttpUrl("https://example.com/1"),
             title="test",
             price_pcm=1000,
             bedrooms=1,
@@ -491,7 +493,7 @@ class TestGraduatedScoring:
         prop1 = Property(
             source=PropertySource.OPENRENT,
             source_id="1",
-            url="https://example.com/1",
+            url=HttpUrl("https://example.com/1"),
             title="test",
             price_pcm=1000,
             bedrooms=1,
@@ -532,7 +534,7 @@ class TestGraduatedScoring:
         prop1 = Property(
             source=PropertySource.OPENRENT,
             source_id="1",
-            url="https://example.com/1",
+            url=HttpUrl("https://example.com/1"),
             title="test",
             price_pcm=1000,
             bedrooms=1,
@@ -565,7 +567,7 @@ class TestGalleryImageHashDedup:
         return Property(
             source=PropertySource.ONTHEMARKET,
             source_id="18751817",
-            url="https://onthemarket.com/details/18751817",
+            url=HttpUrl("https://onthemarket.com/details/18751817"),
             title="2 bed flat, Apex Gardens, N15",
             price_pcm=1800,
             bedrooms=2,
@@ -581,7 +583,7 @@ class TestGalleryImageHashDedup:
         return Property(
             source=PropertySource.RIGHTMOVE,
             source_id="172249586",
-            url="https://rightmove.co.uk/properties/172249586",
+            url=HttpUrl("https://rightmove.co.uk/properties/172249586"),
             title="2 bed flat, Apex Gardens, N15",
             price_pcm=1800,
             bedrooms=2,

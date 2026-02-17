@@ -74,6 +74,7 @@ class TestRequestReanalysis:
             (merged.unique_id,),
         )
         row = await cursor.fetchone()
+        assert row is not None
         assert row["reanalysis_requested_at"] is not None
 
     @pytest.mark.asyncio
@@ -99,7 +100,9 @@ class TestRequestReanalysis:
             "SELECT reanalysis_requested_at FROM quality_analyses WHERE property_unique_id = ?",
             (merged.unique_id,),
         )
-        first_ts = (await cursor.fetchone())["reanalysis_requested_at"]
+        first_row = await cursor.fetchone()
+        assert first_row is not None
+        first_ts = first_row["reanalysis_requested_at"]
 
         # Re-request updates timestamp
         await storage.request_reanalysis([merged.unique_id])
@@ -107,7 +110,9 @@ class TestRequestReanalysis:
             "SELECT reanalysis_requested_at FROM quality_analyses WHERE property_unique_id = ?",
             (merged.unique_id,),
         )
-        second_ts = (await cursor.fetchone())["reanalysis_requested_at"]
+        second_row = await cursor.fetchone()
+        assert second_row is not None
+        second_ts = second_row["reanalysis_requested_at"]
         assert second_ts is not None
         # Both should be set (may be same or different depending on timing)
         assert first_ts is not None
@@ -457,6 +462,7 @@ class TestCompleteReanalysis:
             (merged.unique_id,),
         )
         row = await cursor.fetchone()
+        assert row is not None
         assert row["reanalysis_requested_at"] is None
 
     @pytest.mark.asyncio

@@ -71,6 +71,7 @@ class TestSaveUnenrichedProperty:
             (merged.unique_id,),
         )
         row = await cursor.fetchone()
+        assert row is not None
         assert row["enrichment_attempts"] == 2
 
     @pytest.mark.asyncio
@@ -96,6 +97,7 @@ class TestSaveUnenrichedProperty:
             (merged.unique_id,),
         )
         row = await cursor.fetchone()
+        assert row is not None
         # Original values preserved
         assert row["commute_minutes"] == 20
         assert row["transport_mode"] == "cycling"
@@ -203,6 +205,7 @@ class TestMarkEnriched:
             (merged.unique_id,),
         )
         row = await cursor.fetchone()
+        assert row is not None
         assert row["enrichment_status"] == "enriched"
         assert row["notification_status"] == NotificationStatus.PENDING.value
 
@@ -264,6 +267,7 @@ class TestExpireUnenriched:
             (merged.unique_id,),
         )
         row = await cursor.fetchone()
+        assert row is not None
         assert row["enrichment_status"] == "failed"
 
     @pytest.mark.asyncio

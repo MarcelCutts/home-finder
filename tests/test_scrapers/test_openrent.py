@@ -1,6 +1,7 @@
 """Tests for OpenRent scraper."""
 
 from pathlib import Path
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -180,6 +181,7 @@ class TestOpenRentParser:
         """
         soup = BeautifulSoup(html, "html.parser")
         link = soup.find("a")
+        assert link is not None
         price = openrent_scraper._extract_price_from_html(link)
         assert price == 2300
 
@@ -188,6 +190,7 @@ class TestOpenRentParser:
         html = '<a href="/property/123"><span>View Details</span></a>'
         soup = BeautifulSoup(html, "html.parser")
         link = soup.find("a")
+        assert link is not None
         price = openrent_scraper._extract_price_from_html(link)
         assert price is None
 
@@ -201,6 +204,7 @@ class TestOpenRentParser:
         """
         soup = BeautifulSoup(html, "html.parser")
         link = soup.find("a")
+        assert link is not None
         beds = openrent_scraper._extract_bedrooms_from_html(link)
         assert beds == 2
 
@@ -213,6 +217,7 @@ class TestOpenRentParser:
         """
         soup = BeautifulSoup(html, "html.parser")
         link = soup.find("a")
+        assert link is not None
         beds = openrent_scraper._extract_bedrooms_from_html(link)
         assert beds == 0
 
@@ -225,6 +230,7 @@ class TestOpenRentParser:
         """
         soup = BeautifulSoup(html, "html.parser")
         link = soup.find("a")
+        assert link is not None
         beds = openrent_scraper._extract_bedrooms_from_html(link)
         assert beds == 0
 
@@ -237,6 +243,7 @@ class TestOpenRentParser:
         """
         soup = BeautifulSoup(html, "html.parser")
         link = soup.find("a")
+        assert link is not None
         beds = openrent_scraper._extract_bedrooms_from_html(link)
         assert beds == 1
 
@@ -249,6 +256,7 @@ class TestOpenRentParser:
         """
         soup = BeautifulSoup(html, "html.parser")
         link = soup.find("a")
+        assert link is not None
         title, _address, postcode = openrent_scraper._parse_link_text(link)
 
         assert "Mare Street" in title
@@ -270,6 +278,7 @@ class TestOpenRentParser:
         """
         soup = BeautifulSoup(html, "html.parser")
         link = soup.find("a")
+        assert link is not None
         title, _, _ = openrent_scraper._parse_link_text(link)
 
         assert "£" not in title
@@ -417,10 +426,10 @@ class TestOpenRentNoEarlyStop:
 
         with patch("home_finder.scrapers.openrent.BeautifulSoupCrawler") as MockCrawler:
 
-            def make_crawler(**kwargs):  # type: ignore[no-untyped-def]
+            def make_crawler(**kwargs: Any) -> MagicMock:
                 idx = len(pages_fetched)
                 mock = MagicMock()
-                handler: list = []
+                handler: list[Any] = []
                 mock.router = MagicMock()
                 mock.router.default_handler = handler.append
 

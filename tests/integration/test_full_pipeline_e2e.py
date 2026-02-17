@@ -4,6 +4,7 @@ from collections.abc import Callable
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from pydantic import SecretStr
 
 from home_finder.config import Settings
 from home_finder.db import PropertyStorage
@@ -100,7 +101,7 @@ class TestFullPipelineE2E:
 
         # Create settings with TravelTime credentials
         settings_with_commute = Settings(
-            telegram_bot_token="fake:test-token",
+            telegram_bot_token=SecretStr("fake:test-token"),
             telegram_chat_id=0,
             database_path=":memory:",
             search_areas="e8",
@@ -111,7 +112,7 @@ class TestFullPipelineE2E:
             enable_quality_filter=False,
             require_floorplan=False,
             traveltime_app_id="test-app",
-            traveltime_api_key="test-key",
+            traveltime_api_key=SecretStr("test-key"),
         )
 
         # Mock CommuteFilter to return only half

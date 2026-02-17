@@ -14,6 +14,7 @@ from datetime import datetime
 
 import pytest
 from playwright.sync_api import expect
+from pydantic import HttpUrl, SecretStr
 
 from home_finder.config import Settings
 from home_finder.db import PropertyStorage
@@ -30,6 +31,7 @@ from home_finder.models import (
     PropertyImage,
     PropertyQualityAnalysis,
     PropertySource,
+    PropertyType,
     SpaceAnalysis,
     TransportMode,
     ValueAnalysis,
@@ -40,7 +42,8 @@ def _find_free_port() -> int:
     """Find an available port by binding to port 0."""
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.bind(("127.0.0.1", 0))
-        return s.getsockname()[1]
+        port: int = s.getsockname()[1]
+        return port
 
 
 def _make_test_property(
@@ -57,7 +60,7 @@ def _make_test_property(
     prop = Property(
         source=PropertySource.OPENRENT,
         source_id=source_id,
-        url=f"https://www.openrent.com/property/{source_id}",
+        url=HttpUrl(f"https://www.openrent.com/property/{source_id}"),
         title=title or f"{bedrooms} bed flat in {area}",
         price_pcm=price,
         bedrooms=bedrooms,
@@ -75,7 +78,7 @@ def _make_test_property(
         source_urls={PropertySource.OPENRENT: prop.url},
         images=(
             PropertyImage(
-                url="https://example.com/img1.jpg",
+                url=HttpUrl("https://example.com/img1.jpg"),
                 source=PropertySource.OPENRENT,
                 image_type="gallery",
             ),
@@ -157,7 +160,7 @@ def _make_analyzed_property(
         overall_rating=rating,
         summary=f"Well-maintained {bedrooms}-bed flat with modern kitchen and good light.",
         highlights=["Gas hob", "Solid brick"],
-        listing_extraction=ListingExtraction(property_type="victorian"),
+        listing_extraction=ListingExtraction(property_type=PropertyType.VICTORIAN),
     )
 
     return merged, analysis
@@ -218,7 +221,7 @@ def server_url(tmp_path_factory):
         raise exc[0]
 
     settings = Settings(
-        telegram_bot_token="fake:test-token",
+        telegram_bot_token=SecretStr("fake:test-token"),
         telegram_chat_id=0,
         database_path=db_path,
         search_areas="e5,e8,e9,n16",

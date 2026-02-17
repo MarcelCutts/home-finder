@@ -1,5 +1,7 @@
 """Tests for the true monthly cost calculator."""
 
+from typing import Any
+
 import pytest
 
 from home_finder.utils.cost_calculator import estimate_true_monthly_cost
@@ -19,14 +21,14 @@ WATER_2BED = 50
 BROADBAND = 25  # All types are £25
 
 
-def _get_item(result: dict, label: str) -> dict:
+def _get_item(result: dict[str, Any], label: str) -> dict[str, Any]:
     """Extract a single line item by label, asserting exactly one exists."""
-    items = [i for i in result["line_items"] if i["label"] == label]
+    items: list[dict[str, Any]] = [i for i in result["line_items"] if i["label"] == label]
     assert len(items) == 1, f"Expected 1 '{label}' item, got {len(items)}"
     return items[0]
 
 
-def _get_labels(result: dict) -> list[str]:
+def _get_labels(result: dict[str, Any]) -> list[str]:
     return [i["label"] for i in result["line_items"]]
 
 

@@ -243,6 +243,7 @@ class TestSaveAndGetQualityAnalysis:
             "SELECT json_type(json_extract(analysis_json, '$.one_line')) FROM quality_analyses"
         )
         row = await cursor.fetchone()
+        assert row is not None
         assert row[0] == "object"
 
         # Run initialize() which includes the migration
@@ -253,6 +254,7 @@ class TestSaveAndGetQualityAnalysis:
             "SELECT json_extract(analysis_json, '$.one_line') FROM quality_analyses"
         )
         row = await cursor.fetchone()
+        assert row is not None
         assert row[0] == "Bright flat"
 
         await storage.close()
@@ -341,6 +343,7 @@ class TestGetPropertiesPaginated:
 
         props, total = await storage.get_properties_paginated(PropertyFilter(area="E3"))
         assert total == 1
+        assert props[0]["postcode"] is not None
         assert "E3" in props[0]["postcode"]
 
     @pytest.mark.asyncio
@@ -358,6 +361,7 @@ class TestGetPropertiesPaginated:
 
         props, total = await storage.get_properties_paginated(PropertyFilter(min_rating=4))
         assert total == 1
+        assert props[0]["quality_rating"] is not None
         assert props[0]["quality_rating"] >= 4
 
     @pytest.mark.asyncio
@@ -608,6 +612,7 @@ class TestThumbnailEpcFiltering:
         props, _ = await storage.get_properties_paginated(PropertyFilter())
         assert len(props) == 1
         # Should pick the second image (living_room), not the EPC chart
+        assert props[0]["image_url"] is not None
         assert "living_room" in props[0]["image_url"]
         assert "epc" not in props[0]["image_url"].lower()
 
@@ -632,6 +637,7 @@ class TestThumbnailEpcFiltering:
 
         props, _ = await storage.get_properties_paginated(PropertyFilter())
         assert len(props) == 1
+        assert props[0]["image_url"] is not None
         assert "kitchen" in props[0]["image_url"]
 
     @pytest.mark.asyncio
@@ -668,6 +674,7 @@ class TestThumbnailEpcFiltering:
 
         props, _ = await storage.get_properties_paginated(PropertyFilter())
         assert len(props) == 1
+        assert props[0]["image_url"] is not None
         assert "gallery_photo" in props[0]["image_url"]
 
     @pytest.mark.asyncio
@@ -707,6 +714,7 @@ class TestThumbnailEpcFiltering:
         props, _ = await storage.get_properties_paginated(PropertyFilter())
         assert len(props) == 1
         # EPC filtered out by subquery, falls back to scraper thumbnail
+        assert props[0]["image_url"] is not None
         assert "scraper_thumb" in props[0]["image_url"]
 
     @pytest.mark.asyncio
@@ -748,6 +756,7 @@ class TestThumbnailEpcFiltering:
 
         props, _ = await storage.get_properties_paginated(PropertyFilter())
         assert len(props) == 1
+        assert props[0]["image_url"] is not None
         assert "bedroom" in props[0]["image_url"]
 
     @pytest.mark.asyncio
@@ -771,4 +780,5 @@ class TestThumbnailEpcFiltering:
         props, _ = await storage.get_properties_paginated(PropertyFilter())
         assert len(props) == 1
         # Hash URL passes through — no way to tell it's an EPC from the URL alone
+        assert props[0]["image_url"] is not None
         assert "5e2020de" in props[0]["image_url"]

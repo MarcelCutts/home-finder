@@ -4,6 +4,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 from fastapi import FastAPI
+from pydantic import SecretStr
 
 from home_finder.config import Settings
 from home_finder.web.app import (
@@ -17,7 +18,7 @@ from home_finder.web.routes import router
 @pytest.fixture
 def settings() -> Settings:
     return Settings(
-        telegram_bot_token="fake:token",
+        telegram_bot_token=SecretStr("fake:token"),
         telegram_chat_id=0,
         database_path=":memory:",
         pipeline_interval_minutes=60,
@@ -32,7 +33,7 @@ class TestCreateApp:
 
     def test_has_routes(self, settings: Settings) -> None:
         app = create_app(settings)
-        paths = [route.path for route in app.routes]
+        paths = [route.path for route in app.routes]  # type: ignore[attr-defined]
         assert "/" in paths
         assert "/health" in paths
 
@@ -44,7 +45,7 @@ class TestCreateApp:
     def test_default_settings_if_none(self) -> None:
         with patch("home_finder.web.app.Settings") as mock_settings:
             mock_settings.return_value = Settings(
-                telegram_bot_token="fake:token",
+                telegram_bot_token=SecretStr("fake:token"),
                 telegram_chat_id=0,
                 database_path=":memory:",
             )

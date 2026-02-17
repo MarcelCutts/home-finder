@@ -28,6 +28,7 @@ class TestCreatePipelineRun:
             "SELECT status, started_at FROM pipeline_runs WHERE id = ?", (run_id,)
         )
         row = await cursor.fetchone()
+        assert row is not None
         assert row["status"] == "running"
         assert row["started_at"] is not None
 
@@ -50,6 +51,7 @@ class TestUpdatePipelineRun:
             (run_id,),
         )
         row = await cursor.fetchone()
+        assert row is not None
         assert row["scraped_count"] == 42
         assert row["new_count"] == 5
 
@@ -71,6 +73,7 @@ class TestCompletePipelineRun:
             (run_id,),
         )
         row = await cursor.fetchone()
+        assert row is not None
         assert row["status"] == "completed"
         assert row["completed_at"] is not None
         assert row["duration_seconds"] is not None
@@ -87,6 +90,7 @@ class TestCompletePipelineRun:
             (run_id,),
         )
         row = await cursor.fetchone()
+        assert row is not None
         assert row["status"] == "failed"
         assert row["error_message"] == "Connection timeout"
 

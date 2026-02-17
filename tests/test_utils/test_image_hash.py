@@ -80,7 +80,7 @@ class TestFetchAndHashImage:
     """Tests for fetch_and_hash_image with mocked HTTP."""
 
     @pytest.mark.asyncio
-    async def test_successful_fetch(self, httpx_mock) -> None:  # type: ignore[no-untyped-def]
+    async def test_successful_fetch(self, httpx_mock) -> None:
         # Create a minimal valid image (1x1 red pixel PNG)
         import io
 
@@ -98,7 +98,7 @@ class TestFetchAndHashImage:
         assert len(result) == 16  # 64-bit pHash = 16 hex chars
 
     @pytest.mark.asyncio
-    async def test_protocol_relative_url(self, httpx_mock) -> None:  # type: ignore[no-untyped-def]
+    async def test_protocol_relative_url(self, httpx_mock) -> None:
         import io
 
         from PIL import Image
@@ -113,14 +113,14 @@ class TestFetchAndHashImage:
         assert result is not None
 
     @pytest.mark.asyncio
-    async def test_http_error_returns_none(self, httpx_mock) -> None:  # type: ignore[no-untyped-def]
+    async def test_http_error_returns_none(self, httpx_mock) -> None:
         httpx_mock.add_response(url="https://example.com/missing.jpg", status_code=404)
 
         result = await fetch_and_hash_image("https://example.com/missing.jpg")
         assert result is None
 
     @pytest.mark.asyncio
-    async def test_invalid_image_returns_none(self, httpx_mock) -> None:  # type: ignore[no-untyped-def]
+    async def test_invalid_image_returns_none(self, httpx_mock) -> None:
         httpx_mock.add_response(url="https://example.com/bad.jpg", content=b"not an image")
 
         result = await fetch_and_hash_image("https://example.com/bad.jpg")
@@ -173,7 +173,7 @@ class TestFetchImageHashesBatch:
             self._make_property("2", "https://example.com/img2.jpg"),
         ]
 
-        async def mock_fetch(url: str, **kwargs) -> str | None:  # type: ignore[no-untyped-def]
+        async def mock_fetch(url: str, **kwargs: object) -> str | None:
             if "img1" in url:
                 return "abcdef0123456789"
             return None

@@ -229,6 +229,7 @@ class TestCrossPlatformRerun:
             (OPENRENT_FLAT.unique_id,),
         )
         row = await cursor.fetchone()
+        assert row is not None
         import json
 
         sources = json.loads(row["sources"])
@@ -278,6 +279,7 @@ class TestCrossPlatformRerun:
             (OPENRENT_FLAT.unique_id,),
         )
         row = await cursor.fetchone()
+        assert row is not None
         assert row["min_price"] == 1950
         assert row["max_price"] == 2000
 

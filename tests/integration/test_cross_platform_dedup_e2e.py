@@ -33,7 +33,7 @@ async def _scrape_platform(scraper, area="e8", max_results=5) -> list[Property]:
             area=area,
             max_results=max_results,
         )
-        return results
+        return list(results)
     except Exception:
         return []
     finally:
@@ -118,10 +118,10 @@ class TestCrossPlatformDedupE2E:
             await fetcher.close()
 
         # Then deduplicate the enriched properties
-        deduped = await deduplicator.deduplicate_merged_async(enriched)
+        deduped = await deduplicator.deduplicate_merged_async(enriched.enriched)
 
         # All properties should still exist (possibly merged)
-        assert len(deduped) <= len(enriched)
+        assert len(deduped) <= len(enriched.enriched)
         assert len(deduped) > 0
 
         # Multi-source merged should have images if individual sources had images

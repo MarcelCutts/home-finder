@@ -161,6 +161,7 @@ class TestQualityAnalysisStructural:
 
         # Phase 1: Visual analysis fields are populated
         assert analysis is not None
+        assert analysis.overall_rating is not None
         assert 1 <= analysis.overall_rating <= 5
         assert analysis.kitchen is not None
         assert analysis.kitchen.overall_quality in ("modern", "decent", "dated", "unknown")

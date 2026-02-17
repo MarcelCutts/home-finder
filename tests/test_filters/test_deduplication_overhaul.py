@@ -72,7 +72,7 @@ def _wrap_merged(prop: Property, **overrides: Any) -> MergedProperty:
         "descriptions": {},
     }
     defaults.update(overrides)
-    return MergedProperty(**defaults)
+    return MergedProperty(**defaults)  # type: ignore[arg-type]
 
 
 def _make_image_bytes(color: tuple[int, int, int] = (135, 206, 235)) -> bytes:
@@ -1230,7 +1230,7 @@ class TestMultiSourceCollisionGuard:
         assert len(singleton_groups) == 1
 
         # The merged group should contain A and C
-        merged_sources = set()
+        merged_sources: set[PropertySource] = set()
         for mp in merged_groups[0]:
             merged_sources.update(mp.sources)
         assert PropertySource.ZOOPLA in merged_sources

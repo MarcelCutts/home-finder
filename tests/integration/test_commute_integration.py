@@ -1,5 +1,6 @@
 """Integration tests for commute filtering with mocked TravelTime API."""
 
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -40,7 +41,7 @@ def _make_merged(prop: Property) -> MergedProperty:
     )
 
 
-def _mock_time_filter_response(location_results: list[dict]):
+def _mock_time_filter_response(location_results: list[dict[str, Any]]):
     """Build a mock TravelTime time_filter response.
 
     location_results: list of {"id": str, "travel_time": int_seconds}

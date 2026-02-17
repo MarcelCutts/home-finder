@@ -1,7 +1,7 @@
 """Tests for application configuration."""
 
 import pytest
-from pydantic import ValidationError
+from pydantic import SecretStr, ValidationError
 
 from home_finder.config import Settings
 from home_finder.models import FurnishType, TransportMode
@@ -10,7 +10,7 @@ from home_finder.models import FurnishType, TransportMode
 @pytest.fixture
 def settings() -> Settings:
     return Settings(
-        telegram_bot_token="fake:token",
+        telegram_bot_token=SecretStr("fake:token"),
         telegram_chat_id=0,
         database_path=":memory:",
     )
@@ -25,7 +25,7 @@ class TestGetSearchAreas:
 
     def test_custom_areas(self) -> None:
         s = Settings(
-            telegram_bot_token="fake:token",
+            telegram_bot_token=SecretStr("fake:token"),
             telegram_chat_id=0,
             search_areas="sw1,nw3,se5",
         )
@@ -33,7 +33,7 @@ class TestGetSearchAreas:
 
     def test_strips_whitespace(self) -> None:
         s = Settings(
-            telegram_bot_token="fake:token",
+            telegram_bot_token=SecretStr("fake:token"),
             telegram_chat_id=0,
             search_areas=" e8 , n16 , e3 ",
         )
@@ -41,7 +41,7 @@ class TestGetSearchAreas:
 
     def test_empty_string(self) -> None:
         s = Settings(
-            telegram_bot_token="fake:token",
+            telegram_bot_token=SecretStr("fake:token"),
             telegram_chat_id=0,
             search_areas="",
         )
@@ -49,7 +49,7 @@ class TestGetSearchAreas:
 
     def test_single_area(self) -> None:
         s = Settings(
-            telegram_bot_token="fake:token",
+            telegram_bot_token=SecretStr("fake:token"),
             telegram_chat_id=0,
             search_areas="e8",
         )
@@ -57,7 +57,7 @@ class TestGetSearchAreas:
 
     def test_trailing_comma_ignored(self) -> None:
         s = Settings(
-            telegram_bot_token="fake:token",
+            telegram_bot_token=SecretStr("fake:token"),
             telegram_chat_id=0,
             search_areas="e8,e3,",
         )
@@ -73,7 +73,7 @@ class TestGetFurnishTypes:
 
     def test_single_furnish_type(self) -> None:
         s = Settings(
-            telegram_bot_token="fake:token",
+            telegram_bot_token=SecretStr("fake:token"),
             telegram_chat_id=0,
             furnish_types="furnished",
         )
@@ -81,7 +81,7 @@ class TestGetFurnishTypes:
 
     def test_all_furnish_types(self) -> None:
         s = Settings(
-            telegram_bot_token="fake:token",
+            telegram_bot_token=SecretStr("fake:token"),
             telegram_chat_id=0,
             furnish_types="furnished,unfurnished,part_furnished",
         )
@@ -91,7 +91,7 @@ class TestGetFurnishTypes:
     def test_invalid_furnish_type_raises(self) -> None:
         with pytest.raises((ValueError, ValidationError)):
             Settings(
-                telegram_bot_token="fake:token",
+                telegram_bot_token=SecretStr("fake:token"),
                 telegram_chat_id=0,
                 furnish_types="invalid_type",
             )
@@ -100,7 +100,7 @@ class TestGetFurnishTypes:
 class TestGetSearchCriteria:
     def test_maps_settings_to_criteria(self) -> None:
         s = Settings(
-            telegram_bot_token="fake:token",
+            telegram_bot_token=SecretStr("fake:token"),
             telegram_chat_id=0,
             min_price=1500,
             max_price=2500,
@@ -121,7 +121,7 @@ class TestGetSearchCriteria:
 
     def test_custom_criteria(self) -> None:
         s = Settings(
-            telegram_bot_token="fake:token",
+            telegram_bot_token=SecretStr("fake:token"),
             telegram_chat_id=0,
             min_price=1000,
             max_price=3000,
@@ -142,7 +142,7 @@ class TestGetSearchCriteria:
 class TestDataDir:
     def test_data_dir_from_db_path(self) -> None:
         s = Settings(
-            telegram_bot_token="fake:token",
+            telegram_bot_token=SecretStr("fake:token"),
             telegram_chat_id=0,
             database_path="/some/path/data/properties.db",
         )
@@ -150,7 +150,7 @@ class TestDataDir:
 
     def test_data_dir_memory(self) -> None:
         s = Settings(
-            telegram_bot_token="fake:token",
+            telegram_bot_token=SecretStr("fake:token"),
             telegram_chat_id=0,
             database_path=":memory:",
         )

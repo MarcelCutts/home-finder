@@ -1,6 +1,7 @@
 """Tests for Rightmove scraper."""
 
 from pathlib import Path
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
@@ -470,10 +471,10 @@ class TestRightmoveEarlyStop:
 
         with patch("home_finder.scrapers.rightmove.BeautifulSoupCrawler") as MockCrawler:
 
-            def make_crawler(**kwargs):  # type: ignore[no-untyped-def]
+            def make_crawler(**kwargs: Any) -> MagicMock:
                 idx = len(pages_fetched)
                 mock = MagicMock()
-                handler: list = []
+                handler: list[Any] = []
                 mock.router = MagicMock()
                 mock.router.default_handler = handler.append
 
@@ -516,10 +517,10 @@ class TestRightmoveEarlyStop:
 
         with patch("home_finder.scrapers.rightmove.BeautifulSoupCrawler") as MockCrawler:
 
-            def make_crawler(**kwargs):  # type: ignore[no-untyped-def]
+            def make_crawler(**kwargs: Any) -> MagicMock:
                 idx = len(pages_fetched)
                 mock = MagicMock()
-                handler: list = []
+                handler: list[Any] = []
                 mock.router = MagicMock()
                 mock.router.default_handler = handler.append
 

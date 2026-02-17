@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 
 import pytest
-from pydantic import HttpUrl
+from pydantic import HttpUrl, SecretStr
 
 from home_finder.config import Settings
 from home_finder.db.storage import PropertyStorage
@@ -20,11 +20,10 @@ from home_finder.utils.image_cache import get_cache_dir, save_image_bytes
 @pytest.fixture
 def settings(tmp_path: Path) -> Settings:
     return Settings(
-        telegram_bot_token="fake:token",
+        telegram_bot_token=SecretStr("fake:token"),
         telegram_chat_id=0,
         search_areas="e8",
-        database_path=":memory:",
-        data_dir=str(tmp_path),
+        database_path=str(tmp_path / "properties.db"),
     )
 
 
@@ -120,8 +119,8 @@ async def _run_with_storage(
     try:
         await run_dedup_existing(settings)
     finally:
-        PropertyStorage.__init__ = original_init  # type: ignore[assignment]
-        PropertyStorage.close = original_close  # type: ignore[assignment]
+        PropertyStorage.__init__ = original_init  # type: ignore[method-assign]
+        PropertyStorage.close = original_close  # type: ignore[method-assign]
 
 
 class TestRunDedupExisting:
@@ -163,6 +162,7 @@ class TestRunDedupExisting:
             (remaining[0].property.unique_id,),
         )
         row = await cursor.fetchone()
+        assert row is not None
         sources = json.loads(row["sources"]) if row["sources"] else []
         assert len(sources) >= 2
         assert "onthemarket" in sources

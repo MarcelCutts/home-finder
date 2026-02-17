@@ -40,7 +40,7 @@ class TestRealRightmoveOutcodeMapping:
     )
     async def test_outcode_mapping_exists(self, outcode: str, expected_id: str) -> None:
         """Test that hardcoded outcode mappings exist and are correct."""
-        from home_finder.scrapers.rightmove import RIGHTMOVE_OUTCODES
+        from home_finder.scrapers.rightmove import RIGHTMOVE_OUTCODES  # type: ignore[attr-defined]
 
         location_id = RIGHTMOVE_OUTCODES.get(outcode)
         assert location_id is not None, f"No mapping for outcode {outcode}"
@@ -51,7 +51,7 @@ class TestRealRightmoveOutcodeMapping:
 
     async def test_all_target_outcodes_mapped(self) -> None:
         """Test that all target outcodes have hardcoded mappings."""
-        from home_finder.scrapers.rightmove import RIGHTMOVE_OUTCODES
+        from home_finder.scrapers.rightmove import RIGHTMOVE_OUTCODES  # type: ignore[attr-defined]
 
         target_outcodes = ["E3", "E5", "E8", "E9", "E10", "N15"]
         missing = []

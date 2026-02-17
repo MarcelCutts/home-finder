@@ -9,6 +9,7 @@ from pathlib import Path
 
 import pytest
 import pytest_asyncio
+from pydantic import SecretStr
 
 from home_finder.config import Settings
 from home_finder.db import PropertyStorage
@@ -113,7 +114,7 @@ async def in_memory_storage() -> AsyncGenerator[PropertyStorage, None]:
 def test_settings() -> Settings:
     """Settings configured for integration testing (no real APIs)."""
     return Settings(
-        telegram_bot_token="fake:test-token",
+        telegram_bot_token=SecretStr("fake:test-token"),
         telegram_chat_id=0,
         database_path=":memory:",
         search_areas="e8",
@@ -124,5 +125,5 @@ def test_settings() -> Settings:
         enable_quality_filter=False,
         require_floorplan=False,
         traveltime_app_id="",
-        traveltime_api_key="",
+        traveltime_api_key=SecretStr(""),
     )

@@ -640,6 +640,7 @@ class TestUpdateMergedSources:
             (prop.unique_id,),
         )
         row = await cursor.fetchone()
+        assert row is not None
         assert row["min_price"] == 1950
         assert row["max_price"] == 2000
 
@@ -692,6 +693,7 @@ class TestUpdateMergedSources:
             (prop.unique_id,),
         )
         row = await cursor.fetchone()
+        assert row is not None
         sources = json.loads(row["sources"])
         source_urls = json.loads(row["source_urls"])
         descriptions = json.loads(row["descriptions_json"])

@@ -5,12 +5,13 @@ early return paths. Uses file-backed SQLite for realistic DB interaction
 and mocks PropertyQualityFilter as the single I/O boundary.
 """
 
-from collections.abc import Callable
+from collections.abc import AsyncGenerator, Callable
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
 import pytest
 import pytest_asyncio
+from pydantic import SecretStr
 
 from home_finder.config import Settings
 from home_finder.db import PropertyStorage
@@ -32,22 +33,22 @@ def db_path(tmp_path: Path) -> Path:
 
 
 @pytest_asyncio.fixture
-async def populated_storage(db_path: Path) -> PropertyStorage:
+async def populated_storage(db_path: Path) -> AsyncGenerator[PropertyStorage, None]:
     """Create a file-backed storage, yield for pre-population, then close."""
     s = PropertyStorage(str(db_path))
     await s.initialize()
-    yield s  # type: ignore[misc]
+    yield s
     await s.close()
 
 
 @pytest.fixture
 def reanalysis_settings(db_path: Path) -> Settings:
     return Settings(
-        telegram_bot_token="fake:token",
+        telegram_bot_token=SecretStr("fake:token"),
         telegram_chat_id=0,
         database_path=str(db_path),
         search_areas="e8",
-        anthropic_api_key="fake-key",
+        anthropic_api_key=SecretStr("fake-key"),
         enable_quality_filter=True,
     )
 

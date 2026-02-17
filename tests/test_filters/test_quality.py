@@ -8,7 +8,7 @@ from anthropic.types import ToolUseBlock
 from pydantic import BaseModel as _BaseModel
 from pydantic import HttpUrl, ValidationError
 
-from home_finder.filters.quality import (
+from home_finder.filters.quality import (  # type: ignore[attr-defined]
     _CIRCUIT_BREAKER_COOLDOWN,
     _CIRCUIT_BREAKER_THRESHOLD,
     _MODEL_PAIRS,
@@ -2411,6 +2411,7 @@ class TestMergeAnalysisWithStringifiedNested:
         )
 
         assert analysis is not None
+        assert analysis.bedroom is not None
         assert analysis.bedroom.primary_is_double == "yes"
         assert analysis.bedroom.office_separation == "dedicated_room"
 
@@ -2433,6 +2434,8 @@ class TestMergeAnalysisWithStringifiedNested:
         )
 
         assert analysis is not None
+        assert analysis.bedroom is not None
         assert analysis.bedroom.primary_is_double == "yes"
+        assert analysis.kitchen is not None
         assert analysis.kitchen.overall_quality == "modern"
         assert analysis.kitchen.hob_type == "gas"
