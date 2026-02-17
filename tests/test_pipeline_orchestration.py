@@ -18,6 +18,7 @@ from home_finder.main import (
     PreAnalysisResult,
     _run_pre_analysis_pipeline,
     _run_quality_and_save,
+    _run_scrape,
     _save_one,
     scrape_all_platforms,
 )
@@ -438,6 +439,77 @@ class TestScrapeAllPlatforms:
 
         assert len(result) == 1
         assert result[0].postcode == "E8"
+
+    @patch("home_finder.main.OpenRentScraper")
+    @patch("home_finder.main.RightmoveScraper")
+    @patch("home_finder.main.ZooplaScraper")
+    @patch("home_finder.main.OnTheMarketScraper")
+    async def test_known_ids_passed_to_scrapers(
+        self,
+        mock_otm_cls: Any,
+        mock_zoopla_cls: Any,
+        mock_rm_cls: Any,
+        mock_or_cls: Any,
+    ) -> None:
+        """Each scraper receives its own source-specific known IDs."""
+        sources = [
+            PropertySource.OPENRENT,
+            PropertySource.RIGHTMOVE,
+            PropertySource.ZOOPLA,
+            PropertySource.ONTHEMARKET,
+        ]
+        mock_scrapers = []
+        for i, mock_cls in enumerate([mock_or_cls, mock_rm_cls, mock_zoopla_cls, mock_otm_cls]):
+            s = _mock_scraper(sources[i])
+            mock_cls.return_value = s
+            mock_scrapers.append(s)
+
+        known_ids_by_source = {
+            "openrent": {"or-1", "or-2"},
+            "rightmove": {"rm-1"},
+            "zoopla": set(),
+            # onthemarket intentionally omitted — should get None
+        }
+
+        await scrape_all_platforms(
+            min_price=1500,
+            max_price=2500,
+            min_bedrooms=1,
+            max_bedrooms=2,
+            search_areas=["e8"],
+            known_ids_by_source=known_ids_by_source,
+        )
+
+        # Verify each scraper received its source-specific known IDs
+        or_known = mock_scrapers[0].scrape.call_args.kwargs.get("known_source_ids")
+        assert or_known == {"or-1", "or-2"}
+
+        rm_known = mock_scrapers[1].scrape.call_args.kwargs.get("known_source_ids")
+        assert rm_known == {"rm-1"}
+
+        zoopla_known = mock_scrapers[2].scrape.call_args.kwargs.get("known_source_ids")
+        assert zoopla_known == set()
+
+        otm_known = mock_scrapers[3].scrape.call_args.kwargs.get("known_source_ids")
+        assert otm_known is None
+
+    @patch("home_finder.main.scrape_all_platforms", new_callable=AsyncMock)
+    async def test_full_scrape_skips_known_ids_lookup(
+        self,
+        mock_scrape: AsyncMock,
+        storage: PropertyStorage,
+        test_settings: Settings,
+    ) -> None:
+        """full_scrape=True skips DB known-ID lookup and passes None to scrape_all_platforms."""
+        mock_scrape.return_value = []
+
+        # Spy on storage.get_all_known_source_ids
+        storage.get_all_known_source_ids = AsyncMock()  # type: ignore[method-assign]
+
+        await _run_scrape(test_settings, storage, full_scrape=True)
+
+        storage.get_all_known_source_ids.assert_not_called()
+        assert mock_scrape.call_args.kwargs["known_ids_by_source"] is None
 
 
 # ---------------------------------------------------------------------------
