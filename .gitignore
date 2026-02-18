@@ -140,7 +140,7 @@ dmypy.json
 
 # Database files
 *.db
-data/
+/data/
 
 # Playwright
 playwright-report/

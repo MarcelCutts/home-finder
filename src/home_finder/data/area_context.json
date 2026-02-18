@@ -1,0 +1,857 @@
+{
+  "rental_benchmarks": {
+    "E2": {"1": 1950, "2": 2400, "3": 3100},
+    "E5": {"1": 1800, "2": 2200, "3": 2750},
+    "E8": {"1": 1900, "2": 2350, "3": 3000},
+    "E9": {"1": 1950, "2": 2400, "3": 2950},
+    "N16": {"1": 1800, "2": 2300, "3": 2950},
+    "N1": {"1": 2100, "2": 2600, "3": 3400},
+    "N4": {"1": 1800, "2": 2200, "3": 2850},
+    "N5": {"1": 1900, "2": 2350, "3": 3050},
+    "N7": {"1": 1850, "2": 2300, "3": 2950},
+    "N19": {"1": 1750, "2": 2150, "3": 2800},
+    "EC1": {"1": 2300, "2": 2900, "3": 3700},
+    "N6": {"1": 1700, "2": 2100, "3": 2700},
+    "N8": {"1": 1750, "2": 2150, "3": 2750},
+    "N10": {"1": 1650, "2": 2050, "3": 2650},
+    "N11": {"1": 1600, "2": 2000, "3": 2600},
+    "N15": {"1": 1550, "2": 1850, "3": 2400},
+    "N17": {"1": 1650, "2": 2000, "3": 2550},
+    "N22": {"1": 1600, "2": 1950, "3": 2500},
+    "E1": {"1": 2050, "2": 2550, "3": 3300},
+    "E3": {"1": 1800, "2": 2150, "3": 2700},
+    "E14": {"1": 2100, "2": 2600, "3": 3350},
+    "E15": {"1": 1950, "2": 2250, "3": 2800},
+    "E10": {"1": 1550, "2": 1750, "3": 2400},
+    "E11": {"1": 1550, "2": 1900, "3": 2450},
+    "E17": {"1": 1700, "2": 1850, "3": 2350}
+  },
+  "default_benchmark": {"1": 1750, "2": 2100, "3": 2650},
+  "area_context": {
+    "E3": {
+      "overview": "Bow offers Zone 2 value near Victoria Park with District/H&C/Central line access. Value pockets in Victorian conversions near Roman Road; Fish Island canalside commands 15-25% premiums. New-build developments (Bow Green, Fish Island Village) are pushing average prices higher. Watch for A12 noise/pollution, variable estate quality, and poor EPC ratings on cheap main-road offerings.",
+      "micro_areas": {
+        "Roman Road / Old Ford": {
+          "character": "Grime heritage hub with Roman Road Market (Tue/Thu/Sat) and Victoria Park adjacent. Jungle Electric live music, Muxima arts café. Severe A12 rat-running on Old Ford/Tredegar Roads — target Zealand Road, Vivian Road, Mace Street instead.",
+          "transport": "Bow Road (District/H&C) 8–10 min walk; Mile End (Central/District/H&C) 12–15 min with Night Tube.",
+          "creative_scene": "Birthplace of grime — Dizzee Rascal, Wiley, Skepta. Rhythm Division heritage. Jungle Electric, Muxima art/culture café.",
+          "broadband": "80.5% gigabit coverage (Tower Hamlets). Community Fibre covering ~4,000 social housing homes.",
+          "hosting_tolerance": "moderate",
+          "wfh_suitability": "moderate",
+          "value": "2-bed flats £1,600–2,000/month."
+        },
+        "Fish Island": {
+          "character": "Creative campus sharing Hackney Wick ecosystem from the Tower Hamlets side. Canalside tranquility, warehouse conversions. Proper live-work planning permissions on some units — verify use class before signing.",
+          "transport": "PTAL 2–3 (Overground only), weakest in E3. Cycling along canal towpath to Limehouse and Olympic Park.",
+          "creative_scene": "Trampery Fish Island Village (6-acre campus, studios from £448/month), SPACE / Bridget Riley Studios, Counter Café, Grow.",
+          "broadband": "FTTP in new developments; older warehouses need individual address checks.",
+          "hosting_tolerance": "high",
+          "wfh_suitability": "moderate",
+          "value": "New-build 1-bed £1,500–2,000/month."
+        },
+        "Mile End": {
+          "character": "Best transport in E3. Queen Mary University student energy creates noise-tolerant demographic. Mile End Park linear green space. Avoid Mile End Road itself (A11 dual carriageway).",
+          "transport": "Mile End station (Central Line with Night Tube). Liverpool Street 12 min, Oxford Circus 21 min.",
+          "creative_scene": "Mainyard Studios at 35–37 Bow Road — affordable music studios with fibre broadband and creative co-working.",
+          "broadband": "Good FTTP rollout in university area.",
+          "hosting_tolerance": "moderate",
+          "wfh_suitability": "good",
+          "value": "2-bed flats £1,700–2,100/month."
+        },
+        "Devons Road / Langdon Park": {
+          "character": "Regenerating Bromley-by-Bow between two DLR stations, bisected by the A12. Mix of social housing estates and modern tower developments. Bow Arts Three Waters (70 affordable studios + Nunnery Gallery) is directly within the area.",
+          "transport": "Devons Road DLR + Langdon Park DLR (Zone 2). Direct DLR to Canary Wharf (10 min), Bank (18 min), Stratford (8 min). PTAL 4–5.",
+          "creative_scene": "Bow Arts Three Waters (70 studios, Nunnery Gallery, Nunnery Café). The Engine Rooms rehearsal studios on Bow Road. Adjacent to Fish Island/Hackney Wick creative ecosystem (~15 min walk north).",
+          "broadband": "Gigabit FTTP available. New builds have full fibre as standard. Openreach, Virgin Media, Hyperoptic all present.",
+          "hosting_tolerance": "moderate",
+          "wfh_suitability": "moderate",
+          "value": "2-bed £1,700–2,300/month — typically £200–400 cheaper than Bow/Mile End proper."
+        },
+        "Poplar / Chrisp Street": {
+          "character": "Historic working-class Poplar centred on Chrisp Street Market (Britain's first purpose-built pedestrian shopping area, 1951). Undergoing £300m regeneration. Strong community identity. AB Foundry (Anthony Gormley, Henry Moore works cast here), Spratt's Complex live/work studios.",
+          "transport": "Langdon Park DLR + All Saints DLR (Zone 2). Direct to Canary Wharf (5 min), Bank (15 min). PTAL 4–5.",
+          "creative_scene": "Poplar Union arts centre, AB Foundry (major art foundry), Spratt's Complex live/work studios, street art around Chrisp Street.",
+          "broadband": "Gigabit FTTP available. New developments will have full fibre as standard.",
+          "hosting_tolerance": "moderate",
+          "wfh_suitability": "moderate",
+          "value": "2-bed £1,400–2,375/month — among the cheapest in Zone 2."
+        }
+      }
+    },
+    "E5": {
+      "overview": "Clapton is 15-20% cheaper than neighbouring Dalston (E8) and Stoke Newington (N16) with similar Victorian stock. Overground from Clapton/Homerton reaches Liverpool Street in under 15 min. Best value in Upper Clapton near Stamford Hill; Chatsworth Road artisan hub commands premiums. Clapton Park Estate 1970s blocks vary significantly in quality. Liveable Neighbourhood bus gates (Aug 2025) cause congestion on boundary roads.",
+      "micro_areas": {
+        "Lower Clapton Road": {
+          "character": "Creative epicentre of E5, formerly 'Murder Mile' now gentrified. Lion Coffee + Records, Nobody Asked Me, Pages of Hackney. Round Chapel (Grade II*) hosts major artists.",
+          "transport": "Clapton Pond bus hub (8+ routes, PTAL 3–4). Hackney Downs station 8 min walk.",
+          "creative_scene": "Round Chapel venue (Arlo Parks, Paloma Faith), MKII on Powerscroft Road (Warp Records, Universal), Lion Coffee + Records.",
+          "broadband": "85.6% gigabit coverage borough-wide. Community Fibre, Hyperoptic, Openreach FTTP available.",
+          "hosting_tolerance": "moderate",
+          "wfh_suitability": "moderate",
+          "value": "2-bed rents £1,800–2,200/month. Best streets: Powerscroft Road, Woodmill Road, Rushmore Road."
+        },
+        "Chatsworth Road / Millfields": {
+          "character": "Village heart of E5 with famous Sunday market (50+ traders), E5 Bakehouse, Clapton Country Club (former tram depot). Millfields Park provides acoustic buffer and lifestyle amenity.",
+          "transport": "Cycleway 23 with segregated lanes connecting to Lea Valley. Homerton/Clapton Overground nearby.",
+          "creative_scene": "E5 Bakehouse, Clapton Country Club, Sunday market culture. MKII venue nearby.",
+          "broadband": "85.6% gigabit coverage borough-wide.",
+          "hosting_tolerance": "high",
+          "wfh_suitability": "moderate",
+          "value": "2-bed rents £1,700–2,000/month. Target: Woodmill Road, Rushmore Road."
+        },
+        "Lea Bridge fringe": {
+          "character": "Most affordable zone in E5. Industrial heritage (former Hackney Power Station site). Avoid living on Lea Bridge Road itself (dual carriageway) — target side streets like Mandeville Street.",
+          "transport": "PTAL 2–3, bus-dependent. Best cycling infrastructure in E5: Cycleway 23, Lea Valley towpath, Mini-Holland network.",
+          "creative_scene": "Cell Studios at Grosvenor Works — 30 purpose-built artist studios with 4.3m ceilings and 24-hour access.",
+          "broadband": "Borough-wide gigabit coverage but individual address checks needed for Victorian stock.",
+          "hosting_tolerance": "high",
+          "wfh_suitability": "poor",
+          "value": "2-bed rents £1,500–1,800/month, 15–20% cheaper than Lower Clapton Road."
+        },
+        "Hackney Downs fringe": {
+          "character": "Best WFH zone in E5. Gentrification frontier where Dalston energy pushes east. Multiple stations walking distance. Avoid Pembury Estate and properties near railway tracks on Downs Road.",
+          "transport": "PTAL 4–5. Hackney Downs, Rectory Road, and Hackney Central stations within walking distance.",
+          "creative_scene": "Hackney Downs Studios (200+ creative workspaces, co-working from £250/month, 24hr access). GUTS Gallery warehouse.",
+          "broadband": "Strong borough-wide gigabit coverage. Co-working spaces have guaranteed connectivity.",
+          "hosting_tolerance": "moderate",
+          "wfh_suitability": "good",
+          "value": "2-bed rents £1,700–2,100/month."
+        },
+        "Upper Clapton / Springfield Park": {
+          "character": "Residential Upper Clapton with Springfield Park (14.73 hectares, local nature reserve) providing exceptional green space with River Lea views. Mix of Victorian terraces, interwar estates, and some larger houses. Western parts have significant Orthodox Jewish community. Quieter, more suburban feel than Lower Clapton.",
+          "transport": "Clapton station (Overground, direct to Liverpool Street ~12 min), Stoke Newington station 0.67 mi, Rectory Road 0.79 mi. PTAL 3.",
+          "creative_scene": "Limited. Springfield Park and River Lea/Walthamstow Marshes for recreation. Liberty Hall community space on Clapton Common. Nearest venues are Mascara Bar (~0.5 mi) and EartH (~1 mi south).",
+          "broadband": "Gigabit FTTP confirmed available.",
+          "hosting_tolerance": "low",
+          "wfh_suitability": "good",
+          "value": "2-bed £1,800–2,100/month. Extremely close to Marcel's current N16 base."
+        }
+      }
+    },
+    "E8": {
+      "overview": "Hackney's core rental market \u2014 Dalston, London Fields, Hackney Central, Hackney Downs \u2014 entirely within Hackney borough. No Underground (Overground and Greater Anglia only); Liverpool Street 7-15 min depending on station. 4.3% rental growth YoY, outpacing most neighbours. London Fields is premium (park proximity, Broadway Market); Hackney Downs is best value with fastest City access. Strong creative infrastructure: Netil House, Hackney Empire, Oslo, Hackney Downs Studios (200+ workspaces). 85.6% gigabit broadband coverage. Dalston nightlife inflates crime stats; residential streets significantly safer.",
+      "micro_areas": {
+        "Dalston core": {
+          "character": "London's most concentrated creative postcode. Café OTO, Bootstrap Company (60,000+ sq ft), EartH (Art Deco cinema), Dalston Superstore, Ridley Road Market. Paradoxically low hosting tolerance despite nightlife reputation.",
+          "transport": "PTAL 6a–6b (among London's highest). Dalston Junction and Dalston Kingsland stations 250m apart.",
+          "creative_scene": "Café OTO (world-renowned experimental music), Bootstrap Company, EartH, Dalston Superstore. Ridley Road Market (15-year council lease).",
+          "broadband": "Excellent FTTP in new builds (Dalston Square, Dalston Works, FiftySevenEast). 85.6% gigabit borough-wide.",
+          "hosting_tolerance": "low",
+          "wfh_suitability": "good",
+          "value": "2-bed rents £2,200–2,900/month in modern builds. E8's most expensive."
+        },
+        "Haggerston": {
+          "character": "E8's best-kept secret for a DJ. Highest concentration of live-work warehouse conversions with Sui Generis planning status — different noise rules. Thick walls, high ceilings, concrete floors. Regent's Canal serenity.",
+          "transport": "PTAL 5–6a. Haggerston Overground to Shoreditch High Street in 3 min, Whitechapel in 8.",
+          "creative_scene": "Warehouse conversion community, canal culture, proximity to Dalston scene. Target: Whiston Road, Lee Street, Laburnum Street.",
+          "broadband": "Good borough-wide gigabit coverage. Warehouse conversions need individual checks.",
+          "hosting_tolerance": "high",
+          "wfh_suitability": "good",
+          "value": "Live-work studios from £1,600/month; 2-bed warehouse conversions £2,200–2,900/month."
+        },
+        "London Fields / Broadway Market": {
+          "character": "Best WFH environment in E8 but worst value. Peaceful residential streets (Middleton Road, Lansdowne Drive, Ada Street). London Fields park and LTN. Increasingly family-oriented.",
+          "transport": "London Fields and Hackney Central stations. LTN reduces through traffic.",
+          "creative_scene": "East Eight (Grade II listed Victorian school, lofts with 4.8m ceilings). Broadway Market culture.",
+          "broadband": "Good borough-wide gigabit coverage.",
+          "hosting_tolerance": "low",
+          "wfh_suitability": "good",
+          "value": "2-bed rents £2,500–3,000/month. Most expensive in E8."
+        },
+        "Hackney Central / Mare Street": {
+          "character": "Best balance of affordability and location in E8. Moth Club battle (27,000+ supporter emails) reveals pro-music community DNA. Mare Street is a noisy bus corridor but side streets quieten quickly.",
+          "transport": "Hackney Central and Hackney Downs stations. Good bus connectivity via Mare Street.",
+          "creative_scene": "Moth Club, Hackney Empire, local venue culture. Hackney Downs Studios 200+ workspaces nearby.",
+          "broadband": "Good borough-wide gigabit coverage.",
+          "hosting_tolerance": "moderate",
+          "wfh_suitability": "good",
+          "value": "1-bed from £1,600/month. Victorian 2-beds on Graham Road, Greenwood Road. Best value in E8."
+        }
+      }
+    },
+    "E9": {
+      "overview": "Hackney Wick commands premium rents due to Creative Enterprise Zone status and Olympic Park proximity. Overground reaches Liverpool Street in 15 min. Value in older Homerton stock; warehouse conversions and waterfront new-builds cost significantly more. Note: Fish Island is technically Tower Hamlets (E3), not Hackney\u2014different council tax. Flood risk near canals and late-night venue noise affect some locations.",
+      "micro_areas": {
+        "Hackney Wick core": {
+          "character": "GLA Creative Enterprise Zone with 600+ artist studios — London's densest creative cluster. Grow, Stour Space (149-year lease), The Yard Theatre (new £6m venue). Planning grey area for some 'live-work' spaces — verify use class.",
+          "transport": "PTAL 3–4. Hackney Wick Overground to Stratford in 8 min. Cycling is transport backbone via Lee Navigation towpath. No Tube.",
+          "creative_scene": "600+ studios, Grow (canalside DJ venue), Stour Space, The Yard Theatre. Hackney Wick & Fish Island CDT secured 99-year community lease.",
+          "broadband": "FTTP in new developments; older warehouses need individual checks.",
+          "hosting_tolerance": "high",
+          "wfh_suitability": "moderate",
+          "value": "New-build 1-bed £1,950–2,200/month; warehouse live-work from ~£1,200/month."
+        },
+        "Homerton / Chatsworth Road": {
+          "character": "Best conventional residential option in E9. Victorian high street revived since 2010 with pedestrianised Sunday market. Kristina Records (specialist dance/electronic vinyl, moved from Dalston). LTN reduced traffic.",
+          "transport": "Homerton Overground — Stratford 5 min, Liverpool Street 15 min. LTN area.",
+          "creative_scene": "Kristina Records, Chatsworth Road Sunday market, proximity to Hackney Wick creative district.",
+          "broadband": "Good Hackney borough-wide gigabit coverage.",
+          "hosting_tolerance": "moderate",
+          "wfh_suitability": "good",
+          "value": "Victorian 2-bed flats £1,800–2,200/month. Target: Digby Road, Barnabas Road, Elsdale Street."
+        },
+        "Victoria Park Village": {
+          "character": "Ultra-affluent, family-oriented enclave. Lauriston Road avg £710k; Victoria Park Road houses £2–3.4M. Beautiful green space but zero tolerance for home music events. Not recommended for Marcel.",
+          "transport": "Multiple transport options. Victoria Park (213 acres) adjacent.",
+          "creative_scene": "Minimal — residential and family-oriented.",
+          "broadband": "Good Hackney borough-wide gigabit coverage.",
+          "hosting_tolerance": "low",
+          "wfh_suitability": "good",
+          "value": "Premium rents well above E9 average."
+        }
+      }
+    },
+    "E10": {
+      "overview": "Leyton offers the best value\u201410% below Walthamstow and 15-25% below Stratford\u2014with Central Line access (12 min to Liverpool Street, 21 to Oxford Circus). Francis Road area combines period character with good amenities; proximity to QE Olympic Park and Hackney Marshes adds appeal. Flood risk near River Lea; High Road Leyton has higher crime rates than borough average. Waltham Forest requires selective landlord licensing.",
+      "micro_areas": {
+        "Francis Road / Leyton Village": {
+          "character": "Gentrification epicentre of E10, Stoke Newington formula: pedestrianised street, independent cafés (Perky Blenders), Dreamhouse Records vinyl shop. Victorian terraces with 30–50ft rear gardens.",
+          "transport": "Leyton tube (Central Line), Liverpool Street 12 min. Station undergoing £13m upgrade (spring 2027).",
+          "creative_scene": "Dreamhouse Records, Leyton Technical DJ nights, independent café culture.",
+          "broadband": "87%+ gigabit coverage, 124 Mbps median speed (Waltham Forest — best of all boroughs surveyed).",
+          "hosting_tolerance": "moderate",
+          "wfh_suitability": "good",
+          "value": "Rental 2-beds £1,700–1,900/month."
+        },
+        "Lea Bridge Road": {
+          "character": "Best value in E10 with direct cycling to Hackney Wick (15 min via marshes). Exceptional green space: Leyton Marshes, Hackney Marshes, Essex Filter Beds. Avoid living directly on Lea Bridge Road (A104).",
+          "transport": "Lea Bridge station (opened 2016) to Stratford 8 min. Cycling is the main transport asset.",
+          "creative_scene": "Arbeit Studios (18 creative workspaces, waiting list). Direct cycling connection to Hackney Wick scene.",
+          "broadband": "Same excellent Waltham Forest coverage (87%+ gigabit).",
+          "hosting_tolerance": "moderate",
+          "wfh_suitability": "moderate",
+          "value": "~23% cheaper than Francis Road. Target side streets: Markhouse Road, Gloucester Road."
+        },
+        "Central Leyton": {
+          "character": "Patchworks (258 Church Road) — part creative space, part 'disco palace', part skate park with Funktion-One sound system. Featured on Resident Advisor and Mixmag. Surrounding Leyton Grange Estate has safety challenges.",
+          "transport": "Leyton station (Central Line) nearby. Decent connectivity.",
+          "creative_scene": "Patchworks — dance parties, spatial sound events, vintage markets. E10's most DJ-relevant venue.",
+          "broadband": "Same excellent Waltham Forest coverage (87%+ gigabit).",
+          "hosting_tolerance": "moderate",
+          "wfh_suitability": "moderate",
+          "value": "Affordable but needs careful street selection — high crime variation within the area."
+        },
+        "Upper Leytonstone / Whipps Cross Fringe": {
+          "character": "Transitional zone between Leyton (E10) and Leytonstone (E11) near Epping Forest's southern edge. Victorian terraces with some larger properties. More suburban than central Leyton.",
+          "transport": "Leytonstone tube (Central Line, Zone 3/4) for E11 parts; Leyton tube for E10 parts. PTAL 2–3.",
+          "creative_scene": "Limited — 491 Gallery, biennial E11 Art Trail. Not a current creative hub.",
+          "broadband": "Gigabit broadband confirmed available.",
+          "hosting_tolerance": "low",
+          "wfh_suitability": "moderate",
+          "value": "2-bed £1,600–1,800/month — best value in the search area."
+        }
+      }
+    },
+    "E15": {
+      "overview": "Stratford commands premium rents due to Elizabeth Line connectivity and Olympic legacy regeneration\u2014London's second-most connected transport hub. Value pockets in Victorian terraces around Stratford Village and West Ham run 15-20% below purpose-built towers. Avoid Carpenters Estate (facing demolition/regen uncertainty). New-build service charges add \u00a3150-400/month; scrutinise ground rent terms. Flood risk near Stratford High Street.",
+      "micro_areas": {
+        "Stratford Village / The Grove": {
+          "character": "The real Stratford before the towers and Westfield. Late-Victorian terraces (1890s) with thick brick party walls on The Grove, Salway Road, West Ham Lane, Leggatt Road. Theatre Royal Stratford East (Joan Littlewood's legendary home) on Salway Road anchors the cultural identity. Genuinely diverse and lived-in, not gentrified in the Forest Gate sense. No canal, no warehouses, no creative community in the E2 sense. Critical warning: this is Newham \u2014 NEST noise enforcement operates Wed\u2013Sat until 4:15am, classifies post-11pm domestic noise as anti-social behaviour, installs monitoring recorders for 7\u201310 days. Marcel must target end-of-terrace Victorians, invest in acoustic treatment, and keep sessions strictly before midnight.",
+          "transport": "PTAL 6a\u20136b \u2014 among the highest in East London. Maryland station (Elizabeth line) to Liverpool Street 5\u20136 min, Tottenham Court Road 15 min, trains every 5 min. Stratford mega-interchange 5\u201310 min walk: Central, Jubilee, Elizabeth, DLR, Overground, c2c, Stratford International (HS1). King's Cross ~22 min.",
+          "creative_scene": "Theatre Royal Stratford East (Salway Road \u2014 460-seat Victorian producing theatre, bold new writing, 60-seat studio). East Bank 10\u201315 min walk: Sadler's Wells East (opened Feb 2025, 550-seat), V&A East Storehouse (opened May 2025, David Bowie archive), V&A East Museum (opens 18 April 2026 \u2014 inaugural exhibition 'The Music is Black: A British Story'). 3 Mills Studios adjacent. All institutional, not grassroots. No record shops, no DIY venues, no scene to plug into.",
+          "broadband": "Newham: 95% gigabit, 88% FTTP \u2014 best broadband stats in this entire search. Openreach FTTP 61% giving wide ISP choice. Community Fibre active via Newham council wayleave. Virgin Media cable 61%. Virtually zero blackspot risk.",
+          "hosting_tolerance": "moderate",
+          "wfh_suitability": "moderate",
+          "value": "1-bed Victorian conversion: \u00a31,500\u20131,800/month. 2-bed: \u00a31,800\u20132,300. At Marcel's budget: a spacious 2-bed Victorian with dedicated office room, potentially with garden \u2014 30\u201340% cheaper than equivalent E2 stock. Best streets: The Grove, West Ham Lane, Leggatt Road, Ham Park Road. Strongest budget play for space in this search."
+        },
+        "Stratford High Street / Sugar House Lane": {
+          "character": "E15's one genuine shot at canal-side creative living, split between a gem and a minefield. The gem: The Sugar House at Sugar House Island \u2014 8 exclusive homes in a restored 1882 Victorian sugar warehouse with heritage beams, exposed brick, spiral staircases, mezzanine floors, canal views. Also houses The Talent House (Mayor of London-backed music/dance hub). The minefield: the A11 tower corridor (Stratosphere, Unex, Sky View) \u2014 generic BTR with paper-thin walls, avoid entirely. Service charge crisis at One Stratford (bills effectively doubled). Still partly under construction.",
+          "transport": "PTAL 4\u20135. Pudding Mill Lane DLR to Stratford 2 min, Bank 15 min. Bromley-by-Bow (District/H&C) 10 min walk. Stratford 15 min walk or 1 DLR stop. Cycle to Hackney Wick in 10 min via canal towpaths.",
+          "creative_scene": "The Talent House at Sugar House Island (5 music production/recording studios, live room, 2 vocal booths, large rehearsal/events space, dance studios, co-working for artists). Dane's Yard (100,000 sqft creative workspace). Divisible Space (coworking, event space up to 100 people). 3 Mills Studios adjacent (major film/TV). Curated creative rather than grassroots, but The Talent House is genuine music infrastructure Marcel could use.",
+          "broadband": "New-build: full fibre guaranteed. Multiple FTTP providers: Openreach, likely Hyperoptic, Community Fibre. Gigabit standard in all Sugar House Island units. Best broadband certainty of any property type in this search.",
+          "hosting_tolerance": "low",
+          "wfh_suitability": "good",
+          "value": "The Sugar House heritage warehouse: from \u00a31,850/month \u2014 only 8 units. Botanical Mews: 1-bed from \u00a31,650, 2-bed from \u00a31,800. Currently offering 5 weeks free rent on some units. All BTR: service charges bundled into rent. Avoid the High Street towers \u2014 service charges of \u00a34,500\u20137,000/year on top of rent. The Sugar House is the only unit type worth Marcel's attention here."
+        },
+        "West Ham / Plaistow Fringe": {
+          "character": "Maximum space for minimum money, but zero creative soul. Victorian and Edwardian terraces (Meath Road, Eleanor Road, Keogh Road) interspersed with 1960s council blocks. West Ham Park nearby. Feels like suburban East London, not the creative East London Marcel values. No canal, no warehouses, no interesting architecture, no caf\u00e9 culture. But: thick Victorian walls, quiet residential streets, outstanding multi-line transport. If Marcel prioritises a whole house for sound insulation and a dedicated DJ room over neighbourhood character, this is the most affordable path.",
+          "transport": "PTAL 5\u20136a. West Ham station: Jubilee, District, H&C, DLR, c2c \u2014 one of east London's best interchanges. Liverpool Street 10 min, Canary Wharf 8 min, Bank 12 min. King's Cross ~18 min. 1 stop to Stratford for Elizabeth line.",
+          "creative_scene": "Non-existent locally. No venues, studios, galleries, record shops, or creative coworking. Nearest culture: Theatre Royal Stratford East (20 min walk), East Bank/Olympic Park (25 min walk). Marcel would commute to anything interesting.",
+          "broadband": "Standard Newham coverage: 95% gigabit, Openreach FTTP 61%, Virgin Media 61%, Community Fibre active. No concerns for remote work.",
+          "hosting_tolerance": "moderate",
+          "wfh_suitability": "poor",
+          "value": "Cheapest in the entire search. 1-bed: \u00a31,400\u20131,700. 2-bed: \u00a31,600\u20132,100. At Marcel's budget: a spacious 2-bed ground-floor maisonette with garden at \u00a31,800, or a 3-bed Victorian terrace at \u00a32,300\u20132,500. A whole Victorian house means party walls on only two sides \u2014 best possible sound insulation for DJ sessions. Marcel gets the most house here but sacrifices everything else he values."
+        },
+        "Maryland / Forest Gate Border": {
+          "character": "E15's most promising pocket for emerging character, though the best of it bleeds into E7. Victorian terraces around Maryland station with the Cart & Horses pub (birthplace of Iron Maiden) as the local landmark. The real draw is Forest Gate (E7) spillover 10 min east: Woodgrange Road's independent shops, railway arch caf\u00e9s. Maryland E15 itself is functional and unglamorous \u2014 the interesting streets are technically E7. Thick Victorian party walls offer decent sound insulation. NEST operates identically here but quieter streets and younger gentrifier neighbours reduce complaint probability.",
+          "transport": "PTAL 4\u20135. Maryland station (Elizabeth line): Liverpool Street 5 min, Tottenham Court Road 14 min, trains every 5 min. Forest Gate station (Elizabeth line) 10 min walk east. Stratford 1 stop west for full interchange access. Zone 3 pricing.",
+          "creative_scene": "Thin in E15 proper but Forest Gate E7 (10-min walk) delivers emerging scene: The Red House at St Anthony's Catholic Club (Wednesday jazz sessions), Ciderhouse E7 (vinyl evenings, baby raves, comedy), Forest Gate Tavern. Railway arch caf\u00e9s on Cranmer Road. Notable local musicians: Alfa Mist (jazz/hip-hop, internationally recognised), Barney Artist, Tiana Major9 \u2014 all from Newham/Forest Gate. A music-producing postcode, not a music-venue one.",
+          "broadband": "Newham: 95% gigabit. Openreach FTTP 61%. Community Fibre active. No significant risk for remote work \u2014 check per-address with Community Fibre and Openreach.",
+          "hosting_tolerance": "moderate",
+          "wfh_suitability": "moderate",
+          "value": "Best overall value in this entire search. 1-bed: \u00a31,350\u20131,800. 2-bed Victorian with garden: \u00a31,600\u20132,000. At Marcel's budget: a generous 2-bed Victorian with garden for \u00a31,800 with money to spare. Elizabeth line makes Zone 3 feel like Zone 2 \u2014 5 min to Liverpool Street. The trade-off: no creative infrastructure in E15 itself; Marcel lives here and commutes to culture."
+        },
+        "Olympic Park / East Village": {
+          "character": "Purpose-built BTR-dominated apartments (2012\u20132026) in the Queen Elizabeth Olympic Park zone. Corporate-managed developments (Get Living, Greystar) with concierge services and modern amenities. Institutional rather than grassroots creative character.",
+          "transport": "Stratford International (HS1) + Stratford (Elizabeth/Central/Jubilee/DLR/Overground). PTAL 6a+ \u2014 arguably the best-connected location in East London.",
+          "creative_scene": "Institutional: Sadler's Wells East, V&A East, London College of Fashion (UAL), UCL East, London Stadium concerts. Not grassroots/DIY.",
+          "broadband": "FTTP built into all new developments as standard \u2014 gigabit ubiquitous.",
+          "hosting_tolerance": "low",
+          "wfh_suitability": "moderate",
+          "value": "2-bed \u00a32,000\u20132,500/month (often includes concierge/gym; rent-free incentives of 2\u20134 weeks common)."
+        }
+      }
+    },
+    "E17": {
+      "overview": "Walthamstow shows dramatic price variation between premium Village area and affordable Higham Hill/Wood Street pockets. Victoria Line reaches King's Cross in 15 minutes. Build-to-Rent developments (e.g. The Eades) offer 8 weeks rent-free (~15% effective discount)\u2014factor incentives into comparisons. Waltham Forest operates borough-wide selective landlord licensing. Marlowe Road estate flagged for intervention.",
+      "micro_areas": {
+        "Blackhorse Road": {
+          "character": "Mayor of London Creative Enterprise Zone (one of 9 in London). Blackhorse Workshop (Assemble), Creative Works (100+ professionals), Beer Mile (Exale Brewing DJ nights), Standard Music Venue. Walthamstow Wetlands at doorstep.",
+          "transport": "Victoria Line + Overground (dual mode), PTAL 4–5. Oxford Circus 18 min.",
+          "creative_scene": "Blackhorse Workshop, Creative Works, Beer Mile (Signature Brew, Exale, Pretty Decent, Wild Card, Big Penny Social), Standard Music Venue, Yonder climbing/co-working.",
+          "broadband": "FTTP guaranteed in new builds. 87%+ gigabit coverage, 124 Mbps median (Waltham Forest).",
+          "hosting_tolerance": "high",
+          "wfh_suitability": "good",
+          "value": "2-bed new-builds ~£1,800–2,200/month. Victorian terraces near Coppermill Lane for character."
+        },
+        "St James Street": {
+          "character": "Best pure value in E17. CRATE shipping container park (shops, food, bars, creative workspaces). 16 railway arches being converted to offices/workshops/food. St James Quarter Economic Impact Zone.",
+          "transport": "Overground only (no Tube). St James Street station. Near Walthamstow Marshes.",
+          "creative_scene": "CRATE St James Street — colourful container park with creative workspaces and bars.",
+          "broadband": "Good Waltham Forest borough-wide coverage (87%+ gigabit).",
+          "hosting_tolerance": "high",
+          "wfh_suitability": "moderate",
+          "value": "Grittier, less gentrified — significantly cheaper than Village or Blackhorse Road."
+        },
+        "Walthamstow Village": {
+          "character": "Premium end of E17 (median £7,710/sqm). Orford Road conservation-area independents. God's Own Junkyard on Ravenswood Industrial Estate. Not recommended for regular music events.",
+          "transport": "Walthamstow Central (Victoria Line). Excellent connectivity.",
+          "creative_scene": "God's Own Junkyard, Orford Road independent shops and restaurants.",
+          "broadband": "Good Waltham Forest borough-wide coverage (87%+ gigabit).",
+          "hosting_tolerance": "low",
+          "wfh_suitability": "good",
+          "value": "E17's most expensive zone \u2014 premium village rents."
+        },
+        "Central Walthamstow / Hoe Street": {
+          "character": "The cultural epicentre of E17, anchored by the 960-seat Soho Theatre Walthamstow (opened May 2025 in restored 1930s Granada Cinema) and Ye Olde Rose & Crown (free live music, fringe theatre, comedy). Hoe Street is rapidly evolving with independent caf\u00e9s, steps from Walthamstow Village.",
+          "transport": "Walthamstow Central (Victoria Line + Overground) \u2014 ~15 min to Oxford Circus. PTAL 5\u20136a.",
+          "creative_scene": "Soho Theatre Walthamstow (comedy, cabaret, 4 bars, studio spaces), Ye Olde Rose & Crown (live music always free), The Scene cinema, proximity to Walthamstow Village breweries.",
+          "broadband": "Gigabit FTTP available via Openreach and Virgin Media.",
+          "hosting_tolerance": "moderate",
+          "wfh_suitability": "good",
+          "value": "2-bed \u00a31,700\u20132,200/month (period flat); \u00a32,200\u20132,800 (Village-adjacent premium)."
+        },
+        "Chapel End / West Walthamstow": {
+          "character": "Quieter, predominantly residential pocket of western E17 centred on Chingford Road and Forest Road/Billet Road area. Victorian/Edwardian terraces with some social housing. Proximity to Lloyd Park, William Morris Gallery, and Walthamstow Wetlands. More suburban feel than central Walthamstow.",
+          "transport": "Walthamstow Central within ~0.6 miles. PTAL 3\u20134. Good bus links on Forest Road and Chingford Road.",
+          "creative_scene": "Limited in-ward. Lloyd Park/William Morris Gallery and Walthamstow Wetlands nearby. 15-minute walk to central Walthamstow venues.",
+          "broadband": "Gigabit FTTP available.",
+          "hosting_tolerance": "low",
+          "wfh_suitability": "moderate",
+          "value": "2-bed \u00a31,400\u20131,800/month (most affordable in E17)."
+        },
+        "Wood Street": {
+          "character": "Distinctively creative neighbourhood anchored by Wood Street station. Wood Street Walls (internationally recognized street art), God's Own Junkyard (neon art gallery on Ravenswood Industrial Estate), Wood Street Indoor Market (vintage, records, artisan vendors), Pillars Brewery, Mother's Ruin Gin. More bohemian than neighbouring Walthamstow Village.",
+          "transport": "Wood Street station (Overground, 20 min to Liverpool Street). PTAL 3\u20134.",
+          "creative_scene": "Wood Street Walls, God's Own Junkyard, Pillars Brewery, Mother's Ruin Gin (cocktail bar weekends), Wood Street Indoor Market, annual E17 Art Trail.",
+          "broadband": "Gigabit FTTP available.",
+          "hosting_tolerance": "moderate",
+          "wfh_suitability": "good",
+          "value": "2-bed \u00a31,600\u20132,200/month."
+        }
+      }
+    },
+    "N15": {
+      "overview": "South Tottenham offers 15-20% savings versus neighbouring N16 with Victoria Line access (Seven Sisters to King's Cross in ~15 min). Zone between Seven Sisters and South Tottenham stations offers best balance of price and transport. Gradual gentrification spillover from N16; new BTR developments (Vabel Lawrence, Apex Gardens) adding modern stock. Markfield Road flood risk zone; Haringey crime rate 14% above London average with violence/theft concentrating around transport hubs.",
+      "micro_areas": {
+        "Markfield Road corridor": {
+          "character": "Standout creative micro-area in N15. Gaunson House Creative Studios (84 studios, 95+ artists). Annual Markfield Road Festival (3 days of open studios, live music, DJs). London Live Work warehouse studios with 24hr access.",
+          "transport": "Tottenham Hale station (Victoria Line) 9 min walk. Markfield Park with Grade II listed Beam Engine Museum.",
+          "creative_scene": "Gaunson House (84 studios), Markfield Road Festival, London Live Work. Connects to N17's Ten87 Studios and Five Miles — forming a cross-border creative cluster.",
+          "broadband": "Good Haringey coverage (85%+ gigabit).",
+          "hosting_tolerance": "high",
+          "wfh_suitability": "moderate",
+          "value": "Affordable live-work units when available. More studios than traditional residential."
+        },
+        "West Green Road / Clyde Circus": {
+          "character": "Best balance of residential quality and emerging scene in N15. Clyde Circus Conservation Area (Victorian terraces on Clyde Road, Dongola Road, Beresford Road). Active residents' association. 15–20 min walk to Stoke Newington Church Street.",
+          "transport": "Seven Sisters station (Victoria Line) 5–10 min walk.",
+          "creative_scene": "Early gentrification — True Craft pizzeria/craft beer, Café Lemon. Proximity to N16 cultural scene.",
+          "broadband": "Good Haringey coverage (85%+ gigabit).",
+          "hosting_tolerance": "moderate",
+          "wfh_suitability": "moderate",
+          "value": "Significantly cheaper than N16 with quality Victorian housing stock."
+        },
+        "Harringay Ladder": {
+          "character": "Distinctive grid of ~20 Victorian terraced streets between Green Lanes and Wightman Road. Green Lanes is a vibrant cosmopolitan restaurant strip famous for Turkish cuisine \u2014 G\u00f6ky\u00fcz\u00fc, Hala, Antepliler \u2014 plus bakeries, Dusty Knuckle, and Brouhaha cocktail bar. Quiet, tree-lined residential roads with strong community identity.",
+          "transport": "Harringay (Great Northern), Harringay Green Lanes (Overground), Turnpike Lane and Manor House (Piccadilly Line). PTAL 4\u20135.",
+          "creative_scene": "New River Studios (199 Eade Rd \u2014 rehearsal from \u00a37.50/hr, venue, 199Radio community station), Harringay Warehouse District, ExFed arts space. Proximity to Pirate Studios Tottenham.",
+          "broadband": "Openreach FTTP rolling out; FTTC widely available. Community Fibre, G.Network, Virgin Media cable all present. Gigabit available at many addresses.",
+          "hosting_tolerance": "moderate",
+          "wfh_suitability": "good",
+          "value": "2-bed \u00a31,850\u20132,200/month."
+        },
+        "Northumberland Park / Stadium Quarter": {
+          "character": "Regeneration-zone ward dominated by Tottenham Hotspur Stadium and surrounding social housing estates. Undergoing 20-year transformation plan. Match-day crowds and controlled parking zones impact regularly.",
+          "transport": "Northumberland Park (Greater Anglia), White Hart Lane (Overground). PTAL 2\u20133.",
+          "creative_scene": "Minimal \u2014 nearest hubs are Bernie Grant Arts Centre and Markfield Road, both 1+ mile south.",
+          "broadband": "FTTC available; FTTP growing. Moderate.",
+          "hosting_tolerance": "low",
+          "wfh_suitability": "poor",
+          "value": "2-bed \u00a31,400\u20131,700/month."
+        }
+      }
+    },
+    "N16": {
+      "overview": "Stoke Newington commands 15-20% premiums over N15/N17 reflecting its village feel, independent shops, and excellent schools. Church Street core has highest rents; prime houses near Clissold Park reach \u00a31,800/week. Value pockets near Hackney Downs and Stamford Hill. Woodberry Down regeneration (5,500 homes by 2035) may ease supply. Manor House tube (Piccadilly) nearby but no direct tube; above-average property crime.",
+      "micro_areas": {
+        "Church Street Village": {
+          "character": "Marcel's current zone benchmark. The Others (art/events), The Waiting Room (electronic music), Babel Art House, Abney Park Chapel (jazz/film events). Stoke Newington Literary and Music Festivals. Victorian terraces with solid party walls.",
+          "transport": "PTAL 2–3 (no Tube). Stoke Newington Overground, Liverpool Street 13–19 min. Bus-dependent.",
+          "creative_scene": "The Others, The Waiting Room, Babel Art House, Abney Park Chapel events. Literary and Music Festivals.",
+          "broadband": "~94% gigabit coverage (Hackney North). Community Fibre, Hyperoptic FTTP. Victorian terraces need individual checks.",
+          "hosting_tolerance": "moderate",
+          "wfh_suitability": "moderate",
+          "value": "2-bed flat rents £1,800–2,000/month. N16's most expensive zone."
+        },
+        "Shacklewell / Rectory Road": {
+          "character": "Best value within N16. East of A10, grittier — more tolerant of noise. Whole Victorian houses with basements and gardens more likely affordable here. Dalston 10–15 min walk south.",
+          "transport": "PTAL 3–4. Rectory Road Overground station directly in the area.",
+          "creative_scene": "Proximity to Dalston's cultural scene (10–15 min walk south). Spillover energy.",
+          "broadband": "Good Hackney borough-wide gigabit coverage.",
+          "hosting_tolerance": "moderate",
+          "wfh_suitability": "moderate",
+          "value": "Best value in N16. Possible whole Victorian houses with basements and gardens."
+        },
+        "Stamford Hill": {
+          "character": "Home to one of Europe's largest Hasidic Jewish communities. Conservative, family-oriented — weekend events would conflict with Shabbat. Not recommended for a DJ. But excellent square footage per pound.",
+          "transport": "Stamford Hill rail station. Multiple bus routes.",
+          "creative_scene": "Minimal — residential and religious community.",
+          "broadband": "Good Hackney borough-wide gigabit coverage.",
+          "hosting_tolerance": "low",
+          "wfh_suitability": "moderate",
+          "value": "Average £448,750 vs N16's £742,988. Best square footage per pound in N16."
+        },
+        "Woodberry Down / Manor House": {
+          "character": "Best transport in N16 via Manor House Piccadilly Line. Berkeley Homes regeneration (5,500+ homes through ~2035). Modern acoustic insulation and FTTP in new builds. Terrible for hosting events.",
+          "transport": "Manor House Piccadilly Line — King's Cross 10 min, Leicester Square 20 min.",
+          "creative_scene": "Minimal — new-build residential regeneration.",
+          "broadband": "FTTP as standard in all new builds.",
+          "hosting_tolerance": "low",
+          "wfh_suitability": "good",
+          "value": "Premium new-build rents. Good transport offsets higher cost."
+        },
+        "Newington Green / Mildmay": {
+          "character": "Bohemian-gentrified border zone between Stoke Newington and Islington around Newington Green. Note: Mildmay is an Islington ward, not Hackney \u2014 different noise enforcement. Independent restaurants, wine bars, and the historic Mildmay Club (community venue with sprung dance floor and event hire). Victorian terraces with strong local identity.",
+          "transport": "Walkable to Canonbury, Dalston Kingsland, and Highbury & Islington (Victoria Line). PTAL 5\u20136a.",
+          "creative_scene": "Mildmay Club (stage, dance floor, event hire), Newington Green Meeting House. Close to Dalston nightlife and Arcola Theatre.",
+          "broadband": "Same N16 gigabit availability (~85.6% of Hackney premises).",
+          "hosting_tolerance": "moderate",
+          "wfh_suitability": "good",
+          "value": "2-bed \u00a32,000\u20132,400/month."
+        }
+      }
+    },
+    "N17": {
+      "overview": "Tottenham Hale has a stark two-tier market: Build-to-Rent developments (Heart of Hale, Hale Village, The Gessner\u2014\u00a32,170-2,615 for 1-beds with gym/concierge) vs older Victorian conversions at 20-30% less. Victoria Line reaches King's Cross in 12 min; direct trains to Stansted. Northumberland Park area remains challenging. Higher crime in Tottenham Hale ward; flood risk near waterways.",
+      "micro_areas": {
+        "Tottenham Hale": {
+          "character": "Cheapest viable option with genuine creative infrastructure. Related Argent 'Heart of Hale' scheme (£350m+, same developers as King's Cross). The Cause, Grow Tottenham, Beavertown Brewery. Area still feels transitional with construction disruption.",
+          "transport": "Victoria Line to King's Cross 15 min — better than any N16 connection. Direct trains to Stansted.",
+          "creative_scene": "The Cause (underground electronic venue), Grow Tottenham (community garden/café/bar), Beavertown Brewery Taproom, Millmead Studios.",
+          "broadband": "FTTP virtually certain in new builds.",
+          "hosting_tolerance": "moderate",
+          "wfh_suitability": "good",
+          "value": "New-build 2-bed BTR £1,800–2,200/month furnished. £400–700/month below Hackney equivalents."
+        },
+        "Markfield Road (N17 side)": {
+          "character": "Creative corridor flagship. Ten87 Studios (30+ recording studios, 150+ artists, 4+ feet soundproofing, on-site listening bar). Five Miles (café/bar/brewery/event space). Forms cross-border cluster with N15's Gaunson House.",
+          "transport": "Tottenham Hale station (Victoria Line) nearby.",
+          "creative_scene": "Ten87 Studios (30+ studios, 150+ recording artists, listening bar), Five Miles. Tottenham's strongest creative asset.",
+          "broadband": "Good — new development area with expanding FTTP.",
+          "hosting_tolerance": "high",
+          "wfh_suitability": "moderate",
+          "value": "Affordable live-work units. More a working corridor than traditional residential."
+        },
+        "Bruce Grove / High Road N17": {
+          "character": "Historic heart of Tottenham centred on the Bruce Grove Conservation Area (Grade II listed Georgian terrace) and the High Road (A10). Late Victorian/Edwardian terraced streets with busy, multicultural High Road commercial strip. Bruce Castle Park and Museum provide heritage green space.",
+          "transport": "Bruce Grove station (National Rail to Liverpool Street ~25 min), Tottenham Hale Victoria Line ~19 min walk, buses 123, 149, 243, 341. PTAL 3\u20134.",
+          "creative_scene": "Bernie Grant Arts Centre (20 enterprise studios, performance space, Black-led creative programme) just south of the ward. Bruce Castle Museum hosts exhibitions and community events.",
+          "broadband": "Openreach FTTP available to majority of premises. Gigabit-capable.",
+          "hosting_tolerance": "moderate",
+          "wfh_suitability": "moderate",
+          "value": "2-bed \u00a31,500\u20131,900/month \u2014 significantly cheaper than Tottenham Hale."
+        }
+      }
+    },
+    "E2": {
+      "overview": "Bethnal Green/Shoreditch straddles Tower Hamlets and Hackney with huge internal price variation \u2014 Shoreditch 1-beds at \u00a32,200-2,800 vs Cambridge Heath at \u00a31,500-1,800. Central Line (Bethnal Green) reaches Liverpool Street in 3 min; multiple Overground stations. Rich creative infrastructure from Silicon Roundabout co-working to Vyner Street galleries. Haggerston and Cambridge Heath offer best value; Shoreditch is fully gentrified premium. FTTP widely available (80%+ gigabit coverage). Watch for Shoreditch noise/nightlife and inflated crime stats in southern E2.",
+      "micro_areas": {
+        "Bethnal Green / Cambridge Heath": {
+          "character": "E2's creative core and Marcel's most balanced option. Warehouse conversions along Regent's Canal (Vyner Street, Wadeson Street, The Oval) with thick brick walls, high ceilings, exposed steel. Target the Vyner Street canal corridor, part of the Regent's Canal Conservation Area; avoid Cambridge Heath Road itself (brutal A-road noise). Genuinely diverse: long-standing Bangladeshi community, young creatives in the warehouses, families in Cranbrook Estate. The Oval Space venue and Vyner Street gallery cluster create a natural noise-tolerance context around the canal zone.",
+          "transport": "PTAL 6a. Bethnal Green Underground (Central line) to Liverpool Street 5 min, King's Cross ~15 min with interchange. Cambridge Heath Overground to Liverpool Street 5 min. Regent's Canal towpath \u2014 car-free cycle route to King's Cross (20 min) or Victoria Park (10 min).",
+          "creative_scene": "Record shops: Flashback Records (131 Bethnal Green Road \u2014 two floors, dedicated soul/jazz/reggae basement, in-store gigs), Cosmos Records (324d Hackney Road \u2014 rare groove/jazz roots), Hidden Sounds (144 Cambridge Heath Road \u2014 community store, DJ events), YoYo Records (501 Cambridge Heath Road). Venues: Oval Space (The Oval \u2014 5,000 sqft former medical warehouse, Secretsundaze residency, London's premier electronic music venue, rooftop terrace), Resistance Gallery, Bethnal Green Working Men's Club (legendary cabaret/club nights). Vyner Street gallery cluster for First Thursdays. Maureen Paley (Herald Street \u2014 one of London's most important contemporary galleries, in E2 since 1984).",
+          "broadband": "Tower Hamlets: 89% gigabit, 86% FTTP. Community Fibre is dominant altnet \u2014 signed wayleave with EastendHomes covering 4,000+ E2 homes, symmetric gigabit from ~\u00a320/month. G.Network active. Openreach FTTP only 28% \u2014 patchy, don't rely on it. For warehouse conversions check Community Fibre availability first; older freehold blocks without wayleave agreements are the main blackspot risk.",
+          "hosting_tolerance": "moderate",
+          "wfh_suitability": "good",
+          "value": "1-bed warehouse conversion: \u00a31,800\u20132,200/month. 2-bed warehouse: \u00a32,200\u20132,800 (top of budget). Standard Victorian 1-bed from \u00a31,700. Target: Derbyshire Street warehouse conversions, Vyner Street canal-side, The Oval area. Mezzanine warehouse layouts give natural work-life separation. Agents: Black Katz, Fyfe McDade, Dexters Shoreditch."
+        },
+        "Shoreditch / Hoxton": {
+          "character": "Skip this for Marcel. Most of 'Shoreditch' is EC2A \u2014 the E2 portion is only the eastern fringe: Redchurch Street (now luxury boutiques), Arnold Circus/Boundary Estate (Grade II Arts & Crafts council housing, beautiful but rarely available for private let), western Hackney Road. Creative infrastructure has hollowed out: galleries migrated to Vyner Street, independents replaced by corporate creative. The people who'd complain about a DJ set at 11pm live here now.",
+          "transport": "PTAL 5\u20136a. Shoreditch High Street Overground, Hoxton Overground. Liverpool Street walkable in 8 min. Old Street (Northern line, Zone 1) from western edge.",
+          "creative_scene": "Diminished in E2 Shoreditch. Nearby: Rough Trade East (Old Truman Brewery \u2014 technically E1, 10-min walk). Rich Mix arts centre (E1 boundary). Love Vinyl (5 Pearson Street \u2014 dance/house/techno/disco, serious DJ shop). Village Underground (EC2A boundary). The electronic music community has migrated east to Bethnal Green and Hackney Wick.",
+          "broadband": "Same Tower Hamlets: 89% gigabit. G.Network likely strongest here near City deployment edge. Newer blocks have Hyperoptic. Community Fibre available. No broadband concerns.",
+          "hosting_tolerance": "low",
+          "wfh_suitability": "good",
+          "value": "1-bed: \u00a32,100\u20132,500+. 2-bed: \u00a33,000+. Warehouse conversions: \u00a33,500+. At Marcel's budget he'd get a small 1-bed in a modern block \u2014 no warehouse character, no hosting space. Budget mismatch and wrong vibe \u2014 spend energy on Bethnal Green or Haggerston instead."
+        },
+        "Haggerston / Queensbridge": {
+          "character": "Marcel's bullseye for canal-side warehouse living. Kingsland Basin is the epicentre: Adelaide Wharf, Union Wharf (former timber wharf, 25 flats), Downham Wharf \u2014 gated canal-side developments with genuine industrial features, thick concrete and brick walls. Springfield House (Kingsland Road) has live-work units at 810+ sqft. Critical: this is Hackney borough, not Tower Hamlets \u2014 different noise enforcement, generally more tolerant of creative activity. Target western Whiston Road and Kingsland Basin; the eastern end skews council housing. Always verify genuine warehouse conversion vs industrial-styled new-build (the latter has thin walls that betray the aesthetic).",
+          "transport": "PTAL 4\u20135. Hoxton Overground (western Whiston Road, 370 yards), Haggerston Overground (north), Cambridge Heath Overground (east). Liverpool Street 8\u201310 min. Regent's Canal towpath to King's Cross 20 min, Victoria Park 10 min. Kingsland Road (A10) bus corridor direct to Stoke Newington.",
+          "creative_scene": "Love Vinyl (5 Pearson Street \u2014 London's best DJ-focused shop: new dance/house/techno/disco plus secondhand rarities). Netil House nearby in E8 (1,000+ creative businesses, customizable studios, 24/7 access, rooftop bar). Tuscany Wharf (Victorian timber wharf on canal, creative studio space). Broadway Market (Saturday market, 8-min walk). Direct corridor north to Dalston's music scene: Caf\u00e9 OTO, Dalston Superstore, Ridley Road Market Bar. 10-min canal walk south to Vyner Street galleries and Oval Space.",
+          "broadband": "Hackney borough, E2 postcode. Community Fibre active via Hackney council wayleave agreements. G.Network confirmed in Hackney deployment area. Newer canal-side blocks likely have Hyperoptic. Openreach FTTP coverage generally better in Hackney than Tower Hamlets. Warehouse conversions may have different connectivity \u2014 always check per-address.",
+          "hosting_tolerance": "high",
+          "wfh_suitability": "good",
+          "value": "Live-work 1-bed: \u00a31,800\u20132,200/month. 2-bed warehouse canal-side: \u00a32,200\u20132,800. Kingsland Basin canal-facing commands 10\u201315% premium. Authentic warehouse loft near canal from \u00a31,800 \u2014 rare but they surface. Eastern Whiston Road or one street back from canal for better value. Live-work units provide natural work-life separation with dedicated ground-floor or mezzanine work areas. Agents: Black Katz, Foxtons Shoreditch."
+        },
+        "Weavers / Brick Lane Fringe": {
+          "character": "Sunday-morning-market energy meets Brick Lane bass culture \u2014 distinct from Shoreditch's corporate sheen. Columbia Road (1860s Victorian shopfronts, flower market), Cheshire Street (Sunday vintage market), Ezra Street (converted warehouses, Lily Vanilli Bakery). Genuinely diverse patchwork: affluent creatives beside social housing. Good for culture, bad for Marcel's DJ sessions \u2014 dominant stock is Victorian terraces and tenements with poor sound insulation. Only pursue if a specific warehouse conversion on Cheshire Street or Ezra Street surfaces. Tower Hamlets borough: noise patrol Thu\u2013Sun 8pm\u20133:30am.",
+          "transport": "PTAL 4\u20135. Bethnal Green Underground (Central line) 10\u201312 min walk. Shoreditch High Street Overground 8 min. Hoxton Overground 10 min. No tube station within 5 min walk \u2014 slightly less convenient than Bethnal Green proper.",
+          "creative_scene": "Columbia Road Flower Market (Sunday). Flashback Records (top of Brick Lane/Bethnal Green Road). The Last Tuesday Society / Viktor Wynd Museum of Curiosities. Maureen Paley Gallery (Herald Street \u2014 major contemporary, since 1984). The Marksman pub (Hackney Road). Brick Lane has deep sound system culture history. Proximity to Rough Trade East and Truman Brewery complex. Weekday creative is thinner than Sunday energy.",
+          "broadband": "Tower Hamlets: 89% gigabit. Community Fibre primary altnet \u2014 strong in council and social housing blocks. G.Network active. Older Victorian terraces and Leopold Buildings may depend on building-level wayleave status \u2014 check per address.",
+          "hosting_tolerance": "moderate",
+          "wfh_suitability": "moderate",
+          "value": "Cheshire Street 1-bed: \u00a31,800\u20132,200 \u2014 the sweet spot for character within budget. Columbia Road pushes 1-beds to \u00a32,400+, above budget. 2-bed: \u00a32,500\u20133,250, mostly above budget. Sunday market chaos disrupts ground-floor WFH 8am\u20133pm Sundays. Target Cheshire Street for best character-per-pound."
+        }
+      }
+    }
+  },
+  "outcode_borough": {
+    "E3": "Tower Hamlets",
+    "E5": "Hackney",
+    "E9": "Hackney",
+    "E10": "Waltham Forest",
+    "E15": "Newham",
+    "E17": "Waltham Forest",
+    "N15": "Haringey",
+    "N16": "Hackney",
+    "N17": "Haringey",
+    "E2": "Tower Hamlets",
+    "E8": "Hackney"
+  },
+  "council_tax_monthly": {
+    "Tower Hamlets": {"A": 97, "B": 114, "C": 130, "D": 146},
+    "Hackney": {"A": 109, "B": 127, "C": 146, "D": 164},
+    "Waltham Forest": {"A": 127, "B": 148, "C": 169, "D": 190},
+    "Newham": {"A": 96, "B": 112, "C": 128, "D": 144},
+    "Haringey": {"A": 123, "B": 143, "C": 164, "D": 184}
+  },
+  "crime_rates": {
+    "E3": {"rate": 125, "vs_london": "+47%", "risk": "medium"},
+    "E5": {"rate": 150, "vs_london": "+76%", "risk": "medium-high", "note": "Wide variation within postcode (47\u2013354 per 1k depending on street)"},
+    "E9": {"rate": 165, "vs_london": "+94%", "risk": "medium-high"},
+    "E10": {"rate": 110, "vs_london": "+29%", "risk": "medium", "note": "High Road is much higher (264) vs quiet residential streets (67)"},
+    "E15": {"rate": 150, "vs_london": "+76%", "risk": "medium", "note": "Residential rate shown; including Westfield retail crime the overall figure rises to 398"},
+    "E17": {"rate": 95, "vs_london": "+12%", "risk": "low-medium"},
+    "N15": {"rate": 143, "vs_london": "+68%", "risk": "medium-high"},
+    "N16": {"rate": 125, "vs_london": "+47%", "risk": "medium", "note": "Church St area higher (170) vs quieter High St side (82)"},
+    "N17": {"rate": 143, "vs_london": "+68%", "risk": "medium-high"},
+    "E2": {"rate": 138, "vs_london": "+62%", "risk": "medium-high", "note": "Shoreditch nightlife (300+ bars) significantly inflates anti-social behaviour and theft-from-person stats across southern E2. Bethnal Green residential streets are materially safer than the borough average."},
+    "E8": {"rate": 149, "vs_london": "+75%", "risk": "medium-high", "note": "Dalston's bar/restaurant concentration on Kingsland Road inflates stats. Theft from person double the Tower Hamlets rate (nightlife pickpocketing). Hackney Downs residential areas are calmer. Trend improving: -2.7% YoY."}
+  },
+  "rent_trends": {
+    "Tower Hamlets": {"yoy_pct": 2.6, "direction": "rising"},
+    "Hackney": {"yoy_pct": 4.3, "direction": "rising"},
+    "Waltham Forest": {"yoy_pct": 2.8, "direction": "rising"},
+    "Newham": {"yoy_pct": 8.9, "direction": "rising strongly"},
+    "Haringey": {"yoy_pct": 4.7, "direction": "rising"}
+  },
+  "acoustic_profiles": {
+    "victorian": {
+      "label": "Victorian conversion",
+      "airborne_insulation_db": "35–40 dB",
+      "hosting_safety": "poor",
+      "summary": "Timber joist floors transmit impact noise like a drum. Untreated separating floors achieve only 36–40 dB Rw — well below the 45 dB Part E standard. If your gathering generates 85 dB, neighbours hear 45–50 dB (louder than conversation). Pre-2003 conversions have no legal sound insulation requirement.",
+      "viewing_checks": [
+        "Knock-test party walls — hollow sound = stud partition (red flag)",
+        "Check for back-to-back sockets on party walls (thin points)",
+        "Ask when conversion was done — pre-2003 means no acoustic regulation",
+        "Spend 2–3 min in silence — can you hear neighbours?",
+        "Check flooring in flat above — hard floors without lease restriction = noise risk"
+      ]
+    },
+    "edwardian": {
+      "label": "Edwardian conversion",
+      "airborne_insulation_db": "35–40 dB",
+      "hosting_safety": "poor",
+      "summary": "Same-era construction as Victorian — timber joists, lath-and-plaster ceilings, 9-inch party walls. Flanking through continuous joists and chimney flues reduces effective insulation by 4–6 dB. Pre-2003 conversions are acoustically identical to Victorian.",
+      "viewing_checks": [
+        "Knock-test party walls — hollow sound = stud partition (red flag)",
+        "Check for gaps around pipe penetrations (under sinks, behind radiators)",
+        "Ask about conversion date — pre-2003 = no acoustic standard applied",
+        "Listen for neighbours in complete silence for 2–3 minutes",
+        "Check if flat above has hard flooring"
+      ]
+    },
+    "georgian": {
+      "label": "Georgian terrace",
+      "airborne_insulation_db": "38–42 dB",
+      "hosting_safety": "poor",
+      "summary": "Thicker walls than Victorian (three-brick at ground level, ~50–55 dB) but timber joist floors still only achieve 38–42 dB Rw. Listed building status often prevents acoustic upgrades. Deep floor joists marginally better than Victorian but still well below Part E.",
+      "viewing_checks": [
+        "Check listed status — may prevent any acoustic modification",
+        "Knock-test party walls at different floor levels (they thin as you go up)",
+        "Look for chimney breast recesses — thin spots in party walls",
+        "Check if open fireplaces act as sound conduits between flats",
+        "Ask about conversion date and Building Regs compliance"
+      ]
+    },
+    "new_build": {
+      "label": "Post-2003 purpose-built",
+      "airborne_insulation_db": "45–55 dB",
+      "hosting_safety": "good",
+      "summary": "The only common building type with regulated and tested acoustic performance. Part E requires ≥45 dB airborne with pre-completion testing. NHBC data shows 96% first-time pass rate. A gathering at 85 dB behind a 45 dB wall = 40 dB for neighbours (quiet library level). Concrete floors outperform timber-frame.",
+      "viewing_checks": [
+        "Check if concrete or timber-frame construction (knock floors/walls)",
+        "Ask the developer name — budget builders (timber-frame) underperform",
+        "Check for trickle vents that bypass window insulation",
+        "Listen for services noise (plumbing, pipes) — Part E doesn't cover this",
+        "Verify if Robust Details or pre-completion testing was used"
+      ]
+    },
+    "purpose_built": {
+      "label": "Pre-2003 purpose-built",
+      "airborne_insulation_db": "40–45 dB",
+      "hosting_safety": "moderate",
+      "summary": "Pre-2003 purpose-built flats had no testing obligation. Scottish studies found ~60% failure rate for the era's acoustic standards. 1980s–90s builds are worst: chipboard floors, stud partition walls, minimal insulation. Earlier concrete-frame blocks (1960s–70s) can perform well due to mass.",
+      "viewing_checks": [
+        "Determine construction era — 1960s concrete is better than 1980s chipboard",
+        "Knock-test walls and floors to assess mass",
+        "Ask if any acoustic upgrades have been done",
+        "Check for chipboard flooring (bouncy underfoot = bad sign)",
+        "Spend 2–3 minutes in silence listening for neighbour noise"
+      ]
+    },
+    "warehouse": {
+      "label": "Warehouse conversion",
+      "airborne_insulation_db": "30–50 dB",
+      "hosting_safety": "moderate",
+      "summary": "Acoustically paradoxical. Original fabric (200mm+ concrete slabs, heavy masonry) provides excellent mass-based insulation (50–58 dB). But new partition walls dividing units are often lightweight stud (30–35 dB). Post-2003 conversions must meet ≥43 dB. High ceilings help disperse sound energy.",
+      "viewing_checks": [
+        "Check if party walls are original masonry or new stud partitions (knock test)",
+        "Verify conversion date — post-2003 must meet Part E standards",
+        "Look for exposed services/pipework transmitting noise between units",
+        "Check for Sui Generis planning status (different noise rules)",
+        "Assess if high ceilings and concrete floors are original structure"
+      ]
+    },
+    "ex_council": {
+      "label": "Ex-council concrete block",
+      "airborne_insulation_db": "42–48 dB",
+      "hosting_safety": "moderate",
+      "summary": "Post-war concrete blocks (150–200mm+ slabs) offer surprisingly strong airborne insulation (48–55 dB) due to sheer mass — often outperforming 1990s purpose-built. Critical weakness is impact sound: bare concrete transmits footsteps and dropped objects brutally. Heavy rugs essential for hosting.",
+      "viewing_checks": [
+        "Confirm concrete construction (not no-fines concrete, which is weaker)",
+        "Check if mandatory carpet clause exists in lease",
+        "Knock-test floors — solid concrete vs hollow/lightweight",
+        "Ask about construction type with council/housing association",
+        "Check communal area quality as proxy for management standards"
+      ]
+    },
+    "period_conversion": {
+      "label": "Period conversion",
+      "airborne_insulation_db": "36–40 dB",
+      "hosting_safety": "poor",
+      "summary": "Period conversions share Victorian/Edwardian acoustic characteristics — timber joist floors achieving only 36–40 dB Rw. Unless converted post-2003 to Part E standards, expect minimal sound insulation. The conversion quality varies enormously.",
+      "viewing_checks": [
+        "Knock-test all party walls for stud vs solid construction",
+        "Ask when conversion was done — pre-2003 = no acoustic requirement",
+        "Check for gaps around services penetrations",
+        "Listen in silence for 2–3 minutes in each room",
+        "Ask about flooring restrictions in the lease"
+      ]
+    }
+  },
+  "energy_costs_monthly": {
+    "A": {"1_bed": 53, "2_bed": 66},
+    "B": {"1_bed": 70, "2_bed": 89},
+    "C": {"1_bed": 87, "2_bed": 110},
+    "D": {"1_bed": 106, "2_bed": 132},
+    "E": {"1_bed": 123, "2_bed": 156},
+    "F": {"1_bed": 142, "2_bed": 183},
+    "G": {"1_bed": 169, "2_bed": 217}
+  },
+  "water_costs_monthly": {
+    "1_bed": 40,
+    "2_bed": 50
+  },
+  "broadband_costs_monthly": {
+    "fttp": 25,
+    "fttc": 25,
+    "cable": 25,
+    "standard": 25
+  },
+  "service_charge_ranges": {
+    "victorian": {"typical_low": 50, "typical_high": 150},
+    "edwardian": {"typical_low": 50, "typical_high": 150},
+    "georgian": {"typical_low": 55, "typical_high": 170},
+    "new_build": {"typical_low": 200, "typical_high": 450},
+    "purpose_built": {"typical_low": 100, "typical_high": 220},
+    "warehouse": {"typical_low": 130, "typical_high": 380},
+    "ex_council": {"typical_low": 80, "typical_high": 200},
+    "period_conversion": {"typical_low": 50, "typical_high": 150}
+  },
+  "noise_enforcement": {
+    "Hackney": {
+      "process": "NoiseWorks digital platform (launched 2022). Single report triggers investigation. Out-of-hours officers Thu–Mon evenings (8pm–2am weeknights, to 5am Fri/Sat). Formal abatement notice if noise persists beyond 7 days of initial contact.",
+      "threshold_info": "No fixed dB threshold — subjective 'ordinary reasonable person' test. Night-time (11pm–7am): 34 dBA in complainant's dwelling if ambient ≤24 dBA, or 10 dBA above ambient.",
+      "response_time": "Relatively large enforcement team on rota basis. Structured and active."
+    },
+    "Haringey": {
+      "process": "Requires pattern of recurring disturbance — refuses to investigate one-off noise. Out-of-hours team until 3am (4am Fri/Sat). Officers visit complainant's home to assess. 25 noise prosecutions — highest in London.",
+      "threshold_info": "Subjective 'average reasonable person' standard. Same night-time dB thresholds as all boroughs. Urgent reports within 1 working day, non-urgent within 5.",
+      "response_time": "Pattern-based — won't act on single incidents. But highest prosecution rate when they do act."
+    },
+    "Tower Hamlets": {
+      "process": "Most under-resourced: 5 officers for ~5,000 complaints/year. Diary sheets sent to complainants, documented pattern required before officer visits. Out-of-hours Thu–Sun only, 8pm–3:30am.",
+      "threshold_info": "Same statutory framework but slower response. Heavy reliance on complainant evidence-gathering via diary sheets.",
+      "response_time": "Slowest borough due to understaffing. Limited out-of-hours coverage."
+    },
+    "Waltham Forest": {
+      "process": "Highest barrier to investigation: complainants must log 6 incidents on different days before a case is raised. First report triggers only an advisory letter to noise source. No dedicated late-night patrol identified.",
+      "threshold_info": "Same statutory thresholds but 6-incident minimum before formal investigation. Most lenient borough in practical terms.",
+      "response_time": "Most lenient for a noisy tenant. Advisory letter first, no action until 6 documented incidents."
+    },
+    "Newham": {
+      "process": "Most aggressive enforcer. Out-of-hours officers until 4am, seven days a week. 1,486 Community Protection Notices issued. Mandatory property licensing gives additional leverage — landlord licences can be revoked for persistent noise.",
+      "threshold_info": "Fixed penalty: £100 residential, £400 commercial. Same statutory dB thresholds. Mandatory licensing means landlord is also incentivised to act.",
+      "response_time": "Most extensive coverage (4am, 7 days/week). Fastest to escalate."
+    }
+  },
+  "hosting_tolerance": {
+    "E2": {
+      "rating": "moderate",
+      "notes": "Dense nightlife culture but Tower Hamlets strict (5,000 complaints/yr, equipment seizure powers). Varies wildly street-by-street — Oval/Hackney Road corridor tolerant, Columbia Road and new-builds intolerant.",
+      "known_friendly_areas": ["The Oval / Hackney Road gasworks zone", "Vyner Street canal-side", "Bethnal Green Road corridor", "Kingsland Basin (Hackney side)"],
+      "known_sensitive_areas": ["Columbia Road", "Globe Road / Approach Road", "Regent's View", "Empress Works", "Shoreditch Exchange"]
+    },
+    "E3": {
+      "rating": "moderate",
+      "notes": "Fish Island creative DNA but new-build residents pushing back. Shapes closed after 5 complaints. Old warehouses tolerant; avoid new-builds entirely.",
+      "known_friendly_areas": ["Fish Island warehouses", "Wallis Road", "Roman Road Market area"],
+      "known_sensitive_areas": ["Fish Island Village (Hill/Peabody)", "Ink Court", "New-build developments"]
+    },
+    "E5": {
+      "rating": "moderate",
+      "notes": "Established live-work pockets (DeHavilland Studios, Cell Studios) with 20yr creative communities. Limited tolerance beyond those pockets.",
+      "known_friendly_areas": ["Mount Pleasant Hill live-work", "DeHavilland Studios", "Cell Studios at Grosvenor Works", "Chatsworth Road / Millfields"],
+      "known_sensitive_areas": ["Upper Clapton residential streets", "Pembury Estate"]
+    },
+    "E8": {
+      "rating": "moderate",
+      "notes": "Cultural tolerance high (venue density) but Hackney enforcement strictest — single complaint triggers visit, 24,544 music complaints logged. Haggerston warehouses are the exception.",
+      "known_friendly_areas": ["Haggerston warehouse conversions", "Whiston Road", "Hackney Central / Mare Street"],
+      "known_sensitive_areas": ["Dalston core (795 complaints in Haggerston ward)", "London Fields / Broadway Market", "Dalston Square new-builds"]
+    },
+    "E9": {
+      "rating": "moderate",
+      "notes": "Hackney Wick creative quarter shrinking. Fish Island Village 'surprisingly sleepy'. Lighthouse pub hours slashed. Old warehouses on Wallis Rd still OK.",
+      "known_friendly_areas": ["Wallis Road warehouses", "White Post Lane", "Crate Brewery area"],
+      "known_sensitive_areas": ["Fish Island Village", "Victoria Park Village", "New-build developments"]
+    },
+    "E10": {
+      "rating": "low",
+      "notes": "Quiet suburban feel, limited creative infrastructure. Patchworks venue is an outlier. Residential streets have low noise tolerance.",
+      "known_friendly_areas": ["Patchworks (258 Church Road)", "Lea Bridge Road industrial fringe"],
+      "known_sensitive_areas": ["Francis Road / Leyton Village", "Residential streets generally"]
+    },
+    "E15": {
+      "rating": "low",
+      "notes": "Primarily residential/commercial regeneration zone. NEST enforcement operates Wed-Sat until 4:15am, classifies post-11pm domestic noise as anti-social behaviour.",
+      "known_friendly_areas": ["Sugar House Lane creative quarter"],
+      "known_sensitive_areas": ["Stratford Village residential", "BTR tower blocks", "West Ham / Plaistow"]
+    },
+    "E17": {
+      "rating": "moderate",
+      "notes": "Waltham Forest most lenient enforcement (6 incidents before case opened). Blackhorse Lane creative corridor good. Village area more sensitive.",
+      "known_friendly_areas": ["Blackhorse Lane / Creative Works", "St James Street / CRATE", "Blackhorse Workshop"],
+      "known_sensitive_areas": ["Walthamstow Village conservation area", "Orford Road"]
+    },
+    "N15": {
+      "rating": "high",
+      "notes": "Tottenham Hale creative corridor — Millmead Studios, The Cause, Grow Tottenham. Haringey requires 3+ incidents before investigation. Best window of opportunity.",
+      "known_friendly_areas": ["Markfield Road corridor", "Fountayne Road / Ashley Road", "Gaunson House Studios"],
+      "known_sensitive_areas": ["West Green Road residential (further from creative corridor)"]
+    },
+    "N16": {
+      "rating": "low",
+      "notes": "641 noise complaints/yr in Hackney. Church Street / Clissold = families. Victorian terraces with thin party walls. Stamford Hill religiously conservative.",
+      "known_friendly_areas": ["Shacklewell / Rectory Road (grittier, more tolerant)"],
+      "known_sensitive_areas": ["Church Street Village", "Clissold Park area", "Stamford Hill", "Woodberry Down"]
+    },
+    "N17": {
+      "rating": "high",
+      "notes": "Tottenham Hale creative corridor continues from N15. Haringey's lenient enforcement. Sarabande Foundation, Ten87 Studios, Five Miles. Earlier in gentrification cycle.",
+      "known_friendly_areas": ["Markfield Road (N17 side)", "Ten87 Studios", "Tottenham Hale creative zone", "Five Miles"],
+      "known_sensitive_areas": ["Northumberland Park residential"]
+    }
+  },
+  "creative_scene": {
+    "E2": {
+      "rehearsal_spaces": ["Pirate Studios (Dalston, 24/7)", "The Premises Studios (209 Hackney Road, 40yr+)", "London Sound Academy (Bethnal Green)", "Arch 79 Studio (railway arches)", "Hackney Road Recording Studios (270 Hackney Road)"],
+      "venues": ["Oval Space", "Bethnal Green Working Men's Club", "Star of Bethnal Green (open decks)", "Hoxton Cabin (weekly open decks)", "BOXPARK Shoreditch"],
+      "creative_hubs": ["Proposition Studios (52,000 sqft)", "Thames-Side Studios (200 artist studios)", "Acme Studios (Robinson Road)", "Containerville (shipping container offices)", "Village Underground"],
+      "summary": "London's densest DJ infrastructure. Record shops (Flashback, Cosmos, Hidden Sounds, Love Vinyl), open decks nights, hi-fi listening bars (Mad Cats, Seed Library), and 40yr+ studios. Electronic music community migrating east to Bethnal Green from Shoreditch."
+    },
+    "E3": {
+      "rehearsal_spaces": ["Mainyard Studios (35-37 Bow Road)"],
+      "venues": ["Jungle Electric", "Muxima arts café"],
+      "creative_hubs": ["Trampery Fish Island Village (6-acre campus)", "SPACE / Bridget Riley Studios"],
+      "summary": "Grime heritage hub (Dizzee Rascal, Wiley). Fish Island creative campus. Roman Road Market culture. More production history than current venue scene."
+    },
+    "E5": {
+      "rehearsal_spaces": ["Cell Studios at Grosvenor Works (30 studios, 4.3m ceilings)", "Hackney Downs Studios (200+ workspaces)"],
+      "venues": ["Round Chapel (Grade II*)", "MKII (Powerscroft Road)", "Clapton Country Club"],
+      "creative_hubs": ["DeHavilland Studios (41 live-work apartments)", "Lion Coffee + Records"],
+      "summary": "Round Chapel hosts major artists. MKII connected to Warp Records/Universal. Established 20yr+ creative communities in live-work buildings. E5 Bakehouse/Chatsworth Road Sunday market culture."
+    },
+    "E8": {
+      "rehearsal_spaces": ["Pirate Studios (Dalston)", "Hub16 DJ school", "The Premises Studios (Hackney Road)"],
+      "venues": ["Café OTO (experimental music)", "EartH (Art Deco cinema)", "Dalston Superstore", "Brilliant Corners (Klipschorn speakers)", "Moth Club", "Hackney Empire"],
+      "creative_hubs": ["Netil House (music studios, Netil Radio, rooftop bar)", "Hackney Downs Studios (200+ workspaces)", "Bootstrap Company (60,000 sqft)"],
+      "summary": "London's most concentrated creative postcode. Café OTO world-renowned. Brilliant Corners essential listening bar. NTS Radio based in Gillett Square. Hub16 DJ community. Faded Society open decks at Club Makossa."
+    },
+    "E9": {
+      "rehearsal_spaces": ["SPACE Studios (Hackney Wick)"],
+      "venues": ["Grow (canalside DJ venue)", "Stour Space", "The Yard Theatre", "Number 90 Bar"],
+      "creative_hubs": ["600+ artist studios (GLA Creative Enterprise Zone)", "Hackney Wick & Fish Island CDT (99-year lease)", "Kristina Records (specialist dance/electronic vinyl)"],
+      "summary": "GLA Creative Enterprise Zone with 600+ studios — London's densest creative cluster. Grow is the flagship canalside DJ venue. Kristina Records moved from Dalston."
+    },
+    "E10": {
+      "rehearsal_spaces": ["Arbeit Studios (18 workspaces, waiting list)"],
+      "venues": ["Patchworks (Funktion-One sound system, Resident Advisor featured)"],
+      "creative_hubs": ["Dreamhouse Records (vinyl shop)"],
+      "summary": "Patchworks is E10's standout — disco palace with Funktion-One. Dreamhouse Records and Francis Road café culture. Direct cycling to Hackney Wick scene."
+    },
+    "E15": {
+      "rehearsal_spaces": ["The Talent House at Sugar House Island (5 music production studios, live room, vocal booths)"],
+      "venues": ["Theatre Royal Stratford East (460-seat)"],
+      "creative_hubs": ["East Bank (Sadler's Wells East, V&A East)", "3 Mills Studios", "Dane's Yard (100,000 sqft)"],
+      "summary": "Institutional rather than grassroots. East Bank cultural quarter emerging. The Talent House is genuine music infrastructure. No record shops, no DIY venues, no scene to plug into locally."
+    },
+    "E17": {
+      "rehearsal_spaces": ["Blackhorse Workshop (fabrication + studios)"],
+      "venues": ["Standard Music Venue", "Exale Brewing (DJ nights)", "Big Penny Social"],
+      "creative_hubs": ["Creative Works at Enome House (100+ professionals)", "CRATE St James Street", "God's Own Junkyard"],
+      "summary": "Mayor of London Creative Enterprise Zone. Blackhorse Lane Beer Mile with DJ nights. Creative Works houses 100+ professionals. CRATE container park culture."
+    },
+    "N15": {
+      "rehearsal_spaces": ["Gaunson House Creative Studios (84 studios, 95+ artists)"],
+      "venues": ["The Cause (underground electronic)", "Grow Tottenham"],
+      "creative_hubs": ["Millmead Studios (former peanut factory)", "London Live Work warehouse studios", "Markfield Road Festival (annual, 3 days)"],
+      "summary": "Tottenham Hale creative corridor — Gaunson House anchors 84 studios. The Cause is a major electronic venue. Annual Markfield Road Festival. Cross-border cluster with N17."
+    },
+    "N16": {
+      "rehearsal_spaces": [],
+      "venues": ["The Others (art/events)", "The Waiting Room (electronic music)", "Babel Art House"],
+      "creative_hubs": ["Abney Park Chapel (jazz/film events)"],
+      "summary": "Church Street village culture — literary and music festivals. The Others and Waiting Room for electronic. More consumption than production. Limited studio infrastructure."
+    },
+    "N17": {
+      "rehearsal_spaces": ["Ten87 Studios (30+ recording studios, 150+ artists, 4ft+ soundproofing)"],
+      "venues": ["Five Miles (café/bar/brewery/event space)", "Beavertown Brewery Taproom"],
+      "creative_hubs": ["Sarabande Foundation (subsidised studios ~£1/sqft)", "Paxton17 creative quarter"],
+      "summary": "Ten87 Studios is Tottenham's strongest creative asset — 30+ studios with dedicated soundproofing and listening bar. Sarabande Foundation (McQueen legacy) offers heavily subsidised creative space. Earlier in gentrification cycle than Hackney."
+    }
+  }
+}

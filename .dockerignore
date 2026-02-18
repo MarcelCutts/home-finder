@@ -36,3 +36,16 @@ dist/
 # Local database
 *.db
 data/
+
+# Directories not needed in production
+docs/
+experiments/
+scripts/
+research/
+
+# Screenshots and binaries in root
+*.png
+*.dmg
+
+# Nested virtual environments (safety net)
+**/.venv/

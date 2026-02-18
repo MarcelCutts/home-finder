@@ -29,10 +29,10 @@ echo "==> Replacing database..."
 fly ssh console -C "sh -c 'rm -f /app/data/properties.db /app/data/properties.db-shm /app/data/properties.db-wal'" \
   --app "$APP" 2>/dev/null || true
 fly sftp put "$DATA_DIR/properties.db" /app/data/properties.db --app "$APP" -q
-fly ssh console --app "$APP" -C "sh -c 'chown appuser:appuser /app/data/properties.db'" 2>/dev/null || true
+fly ssh console --app "$APP" -C "sh -c 'chown -R appuser:appuser /app/data/'" 2>/dev/null || true
 
 echo "==> Syncing image cache (incremental)..."
-REMOTE_DIRS=$(fly ssh console --app "$APP" -C "ls /app/data/image_cache/" 2>/dev/null | tr -d '\r' || echo "")
+REMOTE_DIRS=$(fly ssh console --app "$APP" -C "ls /app/data/image_cache/ 2>/dev/null" 2>/dev/null | tr -d '\r' || echo "")
 LOCAL_DIRS=$(ls "$DATA_DIR/image_cache/")
 NEW_DIRS=$(comm -23 <(echo "$LOCAL_DIRS" | sort) <(echo "$REMOTE_DIRS" | sort) || true)
 
@@ -49,7 +49,7 @@ else
   echo "    Compressed size: $SIZE"
 
   fly sftp put /tmp/hf_new_images.tar.gz /app/data/hf_new_images.tar.gz --app "$APP" -q
-  fly ssh console --app "$APP" -C "sh -c 'cd /app/data/image_cache && tar xzf /app/data/hf_new_images.tar.gz && rm /app/data/hf_new_images.tar.gz'"
+  fly ssh console --app "$APP" -C "sh -c 'mkdir -p /app/data/image_cache && cd /app/data/image_cache && tar xzf /app/data/hf_new_images.tar.gz && rm /app/data/hf_new_images.tar.gz'"
   rm /tmp/hf_new_images.tar.gz
 fi
 
