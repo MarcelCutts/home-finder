@@ -35,7 +35,12 @@ from home_finder.utils.image_cache import (
     save_image_bytes,
     url_to_filename,
 )
-from home_finder.web.routes import _parse_optional_int, listing_age_filter, router  # type: ignore[attr-defined]
+from home_finder.web.routes import (  # type: ignore[attr-defined]
+    _parse_optional_int,
+    _resolve_cached_thumbnail,
+    listing_age_filter,
+    router,
+)
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -549,6 +554,45 @@ class TestCachedImages:
     def test_blocks_directory_traversal(self, client: TestClient) -> None:
         resp = client.get("/images/openrent_100/../../../etc/passwd")
         assert resp.status_code != 200
+
+
+# ---------------------------------------------------------------------------
+# Thumbnail resolution
+# ---------------------------------------------------------------------------
+
+
+class TestResolveCachedThumbnail:
+    """Tests for _resolve_cached_thumbnail()."""
+
+    def test_thumbnail_skips_epc_files(self, tmp_path: Path) -> None:
+        """Fallback should skip epc_* files and pick the first gallery_* file."""
+        unique_id = "zoopla:55555"
+        data_dir = str(tmp_path)
+
+        cache_dir = get_cache_dir(data_dir, unique_id)
+        # Create an epc file (alphabetically first) and a gallery file
+        save_image_bytes(cache_dir / "epc_000_aaa11111.jpg", b"\xff\xd8epc")
+        save_image_bytes(cache_dir / "gallery_001_bbb22222.jpg", b"\xff\xd8gallery")
+
+        result = _resolve_cached_thumbnail(unique_id, None, data_dir)
+        assert result is not None
+        assert "gallery_001_bbb22222.jpg" in result
+        assert "epc_" not in result
+
+    def test_thumbnail_fast_path_finds_gallery_by_hash(self, tmp_path: Path) -> None:
+        """Hash-based lookup should find a gallery file regardless of index."""
+        unique_id = "rightmove:66666"
+        data_dir = str(tmp_path)
+        img_url = "https://cdn.example.com/photo.jpg"
+
+        # Save with index 7 (not 0)
+        fname = url_to_filename(img_url, "gallery", 7)
+        cache_dir = get_cache_dir(data_dir, unique_id)
+        save_image_bytes(cache_dir / fname, b"\xff\xd8fake")
+
+        result = _resolve_cached_thumbnail(unique_id, img_url, data_dir)
+        assert result is not None
+        assert fname in result
 
 
 # ---------------------------------------------------------------------------
@@ -1725,6 +1769,178 @@ class TestDetailMicroAreaMatching:
 # ---------------------------------------------------------------------------
 
 
+# ---------------------------------------------------------------------------
+# Temporal (added) filter
+# ---------------------------------------------------------------------------
+
+
+class TestTemporalFilter:
+    """Tests for the ?added= temporal filter."""
+
+    @pytest.mark.asyncio
+    async def test_added_1d_excludes_old_properties(
+        self,
+        client: TestClient,
+        storage: PropertyStorage,
+        prop_a: Property,
+        prop_b: Property,
+    ) -> None:
+        """?added=1d should exclude properties first seen 5 days ago."""
+        old_prop = prop_a.model_copy(update={"first_seen": datetime.now(UTC) - timedelta(days=5)})
+        merged_old = MergedProperty(
+            canonical=old_prop,
+            sources=(PropertySource.OPENRENT,),
+            source_urls={PropertySource.OPENRENT: old_prop.url},
+            min_price=1900,
+            max_price=1900,
+        )
+        recent_prop = prop_b.model_copy(
+            update={"first_seen": datetime.now(UTC) - timedelta(hours=6)},
+        )
+        merged_recent = MergedProperty(
+            canonical=recent_prop,
+            sources=(PropertySource.RIGHTMOVE,),
+            source_urls={PropertySource.RIGHTMOVE: recent_prop.url},
+            min_price=2500,
+            max_price=2500,
+        )
+        await storage.save_merged_property(merged_old)
+        await storage.save_merged_property(merged_recent)
+
+        resp = client.get("/?added=1d")
+        assert resp.status_code == 200
+        assert "2 bed in N16" in resp.text
+        assert "1 bed in E8" not in resp.text
+
+    @pytest.mark.asyncio
+    async def test_added_30d_includes_recent(
+        self,
+        client: TestClient,
+        storage: PropertyStorage,
+        prop_a: Property,
+    ) -> None:
+        """?added=30d should include properties from 10 days ago."""
+        recent_prop = prop_a.model_copy(
+            update={"first_seen": datetime.now(UTC) - timedelta(days=10)},
+        )
+        merged = MergedProperty(
+            canonical=recent_prop,
+            sources=(PropertySource.OPENRENT,),
+            source_urls={PropertySource.OPENRENT: recent_prop.url},
+            min_price=1900,
+            max_price=1900,
+        )
+        await storage.save_merged_property(merged)
+        resp = client.get("/?added=30d")
+        assert resp.status_code == 200
+        assert "1 bed in E8" in resp.text
+
+    @pytest.mark.asyncio
+    async def test_empty_added_shows_all(
+        self,
+        client: TestClient,
+        storage: PropertyStorage,
+        prop_a: Property,
+    ) -> None:
+        """?added= (empty) should show all properties."""
+        old_prop = prop_a.model_copy(update={"first_seen": datetime.now(UTC) - timedelta(days=90)})
+        merged = MergedProperty(
+            canonical=old_prop,
+            sources=(PropertySource.OPENRENT,),
+            source_urls={PropertySource.OPENRENT: old_prop.url},
+            min_price=1900,
+            max_price=1900,
+        )
+        await storage.save_merged_property(merged)
+        resp = client.get("/?added=")
+        assert resp.status_code == 200
+        assert "1 bed in E8" in resp.text
+
+    def test_invalid_added_ignored(self, client: TestClient) -> None:
+        """?added=evil should silently be ignored (200 OK)."""
+        resp = client.get("/?added=evil")
+        assert resp.status_code == 200
+
+    @pytest.mark.asyncio
+    async def test_added_composes_with_sort(
+        self,
+        client: TestClient,
+        storage: PropertyStorage,
+        prop_a: Property,
+    ) -> None:
+        """?added=7d&sort=fit_desc should work together."""
+        recent_prop = prop_a.model_copy(
+            update={"first_seen": datetime.now(UTC) - timedelta(days=2)},
+        )
+        merged = MergedProperty(
+            canonical=recent_prop,
+            sources=(PropertySource.OPENRENT,),
+            source_urls={PropertySource.OPENRENT: recent_prop.url},
+            min_price=1900,
+            max_price=1900,
+        )
+        await storage.save_merged_property(merged)
+        resp = client.get("/?added=7d&sort=fit_desc")
+        assert resp.status_code == 200
+        assert "1 bed in E8" in resp.text
+
+    @pytest.mark.asyncio
+    async def test_added_chip_rendered(
+        self,
+        client: TestClient,
+        storage: PropertyStorage,
+        merged_a: MergedProperty,
+    ) -> None:
+        """?added=3d should render a 'Last 3 days' filter chip."""
+        await storage.save_merged_property(merged_a)
+        resp = client.get("/?added=3d")
+        assert resp.status_code == 200
+        assert "filter-chip" in resp.text
+        assert "Last 3 days" in resp.text
+
+    @pytest.mark.asyncio
+    async def test_count_endpoint_with_added(
+        self,
+        client: TestClient,
+        storage: PropertyStorage,
+        prop_a: Property,
+        prop_b: Property,
+    ) -> None:
+        """/count?added=1d should return correct count."""
+        old_prop = prop_a.model_copy(update={"first_seen": datetime.now(UTC) - timedelta(days=5)})
+        merged_old = MergedProperty(
+            canonical=old_prop,
+            sources=(PropertySource.OPENRENT,),
+            source_urls={PropertySource.OPENRENT: old_prop.url},
+            min_price=1900,
+            max_price=1900,
+        )
+        recent_prop = prop_b.model_copy(
+            update={"first_seen": datetime.now(UTC) - timedelta(hours=6)},
+        )
+        merged_recent = MergedProperty(
+            canonical=recent_prop,
+            sources=(PropertySource.RIGHTMOVE,),
+            source_urls={PropertySource.RIGHTMOVE: recent_prop.url},
+            min_price=2500,
+            max_price=2500,
+        )
+        await storage.save_merged_property(merged_old)
+        await storage.save_merged_property(merged_recent)
+
+        resp = client.get("/count?added=1d")
+        assert resp.status_code == 200
+        assert resp.text == "1"
+
+    def test_added_select_in_dashboard(self, client: TestClient) -> None:
+        """The 'added' select element should be present in dashboard HTML."""
+        resp = client.get("/")
+        assert resp.status_code == 200
+        assert 'name="added"' in resp.text
+        assert "All time" in resp.text
+        assert "Last 3 days" in resp.text
+
+
 class TestHostingToleranceCard:
     """Tests for hosting tolerance badge in compact area summary."""
 
@@ -1818,3 +2034,180 @@ class TestHostingToleranceCard:
         resp = client.get(f"/property/{merged_a.unique_id}")
         assert resp.status_code == 200
         assert "Marcel Fit" in resp.text
+
+
+# ---------------------------------------------------------------------------
+# Status tracking routes (Ticket 7)
+# ---------------------------------------------------------------------------
+
+
+class TestStatusRoutes:
+    """Tests for PATCH /property/{unique_id}/status and status features."""
+
+    @pytest.mark.asyncio
+    async def test_patch_status_success(
+        self, client: TestClient, storage: PropertyStorage, merged_a: MergedProperty
+    ) -> None:
+        await storage.save_merged_property(merged_a)
+        resp = client.patch(
+            f"/property/{merged_a.unique_id}/status",
+            data={"status": "interested"},
+        )
+        assert resp.status_code == 200
+        assert "status-badge" in resp.text
+
+    @pytest.mark.asyncio
+    async def test_patch_status_invalid_400(
+        self, client: TestClient, storage: PropertyStorage, merged_a: MergedProperty
+    ) -> None:
+        await storage.save_merged_property(merged_a)
+        resp = client.patch(
+            f"/property/{merged_a.unique_id}/status",
+            data={"status": "bogus"},
+        )
+        assert resp.status_code == 400
+
+    def test_patch_status_unknown_404(self, client: TestClient) -> None:
+        resp = client.patch(
+            "/property/fake:999/status",
+            data={"status": "interested"},
+        )
+        assert resp.status_code == 404
+
+    @pytest.mark.asyncio
+    async def test_patch_returns_badge_partial(
+        self, client: TestClient, storage: PropertyStorage, merged_a: MergedProperty
+    ) -> None:
+        await storage.save_merged_property(merged_a)
+        resp = client.patch(
+            f"/property/{merged_a.unique_id}/status",
+            data={"status": "interested"},
+        )
+        assert resp.status_code == 200
+        assert "<!DOCTYPE html>" not in resp.text
+        assert "status-badge" in resp.text
+
+    @pytest.mark.asyncio
+    async def test_dashboard_status_filter(
+        self,
+        client: TestClient,
+        storage: PropertyStorage,
+        merged_a: MergedProperty,
+        merged_b: MergedProperty,
+    ) -> None:
+        await storage.save_merged_property(merged_a)
+        await storage.save_merged_property(merged_b)
+        from home_finder.models import UserStatus
+
+        await storage.update_user_status(merged_a.unique_id, UserStatus.INTERESTED)
+        resp = client.get("/?status=interested")
+        assert resp.status_code == 200
+        assert "1 bed in E8" in resp.text
+        assert "2 bed in N16" not in resp.text
+
+    @pytest.mark.asyncio
+    async def test_status_filter_chip_rendered(
+        self, client: TestClient, storage: PropertyStorage, merged_a: MergedProperty
+    ) -> None:
+        """The status filter should produce a filter chip in the partial response."""
+        await storage.save_merged_property(merged_a)
+        resp = client.get("/?status=new", headers={"HX-Request": "true"})
+        assert resp.status_code == 200
+        assert 'data-filter-key="status"' in resp.text
+
+    def test_sort_longest_listed(self, client: TestClient) -> None:
+        resp = client.get("/?sort=longest_listed")
+        assert resp.status_code == 200
+
+
+# ---------------------------------------------------------------------------
+# Price history + benchmark on detail (Ticket 10)
+# ---------------------------------------------------------------------------
+
+
+class TestPriceHistoryDetail:
+    """Tests for price and benchmark rendering on detail page."""
+
+    @pytest.mark.asyncio
+    async def test_price_drop_badge_on_card(
+        self, client: TestClient, storage: PropertyStorage, merged_a: MergedProperty
+    ) -> None:
+        await storage.save_merged_property(merged_a)
+        await storage.detect_and_record_price_change(merged_a.unique_id, 1750)
+        resp = client.get("/")
+        assert resp.status_code == 200
+        assert "Dropped" in resp.text
+
+    @pytest.mark.asyncio
+    async def test_benchmark_chip_on_detail(
+        self, client: TestClient, storage: PropertyStorage, merged_a: MergedProperty
+    ) -> None:
+        """If benchmarks exist, the detail page should show a benchmark chip."""
+        await storage.save_merged_property(merged_a)
+        # Create enough properties for benchmarks
+        for i, price in enumerate([1800, 1900, 2100], start=10):
+            prop = Property(
+                source=PropertySource.OPENRENT,
+                source_id=str(i),
+                url=HttpUrl(f"https://openrent.com/{i}"),
+                title=f"Flat {i}",
+                price_pcm=price,
+                bedrooms=1,
+                address=f"{i} Street",
+                postcode="E8 3RH",
+            )
+            m = MergedProperty(
+                canonical=prop,
+                sources=(PropertySource.OPENRENT,),
+                source_urls={PropertySource.OPENRENT: prop.url},
+                min_price=price,
+                max_price=price,
+            )
+            await storage.save_merged_property(m)
+            await storage.mark_notified(m.unique_id)
+        await storage.compute_rent_benchmarks()
+        resp = client.get(f"/property/{merged_a.unique_id}")
+        assert resp.status_code == 200
+        assert "benchmark-chip" in resp.text
+
+    @pytest.mark.asyncio
+    async def test_status_bar_on_detail(
+        self, client: TestClient, storage: PropertyStorage, merged_a: MergedProperty
+    ) -> None:
+        """Detail page should render the status bar with badge + controls."""
+        await storage.save_merged_property(merged_a)
+        resp = client.get(f"/property/{merged_a.unique_id}")
+        assert resp.status_code == 200
+        assert "detail-status-bar" in resp.text
+        assert "status-badge" in resp.text
+        assert "status-controls" in resp.text
+
+    @pytest.mark.asyncio
+    async def test_listing_age_pill_on_detail(
+        self, client: TestClient, storage: PropertyStorage
+    ) -> None:
+        """Detail page should show listing age pill for properties with first_seen."""
+        prop = Property(
+            source=PropertySource.OPENRENT,
+            source_id="999",
+            url=HttpUrl("https://openrent.com/999"),
+            title="Old listing",
+            price_pcm=1900,
+            bedrooms=1,
+            address="1 Street",
+            postcode="E8 3RH",
+            first_seen="2025-01-01T00:00:00+00:00",
+            image_url=HttpUrl("https://example.com/img.jpg"),
+        )
+        merged = MergedProperty(
+            canonical=prop,
+            sources=(PropertySource.OPENRENT,),
+            source_urls={PropertySource.OPENRENT: prop.url},
+            min_price=1900,
+            max_price=1900,
+        )
+        await storage.save_merged_property(merged)
+        resp = client.get(f"/property/{merged.unique_id}")
+        assert resp.status_code == 200
+        assert "listing-age-pill" in resp.text
+        assert "May be negotiable" in resp.text

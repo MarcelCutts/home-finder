@@ -62,9 +62,16 @@ uv run home-finder                      # Full pipeline with Telegram notificati
 uv run home-finder --dry-run            # Full pipeline, save to DB but no notifications
 uv run home-finder --scrape-only        # Just scrape and print (no filtering/storage)
 uv run home-finder --max-per-scraper 5  # Limit results per scraper (for testing)
+uv run home-finder --scrapers openrent,zoopla  # Only run specific scrapers
+uv run home-finder --full-scrape        # Scrape all pages (disable early-stop on seen properties)
 uv run home-finder --serve              # Web dashboard + recurring pipeline scheduler
+uv run home-finder --serve --no-pipeline  # Web dashboard only, no background pipeline
 uv run home-finder --reanalyze          # Re-run quality analysis on flagged properties
+uv run home-finder --reanalyze --all    # Flag ALL analyzed properties for re-analysis
+uv run home-finder --reanalyze --outcode E2,E8  # Flag specific outcodes for re-analysis
+uv run home-finder --reanalyze --request-only   # Only flag for re-analysis, don't run it
 uv run home-finder --dedup-existing     # Retroactively merge duplicates already in the DB
+uv run home-finder --backfill-commute   # Backfill commute data for properties missing it
 uv run home-finder --debug              # Enable debug-level logging
 ```
 
@@ -128,24 +135,31 @@ Create a `.env` file with these settings (all use `HOME_FINDER_` prefix):
 
 - `HOME_FINDER_ENABLE_QUALITY_FILTER`: Enable Claude vision property analysis (default: true)
 - `HOME_FINDER_REQUIRE_FLOORPLAN`: Drop properties without floorplans (default: true)
-- `HOME_FINDER_QUALITY_FILTER_MAX_IMAGES`: Max gallery images to analyze per property (default: 10, max: 20)
-- `HOME_FINDER_ENABLE_IMAGE_HASH_MATCHING`: Enable perceptual image hashing for deduplication (default: false)
+- `HOME_FINDER_QUALITY_FILTER_MAX_IMAGES`: Max gallery images to analyze per property (default: 20, max: 20)
+- `HOME_FINDER_MIN_GALLERY_FOR_PHOTO_INFERENCE`: Minimum gallery images to bypass floorplan gate via photo inference; 0 disables (default: 8)
+- `HOME_FINDER_ENABLE_EXTENDED_THINKING`: Enable extended thinking for deeper quality analysis (default: true)
+- `HOME_FINDER_ENABLE_IMAGE_HASH_MATCHING`: Enable perceptual image hashing for deduplication (default: true)
+- `HOME_FINDER_MAX_ENRICHMENT_ATTEMPTS`: Max enrichment retry attempts before giving up on a property, 1-10 (default: 3)
 
 ### Search Criteria
 
 - `HOME_FINDER_MIN_PRICE`: Minimum monthly rent (default: 1800)
-- `HOME_FINDER_MAX_PRICE`: Maximum monthly rent (default: 2200)
-- `HOME_FINDER_MIN_BEDROOMS`: Minimum bedrooms (default: 1)
+- `HOME_FINDER_MAX_PRICE`: Maximum monthly rent (default: 2500)
+- `HOME_FINDER_MIN_BEDROOMS`: Minimum bedrooms (default: 0)
 - `HOME_FINDER_MAX_BEDROOMS`: Maximum bedrooms (default: 2)
 - `HOME_FINDER_DESTINATION_POSTCODE`: Your destination postcode (default: N1 5AA)
 - `HOME_FINDER_MAX_COMMUTE_MINUTES`: Maximum commute time in minutes (default: 30)
-- `HOME_FINDER_SEARCH_AREAS`: Comma-separated outcodes/boroughs (default: e3,e5,e9,e10,e15,e17,n15,n16,n17)
+- `HOME_FINDER_SEARCH_AREAS`: Comma-separated outcodes/boroughs (default: e2,e3,e5,e9,e10,e15,e17,n15,n16,n17)
 
 ### Scraper Filters
 
 - `HOME_FINDER_FURNISH_TYPES`: Comma-separated furnishing filter (default: unfurnished,part_furnished)
 - `HOME_FINDER_MIN_BATHROOMS`: Minimum bathrooms (default: 1)
 - `HOME_FINDER_INCLUDE_LET_AGREED`: Include already-let properties (default: false)
+
+### Scraper Tuning
+
+- `HOME_FINDER_ZOOPLA_MAX_AREAS_PER_RUN`: Max search areas per Zoopla run to avoid Cloudflare blocks; rotates a subset each run (default: 4)
 
 ### Other
 

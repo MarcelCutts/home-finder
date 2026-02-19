@@ -7,13 +7,14 @@ from typing import Annotated, Final
 from fastapi import Depends, Query
 from pydantic import BaseModel, field_validator
 
-from home_finder.models import PropertyHighlight, PropertyLowlight
+from home_finder.models import PropertyHighlight, PropertyLowlight, UserStatus
 
 # ---------------------------------------------------------------------------
 # Valid option sets (moved from routes.py)
 # ---------------------------------------------------------------------------
 
-VALID_SORT_OPTIONS: Final = {"newest", "price_asc", "price_desc", "rating_desc", "fit_desc"}
+VALID_SORT_OPTIONS: Final = {"newest", "price_asc", "price_desc", "rating_desc", "fit_desc", "longest_listed"}
+VALID_USER_STATUSES: Final = {s.value for s in UserStatus}
 VALID_PROPERTY_TYPES: Final = {
     "victorian",
     "edwardian",
@@ -35,6 +36,15 @@ VALID_HOSTING_NOISE_RISK: Final = {"low", "moderate", "high"}
 VALID_BROADBAND_TYPE: Final = {"fttp", "fttc", "cable", "standard"}
 
 VALID_TAGS: Final = {v.value for v in PropertyHighlight} | {v.value for v in PropertyLowlight}
+
+# Single source of truth for temporal filter options: (query_value, label, days)
+ADDED_OPTIONS: Final = (
+    ("1d", "Today", 1),
+    ("3d", "Last 3 days", 3),
+    ("7d", "Last week", 7),
+    ("30d", "Last month", 30),
+)
+VALID_ADDED_OPTIONS: Final = {v for v, _, _ in ADDED_OPTIONS}
 
 
 def _parse_optional_int(value: str | None) -> int | None:
@@ -88,6 +98,8 @@ class PropertyFilter(BaseModel):
     hosting_noise_risk: str | None = None
     broadband_type: str | None = None
     tags: list[str] = []
+    added: str | None = None
+    status: str | None = None
 
     # --- validators ---
 
@@ -203,6 +215,16 @@ class PropertyFilter(BaseModel):
             return [t for t in v if isinstance(t, str) and t in VALID_TAGS]
         return []
 
+    @field_validator("added", mode="before")
+    @classmethod
+    def validate_added(cls, v: object) -> str | None:
+        return _validate_enum_field(v, VALID_ADDED_OPTIONS)
+
+    @field_validator("status", mode="before")
+    @classmethod
+    def validate_status(cls, v: object) -> str | None:
+        return _validate_enum_field(v, VALID_USER_STATUSES)
+
     # --- convenience methods ---
 
     def active_filter_chips(self) -> list[dict[str, str]]:
@@ -219,6 +241,9 @@ class PropertyFilter(BaseModel):
             chips.append({"key": "min_rating", "label": f"{self.min_rating}+ stars"})
         if self.area:
             chips.append({"key": "area", "label": self.area})
+        if self.added:
+            label = next((lbl for v, lbl, _ in ADDED_OPTIONS if v == self.added), self.added)
+            chips.append({"key": "added", "label": label})
         if self.property_type:
             chips.append(
                 {
@@ -290,6 +315,11 @@ class PropertyFilter(BaseModel):
             )
         for t in self.tags:
             chips.append({"key": "tag", "label": t, "value": t})
+        if self.status:
+            from home_finder.models import USER_STATUS_META
+
+            label = USER_STATUS_META.get(self.status, {}).get("label", self.status.title())
+            chips.append({"key": "status", "label": label})
         return chips
 
     @property
@@ -360,6 +390,8 @@ def parse_filters(
     hosting_noise_risk: str | None = None,
     broadband_type: str | None = None,
     tag: list[str] = Query(default=[]),
+    added: str | None = None,
+    status: str | None = None,
 ) -> PropertyFilter:
     """FastAPI dependency that parses query params into a PropertyFilter."""
     return PropertyFilter.model_validate(
@@ -382,6 +414,8 @@ def parse_filters(
             "hosting_noise_risk": hosting_noise_risk,
             "broadband_type": broadband_type,
             "tags": tag,
+            "added": added,
+            "status": status,
         }
     )
 

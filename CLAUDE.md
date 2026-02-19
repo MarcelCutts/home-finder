@@ -79,7 +79,6 @@ See README.md for full configuration reference. All settings use `HOME_FINDER_` 
 | OpenRent scraper | `crawlee.BeautifulSoupCrawler` | Standard requests work |
 | DetailFetcher (Zoopla/OTM) | `curl_cffi` with `impersonate="chrome"` | TLS fingerprinting on detail pages |
 | DetailFetcher (others) | `httpx.AsyncClient` | Standard requests work |
-| QualityFilter (Zoopla images) | `curl_cffi` with `impersonate="chrome"` | Anti-bot protection on CDN images |
 
 ```python
 # Example: curl_cffi usage for anti-bot sites
@@ -107,10 +106,10 @@ async with AsyncSession() as session:
 
 ### Quality Analysis
 
-- Uses claude-sonnet-4-5 (`claude-sonnet-4-5-20250929`) via Anthropic API
+- Uses claude-sonnet-4-6 (`claude-sonnet-4-6`) via Anthropic API
 - **Two-phase chained analysis** (perception → evaluation):
-  - **Phase 1 (Visual)**: Images + listing text → structured observations (kitchen, condition, space, etc.). Uses extended thinking, `tool_choice: auto`. Non-strict (schema exceeds Anthropic's grammar complexity limit).
-  - **Phase 2 (Evaluation)**: Phase 1 JSON + listing text (no images) → value assessment, viewing notes, highlights, one-liner. Uses forced tool choice, `strict: true`.
+  - **Phase 1 (Visual)**: Images + listing text → structured observations (kitchen, condition, space, etc.). Uses adaptive thinking (`type: adaptive`), `tool_choice: auto`, `max_tokens: 21000` (total cap for thinking + response; SDK enforces ~21333 non-streaming ceiling). Non-strict (schema exceeds Anthropic's grammar complexity limit).
+  - **Phase 2 (Evaluation)**: Phase 1 JSON + listing text (no images) → value assessment, viewing notes, highlights, one-liner. Uses forced tool choice, `strict: true`, `max_tokens: 4096`.
 - Tool schemas auto-generated from Pydantic models (`_VisualAnalysisResponse`, `_EvaluationResponse`) via `_build_tool_schema()` in `quality.py`; prompts in `quality_prompts.py`
 - Phase 1 output feeds Phase 2 via `build_evaluation_prompt()` (wraps Phase 1 JSON in `<visual_analysis>` XML tags)
 - Graceful degradation: Phase 1 fails → `None`; Phase 2 fails → partial analysis with visual data only
@@ -118,7 +117,7 @@ async with AsyncSession() as session:
 - Rate limited: 0.2s delay between calls (Tier 2: 1,000 RPM)
 - Uses prompt caching (`cache_control: ephemeral`) for ~90% cost savings on system prompt
 - ~$0.05-0.07/property (Phase 1 ~$0.04-0.06 multimodal + thinking, Phase 2 ~$0.005-0.01 text-only)
-- Zoopla CDN images downloaded via curl_cffi and sent as base64 (anti-bot); others sent as URL references
+- All images read from disk cache (populated during detail enrichment) and sent as base64; no CDN re-downloads during analysis
 
 ### Proxy Support
 

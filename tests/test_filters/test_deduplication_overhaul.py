@@ -1411,11 +1411,14 @@ class TestImageEvidenceRequirement:
         assert len(groups) == 2
         assert all(len(g) == 1 for g in groups)
 
-    async def test_high_score_without_images_still_merges(self) -> None:
-        """Score >= 80 with galleries but no image match → still merges.
+    async def test_high_score_without_images_rejected_when_galleries_present(self) -> None:
+        """Score >= 80 with galleries but no image match → rejected.
 
         Full postcode (40) + coords (40) + street (20) + outcode (10) + price (15)
-        = 125 at exact match. Even without image evidence, HIGH confidence merges.
+        = 125 at exact match. Despite the high location score, zero matching
+        images means these could be different flats in the same building.
+        Location signals are perfectly correlated for same-building properties,
+        so they're uninformative — only image evidence can disambiguate.
         """
         p_rm = _make_prop(
             PropertySource.RIGHTMOVE, "rm1",
@@ -1428,7 +1431,7 @@ class TestImageEvidenceRequirement:
 
         items = [_wrap_merged(p_rm), _wrap_merged(p_zp)]
 
-        # Both have galleries, no image matches, but score is very high
+        # Both have galleries, no image matches, score is very high
         image_hashes = {
             "rightmove:rm1": ["aaaa1111bbbb2222"],
             "zoopla:zp1": ["cccc3333dddd4444"],
@@ -1436,7 +1439,81 @@ class TestImageEvidenceRequirement:
 
         groups = _group_items_greedy(items, image_hashes)
 
-        # Should merge: score ~125 (well above 80 threshold)
+        # Should stay separate: image evidence says "no match", location
+        # score is uninformative for same-building disambiguation
+        assert len(groups) == 2
+        assert all(len(g) == 1 for g in groups)
+
+    async def test_same_building_different_flat_rejected(self) -> None:
+        """Two properties at the same address with different galleries → separate.
+
+        Simulates the real-world false positive: identical postcode, coords,
+        street, price (~125 points) but completely different gallery images.
+        """
+        p_rm = _make_prop(
+            PropertySource.RIGHTMOVE, "rm1",
+            price_pcm=1750,
+            postcode="E3 4RB",
+            latitude=51.5310,
+            longitude=-0.0240,
+            address="15 Copperfield Road, London",
+        )
+        p_or = _make_prop(
+            PropertySource.OPENRENT, "or1",
+            price_pcm=1750,
+            postcode="E3 4RB",
+            latitude=51.5310,
+            longitude=-0.0240,
+            address="15 Copperfield Road, London",
+        )
+
+        items = [_wrap_merged(p_rm), _wrap_merged(p_or)]
+
+        # Both have gallery hashes, zero overlap
+        image_hashes = {
+            "rightmove:rm1": ["1111111111111111", "2222222222222222", "3333333333333333"],
+            "openrent:or1": ["aaaaaaaaaaaaaaaa", "bbbbbbbbbbbbbbbb", "cccccccccccccccc"],
+        }
+
+        groups = _group_items_greedy(items, image_hashes)
+
+        assert len(groups) == 2
+        assert all(len(g) == 1 for g in groups)
+
+    async def test_same_flat_with_matching_images_still_merges(self) -> None:
+        """Two properties at the same address with overlapping galleries → merged.
+
+        When gallery images confirm it's the same flat, the match proceeds.
+        """
+        p_rm = _make_prop(
+            PropertySource.RIGHTMOVE, "rm1",
+            price_pcm=1750,
+            postcode="E3 4RB",
+            latitude=51.5310,
+            longitude=-0.0240,
+            address="15 Copperfield Road, London",
+        )
+        p_zp = _make_prop(
+            PropertySource.ZOOPLA, "zp1",
+            price_pcm=1750,
+            postcode="E3 4RB",
+            latitude=51.5310,
+            longitude=-0.0240,
+            address="15 Copperfield Road, London",
+        )
+
+        items = [_wrap_merged(p_rm), _wrap_merged(p_zp)]
+
+        # Both have gallery hashes, two shared image hashes (need 2+ for full credit)
+        shared_hash = "abcdef1234567890"
+        shared_hash_2 = "abcdef1234567891"
+        image_hashes = {
+            "rightmove:rm1": ["1111111111111111", shared_hash, shared_hash_2],
+            "zoopla:zp1": ["aaaaaaaaaaaaaaaa", shared_hash, shared_hash_2],
+        }
+
+        groups = _group_items_greedy(items, image_hashes)
+
         assert len(groups) == 1
         assert len(groups[0]) == 2
 

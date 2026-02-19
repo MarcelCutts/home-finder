@@ -17,10 +17,15 @@ When you cannot determine something from the images, use the appropriate \
 sentinel value: "unknown" for enum/string fields, false for boolean fields, \
 "none" for concern_severity when there are no concerns. \
 For has_visible_damp, has_visible_mold, has_double_glazing, \
-has_washing_machine, is_ensuite, primary_is_double, and \
+has_dishwasher, has_washing_machine, has_worn_fixtures, has_bathtub, \
+has_built_in_wardrobe, has_built_in_wardrobes, has_hallway_cupboard, \
+is_ensuite, primary_is_double, and \
 can_fit_desk use "yes"/"no"/"unknown" — these are tri-state string fields. \
 For multi-value fields (office_separation, hosting_layout, hosting_noise_risk) \
 use "unknown" when you cannot determine the value. \
+For has_balcony, has_garden, has_terrace, has_shared_garden, too_few_photos, \
+selective_angles, feels_spacious, and is_spacious_enough use true/false only \
+(never "unknown" — use false when uncertain). \
 Do not guess — a confident "unknown" is more useful than a wrong answer.
 
 <task>
@@ -73,7 +78,14 @@ potential rent increases (relevant in E9, E15, N17)
 <analysis_steps>
 1. Kitchen Quality: Modern (new units, integrated appliances, good worktops) \
 vs Dated (old-fashioned units, worn surfaces, mismatched appliances). Note hob \
-type if visible/mentioned. Check listing for "new kitchen", "recently fitted".
+type if visible/mentioned. Check listing for "new kitchen", "recently fitted". \
+Appliance detection: check for a dishwasher near the sink — look for EU energy \
+rating stickers (coloured A-G labels on the front), control panels, different \
+handle or panel alignment from surrounding cabinets, or brand logos. Integrated \
+dishwashers behind matching cabinet fronts are common in UK kitchens and easily \
+missed — prefer "unknown" over "no" unless you can see the full under-counter \
+run with no dishwasher-sized gap. Similarly check for a washing machine (porthole \
+door, control dials). Cross-reference the listing text for appliance mentions.
 
 2. Property Condition: Look for damp (water stains, peeling paint near \
 windows/ceilings), mold (dark patches in corners/bathrooms), worn fixtures \
@@ -96,7 +108,11 @@ live here. Don't restate condition concerns (they're listed separately).
 
 7. Bathroom: Condition, bathtub presence, shower type (overhead, separate \
 cubicle, electric), ensuite. Cross-ref "wet room", "new bathroom", \
-"recently refurbished bathroom" in description.
+"recently refurbished bathroom" in description. Identify shower type: \
+overhead = fixed/rain head over bath or walk-in; separate_cubicle = \
+standalone enclosed shower; electric = wall-mounted heater unit (white box, \
+dial controls — common in older UK flats, signals weak hot water). Note \
+whether bathtub present or shower-only.
 
 8. Bedroom & Office Separation: Can primary bedroom fit a double bed + wardrobe + desk? \
 Check floorplan room labels and dimensions. "Double room" claims are often dubious. \
@@ -119,7 +135,12 @@ build), concrete (brutalist, ex-council, new-build blocks), timber frame \
 affects sound insulation — solid brick and concrete are quieter. \
 Assess hosting_noise_risk: risk of disturbing neighbours when hosting music/social \
 events. low = solid construction + carpet + top floor or detached; moderate = mixed \
-signals; high = timber frame + hard floors + lower floor + shared walls.
+signals; high = timber frame + hard floors + lower floor + shared walls. \
+Double glazing detection: thick uPVC frames (white plastic, ~60mm deep) or modern \
+aluminium frames with visible sealed units indicate double glazing. Thin timber \
+sash frames with single panes indicate original single glazing (common in \
+unconverted Victorian/Edwardian properties). Prefer "unknown" over "no" unless \
+you can clearly see window profiles or the listing states single glazing.
 
 12. Floor Level: Estimate from photos and floorplan context — look for stairs \
 in photos, "ground floor"/"first floor" in description, lift mentions, views \

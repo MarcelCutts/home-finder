@@ -32,6 +32,7 @@ from home_finder.models import (
     PropertySource,
     TrackedProperty,
     TransportMode,
+    UserStatus,
 )
 
 if TYPE_CHECKING:
@@ -180,6 +181,7 @@ class PropertyStorage:
             ("enrichment_attempts", "INTEGER", "0"),
             ("ward", "TEXT", None),
             ("analysis_attempts", "INTEGER", "0"),
+            ("user_status", "TEXT", "'new'"),
         ]:
             try:
                 default_clause = f" DEFAULT {default}" if default is not None else ""
@@ -269,6 +271,108 @@ class PropertyStorage:
 
         # Backfill fit_score for existing rows
         await self._backfill_fit_scores(conn)
+
+        # User status index
+        await conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_user_status ON properties(user_status)
+        """)
+
+        # Status events table (Ticket 7)
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS status_events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                property_unique_id TEXT NOT NULL,
+                from_status TEXT,
+                to_status TEXT NOT NULL,
+                note TEXT,
+                source TEXT NOT NULL DEFAULT 'web',
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (property_unique_id) REFERENCES properties(unique_id)
+            )
+        """)
+        await conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_status_events_property
+                ON status_events(property_unique_id)
+        """)
+
+        # Viewing messages cache (Ticket 8)
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS viewing_messages (
+                property_unique_id TEXT PRIMARY KEY,
+                message TEXT NOT NULL,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (property_unique_id) REFERENCES properties(unique_id)
+            )
+        """)
+
+        # Price history (Ticket 10)
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS price_history (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                property_unique_id TEXT NOT NULL,
+                old_price INTEGER NOT NULL,
+                new_price INTEGER NOT NULL,
+                change_amount INTEGER NOT NULL,
+                source TEXT,
+                detected_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (property_unique_id) REFERENCES properties(unique_id)
+            )
+        """)
+        await conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_price_history_property
+                ON price_history(property_unique_id)
+        """)
+        await conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_price_history_detected
+                ON price_history(detected_at)
+        """)
+
+        # Rent benchmarks (Ticket 10)
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS rent_benchmarks (
+                outcode TEXT NOT NULL,
+                bedrooms INTEGER NOT NULL,
+                median_rent INTEGER NOT NULL,
+                mean_rent INTEGER NOT NULL,
+                sample_count INTEGER NOT NULL,
+                computed_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                PRIMARY KEY (outcode, bedrooms)
+            )
+        """)
+
+        # Enquiry log (Ticket 9)
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS enquiry_log (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                property_unique_id TEXT NOT NULL,
+                portal TEXT NOT NULL,
+                message TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'pending',
+                submitted_at TEXT,
+                error TEXT,
+                screenshot_path TEXT,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (property_unique_id) REFERENCES properties(unique_id),
+                UNIQUE(property_unique_id, portal)
+            )
+        """)
+        await conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_enquiry_log_property
+                ON enquiry_log(property_unique_id)
+        """)
+
+        # Migrate: add price_drop_notified column (Ticket 10)
+        for column, col_type, default in [
+            ("price_drop_notified", "INTEGER", "0"),
+        ]:
+            try:
+                default_clause = f" DEFAULT {default}" if default is not None else ""
+                await conn.execute(
+                    f"ALTER TABLE properties ADD COLUMN {column} {col_type}{default_clause}"
+                )
+            except aiosqlite.OperationalError as e:
+                if "duplicate column" not in str(e).lower():
+                    raise
 
         await conn.commit()
 
@@ -1292,6 +1396,306 @@ class PropertyStorage:
     async def get_property_count(self) -> int:
         """Get total number of tracked properties."""
         return await self._web.get_property_count()
+
+    # ------------------------------------------------------------------
+    # User status tracking (Ticket 7)
+    # ------------------------------------------------------------------
+
+    async def update_user_status(
+        self,
+        unique_id: str,
+        new_status: UserStatus,
+        *,
+        note: str | None = None,
+        source: str = "web",
+    ) -> UserStatus | None:
+        """Update property user_status and log the event.
+
+        Returns the previous status, or None if property not found.
+        """
+        conn = await self._get_connection()
+        cursor = await conn.execute(
+            "SELECT user_status FROM properties WHERE unique_id = ?",
+            (unique_id,),
+        )
+        row = await cursor.fetchone()
+        if row is None:
+            return None
+
+        from_status = row["user_status"] or "new"
+
+        await conn.execute(
+            "UPDATE properties SET user_status = ? WHERE unique_id = ?",
+            (new_status.value, unique_id),
+        )
+        await conn.execute(
+            """INSERT INTO status_events
+               (property_unique_id, from_status, to_status, note, source)
+               VALUES (?, ?, ?, ?, ?)""",
+            (unique_id, from_status, new_status.value, note, source),
+        )
+        await conn.commit()
+        logger.debug(
+            "user_status_updated",
+            unique_id=unique_id,
+            from_status=from_status,
+            to_status=new_status.value,
+        )
+        return UserStatus(from_status)
+
+    async def get_status_history(self, unique_id: str) -> list[dict[str, Any]]:
+        """Get status change history for a property, ordered chronologically."""
+        conn = await self._get_connection()
+        cursor = await conn.execute(
+            """SELECT from_status, to_status, note, source, created_at
+               FROM status_events
+               WHERE property_unique_id = ?
+               ORDER BY created_at ASC""",
+            (unique_id,),
+        )
+        rows = await cursor.fetchall()
+        return [dict(row) for row in rows]
+
+    # ------------------------------------------------------------------
+    # Viewing messages (Ticket 8)
+    # ------------------------------------------------------------------
+
+    async def get_viewing_message(self, unique_id: str) -> str | None:
+        """Get cached viewing message for a property."""
+        conn = await self._get_connection()
+        cursor = await conn.execute(
+            "SELECT message FROM viewing_messages WHERE property_unique_id = ?",
+            (unique_id,),
+        )
+        row = await cursor.fetchone()
+        return row["message"] if row else None
+
+    async def save_viewing_message(self, unique_id: str, message: str) -> None:
+        """Save or replace a viewing message for a property."""
+        conn = await self._get_connection()
+        await conn.execute(
+            """INSERT INTO viewing_messages (property_unique_id, message)
+               VALUES (?, ?)
+               ON CONFLICT(property_unique_id) DO UPDATE SET
+                   message = excluded.message,
+                   created_at = CURRENT_TIMESTAMP""",
+            (unique_id, message),
+        )
+        await conn.commit()
+
+    async def delete_viewing_message(self, unique_id: str) -> None:
+        """Delete cached viewing message (for regeneration)."""
+        conn = await self._get_connection()
+        await conn.execute(
+            "DELETE FROM viewing_messages WHERE property_unique_id = ?",
+            (unique_id,),
+        )
+        await conn.commit()
+
+    # ------------------------------------------------------------------
+    # Price history (Ticket 10)
+    # ------------------------------------------------------------------
+
+    async def detect_and_record_price_change(
+        self,
+        unique_id: str,
+        new_price: int,
+        source: str | None = None,
+    ) -> int | None:
+        """Compare new_price against DB; record change if different.
+
+        Returns change_amount (negative = drop) or None if no change / not found.
+        """
+        conn = await self._get_connection()
+        cursor = await conn.execute(
+            "SELECT price_pcm FROM properties WHERE unique_id = ?",
+            (unique_id,),
+        )
+        row = await cursor.fetchone()
+        if row is None:
+            return None
+        old_price = row["price_pcm"]
+        if old_price == new_price:
+            return None
+
+        change_amount = new_price - old_price
+        await conn.execute(
+            """INSERT INTO price_history
+               (property_unique_id, old_price, new_price, change_amount, source)
+               VALUES (?, ?, ?, ?, ?)""",
+            (unique_id, old_price, new_price, change_amount, source),
+        )
+        await conn.execute(
+            "UPDATE properties SET price_pcm = ?, price_drop_notified = 0 WHERE unique_id = ?",
+            (new_price, unique_id),
+        )
+        await conn.commit()
+        logger.info(
+            "price_change_detected",
+            unique_id=unique_id,
+            old_price=old_price,
+            new_price=new_price,
+            change=change_amount,
+        )
+        return change_amount
+
+    async def get_price_history(self, unique_id: str) -> list[dict[str, Any]]:
+        """Get price change history for a property, newest first."""
+        conn = await self._get_connection()
+        cursor = await conn.execute(
+            """SELECT old_price, new_price, change_amount, source, detected_at
+               FROM price_history
+               WHERE property_unique_id = ?
+               ORDER BY detected_at DESC""",
+            (unique_id,),
+        )
+        rows = await cursor.fetchall()
+        return [dict(row) for row in rows]
+
+    async def get_unsent_price_drops(self) -> list[dict[str, Any]]:
+        """Get properties with unnotified price drops for Telegram alerts."""
+        conn = await self._get_connection()
+        cursor = await conn.execute(
+            """SELECT p.unique_id, p.title, p.postcode, p.first_seen, p.url,
+                      ph.old_price, ph.new_price, ph.change_amount
+               FROM properties p
+               JOIN price_history ph ON ph.property_unique_id = p.unique_id
+               WHERE p.price_drop_notified = 0
+                 AND ph.change_amount < 0
+                 AND p.notification_status = 'sent'
+               ORDER BY ph.detected_at DESC"""
+        )
+        rows = await cursor.fetchall()
+        # Deduplicate: only latest drop per property
+        seen: set[str] = set()
+        results: list[dict[str, Any]] = []
+        for row in rows:
+            uid = row["unique_id"]
+            if uid not in seen:
+                seen.add(uid)
+                results.append(dict(row))
+        return results
+
+    async def mark_price_drop_notified(self, unique_id: str) -> None:
+        """Mark a property's price drop as notified."""
+        conn = await self._get_connection()
+        await conn.execute(
+            "UPDATE properties SET price_drop_notified = 1 WHERE unique_id = ?",
+            (unique_id,),
+        )
+        await conn.commit()
+
+    # ------------------------------------------------------------------
+    # Rent benchmarks (Ticket 10)
+    # ------------------------------------------------------------------
+
+    async def compute_rent_benchmarks(self) -> int:
+        """Recompute area rent benchmarks from scraped data.
+
+        Returns number of benchmark rows written.
+        """
+        import statistics
+
+        conn = await self._get_connection()
+        cursor = await conn.execute(
+            """SELECT
+                UPPER(SUBSTR(p.postcode, 1, INSTR(p.postcode || ' ', ' ') - 1)) as outcode,
+                p.bedrooms,
+                p.price_pcm
+            FROM properties p
+            WHERE p.postcode IS NOT NULL
+              AND p.notification_status = 'sent'
+            ORDER BY outcode, bedrooms, price_pcm"""
+        )
+        rows = await cursor.fetchall()
+
+        # Group by outcode + bedrooms
+        groups: dict[tuple[str, int], list[int]] = {}
+        for row in rows:
+            key = (row["outcode"], row["bedrooms"])
+            groups.setdefault(key, []).append(row["price_pcm"])
+
+        # Compute benchmarks (minimum 3 samples)
+        benchmarks: list[tuple[str, int, int, int, int]] = []
+        for (outcode, bedrooms), prices in groups.items():
+            if len(prices) < 3:
+                continue
+            median_rent = int(statistics.median(prices))
+            mean_rent = int(statistics.mean(prices))
+            benchmarks.append((outcode, bedrooms, median_rent, mean_rent, len(prices)))
+
+        # Replace all benchmarks
+        await conn.execute("DELETE FROM rent_benchmarks")
+        if benchmarks:
+            await conn.executemany(
+                """INSERT INTO rent_benchmarks
+                   (outcode, bedrooms, median_rent, mean_rent, sample_count)
+                   VALUES (?, ?, ?, ?, ?)""",
+                benchmarks,
+            )
+        await conn.commit()
+        logger.info("rent_benchmarks_computed", count=len(benchmarks))
+        return len(benchmarks)
+
+    async def get_rent_benchmark(self, outcode: str, bedrooms: int) -> dict[str, Any] | None:
+        """Get benchmark for a specific outcode + bedroom count."""
+        conn = await self._get_connection()
+        cursor = await conn.execute(
+            """SELECT outcode, bedrooms, median_rent, mean_rent, sample_count
+               FROM rent_benchmarks
+               WHERE outcode = ? AND bedrooms = ?""",
+            (outcode.upper(), bedrooms),
+        )
+        row = await cursor.fetchone()
+        return dict(row) if row else None
+
+    # ------------------------------------------------------------------
+    # Enquiry log (Ticket 9)
+    # ------------------------------------------------------------------
+
+    async def log_enquiry(self, result: dict[str, Any]) -> None:
+        """Record an enquiry attempt (INSERT or UPDATE on conflict)."""
+        conn = await self._get_connection()
+        await conn.execute(
+            """INSERT INTO enquiry_log
+               (property_unique_id, portal, message, status, submitted_at, error, screenshot_path)
+               VALUES (?, ?, ?, ?, ?, ?, ?)
+               ON CONFLICT(property_unique_id, portal) DO UPDATE SET
+                   status = excluded.status,
+                   submitted_at = excluded.submitted_at,
+                   error = excluded.error,
+                   screenshot_path = excluded.screenshot_path""",
+            (
+                result["property_unique_id"],
+                result["portal"],
+                result["message"],
+                result["status"],
+                result.get("submitted_at"),
+                result.get("error"),
+                result.get("screenshot_path"),
+            ),
+        )
+        await conn.commit()
+
+    async def get_enquiries_for_property(self, unique_id: str) -> list[dict[str, Any]]:
+        """Get all enquiry attempts for a property."""
+        conn = await self._get_connection()
+        cursor = await conn.execute(
+            "SELECT * FROM enquiry_log WHERE property_unique_id = ? ORDER BY created_at DESC",
+            (unique_id,),
+        )
+        rows = await cursor.fetchall()
+        return [dict(row) for row in rows]
+
+    async def has_enquiry(self, unique_id: str, portal: str) -> bool:
+        """Check if an enquiry has already been submitted for this property+portal."""
+        conn = await self._get_connection()
+        cursor = await conn.execute(
+            """SELECT 1 FROM enquiry_log
+               WHERE property_unique_id = ? AND portal = ? AND status = 'submitted'""",
+            (unique_id, portal),
+        )
+        return await cursor.fetchone() is not None
 
     # ------------------------------------------------------------------
     # Internal helpers

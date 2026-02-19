@@ -20,6 +20,17 @@
                 </div>
                 {% endif %}
                 <span class="badge badge-neutral">{% if prop.bedrooms == 0 %}Studio{% else %}{{ prop.bedrooms }} bed{% endif %}</span>
+                {% if prop.benchmark_diff is defined and prop.benchmark_diff is not none %}
+                <span class="benchmark-chip {% if prop.benchmark_diff < 0 %}benchmark-below{% elif prop.benchmark_diff > 100 %}benchmark-above{% else %}benchmark-at{% endif %}">
+                    {% if prop.benchmark_diff < 0 %}
+                        &pound;{{ (-prop.benchmark_diff)|int }} below avg
+                    {% elif prop.benchmark_diff > 0 %}
+                        &pound;{{ prop.benchmark_diff|int }} above avg
+                    {% else %}
+                        At area avg
+                    {% endif %}
+                </span>
+                {% endif %}
             </div>
             {{ fit_badge(prop.fit_score, prop.fit_breakdown) }}
         </div>
@@ -109,8 +120,26 @@
             {% set badge = source_badges.get(s, {}) %}
             <span class="source-badge" style="background-color: {{ badge.get('color', '#888') }}" title="{{ badge.get('name', s) }}">{{ badge.get('abbr', s[:1]|upper) }}</span>
             {% endfor %}
+            {% if prop.user_status and prop.user_status != 'new' and status_meta is defined %}
+            <span class="status-badge" style="--status-color: {{ status_meta[prop.user_status].color }}">
+                {{ status_meta[prop.user_status].label }}
+            </span>
+            {% endif %}
+            {% if prop.last_price_change is defined and prop.last_price_change and prop.last_price_change < 0 %}
+            <span class="badge badge-green price-change-badge">
+                Dropped &pound;{{ "{:,}".format((-prop.last_price_change)|int) }}
+            </span>
+            {% elif prop.last_price_change is defined and prop.last_price_change and prop.last_price_change > 0 %}
+            <span class="badge badge-red price-change-badge">
+                Up &pound;{{ "{:,}".format(prop.last_price_change|int) }}
+            </span>
+            {% endif %}
             {% if prop.first_seen %}
+            {% set dom = prop.first_seen | days_since %}
             <span class="card-age">{{ prop.first_seen | listing_age }}</span>
+            {% if dom >= 14 %}
+            <span class="badge badge-amber" title="Listed {{ dom }} days — may be negotiable">Negotiable?</span>
+            {% endif %}
             {% endif %}
         </div>
     </a>

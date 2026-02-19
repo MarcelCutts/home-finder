@@ -144,6 +144,33 @@ class NotificationStatus(StrEnum):
     FAILED = "failed"
 
 
+class UserStatus(StrEnum):
+    """User-facing property lifecycle status."""
+
+    NEW = "new"
+    INTERESTED = "interested"
+    ENQUIRED = "enquired"
+    VIEWING_BOOKED = "viewing_booked"
+    VIEWED = "viewed"
+    APPLIED = "applied"
+    OFFERED = "offered"
+    REJECTED = "rejected"
+    ARCHIVED = "archived"
+
+
+USER_STATUS_META: Final[dict[str, dict[str, str]]] = {
+    "new": {"label": "New", "color": "#6366f1"},
+    "interested": {"label": "Interested", "color": "#8b5cf6"},
+    "enquired": {"label": "Enquired", "color": "#3b82f6"},
+    "viewing_booked": {"label": "Viewing", "color": "#f59e0b"},
+    "viewed": {"label": "Viewed", "color": "#10b981"},
+    "applied": {"label": "Applied", "color": "#06b6d4"},
+    "offered": {"label": "Offered", "color": "#22c55e"},
+    "rejected": {"label": "Rejected", "color": "#ef4444"},
+    "archived": {"label": "Archived", "color": "#6b7280"},
+}
+
+
 class TrackedProperty(BaseModel):
     """A property being tracked in the database."""
 

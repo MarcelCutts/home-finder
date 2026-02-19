@@ -16,22 +16,21 @@ class TestBuildInlineKeyboardWithWebUrl:
         keyboard = _build_inline_keyboard(
             sample_merged_property, web_base_url="https://home-finder.fly.dev"
         )
-        # First button should be "Details" as a WebApp button
         all_buttons = [btn for row in keyboard.inline_keyboard for btn in row]
-        assert all_buttons[0].text == "Details"
-        assert all_buttons[0].web_app is not None
-        assert "/property/" in all_buttons[0].web_app.url
-        assert sample_merged_property.unique_id in all_buttons[0].web_app.url
+        details_btn = next(btn for btn in all_buttons if btn.text == "Details")
+        assert details_btn.web_app is not None
+        assert "/property/" in details_btn.web_app.url
+        assert sample_merged_property.unique_id in details_btn.web_app.url
 
     def test_with_http_url_uses_regular_link(self, sample_merged_property: MergedProperty) -> None:
         keyboard = _build_inline_keyboard(
             sample_merged_property, web_base_url="http://localhost:8000"
         )
         all_buttons = [btn for row in keyboard.inline_keyboard for btn in row]
-        assert all_buttons[0].text == "Details"
-        assert all_buttons[0].web_app is None
-        assert all_buttons[0].url is not None
-        assert "/property/" in all_buttons[0].url
+        details_btn = next(btn for btn in all_buttons if btn.text == "Details")
+        assert details_btn.web_app is None
+        assert details_btn.url is not None
+        assert "/property/" in details_btn.url
 
     def test_without_web_base_url_no_details_button(
         self, sample_merged_property: MergedProperty
@@ -59,9 +58,10 @@ class TestBuildInlineKeyboardWithWebUrl:
             sample_merged_property, web_base_url="https://home-finder.fly.dev/"
         )
         all_buttons = [btn for row in keyboard.inline_keyboard for btn in row]
+        details_btn = next(btn for btn in all_buttons if btn.text == "Details")
         # URL should not have double slashes
-        assert all_buttons[0].web_app is not None
-        assert "//property" not in all_buttons[0].web_app.url
+        assert details_btn.web_app is not None
+        assert "//property" not in details_btn.web_app.url
 
     def test_map_button_present_with_coords(self, sample_merged_property: MergedProperty) -> None:
         keyboard = _build_inline_keyboard(sample_merged_property)

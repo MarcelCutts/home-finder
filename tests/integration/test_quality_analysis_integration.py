@@ -333,18 +333,23 @@ class TestQualityAnalysisIntegration:
         # API should not be called
         quality_filter._client.messages.create.assert_not_called()
 
-    async def test_zoopla_images_as_base64(self, make_property: Callable[..., Property]) -> None:
-        """Zoopla CDN images should be downloaded and sent as base64."""
-        from unittest.mock import patch
+    async def test_cached_images_sent_as_base64(
+        self, make_property: Callable[..., Property], tmp_path: Any
+    ) -> None:
+        """Cached images should be read from disk and sent as base64."""
+        from PIL import Image as PILImage
 
-        prop = make_property(source_id="qa-zoopla", price_pcm=1900, postcode="E8 3RH")
+        from home_finder.utils.image_cache import get_cached_image_path, save_image_bytes
+
+        image_url = "https://lid.zoocdn.com/u/1024/768/abc123.jpg"
+        prop = make_property(source_id="qa-cached", price_pcm=1900, postcode="E8 3RH")
         merged = MergedProperty(
             canonical=prop,
             sources=(prop.source,),
             source_urls={prop.source: prop.url},
             images=(
                 PropertyImage(
-                    url=HttpUrl("https://lid.zoocdn.com/u/1024/768/abc123.jpg"),
+                    url=HttpUrl(image_url),
                     source=PropertySource.ZOOPLA,
                     image_type="gallery",
                 ),
@@ -354,29 +359,29 @@ class TestQualityAnalysisIntegration:
             max_price=prop.price_pcm,
         )
 
+        # Create a valid cached image on disk
+        data_dir = str(tmp_path)
+        cache_path = get_cached_image_path(
+            data_dir, merged.unique_id, str(merged.images[0].url), "gallery", 0
+        )
+        from io import BytesIO
+
+        buf = BytesIO()
+        PILImage.new("RGB", (10, 10), color="blue").save(buf, format="JPEG")
+        save_image_bytes(cache_path, buf.getvalue())
+
         quality_filter = PropertyQualityFilter(api_key="test-key")
         quality_filter._client = MagicMock()
         quality_filter._client.messages.create = _make_two_phase_mock()
 
-        # Mock the curl_cffi download
-        mock_curl_resp = MagicMock()
-        mock_curl_resp.status_code = 200
-        mock_curl_resp.content = b"\x89PNG\r\n\x1a\nfake_image_data"
-        mock_curl_resp.headers = {"content-type": "image/jpeg"}
-
-        pytest.importorskip("curl_cffi")
-
-        with patch(
-            "home_finder.filters.quality.PropertyQualityFilter._download_image_as_base64",
-            new_callable=AsyncMock,
-            return_value=("dGVzdA==", "image/jpeg"),
-        ):
-            results = await quality_filter.analyze_merged_properties([merged])
+        results = await quality_filter.analyze_merged_properties(
+            [merged], data_dir=data_dir
+        )
 
         assert len(results) == 1
         # Verify the API was called (image was processed)
         quality_filter._client.messages.create.assert_called()
-        # Phase 1 call should have base64 image
+        # Phase 1 call should have base64 image from cache
         call_args = quality_filter._client.messages.create.call_args_list[0]
         content = call_args.kwargs["messages"][0]["content"]
         image_blocks = [c for c in content if c.get("type") == "image"]

@@ -558,15 +558,18 @@ def _group_items_greedy(
                 )
 
             if score.is_match:
-                # When both properties have gallery hashes but images don't
-                # match, require HIGH confidence (80+) to prevent
-                # "same building, different flat" false positives.
+                # When both properties have gallery hashes but zero images
+                # match, reject the match. Image evidence is the only
+                # independent signal for same-building disambiguation —
+                # location signals (postcode, coords, street, outcode) are
+                # perfectly correlated for properties in the same building,
+                # so high location scores are uninformative in this case.
                 both_have_galleries = (
                     image_hashes
                     and prop_i.unique_id in image_hashes
                     and prop_j.unique_id in image_hashes
                 )
-                if both_have_galleries and score.image_hash == 0 and score.total < 80:
+                if both_have_galleries and score.image_hash == 0:
                     logger.debug(
                         "match_rejected_no_image_evidence",
                         prop1=prop_i.unique_id,

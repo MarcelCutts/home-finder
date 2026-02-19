@@ -1,7 +1,7 @@
 """Tests for property quality analysis filter."""
 
-from typing import Any
-from unittest.mock import AsyncMock, MagicMock
+from typing import Annotated, Any, Literal
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from anthropic.types import ToolUseBlock
@@ -16,6 +16,7 @@ from home_finder.filters.quality import (  # type: ignore[attr-defined]
     VISUAL_ANALYSIS_TOOL,
     APIUnavailableError,
     PropertyQualityFilter,
+    _attempt_json_repair,
     _clean_dict,
     _clean_list,
     _clean_value,
@@ -32,7 +33,9 @@ from home_finder.models import (
     KitchenAnalysis,
     LightSpaceAnalysis,
     ListingExtraction,
+    ListingRedFlags,
     MergedProperty,
+    OutdoorSpaceAnalysis,
     Property,
     PropertyImage,
     PropertyQualityAnalysis,
@@ -41,6 +44,33 @@ from home_finder.models import (
     ValueAnalysis,
 )
 from home_finder.utils.image_cache import is_valid_image_url
+
+
+def _populate_image_cache(
+    data_dir: str, merged: MergedProperty
+) -> None:
+    """Create valid JPEG files in the image cache for all images in a MergedProperty."""
+    from io import BytesIO
+
+    from PIL import Image
+
+    from home_finder.utils.image_cache import get_cached_image_path, save_image_bytes
+
+    buf = BytesIO()
+    Image.new("RGB", (10, 10), color="red").save(buf, format="JPEG")
+    jpeg_bytes = buf.getvalue()
+
+    for idx, img in enumerate(merged.images):
+        path = get_cached_image_path(
+            data_dir, merged.unique_id, str(img.url), img.image_type, idx
+        )
+        save_image_bytes(path, jpeg_bytes)
+
+    if merged.floorplan:
+        path = get_cached_image_path(
+            data_dir, merged.unique_id, str(merged.floorplan.url), "floorplan", 0
+        )
+        save_image_bytes(path, jpeg_bytes)
 
 
 class TestKitchenAnalysis:
@@ -65,9 +95,9 @@ class TestKitchenAnalysis:
         assert analysis.notes == ""
 
     def test_invalid_kitchen_quality(self) -> None:
-        """Should reject invalid kitchen quality."""
-        with pytest.raises(ValidationError):
-            KitchenAnalysis(overall_quality="excellent")  # type: ignore[arg-type]
+        """Invalid kitchen quality should be coerced to default."""
+        analysis = KitchenAnalysis(overall_quality="excellent")  # type: ignore[arg-type]
+        assert analysis.overall_quality == "unknown"
 
 
 class TestToolSchema:
@@ -236,9 +266,9 @@ class TestConditionAnalysis:
         assert analysis.confidence == "medium"
 
     def test_invalid_condition(self) -> None:
-        """Should reject invalid condition values."""
-        with pytest.raises(ValidationError):
-            ConditionAnalysis(overall_condition="amazing")  # type: ignore[arg-type]
+        """Invalid condition should be coerced to default."""
+        analysis = ConditionAnalysis(overall_condition="amazing")  # type: ignore[arg-type]
+        assert analysis.overall_condition == "unknown"
 
 
 class TestLightSpaceAnalysis:
@@ -897,15 +927,21 @@ class TestPropertyQualityFilter:
         sample_merged_property: MergedProperty,
         sample_visual_response: dict[str, Any],
         sample_evaluation_response: dict[str, Any],
+        tmp_path: Any,
     ) -> None:
         """Should include gallery images and floorplan in Phase 1 API call."""
+        data_dir = str(tmp_path)
+        _populate_image_cache(data_dir, sample_merged_property)
+
         quality_filter = PropertyQualityFilter(api_key="test-key", max_images=10)
         quality_filter._client = MagicMock()
         quality_filter._client.messages.create = _make_two_phase_mock(
             sample_visual_response, sample_evaluation_response
         )
 
-        await quality_filter.analyze_merged_properties([sample_merged_property])
+        await quality_filter.analyze_merged_properties(
+            [sample_merged_property], data_dir=data_dir
+        )
 
         # Check the Phase 1 API call (first call)
         call_args = quality_filter._client.messages.create.call_args_list[0]
@@ -924,6 +960,7 @@ class TestPropertyQualityFilter:
         sample_property: Property,
         sample_visual_response: dict[str, Any],
         sample_evaluation_response: dict[str, Any],
+        tmp_path: Any,
     ) -> None:
         """Should respect max_images configuration."""
         # Create merged property with 20 gallery images
@@ -948,13 +985,18 @@ class TestPropertyQualityFilter:
             max_price=sample_property.price_pcm,
         )
 
+        data_dir = str(tmp_path)
+        _populate_image_cache(data_dir, many_images_merged)
+
         quality_filter = PropertyQualityFilter(api_key="test-key", max_images=5)
         quality_filter._client = MagicMock()
         quality_filter._client.messages.create = _make_two_phase_mock(
             sample_visual_response, sample_evaluation_response
         )
 
-        await quality_filter.analyze_merged_properties([many_images_merged])
+        await quality_filter.analyze_merged_properties(
+            [many_images_merged], data_dir=data_dir
+        )
 
         call_args = quality_filter._client.messages.create.call_args_list[0]
         content = call_args.kwargs["messages"][0]["content"]
@@ -993,8 +1035,7 @@ class TestPropertyQualityFilter:
         phase1_kwargs = calls[0].kwargs
         assert phase1_kwargs["tool_choice"] == {"type": "auto"}
         assert phase1_kwargs["thinking"] == {
-            "type": "enabled",
-            "budget_tokens": 10000,
+            "type": "adaptive",
         }
         assert len(phase1_kwargs["tools"]) == 1
         assert phase1_kwargs["tools"][0]["name"] == "property_visual_analysis"
@@ -1994,34 +2035,61 @@ class TestCircuitBreaker:
         assert quality_filter._circuit_opened_at > old_time  # fresh timestamp
 
 
-class TestHttpClientReuse:
-    """Tests for HTTP client reuse (T2.9)."""
+class TestBuildImageBlockCacheOnly:
+    """Tests for cache-only image loading in _build_image_block."""
 
-    async def test_curl_session_reused_across_downloads(self) -> None:
-        """Single curl session should be reused across multiple image downloads."""
+    async def test_returns_none_when_cached_path_is_none(self) -> None:
+        """Should return None and not attempt download when no cached path."""
         quality_filter = PropertyQualityFilter(api_key="test-key")
-        mock_session = AsyncMock()
-        mock_session.get = AsyncMock(
-            return_value=MagicMock(
-                status_code=200,
-                content=b"fake-image",
-                headers={"content-type": "image/jpeg"},
-            )
+        result = await quality_filter._build_image_block(
+            "https://lid.zoocdn.com/u/1024/768/abc.jpg", cached_path=None
         )
+        assert result is None
 
-        quality_filter._curl_session = mock_session
-        await quality_filter._download_image_as_base64("https://example.com/1.jpg")
-        await quality_filter._download_image_as_base64("https://example.com/2.jpg")
-        assert mock_session.get.call_count == 2  # same session, two calls
+    async def test_returns_none_when_cached_image_corrupt(self, tmp_path: Any) -> None:
+        """Should return None when cached image file is corrupt."""
+        corrupt_file = tmp_path / "corrupt.jpg"
+        corrupt_file.write_bytes(b"not-a-real-image")
 
-    async def test_close_closes_curl_session(self) -> None:
-        """close() should close the curl session."""
         quality_filter = PropertyQualityFilter(api_key="test-key")
-        mock_session = AsyncMock()
-        quality_filter._curl_session = mock_session
+        result = await quality_filter._build_image_block(
+            "https://example.com/img.jpg", cached_path=corrupt_file
+        )
+        assert result is None
+
+    async def test_returns_image_block_from_valid_cache(self, tmp_path: Any) -> None:
+        """Should return ImageBlockParam when cached image is valid."""
+        from PIL import Image
+
+        # Create a real 10x10 JPEG
+        img_path = tmp_path / "valid.jpg"
+        img = Image.new("RGB", (10, 10), color="red")
+        img.save(img_path, format="JPEG")
+
+        quality_filter = PropertyQualityFilter(api_key="test-key")
+        result = await quality_filter._build_image_block(
+            "https://example.com/photo.jpg", cached_path=img_path
+        )
+        assert result is not None
+        assert result["type"] == "image"
+        assert result["source"]["type"] == "base64"
+
+    async def test_skips_video_urls(self) -> None:
+        """Should return None for video URLs regardless of cache."""
+        quality_filter = PropertyQualityFilter(api_key="test-key")
+        result = await quality_filter._build_image_block(
+            "https://youtube.com/watch?v=abc", cached_path=None
+        )
+        assert result is None
+
+    async def test_close_only_closes_anthropic_client(self) -> None:
+        """close() should only close the Anthropic client."""
+        quality_filter = PropertyQualityFilter(api_key="test-key")
+        mock_client = AsyncMock()
+        quality_filter._client = mock_client
         await quality_filter.close()
-        mock_session.close.assert_called_once()
-        assert quality_filter._curl_session is None
+        mock_client.close.assert_called_once()
+        assert quality_filter._client is None
 
 
 class TestAcousticContextMapping:
@@ -2439,3 +2507,755 @@ class TestMergeAnalysisWithStringifiedNested:
         assert analysis.kitchen is not None
         assert analysis.kitchen.overall_quality == "modern"
         assert analysis.kitchen.hob_type == "gas"
+
+    def test_defense_chain_clean_dict_fails_model_validator_rescues(
+        self,
+        sample_visual_response: dict[str, Any],
+        sample_evaluation_response: dict[str, Any],
+    ) -> None:
+        """Full defense chain: _clean_dict fails, warning fires, model validator rescues."""
+        import json
+
+        # JSON string with NUL — _clean_value can't parse it, leaves it as string
+        bedroom_data = sample_visual_response["bedroom"]
+        bedroom_json_with_ctrl = json.dumps(bedroom_data).replace(
+            '"yes"', '"yes\x00"', 1
+        )
+        sample_visual_response["bedroom"] = bedroom_json_with_ctrl
+
+        with patch("home_finder.filters.quality.logger") as mock_logger:
+            analysis = PropertyQualityFilter._merge_analysis_results(
+                sample_visual_response,
+                sample_evaluation_response,
+                bedrooms=2,
+                property_id="test-defense",
+            )
+
+        # 1. Warning fired (clean_dict left it as a string)
+        warning_calls = [
+            c for c in mock_logger.warning.call_args_list
+            if c[0] and c[0][0] == "clean_dict_missed_json_string"
+        ]
+        assert len(warning_calls) == 1
+        assert warning_calls[0][1]["field"] == "bedroom"
+
+        # 2. Model validator rescued — valid analysis returned
+        assert analysis is not None
+        assert analysis.bedroom is not None
+        assert analysis.bedroom.primary_is_double == "yes"
+        assert analysis.bedroom.office_separation == "dedicated_room"
+
+
+class TestMergeAnalysisWarningLog:
+    """Tests for clean_dict_missed_json_string warning in _merge_analysis_results."""
+
+    def test_warning_fires_when_clean_dict_leaves_json_string(
+        self,
+        sample_visual_response: dict[str, Any],
+        sample_evaluation_response: dict[str, Any],
+    ) -> None:
+        """Warning should fire when _clean_dict leaves a sub-model field as a JSON string."""
+        import json
+
+        # NUL byte makes _clean_value fail (can't parse), leaving a string
+        bedroom_data = sample_visual_response["bedroom"]
+        bedroom_json = json.dumps(bedroom_data).replace('"yes"', '"yes\x00"', 1)
+        sample_visual_response["bedroom"] = bedroom_json
+
+        with patch("home_finder.filters.quality.logger") as mock_logger:
+            analysis = PropertyQualityFilter._merge_analysis_results(
+                sample_visual_response,
+                sample_evaluation_response,
+                bedrooms=2,
+                property_id="test-warn",
+            )
+
+        assert analysis is not None
+        mock_logger.warning.assert_any_call(
+            "clean_dict_missed_json_string",
+            field="bedroom",
+            property_id="test-warn",
+        )
+
+    def test_no_warning_on_normal_path(
+        self,
+        sample_visual_response: dict[str, Any],
+        sample_evaluation_response: dict[str, Any],
+    ) -> None:
+        """No clean_dict_missed_json_string warning when all fields are normal dicts."""
+        with patch("home_finder.filters.quality.logger") as mock_logger:
+            analysis = PropertyQualityFilter._merge_analysis_results(
+                sample_visual_response,
+                sample_evaluation_response,
+                bedrooms=2,
+                property_id="test-ok",
+            )
+
+        assert analysis is not None
+        missed_warnings = [
+            c for c in mock_logger.warning.call_args_list
+            if c[0] and c[0][0] == "clean_dict_missed_json_string"
+        ]
+        assert missed_warnings == []
+
+    def test_warning_fires_for_each_unparsed_field(
+        self,
+        sample_visual_response: dict[str, Any],
+        sample_evaluation_response: dict[str, Any],
+    ) -> None:
+        """Warning should fire once per unparsed sub-model field."""
+        import json
+
+        # Make both bedroom and kitchen unparseable by _clean_value
+        for field in ("bedroom", "kitchen"):
+            data = sample_visual_response[field]
+            sample_visual_response[field] = json.dumps(data).replace('"', '"\x00', 1)
+
+        with patch("home_finder.filters.quality.logger") as mock_logger:
+            analysis = PropertyQualityFilter._merge_analysis_results(
+                sample_visual_response,
+                sample_evaluation_response,
+                bedrooms=2,
+                property_id="test-multi",
+            )
+
+        assert analysis is not None
+        missed_warnings = [
+            c for c in mock_logger.warning.call_args_list
+            if c[0] and c[0][0] == "clean_dict_missed_json_string"
+        ]
+        warned_fields = {c[1]["field"] for c in missed_warnings}
+        assert warned_fields == {"bedroom", "kitchen"}
+
+
+class TestUnwrapOnLineArbitraryKey:
+    """Tests for unwrap_one_line handling of arbitrary single-key dicts."""
+
+    def test_character_key_dict_unwrapped(self) -> None:
+        """one_line as {"character": "text"} should extract the string value."""
+        analysis = PropertyQualityAnalysis(
+            kitchen=KitchenAnalysis(),
+            condition=ConditionAnalysis(),
+            light_space=LightSpaceAnalysis(),
+            space=SpaceAnalysis(),
+            summary="Test",
+            one_line={"character": "Victorian flat with garden but dated throughout"},  # type: ignore[arg-type]
+        )
+        assert analysis.one_line == "Victorian flat with garden but dated throughout"
+
+    def test_tagline_key_dict_unwrapped(self) -> None:
+        """one_line as {"tagline": "text"} should extract the string value."""
+        analysis = PropertyQualityAnalysis(
+            kitchen=KitchenAnalysis(),
+            condition=ConditionAnalysis(),
+            light_space=LightSpaceAnalysis(),
+            space=SpaceAnalysis(),
+            summary="Test",
+            one_line={"tagline": "Bright corner flat in quiet street"},  # type: ignore[arg-type]
+        )
+        assert analysis.one_line == "Bright corner flat in quiet street"
+
+    def test_one_line_key_still_works(self) -> None:
+        """Original {"one_line": "text"} pattern still works."""
+        analysis = PropertyQualityAnalysis(
+            kitchen=KitchenAnalysis(),
+            condition=ConditionAnalysis(),
+            light_space=LightSpaceAnalysis(),
+            space=SpaceAnalysis(),
+            summary="Test",
+            one_line={"one_line": "Good flat"},  # type: ignore[arg-type]
+        )
+        assert analysis.one_line == "Good flat"
+
+    def test_multi_key_dict_with_one_line_extracts(self) -> None:
+        """Multi-key dict with 'one_line' key should still extract it."""
+        analysis = PropertyQualityAnalysis(
+            kitchen=KitchenAnalysis(),
+            condition=ConditionAnalysis(),
+            light_space=LightSpaceAnalysis(),
+            space=SpaceAnalysis(),
+            summary="Test",
+            one_line={"one_line": "Good flat", "extra": "junk"},  # type: ignore[arg-type]
+        )
+        assert analysis.one_line == "Good flat"
+
+    def test_json_string_with_arbitrary_key_unwrapped(self) -> None:
+        """JSON string '{"character": "text"}' should be parsed and unwrapped."""
+        analysis = PropertyQualityAnalysis(
+            kitchen=KitchenAnalysis(),
+            condition=ConditionAnalysis(),
+            light_space=LightSpaceAnalysis(),
+            space=SpaceAnalysis(),
+            summary="Test",
+            one_line='{"character": "Victorian flat"}',
+        )
+        assert analysis.one_line == "Victorian flat"
+
+    def test_plain_string_passes_through(self) -> None:
+        """Plain string should be unmodified."""
+        analysis = PropertyQualityAnalysis(
+            kitchen=KitchenAnalysis(),
+            condition=ConditionAnalysis(),
+            light_space=LightSpaceAnalysis(),
+            space=SpaceAnalysis(),
+            summary="Test",
+            one_line="Just a plain string",
+        )
+        assert analysis.one_line == "Just a plain string"
+
+    def test_empty_dict_raises(self) -> None:
+        """Empty dict passes through unwrap_one_line, Pydantic rejects the type."""
+        with pytest.raises(ValidationError):
+            PropertyQualityAnalysis(
+                kitchen=KitchenAnalysis(),
+                condition=ConditionAnalysis(),
+                light_space=LightSpaceAnalysis(),
+                space=SpaceAnalysis(),
+                summary="Test",
+                one_line={},  # type: ignore[arg-type]
+            )
+
+    def test_multi_key_dict_without_one_line_raises(self) -> None:
+        """Multi-key dict without 'one_line' key passes through, Pydantic rejects."""
+        with pytest.raises(ValidationError):
+            PropertyQualityAnalysis(
+                kitchen=KitchenAnalysis(),
+                condition=ConditionAnalysis(),
+                light_space=LightSpaceAnalysis(),
+                space=SpaceAnalysis(),
+                summary="Test",
+                one_line={"character": "x", "extra": "y"},  # type: ignore[arg-type]
+            )
+
+    def test_none_passes_through(self) -> None:
+        """None value for one_line should remain None."""
+        analysis = PropertyQualityAnalysis(
+            kitchen=KitchenAnalysis(),
+            condition=ConditionAnalysis(),
+            light_space=LightSpaceAnalysis(),
+            space=SpaceAnalysis(),
+            summary="Test",
+            one_line=None,
+        )
+        assert analysis.one_line is None
+
+
+# Minimal valid JSON strings per sub-model field for parametrized coercion tests.
+# Tuple: (json_string, attribute_to_check, expected_value)
+_SUB_MODEL_JSON_SAMPLES: dict[str, tuple[str, str, object]] = {
+    "kitchen": ('{"overall_quality": "modern", "hob_type": "gas"}', "overall_quality", "modern"),
+    "condition": (
+        '{"overall_condition": "good", "confidence": "high"}',
+        "overall_condition",
+        "good",
+    ),
+    "light_space": ('{"natural_light": "excellent"}', "natural_light", "excellent"),
+    "space": ('{"living_room_sqm": 18, "confidence": "high"}', "living_room_sqm", 18),
+    "bathroom": ('{"overall_condition": "modern", "has_bathtub": "yes"}', "has_bathtub", "yes"),
+    "bedroom": (
+        '{"primary_is_double": "yes", "office_separation": "dedicated_room"}',
+        "primary_is_double",
+        "yes",
+    ),
+    "outdoor_space": ('{"has_balcony": true, "notes": "Nice"}', "has_balcony", True),
+    "storage": ('{"storage_rating": "good"}', "storage_rating", "good"),
+    "flooring_noise": ('{"primary_flooring": "hardwood"}', "primary_flooring", "hardwood"),
+    "listing_red_flags": ('{"red_flag_count": 2}', "red_flag_count", 2),
+    "listing_extraction": ('{"epc_rating": "B", "deposit_weeks": 5}', "epc_rating", "B"),
+    "viewing_notes": (
+        '{"check_items": ["Check boiler"], "questions_for_agent": []}',
+        "check_items",
+        ["Check boiler"],
+    ),
+    "value": ('{"area_average": 1800, "note": "Reasonable"}', "area_average", 1800),
+}
+
+
+class TestCoerceJsonStringsModelValidator:
+    """Tests for the coerce_json_strings model validator on PropertyQualityAnalysis."""
+
+    def test_bedroom_json_string_parsed(self) -> None:
+        """Bedroom as JSON string should be parsed to BedroomAnalysis."""
+        bedroom_json = (
+            '{"primary_is_double": "yes", "has_built_in_wardrobe": "no",'
+            ' "can_fit_desk": "yes", "office_separation": "shared_space",'
+            ' "notes": "Decent room"}'
+        )
+        analysis = PropertyQualityAnalysis(
+            kitchen=KitchenAnalysis(),
+            condition=ConditionAnalysis(),
+            light_space=LightSpaceAnalysis(),
+            space=SpaceAnalysis(),
+            summary="Test",
+            bedroom=bedroom_json,  # type: ignore[arg-type]
+        )
+        assert analysis.bedroom is not None
+        assert analysis.bedroom.primary_is_double == "yes"
+        assert analysis.bedroom.office_separation == "shared_space"
+
+    def test_bedroom_json_string_with_trailing_comma(self) -> None:
+        """Bedroom JSON string with trailing comma should still be parsed."""
+        bedroom_json = (
+            '{"primary_is_double": "yes", "has_built_in_wardrobe": "no",'
+            ' "can_fit_desk": "yes", "notes": "OK",}'
+        )
+        analysis = PropertyQualityAnalysis(
+            kitchen=KitchenAnalysis(),
+            condition=ConditionAnalysis(),
+            light_space=LightSpaceAnalysis(),
+            space=SpaceAnalysis(),
+            summary="Test",
+            bedroom=bedroom_json,  # type: ignore[arg-type]
+        )
+        assert analysis.bedroom is not None
+        assert analysis.bedroom.primary_is_double == "yes"
+
+    def test_kitchen_json_string_parsed(self) -> None:
+        """Kitchen as JSON string should be parsed to KitchenAnalysis."""
+        kitchen_json = '{"overall_quality": "modern", "hob_type": "gas", "notes": "Nice"}'
+        analysis = PropertyQualityAnalysis(
+            kitchen=kitchen_json,  # type: ignore[arg-type]
+            condition=ConditionAnalysis(),
+            light_space=LightSpaceAnalysis(),
+            space=SpaceAnalysis(),
+            summary="Test",
+        )
+        assert analysis.kitchen.overall_quality == "modern"
+        assert analysis.kitchen.hob_type == "gas"
+
+    def test_malformed_json_does_not_crash(self) -> None:
+        """Totally malformed JSON string should not crash — field fails validation."""
+        with pytest.raises(ValidationError):
+            PropertyQualityAnalysis(
+                kitchen=KitchenAnalysis(),
+                condition=ConditionAnalysis(),
+                light_space=LightSpaceAnalysis(),
+                space=SpaceAnalysis(),
+                summary="Test",
+                bedroom='{not valid json at all}',  # type: ignore[arg-type]
+            )
+
+    def test_non_json_string_left_alone(self) -> None:
+        """Non-JSON string for sub-model field should not be modified."""
+        with pytest.raises(ValidationError):
+            PropertyQualityAnalysis(
+                kitchen=KitchenAnalysis(),
+                condition=ConditionAnalysis(),
+                light_space=LightSpaceAnalysis(),
+                space=SpaceAnalysis(),
+                summary="Test",
+                bedroom="just a string",  # type: ignore[arg-type]
+            )
+
+    def test_dict_value_not_double_parsed(self) -> None:
+        """Dict values should pass through without modification."""
+        analysis = PropertyQualityAnalysis(
+            kitchen=KitchenAnalysis(),
+            condition=ConditionAnalysis(),
+            light_space=LightSpaceAnalysis(),
+            space=SpaceAnalysis(),
+            summary="Test",
+            bedroom={"primary_is_double": "yes", "notes": "Fine"},
+        )
+        assert analysis.bedroom is not None
+        assert analysis.bedroom.primary_is_double == "yes"
+
+    def test_merge_with_character_one_line_succeeds(
+        self,
+        sample_visual_response: dict[str, Any],
+        sample_evaluation_response: dict[str, Any],
+    ) -> None:
+        """End-to-end: _merge_analysis_results handles one_line as {"character": "..."}."""
+        sample_evaluation_response["one_line"] = {
+            "character": "Victorian flat with garden"
+        }
+
+        analysis = PropertyQualityFilter._merge_analysis_results(
+            sample_visual_response,
+            sample_evaluation_response,
+            bedrooms=2,
+            property_id="test-123",
+        )
+
+        assert analysis is not None
+        assert analysis.one_line == "Victorian flat with garden"
+
+    def test_merge_with_bedroom_json_string_succeeds(
+        self,
+        sample_visual_response: dict[str, Any],
+        sample_evaluation_response: dict[str, Any],
+    ) -> None:
+        """End-to-end: _merge_analysis_results handles bedroom as JSON string."""
+        import json
+
+        # Stringify with trailing comma (the _clean_dict in merge handles this,
+        # but if it didn't, the model validator would catch it)
+        sample_visual_response["bedroom"] = json.dumps(
+            sample_visual_response["bedroom"]
+        )
+
+        analysis = PropertyQualityFilter._merge_analysis_results(
+            sample_visual_response,
+            sample_evaluation_response,
+            bedrooms=2,
+            property_id="test-123",
+        )
+
+        assert analysis is not None
+        assert analysis.bedroom is not None
+        assert analysis.bedroom.primary_is_double == "yes"
+
+    def test_json_string_with_control_characters(self) -> None:
+        """JSON string with embedded control characters should be parsed after stripping."""
+        # Simulate LLM returning a JSON string with a NUL byte inside a value
+        bedroom_json = (
+            '{"primary_is_double": "yes", "has_built_in_wardrobe": "no",'
+            ' "can_fit_desk": "yes", "office_separation": "shared_space",'
+            ' "notes": "Good\x00 room"}'
+        )
+        analysis = PropertyQualityAnalysis(
+            kitchen=KitchenAnalysis(),
+            condition=ConditionAnalysis(),
+            light_space=LightSpaceAnalysis(),
+            space=SpaceAnalysis(),
+            summary="Test",
+            bedroom=bedroom_json,  # type: ignore[arg-type]
+        )
+        assert analysis.bedroom is not None
+        assert analysis.bedroom.primary_is_double == "yes"
+        assert "Good" in analysis.bedroom.notes
+
+    def test_json_string_with_multiple_control_characters(self) -> None:
+        """JSON string with multiple control characters should be cleaned and parsed."""
+        bedroom_json = (
+            '{"primary_is_double": "yes",\x01 "has_built_in_wardrobe": "no",'
+            ' "can_fit_desk":\x02 "yes", "office_separation": "shared_space",'
+            ' "notes": "OK"}'
+        )
+        analysis = PropertyQualityAnalysis(
+            kitchen=KitchenAnalysis(),
+            condition=ConditionAnalysis(),
+            light_space=LightSpaceAnalysis(),
+            space=SpaceAnalysis(),
+            summary="Test",
+            bedroom=bedroom_json,  # type: ignore[arg-type]
+        )
+        assert analysis.bedroom is not None
+        assert analysis.bedroom.can_fit_desk == "yes"
+
+    @pytest.mark.parametrize("field_name", sorted(_SUB_MODEL_JSON_SAMPLES))
+    def test_json_string_parsed_for_all_sub_model_fields(self, field_name: str) -> None:
+        """Every sub-model field should be parseable from a JSON string."""
+        json_string, attr, expected = _SUB_MODEL_JSON_SAMPLES[field_name]
+
+        # Required fields need model instances when they aren't the test target
+        required_defaults: dict[str, Any] = {
+            "kitchen": KitchenAnalysis(),
+            "condition": ConditionAnalysis(),
+            "light_space": LightSpaceAnalysis(),
+            "space": SpaceAnalysis(),
+        }
+        kwargs: dict[str, Any] = {**required_defaults, "summary": "Test"}
+        kwargs[field_name] = json_string  # override with JSON string
+
+        analysis = PropertyQualityAnalysis(**kwargs)  # type: ignore[arg-type]
+        field_value = getattr(analysis, field_name)
+        assert field_value is not None, f"{field_name} should not be None after parsing"
+        assert getattr(field_value, attr) == expected
+
+    def test_whitespace_control_chars_preserved_in_json_structure(self) -> None:
+        """Tab and newline are valid JSON whitespace and must not be stripped."""
+        bedroom_json = '{\n\t"primary_is_double": "yes",\n\t"notes": "OK\x00"\n}'
+        analysis = PropertyQualityAnalysis(
+            kitchen=KitchenAnalysis(),
+            condition=ConditionAnalysis(),
+            light_space=LightSpaceAnalysis(),
+            space=SpaceAnalysis(),
+            summary="Test",
+            bedroom=bedroom_json,  # type: ignore[arg-type]
+        )
+        assert analysis.bedroom is not None
+        assert analysis.bedroom.primary_is_double == "yes"
+        # NUL stripped, but the value parsed successfully
+        assert "OK" in analysis.bedroom.notes
+
+    def test_harmful_control_chars_stripped_benign_preserved(self) -> None:
+        """Harmful C0 chars (SOH, VT, US) stripped; tab/LF/CR preserved as JSON whitespace."""
+        bedroom_json = (
+            '{\n\t"primary_is_double":\x01 "yes",\n'
+            '\t"has_built_in_wardrobe":\x0B "no",\n'
+            '\t"can_fit_desk": "yes",\x1F\n'
+            '\t"notes": "Fine"\n}'
+        )
+        analysis = PropertyQualityAnalysis(
+            kitchen=KitchenAnalysis(),
+            condition=ConditionAnalysis(),
+            light_space=LightSpaceAnalysis(),
+            space=SpaceAnalysis(),
+            summary="Test",
+            bedroom=bedroom_json,  # type: ignore[arg-type]
+        )
+        assert analysis.bedroom is not None
+        assert analysis.bedroom.primary_is_double == "yes"
+        assert analysis.bedroom.has_built_in_wardrobe == "no"
+        assert analysis.bedroom.can_fit_desk == "yes"
+
+
+class TestQualitySubModelFieldsSync:
+    """Verify _QUALITY_SUB_MODEL_FIELDS stays in sync with PropertyQualityAnalysis."""
+
+    def test_matches_actual_sub_model_fields(self) -> None:
+        """_QUALITY_SUB_MODEL_FIELDS must match the BaseModel-typed fields on the class."""
+        import typing
+
+        from pydantic import BaseModel
+
+        from home_finder.models.quality import _QUALITY_SUB_MODEL_FIELDS
+
+        expected: set[str] = set()
+        for name, field_info in PropertyQualityAnalysis.model_fields.items():
+            annotation = field_info.annotation
+            # Unwrap Optional[X] / X | None via typing.get_args
+            args = typing.get_args(annotation)
+            types_to_check = args if args else (annotation,)
+            for t in types_to_check:
+                if isinstance(t, type) and issubclass(t, BaseModel):
+                    expected.add(name)
+                    break
+
+        assert expected == _QUALITY_SUB_MODEL_FIELDS, (
+            f"_QUALITY_SUB_MODEL_FIELDS drift detected.\n"
+            f"  Missing from frozenset: {expected - _QUALITY_SUB_MODEL_FIELDS}\n"
+            f"  Extra in frozenset: {_QUALITY_SUB_MODEL_FIELDS - expected}"
+        )
+
+
+class TestLiteralCoercion:
+    """Tests for _LenientLiteralModel auto-coercion of invalid Literal values."""
+
+    def test_original_bug_office_separation_poor(self) -> None:
+        """Repro: Claude returned 'poor' for office_separation (not in Literal)."""
+        analysis = BedroomAnalysis(office_separation="poor")  # type: ignore[arg-type]
+        assert analysis.office_separation == "unknown"
+
+    def test_valid_value_passthrough(self) -> None:
+        """Valid Literal values should pass through unchanged."""
+        analysis = KitchenAnalysis(overall_quality="modern")
+        assert analysis.overall_quality == "modern"
+
+    def test_non_unknown_default(self) -> None:
+        """Field with non-'unknown' default should coerce to that default."""
+        # ConditionAnalysis.confidence defaults to "medium"
+        analysis = ConditionAnalysis(confidence="mega")  # type: ignore[arg-type]
+        assert analysis.confidence == "medium"
+
+    def test_different_default_same_type(self) -> None:
+        """SpaceAnalysis.confidence defaults to 'low' (different from ConditionAnalysis)."""
+        analysis = SpaceAnalysis(confidence="mega")  # type: ignore[arg-type]
+        assert analysis.confidence == "low"
+
+    def test_optional_literal_fallback_to_none(self) -> None:
+        """Optional Literal field should coerce to None (field default)."""
+        analysis = ValueAnalysis(rating="superb")  # type: ignore[arg-type]
+        assert analysis.rating is None
+
+    def test_none_passthrough(self) -> None:
+        """None on an Optional Literal field should stay None."""
+        analysis = KitchenAnalysis(hob_type=None)
+        assert analysis.hob_type is None
+
+    def test_tristatebool_invalid(self) -> None:
+        """TriStateBool field with invalid string should coerce to default."""
+        analysis = KitchenAnalysis(has_dishwasher="maybe")  # type: ignore[arg-type]
+        assert analysis.has_dishwasher == "unknown"
+
+    def test_end_to_end_merge_with_invalid_literal(
+        self,
+        sample_visual_response: dict[str, Any],
+        sample_evaluation_response: dict[str, Any],
+    ) -> None:
+        """_merge_analysis_results should succeed despite invalid Literal value."""
+        # Inject the original bug: 'poor' is not a valid office_separation
+        sample_visual_response["bedroom"]["office_separation"] = "poor"
+
+        analysis = PropertyQualityFilter._merge_analysis_results(
+            sample_visual_response,
+            sample_evaluation_response,
+            bedrooms=2,
+            property_id="test-coerce",
+        )
+
+        assert analysis is not None
+        assert analysis.bedroom is not None
+        assert analysis.bedroom.office_separation == "unknown"
+
+
+class TestLiteralFieldIntrospection:
+    """Tests for _extract_literal_values and _literal_field_info helpers."""
+
+    def test_plain_literal(self) -> None:
+        """Should extract values from a plain Literal type."""
+        from home_finder.models.quality import _extract_literal_values
+
+        result = _extract_literal_values(Literal["a", "b", "c"])
+        assert result == ("a", "b", "c")
+
+    def test_optional_literal(self) -> None:
+        """Should extract values from Literal[...] | None."""
+        from home_finder.models.quality import _extract_literal_values
+
+        result = _extract_literal_values(Literal["x", "y"] | None)
+        assert result is not None
+        assert set(result) == {"x", "y"}
+
+    def test_annotated_literal(self) -> None:
+        """Should extract values from Annotated[Literal[...], ...]."""
+        from home_finder.models.quality import _extract_literal_values
+
+        result = _extract_literal_values(Annotated[Literal["a", "b"], "metadata"])
+        assert result == ("a", "b")
+
+    def test_annotated_optional_literal(self) -> None:
+        """Should extract values from Annotated[Literal[...] | None, ...]."""
+        from home_finder.models.quality import _extract_literal_values
+
+        result = _extract_literal_values(Annotated[Literal["a", "b"] | None, "meta"])
+        assert result is not None
+        assert set(result) == {"a", "b"}
+
+    def test_non_literal_types_return_none(self) -> None:
+        """Non-Literal types should return None."""
+        from home_finder.models.quality import _extract_literal_values
+
+        assert _extract_literal_values(bool) is None
+        assert _extract_literal_values(str) is None
+        assert _extract_literal_values(list[str]) is None
+
+    def test_literal_field_info_bedroom(self) -> None:
+        """_literal_field_info should include office_separation for BedroomAnalysis."""
+        from home_finder.models.quality import _literal_field_info
+
+        info = _literal_field_info(BedroomAnalysis)
+        assert "office_separation" in info
+        allowed, default = info["office_separation"]
+        assert "dedicated_room" in allowed
+        assert "poor" not in allowed
+        assert default == "unknown"
+
+
+class TestCoercedBoolStringInputs:
+    """Tests for CoercedBool handling string inputs from non-strict tool_use."""
+
+    def test_unknown_coerces_to_false(self) -> None:
+        """'unknown' should coerce to False — safe default for uncertain booleans."""
+        analysis = OutdoorSpaceAnalysis(has_shared_garden="unknown")  # type: ignore[arg-type]
+        assert analysis.has_shared_garden is False
+
+    def test_yes_coerces_to_true(self) -> None:
+        analysis = OutdoorSpaceAnalysis(has_balcony="yes")  # type: ignore[arg-type]
+        assert analysis.has_balcony is True
+
+    def test_no_coerces_to_false(self) -> None:
+        analysis = OutdoorSpaceAnalysis(has_garden="no")  # type: ignore[arg-type]
+        assert analysis.has_garden is False
+
+    def test_true_string_coerces_to_true(self) -> None:
+        analysis = OutdoorSpaceAnalysis(has_terrace="true")  # type: ignore[arg-type]
+        assert analysis.has_terrace is True
+
+    def test_false_string_coerces_to_false(self) -> None:
+        analysis = OutdoorSpaceAnalysis(has_balcony="false")  # type: ignore[arg-type]
+        assert analysis.has_balcony is False
+
+    def test_na_coerces_to_false(self) -> None:
+        analysis = OutdoorSpaceAnalysis(has_shared_garden="n/a")  # type: ignore[arg-type]
+        assert analysis.has_shared_garden is False
+
+    def test_empty_string_coerces_to_false(self) -> None:
+        analysis = OutdoorSpaceAnalysis(has_garden="")  # type: ignore[arg-type]
+        assert analysis.has_garden is False
+
+    def test_case_insensitive(self) -> None:
+        """Coercion should be case-insensitive."""
+        analysis = OutdoorSpaceAnalysis(
+            has_balcony="YES",  # type: ignore[arg-type]
+            has_garden="Unknown",  # type: ignore[arg-type]
+            has_terrace="TRUE",  # type: ignore[arg-type]
+        )
+        assert analysis.has_balcony is True
+        assert analysis.has_garden is False
+        assert analysis.has_terrace is True
+
+    def test_listing_red_flags_too_few_photos(self) -> None:
+        """CoercedBool on ListingRedFlags should also handle string inputs."""
+        flags = ListingRedFlags(too_few_photos="unknown", selective_angles="yes")  # type: ignore[arg-type]
+        assert flags.too_few_photos is False
+        assert flags.selective_angles is True
+
+    def test_none_still_coerces_to_false(self) -> None:
+        """Original None → False behavior must be preserved."""
+        analysis = OutdoorSpaceAnalysis(has_balcony=None)  # type: ignore[arg-type]
+        assert analysis.has_balcony is False
+
+    def test_bool_values_pass_through(self) -> None:
+        """Actual bool values should not be affected."""
+        analysis = OutdoorSpaceAnalysis(has_balcony=True, has_garden=False)
+        assert analysis.has_balcony is True
+        assert analysis.has_garden is False
+
+
+class TestAttemptJsonRepair:
+    """Tests for _attempt_json_repair — fixing common LLM JSON malformations."""
+
+    def test_missing_colon_between_key_value(self) -> None:
+        """Missing colon: "key" "value" → "key": "value"."""
+        result = _attempt_json_repair('{"primary_is_double" "yes", "notes" "ok"}')
+        assert result is not None
+        assert result["primary_is_double"] == "yes"
+        assert result["notes"] == "ok"
+
+    def test_trailing_comma_fixed(self) -> None:
+        result = _attempt_json_repair('{"a": 1, "b": 2,}')
+        assert result == {"a": 1, "b": 2}
+
+    def test_valid_json_passes_through(self) -> None:
+        result = _attempt_json_repair('{"key": "value"}')
+        assert result == {"key": "value"}
+
+    def test_totally_broken_returns_none(self) -> None:
+        result = _attempt_json_repair("{this is not json at all}")
+        assert result is None
+
+    def test_nested_object_values_repaired(self) -> None:
+        """Nested objects with missing colons should be repaired."""
+        result = _attempt_json_repair('{"key" "value", "num": 42}')
+        assert result is not None
+        assert result["key"] == "value"
+        assert result["num"] == 42
+
+    def test_clean_value_uses_repair_as_third_pass(self) -> None:
+        """_clean_value should use JSON repair when standard parsing fails."""
+        # Missing colon — standard json.loads fails, trailing comma fix fails,
+        # but structural repair should succeed
+        result = _clean_value('{"primary_is_double" "yes", "notes" "Decent"}')
+        assert isinstance(result, dict)
+        assert result["primary_is_double"] == "yes"
+
+    def test_model_validator_repairs_missing_colon(self) -> None:
+        """coerce_json_strings model validator should repair missing colons."""
+        bedroom_json = (
+            '{"primary_is_double" "yes", "has_built_in_wardrobe" "no",'
+            ' "can_fit_desk" "yes", "office_separation" "shared_space",'
+            ' "notes" "Decent room"}'
+        )
+        analysis = PropertyQualityAnalysis(
+            kitchen=KitchenAnalysis(),
+            condition=ConditionAnalysis(),
+            light_space=LightSpaceAnalysis(),
+            space=SpaceAnalysis(),
+            summary="Test",
+            bedroom=bedroom_json,  # type: ignore[arg-type]
+        )
+        assert analysis.bedroom is not None
+        assert analysis.bedroom.primary_is_double == "yes"
+        assert analysis.bedroom.office_separation == "shared_space"

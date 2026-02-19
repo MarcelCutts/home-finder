@@ -2,6 +2,8 @@
 
 from pathlib import Path
 
+from pydantic import HttpUrl
+
 from home_finder.utils.image_cache import (
     clear_image_cache,
     copy_cached_images,
@@ -236,3 +238,38 @@ class TestIsValidImageUrl:
         assert is_valid_image_url("https://example.com/style.css") is False
         assert is_valid_image_url("https://example.com/data.json") is False
         assert is_valid_image_url("https://example.com/feed.xml") is False
+
+
+class TestUrlNormalizationConsistency:
+    """Verify that Pydantic HttpUrl normalization produces consistent cache keys."""
+
+    def test_standard_cdn_url_unchanged(self) -> None:
+        """Standard CDN URLs should produce the same hash raw vs normalized."""
+        urls = [
+            "https://lc.zoocdn.com/u/2048/1024/abc123.jpg",
+            "https://media.rightmove.co.uk/dir/12345_001.jpeg",
+            "https://www.openrent.com/images/photo.png",
+        ]
+        for raw_url in urls:
+            normalized = str(HttpUrl(raw_url))
+            raw_name = url_to_filename(raw_url, "gallery", 0)
+            norm_name = url_to_filename(normalized, "gallery", 0)
+            assert raw_name == norm_name, (
+                f"Hash mismatch for {raw_url}: raw={raw_name}, norm={norm_name}"
+            )
+
+    def test_port_normalization_demonstrates_mismatch(self) -> None:
+        """Explicit :443 on HTTPS gets stripped by Pydantic — hashes would differ.
+
+        This test documents why detail_enrichment normalizes URLs before
+        passing them to get_cached_image_path: without normalization the
+        save key and lookup key can differ.
+        """
+        raw_url = "https://cdn.example.com:443/img.jpg"
+        normalized = str(HttpUrl(raw_url))
+        # Pydantic strips the default port
+        assert ":443" not in normalized
+        # Therefore the hashes differ
+        raw_name = url_to_filename(raw_url, "gallery", 0)
+        norm_name = url_to_filename(normalized, "gallery", 0)
+        assert raw_name != norm_name, "Expected different hashes for port-normalized URL"

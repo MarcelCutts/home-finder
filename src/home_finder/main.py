@@ -615,6 +615,47 @@ async def _run_post_enrichment(
     return merged_to_notify, anchors_updated
 
 
+async def _detect_price_changes(
+    merged_list: list[MergedProperty],
+    storage: PropertyStorage,
+) -> None:
+    """Detect and record price changes for already-known properties.
+
+    Compares the scraped price against the DB price for each property.
+    Only records a change if the property exists in the DB with a different price.
+    """
+    drops = 0
+    increases = 0
+    for merged in merged_list:
+        change = await storage.detect_and_record_price_change(
+            merged.unique_id,
+            merged.canonical.price_pcm,
+            source=merged.canonical.source.value,
+        )
+        if change is not None:
+            if change < 0:
+                drops += 1
+            else:
+                increases += 1
+    if drops or increases:
+        logger.info("price_changes_detected", drops=drops, increases=increases)
+
+
+def _days_since(iso_str: str | None) -> int:
+    """Return integer days since ISO datetime, or 0 if invalid."""
+    if not iso_str:
+        return 0
+    from datetime import UTC, datetime
+
+    try:
+        dt = datetime.fromisoformat(iso_str)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=UTC)
+        return max(0, (datetime.now(UTC) - dt).days)
+    except (ValueError, TypeError):
+        return 0
+
+
 async def _run_pre_analysis_pipeline(
     settings: Settings,
     storage: PropertyStorage,
@@ -659,6 +700,9 @@ async def _run_pre_analysis_pipeline(
         count=len(merged_properties),
         by_source=_source_counts(merged_properties),
     )
+
+    # Step 3b: Detect price changes for already-known properties
+    await _detect_price_changes(merged_properties, storage)
 
     logger.info("pipeline_started", phase="new_property_filter")
     new_merged = await storage.filter_new_merged(merged_properties)
@@ -896,7 +940,6 @@ async def _run_quality_and_save(
             api_key=settings.anthropic_api_key.get_secret_value(),
             max_images=settings.quality_filter_max_images,
             enable_extended_thinking=settings.enable_extended_thinking,
-            thinking_budget_tokens=settings.thinking_budget_tokens,
         )
     else:
         logger.info("skipping_quality_analysis", reason="not_configured")
@@ -959,7 +1002,6 @@ async def _drain_reanalysis_queue(
         api_key=settings.anthropic_api_key.get_secret_value(),
         max_images=settings.quality_filter_max_images,
         enable_extended_thinking=settings.enable_extended_thinking,
-        thinking_budget_tokens=settings.thinking_budget_tokens,
     )
 
     completed = 0
@@ -1105,14 +1147,41 @@ async def run_pipeline(
         # Re-analyze cross-run merges that gained new source data
         reanalyzed_count = await _drain_reanalysis_queue(settings, storage)
 
+        # Send price drop notifications for previously-notified properties
+        price_drops = await storage.get_unsent_price_drops()
+        price_drop_count = 0
+        for drop in price_drops:
+            success = await notifier.send_price_drop_notification(
+                title=drop["title"],
+                postcode=drop.get("postcode") or "",
+                old_price=drop["old_price"],
+                new_price=drop["new_price"],
+                unique_id=drop["unique_id"],
+                days_listed=_days_since(drop.get("first_seen")),
+            )
+            if success:
+                await storage.mark_price_drop_notified(drop["unique_id"])
+                price_drop_count += 1
+                await asyncio.sleep(1)  # Telegram rate limit
+        if price_drop_count:
+            logger.info("price_drop_notifications_sent", count=price_drop_count)
+
         await storage.update_pipeline_run(
             run_id,
             analyzed_count=analyzed_count,
             notified_count=notified_count,
         )
         await storage.complete_pipeline_run(run_id, "completed")
+
+        # Recompute rent benchmarks with fresh data
+        benchmark_count = await storage.compute_rent_benchmarks()
+        logger.info("rent_benchmarks_refreshed", count=benchmark_count)
+
         logger.info(
-            "pipeline_complete", notified=notified_count, reanalyzed=reanalyzed_count
+            "pipeline_complete",
+            notified=notified_count,
+            reanalyzed=reanalyzed_count,
+            price_drops=price_drop_count,
         )
 
     except Exception as exc:
@@ -1336,7 +1405,6 @@ async def run_reanalysis(
             api_key=settings.anthropic_api_key.get_secret_value(),
             max_images=settings.quality_filter_max_images,
             enable_extended_thinking=settings.enable_extended_thinking,
-            thinking_budget_tokens=settings.thinking_budget_tokens,
         )
 
         completed = 0

@@ -1,0 +1,12 @@
+<div class="status-controls">
+    <select name="status"
+            hx-patch="/property/{{ unique_id }}/status"
+            hx-target="#status-badge-{{ unique_id }}"
+            hx-swap="outerHTML">
+        {% for s in user_statuses %}
+        <option value="{{ s.value }}" {% if s.value == current_status %}selected{% endif %}>
+            {{ status_meta[s.value].label }}
+        </option>
+        {% endfor %}
+    </select>
+</div>

@@ -1,10 +1,14 @@
 """Quality analysis models for property evaluation."""
 
+import contextlib
+import functools
 import json
+import re
+import types
 from enum import StrEnum
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, Literal, Union, get_args, get_origin
 
-from pydantic import BaseModel, ConfigDict, field_validator
+from pydantic import BaseModel, ConfigDict, field_validator, model_validator
 from pydantic.functional_validators import BeforeValidator
 
 # ---------------------------------------------------------------------------
@@ -24,8 +28,21 @@ def _coerce_bool_to_tristate(v: Any) -> Any:
 
 
 def _coerce_none_to_false(v: Any) -> Any:
-    """Coerce None to False for backward compat with old DB data."""
-    return False if v is None else v
+    """Coerce None and common LLM string values to bool.
+
+    Non-strict tool_use can return string values like "unknown", "yes", "true"
+    for boolean fields. Coerce them to proper booleans so Pydantic validation
+    doesn't reject the entire analysis.
+    """
+    if v is None:
+        return False
+    if isinstance(v, str):
+        low = v.lower().strip()
+        if low in ("true", "yes", "1"):
+            return True
+        if low in ("false", "no", "0", "unknown", "n/a", ""):
+            return False
+    return v
 
 
 def _coerce_none_to_unknown(v: Any) -> Any:
@@ -37,6 +54,70 @@ def _coerce_none_to_unknown(v: Any) -> Any:
 TriStateBool = Annotated[Literal["yes", "no", "unknown"], BeforeValidator(_coerce_bool_to_tristate)]
 CoercedBool = Annotated[bool, BeforeValidator(_coerce_none_to_false)]
 _CoerceUnknown = BeforeValidator(_coerce_none_to_unknown)
+
+
+# ---------------------------------------------------------------------------
+# Introspection helpers for auto-discovering Literal fields
+# ---------------------------------------------------------------------------
+
+
+def _extract_literal_values(annotation: Any) -> tuple[str, ...] | None:
+    """Extract string values from a Literal type, unwrapping Optional/Union.
+
+    Note: the Annotated branch is defensive — Pydantic v2 strips Annotated
+    wrappers from field_info.annotation, so it's unreachable in practice
+    when called from _literal_field_info(). Kept for robustness if the
+    function is reused on raw type aliases (e.g. in tests).
+    """
+    origin = get_origin(annotation)
+    if origin is Annotated:
+        return _extract_literal_values(get_args(annotation)[0])
+    if origin is Union or origin is types.UnionType:
+        for arg in get_args(annotation):
+            if arg is type(None):
+                continue
+            result = _extract_literal_values(arg)
+            if result is not None:
+                return result
+        return None
+    if origin is Literal:
+        args = get_args(annotation)
+        if args and all(isinstance(a, str) for a in args):
+            return args
+    return None
+
+
+@functools.cache
+def _literal_field_info(
+    model_cls: type[BaseModel],
+) -> dict[str, tuple[frozenset[str], Any]]:
+    """Build {field_name: (allowed_values, fallback_default)} for Literal str fields."""
+    result: dict[str, tuple[frozenset[str], Any]] = {}
+    for name, field_info in model_cls.model_fields.items():
+        allowed = _extract_literal_values(field_info.annotation)
+        if allowed is not None:
+            result[name] = (frozenset(allowed), field_info.default)
+    return result
+
+
+class _LenientLiteralModel(BaseModel):
+    """Base model that coerces out-of-vocabulary Literal strings to the field default.
+
+    Non-strict tool use can return any string for Literal fields. Rather than
+    losing the entire analysis to a ValidationError, coerce to the field's
+    default value (usually "unknown").
+    """
+
+    @model_validator(mode="before")
+    @classmethod
+    def _coerce_invalid_literals(cls, data: Any) -> Any:
+        if not isinstance(data, dict):
+            return data
+        for field_name, (allowed, fallback) in _literal_field_info(cls).items():
+            val = data.get(field_name)
+            if isinstance(val, str) and val not in allowed:
+                data[field_name] = fallback
+        return data
 
 
 class PropertyHighlight(StrEnum):
@@ -136,7 +217,7 @@ class PropertyType(StrEnum):
     UNKNOWN = "unknown"
 
 
-class KitchenAnalysis(BaseModel):
+class KitchenAnalysis(_LenientLiteralModel):
     """Analysis of kitchen amenities and condition."""
 
     model_config = ConfigDict(frozen=True)
@@ -148,7 +229,7 @@ class KitchenAnalysis(BaseModel):
     notes: str = ""
 
 
-class ConditionAnalysis(BaseModel):
+class ConditionAnalysis(_LenientLiteralModel):
     """Analysis of property condition."""
 
     model_config = ConfigDict(frozen=True)
@@ -161,7 +242,7 @@ class ConditionAnalysis(BaseModel):
     confidence: Literal["high", "medium", "low"] = "medium"
 
 
-class LightSpaceAnalysis(BaseModel):
+class LightSpaceAnalysis(_LenientLiteralModel):
     """Analysis of natural light and space feel."""
 
     model_config = ConfigDict(frozen=True)
@@ -180,7 +261,7 @@ class LightSpaceAnalysis(BaseModel):
     notes: str = ""
 
 
-class SpaceAnalysis(BaseModel):
+class SpaceAnalysis(_LenientLiteralModel):
     """Analysis of living room space (replaces FloorplanFilter logic)."""
 
     model_config = ConfigDict(frozen=True)
@@ -191,7 +272,7 @@ class SpaceAnalysis(BaseModel):
     hosting_layout: Literal["excellent", "good", "awkward", "poor", "unknown"] = "unknown"
 
 
-class ValueAnalysis(BaseModel):
+class ValueAnalysis(_LenientLiteralModel):
     """Value-for-money assessment based on local benchmarks."""
 
     model_config = ConfigDict(frozen=True)
@@ -206,7 +287,7 @@ class ValueAnalysis(BaseModel):
     quality_adjusted_note: str = ""
 
 
-class BathroomAnalysis(BaseModel):
+class BathroomAnalysis(_LenientLiteralModel):
     """Analysis of bathroom amenities and condition."""
 
     model_config = ConfigDict(frozen=True)
@@ -220,7 +301,7 @@ class BathroomAnalysis(BaseModel):
     notes: str = ""
 
 
-class BedroomAnalysis(BaseModel):
+class BedroomAnalysis(_LenientLiteralModel):
     """Analysis of bedroom space and fittings."""
 
     model_config = ConfigDict(frozen=True)
@@ -234,7 +315,7 @@ class BedroomAnalysis(BaseModel):
     notes: str = ""
 
 
-class OutdoorSpaceAnalysis(BaseModel):
+class OutdoorSpaceAnalysis(_LenientLiteralModel):
     """Analysis of outdoor space availability."""
 
     model_config = ConfigDict(frozen=True)
@@ -246,7 +327,7 @@ class OutdoorSpaceAnalysis(BaseModel):
     notes: str = ""
 
 
-class StorageAnalysis(BaseModel):
+class StorageAnalysis(_LenientLiteralModel):
     """Analysis of storage provision."""
 
     model_config = ConfigDict(frozen=True)
@@ -256,7 +337,7 @@ class StorageAnalysis(BaseModel):
     storage_rating: Literal["good", "adequate", "poor", "unknown"] = "unknown"
 
 
-class FlooringNoiseAnalysis(BaseModel):
+class FlooringNoiseAnalysis(_LenientLiteralModel):
     """Analysis of flooring type and noise indicators."""
 
     model_config = ConfigDict(frozen=True)
@@ -274,7 +355,7 @@ class FlooringNoiseAnalysis(BaseModel):
     notes: str = ""
 
 
-class ListingExtraction(BaseModel):
+class ListingExtraction(_LenientLiteralModel):
     """Structured data extracted from the listing description."""
 
     model_config = ConfigDict(frozen=True)
@@ -295,7 +376,7 @@ class ListingExtraction(BaseModel):
     broadband_type: Literal["fttp", "fttc", "cable", "standard", "unknown"] | None = None
 
 
-class ListingRedFlags(BaseModel):
+class ListingRedFlags(_LenientLiteralModel):
     """Red flags identified from the listing."""
 
     model_config = ConfigDict(frozen=True)
@@ -307,7 +388,7 @@ class ListingRedFlags(BaseModel):
     red_flag_count: int = 0
 
 
-class ViewingNotes(BaseModel):
+class ViewingNotes(_LenientLiteralModel):
     """Property-specific viewing preparation notes."""
 
     model_config = ConfigDict(frozen=True)
@@ -317,7 +398,17 @@ class ViewingNotes(BaseModel):
     deal_breaker_tests: list[str] = []
 
 
-class PropertyQualityAnalysis(BaseModel):
+# Fields on PropertyQualityAnalysis expected to be sub-model dicts (not strings).
+# Defined outside the class to avoid Pydantic treating it as a private attribute.
+_QUALITY_SUB_MODEL_FIELDS: frozenset[str] = frozenset({
+    "kitchen", "condition", "light_space", "space", "bathroom",
+    "bedroom", "outdoor_space", "storage", "flooring_noise",
+    "listing_red_flags", "listing_extraction", "viewing_notes",
+    "value",
+})
+
+
+class PropertyQualityAnalysis(_LenientLiteralModel):
     """Complete quality analysis of a property."""
 
     model_config = ConfigDict(frozen=True)
@@ -342,17 +433,70 @@ class PropertyQualityAnalysis(BaseModel):
     lowlights: list[str] | None = None
     one_line: str | None = None
 
+    @model_validator(mode="before")
+    @classmethod
+    def coerce_json_strings(cls, data: Any) -> Any:
+        """Parse JSON strings that should be sub-model dicts (LLM artifact).
+
+        Defense-in-depth safety net: in the normal pipeline path,
+        ``_clean_dict`` (in ``filters/quality.py``) already parses JSON
+        strings before ``model_validate`` is called.  This validator
+        protects against future code paths that skip ``_clean_dict``
+        (e.g. direct ``model_validate_json`` from DB) and adds extra
+        repair logic (control character stripping) that ``_clean_value``
+        does not perform.
+        """
+        if not isinstance(data, dict):
+            return data
+        # Translation table: strip C0 control chars except tab/LF/CR
+        _ctrl_table = {i: None for i in range(32) if i not in (9, 10, 13)}
+        for key in _QUALITY_SUB_MODEL_FIELDS:
+            val = data.get(key)
+            if not isinstance(val, str):
+                continue
+            val = val.strip()
+            if not (val.startswith("{") and val.endswith("}")):
+                continue
+            try:
+                data[key] = json.loads(val)
+            except (json.JSONDecodeError, ValueError):
+                # Strip control characters (common LLM artifact), then
+                # fix trailing commas — same regex as _clean_value.
+                cleaned = val.translate(_ctrl_table)
+                sanitized = re.sub(r",\s*([}\]])", r"\1", cleaned)
+                try:
+                    data[key] = json.loads(sanitized)
+                except (json.JSONDecodeError, ValueError):
+                    # Final fallback: structural repair for missing colons
+                    repaired = re.sub(r'("\w+")\s*,?\s*(")', r'\1: \2', sanitized)
+                    repaired = re.sub(r",\s*([}\]])", r"\1", repaired)
+                    with contextlib.suppress(json.JSONDecodeError, ValueError):
+                        parsed = json.loads(repaired)
+                        if isinstance(parsed, dict):
+                            data[key] = parsed
+        return data
+
     @field_validator("one_line", mode="before")
     @classmethod
     def unwrap_one_line(cls, v: Any) -> Any:
-        """Unwrap one_line if stored as dict or JSON string like {"one_line": "text"}."""
-        if isinstance(v, dict) and "one_line" in v:
-            return v["one_line"]
+        """Unwrap one_line if Claude returned a dict instead of a plain string.
+
+        Handles {"one_line": "text"}, {"character": "text"}, or any single-key dict
+        where the LLM wrapped the string value in an object.
+        """
+        if isinstance(v, dict):
+            if len(v) == 1:
+                return next(iter(v.values()))
+            if "one_line" in v:
+                return v["one_line"]
         if isinstance(v, str) and v.startswith("{"):
             try:
                 parsed = json.loads(v)
-                if isinstance(parsed, dict) and "one_line" in parsed:
-                    return parsed["one_line"]
+                if isinstance(parsed, dict):
+                    if len(parsed) == 1:
+                        return next(iter(parsed.values()))
+                    if "one_line" in parsed:
+                        return parsed["one_line"]
             except (json.JSONDecodeError, TypeError):
                 pass
         return v

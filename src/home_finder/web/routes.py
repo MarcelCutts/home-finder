@@ -31,18 +31,25 @@ from home_finder.logging import get_logger
 from home_finder.models import (
     SOURCE_BADGES,
     SOURCE_NAMES,
+    USER_STATUS_META,
     PropertyHighlight,
     PropertyImage,
     PropertyLowlight,
+    UserStatus,
 )
 from home_finder.utils.address import extract_outcode
 from home_finder.utils.image_cache import (
     find_cached_file,
     get_cache_dir,
     safe_dir_name,
-    url_to_filename,
 )
-from home_finder.web.filters import VALID_SORT_OPTIONS, FilterDep, _parse_optional_int
+from home_finder.utils.negotiation import generate_negotiation_brief
+from home_finder.web.filters import (
+    ADDED_OPTIONS,
+    VALID_SORT_OPTIONS,
+    FilterDep,
+    _parse_optional_int,
+)
 
 logger = get_logger(__name__)
 
@@ -154,6 +161,22 @@ def listing_age_filter(iso_str: str | None) -> str:
 templates.env.filters["listing_age"] = listing_age_filter
 
 
+def days_since_filter(iso_str: str | None) -> int:
+    """Return integer days since ISO datetime string, or 0 if invalid."""
+    if not iso_str:
+        return 0
+    try:
+        dt = datetime.fromisoformat(iso_str)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=UTC)
+        return max(0, (datetime.now(UTC) - dt).days)
+    except (ValueError, TypeError):
+        return 0
+
+
+templates.env.filters["days_since"] = days_since_filter
+
+
 def get_storage(request: Request) -> PropertyStorage:
     """Dependency: get the PropertyStorage from app state."""
     return cast(PropertyStorage, request.app.state.storage)
@@ -239,25 +262,22 @@ def _resolve_cached_thumbnail(
 
     The DB stores the scraper thumbnail URL which often differs from the
     enrichment gallery URL (different CDN resolution path), so we fall back
-    to finding any ``gallery_000_*`` file in the cache directory.
+    to the first ``gallery_*`` file in the cache directory.
     """
     safe_id = safe_dir_name(unique_id)
-    cache_dir = get_cache_dir(data_dir, unique_id)
 
-    # Fast path: exact URL match
+    # Fast path: find cached file by URL hash (index-independent)
     if image_url and image_url.startswith("http"):
-        fname = url_to_filename(image_url, "gallery", 0)
-        if (cache_dir / fname).is_file():
-            return f"/images/{safe_id}/{fname}"
+        cached = find_cached_file(data_dir, unique_id, image_url, "gallery")
+        if cached:
+            return f"/images/{safe_id}/{cached.name}"
 
-    # Fallback: any gallery_000_* file
+    # Fallback: first gallery file on disk
+    cache_dir = get_cache_dir(data_dir, unique_id)
     if cache_dir.is_dir():
-        match = next(
-            (f.name for f in cache_dir.iterdir() if f.name.startswith("gallery_000_")),
-            None,
-        )
-        if match:
-            return f"/images/{safe_id}/{match}"
+        for f in sorted(cache_dir.iterdir()):
+            if f.name.startswith("gallery_") and f.is_file():
+                return f"/images/{safe_id}/{f.name}"
 
     return None
 
@@ -338,6 +358,9 @@ async def dashboard(
         "secondary_filter_count": filters.secondary_filter_count,
         "tag_categories": TAG_CATEGORIES,
         "highlight_values": highlight_values,
+        "added_options": ADDED_OPTIONS,
+        "user_statuses": list(UserStatus),
+        "status_meta": USER_STATUS_META,
         **filters.model_dump(),
     }
 
@@ -523,6 +546,27 @@ async def property_detail(
                 bills_included=bills_included,
             )
 
+    # Status tracking (Ticket 7)
+    user_status = prop.get("user_status") or "new"
+    status_history = await storage.get_status_history(unique_id)
+
+    # Price history (Ticket 10)
+    price_history = await storage.get_price_history(unique_id)
+    benchmark = None
+    if outcode:
+        benchmark = await storage.get_rent_benchmark(outcode, prop.get("bedrooms", 0) or 0)
+
+    # Negotiation intelligence (Ticket 10)
+    negotiation = generate_negotiation_brief(
+        days_listed=days_since_filter(prop.get("first_seen")),
+        price_history=price_history,
+        benchmark_diff=prop.get("price_pcm", 0) - benchmark["median_rent"]
+        if benchmark
+        else None,
+        area_median=benchmark["median_rent"] if benchmark else None,
+        current_price=prop.get("price_pcm", 0),
+    )
+
     return templates.TemplateResponse(
         "detail.html",
         {
@@ -537,6 +581,13 @@ async def property_detail(
             "fit_score": fit_score,
             "fit_breakdown": fit_breakdown,
             "cost_breakdown": cost_breakdown,
+            "user_status": user_status,
+            "user_statuses": list(UserStatus),
+            "status_meta": USER_STATUS_META,
+            "status_history": status_history,
+            "price_history": price_history,
+            "benchmark": benchmark,
+            "negotiation": negotiation,
         },
     )
 
@@ -572,6 +623,36 @@ async def area_detail(
             "outcode": outcode,
             "area_context": area_context,
             "highlight": highlight,
+        },
+    )
+
+
+@router.patch("/property/{unique_id}/status")
+async def update_property_status(
+    request: Request,
+    unique_id: str,
+    storage: StorageDep,
+) -> Response:
+    """Update property user status. Returns status badge partial for HTMX swap."""
+    form = await request.form()
+    status_value = str(form.get("status", "")).strip().lower()
+
+    try:
+        new_status = UserStatus(status_value)
+    except ValueError:
+        return JSONResponse({"error": f"Invalid status: {status_value}"}, status_code=400)
+
+    prev = await storage.update_user_status(unique_id, new_status)
+    if prev is None:
+        return JSONResponse({"error": "Property not found"}, status_code=404)
+
+    return templates.TemplateResponse(
+        "_status_badge.html",
+        {
+            "request": request,
+            "unique_id": unique_id,
+            "status": new_status.value,
+            "status_meta": USER_STATUS_META,
         },
     )
 

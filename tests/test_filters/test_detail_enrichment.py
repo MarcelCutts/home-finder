@@ -316,6 +316,139 @@ class TestEnrichMergedProperties:
         cached_files = list(cache_dir.iterdir())
         assert len(cached_files) == 2  # 1 gallery + 1 floorplan
 
+    async def test_failed_gallery_download_excludes_image(
+        self, tmp_path: Path, make_merged_property: Callable[..., MergedProperty]
+    ) -> None:
+        """Gallery image whose download fails should not appear in merged.images."""
+        merged = make_merged_property()
+        data_dir = str(tmp_path)
+
+        detail_data = DetailPageData(
+            gallery_urls=[
+                "https://example.com/img1.jpg",
+                "https://example.com/img2.jpg",
+                "https://example.com/img3.jpg",
+            ],
+        )
+
+        call_count = 0
+
+        async def mock_download(url: str) -> bytes | None:
+            nonlocal call_count
+            call_count += 1
+            if "img2" in url:
+                return None  # simulate 403 / timeout
+            return b"imgdata"
+
+        fetcher = DetailFetcher()
+        with (
+            patch.object(
+                fetcher, "fetch_detail_page", new_callable=AsyncMock, return_value=detail_data
+            ),
+            patch.object(fetcher, "download_image_bytes", side_effect=mock_download),
+        ):
+            result = await enrich_merged_properties([merged], fetcher, data_dir=data_dir)
+
+        assert len(result.enriched) == 1
+        enriched = result.enriched[0]
+        # Only 2 of 3 images should be present (img2 download failed)
+        assert len(enriched.images) == 2
+        image_urls = {str(img.url) for img in enriched.images}
+        assert "https://example.com/img2.jpg" not in image_urls
+        assert "https://example.com/img1.jpg" in image_urls
+        assert "https://example.com/img3.jpg" in image_urls
+
+    async def test_failed_floorplan_download_leaves_none(
+        self, tmp_path: Path, make_merged_property: Callable[..., MergedProperty]
+    ) -> None:
+        """Floorplan whose download fails should leave merged.floorplan as None."""
+        merged = make_merged_property()
+        data_dir = str(tmp_path)
+
+        detail_data = DetailPageData(
+            gallery_urls=["https://example.com/img1.jpg"],
+            floorplan_url="https://example.com/floor.jpg",
+        )
+
+        async def mock_download(url: str) -> bytes | None:
+            if "floor" in url:
+                return None  # floorplan download fails
+            return b"imgdata"
+
+        fetcher = DetailFetcher()
+        with (
+            patch.object(
+                fetcher, "fetch_detail_page", new_callable=AsyncMock, return_value=detail_data
+            ),
+            patch.object(fetcher, "download_image_bytes", side_effect=mock_download),
+        ):
+            result = await enrich_merged_properties([merged], fetcher, data_dir=data_dir)
+
+        assert len(result.enriched) == 1
+        enriched = result.enriched[0]
+        assert enriched.floorplan is None
+        assert len(enriched.images) == 1  # gallery image still present
+
+    async def test_all_downloads_fail_routes_to_failed(
+        self, tmp_path: Path, make_merged_property: Callable[..., MergedProperty]
+    ) -> None:
+        """When all image downloads fail, property should go to result.failed."""
+        merged = make_merged_property()
+        data_dir = str(tmp_path)
+
+        detail_data = DetailPageData(
+            gallery_urls=["https://example.com/img1.jpg"],
+            floorplan_url="https://example.com/floor.jpg",
+        )
+
+        fetcher = DetailFetcher()
+        with (
+            patch.object(
+                fetcher, "fetch_detail_page", new_callable=AsyncMock, return_value=detail_data
+            ),
+            patch.object(
+                fetcher, "download_image_bytes", new_callable=AsyncMock, return_value=None
+            ),
+        ):
+            result = await enrich_merged_properties([merged], fetcher, data_dir=data_dir)
+
+        assert len(result.enriched) == 0
+        assert len(result.failed) == 1
+
+    async def test_partial_failures_still_enriches(
+        self, tmp_path: Path, make_merged_property: Callable[..., MergedProperty]
+    ) -> None:
+        """Property with 1/3 successful downloads should still be enriched."""
+        merged = make_merged_property()
+        data_dir = str(tmp_path)
+
+        detail_data = DetailPageData(
+            gallery_urls=[
+                "https://example.com/img1.jpg",
+                "https://example.com/img2.jpg",
+                "https://example.com/img3.jpg",
+            ],
+        )
+
+        async def mock_download(url: str) -> bytes | None:
+            if "img1" in url:
+                return b"imgdata"
+            return None  # img2 and img3 fail
+
+        fetcher = DetailFetcher()
+        with (
+            patch.object(
+                fetcher, "fetch_detail_page", new_callable=AsyncMock, return_value=detail_data
+            ),
+            patch.object(fetcher, "download_image_bytes", side_effect=mock_download),
+        ):
+            result = await enrich_merged_properties([merged], fetcher, data_dir=data_dir)
+
+        assert len(result.enriched) == 1
+        enriched = result.enriched[0]
+        assert len(enriched.images) == 1
+        assert "img1" in str(enriched.images[0].url)
+
 
 class TestFilterByFloorplan:
     """Tests for filter_by_floorplan()."""
@@ -827,6 +960,27 @@ def _make_epc_bytes() -> bytes:
     return buf.getvalue()
 
 
+def _make_env_impact_bytes() -> bytes:
+    """Create synthetic Environmental Impact (CO₂) chart image bytes.
+
+    Grey graduated bands (A-G) on white background with a blue header —
+    mimics the monochrome Environmental Impact Rating charts on EPC certificates.
+    """
+    img = Image.new("RGB", (400, 300), (255, 255, 255))
+    draw = ImageDraw.Draw(img)
+    # Blue header band
+    draw.rectangle([0, 0, 400, 50], fill=(41, 100, 180))
+    # Grey graduated bands
+    band_greys = [200, 180, 160, 140, 120, 100, 80]
+    for i, g in enumerate(band_greys):
+        y = 60 + i * 29
+        band_width = 120 + 30 * i
+        draw.rectangle([40, y, 40 + band_width, y + 25], fill=(g, g, g))
+    buf = BytesIO()
+    img.save(buf, format="PNG")
+    return buf.getvalue()
+
+
 class TestDetectEpcInGallery:
     """Tests for _detect_epc_in_gallery()."""
 
@@ -845,8 +999,10 @@ class TestDetectEpcInGallery:
         ]
 
         # First image is EPC, rest are photos
+        paths = []
         for idx, img in enumerate(images):
             path = get_cached_image_path(data_dir, unique_id, str(img.url), "gallery", idx)
+            paths.append(path)
             if idx == 0:
                 save_image_bytes(path, _make_epc_bytes())
             else:
@@ -855,6 +1011,14 @@ class TestDetectEpcInGallery:
         remaining = _detect_epc_in_gallery(images, unique_id, data_dir)
 
         assert len(remaining) == 2
+
+        # EPC file should be renamed on disk; photo files unchanged
+        epc_path = paths[0]
+        assert not epc_path.exists()
+        epc_name = epc_path.name.replace("gallery_", "epc_", 1)
+        assert (epc_path.parent / epc_name).exists()
+        assert paths[1].exists()
+        assert paths[2].exists()
 
     def test_no_epc_in_gallery(self, tmp_path: Path) -> None:
         """Should return None when no EPC detected."""
@@ -879,7 +1043,7 @@ class TestDetectEpcInGallery:
         assert len(remaining) == 2
 
     def test_removes_multiple_epcs(self, tmp_path: Path) -> None:
-        """Should remove ALL EPC charts but return only the first as representative."""
+        """Should remove ALL EPC charts and rename all to epc_* on disk."""
         unique_id = "zoopla:77777"
         data_dir = str(tmp_path)
 
@@ -893,8 +1057,10 @@ class TestDetectEpcInGallery:
         ]
 
         # Images 0 and 2 are EPCs, 1 and 3 are photos
+        paths = []
         for idx, img in enumerate(images):
             path = get_cached_image_path(data_dir, unique_id, str(img.url), "gallery", idx)
+            paths.append(path)
             if idx in (0, 2):
                 save_image_bytes(path, _make_epc_bytes())
             else:
@@ -903,6 +1069,109 @@ class TestDetectEpcInGallery:
         remaining = _detect_epc_in_gallery(images, unique_id, data_dir)
 
         assert len(remaining) == 2  # both EPCs removed
+
+        # Both EPC files should be renamed on disk
+        for idx in (0, 2):
+            assert not paths[idx].exists()
+            epc_name = paths[idx].name.replace("gallery_", "epc_", 1)
+            assert (paths[idx].parent / epc_name).exists()
+
+
+    def test_detects_env_impact_chart_in_gallery(self, tmp_path: Path) -> None:
+        """Should detect Environmental Impact (CO₂) chart and rename to epc_*."""
+        unique_id = "zoopla:66666"
+        data_dir = str(tmp_path)
+
+        images = [
+            PropertyImage(
+                url=HttpUrl(f"https://example.com/img{i}.jpg"),
+                source=PropertySource.ZOOPLA,
+                image_type="gallery",
+            )
+            for i in range(3)
+        ]
+
+        # First image is env impact chart, rest are photos
+        paths = []
+        for idx, img in enumerate(images):
+            path = get_cached_image_path(data_dir, unique_id, str(img.url), "gallery", idx)
+            paths.append(path)
+            if idx == 0:
+                save_image_bytes(path, _make_env_impact_bytes())
+            else:
+                save_image_bytes(path, _make_photo_bytes())
+
+        remaining = _detect_epc_in_gallery(images, unique_id, data_dir)
+
+        assert len(remaining) == 2
+
+        # Env impact file should be renamed to epc_* on disk
+        epc_path = paths[0]
+        assert not epc_path.exists()
+        epc_name = epc_path.name.replace("gallery_", "epc_", 1)
+        assert (epc_path.parent / epc_name).exists()
+        assert paths[1].exists()
+        assert paths[2].exists()
+
+
+class TestDetectWithMismatchedIndex:
+    """Tests that detection works when file index doesn't match enumerate position."""
+
+    def test_detects_epc_with_mismatched_index(self, tmp_path: Path) -> None:
+        """EPC file saved at index 5 should still be detected at enumerate position 0."""
+        unique_id = "zoopla:44444"
+        data_dir = str(tmp_path)
+
+        img_url = "https://example.com/epc_chart.png"
+        images = [
+            PropertyImage(
+                url=HttpUrl(img_url),
+                source=PropertySource.ZOOPLA,
+                image_type="gallery",
+            )
+        ]
+
+        # Save with index 5 (not 0 as enumerate would produce)
+        path = get_cached_image_path(data_dir, unique_id, img_url, "gallery", 5)
+        save_image_bytes(path, _make_epc_bytes())
+
+        remaining = _detect_epc_in_gallery(images, unique_id, data_dir)
+
+        # Should still find and remove the EPC despite index mismatch
+        assert len(remaining) == 0
+
+        # File should be renamed from gallery_* to epc_* on disk
+        assert not path.exists()
+        epc_name = path.name.replace("gallery_", "epc_", 1)
+        assert (path.parent / epc_name).exists()
+
+    def test_detects_floorplan_with_mismatched_index(self, tmp_path: Path) -> None:
+        """Floorplan file saved at index 5 should still be detected at enumerate position 0."""
+        unique_id = "openrent:44444"
+        data_dir = str(tmp_path)
+
+        img_url = "https://example.com/floor.jpg"
+        images = [
+            PropertyImage(
+                url=HttpUrl(img_url),
+                source=PropertySource.OPENRENT,
+                image_type="gallery",
+            )
+        ]
+
+        # Save with index 5 (not 0 as enumerate would produce)
+        path = get_cached_image_path(data_dir, unique_id, img_url, "gallery", 5)
+        save_image_bytes(path, _make_floorplan_bytes())
+
+        floorplan, remaining, detected_idx = _detect_floorplan_in_gallery(
+            images, unique_id, data_dir
+        )
+
+        # Should still find the floorplan despite index mismatch
+        assert floorplan is not None
+        assert floorplan.image_type == "floorplan"
+        assert detected_idx == 0
+        assert len(remaining) == 0
 
 
 class TestEnrichSingleEpcDetection:

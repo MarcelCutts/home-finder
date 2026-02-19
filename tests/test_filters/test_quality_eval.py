@@ -142,7 +142,6 @@ def quality_filter() -> PropertyQualityFilter:
         api_key=api_key,
         max_images=5,
         enable_extended_thinking=True,
-        thinking_budget_tokens=5000,
     )
 
 

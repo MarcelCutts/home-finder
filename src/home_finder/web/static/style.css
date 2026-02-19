@@ -2941,3 +2941,172 @@ nav.container-fluid li {
         min-width: 22px;
     }
 }
+
+/* ===== Status badge (Ticket 7) ===== */
+.status-badge {
+    display: inline-flex;
+    align-items: center;
+    padding: 0.15rem 0.55rem;
+    font-size: 0.75rem;
+    font-weight: 600;
+    border-radius: 6px;
+    background: color-mix(in srgb, var(--status-color, #888) 15%, transparent);
+    color: var(--status-color, var(--text-muted));
+    white-space: nowrap;
+}
+
+/* ===== Status controls (Ticket 7) ===== */
+.status-controls select {
+    height: 2rem;
+    font-size: 0.8rem;
+    padding: 0.15rem 0.5rem;
+    margin-bottom: 0;
+    min-width: 110px;
+    max-width: 160px;
+}
+
+/* ===== Detail status bar (Ticket 7) ===== */
+.detail-status-bar {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    margin: 0.75rem 0;
+    padding: 0.5rem 0;
+    border-bottom: 1px solid var(--border);
+}
+
+/* ===== Status history timeline (Ticket 7) ===== */
+.status-history-section {
+    margin: 0.5rem 0 1rem;
+}
+.status-history-section summary {
+    font-size: 0.85rem;
+    color: var(--text-muted);
+    cursor: pointer;
+}
+.status-history-timeline {
+    border-left: 2px solid var(--border);
+    padding-left: 0.75rem;
+    margin-top: 0.5rem;
+}
+.status-history-event {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.25rem 0;
+    font-size: 0.8rem;
+}
+.status-history-date {
+    color: var(--text-dim);
+    min-width: 6.5em;
+}
+.status-history-label {
+    color: var(--text);
+}
+.status-history-source {
+    color: var(--text-dim);
+    font-size: 0.75rem;
+}
+
+/* ===== Benchmark chip (overlay on card + detail) ===== */
+.benchmark-chip {
+    display: inline-flex;
+    align-items: center;
+    padding: 0.12rem 0.45rem;
+    font-size: 0.7rem;
+    font-weight: 600;
+    border-radius: 4px;
+    white-space: nowrap;
+}
+.benchmark-below {
+    background: rgba(16, 185, 129, 0.15);
+    color: #34d399;
+}
+.benchmark-above {
+    background: rgba(239, 68, 68, 0.15);
+    color: #fca5a5;
+}
+.benchmark-at {
+    background: rgba(139, 92, 246, 0.12);
+    color: #a78bfa;
+}
+
+/* ===== Price history timeline (Ticket 10) ===== */
+.price-history-card h4 {
+    margin-bottom: 0.5rem;
+}
+.price-timeline {
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+}
+.price-event {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    font-size: 0.85rem;
+}
+.price-event-date {
+    color: var(--text-dim);
+    font-size: 0.78rem;
+    min-width: 6.5em;
+}
+.price-event-change {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+.price-drop .price-event-change {
+    color: #34d399;
+}
+.price-increase .price-event-change {
+    color: #fca5a5;
+}
+
+/* ===== Price change badge (card footer) ===== */
+.price-change-badge {
+    font-size: 0.7rem !important;
+    padding: 0.1rem 0.35rem !important;
+}
+
+/* ===== Listing age pill (detail header) ===== */
+.listing-age-pill {
+    display: inline-flex;
+    align-items: center;
+    padding: 0.12rem 0.5rem;
+    font-size: 0.75rem;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.06);
+    color: var(--text-muted);
+    white-space: nowrap;
+}
+
+/* ===== Negotiation card (Ticket 10) ===== */
+.negotiation-card {
+    cursor: default;
+}
+.negotiation-card summary {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-weight: 600;
+    font-size: 0.95rem;
+    cursor: pointer;
+}
+.negotiation-points {
+    margin: 0.5rem 0;
+    padding-left: 1.25rem;
+    font-size: 0.85rem;
+    color: var(--text-muted);
+}
+.negotiation-points li {
+    padding: 0.15rem 0;
+}
+.negotiation-approach {
+    font-size: 0.85rem;
+    color: var(--text);
+    padding: 0.5rem;
+    background: var(--bg-elevated);
+    border-radius: 6px;
+    margin-top: 0.25rem;
+}

@@ -16,6 +16,7 @@ from home_finder.utils.epc_detector import detect_epc
 from home_finder.utils.floorplan_detector import detect_floorplan
 from home_finder.utils.image_cache import (
     clear_image_cache,
+    find_cached_file,
     get_cached_image_path,
     is_property_cached,
     is_valid_image_url,
@@ -62,7 +63,9 @@ def _detect_floorplan_in_gallery(
     # Iterate in reverse — floorplans are commonly placed at the end
     for idx in range(len(images) - 1, -1, -1):
         img = images[idx]
-        cache_path = get_cached_image_path(data_dir, unique_id, str(img.url), "gallery", idx)
+        cache_path = find_cached_file(data_dir, unique_id, str(img.url), "gallery")
+        if cache_path is None:
+            continue
         img_bytes = read_image_bytes(cache_path)
         if img_bytes is None:
             continue
@@ -109,13 +112,19 @@ def _detect_epc_in_gallery(
     epc_indices: set[int] = set()
 
     for idx, img in enumerate(images):
-        cache_path = get_cached_image_path(data_dir, unique_id, str(img.url), "gallery", idx)
+        cache_path = find_cached_file(data_dir, unique_id, str(img.url), "gallery")
+        if cache_path is None:
+            continue
         img_bytes = read_image_bytes(cache_path)
         if img_bytes is None:
             continue
 
         is_epc, confidence = detect_epc(img_bytes)
         if is_epc:
+            # Rename on disk so thumbnail fallback skips it
+            epc_name = cache_path.name.replace("gallery_", "epc_", 1)
+            epc_path = cache_path.parent / epc_name
+            cache_path.rename(epc_path)
             logger.info(
                 "epc_detected_by_heuristic",
                 property_id=unique_id,
@@ -161,36 +170,48 @@ async def _enrich_single(
             if detail_data:
                 if detail_data.gallery_urls:
                     for idx, img_url in enumerate(detail_data.gallery_urls):
-                        all_images.append(
-                            PropertyImage(
-                                url=HttpUrl(img_url),
-                                source=source,
-                                image_type="gallery",
-                            )
-                        )
-                        # Download and cache image bytes
+                        normalized_url = str(HttpUrl(img_url))
+                        # Download and cache image bytes first
+                        cached = True  # default when caching disabled (data_dir=None)
                         if data_dir:
                             cache_path = get_cached_image_path(
-                                data_dir, merged.unique_id, img_url, "gallery", idx
+                                data_dir, merged.unique_id, normalized_url, "gallery", idx
                             )
                             if not cache_path.is_file():
-                                img_bytes = await detail_fetcher.download_image_bytes(img_url)
+                                img_bytes = await detail_fetcher.download_image_bytes(
+                                    img_url
+                                )
                                 if img_bytes:
                                     save_image_bytes(cache_path, img_bytes)
+                                else:
+                                    cached = False
+                                    logger.warning(
+                                        "image_download_skipped",
+                                        property_id=merged.unique_id,
+                                        url=img_url,
+                                        image_type="gallery",
+                                        index=idx,
+                                    )
+                        # Only create PropertyImage if file exists on disk
+                        # (or caching disabled — data_dir=None)
+                        if cached:
+                            all_images.append(
+                                PropertyImage(
+                                    url=HttpUrl(normalized_url),
+                                    source=source,
+                                    image_type="gallery",
+                                )
+                            )
 
                 if detail_data.floorplan_url and not floorplan_image:
                     if is_valid_image_url(detail_data.floorplan_url):
-                        floorplan_image = PropertyImage(
-                            url=HttpUrl(detail_data.floorplan_url),
-                            source=source,
-                            image_type="floorplan",
-                        )
-                        # Download and cache floorplan
+                        normalized_fp_url = str(HttpUrl(detail_data.floorplan_url))
+                        fp_cached = True
                         if data_dir:
                             cache_path = get_cached_image_path(
                                 data_dir,
                                 merged.unique_id,
-                                detail_data.floorplan_url,
+                                normalized_fp_url,
                                 "floorplan",
                                 0,
                             )
@@ -200,6 +221,21 @@ async def _enrich_single(
                                 )
                                 if fp_bytes:
                                     save_image_bytes(cache_path, fp_bytes)
+                                else:
+                                    fp_cached = False
+                                    logger.warning(
+                                        "image_download_skipped",
+                                        property_id=merged.unique_id,
+                                        url=detail_data.floorplan_url,
+                                        image_type="floorplan",
+                                        index=0,
+                                    )
+                        if fp_cached:
+                            floorplan_image = PropertyImage(
+                                url=HttpUrl(normalized_fp_url),
+                                source=source,
+                                image_type="floorplan",
+                            )
                     else:
                         logger.warning(
                             "floorplan_url_rejected",
@@ -245,17 +281,16 @@ async def _enrich_single(
             )
             # Copy the cached image to the floorplan cache path so quality analysis finds it
             if floorplan_image is not None and detected_idx >= 0:
-                old_path = get_cached_image_path(
+                old_path = find_cached_file(
                     data_dir,
                     merged.unique_id,
                     str(floorplan_image.url),
                     "gallery",
-                    detected_idx,
                 )
                 new_path = get_cached_image_path(
                     data_dir, merged.unique_id, str(floorplan_image.url), "floorplan", 0
                 )
-                if old_path.is_file() and not new_path.is_file():
+                if old_path is not None and old_path.is_file() and not new_path.is_file():
                     save_image_bytes(new_path, old_path.read_bytes())
 
         canonical = prop.model_copy(update=canon_updates) if canon_updates else prop

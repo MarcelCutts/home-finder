@@ -593,6 +593,20 @@ def _build_inline_keyboard(
 
     # Arrange in rows of 2
     rows: list[list[InlineKeyboardButton]] = []
+
+    # Status action row (Ticket 7) — callback_data fits 64-byte limit
+    uid_short = merged.unique_id[:40]  # Leave room for prefix
+    rows.append([
+        InlineKeyboardButton(
+            text="\U0001f44d Interested",
+            callback_data=f"st:{uid_short}:interested",
+        ),
+        InlineKeyboardButton(
+            text="\u23ed Skip",
+            callback_data=f"st:{uid_short}:archived",
+        ),
+    ])
+
     for i in range(0, len(buttons), 2):
         rows.append(buttons[i : i + 2])
 
@@ -951,6 +965,58 @@ class TelegramNotifier:
             return True
         except Exception as e:
             logger.error("status_message_failed", error=str(e), exc_info=True)
+            return False
+
+    async def send_price_drop_notification(
+        self,
+        *,
+        title: str,
+        postcode: str,
+        old_price: int,
+        new_price: int,
+        unique_id: str,
+        days_listed: int = 0,
+    ) -> bool:
+        """Send a price drop notification for a previously-notified property.
+
+        Returns True if sent successfully.
+        """
+        from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+
+        drop = old_price - new_price
+        lines = [
+            "\U0001f4c9 <b>Price Drop</b>",
+            "",
+            f"<b>{html.escape(title)}</b>",
+            f"\u00a3{old_price:,} \u2192 \u00a3{new_price:,}/mo "
+            f"(<b>-\u00a3{drop:,}</b>)",
+        ]
+        if postcode:
+            lines.append(f"\U0001f4cd {html.escape(postcode)}")
+        if days_listed > 0:
+            lines.append(f"Listed {days_listed} days")
+
+        buttons: list[list[InlineKeyboardButton]] = []
+        if self.web_base_url:
+            detail_url = f"{self.web_base_url}/property/{unique_id}"
+            buttons.append([InlineKeyboardButton(text="Details", url=detail_url)])
+
+        try:
+            bot = self._get_bot()
+            await bot.send_message(
+                chat_id=self.chat_id,
+                text="\n".join(lines),
+                reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons) if buttons else None,
+            )
+            logger.info("price_drop_notification_sent", unique_id=unique_id, drop=drop)
+            return True
+        except Exception as e:
+            logger.error(
+                "price_drop_notification_failed",
+                unique_id=unique_id,
+                error=str(e),
+                exc_info=True,
+            )
             return False
 
     async def close(self) -> None:

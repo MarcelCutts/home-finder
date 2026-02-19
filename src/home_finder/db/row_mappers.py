@@ -60,6 +60,13 @@ class PropertyListItem(TypedDict, total=False):
     epc_rating: str | None
     # Analysis JSON for fit_score computation in routes
     analysis_json: str | None
+    # User status (Ticket 7)
+    user_status: str | None
+    # Price history (Ticket 10)
+    last_price_change: int | None
+    price_changed_at: str | None
+    area_median: int | None
+    benchmark_diff: int | None
 
 
 class PropertyDetailItem(PropertyListItem, total=False):

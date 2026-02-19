@@ -165,3 +165,19 @@ CLAUDE.md
 
 # Mutation testing (mutmut)
 mutants/
+
+# Dev screenshots & test images (Playwright MCP, manual spot-checks)
+# Root-anchored: only ignores images dumped in project root, not subdirectories
+/*.png
+/*.jpg
+/*.jpeg
+/*.dmg
+
+# Research artifacts
+/research/
+
+# Script output data
+/scripts/data/
+
+# Experiment data
+/experiments/*/data/

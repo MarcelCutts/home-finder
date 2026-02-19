@@ -57,7 +57,7 @@ You are an expert London rental property analyst with perfect vision and meticul
 
 Your task is to observe and assess property quality from images and cross-reference with listing text. A separate evaluation step will handle value assessment, viewing preparation, and curation — focus purely on what you can see and verify.
 
-When you cannot determine something from the images, use the appropriate sentinel value: "unknown" for enum/string fields, false for boolean fields, "none" for concern_severity when there are no concerns. For has_visible_damp, has_visible_mold, has_double_glazing, has_washing_machine, is_ensuite, primary_is_double, and can_fit_desk use "yes"/"no"/"unknown" — these are tri-state string fields. For multi-value fields (office_separation, hosting_layout, hosting_noise_risk) use "unknown" when you cannot determine the value. Do not guess — a confident "unknown" is more useful than a wrong answer.
+When you cannot determine something from the images, use the appropriate sentinel value: "unknown" for enum/string fields, false for boolean fields, "none" for concern_severity when there are no concerns. For has_visible_damp, has_visible_mold, has_double_glazing, has_dishwasher, has_washing_machine, has_worn_fixtures, has_bathtub, has_built_in_wardrobe, has_built_in_wardrobes, has_hallway_cupboard, is_ensuite, primary_is_double, and can_fit_desk use "yes"/"no"/"unknown" — these are tri-state string fields. For multi-value fields (office_separation, hosting_layout, hosting_noise_risk) use "unknown" when you cannot determine the value. For has_balcony, has_garden, has_terrace, has_shared_garden, too_few_photos, selective_angles, feels_spacious, and is_spacious_enough use true/false only (never "unknown" — use false when uncertain). Do not guess — a confident "unknown" is more useful than a wrong answer.
 
 <task>
 Analyze property images (gallery photos and optional floorplan) together with listing text to produce a structured visual quality assessment. Cross-reference what you see in the images with the listing description — it often mentions "new kitchen", "gas hob", "recently refurbished" that confirm or clarify what's in the photos.
@@ -83,7 +83,7 @@ Scan the description for cost and quality signals to cross-reference with images
 </listing_signals>
 
 <analysis_steps>
-1. Kitchen Quality: Modern (new units, integrated appliances, good worktops) vs Dated (old-fashioned units, worn surfaces, mismatched appliances). Note hob type if visible/mentioned. Check listing for "new kitchen", "recently fitted".
+1. Kitchen Quality: Modern (new units, integrated appliances, good worktops) vs Dated (old-fashioned units, worn surfaces, mismatched appliances). Note hob type if visible/mentioned. Check listing for "new kitchen", "recently fitted". Appliance detection: check for a dishwasher near the sink — look for EU energy rating stickers (coloured A-G labels on the front), control panels, different handle or panel alignment from surrounding cabinets, or brand logos. Integrated dishwashers behind matching cabinet fronts are common in UK kitchens and easily missed — prefer "unknown" over "no" unless you can see the full under-counter run with no dishwasher-sized gap. Similarly check for a washing machine (porthole door, control dials). Cross-reference the listing text for appliance mentions.
 
 2. Property Condition: Look for damp (water stains, peeling paint near windows/ceilings), mold (dark patches in corners/bathrooms), worn fixtures (dated bathroom fittings, tired carpets, scuffed walls). Check stock-type-specific issues. Cross-reference listing mentions of "refurbished", "newly decorated".
 
@@ -95,7 +95,7 @@ Scan the description for cost and quality signals to cross-reference with images
 
 6. Overall Rating: 1-5 stars for rental desirability.
 
-7. Bathroom: Condition, bathtub presence, shower type (overhead, separate cubicle, electric), ensuite. Cross-ref "wet room", "new bathroom", "recently refurbished bathroom" in description.
+7. Bathroom: Condition, bathtub presence, shower type (overhead, separate cubicle, electric), ensuite. Cross-ref "wet room", "new bathroom", "recently refurbished bathroom" in description. Identify shower type: overhead = fixed/rain head over bath or walk-in; separate_cubicle = standalone enclosed shower; electric = wall-mounted heater unit (white box, dial controls — common in older UK flats, signals weak hot water). Note whether bathtub present or shower-only.
 
 8. Bedroom & Office Separation: Can primary bedroom fit a double bed + wardrobe + desk? Check floorplan room labels and dimensions. "Double room" claims are often dubious. Assess office_separation quality: dedicated_room = closable second bedroom usable as office (non-through room with a door); separate_area = alcove, mezzanine, or partitioned nook; shared_space = desk in living room with no separation; none = studio or nowhere viable for a desk.
 
@@ -103,7 +103,7 @@ Scan the description for cost and quality signals to cross-reference with images
 
 10. Outdoor Space: Balcony, garden, terrace, shared garden from photos or description. Premium London feature worth noting.
 
-11. Flooring & Noise: Floor type (hardwood, laminate, carpet), double glazing presence, road-facing rooms, railway/traffic proximity indicators. Estimate building construction type from visual cues: solid brick (thick walls, period build), concrete (brutalist, ex-council, new-build blocks), timber frame (lightweight new-builds, stud wall indicators), mixed, or unknown. This affects sound insulation — solid brick and concrete are quieter. Assess hosting_noise_risk: risk of disturbing neighbours when hosting music/social events. low = solid construction + carpet + top floor or detached; moderate = mixed signals; high = timber frame + hard floors + lower floor + shared walls.
+11. Flooring & Noise: Floor type (hardwood, laminate, carpet), double glazing presence, road-facing rooms, railway/traffic proximity indicators. Estimate building construction type from visual cues: solid brick (thick walls, period build), concrete (brutalist, ex-council, new-build blocks), timber frame (lightweight new-builds, stud wall indicators), mixed, or unknown. This affects sound insulation — solid brick and concrete are quieter. Assess hosting_noise_risk: risk of disturbing neighbours when hosting music/social events. low = solid construction + carpet + top floor or detached; moderate = mixed signals; high = timber frame + hard floors + lower floor + shared walls. Double glazing detection: thick uPVC frames (white plastic, ~60mm deep) or modern aluminium frames with visible sealed units indicate double glazing. Thin timber sash frames with single panes indicate original single glazing (common in unconverted Victorian/Edwardian properties). Prefer "unknown" over "no" unless you can clearly see window profiles or the listing states single glazing.
 
 12. Floor Level: Estimate from photos and floorplan context — look for stairs in photos, "ground floor"/"first floor" in description, lift mentions, views from windows. Use: basement, ground, lower (1st-2nd), upper (3rd-4th), top (5th+), or unknown.
 
@@ -430,10 +430,12 @@ class TestToolSchemaSnapshots:
                                         "type": "string",
                                     },
                                     "has_dishwasher": {
+                                        "description": 'Whether a dishwasher is visible or mentioned. Look for: freestanding or semi-integrated units near the sink, EU energy rating stickers (coloured A-G labels), control panels along the top edge, brand logos, or handles/panels that differ from adjacent cabinets. Fully integrated dishwashers behind matching cabinet fronts are hard to spot — use "unknown" unless you see a clear indicator or the listing mentions one.',
                                         "enum": ["yes", "no", "unknown"],
                                         "type": "string",
                                     },
                                     "has_washing_machine": {
+                                        "description": "Whether a washing machine is visible or mentioned. Look for: freestanding units (usually in the kitchen or a utility area), porthole door, control dials, or listing mentions. Use \"unknown\" if no laundry appliance is visible and the listing doesn't mention one.",
                                         "enum": ["yes", "no", "unknown"],
                                         "type": "string",
                                     },
@@ -459,14 +461,17 @@ class TestToolSchemaSnapshots:
                                         "type": "string",
                                     },
                                     "has_visible_damp": {
+                                        "description": 'Whether visible damp is present. Look for: water stains on ceilings/walls, peeling or bubbling paint near windows, tide marks on lower walls (rising damp), discolouration around pipes. Victorian/Edwardian conversions are particularly prone to rising damp. Use "unknown" if walls/ceilings are not clearly shown.',
                                         "enum": ["yes", "no", "unknown"],
                                         "type": "string",
                                     },
                                     "has_visible_mold": {
+                                        "description": 'Whether visible mold is present. Look for: dark clusters in bathroom corners, around window frames, or on ceilings — black mold appears as dark spotty patches. Check bathroom and kitchen photos especially. Use "unknown" if wet areas are not shown.',
                                         "enum": ["yes", "no", "unknown"],
                                         "type": "string",
                                     },
                                     "has_worn_fixtures": {
+                                        "description": 'Whether fixtures look worn or dated. Look for: chipped or stained bathroom fittings, tired carpets, scuffed walls, old-style light switches/sockets, worn cupboard edges. Use "unknown" if photos are too few or angled to hide fixture condition.',
                                         "enum": ["yes", "no", "unknown"],
                                         "type": "string",
                                     },
@@ -570,10 +575,12 @@ class TestToolSchemaSnapshots:
                                         "type": "string",
                                     },
                                     "has_bathtub": {
+                                        "description": 'Whether a bathtub is visible. Many London flats are shower-only — this is documentation, not a negative. Check for bath/shower combo or standalone tub. Use "unknown" if the bathroom is not fully shown in photos.',
                                         "enum": ["yes", "no", "unknown"],
                                         "type": "string",
                                     },
                                     "shower_type": {
+                                        "description": "Shower type: overhead = rain or fixed head over bath/walk-in; separate_cubicle = standalone enclosed shower (not over bath); electric = wall-mounted unit with built-in heater (white box, dial — common in older UK flats, signals weak hot water system); none = no shower visible. Use \"unknown\" if bathroom not shown.",
                                         "enum": [
                                             "overhead",
                                             "separate_cubicle",
@@ -584,6 +591,7 @@ class TestToolSchemaSnapshots:
                                         "type": "string",
                                     },
                                     "is_ensuite": {
+                                        "description": 'Whether a bathroom is ensuite (accessed from inside a bedroom). Check floorplan layout — ensuite doors open from the bedroom, not the hallway. Use "unknown" if no floorplan and photos are ambiguous.',
                                         "enum": ["yes", "no", "unknown"],
                                         "type": "string",
                                     },
@@ -602,14 +610,17 @@ class TestToolSchemaSnapshots:
                                 "additionalProperties": False,
                                 "properties": {
                                     "primary_is_double": {
+                                        "description": "Whether the primary bedroom can fit a double bed (≥1.35m wide). Check floorplan dimensions if available — \"double room\" claims in listings are often dubious for rooms under 3m wide. Use \"unknown\" if no floorplan and photos don't show enough of the room.",
                                         "enum": ["yes", "no", "unknown"],
                                         "type": "string",
                                     },
                                     "has_built_in_wardrobe": {
+                                        "description": "Whether the primary bedroom has a built-in wardrobe. Look for: wardrobe doors (sliding or hinged) along one wall, commonly found in purpose-built and new-build flats. Use \"unknown\" if bedroom photos don't show all walls.",
                                         "enum": ["yes", "no", "unknown"],
                                         "type": "string",
                                     },
                                     "can_fit_desk": {
+                                        "description": "Whether a desk (~1.2m wide) could fit in any bedroom or dedicated space. Check floorplan dimensions and photos for available wall space beyond bed and wardrobe. Prefer \"unknown\" over \"no\" unless the room is clearly too small or the floorplan confirms insufficient space.",
                                         "enum": ["yes", "no", "unknown"],
                                         "type": "string",
                                     },
@@ -657,10 +668,12 @@ class TestToolSchemaSnapshots:
                                 "additionalProperties": False,
                                 "properties": {
                                     "has_built_in_wardrobes": {
+                                        "description": "Whether the property has built-in wardrobes in any bedroom. Look for wardrobe doors in bedroom photos. Common in purpose-built and new-build flats. Use \"unknown\" if bedrooms are not fully shown.",
                                         "enum": ["yes", "no", "unknown"],
                                         "type": "string",
                                     },
                                     "has_hallway_cupboard": {
+                                        "description": "Whether there is a hallway storage cupboard (airing cupboard, coat cupboard, or utility cupboard). Look for doors in hallway photos. Common in ex-council and purpose-built flats. Use \"unknown\" if hallway is not shown in photos.",
                                         "enum": ["yes", "no", "unknown"],
                                         "type": "string",
                                     },
@@ -691,6 +704,7 @@ class TestToolSchemaSnapshots:
                                         "type": "string",
                                     },
                                     "has_double_glazing": {
+                                        "description": 'Whether windows are double-glazed. Look for: thick uPVC frames (white plastic, ~60mm deep), sealed double-pane units visible in profile, or listing mentions. Single glazing: thin timber sash frames with visible putty (common in unconverted Victorian/ Edwardian properties). Prefer "unknown" over "no" unless you can clearly see single-pane windows or the listing states it.',
                                         "enum": ["yes", "no", "unknown"],
                                         "type": "string",
                                     },

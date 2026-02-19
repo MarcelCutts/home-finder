@@ -9,17 +9,20 @@ ENV UV_COMPILE_BYTECODE=1 \
 
 WORKDIR /app
 
-# Copy dependency files first (better layer caching)
-COPY pyproject.toml uv.lock README.md ./
+# Install dependencies (cache uv downloads across rebuilds)
+RUN --mount=type=cache,target=/root/.cache/uv \
+    --mount=type=bind,source=uv.lock,target=uv.lock \
+    --mount=type=bind,source=pyproject.toml,target=pyproject.toml \
+    --mount=type=bind,source=README.md,target=README.md \
+    uv sync --locked --no-dev --no-install-project --no-editable
 
-# Install dependencies only (not the project itself)
-RUN uv sync --frozen --no-dev --no-install-project
-
-# Copy source code
+# Copy source code and install the project
 COPY src/ ./src/
-
-# Install the project
-RUN uv sync --frozen --no-dev
+RUN --mount=type=cache,target=/root/.cache/uv \
+    --mount=type=bind,source=uv.lock,target=uv.lock \
+    --mount=type=bind,source=pyproject.toml,target=pyproject.toml \
+    --mount=type=bind,source=README.md,target=README.md \
+    uv sync --locked --no-dev --no-editable
 
 # Create data directory for SQLite (will be mounted as volume)
 RUN mkdir -p /app/data

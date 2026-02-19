@@ -77,9 +77,52 @@
                 </span>
                 {% endif %}
                 {{ commute_pill(prop.commute_minutes, prop.transport_mode) }}
+                {% if prop.first_seen %}
+                {% set dom = prop.first_seen | days_since %}
+                {% if dom > 0 %}
+                <span class="listing-age-pill">Listed {{ dom }}d ago{% if dom >= 14 %} &middot; May be negotiable{% endif %}</span>
+                {% endif %}
+                {% endif %}
+                {% if benchmark %}
+                {% set bdiff = prop.price_pcm - benchmark.median_rent %}
+                <span class="benchmark-chip {% if bdiff < 0 %}benchmark-below{% elif bdiff > 100 %}benchmark-above{% else %}benchmark-at{% endif %}">
+                    {% if bdiff < 0 %}
+                        &pound;{{ (-bdiff)|int }} below avg
+                    {% elif bdiff > 0 %}
+                        &pound;{{ bdiff|int }} above avg
+                    {% else %}
+                        At area avg
+                    {% endif %}
+                </span>
+                {% endif %}
             </div>
         </div>
     </div>
+
+    {# Status bar (Ticket 7) — badge + dropdown #}
+    <div class="detail-status-bar">
+        {% set unique_id = prop.unique_id %}
+        {% set status = user_status %}
+        {% set current_status = user_status %}
+        {% include "_status_badge.html" %}
+        {% include "_status_controls.html" %}
+    </div>
+
+    {# Status history (Ticket 7) — collapsible timeline #}
+    {% if status_history %}
+    <details class="status-history-section">
+        <summary>Status History ({{ status_history|length }})</summary>
+        <div class="status-history-timeline">
+            {% for event in status_history %}
+            <div class="status-history-event">
+                <span class="status-history-date">{{ event.created_at[:10] }}</span>
+                <span class="status-history-label">{{ event.from_status or 'new' }} &rarr; {{ event.to_status }}</span>
+                {% if event.source != 'web' %}<span class="status-history-source">via {{ event.source }}</span>{% endif %}
+            </div>
+            {% endfor %}
+        </div>
+    </details>
+    {% endif %}
 
     {# Section Navigation — sticky anchor bar #}
     <nav class="section-nav" id="section-nav">
@@ -153,6 +196,48 @@
             {% endif %}
             {% endif %}
         </div>
+        {% endif %}
+
+        {# Price History (Ticket 10) #}
+        {% if price_history %}
+        <div class="overview-card price-history-card">
+            <h4>Price History</h4>
+            <div class="price-timeline">
+                {% for event in price_history %}
+                <div class="price-event {% if event.change_amount < 0 %}price-drop{% else %}price-increase{% endif %}">
+                    <span class="price-event-date">{{ event.detected_at[:10] }}</span>
+                    <span class="price-event-change">
+                        {% if event.change_amount < 0 %}
+                            &pound;{{ "{:,}".format(event.old_price) }} &rarr; &pound;{{ "{:,}".format(event.new_price) }}
+                            <span class="badge badge-green">-&pound;{{ "{:,}".format((-event.change_amount)|int) }}</span>
+                        {% else %}
+                            &pound;{{ "{:,}".format(event.old_price) }} &rarr; &pound;{{ "{:,}".format(event.new_price) }}
+                            <span class="badge badge-red">+&pound;{{ "{:,}".format(event.change_amount|int) }}</span>
+                        {% endif %}
+                    </span>
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+        {% endif %}
+
+        {# Negotiation Intelligence (Ticket 10) #}
+        {% if negotiation %}
+        <details class="overview-card negotiation-card">
+            <summary>
+                Negotiation Intel
+                <span class="badge {% if negotiation.strength == 'strong' %}badge-green{% elif negotiation.strength == 'moderate' %}badge-amber{% else %}badge-red{% endif %}">
+                    {{ negotiation.strength | capitalize }}
+                </span>
+            </summary>
+            <ul class="negotiation-points">
+                <li>{{ negotiation.days_context }}</li>
+                <li>{{ negotiation.price_context }}</li>
+                <li>{{ negotiation.history_context }}</li>
+                <li>{{ negotiation.seasonal_context }}</li>
+            </ul>
+            <p class="negotiation-approach">{{ negotiation.suggested_approach }}</p>
+        </details>
         {% endif %}
 
         {# Listing Details — compact KV grid (moved from quality card) #}

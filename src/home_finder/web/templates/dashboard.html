@@ -32,10 +32,27 @@
                     {% endfor %}
                 </select>
 
+                <select name="added" aria-label="Added">
+                    <option value="">All time</option>
+                    {% for val, label, _days in added_options %}
+                    <option value="{{ val }}" {% if added == val %}selected{% endif %}>{{ label }}</option>
+                    {% endfor %}
+                </select>
+
                 <select name="min_rating" aria-label="Min rating" class="desktop-only">
                     <option value="">Any rating</option>
                     {% for r in [3, 4, 5] %}
                     <option value="{{ r }}" {% if min_rating == r %}selected{% endif %}>{{ r }}+ stars</option>
+                    {% endfor %}
+                </select>
+
+                <select name="status" aria-label="Status filter"
+                        hx-get="/" hx-target="#results" hx-push-url="true" hx-indicator="#loading">
+                    <option value="">All statuses</option>
+                    {% for s in user_statuses %}
+                    <option value="{{ s.value }}" {% if status == s.value %}selected{% endif %}>
+                        {{ status_meta[s.value].label }}
+                    </option>
                     {% endfor %}
                 </select>
 
@@ -45,6 +62,7 @@
                     <option value="price_desc" {% if sort == "price_desc" %}selected{% endif %}>Price: High</option>
                     <option value="rating_desc" {% if sort == "rating_desc" %}selected{% endif %}>Rating</option>
                     <option value="fit_desc" {% if sort == "fit_desc" %}selected{% endif %}>Best Fit</option>
+                    <option value="longest_listed" {% if sort == "longest_listed" %}selected{% endif %}>Longest Listed</option>
                 </select>
 
                 <button type="button" id="open-filters-btn" class="filter-modal-btn">Filters{% if secondary_filter_count %} <span class="filter-badge">{{ secondary_filter_count }}</span>{% endif %}</button>

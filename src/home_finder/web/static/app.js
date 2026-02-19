@@ -1,3 +1,15 @@
+// Fix Leaflet tile gap rendering (white lines between tiles)
+// https://github.com/Leaflet/Leaflet/issues/3575
+var _origInitTile = L.GridLayer.prototype._initTile;
+L.GridLayer.include({
+  _initTile: function (tile) {
+    _origInitTile.call(this, tile);
+    var tileSize = this.getTileSize();
+    tile.style.width = tileSize.x + 1 + "px";
+    tile.style.height = tileSize.y + 1 + "px";
+  },
+});
+
 // Filter form: strip empty params, chip removal, explicit apply
 (function () {
   // Strip empty-string params before HTMX sends request
@@ -94,6 +106,8 @@
         if (deskMinP) deskMinP.value = "";
         var deskMaxP = form.querySelector('input[name="max_price"]');
         if (deskMaxP) deskMaxP.value = "";
+        var deskAdded = form.querySelector('select[name="added"]');
+        if (deskAdded) deskAdded.value = "";
       }
       dialog.dispatchEvent(new CustomEvent("filterChange", { bubbles: true }));
     });

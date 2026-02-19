@@ -35,12 +35,10 @@ from home_finder.models import (
     ValueAnalysis,
     ViewingNotes,
 )
-from home_finder.utils.image_cache import is_valid_image_url, read_image_bytes
+from home_finder.models.quality import _QUALITY_SUB_MODEL_FIELDS
+from home_finder.utils.image_cache import find_cached_file, is_valid_image_url, read_image_bytes
 from home_finder.utils.image_processing import (
     ImageMediaType,
-)
-from home_finder.utils.image_processing import (
-    is_valid_media_type as _is_valid_media_type,
 )
 from home_finder.utils.image_processing import (
     resize_image_bytes as _resize_image_bytes,
@@ -151,16 +149,54 @@ class _VisualAnalysisResponse(BaseModel):
         hob_type: Literal["gas", "electric", "induction", "unknown"] = Field(
             description="Type of hob if visible or mentioned"
         )
-        has_dishwasher: Literal["yes", "no", "unknown"]
-        has_washing_machine: Literal["yes", "no", "unknown"]
+        has_dishwasher: Literal["yes", "no", "unknown"] = Field(
+            description=(
+                "Whether a dishwasher is visible or mentioned. Look for: freestanding "
+                "or semi-integrated units near the sink, EU energy rating stickers "
+                "(coloured A-G labels), control panels along the top edge, brand logos, "
+                "or handles/panels that differ from adjacent cabinets. Fully integrated "
+                "dishwashers behind matching cabinet fronts are hard to spot — use "
+                '"unknown" unless you see a clear indicator or the listing mentions one.'
+            ),
+        )
+        has_washing_machine: Literal["yes", "no", "unknown"] = Field(
+            description=(
+                "Whether a washing machine is visible or mentioned. Look for: "
+                "freestanding units (usually in the kitchen or a utility area), "
+                "porthole door, control dials, or listing mentions. Use \"unknown\" "
+                "if no laundry appliance is visible and the listing doesn't mention one."
+            ),
+        )
         notes: str = Field(description="Notable kitchen features or concerns")
 
     class Condition(BaseModel):
         model_config = _Forbid
         overall_condition: Literal["excellent", "good", "fair", "poor", "unknown"]
-        has_visible_damp: Literal["yes", "no", "unknown"]
-        has_visible_mold: Literal["yes", "no", "unknown"]
-        has_worn_fixtures: Literal["yes", "no", "unknown"]
+        has_visible_damp: Literal["yes", "no", "unknown"] = Field(
+            description=(
+                'Whether visible damp is present. Look for: water stains on '
+                'ceilings/walls, peeling or bubbling paint near windows, tide marks '
+                'on lower walls (rising damp), discolouration around pipes. '
+                'Victorian/Edwardian conversions are particularly prone to rising '
+                'damp. Use "unknown" if walls/ceilings are not clearly shown.'
+            ),
+        )
+        has_visible_mold: Literal["yes", "no", "unknown"] = Field(
+            description=(
+                'Whether visible mold is present. Look for: dark clusters in '
+                'bathroom corners, around window frames, or on ceilings — black '
+                'mold appears as dark spotty patches. Check bathroom and kitchen '
+                'photos especially. Use "unknown" if wet areas are not shown.'
+            ),
+        )
+        has_worn_fixtures: Literal["yes", "no", "unknown"] = Field(
+            description=(
+                'Whether fixtures look worn or dated. Look for: chipped or '
+                'stained bathroom fittings, tired carpets, scuffed walls, old-style '
+                'light switches/sockets, worn cupboard edges. Use "unknown" if '
+                'photos are too few or angled to hide fixture condition.'
+            ),
+        )
         maintenance_concerns: list[str] = Field(description="List of specific maintenance concerns")
         confidence: Literal["high", "medium", "low"]
 
@@ -194,16 +230,60 @@ class _VisualAnalysisResponse(BaseModel):
     class Bathroom(BaseModel):
         model_config = _Forbid
         overall_condition: Literal["modern", "decent", "dated", "unknown"]
-        has_bathtub: Literal["yes", "no", "unknown"]
-        shower_type: Literal["overhead", "separate_cubicle", "electric", "none", "unknown"]
-        is_ensuite: Literal["yes", "no", "unknown"]
+        has_bathtub: Literal["yes", "no", "unknown"] = Field(
+            description=(
+                'Whether a bathtub is visible. Many London flats are shower-only '
+                '— this is documentation, not a negative. Check for bath/shower '
+                'combo or standalone tub. Use "unknown" if the bathroom is not '
+                'fully shown in photos.'
+            ),
+        )
+        shower_type: Literal["overhead", "separate_cubicle", "electric", "none", "unknown"] = Field(
+            description=(
+                'Shower type: overhead = rain or fixed head over bath/walk-in; '
+                'separate_cubicle = standalone enclosed shower (not over bath); '
+                'electric = wall-mounted unit with built-in heater (white box, '
+                'dial — common in older UK flats, signals weak hot water system); '
+                'none = no shower visible. Use "unknown" if bathroom not shown.'
+            ),
+        )
+        is_ensuite: Literal["yes", "no", "unknown"] = Field(
+            description=(
+                'Whether a bathroom is ensuite (accessed from inside a bedroom). '
+                'Check floorplan layout — ensuite doors open from the bedroom, '
+                'not the hallway. Use "unknown" if no floorplan and photos are '
+                'ambiguous.'
+            ),
+        )
         notes: str
 
     class Bedroom(BaseModel):
         model_config = _Forbid
-        primary_is_double: Literal["yes", "no", "unknown"]
-        has_built_in_wardrobe: Literal["yes", "no", "unknown"]
-        can_fit_desk: Literal["yes", "no", "unknown"]
+        primary_is_double: Literal["yes", "no", "unknown"] = Field(
+            description=(
+                'Whether the primary bedroom can fit a double bed (≥1.35m wide). '
+                'Check floorplan dimensions if available — "double room" claims in '
+                'listings are often dubious for rooms under 3m wide. Use "unknown" '
+                'if no floorplan and photos don\'t show enough of the room.'
+            ),
+        )
+        has_built_in_wardrobe: Literal["yes", "no", "unknown"] = Field(
+            description=(
+                'Whether the primary bedroom has a built-in wardrobe. Look for: '
+                'wardrobe doors (sliding or hinged) along one wall, commonly found '
+                'in purpose-built and new-build flats. Use "unknown" if bedroom '
+                'photos don\'t show all walls.'
+            ),
+        )
+        can_fit_desk: Literal["yes", "no", "unknown"] = Field(
+            description=(
+                'Whether a desk (~1.2m wide) could fit in any bedroom or '
+                'dedicated space. Check floorplan dimensions and photos for '
+                'available wall space beyond bed and wardrobe. Prefer "unknown" '
+                'over "no" unless the room is clearly too small or the floorplan '
+                'confirms insufficient space.'
+            ),
+        )
         office_separation: Literal[
             "dedicated_room", "separate_area", "shared_space", "none", "unknown"
         ] = Field(
@@ -226,14 +306,36 @@ class _VisualAnalysisResponse(BaseModel):
 
     class Storage(BaseModel):
         model_config = _Forbid
-        has_built_in_wardrobes: Literal["yes", "no", "unknown"]
-        has_hallway_cupboard: Literal["yes", "no", "unknown"]
+        has_built_in_wardrobes: Literal["yes", "no", "unknown"] = Field(
+            description=(
+                'Whether the property has built-in wardrobes in any bedroom. '
+                'Look for wardrobe doors in bedroom photos. Common in purpose-built '
+                'and new-build flats. Use "unknown" if bedrooms are not fully shown.'
+            ),
+        )
+        has_hallway_cupboard: Literal["yes", "no", "unknown"] = Field(
+            description=(
+                'Whether there is a hallway storage cupboard (airing cupboard, '
+                'coat cupboard, or utility cupboard). Look for doors in hallway '
+                'photos. Common in ex-council and purpose-built flats. Use '
+                '"unknown" if hallway is not shown in photos.'
+            ),
+        )
         storage_rating: Literal["good", "adequate", "poor", "unknown"]
 
     class FlooringNoise(BaseModel):
         model_config = _Forbid
         primary_flooring: Literal["hardwood", "laminate", "carpet", "tile", "mixed", "unknown"]
-        has_double_glazing: Literal["yes", "no", "unknown"]
+        has_double_glazing: Literal["yes", "no", "unknown"] = Field(
+            description=(
+                'Whether windows are double-glazed. Look for: thick uPVC frames '
+                '(white plastic, ~60mm deep), sealed double-pane units visible in '
+                'profile, or listing mentions. Single glazing: thin timber sash '
+                'frames with visible putty (common in unconverted Victorian/ '
+                'Edwardian properties). Prefer "unknown" over "no" unless you '
+                'can clearly see single-pane windows or the listing states it.'
+            ),
+        )
         building_construction: Literal[
             "solid_brick", "concrete", "timber_frame", "mixed", "unknown"
         ] = Field(description="Building construction type estimated from visual cues")
@@ -446,6 +548,26 @@ EVALUATION_TOOL: Final[dict[str, Any]] = _build_tool_schema(
 )
 
 
+def _attempt_json_repair(s: str) -> dict[str, Any] | list[Any] | None:
+    """Best-effort repair of common LLM JSON malformations.
+
+    Handles:
+    - Missing colons between key-value pairs ("key" "value" → "key": "value")
+    - Trailing commas before closing braces/brackets
+    """
+    # Fix missing colons: "key" "value" or "key", "value" → "key": "value"
+    repaired = _re.sub(r'("\w+")\s*,?\s*(")', r'\1: \2', s)
+    # Fix trailing commas
+    repaired = _re.sub(r",\s*([}\]])", r"\1", repaired)
+    try:
+        parsed = _json.loads(repaired)
+        if isinstance(parsed, (dict, list)):
+            return parsed
+    except (ValueError, _json.JSONDecodeError):
+        pass
+    return None
+
+
 def _clean_value(val: Any) -> Any:
     """Clean a single response value — parse JSON strings that should be dicts/lists."""
     if not isinstance(val, str):
@@ -465,6 +587,11 @@ def _clean_value(val: Any) -> Any:
                     return parsed
             except (ValueError, _json.JSONDecodeError):
                 pass
+            # Third pass: best-effort structural repair (missing colons, etc.)
+            repaired = _attempt_json_repair(s)
+            if repaired is not None:
+                logger.info("json_repair_succeeded", preview=s[:120])
+                return repaired
     return s
 
 
@@ -511,7 +638,6 @@ class PropertyQualityFilter:
         max_images: int = 20,
         *,
         enable_extended_thinking: bool = True,
-        thinking_budget_tokens: int = 10000,
     ) -> None:
         """Initialize the quality filter.
 
@@ -519,14 +645,11 @@ class PropertyQualityFilter:
             api_key: Anthropic API key.
             max_images: Maximum number of gallery images to analyze.
             enable_extended_thinking: Enable extended thinking for deeper analysis.
-            thinking_budget_tokens: Token budget for extended thinking.
         """
         self._api_key = api_key
         self._max_images = max_images
         self._enable_extended_thinking = enable_extended_thinking
-        self._thinking_budget_tokens = thinking_budget_tokens
         self._client: anthropic.AsyncAnthropic | None = None
-        self._curl_session: Any | None = None  # curl_cffi.requests.AsyncSession
         # Circuit breaker state (asyncio is single-threaded, no lock needed)
         self._consecutive_api_failures = 0
         self._circuit_open = False
@@ -544,14 +667,6 @@ class PropertyQualityFilter:
                 timeout=httpx.Timeout(REQUEST_TIMEOUT),  # 3 min for vision requests
             )
         return self._client
-
-    async def _get_curl_session(self) -> Any:
-        """Get or create the curl_cffi async session for image downloads."""
-        if self._curl_session is None:
-            from curl_cffi.requests import AsyncSession
-
-            self._curl_session = AsyncSession()
-        return self._curl_session
 
     def _record_api_failure(self) -> None:
         """Record a consecutive API failure and open circuit if threshold reached."""
@@ -591,20 +706,6 @@ class PropertyQualityFilter:
         return True
 
     @staticmethod
-    def _needs_base64_download(url: str) -> bool:
-        """Check if URL requires local download due to anti-bot protection.
-
-        Some image CDNs (Zoopla's zoocdn.com) use TLS fingerprinting to block
-        non-browser requests. When we send URL-based images to Claude's API,
-        Anthropic's servers fetch them directly and get blocked with 403.
-
-        For these sites, we need to download the images locally using curl_cffi
-        (which can impersonate Chrome's TLS fingerprint) and send as base64.
-        """
-        # Zoopla and OpenRent image CDNs block non-browser requests
-        return "zoocdn.com" in url or "imagescdn.openrent.co.uk" in url
-
-    @staticmethod
     def _get_media_type(url: str) -> ImageMediaType:
         """Determine media type from URL extension."""
         # Try to get from URL extension
@@ -618,66 +719,23 @@ class PropertyQualityFilter:
         }
         return type_map.get(ext, "image/jpeg")  # Default to JPEG
 
-    async def _download_image_as_base64(self, url: str) -> tuple[str, ImageMediaType] | None:
-        """Download image using curl_cffi and return base64 data with media type.
-
-        Uses Chrome TLS fingerprint impersonation to bypass anti-bot protection.
-
-        Args:
-            url: Image URL to download.
-
-        Returns:
-            Tuple of (base64_data, media_type) or None if download failed.
-        """
-        try:
-            session = await self._get_curl_session()
-            response = await session.get(
-                url,
-                impersonate="chrome",
-                headers={
-                    "Accept": "image/webp,image/apng,image/*,*/*;q=0.8",
-                    "Accept-Language": "en-GB,en;q=0.9",
-                    "Accept-Encoding": "gzip, deflate, br",
-                },
-                timeout=30,
-            )
-            if response.status_code != 200:
-                logger.warning(
-                    "image_download_failed",
-                    url=url,
-                    status=response.status_code,
-                )
-                return None
-
-            # Get content type from response or guess from URL
-            content_type = response.headers.get("content-type", "")
-            media_type_raw = content_type.split(";")[0] if content_type else ""
-
-            # Validate and use the media type if valid, otherwise guess from URL
-            if _is_valid_media_type(media_type_raw):
-                media_type: ImageMediaType = media_type_raw
-            else:
-                media_type = self._get_media_type(url)
-
-            # Encode to base64
-            image_data = base64.standard_b64encode(response.content).decode("utf-8")
-            return image_data, media_type
-
-        except Exception as e:
-            logger.warning("image_download_error", url=url, error=str(e), exc_info=True)
-            return None
-
     async def _build_image_block(
         self, url: str, cached_path: Path | None = None
     ) -> "ImageBlockParam | None":
-        """Build an image block, using disk cache or downloading as needed.
+        """Build an image block from disk cache.
+
+        All images should already be cached by detail enrichment (pipeline
+        step 8).  If the cache misses, the image is skipped rather than
+        re-downloaded — the CDN download would face the same network
+        conditions that caused the enrichment miss, and skipping 1-2 of 20
+        images has negligible impact on analysis quality.
 
         Args:
-            url: Image URL.
-            cached_path: Path to cached image on disk (if available).
+            url: Image URL (used for media-type detection and logging).
+            cached_path: Path to cached image on disk.
 
         Returns:
-            ImageBlockParam or None if image couldn't be loaded.
+            ImageBlockParam or None if image not cached or corrupt.
         """
         # Skip non-image URLs (e.g. YouTube embeds in OpenRent galleries)
         _VIDEO_MARKERS = ("youtube.com/", "youtu.be/", "vimeo.com/")
@@ -688,71 +746,53 @@ class PropertyQualityFilter:
         from anthropic.types import (
             Base64ImageSourceParam,
             ImageBlockParam,
-            URLImageSourceParam,
         )
 
-        # Try disk cache first — avoids all HTTP requests
-        if cached_path is not None:
-            data = read_image_bytes(cached_path)
-            if data is not None:
-                media_type = self._get_media_type(url)
-                logger.debug(
-                    "image_block_from_cache",
-                    url=url,
-                    cached_path=str(cached_path),
-                    data_len=len(data),
-                    media_type=media_type,
-                )
-                # Validate image is decodable before sending to API
-                try:
-                    from io import BytesIO
+        if cached_path is None:
+            logger.warning("image_not_cached", url=url)
+            return None
 
-                    from PIL import Image
+        data = read_image_bytes(cached_path)
+        if data is None:
+            logger.warning("cached_image_unreadable", url=url, cached_path=str(cached_path))
+            return None
 
-                    img = Image.open(BytesIO(data))
-                    img.load()  # Force full pixel decode
-                    img.close()
-                except Exception:
-                    logger.warning(
-                        "cached_image_corrupt",
-                        url=url,
-                        cached_path=str(cached_path),
-                    )
-                    data = None  # Fall through to download path
-            if data is not None:
-                data = await asyncio.to_thread(_resize_image_bytes, data)
-                image_data = base64.standard_b64encode(data).decode("utf-8")
-                return ImageBlockParam(
-                    type="image",
-                    source=Base64ImageSourceParam(
-                        type="base64",
-                        media_type=media_type,
-                        data=image_data,
-                    ),
-                )
+        media_type = self._get_media_type(url)
+        logger.debug(
+            "image_block_from_cache",
+            url=url,
+            cached_path=str(cached_path),
+            data_len=len(data),
+            media_type=media_type,
+        )
 
-        if self._needs_base64_download(url):
-            result = await self._download_image_as_base64(url)
-            if result is None:
-                return None
-            image_data, media_type = result
-            decoded = base64.standard_b64decode(image_data)
-            resized = await asyncio.to_thread(_resize_image_bytes, decoded)
-            image_data = base64.standard_b64encode(resized).decode("utf-8")
-            return ImageBlockParam(
-                type="image",
-                source=Base64ImageSourceParam(
-                    type="base64",
-                    media_type=media_type,
-                    data=image_data,
-                ),
+        # Validate image is decodable before sending to API
+        try:
+            from io import BytesIO
+
+            from PIL import Image
+
+            img = Image.open(BytesIO(data))
+            img.load()  # Force full pixel decode
+            img.close()
+        except Exception:
+            logger.warning(
+                "cached_image_corrupt",
+                url=url,
+                cached_path=str(cached_path),
             )
-        else:
-            # Use URL-based image (Anthropic fetches directly)
-            return ImageBlockParam(
-                type="image",
-                source=URLImageSourceParam(type="url", url=url),
-            )
+            return None
+
+        data = await asyncio.to_thread(_resize_image_bytes, data)
+        image_data = base64.standard_b64encode(data).decode("utf-8")
+        return ImageBlockParam(
+            type="image",
+            source=Base64ImageSourceParam(
+                type="base64",
+                media_type=media_type,
+                data=image_data,
+            ),
+        )
 
     async def analyze_single_merged(
         self,
@@ -785,14 +825,14 @@ class PropertyQualityFilter:
         gallery_cached: list[Path | None] = []
         floorplan_cached: Path | None = None
         if data_dir:
-            from home_finder.utils.image_cache import get_cached_image_path
-
-            for idx, g_url in enumerate(gallery_urls):
-                p = get_cached_image_path(data_dir, merged.unique_id, g_url, "gallery", idx)
-                gallery_cached.append(p if p.is_file() else None)
+            for g_url in gallery_urls:
+                gallery_cached.append(
+                    find_cached_file(data_dir, merged.unique_id, g_url, "gallery")
+                )
             if floorplan_url:
-                p = get_cached_image_path(data_dir, merged.unique_id, floorplan_url, "floorplan", 0)
-                floorplan_cached = p if p.is_file() else None
+                floorplan_cached = find_cached_file(
+                    data_dir, merged.unique_id, floorplan_url, "floorplan"
+                )
         else:
             gallery_cached = [None] * len(gallery_urls)
 
@@ -966,8 +1006,10 @@ class PropertyQualityFilter:
             visual_tool: ToolParam = VISUAL_ANALYSIS_TOOL  # type: ignore[assignment]
 
             create_kwargs: dict[str, Any] = {
-                "model": "claude-sonnet-4-5-20250929",
-                "max_tokens": 16384,
+                "model": "claude-sonnet-4-6",
+                # SDK enforces non-streaming cap of ~21333 tokens (10-min timeout estimate).
+                # Streaming would allow 32768+ but requires a larger refactor.
+                "max_tokens": 21000,
                 "system": [
                     {
                         "type": "text",
@@ -981,8 +1023,7 @@ class PropertyQualityFilter:
 
             if self._enable_extended_thinking:
                 create_kwargs["thinking"] = {
-                    "type": "enabled",
-                    "budget_tokens": self._thinking_budget_tokens,
+                    "type": "adaptive",
                 }
                 create_kwargs["tool_choice"] = {"type": "auto"}
             else:
@@ -1163,7 +1204,7 @@ class PropertyQualityFilter:
             )
 
             eval_response = await client.messages.create(
-                model="claude-sonnet-4-5-20250929",
+                model="claude-sonnet-4-6",
                 max_tokens=4096,
                 system=[
                     {
@@ -1245,6 +1286,18 @@ class PropertyQualityFilter:
         try:
             merged_data = {**visual_data, **eval_data, "value": value}
             merged_data.setdefault("summary", "Analysis completed")
+
+            # Warn if _clean_dict failed to parse any sub-model JSON strings.
+            # The model validator will attempt further repair (control char
+            # stripping), but this log flags upstream issues worth investigating.
+            for key in _QUALITY_SUB_MODEL_FIELDS:
+                if isinstance(merged_data.get(key), str):
+                    logger.warning(
+                        "clean_dict_missed_json_string",
+                        field=key,
+                        property_id=property_id,
+                    )
+
             analysis = PropertyQualityAnalysis.model_validate(merged_data)
         except Exception as e:
             logger.warning(
@@ -1423,6 +1476,3 @@ class PropertyQualityFilter:
         if self._client is not None:
             await self._client.close()
             self._client = None
-        if self._curl_session is not None:
-            await self._curl_session.close()
-            self._curl_session = None

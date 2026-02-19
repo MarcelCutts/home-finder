@@ -3,6 +3,7 @@
 from home_finder.models.core import (
     SOURCE_BADGES,
     SOURCE_NAMES,
+    USER_STATUS_META,
     FurnishType,
     MergedProperty,
     NotificationStatus,
@@ -12,6 +13,7 @@ from home_finder.models.core import (
     SearchCriteria,
     TrackedProperty,
     TransportMode,
+    UserStatus,
 )
 from home_finder.models.quality import (
     BathroomAnalysis,
@@ -38,6 +40,7 @@ from home_finder.models.quality import (
 __all__ = [
     "SOURCE_BADGES",
     "SOURCE_NAMES",
+    "USER_STATUS_META",
     "BathroomAnalysis",
     "BedroomAnalysis",
     "CoercedBool",
@@ -64,6 +67,7 @@ __all__ = [
     "TrackedProperty",
     "TransportMode",
     "TriStateBool",
+    "UserStatus",
     "ValueAnalysis",
     "ViewingNotes",
 ]

@@ -68,13 +68,6 @@ class Settings(BaseSettings):
         default=True,
         description="Enable extended thinking for deeper quality analysis",
     )
-    thinking_budget_tokens: int = Field(
-        default=10000,
-        ge=1024,
-        le=32000,
-        description="Token budget for extended thinking",
-    )
-
     # Enrichment retry
     max_enrichment_attempts: int = Field(
         default=3,

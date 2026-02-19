@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Callable, Coroutine
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any, cast
 
 import aiosqlite
@@ -15,6 +16,7 @@ from home_finder.db.row_mappers import (
 )
 from home_finder.logging import get_logger
 from home_finder.models import PropertyImage, PropertyQualityAnalysis
+from home_finder.web.filters import ADDED_OPTIONS
 
 if TYPE_CHECKING:
     from home_finder.web.filters import PropertyFilter
@@ -63,6 +65,16 @@ def build_filter_clauses(
     if filters.area:
         where_clauses.append("UPPER(p.postcode) LIKE ?")
         params.append(f"{filters.area.upper()}%")
+    if filters.added:
+        days_map = {v: d for v, _, d in ADDED_OPTIONS}
+        days = days_map.get(filters.added)
+        if days is not None:
+            where_clauses.append("p.first_seen >= ?")
+            cutoff = (datetime.now(UTC) - timedelta(days=days)).isoformat()
+            params.append(cutoff)
+    if filters.status:
+        where_clauses.append("COALESCE(p.user_status, 'new') = ?")
+        params.append(filters.status)
     if filters.property_type:
         where_clauses.append(
             "json_extract(q.analysis_json, '$.listing_extraction.property_type') = ?"
@@ -242,6 +254,7 @@ class WebQueryService:
             "price_desc": "p.price_pcm DESC",
             "rating_desc": "COALESCE(q.overall_rating, 0) DESC, p.first_seen DESC",
             "fit_desc": "COALESCE(q.fit_score, -1) DESC, p.first_seen DESC",
+            "longest_listed": "p.first_seen ASC",
         }
         order_sql = order_map.get(sort, "p.first_seen DESC")
 
@@ -268,6 +281,22 @@ class WebQueryService:
              ORDER BY pi.id LIMIT 1) as first_gallery_url
         """
 
+        # Subqueries for price history (Ticket 10)
+        price_history_subquery = """
+            (SELECT ph.change_amount FROM price_history ph
+             WHERE ph.property_unique_id = p.unique_id
+             ORDER BY ph.detected_at DESC LIMIT 1) as last_price_change,
+            (SELECT ph.detected_at FROM price_history ph
+             WHERE ph.property_unique_id = p.unique_id
+             ORDER BY ph.detected_at DESC LIMIT 1) as price_changed_at
+        """
+
+        # Subquery for area rent benchmark (Ticket 10)
+        benchmark_subquery = """
+            rb.median_rent as area_median,
+            (p.price_pcm - rb.median_rent) as benchmark_diff
+        """
+
         offset = (page - 1) * per_page
         cursor = await conn.execute(
             f"""
@@ -275,9 +304,14 @@ class WebQueryService:
                    q.condition_concerns as quality_concerns,
                    q.concern_severity as quality_severity,
                    q.analysis_json,
-                   {gallery_subquery}
+                   {gallery_subquery},
+                   {price_history_subquery},
+                   {benchmark_subquery}
             FROM properties p
             LEFT JOIN quality_analyses q ON p.unique_id = q.property_unique_id
+            LEFT JOIN rent_benchmarks rb
+                ON rb.outcode = UPPER(SUBSTR(p.postcode, 1, INSTR(p.postcode || ' ', ' ') - 1))
+                AND rb.bedrooms = p.bedrooms
             WHERE {where_sql}
             ORDER BY {order_sql}
             LIMIT ? OFFSET ?

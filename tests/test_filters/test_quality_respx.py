@@ -120,7 +120,7 @@ PHASE1_VISUAL_RESPONSE: dict[str, Any] = {
             },
         }
     ],
-    "model": "claude-sonnet-4-5-20250929",
+    "model": "claude-sonnet-4-6",
     "stop_reason": "tool_use",
     "usage": {
         "input_tokens": 1523,
@@ -183,7 +183,7 @@ PHASE2_EVALUATION_RESPONSE: dict[str, Any] = {
             },
         }
     ],
-    "model": "claude-sonnet-4-5-20250929",
+    "model": "claude-sonnet-4-6",
     "stop_reason": "tool_use",
     "usage": {
         "input_tokens": 892,
@@ -241,6 +241,36 @@ def test_merged_property(test_property: Property) -> MergedProperty:
         min_price=test_property.price_pcm,
         max_price=test_property.price_pcm,
     )
+
+
+@pytest.fixture
+def cached_data_dir(
+    tmp_path: Any, test_merged_property: MergedProperty
+) -> str:
+    """Populate a temp image cache with valid JPEGs for the test_merged_property."""
+    from io import BytesIO
+
+    from PIL import Image
+
+    from home_finder.utils.image_cache import get_cached_image_path, save_image_bytes
+
+    buf = BytesIO()
+    Image.new("RGB", (10, 10), color="red").save(buf, format="JPEG")
+    jpeg_bytes = buf.getvalue()
+
+    data_dir = str(tmp_path)
+    merged = test_merged_property
+    for idx, img in enumerate(merged.images):
+        path = get_cached_image_path(
+            data_dir, merged.unique_id, str(img.url), img.image_type, idx
+        )
+        save_image_bytes(path, jpeg_bytes)
+    if merged.floorplan:
+        path = get_cached_image_path(
+            data_dir, merged.unique_id, str(merged.floorplan.url), "floorplan", 0
+        )
+        save_image_bytes(path, jpeg_bytes)
+    return data_dir
 
 
 def _make_quality_filter() -> PropertyQualityFilter:
@@ -325,7 +355,9 @@ class TestTwoPhaseAnalysisViaHTTP:
         assert phase1_request.headers["content-type"] == "application/json"
 
     @respx.mock
-    async def test_request_body_structure(self, test_merged_property: MergedProperty) -> None:
+    async def test_request_body_structure(
+        self, test_merged_property: MergedProperty, cached_data_dir: str
+    ) -> None:
         """Phase 1 request body should contain images, system prompt, and tools."""
         route = respx.post("https://api.anthropic.com/v1/messages").mock(
             side_effect=[
@@ -336,7 +368,9 @@ class TestTwoPhaseAnalysisViaHTTP:
 
         quality_filter = _make_quality_filter()
         try:
-            await quality_filter.analyze_merged_properties([test_merged_property])
+            await quality_filter.analyze_merged_properties(
+                [test_merged_property], data_dir=cached_data_dir
+            )
         finally:
             await quality_filter.close()
 
@@ -344,8 +378,8 @@ class TestTwoPhaseAnalysisViaHTTP:
         phase1_body = json.loads(route.calls[0].request.content)
 
         # Model and max_tokens
-        assert phase1_body["model"] == "claude-sonnet-4-5-20250929"
-        assert phase1_body["max_tokens"] == 16384
+        assert phase1_body["model"] == "claude-sonnet-4-6"
+        assert phase1_body["max_tokens"] == 21000
 
         # System prompt with cache_control
         assert len(phase1_body["system"]) == 1
@@ -362,8 +396,8 @@ class TestTwoPhaseAnalysisViaHTTP:
         assert len(phase1_body["tools"]) == 1
         assert phase1_body["tools"][0]["name"] == "property_visual_analysis"
 
-        # Extended thinking enabled
-        assert phase1_body["thinking"]["type"] == "enabled"
+        # Adaptive thinking enabled
+        assert phase1_body["thinking"]["type"] == "adaptive"
         assert phase1_body["tool_choice"] == {"type": "auto"}
 
     @respx.mock
