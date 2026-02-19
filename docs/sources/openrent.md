@@ -4,7 +4,7 @@
 
 ## Key Decisions
 
-- **HTTP client**: `crawlee.BeautifulSoupCrawler` for search, `httpx.AsyncClient` for detail pages, `curl_cffi` for image downloads — `imagescdn.openrent.co.uk` CDN blocks non-browser requests.
+- **HTTP client**: `curl_cffi` with `impersonate="chrome"` for search (TLS fingerprinting detection), `httpx.AsyncClient` for detail pages, `curl_cffi` for image downloads — `imagescdn.openrent.co.uk` CDN blocks non-browser requests.
 - **No newest sort**: Only distance/price sort available. Early-stop pagination is disabled; must paginate all pages every run.
 - **Geocoding override**: OpenRent mis-geocodes certain outcodes (e.g., E10 resolves to Buckinghamshire). `OUTCODE_SLUG_OVERRIDES` maps problem outcodes to correct neighbourhood slugs.
 
@@ -20,6 +20,7 @@ Gallery extracted via PhotoSwipe lightbox links, with fallbacks for legacy light
 
 ## Known Quirks
 
+- **TLS fingerprint sensitivity**: OpenRent returns 429 on every request when using plain HTTP clients (e.g. `httpx`, `crawlee`). Requires `curl_cffi` with Chrome TLS impersonation.
 - **No dedicated floorplan section**: Floorplans mixed into the general gallery. The PIL heuristic attempts to identify them.
 - **Protocol-relative URLs**: All image URLs start with `//` — must prepend `https:`.
 - **Property link parsing is fragile**: Multiple text nodes within each property link require careful filtering to extract the title.

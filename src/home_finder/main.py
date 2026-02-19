@@ -110,7 +110,7 @@ async def scrape_all_platforms(
     # Shuffle so rate-limited scrapers (Zoopla) don't always block the same areas
     random.shuffle(areas)
     scrapers = [
-        OpenRentScraper(),
+        OpenRentScraper(proxy_url=proxy_url),
         RightmoveScraper(),
         ZooplaScraper(proxy_url=proxy_url, max_areas=zoopla_max_areas),
         OnTheMarketScraper(proxy_url=proxy_url),
@@ -1185,6 +1185,7 @@ async def run_pipeline(
         bot_token=settings.telegram_bot_token.get_secret_value(),
         chat_id=settings.telegram_chat_id,
         web_base_url=settings.web_base_url,
+        data_dir=settings.data_dir,
     )
 
     try:

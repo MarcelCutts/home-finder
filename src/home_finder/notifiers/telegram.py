@@ -17,7 +17,7 @@ from home_finder.models import (
 
 if TYPE_CHECKING:
     from aiogram import Bot
-    from aiogram.types import InlineKeyboardMarkup
+    from aiogram.types import FSInputFile, InlineKeyboardMarkup
 
 logger = get_logger(__name__)
 
@@ -642,20 +642,55 @@ def _get_best_image_url(merged: MergedProperty) -> str | None:
     return urls[0] if urls else None
 
 
+def _resolve_photo(
+    url: str, unique_id: str, data_dir: str
+) -> "FSInputFile | str":
+    """Resolve a CDN URL to a local FSInputFile if cached, else return the URL.
+
+    Prefers thumbnails for single-photo sends (smaller upload, faster).
+    Falls back to the original URL when the image is not in the local cache.
+    """
+    from aiogram.types import FSInputFile
+
+    from home_finder.utils.image_cache import find_cached_file, find_thumbnail
+
+    cached = find_cached_file(data_dir, unique_id, url, "gallery")
+    if cached is not None:
+        thumb = find_thumbnail(cached)
+        return FSInputFile(thumb if thumb is not None else cached)
+    return url
+
+
+def _resolve_gallery_photos(
+    urls: list[str], unique_id: str, data_dir: str
+) -> "list[FSInputFile | str]":
+    """Resolve a list of gallery URLs to FSInputFile or URL strings.
+
+    When data_dir is empty, returns URLs unchanged (backwards compatible).
+    """
+    if not data_dir:
+        return list(urls)
+    return [_resolve_photo(url, unique_id, data_dir) for url in urls]
+
+
 class TelegramNotifier:
     """Send property notifications via Telegram."""
 
-    def __init__(self, *, bot_token: str, chat_id: int, web_base_url: str = "") -> None:
+    def __init__(
+        self, *, bot_token: str, chat_id: int, web_base_url: str = "", data_dir: str = ""
+    ) -> None:
         """Initialize the notifier.
 
         Args:
             bot_token: Telegram bot token from @BotFather.
             chat_id: Chat ID to send notifications to.
             web_base_url: Base URL for web dashboard (optional).
+            data_dir: Base data directory for image cache (optional).
         """
         self.bot_token = bot_token
         self.chat_id = chat_id
         self.web_base_url = web_base_url.rstrip("/") if web_base_url else ""
+        self.data_dir = data_dir
         self._bot: Bot | None = None
 
     def _get_bot(self) -> "Bot":
@@ -771,9 +806,10 @@ class TelegramNotifier:
             bot = self._get_bot()
             keyboard = _build_inline_keyboard(merged, web_base_url=self.web_base_url)
             gallery_urls = _get_gallery_urls(merged)
+            photos = _resolve_gallery_photos(gallery_urls, merged.unique_id, self.data_dir)
 
             sent_photo = False
-            if gallery_urls:
+            if photos:
                 caption = format_merged_property_caption(
                     merged,
                     commute_minutes=commute_minutes,
@@ -781,13 +817,13 @@ class TelegramNotifier:
                     quality_analysis=quality_analysis,
                 )
                 try:
-                    if is_high_rated and len(gallery_urls) >= 3:
+                    if is_high_rated and len(photos) >= 3:
                         # High-rated: album with viewing notes follow-up
                         followup_text = _format_followup_detail(
                             quality_analysis=quality_analysis,
                         )
                         sent_photo = await self._send_media_group(
-                            gallery_urls,
+                            photos,
                             caption=caption,
                             keyboard=keyboard,
                             followup_text=followup_text,
@@ -796,7 +832,7 @@ class TelegramNotifier:
                         # Single hero image with caption + keyboard
                         await bot.send_photo(
                             chat_id=self.chat_id,
-                            photo=gallery_urls[0],
+                            photo=photos[0],
                             caption=caption,
                             reply_markup=keyboard,
                         )
@@ -880,7 +916,7 @@ class TelegramNotifier:
 
     async def _send_media_group(
         self,
-        image_urls: list[str],
+        photos: "list[FSInputFile | str]",
         *,
         caption: str,
         keyboard: "InlineKeyboardMarkup",
@@ -893,7 +929,7 @@ class TelegramNotifier:
         directly). Falls back to a minimal pointer if no followup_text provided.
 
         Args:
-            image_urls: List of image URLs (up to 10).
+            photos: List of FSInputFile or URL strings (up to 10).
             caption: Caption for the first photo.
             keyboard: Inline keyboard to send in follow-up message.
             followup_text: Full analysis text for follow-up (up to 4096 chars).
@@ -904,11 +940,11 @@ class TelegramNotifier:
         from aiogram.utils.media_group import MediaGroupBuilder
 
         builder = MediaGroupBuilder()
-        for i, url in enumerate(image_urls[:10]):
+        for i, item in enumerate(photos[:10]):
             if i == 0:
-                builder.add_photo(media=url, caption=caption, parse_mode="HTML")
+                builder.add_photo(media=item, caption=caption, parse_mode="HTML")
             else:
-                builder.add_photo(media=url)
+                builder.add_photo(media=item)
 
         bot = self._get_bot()
         await bot.send_media_group(chat_id=self.chat_id, media=builder.build())

@@ -77,7 +77,7 @@ See README.md for full configuration reference. All settings use `HOME_FINDER_` 
 | Zoopla scraper | `curl_cffi` with `impersonate="chrome"` | TLS fingerprinting bypasses Cloudflare |
 | OnTheMarket scraper | `curl_cffi` with `impersonate="chrome"` | TLS fingerprinting detection |
 | Rightmove scraper | `crawlee.BeautifulSoupCrawler` | Standard requests work |
-| OpenRent scraper | `crawlee.BeautifulSoupCrawler` | Standard requests work |
+| OpenRent scraper | `curl_cffi` with `impersonate="chrome"` | TLS fingerprinting detection |
 | DetailFetcher (Zoopla/OTM) | `curl_cffi` with `impersonate="chrome"` | TLS fingerprinting on detail pages |
 | DetailFetcher (others) | `httpx.AsyncClient` | Standard requests work |
 

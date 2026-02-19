@@ -2,17 +2,16 @@
 
 import asyncio
 import re
-import time
 from urllib.parse import urljoin
 
-from bs4 import Tag
-from crawlee.crawlers import BeautifulSoupCrawler, BeautifulSoupCrawlingContext
-from crawlee.storage_clients import MemoryStorageClient
+from bs4 import BeautifulSoup, Tag
+from curl_cffi.requests import AsyncSession
 from pydantic import HttpUrl
 
 from home_finder.logging import get_logger
 from home_finder.models import FurnishType, Property, PropertySource
 from home_finder.scrapers.base import BaseScraper
+from home_finder.scrapers.constants import BROWSER_HEADERS
 
 logger = get_logger(__name__)
 
@@ -33,17 +32,84 @@ class OpenRentScraper(BaseScraper):
     RESULTS_PER_PAGE = 20
     MAX_PAGES = 20
     PAGE_DELAY_SECONDS = 2.0
-    MAX_DELAY_SECONDS = 30.0
-    BACKOFF_FACTOR = 2.0
-    # Requests normally complete in ~300ms; if >1s, retries likely happened
-    RETRY_THRESHOLD_SECONDS = 1.0
+
+    # 429 retry constants
+    MAX_RETRIES = 4
+    INITIAL_BACKOFF_SECONDS = 2.0
+    MAX_BACKOFF_SECONDS = 30.0
 
     # Search radius in km (appended as within= URL parameter)
     SEARCH_RADIUS_KM = 2
 
+    def __init__(self, *, proxy_url: str = "") -> None:
+        self._session: AsyncSession | None = None  # type: ignore[type-arg]
+        self._proxy_url = proxy_url
+
+    async def _get_session(self) -> AsyncSession:  # type: ignore[type-arg]
+        """Get or create a reusable curl_cffi session."""
+        if self._session is None:
+            self._session = AsyncSession()
+        return self._session
+
+    async def close(self) -> None:
+        """Close the curl_cffi session."""
+        if self._session is not None:
+            await self._session.close()
+            self._session = None
+
     @property
     def source(self) -> PropertySource:
         return PropertySource.OPENRENT
+
+    async def _fetch_page(self, url: str) -> str | None:
+        """Fetch page using curl_cffi with Chrome impersonation and 429 retry."""
+        session = await self._get_session()
+        backoff = self.INITIAL_BACKOFF_SECONDS
+
+        for attempt in range(1, self.MAX_RETRIES + 1):
+            try:
+                kwargs: dict[str, object] = {
+                    "impersonate": "chrome",
+                    "headers": BROWSER_HEADERS,
+                    "timeout": 30,
+                }
+                if self._proxy_url:
+                    kwargs["proxy"] = self._proxy_url
+                response = await session.get(url, **kwargs)  # type: ignore[arg-type]
+
+                if response.status_code == 200:
+                    text: str = response.text
+                    return text
+
+                if response.status_code == 429:
+                    if attempt < self.MAX_RETRIES:
+                        logger.warning(
+                            "openrent_429_retry",
+                            url=url,
+                            attempt=attempt,
+                            backoff=round(backoff, 1),
+                        )
+                        await asyncio.sleep(backoff)
+                        backoff = min(backoff * 2, self.MAX_BACKOFF_SECONDS)
+                        continue
+                    logger.warning(
+                        "openrent_429_exhausted",
+                        url=url,
+                        attempts=self.MAX_RETRIES,
+                    )
+                    return None
+
+                logger.warning(
+                    "openrent_http_error",
+                    status=response.status_code,
+                    url=url,
+                )
+                return None
+            except Exception as e:
+                logger.error("openrent_fetch_exception", error=str(e), url=url)
+                return None
+
+        return None
 
     async def scrape(
         self,
@@ -60,8 +126,6 @@ class OpenRentScraper(BaseScraper):
         known_source_ids: set[str] | None = None,
     ) -> list[Property]:
         """Scrape OpenRent for matching properties (all pages)."""
-        current_delay = self.PAGE_DELAY_SECONDS
-
         base_url = self._build_search_url(
             area=area,
             min_price=min_price,
@@ -74,46 +138,16 @@ class OpenRentScraper(BaseScraper):
         )
 
         async def fetch_page(page_idx: int) -> list[Property]:
-            nonlocal current_delay
-
             skip = page_idx * self.RESULTS_PER_PAGE
             url = f"{base_url}&skip={skip}" if page_idx > 0 else base_url
 
-            page_properties: list[Property] = []
+            html = await self._fetch_page(url)
+            if not html:
+                logger.warning("openrent_fetch_failed", url=url, page=page_idx + 1)
+                return []
 
-            async def handle_page(
-                context: BeautifulSoupCrawlingContext,
-                _props: list[Property] = page_properties,
-            ) -> None:
-                soup = context.soup
-                parsed = self._parse_search_results(soup, str(context.request.url))
-                _props.extend(parsed)
-
-            crawler = BeautifulSoupCrawler(
-                max_requests_per_crawl=1,
-                max_request_retries=1,
-                storage_client=MemoryStorageClient(),
-            )
-            crawler.router.default_handler(handle_page)
-
-            start = time.monotonic()
-            await crawler.run([url])
-            elapsed = time.monotonic() - start
-
-            # Adaptive backoff: normal requests complete in ~300ms.
-            # If significantly slower, crawlee was retrying 429s internally.
-            if elapsed > self.RETRY_THRESHOLD_SECONDS:
-                current_delay = min(current_delay * self.BACKOFF_FACTOR, self.MAX_DELAY_SECONDS)
-                logger.warning(
-                    "openrent_rate_limit_backoff",
-                    area=area,
-                    page=page_idx + 1,
-                    elapsed=round(elapsed, 1),
-                    new_delay=round(current_delay, 1),
-                )
-            elif current_delay > self.PAGE_DELAY_SECONDS:
-                # Gradually recover when requests are healthy again
-                current_delay = max(current_delay * 0.75, self.PAGE_DELAY_SECONDS)
+            soup = BeautifulSoup(html, "html.parser")
+            page_properties = self._parse_search_results(soup, url)
 
             logger.info(
                 "scraped_openrent_page",
@@ -124,7 +158,7 @@ class OpenRentScraper(BaseScraper):
             return page_properties
 
         async def delay() -> None:
-            await asyncio.sleep(current_delay)
+            await asyncio.sleep(self.PAGE_DELAY_SECONDS)
 
         # OpenRent has no "newest first" sort option (sortType only supports
         # 0=Distance, 1=Price↑, 2=Price↓). Results default to distance order,
@@ -194,7 +228,7 @@ class OpenRentScraper(BaseScraper):
 
         return f"{self.BASE_URL}/properties-to-rent/{area_slug}?{'&'.join(params)}"
 
-    def _parse_search_results(self, soup: "BeautifulSoup", base_url: str) -> list[Property]:  # type: ignore[name-defined]  # noqa: F821
+    def _parse_search_results(self, soup: BeautifulSoup, base_url: str) -> list[Property]:
         """Parse property listings from search results page.
 
         OpenRent embeds property data in JavaScript arrays on the page.
@@ -219,7 +253,7 @@ class OpenRentScraper(BaseScraper):
         seen_ids: set[str] = set()
 
         for link in property_links:
-            href = link.get("href", "")
+            href = str(link.get("href", ""))
             if not href:
                 continue
 
@@ -253,7 +287,7 @@ class OpenRentScraper(BaseScraper):
             image_url: str | None = None
             img_tag = link.find("img")
             if img_tag and img_tag.get("src"):
-                img_src = img_tag["src"]
+                img_src = str(img_tag["src"])
                 # OpenRent uses protocol-relative URLs (//imagescdn.openrent.co.uk/...)
                 if img_src.startswith("//"):
                     img_src = "https:" + img_src
@@ -306,7 +340,7 @@ class OpenRentScraper(BaseScraper):
 
         return properties
 
-    def _extract_js_arrays(self, soup: "BeautifulSoup") -> dict[str, list[int | float]]:  # type: ignore[name-defined]  # noqa: F821
+    def _extract_js_arrays(self, soup: BeautifulSoup) -> dict[str, list[int | float]]:
         """Extract JavaScript array variables from script tags."""
         data: dict[str, list[int | float]] = {}
         array_patterns = {

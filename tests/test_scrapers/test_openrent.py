@@ -1,7 +1,6 @@
 """Tests for OpenRent scraper."""
 
 from pathlib import Path
-from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -354,38 +353,30 @@ class TestOpenRentScraperIntegration:
         self, openrent_scraper: OpenRentScraper, openrent_search_html: str
     ) -> None:
         """Test that scrape method returns parsed properties."""
-        # Mock the crawler to return our fixture HTML
-        mock_context = MagicMock()
-        mock_context.soup = BeautifulSoup(openrent_search_html, "html.parser")
-        mock_context.request.url = "https://www.openrent.co.uk/properties-to-rent/hackney"
+        # Mock _fetch_page to return fixture HTML on page 1, None on page 2
+        call_count = 0
 
-        with patch.object(
-            openrent_scraper,
-            "_parse_search_results",
-            wraps=openrent_scraper._parse_search_results,
-        ) as mock_parse:
-            # Create a mock crawler that calls our handler with test data
-            async def mock_run(urls: list[str]) -> None:
-                # Simulate crawler behavior by directly calling parse
-                soup = BeautifulSoup(openrent_search_html, "html.parser")
-                openrent_scraper._parse_search_results(soup, urls[0])
+        async def mock_fetch(url: str) -> str | None:
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return openrent_search_html
+            return None  # Page 2 returns nothing → pagination stops
 
-            with patch("home_finder.scrapers.openrent.BeautifulSoupCrawler") as MockCrawler:
-                mock_crawler_instance = AsyncMock()
-                mock_crawler_instance.run = mock_run
-                mock_crawler_instance.router = MagicMock()
-                MockCrawler.return_value = mock_crawler_instance
+        with (
+            patch.object(openrent_scraper, "_fetch_page", side_effect=mock_fetch),
+            patch("asyncio.sleep", new_callable=AsyncMock),
+        ):
+            result = await openrent_scraper.scrape(
+                min_price=1800,
+                max_price=2500,
+                min_bedrooms=1,
+                max_bedrooms=2,
+                area="hackney",
+            )
 
-                await openrent_scraper.scrape(
-                    min_price=1800,
-                    max_price=2500,
-                    min_bedrooms=1,
-                    max_bedrooms=2,
-                    area="hackney",
-                )
-
-                # The parse method should have been called
-                mock_parse.assert_called_once()
+        assert len(result) == 3
+        assert all(p.source == PropertySource.OPENRENT for p in result)
 
 
 class TestOpenRentNoEarlyStop:
@@ -424,40 +415,105 @@ class TestOpenRentNoEarlyStop:
 
         pages_fetched: list[int] = []
 
-        with patch("home_finder.scrapers.openrent.BeautifulSoupCrawler") as MockCrawler:
+        async def mock_fetch(url: str) -> str | None:
+            idx = len(pages_fetched)
+            pages_fetched.append(idx)
+            if idx == 0:
+                return openrent_search_html
+            # Page 2 returns empty → pagination stops naturally
+            return "<html></html>"
 
-            def make_crawler(**kwargs: Any) -> MagicMock:
-                idx = len(pages_fetched)
-                mock = MagicMock()
-                handler: list[Any] = []
-                mock.router = MagicMock()
-                mock.router.default_handler = handler.append
-
-                async def run(urls: list[str]) -> None:
-                    ctx = MagicMock()
-                    if idx == 0:
-                        ctx.soup = BeautifulSoup(openrent_search_html, "html.parser")
-                    else:
-                        # Page 2 returns empty → pagination stops naturally
-                        ctx.soup = BeautifulSoup("<html></html>", "html.parser")
-                    ctx.request.url = urls[0]
-                    await handler[0](ctx)
-
-                mock.run = run
-                pages_fetched.append(idx)
-                return mock
-
-            MockCrawler.side_effect = make_crawler
-
-            with patch("asyncio.sleep", new_callable=AsyncMock):
-                result = await openrent_scraper.scrape(
-                    min_price=1800,
-                    max_price=2500,
-                    min_bedrooms=1,
-                    max_bedrooms=2,
-                    area="hackney",
-                    known_source_ids=known_ids,
-                )
+        with (
+            patch.object(openrent_scraper, "_fetch_page", side_effect=mock_fetch),
+            patch("asyncio.sleep", new_callable=AsyncMock),
+        ):
+            result = await openrent_scraper.scrape(
+                min_price=1800,
+                max_price=2500,
+                min_bedrooms=1,
+                max_bedrooms=2,
+                area="hackney",
+                known_source_ids=known_ids,
+            )
 
         assert len(pages_fetched) >= 2  # Did NOT early-stop on page 1
         assert len(result) == len(page1_props)  # Page 1 props still returned
+
+
+class TestOpenRent429Handling:
+    """Tests for 429 rate limit handling."""
+
+    @pytest.mark.asyncio
+    async def test_retries_on_429(self, openrent_scraper: OpenRentScraper) -> None:
+        """Test that _fetch_page retries on 429 with exponential backoff."""
+        mock_response_429 = MagicMock()
+        mock_response_429.status_code = 429
+
+        mock_response_200 = MagicMock()
+        mock_response_200.status_code = 200
+        mock_response_200.text = "<html>OK</html>"
+
+        mock_session = AsyncMock()
+        mock_session.get = AsyncMock(side_effect=[mock_response_429, mock_response_200])
+
+        openrent_scraper._session = mock_session
+
+        with patch("asyncio.sleep", new_callable=AsyncMock) as mock_sleep:
+            result = await openrent_scraper._fetch_page("https://openrent.co.uk/test")
+
+        assert result == "<html>OK</html>"
+        assert mock_session.get.call_count == 2
+        mock_sleep.assert_called_once_with(2.0)  # Initial backoff
+
+    @pytest.mark.asyncio
+    async def test_max_retries_exhausted(self, openrent_scraper: OpenRentScraper) -> None:
+        """Test that _fetch_page returns None after max retries."""
+        mock_response = MagicMock()
+        mock_response.status_code = 429
+
+        mock_session = AsyncMock()
+        mock_session.get = AsyncMock(return_value=mock_response)
+
+        openrent_scraper._session = mock_session
+
+        with patch("asyncio.sleep", new_callable=AsyncMock) as mock_sleep:
+            result = await openrent_scraper._fetch_page("https://openrent.co.uk/test")
+
+        assert result is None
+        assert mock_session.get.call_count == 4  # MAX_RETRIES
+        # Should have slept 3 times (not on the last attempt)
+        assert mock_sleep.call_count == 3
+        # Verify exponential backoff: 2s, 4s, 8s
+        mock_sleep.assert_any_call(2.0)
+        mock_sleep.assert_any_call(4.0)
+        mock_sleep.assert_any_call(8.0)
+
+    @pytest.mark.asyncio
+    async def test_proxy_passthrough(self) -> None:
+        """Test that proxy_url is passed to curl_cffi session.get()."""
+        scraper = OpenRentScraper(proxy_url="socks5://proxy:1080")
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.text = "<html>OK</html>"
+
+        mock_session = AsyncMock()
+        mock_session.get = AsyncMock(return_value=mock_response)
+        scraper._session = mock_session
+
+        await scraper._fetch_page("https://openrent.co.uk/test")
+
+        call_kwargs = mock_session.get.call_args
+        assert call_kwargs[1]["proxy"] == "socks5://proxy:1080"
+
+    @pytest.mark.asyncio
+    async def test_session_cleanup(self) -> None:
+        """Test that close() cleans up the session."""
+        scraper = OpenRentScraper()
+        mock_session = AsyncMock()
+        scraper._session = mock_session
+
+        await scraper.close()
+
+        mock_session.close.assert_called_once()
+        assert scraper._session is None

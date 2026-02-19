@@ -2022,6 +2022,25 @@ class TestCircuitBreaker:
 
         assert quality_filter._circuit_open
 
+    async def test_api_timeout_error_trips_circuit(
+        self,
+        sample_merged_property: MergedProperty,
+    ) -> None:
+        """APITimeoutError (subclass of APIConnectionError) should trip circuit breaker."""
+        from anthropic import APITimeoutError
+
+        quality_filter = PropertyQualityFilter(api_key="test-key")
+        quality_filter._client = MagicMock()
+        quality_filter._client.messages.create = AsyncMock(
+            side_effect=APITimeoutError(request=MagicMock())
+        )
+
+        for _ in range(_CIRCUIT_BREAKER_THRESHOLD):
+            with pytest.raises(APIUnavailableError):
+                await quality_filter.analyze_single_merged(sample_merged_property)
+
+        assert quality_filter._circuit_open
+
     async def test_bad_request_does_not_trip_circuit(
         self,
         sample_merged_property: MergedProperty,

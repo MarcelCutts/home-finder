@@ -1104,16 +1104,18 @@ class PropertyQualityFilter:
 
         except (RateLimitError, InternalServerError, APIConnectionError) as e:
             self._record_api_failure()
-            log_event = {
-                RateLimitError: "rate_limit_exhausted",
-                InternalServerError: "server_error",
-                APIConnectionError: "connection_error",
-            }[type(e)]
+            if isinstance(e, RateLimitError):
+                log_event = "rate_limit_exhausted"
+            elif isinstance(e, InternalServerError):
+                log_event = "server_error"
+            else:
+                log_event = "connection_error"
             logger.error(
                 log_event,
                 property_id=property_id,
                 phase="visual",
                 error=str(e),
+                error_type=type(e).__name__,
                 request_id=getattr(e, "_request_id", None)
                 if not isinstance(e, APIConnectionError)
                 else None,

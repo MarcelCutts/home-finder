@@ -1,5 +1,6 @@
 """Tests for Telegram notifications."""
 
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -30,6 +31,8 @@ from home_finder.notifiers.telegram import (
     _format_viewing_notes,
     _get_best_image_url,
     _get_gallery_urls,
+    _resolve_gallery_photos,
+    _resolve_photo,
     format_merged_property_caption,
     format_merged_property_message,
     format_property_message,
@@ -1236,3 +1239,221 @@ class TestHtmlLinkEscaping:
         assert "&amp;" in message
         # Should not have bare & in href (which would be invalid HTML)
         assert 'href="https://example.com/property?a=1&b=2"' not in message
+
+
+class TestResolvePhoto:
+    """Tests for _resolve_photo — CDN URL to FSInputFile resolution."""
+
+    def test_returns_fsinputfile_when_cached(self, tmp_path: Path) -> None:
+        """Cached image on disk should return FSInputFile."""
+        from aiogram.types import FSInputFile
+
+        from home_finder.utils.image_cache import get_cache_dir, url_to_filename
+
+        unique_id = "openrent:12345"
+        url = "https://example.com/img1.jpg"
+        cache_dir = get_cache_dir(str(tmp_path), unique_id)
+        cache_dir.mkdir(parents=True)
+        filename = url_to_filename(url, "gallery", 0)
+        (cache_dir / filename).write_bytes(b"\xff\xd8\xff" + b"\x00" * 100)
+
+        result = _resolve_photo(url, unique_id, str(tmp_path))
+        assert isinstance(result, FSInputFile)
+
+    def test_prefers_thumbnail_when_available(self, tmp_path: Path) -> None:
+        """Should prefer thumbnail over original when it exists."""
+        from aiogram.types import FSInputFile
+
+        from home_finder.utils.image_cache import (
+            THUMBNAIL_PREFIX,
+            get_cache_dir,
+            url_to_filename,
+        )
+
+        unique_id = "openrent:12345"
+        url = "https://example.com/img1.jpg"
+        cache_dir = get_cache_dir(str(tmp_path), unique_id)
+        cache_dir.mkdir(parents=True)
+        filename = url_to_filename(url, "gallery", 0)
+        original = cache_dir / filename
+        original.write_bytes(b"\xff\xd8\xff" + b"\x00" * 100)
+        stem = original.stem
+        thumb = cache_dir / f"{THUMBNAIL_PREFIX}{stem}.jpg"
+        thumb.write_bytes(b"\xff\xd8\xff" + b"\x00" * 50)
+
+        result = _resolve_photo(url, unique_id, str(tmp_path))
+        assert isinstance(result, FSInputFile)
+        assert THUMBNAIL_PREFIX in str(result.path)
+
+    def test_returns_url_when_not_cached(self, tmp_path: Path) -> None:
+        """Missing cache should fall back to the original URL string."""
+        url = "https://example.com/img1.jpg"
+        result = _resolve_photo(url, "openrent:99999", str(tmp_path))
+        assert result == url
+        assert isinstance(result, str)
+
+
+class TestResolveGalleryPhotos:
+    """Tests for _resolve_gallery_photos."""
+
+    def test_empty_data_dir_returns_urls(self) -> None:
+        """Empty data_dir should return URL strings unchanged (backwards compat)."""
+        urls = ["https://example.com/a.jpg", "https://example.com/b.jpg"]
+        result = _resolve_gallery_photos(urls, "openrent:123", "")
+        assert result == urls
+        assert all(isinstance(r, str) for r in result)
+
+    def test_mixed_cached_and_uncached(self, tmp_path: Path) -> None:
+        """Should return FSInputFile for cached, URL for uncached."""
+        from aiogram.types import FSInputFile
+
+        from home_finder.utils.image_cache import get_cache_dir, url_to_filename
+
+        unique_id = "zoopla:999"
+        cached_url = "https://example.com/cached.jpg"
+        uncached_url = "https://example.com/uncached.jpg"
+
+        cache_dir = get_cache_dir(str(tmp_path), unique_id)
+        cache_dir.mkdir(parents=True)
+        filename = url_to_filename(cached_url, "gallery", 0)
+        (cache_dir / filename).write_bytes(b"\xff\xd8\xff" + b"\x00" * 100)
+
+        result = _resolve_gallery_photos(
+            [cached_url, uncached_url], unique_id, str(tmp_path)
+        )
+        assert len(result) == 2
+        assert isinstance(result[0], FSInputFile)
+        assert isinstance(result[1], str)
+        assert result[1] == uncached_url
+
+
+class TestNotificationWithFSInputFile:
+    """Tests that notifications use FSInputFile when data_dir is configured."""
+
+    @pytest.mark.asyncio
+    async def test_send_photo_uses_fsinputfile(
+        self,
+        sample_merged_property: MergedProperty,
+        sample_quality_analysis: PropertyQualityAnalysis,
+        tmp_path: Path,
+    ) -> None:
+        """send_photo should receive FSInputFile when image is cached."""
+        from aiogram.types import FSInputFile
+
+        from home_finder.utils.image_cache import get_cache_dir, url_to_filename
+
+        # Cache the first gallery image
+        unique_id = sample_merged_property.unique_id
+        url = str(sample_merged_property.images[0].url)
+        cache_dir = get_cache_dir(str(tmp_path), unique_id)
+        cache_dir.mkdir(parents=True)
+        filename = url_to_filename(url, "gallery", 0)
+        (cache_dir / filename).write_bytes(b"\xff\xd8\xff" + b"\x00" * 100)
+
+        notifier = TelegramNotifier(
+            bot_token="123456:ABC-DEF",
+            chat_id=12345678,
+            data_dir=str(tmp_path),
+        )
+        mock_bot = AsyncMock()
+        mock_bot.send_photo = AsyncMock(return_value=MagicMock(message_id=1))
+        mock_bot.send_venue = AsyncMock(return_value=MagicMock(message_id=2))
+
+        with patch.object(notifier, "_get_bot", return_value=mock_bot):
+            result = await notifier.send_merged_property_notification(
+                sample_merged_property, quality_analysis=sample_quality_analysis
+            )
+
+        assert result is True
+        mock_bot.send_photo.assert_called_once()
+        photo_arg = mock_bot.send_photo.call_args[1]["photo"]
+        assert isinstance(photo_arg, FSInputFile)
+
+    @pytest.mark.asyncio
+    async def test_no_data_dir_uses_url_string(
+        self,
+        sample_merged_property: MergedProperty,
+        sample_quality_analysis: PropertyQualityAnalysis,
+    ) -> None:
+        """Without data_dir, send_photo should receive a URL string."""
+        notifier = TelegramNotifier(
+            bot_token="123456:ABC-DEF",
+            chat_id=12345678,
+        )
+        mock_bot = AsyncMock()
+        mock_bot.send_photo = AsyncMock(return_value=MagicMock(message_id=1))
+        mock_bot.send_venue = AsyncMock(return_value=MagicMock(message_id=2))
+
+        with patch.object(notifier, "_get_bot", return_value=mock_bot):
+            result = await notifier.send_merged_property_notification(
+                sample_merged_property, quality_analysis=sample_quality_analysis
+            )
+
+        assert result is True
+        photo_arg = mock_bot.send_photo.call_args[1]["photo"]
+        assert isinstance(photo_arg, str)
+
+    @pytest.mark.asyncio
+    async def test_album_uses_fsinputfile(
+        self,
+        sample_property: Property,
+        tmp_path: Path,
+    ) -> None:
+        """Media group should receive FSInputFile items when cached."""
+        from aiogram.types import FSInputFile
+
+        from home_finder.utils.image_cache import get_cache_dir, url_to_filename
+
+        images = tuple(
+            PropertyImage(
+                url=HttpUrl(f"https://example.com/img{i}.jpg"),
+                source=PropertySource.OPENRENT,
+                image_type="gallery",
+            )
+            for i in range(5)
+        )
+        merged = MergedProperty(
+            canonical=sample_property,
+            sources=(PropertySource.OPENRENT,),
+            source_urls={PropertySource.OPENRENT: sample_property.url},
+            images=images,
+            min_price=1900,
+            max_price=1900,
+        )
+
+        # Cache all images
+        cache_dir = get_cache_dir(str(tmp_path), merged.unique_id)
+        cache_dir.mkdir(parents=True)
+        for i, img in enumerate(images):
+            filename = url_to_filename(str(img.url), "gallery", i)
+            (cache_dir / filename).write_bytes(b"\xff\xd8\xff" + b"\x00" * 100)
+
+        high_rated = PropertyQualityAnalysis(
+            kitchen=KitchenAnalysis(),
+            condition=ConditionAnalysis(),
+            light_space=LightSpaceAnalysis(),
+            space=SpaceAnalysis(),
+            summary="Great flat.",
+            overall_rating=4,
+        )
+
+        notifier = TelegramNotifier(
+            bot_token="123456:ABC-DEF",
+            chat_id=12345678,
+            data_dir=str(tmp_path),
+        )
+        mock_bot = AsyncMock()
+        mock_bot.send_media_group = AsyncMock(return_value=[MagicMock(message_id=1)])
+        mock_bot.send_message = AsyncMock(return_value=MagicMock(message_id=2))
+        mock_bot.send_venue = AsyncMock(return_value=MagicMock(message_id=3))
+
+        with patch.object(notifier, "_get_bot", return_value=mock_bot):
+            result = await notifier.send_merged_property_notification(
+                merged, quality_analysis=high_rated
+            )
+
+        assert result is True
+        mock_bot.send_media_group.assert_called_once()
+        # Verify the media list contains FSInputFile objects
+        media_list = mock_bot.send_media_group.call_args[1]["media"]
+        assert any(isinstance(m.media, FSInputFile) for m in media_list)
