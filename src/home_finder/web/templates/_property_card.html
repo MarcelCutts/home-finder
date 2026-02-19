@@ -1,5 +1,8 @@
 {% from "_macros.html" import commute_pill, fit_badge, lifestyle_icons %}
-<article class="property-card" data-property-id="{{ prop.unique_id }}">
+<article class="property-card"
+         data-property-id="{{ prop.unique_id }}"
+         data-status="{{ prop.user_status or 'new' }}"
+         style="{% if prop.user_status and prop.user_status != 'new' and status_meta is defined %}--card-status-color: {{ status_meta[prop.user_status].color }}{% endif %}">
     <a href="/property/{{ prop.unique_id }}" class="card-link">
         <div class="card-image-wrapper">
             {% if prop.image_url %}
@@ -19,18 +22,16 @@
                     <span class="card-price-label">pcm</span>
                 </div>
                 {% endif %}
-                <span class="badge badge-neutral">{% if prop.bedrooms == 0 %}Studio{% else %}{{ prop.bedrooms }} bed{% endif %}</span>
-                {% if prop.benchmark_diff is defined and prop.benchmark_diff is not none %}
-                <span class="benchmark-chip {% if prop.benchmark_diff < 0 %}benchmark-below{% elif prop.benchmark_diff > 100 %}benchmark-above{% else %}benchmark-at{% endif %}">
+                <div class="card-overlay-right">
+                    <span class="badge badge-neutral">{% if prop.bedrooms == 0 %}Studio{% else %}{{ prop.bedrooms }} bed{% endif %}</span>
+                    {% if prop.benchmark_diff is defined and prop.benchmark_diff is not none %}
                     {% if prop.benchmark_diff < 0 %}
-                        &pound;{{ (-prop.benchmark_diff)|int }} below avg
+                    <span class="benchmark-chip benchmark-below">&minus;&pound;{{ (-prop.benchmark_diff)|int }}</span>
                     {% elif prop.benchmark_diff > 0 %}
-                        &pound;{{ prop.benchmark_diff|int }} above avg
-                    {% else %}
-                        At area avg
+                    <span class="benchmark-chip benchmark-above">&plus;&pound;{{ prop.benchmark_diff|int }}</span>
                     {% endif %}
-                </span>
-                {% endif %}
+                    {% endif %}
+                </div>
             </div>
             {{ fit_badge(prop.fit_score, prop.fit_breakdown) }}
         </div>
@@ -38,12 +39,11 @@
             {# Meta row: rating | postcode | commute pill #}
             <div class="card-meta">
                 <div class="card-meta-left">
-                    {% if prop.quality_rating %}
-                    <span class="quality-dots quality-dots-{{ prop.quality_rating }}">
-                        {{ prop.quality_rating }}/5
-                        {% for i in range(1, 6) %}{% if i <= prop.quality_rating %}<span class="dot filled">&#9679;</span>{% else %}<span class="dot empty">&#9679;</span>{% endif %}{% endfor %}
+                    {% set rating = prop.quality_rating or 0 %}
+                    <span class="quality-dots quality-dots-{{ rating }}">
+                        {{ rating }}/5
+                        {% for i in range(1, 6) %}{% if i <= rating %}<span class="dot filled">&#9679;</span>{% else %}<span class="dot empty">&#9679;</span>{% endif %}{% endfor %}
                     </span>
-                    {% endif %}
                     {% if prop.postcode %}
                     <span class="card-postcode">{{ prop.postcode }}</span>
                     {% endif %}
@@ -54,10 +54,6 @@
             {# AI summary text (2-line clamp) #}
             {% if prop.quality_summary %}
             <p class="card-summary">{{ prop.quality_summary }}</p>
-            {% endif %}
-
-            {% if prop.title %}
-            <p class="card-title">{{ prop.title }}</p>
             {% endif %}
 
             {# Property type + lifestyle icons row #}
@@ -71,9 +67,9 @@
             {% endif %}
 
             {# Highlight + lowlight chips #}
-            {% set max_highlights = 3 %}
+            {% set max_highlights = 4 %}
             {% set max_lowlights = 2 %}
-            {% set has_positive = prop.highlights or (prop.epc_rating and prop.epc_rating != 'unknown') or prop.value_rating %}
+            {% set has_positive = prop.highlights or (prop.epc_rating and prop.epc_rating != 'unknown') or (prop.value_rating and prop.value_rating in ('good', 'excellent')) %}
             {% set has_negative = prop.quality_concerns or prop.lowlights %}
             {% if has_positive or has_negative %}
             <div class="card-tags">
@@ -92,7 +88,7 @@
                     {% if prop.epc_rating and prop.epc_rating != 'unknown' %}
                     <span class="highlight-chip highlight-neutral">EPC {{ prop.epc_rating }}</span>
                     {% endif %}
-                    {% if prop.value_rating %}
+                    {% if prop.value_rating and prop.value_rating in ('good', 'excellent') %}
                     <span class="highlight-chip highlight-value-{{ prop.value_rating }}">{{ prop.value_rating }} value</span>
                     {% endif %}
                 </div>
@@ -120,27 +116,34 @@
             {% set badge = source_badges.get(s, {}) %}
             <span class="source-badge" style="background-color: {{ badge.get('color', '#888') }}" title="{{ badge.get('name', s) }}">{{ badge.get('abbr', s[:1]|upper) }}</span>
             {% endfor %}
-            {% if prop.user_status and prop.user_status != 'new' and status_meta is defined %}
-            <span class="status-badge" style="--status-color: {{ status_meta[prop.user_status].color }}">
-                {{ status_meta[prop.user_status].label }}
-            </span>
-            {% endif %}
             {% if prop.last_price_change is defined and prop.last_price_change and prop.last_price_change < 0 %}
             <span class="badge badge-green price-change-badge">
                 Dropped &pound;{{ "{:,}".format((-prop.last_price_change)|int) }}
             </span>
-            {% elif prop.last_price_change is defined and prop.last_price_change and prop.last_price_change > 0 %}
-            <span class="badge badge-red price-change-badge">
-                Up &pound;{{ "{:,}".format(prop.last_price_change|int) }}
-            </span>
             {% endif %}
             {% if prop.first_seen %}
-            {% set dom = prop.first_seen | days_since %}
             <span class="card-age">{{ prop.first_seen | listing_age }}</span>
-            {% if dom >= 14 %}
-            <span class="badge badge-amber" title="Listed {{ dom }} days — may be negotiable">Negotiable?</span>
-            {% endif %}
             {% endif %}
         </div>
     </a>
+    {% if not prop.user_status or prop.user_status == 'new' %}
+    <div class="card-quick-actions">
+        <button class="card-action-btn card-action-interested"
+                hx-patch="/property/{{ prop.unique_id }}/status"
+                hx-vals='{"status": "interested", "source": "card"}'
+                hx-target="closest article"
+                hx-swap="outerHTML"
+                title="Interested">
+            &#9733;
+        </button>
+        <button class="card-action-btn card-action-skip"
+                hx-patch="/property/{{ prop.unique_id }}/status"
+                hx-vals='{"status": "archived", "source": "card"}'
+                hx-target="closest article"
+                hx-swap="outerHTML"
+                title="Skip">
+            &#10005;
+        </button>
+    </div>
+    {% endif %}
 </article>

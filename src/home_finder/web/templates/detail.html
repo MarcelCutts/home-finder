@@ -3,6 +3,19 @@
 
 {% block title %}{{ prop.title }} — Home Finder{% endblock %}
 
+{% block meta_description %}<meta name="description" content="{{ prop.bedrooms }} bed · {{ prop.address }}{% if prop.postcode %}, {{ prop.postcode }}{% endif %}">{% endblock %}
+
+{% block og_meta %}
+<meta property="og:type" content="article">
+<meta property="og:site_name" content="Home Finder">
+<meta property="og:title" content="{{ prop.title }} — £{{ '{:,}'.format(prop.price_pcm) }}/mo">
+<meta property="og:description" content="{{ prop.bedrooms }} bed · {{ prop.address }}{% if prop.postcode %}, {{ prop.postcode }}{% endif %}">
+{% if og_image_url %}<meta property="og:image" content="{{ og_image_url }}">{% endif %}
+{% if base_url %}<meta property="og:url" content="{{ base_url }}/property/{{ prop.unique_id }}">{% endif %}
+<meta property="og:locale" content="en_GB">
+<meta name="twitter:card" content="summary_large_image">
+{% endblock %}
+
 {% block nav_info %}<a href="/">&larr; Dashboard</a>{% endblock %}
 
 {% block content %}
@@ -65,6 +78,11 @@
                 {%- endif %}
             </p>
             <div class="detail-header-meta">
+                {% set unique_id = prop.unique_id %}
+                {% set current_status = user_status %}
+                <div class="status-selector-wrap">
+                    {% include "_status_controls.html" %}
+                </div>
                 {% if prop.quality_rating %}
                 <span class="star-rating">
                     {% for i in range(1, 6) %}
@@ -97,15 +115,6 @@
                 {% endif %}
             </div>
         </div>
-    </div>
-
-    {# Status bar (Ticket 7) — badge + dropdown #}
-    <div class="detail-status-bar">
-        {% set unique_id = prop.unique_id %}
-        {% set status = user_status %}
-        {% set current_status = user_status %}
-        {% include "_status_badge.html" %}
-        {% include "_status_controls.html" %}
     </div>
 
     {# Status history (Ticket 7) — collapsible timeline #}

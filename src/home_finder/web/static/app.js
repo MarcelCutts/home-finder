@@ -420,6 +420,7 @@ L.GridLayer.include({
   var cluster = null;
   var mapInitialized = false;
   var markersByPropertyId = {};
+  var pinnedCardRequestId = 0;
 
   function createPricePillIcon(price, id) {
     var formatted = "\u00A3" + Number(price).toLocaleString();
@@ -528,9 +529,51 @@ L.GridLayer.include({
         card.scrollIntoView({ behavior: "smooth", block: "center" });
         card.classList.add("card-highlighted");
         setTimeout(function () { card.classList.remove("card-highlighted"); }, 2000);
-      } else {
-        window.location.href = "/property/" + encodeURIComponent(p.id);
+        return;
       }
+      // Card not on current page — fetch and pin it at top of results
+      var prev = resultsEl.querySelector(".pinned-card");
+      if (prev) prev.remove();
+
+      var thisRequest = ++pinnedCardRequestId;
+      var loader = document.createElement("div");
+      loader.className = "pinned-card pinned-card-loading";
+      loader.textContent = "Loading\u2026";
+      resultsEl.insertBefore(loader, resultsEl.firstChild);
+      resultsEl.scrollTop = 0;
+
+      fetch("/property/" + encodeURIComponent(p.id) + "/card")
+        .then(function (r) {
+          if (!r.ok) throw new Error(r.status);
+          return r.text();
+        })
+        .then(function (html) {
+          if (thisRequest !== pinnedCardRequestId) return;
+          loader.remove();
+          var wrapper = document.createElement("div");
+          wrapper.className = "pinned-card";
+          var dismiss = document.createElement("button");
+          dismiss.className = "pinned-card-dismiss";
+          dismiss.setAttribute("aria-label", "Dismiss pinned card");
+          dismiss.textContent = "\u00d7";
+          dismiss.onclick = function () { wrapper.remove(); };
+          wrapper.appendChild(dismiss);
+          var cardDiv = document.createElement("div");
+          cardDiv.innerHTML = html;
+          wrapper.appendChild(cardDiv);
+          resultsEl.insertBefore(wrapper, resultsEl.firstChild);
+          var pinned = wrapper.querySelector(".property-card");
+          if (pinned) {
+            pinned.scrollIntoView({ behavior: "smooth", block: "center" });
+            pinned.classList.add("card-highlighted");
+            setTimeout(function () { pinned.classList.remove("card-highlighted"); }, 2000);
+          }
+        })
+        .catch(function () {
+          if (thisRequest !== pinnedCardRequestId) return;
+          loader.remove();
+          window.location.href = "/property/" + encodeURIComponent(p.id);
+        });
     });
     marker.on("popupopen", function () {
       var pill = mapEl.querySelector('.price-pill[data-property-id="' + p.id + '"]');
@@ -752,6 +795,62 @@ L.GridLayer.include({
   }, { threshold: 0.3 });
 
   bars.forEach(function (bar) { observer.observe(bar); });
+})();
+
+// Status selector popover: toggle on click, close on outside click / Escape
+(function () {
+  document.addEventListener("click", function (e) {
+    var trigger = e.target.closest(".status-selector-trigger");
+    if (trigger) {
+      e.preventDefault();
+      var selector = trigger.closest(".status-selector");
+      var wasOpen = selector.classList.contains("open");
+
+      // Close any other open selectors
+      document.querySelectorAll(".status-selector.open").forEach(function (s) {
+        s.classList.remove("open");
+        s.querySelector(".status-selector-trigger").setAttribute("aria-expanded", "false");
+      });
+
+      if (!wasOpen) {
+        selector.classList.add("open");
+        trigger.setAttribute("aria-expanded", "true");
+      }
+      return;
+    }
+
+    // Close on click outside
+    if (!e.target.closest(".status-popover")) {
+      document.querySelectorAll(".status-selector.open").forEach(function (s) {
+        s.classList.remove("open");
+        s.querySelector(".status-selector-trigger").setAttribute("aria-expanded", "false");
+      });
+    }
+  });
+
+  document.addEventListener("keydown", function (e) {
+    if (e.key === "Escape") {
+      document.querySelectorAll(".status-selector.open").forEach(function (s) {
+        s.classList.remove("open");
+        var trigger = s.querySelector(".status-selector-trigger");
+        trigger.setAttribute("aria-expanded", "false");
+        trigger.focus();
+      });
+    }
+  });
+})();
+
+// Flash animation on card status change via HTMX
+(function () {
+  document.addEventListener("htmx:afterSwap", function (e) {
+    var card = e.detail.target;
+    if (card && card.classList && card.classList.contains("property-card")) {
+      card.classList.add("status-just-changed");
+      setTimeout(function () {
+        card.classList.remove("status-just-changed");
+      }, 700);
+    }
+  });
 })();
 
 // Scroll to top of results after HTMX pagination swap

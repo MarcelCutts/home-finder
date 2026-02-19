@@ -5,12 +5,18 @@ from pathlib import Path
 from pydantic import HttpUrl
 
 from home_finder.utils.image_cache import (
+    THUMBNAIL_PREFIX,
+    backfill_thumbnails,
     clear_image_cache,
     copy_cached_images,
     find_cached_file,
+    find_thumbnail,
+    gallery_cache_coverage,
+    generate_thumbnail,
     get_cache_dir,
     get_cached_image_path,
     is_property_cached,
+    is_valid_image_bytes,
     is_valid_image_url,
     read_image_bytes,
     safe_dir_name,
@@ -88,7 +94,7 @@ class TestIsPropertyCached:
 class TestSaveAndReadImageBytes:
     def test_round_trip(self, tmp_path: Path) -> None:
         path = tmp_path / "sub" / "image.jpg"
-        data = b"\xff\xd8\xff\xe0fake jpeg data"
+        data = b"fake image data"
         save_image_bytes(path, data)
         assert read_image_bytes(path) == data
 
@@ -240,6 +246,32 @@ class TestIsValidImageUrl:
         assert is_valid_image_url("https://example.com/feed.xml") is False
 
 
+class TestIsValidImageBytes:
+    def test_valid_jpeg(self) -> None:
+        assert is_valid_image_bytes(b"\xff\xd8\xff\xe0" + b"\x00" * 20) is True
+
+    def test_valid_png(self) -> None:
+        assert is_valid_image_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00" * 20) is True
+
+    def test_valid_gif(self) -> None:
+        assert is_valid_image_bytes(b"GIF89a" + b"\x00" * 20) is True
+
+    def test_valid_webp(self) -> None:
+        assert is_valid_image_bytes(b"RIFF\x00\x00\x00\x00WEBP" + b"\x00" * 20) is True
+
+    def test_rejects_html(self) -> None:
+        assert is_valid_image_bytes(b"<!DOCTYPE html><html>") is False
+
+    def test_rejects_plaintext(self) -> None:
+        assert is_valid_image_bytes(b"data something something") is False
+
+    def test_rejects_empty(self) -> None:
+        assert is_valid_image_bytes(b"") is False
+
+    def test_rejects_short(self) -> None:
+        assert is_valid_image_bytes(b"\xff\xd8\xff") is False
+
+
 class TestUrlNormalizationConsistency:
     """Verify that Pydantic HttpUrl normalization produces consistent cache keys."""
 
@@ -273,3 +305,278 @@ class TestUrlNormalizationConsistency:
         raw_name = url_to_filename(raw_url, "gallery", 0)
         norm_name = url_to_filename(normalized, "gallery", 0)
         assert raw_name != norm_name, "Expected different hashes for port-normalized URL"
+
+
+class TestGalleryCacheCoverage:
+    """Tests for gallery_cache_coverage()."""
+
+    def test_all_cached(self, tmp_path: Path) -> None:
+        """Returns (N, N) when all gallery images are cached."""
+        uid = "openrent:cov1"
+        data_dir = str(tmp_path)
+        urls = [f"https://example.com/img{i}.jpg" for i in range(3)]
+
+        cache_dir = get_cache_dir(data_dir, uid)
+        for idx, url in enumerate(urls):
+            save_image_bytes(cache_dir / url_to_filename(url, "gallery", idx), b"fake")
+
+        cached, expected = gallery_cache_coverage(data_dir, uid, urls)
+        assert cached == 3
+        assert expected == 3
+
+    def test_partial_cache(self, tmp_path: Path) -> None:
+        """Returns (M, N) where M < N for partial cache."""
+        uid = "zoopla:cov2"
+        data_dir = str(tmp_path)
+        urls = [f"https://example.com/img{i}.jpg" for i in range(4)]
+
+        # Only cache first 2 of 4
+        cache_dir = get_cache_dir(data_dir, uid)
+        for idx in range(2):
+            save_image_bytes(cache_dir / url_to_filename(urls[idx], "gallery", idx), b"fake")
+
+        cached, expected = gallery_cache_coverage(data_dir, uid, urls)
+        assert cached == 2
+        assert expected == 4
+
+    def test_with_floorplan_reduces_expected(self, tmp_path: Path) -> None:
+        """has_valid_floorplan=True reduces expected by 1."""
+        uid = "rightmove:cov3"
+        data_dir = str(tmp_path)
+        urls = [f"https://example.com/img{i}.jpg" for i in range(5)]
+
+        # Cache all 5
+        cache_dir = get_cache_dir(data_dir, uid)
+        for idx, url in enumerate(urls):
+            save_image_bytes(cache_dir / url_to_filename(url, "gallery", idx), b"fake")
+
+        # max_images=5, floorplan=True → effective_max=4
+        cached, expected = gallery_cache_coverage(
+            data_dir, uid, urls, has_valid_floorplan=True, max_images=5
+        )
+        assert cached == 4
+        assert expected == 4
+
+    def test_empty_gallery(self, tmp_path: Path) -> None:
+        """Returns (0, 0) when gallery is empty."""
+        cached, expected = gallery_cache_coverage(str(tmp_path), "x:1", [])
+        assert cached == 0
+        assert expected == 0
+
+    def test_max_images_caps_expected(self, tmp_path: Path) -> None:
+        """Expected should not exceed max_images."""
+        uid = "zoopla:cov4"
+        data_dir = str(tmp_path)
+        urls = [f"https://example.com/img{i}.jpg" for i in range(10)]
+
+        # Cache all 10
+        cache_dir = get_cache_dir(data_dir, uid)
+        for idx, url in enumerate(urls):
+            save_image_bytes(cache_dir / url_to_filename(url, "gallery", idx), b"fake")
+
+        cached, expected = gallery_cache_coverage(data_dir, uid, urls, max_images=3)
+        assert cached == 3
+        assert expected == 3
+
+
+def _create_test_image(width: int = 800, height: int = 600) -> bytes:
+    """Create a minimal valid JPEG image of the given size."""
+    from PIL import Image
+    import io
+
+    img = Image.new("RGB", (width, height), color=(100, 150, 200))
+    buf = io.BytesIO()
+    img.save(buf, "JPEG", quality=80)
+    return buf.getvalue()
+
+
+class TestGenerateThumbnail:
+    def test_creates_thumbnail(self, tmp_path: Path) -> None:
+        """Should create a thumb_ prefixed JPEG next to the original."""
+        original = tmp_path / "gallery_000_abc12345.jpg"
+        original.write_bytes(_create_test_image(800, 600))
+
+        result = generate_thumbnail(original)
+        assert result is not None
+        assert result.name == "thumb_gallery_000_abc12345.jpg"
+        assert result.is_file()
+        assert result.stat().st_size < original.stat().st_size
+
+    def test_skips_small_image(self, tmp_path: Path) -> None:
+        """Should return None if image is already <= max_dim."""
+        original = tmp_path / "gallery_000_abc12345.jpg"
+        original.write_bytes(_create_test_image(200, 150))
+
+        result = generate_thumbnail(original)
+        assert result is None
+
+    def test_idempotent(self, tmp_path: Path) -> None:
+        """Calling twice should return existing thumbnail."""
+        original = tmp_path / "gallery_000_abc12345.jpg"
+        original.write_bytes(_create_test_image(800, 600))
+
+        result1 = generate_thumbnail(original)
+        assert result1 is not None
+        mtime1 = result1.stat().st_mtime
+
+        result2 = generate_thumbnail(original)
+        assert result2 is not None
+        assert result2.stat().st_mtime == mtime1
+
+    def test_maintains_aspect_ratio(self, tmp_path: Path) -> None:
+        """Thumbnail should maintain aspect ratio."""
+        from PIL import Image
+
+        original = tmp_path / "gallery_000_abc12345.jpg"
+        original.write_bytes(_create_test_image(1000, 500))
+
+        result = generate_thumbnail(original)
+        assert result is not None
+        with Image.open(result) as img:
+            w, h = img.size
+            assert max(w, h) <= 480
+            assert abs(w / h - 2.0) < 0.1  # ~2:1 ratio preserved
+
+    def test_converts_rgba_to_rgb(self, tmp_path: Path) -> None:
+        """Should convert RGBA images to RGB for JPEG output."""
+        from PIL import Image
+        import io
+
+        img = Image.new("RGBA", (800, 600), color=(100, 150, 200, 128))
+        buf = io.BytesIO()
+        img.save(buf, "PNG")
+
+        original = tmp_path / "gallery_000_abc12345.png"
+        original.write_bytes(buf.getvalue())
+
+        result = generate_thumbnail(original)
+        assert result is not None
+        assert result.suffix == ".jpg"
+
+    def test_corrupt_image_returns_none(self, tmp_path: Path) -> None:
+        """Should return None for corrupt image data."""
+        original = tmp_path / "gallery_000_abc12345.jpg"
+        original.write_bytes(b"not a real image")
+
+        result = generate_thumbnail(original)
+        assert result is None
+
+    def test_custom_max_dim(self, tmp_path: Path) -> None:
+        """Should respect custom max_dim parameter."""
+        from PIL import Image
+
+        original = tmp_path / "gallery_000_abc12345.jpg"
+        original.write_bytes(_create_test_image(800, 600))
+
+        result = generate_thumbnail(original, max_dim=200)
+        assert result is not None
+        with Image.open(result) as img:
+            assert max(img.size) <= 200
+
+
+class TestFindThumbnail:
+    def test_finds_existing_thumbnail(self, tmp_path: Path) -> None:
+        original = tmp_path / "gallery_000_abc12345.jpg"
+        original.write_bytes(b"original")
+        thumb = tmp_path / "thumb_gallery_000_abc12345.jpg"
+        thumb.write_bytes(b"thumbnail")
+
+        result = find_thumbnail(original)
+        assert result is not None
+        assert result == thumb
+
+    def test_returns_none_when_no_thumbnail(self, tmp_path: Path) -> None:
+        original = tmp_path / "gallery_000_abc12345.jpg"
+        original.write_bytes(b"original")
+
+        result = find_thumbnail(original)
+        assert result is None
+
+
+class TestBackfillThumbnails:
+    def test_generates_missing_thumbnails(self, tmp_path: Path) -> None:
+        """Should generate thumbnails for gallery images without them."""
+        data_dir = str(tmp_path)
+        uid = "openrent:backfill1"
+        cache_dir = get_cache_dir(data_dir, uid)
+        cache_dir.mkdir(parents=True)
+
+        (cache_dir / "gallery_000_aaa11111.jpg").write_bytes(_create_test_image(800, 600))
+        (cache_dir / "gallery_001_bbb22222.jpg").write_bytes(_create_test_image(1000, 750))
+
+        generated, skipped, deleted = backfill_thumbnails(data_dir)
+        assert generated == 2
+        assert skipped == 0
+        assert deleted == 0
+        assert (cache_dir / "thumb_gallery_000_aaa11111.jpg").is_file()
+        assert (cache_dir / "thumb_gallery_001_bbb22222.jpg").is_file()
+
+    def test_skips_existing_thumbnails(self, tmp_path: Path) -> None:
+        """Should skip gallery images that already have thumbnails."""
+        data_dir = str(tmp_path)
+        uid = "openrent:backfill2"
+        cache_dir = get_cache_dir(data_dir, uid)
+        cache_dir.mkdir(parents=True)
+
+        (cache_dir / "gallery_000_aaa11111.jpg").write_bytes(_create_test_image(800, 600))
+        (cache_dir / "thumb_gallery_000_aaa11111.jpg").write_bytes(b"existing thumb")
+
+        generated, skipped, deleted = backfill_thumbnails(data_dir)
+        assert generated == 0
+        assert skipped == 1
+        assert deleted == 0
+
+    def test_ignores_non_gallery_files(self, tmp_path: Path) -> None:
+        """Should not generate thumbnails for epc_ or floorplan_ files."""
+        data_dir = str(tmp_path)
+        uid = "zoopla:backfill3"
+        cache_dir = get_cache_dir(data_dir, uid)
+        cache_dir.mkdir(parents=True)
+
+        (cache_dir / "epc_000_aaa11111.jpg").write_bytes(_create_test_image(800, 600))
+        (cache_dir / "floorplan_000_bbb22222.jpg").write_bytes(_create_test_image(800, 600))
+
+        generated, skipped, deleted = backfill_thumbnails(data_dir)
+        assert generated == 0
+        assert skipped == 0
+        assert deleted == 0
+
+    def test_empty_cache_dir(self, tmp_path: Path) -> None:
+        """Should return (0, 0, 0) for empty cache."""
+        generated, skipped, deleted = backfill_thumbnails(str(tmp_path))
+        assert generated == 0
+        assert skipped == 0
+        assert deleted == 0
+
+    def test_multiple_properties(self, tmp_path: Path) -> None:
+        """Should process all property directories."""
+        data_dir = str(tmp_path)
+        for uid in ["openrent_100", "rightmove_200"]:
+            cache_dir = tmp_path / "image_cache" / uid
+            cache_dir.mkdir(parents=True)
+            (cache_dir / "gallery_000_aaa11111.jpg").write_bytes(
+                _create_test_image(800, 600)
+            )
+
+        generated, skipped, deleted = backfill_thumbnails(data_dir)
+        assert generated == 2
+        assert deleted == 0
+
+    def test_deletes_corrupt_files(self, tmp_path: Path) -> None:
+        """Should detect and delete corrupt files (HTML error pages)."""
+        data_dir = str(tmp_path)
+        uid = "openrent:backfill_corrupt"
+        cache_dir = get_cache_dir(data_dir, uid)
+        cache_dir.mkdir(parents=True)
+
+        valid_file = cache_dir / "gallery_000_aaa11111.jpg"
+        valid_file.write_bytes(_create_test_image(800, 600))
+
+        corrupt_file = cache_dir / "gallery_001_bbb22222.jpg"
+        corrupt_file.write_bytes(b"<!DOCTYPE html><html><body>CDN Error</body></html>")
+
+        generated, skipped, deleted = backfill_thumbnails(data_dir)
+        assert generated == 1
+        assert deleted == 1
+        assert not corrupt_file.exists()
+        assert valid_file.exists()

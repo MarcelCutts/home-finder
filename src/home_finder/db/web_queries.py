@@ -23,6 +23,90 @@ if TYPE_CHECKING:
 
 logger = get_logger(__name__)
 
+# ── Shared SQL fragments for card-format queries ──────────────────────
+
+_CARD_COLUMNS = """
+    p.*, q.overall_rating as quality_rating,
+    q.condition_concerns as quality_concerns,
+    q.concern_severity as quality_severity,
+    q.analysis_json,
+    (SELECT pi.url FROM property_images pi
+     WHERE pi.property_unique_id = p.unique_id
+     AND pi.image_type = 'gallery'
+     AND LOWER(pi.url) NOT LIKE '%epc%'
+     AND LOWER(pi.url) NOT LIKE '%energy-performance%'
+     AND LOWER(pi.url) NOT LIKE '%energy_performance%'
+     ORDER BY pi.id LIMIT 1) as first_gallery_url,
+    (SELECT ph.change_amount FROM price_history ph
+     WHERE ph.property_unique_id = p.unique_id
+     ORDER BY ph.detected_at DESC LIMIT 1) as last_price_change,
+    (SELECT ph.detected_at FROM price_history ph
+     WHERE ph.property_unique_id = p.unique_id
+     ORDER BY ph.detected_at DESC LIMIT 1) as price_changed_at,
+    rb.median_rent as area_median,
+    (p.price_pcm - rb.median_rent) as benchmark_diff
+"""
+
+_CARD_JOINS = """
+    FROM properties p
+    LEFT JOIN quality_analyses q ON p.unique_id = q.property_unique_id
+    LEFT JOIN rent_benchmarks rb
+        ON rb.outcode = UPPER(SUBSTR(p.postcode, 1, INSTR(p.postcode || ' ', ' ') - 1))
+        AND rb.bedrooms = p.bedrooms
+"""
+
+_QUALITY_FIELD_DEFAULTS: dict[str, Any] = {
+    "quality_summary": "",
+    "value_rating": None,
+    "highlights": None,
+    "lowlights": None,
+    "one_line": None,
+    "property_type": None,
+    "epc_rating": None,
+}
+
+
+def _row_to_card_dict(row: aiosqlite.Row) -> PropertyListItem:
+    """Convert a raw DB row (with card columns) into a PropertyListItem dict."""
+    prop_dict = dict(row)
+    parse_json_fields(prop_dict)
+
+    if prop_dict.get("first_gallery_url"):
+        prop_dict["image_url"] = prop_dict["first_gallery_url"]
+
+    if not prop_dict.get("analysis_json"):
+        prop_dict.update(_QUALITY_FIELD_DEFAULTS)
+        return cast(PropertyListItem, prop_dict)
+
+    try:
+        analysis = json.loads(prop_dict["analysis_json"])
+    except (json.JSONDecodeError, TypeError):
+        prop_dict.update(_QUALITY_FIELD_DEFAULTS)
+        return cast(PropertyListItem, prop_dict)
+
+    prop_dict["quality_summary"] = analysis.get("summary", "")
+    value = analysis.get("value") or {}
+    prop_dict["value_rating"] = value.get("quality_adjusted_rating") or value.get("rating")
+
+    raw_hl = analysis.get("highlights")
+    raw_ll = analysis.get("lowlights")
+    prop_dict["highlights"] = (
+        [t for t in raw_hl if isinstance(t, str) and t.strip() not in ("", ",")]
+        if isinstance(raw_hl, list)
+        else None
+    )
+    prop_dict["lowlights"] = (
+        [t for t in raw_ll if isinstance(t, str) and t.strip() not in ("", ",")]
+        if isinstance(raw_ll, list)
+        else None
+    )
+    prop_dict["one_line"] = analysis.get("one_line")
+    listing_ext = analysis.get("listing_extraction") or {}
+    prop_dict["property_type"] = listing_ext.get("property_type")
+    prop_dict["epc_rating"] = listing_ext.get("epc_rating")
+
+    return cast(PropertyListItem, prop_dict)
+
 
 def build_filter_clauses(
     filters: PropertyFilter,
@@ -270,111 +354,28 @@ class WebQueryService:
         count_row = await count_cursor.fetchone()
         total = count_row[0] if count_row else 0
 
-        # Subquery: first non-EPC gallery image as fallback thumbnail
-        gallery_subquery = """
-            (SELECT pi.url FROM property_images pi
-             WHERE pi.property_unique_id = p.unique_id
-             AND pi.image_type = 'gallery'
-             AND LOWER(pi.url) NOT LIKE '%epc%'
-             AND LOWER(pi.url) NOT LIKE '%energy-performance%'
-             AND LOWER(pi.url) NOT LIKE '%energy_performance%'
-             ORDER BY pi.id LIMIT 1) as first_gallery_url
-        """
-
-        # Subqueries for price history (Ticket 10)
-        price_history_subquery = """
-            (SELECT ph.change_amount FROM price_history ph
-             WHERE ph.property_unique_id = p.unique_id
-             ORDER BY ph.detected_at DESC LIMIT 1) as last_price_change,
-            (SELECT ph.detected_at FROM price_history ph
-             WHERE ph.property_unique_id = p.unique_id
-             ORDER BY ph.detected_at DESC LIMIT 1) as price_changed_at
-        """
-
-        # Subquery for area rent benchmark (Ticket 10)
-        benchmark_subquery = """
-            rb.median_rent as area_median,
-            (p.price_pcm - rb.median_rent) as benchmark_diff
-        """
-
         offset = (page - 1) * per_page
         cursor = await conn.execute(
-            f"""
-            SELECT p.*, q.overall_rating as quality_rating,
-                   q.condition_concerns as quality_concerns,
-                   q.concern_severity as quality_severity,
-                   q.analysis_json,
-                   {gallery_subquery},
-                   {price_history_subquery},
-                   {benchmark_subquery}
-            FROM properties p
-            LEFT JOIN quality_analyses q ON p.unique_id = q.property_unique_id
-            LEFT JOIN rent_benchmarks rb
-                ON rb.outcode = UPPER(SUBSTR(p.postcode, 1, INSTR(p.postcode || ' ', ' ') - 1))
-                AND rb.bedrooms = p.bedrooms
-            WHERE {where_sql}
-            ORDER BY {order_sql}
-            LIMIT ? OFFSET ?
-            """,
+            f"SELECT {_CARD_COLUMNS} {_CARD_JOINS} WHERE {where_sql} ORDER BY {order_sql} LIMIT ? OFFSET ?",
             [*params, per_page, offset],
         )
         rows = await cursor.fetchall()
 
-        properties: list[PropertyListItem] = []
-        for row in rows:
-            prop_dict = dict(row)
-            parse_json_fields(prop_dict)
-            # Prefer enriched gallery image (EPC URLs already filtered by subquery)
-            # over scraper thumbnail which may be low-res or expired
-            if prop_dict.get("first_gallery_url"):
-                prop_dict["image_url"] = prop_dict["first_gallery_url"]
-            # Extract quality fields from analysis_json
-            if prop_dict.get("analysis_json"):
-                try:
-                    analysis = json.loads(prop_dict["analysis_json"])
-                    prop_dict["quality_summary"] = analysis.get("summary", "")
-                    value = analysis.get("value") or {}
-                    prop_dict["value_rating"] = value.get("quality_adjusted_rating") or value.get(
-                        "rating"
-                    )
-                    # Extended quality fields for card display
-                    # Defensive: filter out junk entries (commas, empties) from
-                    # old analyses where Claude returned malformed lists
-                    raw_hl = analysis.get("highlights")
-                    raw_ll = analysis.get("lowlights")
-                    prop_dict["highlights"] = (
-                        [t for t in raw_hl if isinstance(t, str) and t.strip() not in ("", ",")]
-                        if isinstance(raw_hl, list)
-                        else None
-                    )
-                    prop_dict["lowlights"] = (
-                        [t for t in raw_ll if isinstance(t, str) and t.strip() not in ("", ",")]
-                        if isinstance(raw_ll, list)
-                        else None
-                    )
-                    prop_dict["one_line"] = analysis.get("one_line")
-                    listing_ext = analysis.get("listing_extraction") or {}
-                    prop_dict["property_type"] = listing_ext.get("property_type")
-                    prop_dict["epc_rating"] = listing_ext.get("epc_rating")
-                except (json.JSONDecodeError, TypeError):
-                    prop_dict["quality_summary"] = ""
-                    prop_dict["value_rating"] = None
-                    prop_dict["highlights"] = None
-                    prop_dict["lowlights"] = None
-                    prop_dict["one_line"] = None
-                    prop_dict["property_type"] = None
-                    prop_dict["epc_rating"] = None
-            else:
-                prop_dict["quality_summary"] = ""
-                prop_dict["value_rating"] = None
-                prop_dict["highlights"] = None
-                prop_dict["lowlights"] = None
-                prop_dict["one_line"] = None
-                prop_dict["property_type"] = None
-                prop_dict["epc_rating"] = None
-            properties.append(cast(PropertyListItem, prop_dict))
+        return [_row_to_card_dict(row) for row in rows], total
 
-        return properties, total
+    async def get_property_card(self, unique_id: str) -> PropertyListItem | None:
+        """Get a single property in card-list format (same shape as get_properties_paginated).
+
+        Used by the card endpoint to render a single property card partial
+        when the card isn't on the current paginated page.
+        """
+        conn = await self._get_connection()
+        cursor = await conn.execute(
+            f"SELECT {_CARD_COLUMNS} {_CARD_JOINS} WHERE p.unique_id = ? LIMIT 1",
+            [unique_id],
+        )
+        row = await cursor.fetchone()
+        return _row_to_card_dict(row) if row else None
 
     async def get_property_detail(self, unique_id: str) -> PropertyDetailItem | None:
         """Get full property detail including quality analysis and images.

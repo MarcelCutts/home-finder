@@ -27,6 +27,7 @@ uv run home-finder --scrape-only        # Just scrape and print (no filtering/st
 uv run home-finder --max-per-scraper 5  # Limit results per scraper (for testing)
 uv run home-finder --serve              # Web dashboard + recurring pipeline scheduler
 uv run home-finder --debug              # Enable debug-level logging
+uv run home-finder --generate-thumbnails   # Generate missing thumbnails for cached images
 
 # Testing — runs in parallel by default via pytest-xdist (-n auto in addopts).
 # Timeout is already configured in pyproject.toml addopts (30s default).
@@ -59,7 +60,7 @@ See README.md for full configuration reference. All settings use `HOME_FINDER_` 
 5. **Wrap as MergedProperty** — `Deduplicator.properties_to_merged()` wraps each Property as single-source
 6. **New Property Filter** — Check SQLite DB to only process unseen properties
 7. **Commute Filter** — TravelTime API (if configured); geocodes missing coordinates
-8. **Detail Enrichment** — Fetch gallery, floorplans, descriptions; cache images to disk
+8. **Detail Enrichment** — Fetch gallery, floorplans, descriptions; cache images to disk; detect/remove EPC charts; detect floorplans in gallery via PIL heuristics; generate thumbnails for surviving gallery images
 9. **Post-Enrichment Dedup** — `deduplicate_merged_async()` merges cross-platform duplicates using enriched data
 10. **Floorplan Gate** — Drop properties without floorplans (if `require_floorplan=True`)
 11. **Quality Analysis** — Claude vision analyzes images (if configured)
@@ -103,6 +104,8 @@ async with AsyncSession() as session:
 - Quality analysis reads cached images from disk (avoids re-downloading)
 - Web dashboard serves cached images via `GET /images/{unique_id}/{filename}` with immutable cache headers
 - `image_url_map` in detail template maps original CDN URLs to local `/images/` URLs for cached images
+- **Thumbnails**: `thumb_` prefix, max 480px (2x retina for 240px cards). Generated during enrichment *after* EPC/floorplan detection (avoids orphaned thumbnails for reclassified images). `backfill_thumbnails()` generates missing thumbnails for existing caches (`--generate-thumbnails` CLI). Web dashboard prefers `thumb_` files when available, falls back to originals.
+- **EPC detection**: Gallery images identified as EPC charts are renamed from `gallery_*` to `epc_*` on disk and excluded from gallery/quality analysis.
 
 ### Quality Analysis
 
@@ -133,7 +136,7 @@ async with AsyncSession() as session:
 - **Config** → `config.py` — `pydantic-settings` with `HOME_FINDER_` prefix, key methods: `get_search_areas()`, `get_furnish_types()`, `get_search_criteria()`
 - **Database** → `db/storage.py` — async SQLite, `properties` + `property_images` tables, paginated queries with filters
 - **Notifier** → `notifiers/telegram.py` — aiogram 3.x, photo cards, quality display, venue pins, web dashboard deep links
-- **Image Cache** → `utils/image_cache.py` — disk-based, deterministic filenames from URL hash
+- **Image Cache** → `utils/image_cache.py` — disk-based, deterministic filenames from URL hash, thumbnail generation, EPC/floorplan file renaming, cache coverage checks
 - **Address Utils** → `utils/address.py` — `normalize_street_name`, `extract_outcode`
 - **Source Knowledge** → `docs/sources/` — per-platform decisions, filter quirks, known bugs, pipeline implications. Update the relevant source doc when changing a scraper's HTTP client, filter params, extraction approach, or anti-bot strategy.
 
@@ -145,7 +148,10 @@ async with AsyncSession() as session:
 - **Template variables:**
   - Dashboard: `properties`, `properties_json`, `search_areas`, `source_names`, `total`, `page`, `total_pages`, `sort`, `min_price`, `max_price`, `bedrooms`, `min_rating`, `area`
   - Detail: `prop`, `outcode`, `area_context`, `best_description`, `source_names`, `image_url_map`
-  - Property card `prop` dict: `unique_id`, `title`, `price_pcm`, `bedrooms`, `postcode`, `image_url`, `quality_rating`, `quality_concerns`, `quality_severity`, `quality_summary`, `sources_list`, `commute_minutes`, `transport_mode`, `min_price`, `max_price`, `latitude`, `longitude`
+  - Property card `prop` dict: `unique_id`, `title`, `price_pcm`, `bedrooms`, `postcode`, `image_url`, `quality_rating`, `quality_concerns`, `quality_severity`, `quality_summary`, `sources_list`, `commute_minutes`, `transport_mode`, `min_price`, `max_price`, `latitude`, `longitude`, `status`, `highlights`, `lowlights`, `value_rating`
+- **Templates:**
+  - `_status_controls.html` — Status pill groups (triage/progress/outcome) for detail page
+  - `_macros.html` — Shared Jinja2 macros
 
 ## Testing Patterns
 

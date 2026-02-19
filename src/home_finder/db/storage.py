@@ -1391,6 +1391,10 @@ class PropertyStorage:
             filters, sort=sort, page=page, per_page=per_page
         )
 
+    async def get_property_card(self, unique_id: str) -> PropertyListItem | None:
+        """Get a single property in card-list format."""
+        return await self._web.get_property_card(unique_id)
+
     async def get_property_detail(self, unique_id: str) -> PropertyDetailItem | None:
         """Get full property detail including quality analysis and images."""
         return await self._web.get_property_detail(unique_id)

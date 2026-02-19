@@ -17,6 +17,8 @@ from home_finder.utils.floorplan_detector import detect_floorplan
 from home_finder.utils.image_cache import (
     clear_image_cache,
     find_cached_file,
+    find_thumbnail,
+    generate_thumbnail,
     get_cached_image_path,
     is_property_cached,
     is_valid_image_url,
@@ -87,6 +89,25 @@ def _detect_floorplan_in_gallery(
             return floorplan, remaining, idx
 
     return None, images, -1
+
+
+def _generate_gallery_thumbnails(
+    images: list[PropertyImage],
+    unique_id: str,
+    data_dir: str,
+) -> int:
+    """Generate thumbnails for gallery images that don't have one yet.
+
+    Called after EPC/floorplan detection so only surviving gallery images
+    are thumbnailed (no orphaned thumb_ files for reclassified EPCs).
+    """
+    count = 0
+    for img in images:
+        cached_path = find_cached_file(data_dir, unique_id, str(img.url), "gallery")
+        if cached_path and not find_thumbnail(cached_path):
+            if generate_thumbnail(cached_path) is not None:
+                count += 1
+    return count
 
 
 def _detect_epc_in_gallery(
@@ -292,6 +313,12 @@ async def _enrich_single(
                 )
                 if old_path is not None and old_path.is_file() and not new_path.is_file():
                     save_image_bytes(new_path, old_path.read_bytes())
+
+        # Generate thumbnails for surviving gallery images (after EPC/floorplan detection)
+        if data_dir and all_images:
+            await asyncio.to_thread(
+                _generate_gallery_thumbnails, all_images, merged.unique_id, data_dir
+            )
 
         canonical = prop.model_copy(update=canon_updates) if canon_updates else prop
 

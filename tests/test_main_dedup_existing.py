@@ -142,8 +142,8 @@ class TestRunDedupExisting:
         # Create cached images for both
         otm_dir = get_cache_dir(str(tmp_path), merged_otm.unique_id)
         rm_dir = get_cache_dir(str(tmp_path), merged_rm.unique_id)
-        save_image_bytes(otm_dir / "gallery_000_aaa11111.jpg", b"otm_image")
-        save_image_bytes(rm_dir / "gallery_000_bbb22222.jpg", b"rm_image")
+        save_image_bytes(otm_dir / "gallery_000_aaa11111.jpg", b"fake")
+        save_image_bytes(rm_dir / "gallery_000_bbb22222.jpg", b"fake")
 
         # Verify both exist before dedup
         all_props = await storage.get_all_properties()

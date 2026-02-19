@@ -161,7 +161,7 @@ def _make_image_cache(tmp_path: Any, unique_id: str, count: int = 3) -> list[str
     for i in range(count):
         fname = f"gallery_{i:03d}_fake{i:04d}.jpg"
         path = cache_dir / fname
-        save_image_bytes(path, b"\xff\xd8\xff" + bytes(100))
+        save_image_bytes(path, b"fake")
         filenames.append(fname)
     return filenames
 

@@ -33,7 +33,7 @@ import sqlite3
 from collections import defaultdict
 from pathlib import Path
 
-from home_finder.utils.image_cache import find_cached_file, safe_dir_name
+from home_finder.utils.image_cache import find_cached_file, gallery_cache_coverage, safe_dir_name
 
 DEFAULT_DATA_DIR = Path(__file__).parent.parent / "data"
 
@@ -356,19 +356,17 @@ def reflag_partial(
             (uid,),
         ).fetchone()
 
-        has_floorplan = fp_row is not None
-        effective_max = max_images - (1 if has_floorplan else 0)
         gallery_urls = [r["url"] for r in img_rows]
-        expected = min(len(gallery_urls), effective_max)
+        cached_count, expected = gallery_cache_coverage(
+            data_dir,
+            uid,
+            gallery_urls,
+            has_valid_floorplan=fp_row is not None,
+            max_images=max_images,
+        )
 
         if expected == 0:
             continue
-
-        cached_count = sum(
-            1
-            for url in gallery_urls[:expected]
-            if find_cached_file(data_dir, uid, url, "gallery") is not None
-        )
 
         if cached_count < expected:
             to_flag.append(uid)

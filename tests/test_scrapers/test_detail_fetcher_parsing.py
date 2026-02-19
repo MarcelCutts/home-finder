@@ -891,41 +891,65 @@ class TestDetailFetcherLifecycle:
 # ---------------------------------------------------------------------------
 
 
+_VALID_JPEG = b"\xff\xd8\xff\xe0" + b"\x00" * 20
+
+
 class TestDownloadImageBytes:
     async def test_uses_curl_for_zoocdn(self) -> None:
         fetcher = DetailFetcher()
         mock_resp = MagicMock()
         mock_resp.status_code = 200
-        mock_resp.content = b"image-data"
+        mock_resp.content = _VALID_JPEG
         fetcher._curl_get_with_retry = AsyncMock(return_value=mock_resp)  # type: ignore[method-assign]
 
         result = await fetcher.download_image_bytes("https://lid.zoocdn.com/photo.jpg")
-        assert result == b"image-data"
+        assert result == _VALID_JPEG
         fetcher._curl_get_with_retry.assert_awaited_once()
 
     async def test_uses_curl_for_onthemarket(self) -> None:
         fetcher = DetailFetcher()
         mock_resp = MagicMock()
         mock_resp.status_code = 200
-        mock_resp.content = b"otm-data"
+        mock_resp.content = _VALID_JPEG
         fetcher._curl_get_with_retry = AsyncMock(return_value=mock_resp)  # type: ignore[method-assign]
 
         result = await fetcher.download_image_bytes("https://media.onthemarket.com/img.jpg")
-        assert result == b"otm-data"
+        assert result == _VALID_JPEG
 
     async def test_uses_httpx_for_other_urls(self) -> None:
         fetcher = DetailFetcher()
         mock_resp = MagicMock()
-        mock_resp.content = b"httpx-data"
+        mock_resp.content = _VALID_JPEG
         fetcher._httpx_get_with_retry = AsyncMock(return_value=mock_resp)  # type: ignore[method-assign]
 
         result = await fetcher.download_image_bytes("https://example.com/photo.jpg")
-        assert result == b"httpx-data"
+        assert result == _VALID_JPEG
 
     async def test_curl_non_200_returns_none(self) -> None:
         fetcher = DetailFetcher()
         mock_resp = MagicMock()
         mock_resp.status_code = 403
+        fetcher._curl_get_with_retry = AsyncMock(return_value=mock_resp)  # type: ignore[method-assign]
+
+        result = await fetcher.download_image_bytes("https://lid.zoocdn.com/photo.jpg")
+        assert result is None
+
+    async def test_rejects_html_error_page(self) -> None:
+        """CDN returning HTML with status 200 should be rejected."""
+        fetcher = DetailFetcher()
+        mock_resp = MagicMock()
+        mock_resp.content = b"<!DOCTYPE html><html><body>CDN Error</body></html>"
+        fetcher._httpx_get_with_retry = AsyncMock(return_value=mock_resp)  # type: ignore[method-assign]
+
+        result = await fetcher.download_image_bytes("https://example.com/photo.jpg")
+        assert result is None
+
+    async def test_rejects_plaintext_response(self) -> None:
+        """CDN returning plaintext with status 200 should be rejected."""
+        fetcher = DetailFetcher()
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.content = b"Access Denied"
         fetcher._curl_get_with_retry = AsyncMock(return_value=mock_resp)  # type: ignore[method-assign]
 
         result = await fetcher.download_image_bytes("https://lid.zoocdn.com/photo.jpg")

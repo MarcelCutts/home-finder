@@ -72,6 +72,7 @@ uv run home-finder --reanalyze --outcode E2,E8  # Flag specific outcodes for re-
 uv run home-finder --reanalyze --request-only   # Only flag for re-analysis, don't run it
 uv run home-finder --dedup-existing     # Retroactively merge duplicates already in the DB
 uv run home-finder --backfill-commute   # Backfill commute data for properties missing it
+uv run home-finder --generate-thumbnails   # Generate missing thumbnails for cached images
 uv run home-finder --debug              # Enable debug-level logging
 ```
 
@@ -86,6 +87,9 @@ The `--serve` flag starts a FastAPI web server on port 8000 with a background pi
 - **Map view**: Toggle between grid and map. MarkerCluster groups nearby properties; markers are color-coded by quality rating (green 4-5, amber 3, red 1-2, grey unrated)
 - **Property detail pages**: Full gallery with lightbox (keyboard + touch/swipe navigation), floorplan, quality analysis breakdown, area context (rental benchmarks, council tax, crime rates, rent trends), and source links
 - **Quality summary on cards**: Condition severity badge and one-line AI summary on each card
+- **Map marker interaction**: Clicking a marker scrolls to the card if visible, or fetches and pins it at the top of results with a dismiss button
+- **Property status workflow**: Pill-based status controls (triage → progress → outcome) with quick-action buttons (star/skip) on new property cards
+- **Thumbnails**: Gallery images served as 480px thumbnails for faster card loading
 - **Telegram integration**: When `HOME_FINDER_WEB_BASE_URL` is set, Telegram notifications include a "Details" button linking to the web dashboard
 
 ### Dashboard Configuration
@@ -113,8 +117,13 @@ The web dashboard is read-only (no forms that mutate state). Security measures i
 | `GET /` | Dashboard with filters (supports HTMX partial rendering) |
 | `GET /property/{unique_id}` | Property detail page |
 | `GET /images/{unique_id}/{filename}` | Cached property image (immutable cache headers) |
+| `GET /count` | Property count JSON (for badge/polling) |
+| `GET /property/{unique_id}/card` | Single property card partial (for map marker clicks) |
+| `GET /area/{outcode}` | Area context page (rent benchmarks, council tax, crime) |
 | `GET /health` | Health check (`{"status": "ok"}`) |
 | `GET /static/...` | Static assets (CSS, JS) |
+| `PATCH /property/{unique_id}/status` | Update property status (returns card or badge partial) |
+| `POST /property/{unique_id}/reanalyze` | Request quality re-analysis |
 
 ## Configuration
 
@@ -267,7 +276,9 @@ src/home_finder/
 │   │   ├── error.html     # Error/404 page
 │   │   ├── _results.html  # HTMX partial (card grid + pagination)
 │   │   ├── _property_card.html  # Single property card component
-│   │   └── _quality_card.html   # Quality analysis breakdown component
+│   │   ├── _quality_card.html   # Quality analysis breakdown component
+│   │   ├── _status_controls.html  # Status pill workflow component
+│   │   └── _macros.html           # Shared Jinja2 macros
 │   └── static/
 │       ├── app.js         # Lightbox, detail map, dashboard map, lazy loading
 │       └── style.css      # All custom styles
@@ -278,7 +289,9 @@ src/home_finder/
 ├── utils/
 │   ├── address.py         # Address normalization for deduplication
 │   ├── image_cache.py     # Disk-based image caching for gallery/floorplan images
-│   └── image_hash.py      # Perceptual image hashing
+│   ├── image_hash.py      # Perceptual image hashing
+│   ├── epc_detector.py    # EPC chart detection (PIL heuristics)
+│   └── floorplan_detector.py  # Floorplan detection (PIL heuristics)
 ├── models.py              # Pydantic models (Property, MergedProperty, SOURCE_NAMES, etc.)
 ├── config.py              # Settings management (pydantic-settings)
 ├── logging.py             # Structured logging (structlog)

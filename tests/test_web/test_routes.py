@@ -400,7 +400,11 @@ class TestPropertyDetail:
         await storage.save_merged_property(merged)
         await storage.save_property_images(
             merged.unique_id,
-            [PropertyImage(source=PropertySource.OPENRENT, url=HttpUrl(img_url), image_type="gallery")],
+            [
+                PropertyImage(
+                    source=PropertySource.OPENRENT, url=HttpUrl(img_url), image_type="gallery"
+                )
+            ],
         )
 
         # Save cached file with index 7 (not 0 as enumerate would produce)
@@ -414,7 +418,7 @@ class TestPropertyDetail:
             database_path=str(tmp_path / "test.db"),
         )
         cache_dir = get_cache_dir(test_settings.data_dir, merged.unique_id)
-        save_image_bytes(cache_dir / fname, b"\xff\xd8fake")
+        save_image_bytes(cache_dir / fname, b"fake")
 
         from fastapi import FastAPI
 
@@ -429,6 +433,67 @@ class TestPropertyDetail:
         safe_id = safe_dir_name(merged.unique_id)
         # The image URL should be rewritten to the local cached path
         assert f"/images/{safe_id}/{fname}" in resp.text
+
+
+# ---------------------------------------------------------------------------
+# Property card partial endpoint (map marker click)
+# ---------------------------------------------------------------------------
+
+
+class TestPropertyCardEndpoint:
+    """Tests for GET /property/{id}/card which returns a single card partial."""
+
+    @pytest.mark.asyncio
+    async def test_returns_card_html(
+        self, client: TestClient, storage: PropertyStorage, merged_a: MergedProperty
+    ) -> None:
+        await storage.save_merged_property(merged_a)
+        resp = client.get(f"/property/{merged_a.unique_id}/card")
+        assert resp.status_code == 200
+        assert "property-card" in resp.text
+        assert merged_a.unique_id in resp.text
+
+    def test_not_found_returns_404(self, client: TestClient) -> None:
+        resp = client.get("/property/nonexistent:999/card")
+        assert resp.status_code == 404
+
+    @pytest.mark.asyncio
+    async def test_card_includes_price(
+        self, client: TestClient, storage: PropertyStorage, merged_a: MergedProperty
+    ) -> None:
+        await storage.save_merged_property(merged_a)
+        resp = client.get(f"/property/{merged_a.unique_id}/card")
+        assert resp.status_code == 200
+        assert "1,900" in resp.text
+
+    @pytest.mark.asyncio
+    async def test_card_includes_quality_data(
+        self,
+        client: TestClient,
+        storage: PropertyStorage,
+        prop_a: Property,
+        merged_a: MergedProperty,
+        base_analysis: PropertyQualityAnalysis,
+    ) -> None:
+        await storage.save_merged_property(merged_a)
+        await storage.save_quality_analysis(prop_a.unique_id, base_analysis)
+        resp = client.get(f"/property/{merged_a.unique_id}/card")
+        assert resp.status_code == 200
+        assert "4/5" in resp.text
+
+    @pytest.mark.asyncio
+    async def test_card_is_partial_not_full_page(
+        self, client: TestClient, storage: PropertyStorage, merged_a: MergedProperty
+    ) -> None:
+        """Card endpoint returns just the card, not wrapped in base.html."""
+        await storage.save_merged_property(merged_a)
+        resp = client.get(f"/property/{merged_a.unique_id}/card")
+        assert resp.status_code == 200
+        # Should NOT contain full page scaffolding
+        assert "<nav" not in resp.text
+        assert "Home Finder" not in resp.text
+        # Should contain the card article
+        assert "<article" in resp.text
 
 
 # ---------------------------------------------------------------------------
@@ -491,7 +556,13 @@ class TestDetailQualityCards:
         await storage.save_merged_property(merged_a)
         await storage.save_property_images(
             merged_a.unique_id,
-            [PropertyImage(source=PropertySource.OPENRENT, url=HttpUrl("https://example.com/fp.jpg"), image_type="floorplan")],
+            [
+                PropertyImage(
+                    source=PropertySource.OPENRENT,
+                    url=HttpUrl("https://example.com/fp.jpg"),
+                    image_type="floorplan",
+                )
+            ],
         )
         await storage.save_quality_analysis(prop_a.unique_id, base_analysis)
         resp = client.get(f"/property/{merged_a.unique_id}")
@@ -539,12 +610,12 @@ class TestCachedImages:
         unique_id = "openrent:100"
         filename = "gallery_000_abc12345.jpg"
         cache_dir = get_cache_dir(settings.data_dir, unique_id)
-        save_image_bytes(cache_dir / filename, b"\xff\xd8\xff\xe0fake jpeg")
+        save_image_bytes(cache_dir / filename, b"fake jpeg")
 
         safe_id = safe_dir_name(unique_id)
         resp = client.get(f"/images/{safe_id}/{filename}")
         assert resp.status_code == 200
-        assert resp.content == b"\xff\xd8\xff\xe0fake jpeg"
+        assert resp.content == b"fake jpeg"
         assert "max-age=31536000" in resp.headers["cache-control"]
 
     def test_returns_404_for_missing_image(self, client: TestClient) -> None:
@@ -571,8 +642,8 @@ class TestResolveCachedThumbnail:
 
         cache_dir = get_cache_dir(data_dir, unique_id)
         # Create an epc file (alphabetically first) and a gallery file
-        save_image_bytes(cache_dir / "epc_000_aaa11111.jpg", b"\xff\xd8epc")
-        save_image_bytes(cache_dir / "gallery_001_bbb22222.jpg", b"\xff\xd8gallery")
+        save_image_bytes(cache_dir / "epc_000_aaa11111.jpg", b"fake")
+        save_image_bytes(cache_dir / "gallery_001_bbb22222.jpg", b"fake")
 
         result = _resolve_cached_thumbnail(unique_id, None, data_dir)
         assert result is not None
@@ -588,11 +659,53 @@ class TestResolveCachedThumbnail:
         # Save with index 7 (not 0)
         fname = url_to_filename(img_url, "gallery", 7)
         cache_dir = get_cache_dir(data_dir, unique_id)
-        save_image_bytes(cache_dir / fname, b"\xff\xd8fake")
+        save_image_bytes(cache_dir / fname, b"fake")
 
         result = _resolve_cached_thumbnail(unique_id, img_url, data_dir)
         assert result is not None
         assert fname in result
+
+    def test_prefers_thumb_file_fast_path(self, tmp_path: Path) -> None:
+        """When a thumb_ file exists, the hash-based path should prefer it."""
+        unique_id = "rightmove:77777"
+        data_dir = str(tmp_path)
+        img_url = "https://cdn.example.com/photo.jpg"
+
+        fname = url_to_filename(img_url, "gallery", 0)
+        thumb_name = f"thumb_{Path(fname).stem}.jpg"
+        cache_dir = get_cache_dir(data_dir, unique_id)
+        save_image_bytes(cache_dir / fname, b"fake")
+        save_image_bytes(cache_dir / thumb_name, b"fake")
+
+        result = _resolve_cached_thumbnail(unique_id, img_url, data_dir)
+        assert result is not None
+        assert thumb_name in result
+
+    def test_prefers_thumb_file_fallback_path(self, tmp_path: Path) -> None:
+        """When a thumb_ file exists, the fallback path should prefer it."""
+        unique_id = "openrent:88888"
+        data_dir = str(tmp_path)
+
+        cache_dir = get_cache_dir(data_dir, unique_id)
+        save_image_bytes(cache_dir / "gallery_000_aaa11111.jpg", b"fake")
+        save_image_bytes(cache_dir / "thumb_gallery_000_aaa11111.jpg", b"fake")
+
+        result = _resolve_cached_thumbnail(unique_id, None, data_dir)
+        assert result is not None
+        assert "thumb_gallery_000_aaa11111.jpg" in result
+
+    def test_falls_back_to_original_without_thumb(self, tmp_path: Path) -> None:
+        """When no thumb_ file exists, should serve the original."""
+        unique_id = "openrent:99999"
+        data_dir = str(tmp_path)
+
+        cache_dir = get_cache_dir(data_dir, unique_id)
+        save_image_bytes(cache_dir / "gallery_000_aaa11111.jpg", b"fake")
+
+        result = _resolve_cached_thumbnail(unique_id, None, data_dir)
+        assert result is not None
+        assert "gallery_000_aaa11111.jpg" in result
+        assert "thumb_" not in result
 
 
 # ---------------------------------------------------------------------------
@@ -685,16 +798,6 @@ class TestCardRendering:
         resp = client.get("/")
         assert resp.status_code == 200
         assert "excellent value" in resp.text
-
-    @pytest.mark.asyncio
-    async def test_card_title_displayed(
-        self, client: TestClient, storage: PropertyStorage, merged_a: MergedProperty
-    ) -> None:
-        await storage.save_merged_property(merged_a)
-        resp = client.get("/")
-        assert resp.status_code == 200
-        assert "card-title" in resp.text
-        assert merged_a.canonical.title in resp.text
 
 
 # ---------------------------------------------------------------------------
@@ -2054,7 +2157,7 @@ class TestStatusRoutes:
             data={"status": "interested"},
         )
         assert resp.status_code == 200
-        assert "status-badge" in resp.text
+        assert "status-selector" in resp.text
 
     @pytest.mark.asyncio
     async def test_patch_status_invalid_400(
@@ -2075,7 +2178,7 @@ class TestStatusRoutes:
         assert resp.status_code == 404
 
     @pytest.mark.asyncio
-    async def test_patch_returns_badge_partial(
+    async def test_patch_returns_selector_partial(
         self, client: TestClient, storage: PropertyStorage, merged_a: MergedProperty
     ) -> None:
         await storage.save_merged_property(merged_a)
@@ -2085,7 +2188,26 @@ class TestStatusRoutes:
         )
         assert resp.status_code == 200
         assert "<!DOCTYPE html>" not in resp.text
-        assert "status-badge" in resp.text
+        assert "status-selector" in resp.text
+        assert "Interested" in resp.text
+        # hx-target must use "closest" to avoid colon-in-id CSS selector bug
+        assert 'hx-target="closest .status-selector-wrap"' in resp.text
+        assert 'hx-swap="innerHTML"' in resp.text
+
+    @pytest.mark.asyncio
+    async def test_patch_returns_card_partial_for_htmx_card_swap(
+        self, client: TestClient, storage: PropertyStorage, merged_a: MergedProperty
+    ) -> None:
+        """When source=card, return full card partial."""
+        await storage.save_merged_property(merged_a)
+        resp = client.patch(
+            f"/property/{merged_a.unique_id}/status",
+            data={"status": "interested", "source": "card"},
+        )
+        assert resp.status_code == 200
+        assert "property-card" in resp.text
+        assert 'data-status="interested"' in resp.text
+        assert "<!DOCTYPE html>" not in resp.text
 
     @pytest.mark.asyncio
     async def test_dashboard_status_filter(
@@ -2118,6 +2240,89 @@ class TestStatusRoutes:
     def test_sort_longest_listed(self, client: TestClient) -> None:
         resp = client.get("/?sort=longest_listed")
         assert resp.status_code == 200
+
+    @pytest.mark.asyncio
+    async def test_consecutive_status_changes(
+        self, client: TestClient, storage: PropertyStorage, merged_a: MergedProperty
+    ) -> None:
+        """3 sequential PATCHes should each return 200 with the correct label."""
+        await storage.save_merged_property(merged_a)
+        steps = [
+            ("interested", "Interested"),
+            ("enquired", "Enquired"),
+            ("viewing_booked", "Viewing"),
+        ]
+        for status, label in steps:
+            resp = client.patch(
+                f"/property/{merged_a.unique_id}/status",
+                data={"status": status},
+            )
+            assert resp.status_code == 200, f"Failed on {status}"
+            assert label in resp.text, f"Missing label '{label}' after setting {status}"
+
+    @pytest.mark.asyncio
+    async def test_response_htmx_attrs_on_all_buttons(
+        self, client: TestClient, storage: PropertyStorage, merged_a: MergedProperty
+    ) -> None:
+        """Every status-option button in the PATCH response must have correct HTMX attrs."""
+        from bs4 import BeautifulSoup
+
+        await storage.save_merged_property(merged_a)
+        resp = client.patch(
+            f"/property/{merged_a.unique_id}/status",
+            data={"status": "interested"},
+        )
+        assert resp.status_code == 200
+        soup = BeautifulSoup(resp.text, "html.parser")
+        buttons = soup.select("button.status-option")
+        # There should be 9 status buttons (3 groups × 3)
+        assert len(buttons) == 9
+        for btn in buttons:
+            assert btn.get("hx-target") == "closest .status-selector-wrap"
+            assert btn.get("hx-swap") == "innerHTML"
+            assert btn.get("hx-patch")
+
+    @pytest.mark.asyncio
+    async def test_active_and_disabled_state_updates(
+        self, client: TestClient, storage: PropertyStorage, merged_a: MergedProperty
+    ) -> None:
+        """After PATCH: exactly 1 disabled button and 1 checkmark. Verify across 2 changes."""
+        from bs4 import BeautifulSoup
+
+        await storage.save_merged_property(merged_a)
+        for status in ("interested", "enquired"):
+            resp = client.patch(
+                f"/property/{merged_a.unique_id}/status",
+                data={"status": status},
+            )
+            assert resp.status_code == 200
+            soup = BeautifulSoup(resp.text, "html.parser")
+            # Exactly one disabled button
+            assert len(soup.select("button.status-option[disabled]")) == 1
+            # Exactly one checkmark SVG
+            assert len(soup.select("svg.status-option-check")) == 1
+            # The active button class should appear exactly once
+            assert len(soup.select("button.status-option.active")) == 1
+
+    @pytest.mark.asyncio
+    async def test_trigger_label_and_color_update(
+        self, client: TestClient, storage: PropertyStorage, merged_a: MergedProperty
+    ) -> None:
+        """Trigger button shows new label and --status-color matches USER_STATUS_META."""
+        from home_finder.models import USER_STATUS_META
+
+        await storage.save_merged_property(merged_a)
+        for status in ("viewing_booked", "rejected"):
+            resp = client.patch(
+                f"/property/{merged_a.unique_id}/status",
+                data={"status": status},
+            )
+            assert resp.status_code == 200
+            meta = USER_STATUS_META[status]
+            # Trigger button should contain the label
+            assert meta["label"] in resp.text
+            # Trigger should use the correct --status-color
+            assert f'--status-color: {meta["color"]}' in resp.text
 
 
 # ---------------------------------------------------------------------------
@@ -2174,13 +2379,12 @@ class TestPriceHistoryDetail:
     async def test_status_bar_on_detail(
         self, client: TestClient, storage: PropertyStorage, merged_a: MergedProperty
     ) -> None:
-        """Detail page should render the status bar with badge + controls."""
+        """Detail page should render the status selector in header meta."""
         await storage.save_merged_property(merged_a)
         resp = client.get(f"/property/{merged_a.unique_id}")
         assert resp.status_code == 200
-        assert "detail-status-bar" in resp.text
-        assert "status-badge" in resp.text
-        assert "status-controls" in resp.text
+        assert "detail-status-bar" not in resp.text
+        assert "status-selector" in resp.text
 
     @pytest.mark.asyncio
     async def test_listing_age_pill_on_detail(

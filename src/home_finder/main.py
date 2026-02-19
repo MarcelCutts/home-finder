@@ -42,7 +42,16 @@ from home_finder.scrapers import (
 )
 from home_finder.scrapers.detail_fetcher import DetailFetcher
 from home_finder.utils.address import is_outcode
-from home_finder.utils.image_cache import clear_image_cache, copy_cached_images
+from home_finder.utils.image_cache import (
+    backfill_thumbnails,
+    clear_image_cache,
+    copy_cached_images,
+    find_cached_file,
+    gallery_cache_coverage,
+    get_cached_image_path,
+    is_valid_image_url,
+    save_image_bytes,
+)
 
 logger = get_logger(__name__)
 
@@ -975,6 +984,115 @@ async def _run_quality_and_save(
     return count
 
 
+async def _download_missing_images(
+    merged: MergedProperty,
+    detail_fetcher: DetailFetcher,
+    data_dir: str,
+    max_images: int,
+) -> int:
+    """Download gallery images that are in the DB but missing from disk cache.
+
+    Uses URLs already on the MergedProperty (loaded from DB by the reanalysis
+    queue) — no detail-page fetching required.
+
+    Returns:
+        Number of images successfully downloaded.
+    """
+    has_fp = merged.floorplan is not None and is_valid_image_url(
+        str(merged.floorplan.url)
+    )
+    effective_max = max_images - (1 if has_fp else 0)
+    gallery = [img for img in merged.images if img.image_type == "gallery"]
+    to_check = gallery[:effective_max]
+
+    downloaded = 0
+    for idx, img in enumerate(to_check):
+        url_str = str(img.url)
+        if find_cached_file(data_dir, merged.unique_id, url_str, "gallery"):
+            continue
+        img_bytes = await detail_fetcher.download_image_bytes(url_str)
+        if img_bytes:
+            path = get_cached_image_path(
+                data_dir, merged.unique_id, url_str, "gallery", idx
+            )
+            save_image_bytes(path, img_bytes)
+            downloaded += 1
+        else:
+            logger.warning(
+                "missing_image_download_failed",
+                property_id=merged.unique_id,
+                url=url_str,
+            )
+    return downloaded
+
+
+async def _re_enrich_incomplete(
+    queue: list[MergedProperty],
+    settings: Settings,
+    storage: PropertyStorage,
+) -> list[MergedProperty]:
+    """Download missing cached images for reanalysis queue properties.
+
+    Checks each property's gallery images against the disk cache. For any
+    with gaps, downloads the missing files directly from the image URLs
+    already stored on the MergedProperty (no detail-page re-scraping).
+
+    Returns the queue unchanged — the same MergedProperty objects, but now
+    with more complete disk caches so the analysis gate will accept them.
+    """
+    if not settings.data_dir:
+        return queue
+
+    # Find properties with incomplete caches
+    incomplete: list[MergedProperty] = []
+    for merged in queue:
+        gallery_urls = [
+            str(img.url) for img in merged.images if img.image_type == "gallery"
+        ]
+        has_fp = merged.floorplan is not None and is_valid_image_url(
+            str(merged.floorplan.url)
+        )
+        cached, expected = gallery_cache_coverage(
+            settings.data_dir,
+            merged.unique_id,
+            gallery_urls,
+            has_valid_floorplan=has_fp,
+            max_images=settings.quality_filter_max_images,
+        )
+        if cached < expected:
+            incomplete.append(merged)
+
+    if not incomplete:
+        return queue
+
+    logger.info("downloading_missing_cache_images", count=len(incomplete))
+
+    detail_fetcher = DetailFetcher(
+        max_gallery_images=settings.quality_filter_max_images,
+        proxy_url=settings.proxy_url,
+    )
+    try:
+        total_downloaded = 0
+        for merged in incomplete:
+            downloaded = await _download_missing_images(
+                merged,
+                detail_fetcher,
+                settings.data_dir,
+                settings.quality_filter_max_images,
+            )
+            total_downloaded += downloaded
+    finally:
+        await detail_fetcher.close()
+
+    logger.info(
+        "missing_image_downloads_complete",
+        properties=len(incomplete),
+        images_downloaded=total_downloaded,
+    )
+
+    return queue
+
+
 async def _drain_reanalysis_queue(
     settings: Settings,
     storage: PropertyStorage,
@@ -997,6 +1115,8 @@ async def _drain_reanalysis_queue(
     queue = await storage.get_reanalysis_queue()
     if not queue:
         return 0
+
+    queue = await _re_enrich_incomplete(queue, settings, storage)
 
     logger.info("reanalysis_queue_drain_started", count=len(queue))
 
@@ -1384,12 +1504,14 @@ async def run_reanalysis(
         if request_only:
             return
 
-        # Step 2: Load queue
+        # Step 2: Load queue and re-enrich incomplete caches
         queue = await storage.get_reanalysis_queue()
 
         if not queue:
             print("No properties queued for re-analysis.")
             return
+
+        queue = await _re_enrich_incomplete(queue, settings, storage)
 
         # Step 3: Cost estimate
         est_cost = len(queue) * 0.06
@@ -1641,6 +1763,11 @@ def main() -> None:
         help="Retroactively merge duplicate properties already in the database",
     )
     parser.add_argument(
+        "--generate-thumbnails",
+        action="store_true",
+        help="Generate missing thumbnails for all cached gallery images",
+    )
+    parser.add_argument(
         "--reanalyze",
         action="store_true",
         help="Re-run quality analysis on flagged properties",
@@ -1726,6 +1853,9 @@ def main() -> None:
         asyncio.run(run_backfill_commute(settings))
     elif args.dedup_existing:
         asyncio.run(run_dedup_existing(settings))
+    elif args.generate_thumbnails:
+        generated, skipped, deleted = backfill_thumbnails(settings.data_dir)
+        print(f"Thumbnails generated: {generated}, skipped: {skipped}, corrupt deleted: {deleted}")
     elif args.reanalyze:
         outcodes = [o.strip().upper() for o in args.outcode.split(",")] if args.outcode else None
         asyncio.run(

@@ -112,7 +112,7 @@ class TestPhase1DbToDisk:
 
         fname = url_to_filename(url_with_file, "gallery", 0)
         cache_dir = get_cache_dir(data_dir, uid)
-        save_image_bytes(cache_dir / fname, b"fake-image")
+        save_image_bytes(cache_dir / fname, b"fake")
 
         _setup_db(tmp_path / "properties.db", [
             (uid, "zoopla", url_with_file, "gallery"),
@@ -133,8 +133,8 @@ class TestPhase1DbToDisk:
         url2 = "https://example.com/img2.jpg"
 
         cache_dir = get_cache_dir(data_dir, uid)
-        save_image_bytes(cache_dir / url_to_filename(url1, "gallery", 0), b"img1")
-        save_image_bytes(cache_dir / url_to_filename(url2, "gallery", 1), b"img2")
+        save_image_bytes(cache_dir / url_to_filename(url1, "gallery", 0), b"fake")
+        save_image_bytes(cache_dir / url_to_filename(url2, "gallery", 1), b"fake")
 
         _setup_db(tmp_path / "properties.db", [
             (uid, "rightmove", url1, "gallery"),
@@ -155,7 +155,7 @@ class TestPhase1DbToDisk:
         bad_url = "https://example.com/bad.jpg"
 
         cache_dir = get_cache_dir(data_dir, uid)
-        save_image_bytes(cache_dir / url_to_filename(good_url, "gallery", 0), b"ok")
+        save_image_bytes(cache_dir / url_to_filename(good_url, "gallery", 0), b"fake")
 
         _setup_db(tmp_path / "properties.db", [
             (uid, "zoopla", good_url, "gallery"),
@@ -189,10 +189,10 @@ class TestPhase1DbToDisk:
 
         # Property A: 1 good, 1 bad
         cache_a = get_cache_dir(data_dir, uid_a)
-        save_image_bytes(cache_a / url_to_filename(good_url_a, "gallery", 0), b"ok")
+        save_image_bytes(cache_a / url_to_filename(good_url_a, "gallery", 0), b"fake")
         # Property B: 1 good, 2 bad
         cache_b = get_cache_dir(data_dir, uid_b)
-        save_image_bytes(cache_b / url_to_filename(good_url_b, "gallery", 0), b"ok")
+        save_image_bytes(cache_b / url_to_filename(good_url_b, "gallery", 0), b"fake")
 
         _setup_db(tmp_path / "properties.db", [
             (uid_a, "zoopla", good_url_a, "gallery"),
@@ -258,7 +258,7 @@ class TestPhase1DbToDisk:
 
         fname = url_to_filename(epc_url, "epc", 0)
         cache_dir = get_cache_dir(data_dir, uid)
-        save_image_bytes(cache_dir / fname, b"epc-image")
+        save_image_bytes(cache_dir / fname, b"fake")
 
         _setup_db(tmp_path / "properties.db", [(uid, "zoopla", epc_url, "epc")])
 
@@ -292,8 +292,8 @@ class TestPhase2DiskToDb:
         url_not_in_db = "https://example.com/untracked.jpg"
 
         cache_dir = get_cache_dir(data_dir, uid)
-        save_image_bytes(cache_dir / url_to_filename(url_in_db, "gallery", 0), b"ok")
-        save_image_bytes(cache_dir / url_to_filename(url_not_in_db, "gallery", 1), b"extra")
+        save_image_bytes(cache_dir / url_to_filename(url_in_db, "gallery", 0), b"fake")
+        save_image_bytes(cache_dir / url_to_filename(url_not_in_db, "gallery", 1), b"fake")
 
         _setup_db(tmp_path / "properties.db", [(uid, "zoopla", url_in_db, "gallery")])
 
@@ -317,7 +317,7 @@ class TestPhase2DiskToDb:
         epc_url = "https://example.com/chart.png"
         epc_fname = url_to_filename(epc_url, "epc", 0)
         cache_dir = get_cache_dir(data_dir, uid)
-        save_image_bytes(cache_dir / epc_fname, b"epc-chart")
+        save_image_bytes(cache_dir / epc_fname, b"fake")
 
         _setup_db(tmp_path / "properties.db", [])
 
@@ -353,10 +353,10 @@ class TestPhase2DiskToDb:
 
         url_in_db = "https://example.com/photo.jpg"
         cache_dir = get_cache_dir(data_dir, uid)
-        save_image_bytes(cache_dir / url_to_filename(url_in_db, "gallery", 0), b"ok")
+        save_image_bytes(cache_dir / url_to_filename(url_in_db, "gallery", 0), b"fake")
         # Non-conforming filenames
-        save_image_bytes(cache_dir / ".DS_Store", b"junk")
-        save_image_bytes(cache_dir / "thumbs.db", b"junk")
+        save_image_bytes(cache_dir / ".DS_Store", b"fake")
+        save_image_bytes(cache_dir / "thumbs.db", b"fake")
 
         _setup_db(tmp_path / "properties.db", [(uid, "zoopla", url_in_db, "gallery")])
 
@@ -380,14 +380,14 @@ class TestPhase2DiskToDb:
         url_extra = "https://example.com/extra.jpg"
 
         save_image_bytes(
-            get_cache_dir(data_dir, uid_a) / url_to_filename(url_a, "gallery", 0), b"a"
+            get_cache_dir(data_dir, uid_a) / url_to_filename(url_a, "gallery", 0), b"fake"
         )
         save_image_bytes(
-            get_cache_dir(data_dir, uid_b) / url_to_filename(url_b, "gallery", 0), b"b"
+            get_cache_dir(data_dir, uid_b) / url_to_filename(url_b, "gallery", 0), b"fake"
         )
         # Extra file in uid_b with no DB record
         save_image_bytes(
-            get_cache_dir(data_dir, uid_b) / url_to_filename(url_extra, "gallery", 1), b"x"
+            get_cache_dir(data_dir, uid_b) / url_to_filename(url_extra, "gallery", 1), b"fake"
         )
 
         _setup_db(tmp_path / "properties.db", [
@@ -424,7 +424,7 @@ class TestMain:
         bad_url = "https://example.com/bad.jpg"
 
         cache_dir = get_cache_dir(data_dir, uid)
-        save_image_bytes(cache_dir / url_to_filename(good_url, "gallery", 0), b"ok")
+        save_image_bytes(cache_dir / url_to_filename(good_url, "gallery", 0), b"fake")
 
         _setup_db(tmp_path / "properties.db", [
             (uid, "zoopla", good_url, "gallery"),
@@ -442,7 +442,7 @@ class TestMain:
         bad_url = "https://example.com/gone.jpg"
 
         cache_dir = get_cache_dir(data_dir, uid)
-        save_image_bytes(cache_dir / url_to_filename(good_url, "gallery", 0), b"ok")
+        save_image_bytes(cache_dir / url_to_filename(good_url, "gallery", 0), b"fake")
 
         db_path = tmp_path / "properties.db"
         _setup_db(db_path, [
@@ -477,10 +477,10 @@ class TestPurgeDiskFiles:
 
         # Create cache dirs for both
         orphan_dir = get_cache_dir(data_dir, orphan_uid)
-        save_image_bytes(orphan_dir / url_to_filename(url1, "gallery", 0), b"img1")
-        save_image_bytes(orphan_dir / url_to_filename(url2, "gallery", 1), b"img2")
+        save_image_bytes(orphan_dir / url_to_filename(url1, "gallery", 0), b"fake")
+        save_image_bytes(orphan_dir / url_to_filename(url2, "gallery", 1), b"fake")
         kept_dir = get_cache_dir(data_dir, kept_uid)
-        save_image_bytes(kept_dir / url_to_filename(kept_url, "gallery", 0), b"kept")
+        save_image_bytes(kept_dir / url_to_filename(kept_url, "gallery", 0), b"fake")
 
         # Only kept_uid exists in DB
         _setup_db(
@@ -512,8 +512,8 @@ class TestPurgeDiskFiles:
         cache_dir = get_cache_dir(data_dir, uid)
         tracked_fname = url_to_filename(tracked_url, "gallery", 0)
         stale_fname = url_to_filename(stale_url, "gallery", 1)
-        save_image_bytes(cache_dir / tracked_fname, b"tracked")
-        save_image_bytes(cache_dir / stale_fname, b"stale")
+        save_image_bytes(cache_dir / tracked_fname, b"fake")
+        save_image_bytes(cache_dir / stale_fname, b"fake")
 
         _setup_db(
             tmp_path / "properties.db",
@@ -544,13 +544,13 @@ class TestPurgeDiskFiles:
 
         # Orphan dir
         orphan_dir = get_cache_dir(data_dir, orphan_uid)
-        save_image_bytes(orphan_dir / url_to_filename(orphan_url, "gallery", 0), b"orph")
+        save_image_bytes(orphan_dir / url_to_filename(orphan_url, "gallery", 0), b"fake")
 
         # DB-backed dir with one stale file
         kept_dir = get_cache_dir(data_dir, kept_uid)
-        save_image_bytes(kept_dir / url_to_filename(kept_url, "gallery", 0), b"kept")
+        save_image_bytes(kept_dir / url_to_filename(kept_url, "gallery", 0), b"fake")
         stale_fname = url_to_filename(stale_url, "gallery", 1)
-        save_image_bytes(kept_dir / stale_fname, b"stale")
+        save_image_bytes(kept_dir / stale_fname, b"fake")
 
         _setup_db(
             tmp_path / "properties.db",
@@ -592,8 +592,8 @@ class TestPurgeDiskFiles:
         uid = "zoopla:50001"
 
         cache_dir = get_cache_dir(data_dir, uid)
-        save_image_bytes(cache_dir / ".DS_Store", b"junk")
-        save_image_bytes(cache_dir / "thumbs.db", b"junk")
+        save_image_bytes(cache_dir / ".DS_Store", b"fake")
+        save_image_bytes(cache_dir / "thumbs.db", b"fake")
 
         _setup_db(tmp_path / "properties.db", [], property_ids=[uid])
 
@@ -615,7 +615,7 @@ class TestPurgeDiskFiles:
         url = "https://example.com/img.jpg"
 
         orphan_dir = get_cache_dir(data_dir, orphan_uid)
-        save_image_bytes(orphan_dir / url_to_filename(url, "gallery", 0), b"img")
+        save_image_bytes(orphan_dir / url_to_filename(url, "gallery", 0), b"fake")
 
         _setup_db(tmp_path / "properties.db", [], property_ids=[])
 
@@ -638,7 +638,7 @@ class TestReflagPartial:
 
         # Cache only one of two images
         cache_dir = get_cache_dir(data_dir, uid)
-        save_image_bytes(cache_dir / url_to_filename(cached_url, "gallery", 0), b"ok")
+        save_image_bytes(cache_dir / url_to_filename(cached_url, "gallery", 0), b"fake")
 
         _setup_db(
             tmp_path / "properties.db",
@@ -672,8 +672,8 @@ class TestReflagPartial:
         url2 = "https://example.com/b.jpg"
 
         cache_dir = get_cache_dir(data_dir, uid)
-        save_image_bytes(cache_dir / url_to_filename(url1, "gallery", 0), b"a")
-        save_image_bytes(cache_dir / url_to_filename(url2, "gallery", 1), b"b")
+        save_image_bytes(cache_dir / url_to_filename(url1, "gallery", 0), b"fake")
+        save_image_bytes(cache_dir / url_to_filename(url2, "gallery", 1), b"fake")
 
         _setup_db(
             tmp_path / "properties.db",
@@ -770,8 +770,8 @@ class TestReflagPartial:
 
         # Cache both gallery images
         cache_dir = get_cache_dir(data_dir, uid)
-        save_image_bytes(cache_dir / url_to_filename(gallery_url1, "gallery", 0), b"g1")
-        save_image_bytes(cache_dir / url_to_filename(gallery_url2, "gallery", 1), b"g2")
+        save_image_bytes(cache_dir / url_to_filename(gallery_url1, "gallery", 0), b"fake")
+        save_image_bytes(cache_dir / url_to_filename(gallery_url2, "gallery", 1), b"fake")
 
         _setup_db(
             tmp_path / "properties.db",

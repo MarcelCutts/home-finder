@@ -13,6 +13,7 @@ from curl_cffi.requests import AsyncSession
 from home_finder.logging import get_logger
 from home_finder.models import Property, PropertySource
 from home_finder.scrapers.constants import BROWSER_HEADERS
+from home_finder.utils.image_cache import is_valid_image_bytes
 
 _MAX_RETRIES = 2  # cross-run retry handles persistent failures
 _RETRY_BASE_DELAY = 2.0  # seconds, doubled each retry (2, 4)
@@ -788,10 +789,14 @@ class DetailFetcher:
                 if response.status_code != 200:
                     logger.debug("image_download_failed", url=url, status=response.status_code)
                     return None
-                return response.content  # type: ignore[no-any-return]
+                data: bytes = response.content  # type: ignore[assignment]
             else:
                 response = await self._httpx_get_with_retry(url)
-                return response.content
+                data = response.content
+            if not is_valid_image_bytes(data):
+                logger.warning("image_download_not_image", url=url, prefix=data[:16])
+                return None
+            return data
         except Exception as e:
             logger.debug("image_download_error", url=url, error=str(e))
             return None

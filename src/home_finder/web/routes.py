@@ -40,6 +40,7 @@ from home_finder.models import (
 from home_finder.utils.address import extract_outcode
 from home_finder.utils.image_cache import (
     find_cached_file,
+    find_thumbnail,
     get_cache_dir,
     safe_dir_name,
 )
@@ -193,9 +194,15 @@ def get_data_dir(request: Request) -> str:
     return cast(str, request.app.state.settings.data_dir)
 
 
+def get_base_url(request: Request) -> str:
+    """Dependency: get the web base URL from app settings (empty string if unset)."""
+    return cast(str, request.app.state.settings.web_base_url).rstrip("/")
+
+
 StorageDep = Annotated[PropertyStorage, Depends(get_storage)]
 SearchAreasDep = Annotated[list[str], Depends(get_search_areas)]
 DataDirDep = Annotated[str, Depends(get_data_dir)]
+BaseUrlDep = Annotated[str, Depends(get_base_url)]
 
 
 def _enrich_fit_scores(properties: list[Any]) -> None:
@@ -258,6 +265,9 @@ async def health_check(request: Request) -> JSONResponse:
 def _resolve_cached_thumbnail(unique_id: str, image_url: str | None, data_dir: str) -> str | None:
     """Resolve a CDN image URL to a locally cached path, or return None.
 
+    Prefers ``thumb_`` prefixed thumbnails when available, falling back to
+    the original gallery file for pre-existing caches without thumbnails.
+
     The DB stores the scraper thumbnail URL which often differs from the
     enrichment gallery URL (different CDN resolution path), so we fall back
     to the first ``gallery_*`` file in the cache directory.
@@ -268,14 +278,18 @@ def _resolve_cached_thumbnail(unique_id: str, image_url: str | None, data_dir: s
     if image_url and image_url.startswith("http"):
         cached = find_cached_file(data_dir, unique_id, image_url, "gallery")
         if cached:
-            return f"/images/{safe_id}/{cached.name}"
+            thumb = find_thumbnail(cached)
+            serve = thumb or cached
+            return f"/images/{safe_id}/{serve.name}"
 
-    # Fallback: first gallery file on disk
+    # Fallback: first gallery file on disk, prefer its thumbnail
     cache_dir = get_cache_dir(data_dir, unique_id)
     if cache_dir.is_dir():
         for f in sorted(cache_dir.iterdir()):
             if f.name.startswith("gallery_") and f.is_file():
-                return f"/images/{safe_id}/{f.name}"
+                thumb = find_thumbnail(f)
+                serve = thumb or f
+                return f"/images/{safe_id}/{serve.name}"
 
     return None
 
@@ -286,6 +300,7 @@ async def dashboard(
     storage: StorageDep,
     search_areas: SearchAreasDep,
     data_dir: DataDirDep,
+    base_url: BaseUrlDep,
     filters: FilterDep,
     sort: str = "newest",
     page: str | None = None,
@@ -359,6 +374,7 @@ async def dashboard(
         "added_options": ADDED_OPTIONS,
         "user_statuses": list(UserStatus),
         "status_meta": USER_STATUS_META,
+        "base_url": base_url,
         **filters.model_dump(),
     }
 
@@ -406,12 +422,46 @@ async def serve_cached_image(unique_id: str, filename: str, data_dir: DataDirDep
     )
 
 
+@router.get("/property/{unique_id}/card", response_class=HTMLResponse)
+async def property_card(
+    request: Request,
+    unique_id: str,
+    storage: StorageDep,
+    data_dir: DataDirDep,
+) -> HTMLResponse:
+    """Return a single property card partial for map marker click."""
+    try:
+        prop = await storage.get_property_card(unique_id)
+    except Exception:
+        logger.error("card_query_failed", unique_id=unique_id, exc_info=True)
+        return HTMLResponse("", status_code=500)
+
+    if not prop:
+        return HTMLResponse("", status_code=404)
+
+    _enrich_fit_scores([prop])
+    resolved = _resolve_cached_thumbnail(prop["unique_id"], prop.get("image_url"), data_dir)
+    if resolved:
+        prop["image_url"] = resolved
+
+    return templates.TemplateResponse(
+        "_property_card.html",
+        {
+            "request": request,
+            "prop": prop,
+            "source_badges": SOURCE_BADGES,
+            "status_meta": USER_STATUS_META,
+        },
+    )
+
+
 @router.get("/property/{unique_id}", response_class=HTMLResponse)
 async def property_detail(
     request: Request,
     unique_id: str,
     storage: StorageDep,
     data_dir: DataDirDep,
+    base_url: BaseUrlDep,
 ) -> HTMLResponse:
     """Property detail page."""
     try:
@@ -562,6 +612,16 @@ async def property_detail(
         area_median=benchmark["median_rent"] if benchmark else None,
     )
 
+    # OG image: use first gallery image as absolute URL for social previews
+    og_image_url = ""
+    if base_url and image_url_map:
+        gallery_images = prop.get("gallery_images", [])
+        for img in gallery_images:
+            local_path = image_url_map.get(str(img.url))
+            if local_path:
+                og_image_url = f"{base_url}{local_path}"
+                break
+
     return templates.TemplateResponse(
         "detail.html",
         {
@@ -573,6 +633,8 @@ async def property_detail(
             "source_names": SOURCE_NAMES,
             "source_badges": SOURCE_BADGES,
             "image_url_map": image_url_map,
+            "base_url": base_url,
+            "og_image_url": og_image_url,
             "fit_score": fit_score,
             "fit_breakdown": fit_breakdown,
             "cost_breakdown": cost_breakdown,
@@ -591,6 +653,7 @@ async def property_detail(
 async def area_detail(
     request: Request,
     outcode: str,
+    base_url: BaseUrlDep,
     highlight: str | None = None,
 ) -> HTMLResponse:
     """Area exploration page showing all micro-areas and reference data."""
@@ -618,6 +681,7 @@ async def area_detail(
             "outcode": outcode,
             "area_context": area_context,
             "highlight": highlight,
+            "base_url": base_url,
         },
     )
 
@@ -627,8 +691,14 @@ async def update_property_status(
     request: Request,
     unique_id: str,
     storage: StorageDep,
+    data_dir: DataDirDep,
 ) -> Response:
-    """Update property user status. Returns status badge partial for HTMX swap."""
+    """Update property user status.
+
+    Returns a full card partial when HX-Target indicates a card-level swap
+    (quick-action buttons on dashboard), or a status badge partial for
+    detail-page swaps.
+    """
     form = await request.form()
     status_value = str(form.get("status", "")).strip().lower()
 
@@ -641,12 +711,31 @@ async def update_property_status(
     if prev is None:
         return JSONResponse({"error": "Property not found"}, status_code=404)
 
+    # Card-level swap: return full card partial (same as /property/{id}/card)
+    if form.get("source") == "card":
+        prop = await storage.get_property_card(unique_id)
+        if prop:
+            _enrich_fit_scores([prop])
+            resolved = _resolve_cached_thumbnail(prop["unique_id"], prop.get("image_url"), data_dir)
+            if resolved:
+                prop["image_url"] = resolved
+            return templates.TemplateResponse(
+                "_property_card.html",
+                {
+                    "request": request,
+                    "prop": prop,
+                    "source_badges": SOURCE_BADGES,
+                    "status_meta": USER_STATUS_META,
+                },
+            )
+
+    # Detail page: return full status selector so active state updates
     return templates.TemplateResponse(
-        "_status_badge.html",
+        "_status_controls.html",
         {
             "request": request,
             "unique_id": unique_id,
-            "status": new_status.value,
+            "current_status": new_status.value,
             "status_meta": USER_STATUS_META,
         },
     )

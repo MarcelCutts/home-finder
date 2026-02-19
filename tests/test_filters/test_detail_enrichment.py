@@ -11,6 +11,7 @@ from pydantic import HttpUrl
 from home_finder.filters.detail_enrichment import (
     _detect_epc_in_gallery,
     _detect_floorplan_in_gallery,
+    _generate_gallery_thumbnails,
     _load_cached_property,
     enrich_merged_properties,
     filter_by_floorplan,
@@ -23,7 +24,12 @@ from home_finder.models import (
     PropertySource,
 )
 from home_finder.scrapers.detail_fetcher import DetailFetcher, DetailPageData
-from home_finder.utils.image_cache import get_cache_dir, get_cached_image_path, save_image_bytes
+from home_finder.utils.image_cache import (
+    get_cache_dir,
+    get_cached_image_path,
+    find_cached_file,
+    save_image_bytes,
+)
 
 
 class TestEnrichMergedProperties:
@@ -212,7 +218,7 @@ class TestEnrichMergedProperties:
                 fetcher, "fetch_detail_page", new_callable=AsyncMock, return_value=detail_data
             ),
             patch.object(
-                fetcher, "download_image_bytes", new_callable=AsyncMock, return_value=b"imgdata"
+                fetcher, "download_image_bytes", new_callable=AsyncMock, return_value=b"fake"
             ),
         ):
             result = await enrich_merged_properties(
@@ -305,7 +311,7 @@ class TestEnrichMergedProperties:
                 fetcher, "fetch_detail_page", new_callable=AsyncMock, return_value=detail_data
             ),
             patch.object(
-                fetcher, "download_image_bytes", new_callable=AsyncMock, return_value=b"imgdata"
+                fetcher, "download_image_bytes", new_callable=AsyncMock, return_value=b"fake"
             ),
         ):
             result = await enrich_merged_properties([merged], fetcher, data_dir=data_dir)
@@ -627,21 +633,26 @@ def _make_floorplan_bytes() -> bytes:
     return buf.getvalue()
 
 
-def _make_photo_bytes() -> bytes:
-    """Create synthetic room photo image bytes (colorful, with noise for high entropy)."""
+def _make_photo_bytes(size: int = 400) -> bytes:
+    """Create synthetic room photo image bytes (colorful, with noise for high entropy).
+
+    Args:
+        size: Width of the image in pixels. Height is 75% of width.
+    """
     import random
 
+    height = int(size * 0.75)
     rng = random.Random(42)
-    img = Image.new("RGB", (400, 300), (135, 206, 235))
+    img = Image.new("RGB", (size, height), (135, 206, 235))
     draw = ImageDraw.Draw(img)
-    draw.rectangle([0, 200, 400, 300], fill=(34, 139, 34))
+    draw.rectangle([0, height // 2, size, height], fill=(34, 139, 34))
     draw.rectangle([50, 100, 150, 200], fill=(139, 69, 19))
     draw.rectangle([200, 120, 250, 160], fill=(220, 20, 60))
     # Add pixel noise to push entropy above 5.5 (like real photos)
     pixels = img.load()
     assert pixels is not None
-    for y in range(300):
-        for x in range(400):
+    for y in range(height):
+        for x in range(size):
             r, g, b = pixels[x, y]  # type: ignore[misc]
             n = rng.randint(-20, 20)
             pixels[x, y] = (
@@ -1215,6 +1226,85 @@ class TestEnrichSingleEpcDetection:
         assert all(img.image_type == "gallery" for img in enriched.images)
 
 
+class TestEpcThumbnailInteraction:
+    """Integration: EPC reclassification must not leave orphaned thumbnails."""
+
+    async def test_no_orphaned_thumbnails_for_epc_images(
+        self, tmp_path: Path, make_merged_property: Callable[..., MergedProperty]
+    ) -> None:
+        """Thumbnails should only exist for surviving gallery images, not EPCs.
+
+        This verifies the key invariant: thumbnails are generated *after*
+        EPC detection, so images reclassified to epc_* never get a thumb_gallery_* file.
+        """
+        merged = make_merged_property(sources=(PropertySource.ZOOPLA,), source_id="zp_epc")
+        data_dir = str(tmp_path)
+
+        detail_data = DetailPageData(
+            gallery_urls=[
+                "https://example.com/epc.png",
+                "https://example.com/photo1.jpg",
+                "https://example.com/photo2.jpg",
+            ],
+        )
+
+        fetcher = DetailFetcher()
+
+        # Images must be > 480px (THUMBNAIL_MAX_DIM) for thumbnail generation
+        async def mock_download(url: str) -> bytes:
+            if "epc" in url:
+                return _make_epc_bytes()
+            return _make_photo_bytes(size=800)
+
+        with (
+            patch.object(
+                fetcher, "fetch_detail_page", new_callable=AsyncMock, return_value=detail_data
+            ),
+            patch.object(fetcher, "download_image_bytes", side_effect=mock_download),
+        ):
+            result = await enrich_merged_properties([merged], fetcher, data_dir=data_dir)
+
+        assert len(result.enriched) == 1
+        enriched = result.enriched[0]
+        assert len(enriched.images) == 2  # EPC removed from gallery
+
+        # Check disk state: thumbnails should exist for surviving gallery images
+        cache_dir = get_cache_dir(data_dir, merged.unique_id)
+        all_files = {f.name for f in cache_dir.iterdir()}
+
+        # There should be thumb_ files for the two surviving gallery images
+        thumb_files = {f for f in all_files if f.startswith("thumb_")}
+        assert len(thumb_files) == 2
+
+        # No thumb_ file should reference an EPC image (thumb_gallery_000_*)
+        # The EPC was gallery index 0 → its original file was gallery_000_*
+        epc_files = {f for f in all_files if f.startswith("epc_")}
+        assert len(epc_files) == 1  # the renamed EPC
+
+        # Critical invariant: no thumbnail for the EPC image
+        thumb_epc_files = {f for f in all_files if f.startswith("thumb_epc_")}
+        assert len(thumb_epc_files) == 0
+
+        # Also verify: no thumb_ file corresponds to the EPC's original gallery index
+        # The EPC URL's cache file was gallery_000_*, so any thumb_gallery_000_* would be orphaned
+        epc_url = "https://example.com/epc.png"
+        epc_cached = find_cached_file(data_dir, merged.unique_id, epc_url, "gallery")
+        assert epc_cached is None  # was renamed to epc_*, so gallery lookup returns None
+
+    def test_generate_gallery_thumbnails_skips_missing_cache(self, tmp_path: Path) -> None:
+        """_generate_gallery_thumbnails should skip images with no cached file."""
+        images = [
+            PropertyImage(
+                url=HttpUrl("https://example.com/missing.jpg"),
+                source=PropertySource.ZOOPLA,
+                image_type="gallery",
+            )
+        ]
+        # Don't create any cache files
+        count = _generate_gallery_thumbnails(images, "test:1", str(tmp_path))
+        assert count == 0
+
+
 class TestIsFloorplanExempt:
     """Tests for is_floorplan_exempt()."""
 
@@ -1265,3 +1355,5 @@ class TestFloorplanUrlRejectedLogging:
             url="https://example.com/floor.svg",
             reason="failed_image_url_validation",
         )
+
+

@@ -4,6 +4,29 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>{% block title %}Home Finder{% endblock %}</title>
+
+    <!-- Branding -->
+    <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
+    <link rel="apple-touch-icon" href="/static/apple-touch-icon.png">
+    <link rel="manifest" href="/static/manifest.json">
+    <meta name="theme-color" content="#09090b">
+
+    <!-- SEO & social meta (overridden per-page via blocks) -->
+    {% block meta_description %}<meta name="description" content="London rental property finder — scrapes, filters, and analyzes listings with AI.">{% endblock %}
+
+    {% block og_meta %}
+    <meta property="og:type" content="website">
+    <meta property="og:site_name" content="Home Finder">
+    <meta property="og:title" content="Home Finder">
+    <meta property="og:description" content="London rental property finder — scrapes, filters, and analyzes listings with AI.">
+    {% if base_url %}<meta property="og:image" content="{{ base_url }}/static/og-image.png">{% endif %}
+    {% if base_url %}<meta property="og:image:width" content="1200">{% endif %}
+    {% if base_url %}<meta property="og:image:height" content="630">{% endif %}
+    {% if base_url %}<meta property="og:url" content="{{ base_url }}{{ request.path }}">{% endif %}
+    <meta property="og:locale" content="en_GB">
+    <meta name="twitter:card" content="summary_large_image">
+    {% endblock %}
+
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap">
@@ -16,7 +39,13 @@
 <body>
     <nav class="container-fluid">
         <ul>
-            <li><a href="/"><strong>Home Finder</strong></a></li>
+            <li><a href="/" class="nav-logo">
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="26" height="26" aria-hidden="true">
+                    <defs><linearGradient id="hg" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#8b5cf6"/><stop offset="100%" stop-color="#d946ef"/></linearGradient></defs>
+                    <path d="M12 3 L2 11 L5 11 L5 20 L10 20 L10 15 L14 15 L14 20 L19 20 L19 11 L22 11 Z" fill="url(#hg)"/>
+                </svg>
+                <strong>Home Finder</strong>
+            </a></li>
         </ul>
         <ul>
             <li>{% block nav_info %}{% endblock %}</li>

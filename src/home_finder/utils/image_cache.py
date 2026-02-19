@@ -3,6 +3,7 @@
 import hashlib
 import re
 import shutil
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Final
 
@@ -12,9 +13,31 @@ logger = get_logger(__name__)
 
 _IMAGE_CACHE_DIR: Final = "image_cache"
 
+THUMBNAIL_PREFIX: Final = "thumb_"
+THUMBNAIL_MAX_DIM: Final = 480  # 2x retina for 240px cards / 240px map popups
+
 VALID_IMAGE_EXTENSIONS: Final = (".jpg", ".jpeg", ".png", ".gif", ".webp")
 
 _REJECTED_EXTENSIONS: Final = (".pdf", ".svg", ".html", ".js", ".css", ".json", ".xml")
+
+
+def is_valid_image_bytes(data: bytes) -> bool:
+    """Check if raw bytes look like a real image based on magic bytes.
+
+    Supports JPEG, PNG, GIF, and WebP. Rejects anything shorter than 12 bytes
+    (too small to be a real image) or with an unrecognised header.
+    """
+    if len(data) < 12:
+        return False
+    if data[:3] == b"\xff\xd8\xff":
+        return True
+    if data[:4] == b"\x89PNG":
+        return True
+    if data[:4] == b"GIF8":
+        return True
+    if data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+        return True
+    return False
 
 
 def is_valid_image_url(url: str) -> bool:
@@ -150,8 +173,126 @@ def clear_image_cache(data_dir: str, unique_id: str) -> None:
         logger.debug("image_cache_cleared", unique_id=unique_id)
 
 
+def gallery_cache_coverage(
+    data_dir: str,
+    unique_id: str,
+    gallery_urls: Sequence[str],
+    *,
+    has_valid_floorplan: bool = False,
+    max_images: int = 20,
+) -> tuple[int, int]:
+    """Count cached vs expected gallery images.
+
+    Args:
+        data_dir: Base data directory.
+        unique_id: Property unique ID.
+        gallery_urls: Gallery image URLs from the DB/model.
+        has_valid_floorplan: Whether a valid floorplan exists (reduces max by 1).
+        max_images: Maximum gallery images for quality analysis.
+
+    Returns:
+        Tuple of (cached_count, expected_count).
+    """
+    effective_max = max_images - (1 if has_valid_floorplan else 0)
+    expected = min(len(gallery_urls), effective_max)
+    if expected == 0:
+        return 0, 0
+    cached = sum(
+        1
+        for url in gallery_urls[:expected]
+        if find_cached_file(data_dir, unique_id, url, "gallery") is not None
+    )
+    return cached, expected
+
+
 def read_image_bytes(path: Path) -> bytes | None:
     """Read image bytes from disk, or None if not found."""
     if path.is_file():
         return path.read_bytes()
     return None
+
+
+def generate_thumbnail(
+    original_path: Path, max_dim: int = THUMBNAIL_MAX_DIM
+) -> Path | None:
+    """Generate a JPEG thumbnail from an image file on disk.
+
+    Uses Pillow's thumbnail() — maintains aspect ratio, only shrinks.
+    Saves next to original with 'thumb_' prefix. Returns path or None on failure.
+    Skips if original is already <= max_dim on longest edge.
+    """
+    from PIL import Image
+
+    thumb_path = original_path.parent / f"{THUMBNAIL_PREFIX}{original_path.stem}.jpg"
+    if thumb_path.is_file():
+        return thumb_path
+
+    try:
+        with Image.open(original_path) as img:
+            if max(img.size) <= max_dim:
+                return None
+
+            rgb = img.convert("RGB") if img.mode in ("RGBA", "P", "CMYK") else img
+
+            rgb.thumbnail((max_dim, max_dim), Image.Resampling.LANCZOS)
+            rgb.save(thumb_path, "JPEG", quality=80)
+            return thumb_path
+    except Exception:
+        logger.warning(
+            "thumbnail_generation_failed",
+            original=str(original_path),
+            exc_info=True,
+        )
+        return None
+
+
+def find_thumbnail(original_path: Path) -> Path | None:
+    """Return the thumbnail path if it exists, else None."""
+    thumb_path = original_path.parent / f"{THUMBNAIL_PREFIX}{original_path.stem}.jpg"
+    return thumb_path if thumb_path.is_file() else None
+
+
+def backfill_thumbnails(data_dir: str) -> tuple[int, int, int]:
+    """Generate missing thumbnails for all cached gallery images.
+
+    Detects and deletes corrupt files (HTML error pages, plaintext) that
+    CDNs returned with HTTP 200 during enrichment.
+
+    Returns (generated_count, skipped_count, deleted_count).
+    """
+    cache_root = Path(data_dir) / _IMAGE_CACHE_DIR
+    if not cache_root.is_dir():
+        return 0, 0, 0
+
+    generated = 0
+    skipped = 0
+    deleted = 0
+
+    for prop_dir in sorted(cache_root.iterdir()):
+        if not prop_dir.is_dir():
+            continue
+        for img_file in sorted(prop_dir.iterdir()):
+            if not img_file.name.startswith("gallery_") or not img_file.is_file():
+                continue
+            if find_thumbnail(img_file) is not None:
+                skipped += 1
+                continue
+            with open(img_file, "rb") as f:
+                header = f.read(12)
+            if not is_valid_image_bytes(header):
+                logger.warning(
+                    "backfill_deleted_corrupt_file",
+                    path=str(img_file),
+                    size=img_file.stat().st_size,
+                    prefix=header,
+                )
+                img_file.unlink()
+                deleted += 1
+                continue
+            result = generate_thumbnail(img_file)
+            if result is not None:
+                generated += 1
+            else:
+                skipped += 1
+
+    return generated, skipped, deleted
