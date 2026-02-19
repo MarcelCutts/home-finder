@@ -10,7 +10,6 @@ def generate_negotiation_brief(
     price_history: list[dict[str, Any]],
     benchmark_diff: int | None,
     area_median: int | None,
-    current_price: int,
 ) -> dict[str, Any] | None:
     """Generate a negotiation intelligence brief for a property.
 
@@ -40,7 +39,7 @@ def generate_negotiation_brief(
         total_drop = sum(h["change_amount"] for h in drops)
         history_context = (
             f"Already dropped {len(drops)} time{'s' if len(drops) > 1 else ''} "
-            f"(total {chr(163)}{abs(total_drop):,})"
+            f"(total £{abs(total_drop):,})"
         )
         signals += 1
     else:

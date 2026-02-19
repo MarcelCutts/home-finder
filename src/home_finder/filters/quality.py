@@ -551,19 +551,18 @@ EVALUATION_TOOL: Final[dict[str, Any]] = _build_tool_schema(
 def _attempt_json_repair(s: str) -> dict[str, Any] | list[Any] | None:
     """Best-effort repair of common LLM JSON malformations.
 
-    Handles:
-    - Missing colons between key-value pairs ("key" "value" → "key": "value")
-    - Trailing commas before closing braces/brackets
+    Uses the ``json_repair`` library (parser-based) to handle:
+    - Missing colons between key-value pairs
+    - Set-literal syntax (valueless keys like ``"primary_is_double"``)
+    - Trailing commas, single quotes, Python booleans, and more
     """
-    # Fix missing colons: "key" "value" or "key", "value" → "key": "value"
-    repaired = _re.sub(r'("\w+")\s*,?\s*(")', r'\1: \2', s)
-    # Fix trailing commas
-    repaired = _re.sub(r",\s*([}\]])", r"\1", repaired)
+    from json_repair import loads as repair_loads
+
     try:
-        parsed = _json.loads(repaired)
+        parsed = repair_loads(s)
         if isinstance(parsed, (dict, list)):
             return parsed
-    except (ValueError, _json.JSONDecodeError):
+    except Exception:
         pass
     return None
 

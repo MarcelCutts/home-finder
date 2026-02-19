@@ -83,6 +83,30 @@ async def _pipeline_loop(settings: Settings, interval_minutes: int) -> None:
         await asyncio.sleep(sleep_seconds)
 
 
+async def _register_telegram_webhook(settings: Settings) -> None:
+    """Register the Telegram webhook URL so inline button callbacks are delivered."""
+    try:
+        from aiogram import Bot
+        from aiogram.client.default import DefaultBotProperties
+        from aiogram.enums import ParseMode
+
+        bot = Bot(
+            token=settings.telegram_bot_token.get_secret_value(),
+            default=DefaultBotProperties(parse_mode=ParseMode.HTML),
+        )
+        webhook_url = f"{settings.web_base_url.rstrip('/')}/telegram/webhook"
+        try:
+            await bot.set_webhook(
+                url=webhook_url,
+                secret_token=settings.telegram_webhook_secret,
+            )
+            logger.info("telegram_webhook_registered", url=webhook_url)
+        finally:
+            await bot.session.close()
+    except Exception:
+        logger.warning("telegram_webhook_registration_failed", exc_info=True)
+
+
 def create_app(settings: Settings | None = None, *, run_pipeline: bool = True) -> FastAPI:
     """Create the FastAPI application.
 
@@ -105,6 +129,14 @@ def create_app(settings: Settings | None = None, *, run_pipeline: bool = True) -
         app.state.storage = storage
         app.state.settings = settings
         app.state.pipeline_lock = _pipeline_lock
+
+        # Register Telegram webhook if both base URL and secret are configured
+        if (
+            settings.telegram_webhook_secret
+            and settings.web_base_url
+            and settings.telegram_bot_token.get_secret_value()
+        ):
+            await _register_telegram_webhook(settings)
 
         if run_pipeline:
             # Start background pipeline scheduler
@@ -140,5 +172,10 @@ def create_app(settings: Settings | None = None, *, run_pipeline: bool = True) -
     from home_finder.web.routes import router
 
     app.include_router(router)
+
+    # Register Telegram webhook handler (only active when secret is configured)
+    from home_finder.web.telegram_webhook import router as webhook_router
+
+    app.include_router(webhook_router)
 
     return app

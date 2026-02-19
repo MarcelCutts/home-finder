@@ -19,7 +19,7 @@ import sqlite3
 from itertools import combinations
 from pathlib import Path
 
-from home_finder.utils.image_cache import find_cached_file
+from home_finder.utils.image_cache import clear_image_cache, find_cached_file
 from home_finder.utils.image_hash import count_gallery_hash_matches, hash_from_disk
 
 DEFAULT_DATA_DIR = Path(__file__).parent.parent / "data"
@@ -152,6 +152,7 @@ def main(data_dir: str, *, dry_run: bool = False) -> None:
             (unique_id,),
         )
         conn.commit()
+        clear_image_cache(data_dir, unique_id)
         print(f"  Deleted: {unique_id} [{', '.join(sources)}]")
 
     print(f"\nDeleted {len(false_merges)} false merges.")

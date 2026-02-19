@@ -467,11 +467,12 @@ class PropertyQualityAnalysis(_LenientLiteralModel):
                 try:
                     data[key] = json.loads(sanitized)
                 except (json.JSONDecodeError, ValueError):
-                    # Final fallback: structural repair for missing colons
-                    repaired = re.sub(r'("\w+")\s*,?\s*(")', r'\1: \2', sanitized)
-                    repaired = re.sub(r",\s*([}\]])", r"\1", repaired)
-                    with contextlib.suppress(json.JSONDecodeError, ValueError):
-                        parsed = json.loads(repaired)
+                    # Final fallback: parser-based repair (handles set-literal
+                    # syntax, missing colons, Python booleans, etc.)
+                    from json_repair import loads as repair_loads
+
+                    with contextlib.suppress(Exception):
+                        parsed = repair_loads(sanitized)
                         if isinstance(parsed, dict):
                             data[key] = parsed
         return data

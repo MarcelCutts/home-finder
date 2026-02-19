@@ -125,6 +125,12 @@ class Settings(BaseSettings):
         description="HTTP/SOCKS5 proxy URL (e.g. socks5://user:pass@host:port)",
     )
 
+    # Telegram webhook (enables inline button callbacks when set)
+    telegram_webhook_secret: str = Field(
+        default="",
+        description="Secret token for Telegram webhook validation",
+    )
+
     # Web dashboard
     web_base_url: str = Field(
         default="",

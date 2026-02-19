@@ -11,15 +11,24 @@ Phase 2 — Disk→DB check (informational):
     Reports files with no DB record, categorising ``epc_*`` files as expected
     (renamed by the EPC detector and stored with image_type='epc' in DB).
 
+Purge disk (``--purge-disk``):
+    Deletes stale files from disk that have no matching DB record.
+    Two categories:
+    - Orphan directories: cache dirs whose property no longer exists in DB
+    - Stale files: individual files in DB-backed dirs with no matching image row
+
 Usage:
-    uv run python scripts/audit_image_cache.py                    # Audit only
-    uv run python scripts/audit_image_cache.py --fix              # Delete orphaned DB rows
-    uv run python scripts/audit_image_cache.py --fix --dry-run    # Preview deletions
+    uv run python scripts/audit_image_cache.py                        # Audit only
+    uv run python scripts/audit_image_cache.py --fix                  # Delete orphaned DB rows
+    uv run python scripts/audit_image_cache.py --fix --dry-run        # Preview DB deletions
+    uv run python scripts/audit_image_cache.py --purge-disk           # Delete stale disk files
+    uv run python scripts/audit_image_cache.py --purge-disk --dry-run # Preview disk deletions
 """
 
 import argparse
 import hashlib
 import re
+import shutil
 import sqlite3
 from collections import defaultdict
 from pathlib import Path
@@ -213,7 +222,100 @@ def phase2_disk_to_db(
     return total_files, with_record, without_record, epc_expected, unrecognized
 
 
-def main(data_dir: str, *, fix: bool = False, dry_run: bool = False) -> None:
+def purge_disk_files(
+    conn: sqlite3.Connection,
+    data_dir: str,
+    *,
+    dry_run: bool = False,
+) -> tuple[int, int, int, int]:
+    """Delete stale disk files with no matching DB record.
+
+    Category 1: Orphan directories — cache dirs whose property no longer
+    exists in the ``properties`` table.  Removed with ``shutil.rmtree()``.
+
+    Category 2+3: Stale files in DB-backed dirs — individual files whose
+    URL hash doesn't match any ``property_images`` row for that property.
+
+    Returns:
+        Tuple of (orphan_dirs_removed, orphan_files_in_dirs,
+        stale_files_removed, total_files_removed).
+    """
+    cache_root = Path(data_dir) / "image_cache"
+    if not cache_root.is_dir():
+        print("\nPurge disk: Cache directory not found — skipping")
+        return 0, 0, 0, 0
+
+    # Build set of all property unique_ids in DB (via safe_dir_name mapping)
+    prop_rows = conn.execute("SELECT unique_id FROM properties").fetchall()
+    db_dir_names: set[str] = {safe_dir_name(row["unique_id"]) for row in prop_rows}
+
+    # Build lookup for file matching: (safe_dir_name, url_hash) -> set of image_types
+    all_image_rows = conn.execute(
+        "SELECT property_unique_id, url, image_type FROM property_images"
+    ).fetchall()
+    dir_lookup: dict[tuple[str, str], set[str]] = defaultdict(set)
+    for row in all_image_rows:
+        h = _url_hash(row["url"])
+        dir_name = safe_dir_name(row["property_unique_id"])
+        dir_lookup[(dir_name, h)].add(row["image_type"])
+
+    orphan_dirs = 0
+    orphan_dir_files = 0
+    stale_files = 0
+
+    for prop_dir in sorted(cache_root.iterdir()):
+        if not prop_dir.is_dir():
+            continue
+        dir_name = prop_dir.name
+
+        # Category 1: orphan directory (no matching property in DB)
+        if dir_name not in db_dir_names:
+            file_count = sum(1 for f in prop_dir.iterdir() if f.is_file())
+            if dry_run:
+                print(f"  Would remove orphan dir: {dir_name}/ ({file_count} files)")
+            else:
+                shutil.rmtree(prop_dir)
+                print(f"  Removed orphan dir: {dir_name}/ ({file_count} files)")
+            orphan_dirs += 1
+            orphan_dir_files += file_count
+            continue
+
+        # Category 2+3: stale files in DB-backed directory
+        for f in sorted(prop_dir.iterdir()):
+            if not f.is_file():
+                continue
+            m = _FILENAME_RE.match(f.name)
+            if not m:
+                continue  # skip unrecognized filenames
+            file_type = m.group(1)
+            file_hash = m.group(2)
+            types = dir_lookup.get((dir_name, file_hash), set())
+            if file_type not in types:
+                if dry_run:
+                    print(f"  Would remove stale file: {dir_name}/{f.name}")
+                else:
+                    f.unlink()
+                    print(f"  Removed stale file: {dir_name}/{f.name}")
+                stale_files += 1
+
+    total = orphan_dir_files + stale_files
+    print("\nPurge disk summary:")
+    print(f"  Orphan directories removed: {orphan_dirs} ({orphan_dir_files} files)")
+    print(f"  Stale files removed:        {stale_files}")
+    print(f"  Total files removed:         {total}")
+    if dry_run:
+        print("  (dry run — no files were actually deleted)")
+
+    return orphan_dirs, orphan_dir_files, stale_files, total
+
+
+def main(
+    data_dir: str,
+    *,
+    fix: bool = False,
+    dry_run: bool = False,
+    purge_disk: bool = False,
+) -> None:
     db_path = Path(data_dir) / "properties.db"
     if not db_path.is_file():
         print(f"Database not found: {db_path}")
@@ -224,6 +326,8 @@ def main(data_dir: str, *, fix: bool = False, dry_run: bool = False) -> None:
     try:
         phase1_db_to_disk(conn, data_dir, fix=fix, dry_run=dry_run)
         phase2_disk_to_db(conn, data_dir)
+        if purge_disk:
+            purge_disk_files(conn, data_dir, dry_run=dry_run)
     finally:
         conn.close()
 
@@ -239,11 +343,16 @@ if __name__ == "__main__":
         help="Delete orphaned DB rows (rows with no matching disk file)",
     )
     parser.add_argument(
+        "--purge-disk",
+        action="store_true",
+        help="Delete stale disk files (files with no matching DB record)",
+    )
+    parser.add_argument(
         "--dry-run",
         action="store_true",
-        help="Preview deletions without making changes (requires --fix)",
+        help="Preview deletions without making changes (requires --fix or --purge-disk)",
     )
     args = parser.parse_args()
-    if args.dry_run and not args.fix:
-        parser.error("--dry-run only makes sense with --fix")
-    main(args.data_dir, fix=args.fix, dry_run=args.dry_run)
+    if args.dry_run and not args.fix and not args.purge_disk:
+        parser.error("--dry-run only makes sense with --fix or --purge-disk")
+    main(args.data_dir, fix=args.fix, dry_run=args.dry_run, purge_disk=args.purge_disk)

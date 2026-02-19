@@ -11,7 +11,6 @@ class TestGenerateNegotiationBrief:
             price_history=[{"change_amount": -100}],
             benchmark_diff=200,  # above median
             area_median=2000,
-            current_price=2200,
         )
         assert result is not None
         assert result["strength"] == "strong"
@@ -26,7 +25,6 @@ class TestGenerateNegotiationBrief:
             price_history=[],
             benchmark_diff=None,
             area_median=None,
-            current_price=1900,
         )
         assert result is not None
         assert result["strength"] == "moderate"
@@ -38,7 +36,6 @@ class TestGenerateNegotiationBrief:
             price_history=[],
             benchmark_diff=None,
             area_median=None,
-            current_price=1900,
         )
         assert result is not None
         assert result["strength"] == "weak"
@@ -51,7 +48,6 @@ class TestGenerateNegotiationBrief:
             price_history=[],
             benchmark_diff=None,
             area_median=None,
-            current_price=1900,
         )
         assert result is None
 
@@ -61,7 +57,6 @@ class TestGenerateNegotiationBrief:
             price_history=[],
             benchmark_diff=None,
             area_median=None,
-            current_price=1900,
         )
         assert result is not None
         assert result["seasonal_context"]  # non-empty string
@@ -73,7 +68,6 @@ class TestGenerateNegotiationBrief:
             price_history=[],
             benchmark_diff=200,  # price is 200 above median
             area_median=1800,
-            current_price=2000,
         )
         assert result is not None
         assert "above" in result["price_context"]
@@ -85,7 +79,6 @@ class TestGenerateNegotiationBrief:
             price_history=[],
             benchmark_diff=-200,  # price is 200 below median
             area_median=2000,
-            current_price=1800,
         )
         assert result is not None
         assert "below" in result["price_context"]
@@ -96,7 +89,6 @@ class TestGenerateNegotiationBrief:
             price_history=[{"change_amount": -100}],
             benchmark_diff=300,
             area_median=2000,
-            current_price=2300,
         )
         assert strong is not None
         assert "5-8%" in strong["suggested_approach"]
@@ -106,7 +98,6 @@ class TestGenerateNegotiationBrief:
             price_history=[],
             benchmark_diff=None,
             area_median=None,
-            current_price=1900,
         )
         assert weak is not None
         assert "strongest applicant" in weak["suggested_approach"]

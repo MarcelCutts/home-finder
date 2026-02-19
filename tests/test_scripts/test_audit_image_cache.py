@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from home_finder.utils.image_cache import get_cache_dir, save_image_bytes, url_to_filename
+from home_finder.utils.image_cache import get_cache_dir, safe_dir_name, save_image_bytes, url_to_filename
 
 # Import the script module from the scripts/ directory (not a package)
 _SCRIPT_PATH = Path(__file__).parent.parent.parent / "scripts" / "audit_image_cache.py"
@@ -17,18 +17,25 @@ _spec.loader.exec_module(_mod)
 
 phase1_db_to_disk = _mod.phase1_db_to_disk
 phase2_disk_to_db = _mod.phase2_disk_to_db
+purge_disk_files = _mod.purge_disk_files
 main = _mod.main
 
 
-def _setup_db(db_path: Path, rows: list[tuple[str, str, str, str]]) -> None:
-    """Create property_images table and insert rows.
+def _setup_db(
+    db_path: Path,
+    rows: list[tuple[str, str, str, str]],
+    *,
+    property_ids: list[str] | None = None,
+) -> None:
+    """Create property_images and properties tables and insert rows.
 
     Each row is (property_unique_id, source, url, image_type).
+    property_ids: optional list of unique_ids to insert into properties table.
     """
     conn = sqlite3.connect(str(db_path))
     try:
         conn.execute(
-            "CREATE TABLE property_images ("
+            "CREATE TABLE IF NOT EXISTS property_images ("
             "  id INTEGER PRIMARY KEY AUTOINCREMENT,"
             "  property_unique_id TEXT NOT NULL,"
             "  source TEXT NOT NULL,"
@@ -38,12 +45,27 @@ def _setup_db(db_path: Path, rows: list[tuple[str, str, str, str]]) -> None:
             "  UNIQUE(property_unique_id, url)"
             ")"
         )
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS properties ("
+            "  unique_id TEXT PRIMARY KEY,"
+            "  source TEXT NOT NULL DEFAULT '',"
+            "  source_id TEXT NOT NULL DEFAULT '',"
+            "  url TEXT NOT NULL DEFAULT '',"
+            "  title TEXT NOT NULL DEFAULT ''"
+            ")"
+        )
         for prop_id, source, url, img_type in rows:
             conn.execute(
                 "INSERT INTO property_images (property_unique_id, source, url, image_type)"
                 " VALUES (?, ?, ?, ?)",
                 (prop_id, source, url, img_type),
             )
+        if property_ids:
+            for uid in property_ids:
+                conn.execute(
+                    "INSERT OR IGNORE INTO properties (unique_id) VALUES (?)",
+                    (uid,),
+                )
         conn.commit()
     finally:
         conn.close()
@@ -420,3 +442,164 @@ class TestMain:
 
         assert len(remaining) == 1
         assert remaining[0]["url"] == good_url
+
+
+class TestPurgeDiskFiles:
+    """Tests for purge_disk_files — stale disk file cleanup."""
+
+    def test_orphan_directory_removed(self, tmp_path: Path, db_conn: sqlite3.Connection) -> None:
+        """Cache dir with no matching property in DB should be removed entirely."""
+        data_dir = str(tmp_path)
+        orphan_uid = "zoopla:deleted1"
+        kept_uid = "zoopla:kept1"
+        url1 = "https://example.com/orphan1.jpg"
+        url2 = "https://example.com/orphan2.jpg"
+        kept_url = "https://example.com/kept.jpg"
+
+        # Create cache dirs for both
+        orphan_dir = get_cache_dir(data_dir, orphan_uid)
+        save_image_bytes(orphan_dir / url_to_filename(url1, "gallery", 0), b"img1")
+        save_image_bytes(orphan_dir / url_to_filename(url2, "gallery", 1), b"img2")
+        kept_dir = get_cache_dir(data_dir, kept_uid)
+        save_image_bytes(kept_dir / url_to_filename(kept_url, "gallery", 0), b"kept")
+
+        # Only kept_uid exists in DB
+        _setup_db(
+            tmp_path / "properties.db",
+            [(kept_uid, "zoopla", kept_url, "gallery")],
+            property_ids=[kept_uid],
+        )
+
+        orphan_dirs, orphan_files, stale_files, total = purge_disk_files(
+            db_conn, data_dir
+        )
+
+        assert orphan_dirs == 1
+        assert orphan_files == 2
+        assert stale_files == 0
+        assert total == 2
+        assert not orphan_dir.exists()
+        assert kept_dir.exists()
+
+    def test_stale_files_in_db_backed_dir_removed(
+        self, tmp_path: Path, db_conn: sqlite3.Connection
+    ) -> None:
+        """Files in a DB-backed dir that don't match any image row should be removed."""
+        data_dir = str(tmp_path)
+        uid = "rightmove:40001"
+        tracked_url = "https://example.com/tracked.jpg"
+        stale_url = "https://example.com/stale.jpg"
+
+        cache_dir = get_cache_dir(data_dir, uid)
+        tracked_fname = url_to_filename(tracked_url, "gallery", 0)
+        stale_fname = url_to_filename(stale_url, "gallery", 1)
+        save_image_bytes(cache_dir / tracked_fname, b"tracked")
+        save_image_bytes(cache_dir / stale_fname, b"stale")
+
+        _setup_db(
+            tmp_path / "properties.db",
+            [(uid, "rightmove", tracked_url, "gallery")],
+            property_ids=[uid],
+        )
+
+        orphan_dirs, orphan_files, stale_files, total = purge_disk_files(
+            db_conn, data_dir
+        )
+
+        assert orphan_dirs == 0
+        assert stale_files == 1
+        assert total == 1
+        assert (cache_dir / tracked_fname).exists()
+        assert not (cache_dir / stale_fname).exists()
+
+    def test_dry_run_preserves_files(
+        self, tmp_path: Path, db_conn: sqlite3.Connection
+    ) -> None:
+        """--purge-disk --dry-run should report but not delete any files."""
+        data_dir = str(tmp_path)
+        orphan_uid = "zoopla:deleted2"
+        kept_uid = "zoopla:kept2"
+        orphan_url = "https://example.com/orphan.jpg"
+        kept_url = "https://example.com/kept.jpg"
+        stale_url = "https://example.com/stale.jpg"
+
+        # Orphan dir
+        orphan_dir = get_cache_dir(data_dir, orphan_uid)
+        save_image_bytes(orphan_dir / url_to_filename(orphan_url, "gallery", 0), b"orph")
+
+        # DB-backed dir with one stale file
+        kept_dir = get_cache_dir(data_dir, kept_uid)
+        save_image_bytes(kept_dir / url_to_filename(kept_url, "gallery", 0), b"kept")
+        stale_fname = url_to_filename(stale_url, "gallery", 1)
+        save_image_bytes(kept_dir / stale_fname, b"stale")
+
+        _setup_db(
+            tmp_path / "properties.db",
+            [(kept_uid, "zoopla", kept_url, "gallery")],
+            property_ids=[kept_uid],
+        )
+
+        orphan_dirs, orphan_files, stale_files, total = purge_disk_files(
+            db_conn, data_dir, dry_run=True
+        )
+
+        assert orphan_dirs == 1
+        assert orphan_files == 1
+        assert stale_files == 1
+        assert total == 2
+        # All files still exist
+        assert orphan_dir.exists()
+        assert (kept_dir / stale_fname).exists()
+
+    def test_no_cache_directory(self, tmp_path: Path, db_conn: sqlite3.Connection) -> None:
+        """Missing cache directory should return all zeros."""
+        data_dir = str(tmp_path)
+        _setup_db(tmp_path / "properties.db", [], property_ids=[])
+
+        orphan_dirs, orphan_files, stale_files, total = purge_disk_files(
+            db_conn, data_dir
+        )
+
+        assert orphan_dirs == 0
+        assert orphan_files == 0
+        assert stale_files == 0
+        assert total == 0
+
+    def test_unrecognized_filenames_skipped(
+        self, tmp_path: Path, db_conn: sqlite3.Connection
+    ) -> None:
+        """Files with non-standard names should not be deleted."""
+        data_dir = str(tmp_path)
+        uid = "zoopla:50001"
+
+        cache_dir = get_cache_dir(data_dir, uid)
+        save_image_bytes(cache_dir / ".DS_Store", b"junk")
+        save_image_bytes(cache_dir / "thumbs.db", b"junk")
+
+        _setup_db(tmp_path / "properties.db", [], property_ids=[uid])
+
+        orphan_dirs, orphan_files, stale_files, total = purge_disk_files(
+            db_conn, data_dir
+        )
+
+        assert orphan_dirs == 0
+        assert stale_files == 0
+        assert total == 0
+        # Files preserved
+        assert (cache_dir / ".DS_Store").exists()
+        assert (cache_dir / "thumbs.db").exists()
+
+    def test_purge_disk_via_main(self, tmp_path: Path) -> None:
+        """main(purge_disk=True) should remove orphan directories."""
+        data_dir = str(tmp_path)
+        orphan_uid = "zoopla:main1"
+        url = "https://example.com/img.jpg"
+
+        orphan_dir = get_cache_dir(data_dir, orphan_uid)
+        save_image_bytes(orphan_dir / url_to_filename(url, "gallery", 0), b"img")
+
+        _setup_db(tmp_path / "properties.db", [], property_ids=[])
+
+        main(data_dir, purge_disk=True)
+
+        assert not orphan_dir.exists()

@@ -20,6 +20,7 @@ dependencies = [
     "fastapi>=0.115",
     "uvicorn[standard]>=0.34",
     "jinja2>=3.1",
+    "json-repair>=0.44",
 ]
 
 [project.optional-dependencies]
@@ -86,6 +87,10 @@ disallow_incomplete_defs = false
 [[tool.mypy.overrides]]
 module = "scripts.*"
 disallow_untyped_defs = false
+
+[[tool.mypy.overrides]]
+module = "json_repair.*"
+ignore_missing_imports = true
 
 [tool.coverage.run]
 source = ["src/home_finder"]

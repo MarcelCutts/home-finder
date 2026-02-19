@@ -742,14 +742,18 @@ class PropertyStorage:
         Used to clean up unenriched rows consumed by cross-platform anchor merges.
         """
         conn = await self._get_connection()
-        await conn.execute(
-            "DELETE FROM property_images WHERE property_unique_id = ?",
-            (unique_id,),
-        )
-        await conn.execute(
-            "DELETE FROM quality_analyses WHERE property_unique_id = ?",
-            (unique_id,),
-        )
+        for table in (
+            "property_images",
+            "quality_analyses",
+            "status_events",
+            "viewing_messages",
+            "price_history",
+            "enquiry_log",
+        ):
+            await conn.execute(
+                f"DELETE FROM {table} WHERE property_unique_id = ?",
+                (unique_id,),
+            )
         await conn.execute(
             "DELETE FROM properties WHERE unique_id = ?",
             (unique_id,),
@@ -797,9 +801,7 @@ class PropertyStorage:
         rows = await cursor.fetchall()
 
         results = [
-            await row_to_merged_property(
-                row, get_property_images=self.get_property_images
-            )
+            await row_to_merged_property(row, get_property_images=self.get_property_images)
             for row in rows
         ]
 

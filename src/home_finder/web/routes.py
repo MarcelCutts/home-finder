@@ -255,9 +255,7 @@ async def health_check(request: Request) -> JSONResponse:
     )
 
 
-def _resolve_cached_thumbnail(
-    unique_id: str, image_url: str | None, data_dir: str
-) -> str | None:
+def _resolve_cached_thumbnail(unique_id: str, image_url: str | None, data_dir: str) -> str | None:
     """Resolve a CDN image URL to a locally cached path, or return None.
 
     The DB stores the scraper thumbnail URL which often differs from the
@@ -560,11 +558,8 @@ async def property_detail(
     negotiation = generate_negotiation_brief(
         days_listed=days_since_filter(prop.get("first_seen")),
         price_history=price_history,
-        benchmark_diff=prop.get("price_pcm", 0) - benchmark["median_rent"]
-        if benchmark
-        else None,
+        benchmark_diff=prop.get("price_pcm", 0) - benchmark["median_rent"] if benchmark else None,
         area_median=benchmark["median_rent"] if benchmark else None,
-        current_price=prop.get("price_pcm", 0),
     )
 
     return templates.TemplateResponse(

@@ -325,6 +325,8 @@ async def _cross_run_deduplicate(
     consumed_retries = re_enrichment_ids - genuinely_new_ids
     for uid in consumed_retries:
         await storage.delete_property(uid)
+        if data_dir:
+            clear_image_cache(data_dir, uid)
         logger.debug("consumed_retry_cleaned", unique_id=uid)
 
     logger.info(
@@ -1579,6 +1581,8 @@ async def run_dedup_existing(settings: Settings) -> None:
                             count=copied,
                         )
                 await storage.delete_property(absorbed_id)
+                if settings.data_dir:
+                    clear_image_cache(settings.data_dir, absorbed_id)
                 logger.info(
                     "dedup_property_absorbed",
                     absorbed_id=absorbed_id,

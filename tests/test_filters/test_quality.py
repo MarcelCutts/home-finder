@@ -2396,10 +2396,10 @@ class TestCleanValue:
         result = _clean_value('{"a": [1, 2,], "b": {"c": 3,},}')
         assert result == {"a": [1, 2], "b": {"c": 3}}
 
-    def test_unparseable_json_like_string_returned_as_is(self) -> None:
-        """Strings that look like JSON but aren't should pass through."""
-        result = _clean_value("{not valid json at all}")
-        assert result == "{not valid json at all}"
+    def test_unparseable_string_returned_as_is(self) -> None:
+        """Non-JSON strings without brace wrapping should pass through."""
+        result = _clean_value("not valid json at all")
+        assert result == "not valid json at all"
 
 
 class TestCleanList:
@@ -2508,15 +2508,15 @@ class TestMergeAnalysisWithStringifiedNested:
         assert analysis.kitchen.overall_quality == "modern"
         assert analysis.kitchen.hob_type == "gas"
 
-    def test_defense_chain_clean_dict_fails_model_validator_rescues(
+    def test_defense_chain_nul_byte_handled_by_json_repair(
         self,
         sample_visual_response: dict[str, Any],
         sample_evaluation_response: dict[str, Any],
     ) -> None:
-        """Full defense chain: _clean_dict fails, warning fires, model validator rescues."""
+        """JSON string with NUL bytes is now handled by json_repair in _clean_dict."""
         import json
 
-        # JSON string with NUL — _clean_value can't parse it, leaves it as string
+        # JSON string with NUL — json_repair handles this in _clean_value
         bedroom_data = sample_visual_response["bedroom"]
         bedroom_json_with_ctrl = json.dumps(bedroom_data).replace(
             '"yes"', '"yes\x00"', 1
@@ -2531,18 +2531,16 @@ class TestMergeAnalysisWithStringifiedNested:
                 property_id="test-defense",
             )
 
-        # 1. Warning fired (clean_dict left it as a string)
+        # No warning — json_repair in _clean_value handles NUL bytes
         warning_calls = [
             c for c in mock_logger.warning.call_args_list
             if c[0] and c[0][0] == "clean_dict_missed_json_string"
         ]
-        assert len(warning_calls) == 1
-        assert warning_calls[0][1]["field"] == "bedroom"
+        assert len(warning_calls) == 0
 
-        # 2. Model validator rescued — valid analysis returned
+        # Valid analysis returned
         assert analysis is not None
         assert analysis.bedroom is not None
-        assert analysis.bedroom.primary_is_double == "yes"
         assert analysis.bedroom.office_separation == "dedicated_room"
 
 
@@ -2557,12 +2555,15 @@ class TestMergeAnalysisWarningLog:
         """Warning should fire when _clean_dict leaves a sub-model field as a JSON string."""
         import json
 
-        # NUL byte makes _clean_value fail (can't parse), leaving a string
-        bedroom_data = sample_visual_response["bedroom"]
-        bedroom_json = json.dumps(bedroom_data).replace('"yes"', '"yes\x00"', 1)
-        sample_visual_response["bedroom"] = bedroom_json
+        # Malform JSON (missing colon) so json.loads fails in first two passes,
+        # then mock _attempt_json_repair to return None so _clean_value gives up
+        bedroom_json = json.dumps(sample_visual_response["bedroom"])
+        sample_visual_response["bedroom"] = bedroom_json.replace('": "', '" "', 1)
 
-        with patch("home_finder.filters.quality.logger") as mock_logger:
+        with (
+            patch("home_finder.filters.quality._attempt_json_repair", return_value=None),
+            patch("home_finder.filters.quality.logger") as mock_logger,
+        ):
             analysis = PropertyQualityFilter._merge_analysis_results(
                 sample_visual_response,
                 sample_evaluation_response,
@@ -2606,12 +2607,17 @@ class TestMergeAnalysisWarningLog:
         """Warning should fire once per unparsed sub-model field."""
         import json
 
-        # Make both bedroom and kitchen unparseable by _clean_value
+        # Malform JSON (missing colon) so json.loads fails in first two passes
         for field in ("bedroom", "kitchen"):
-            data = sample_visual_response[field]
-            sample_visual_response[field] = json.dumps(data).replace('"', '"\x00', 1)
+            field_json = json.dumps(sample_visual_response[field])
+            sample_visual_response[field] = field_json.replace('": "', '" "', 1)
 
-        with patch("home_finder.filters.quality.logger") as mock_logger:
+        # Mock _attempt_json_repair to return None, forcing _clean_value to
+        # leave them as strings so the warning path fires
+        with (
+            patch("home_finder.filters.quality._attempt_json_repair", return_value=None),
+            patch("home_finder.filters.quality.logger") as mock_logger,
+        ):
             analysis = PropertyQualityFilter._merge_analysis_results(
                 sample_visual_response,
                 sample_evaluation_response,
@@ -3223,7 +3229,7 @@ class TestAttemptJsonRepair:
         assert result == {"key": "value"}
 
     def test_totally_broken_returns_none(self) -> None:
-        result = _attempt_json_repair("{this is not json at all}")
+        result = _attempt_json_repair("just a string with no structure")
         assert result is None
 
     def test_nested_object_values_repaired(self) -> None:
@@ -3258,4 +3264,89 @@ class TestAttemptJsonRepair:
         )
         assert analysis.bedroom is not None
         assert analysis.bedroom.primary_is_double == "yes"
+        assert analysis.bedroom.office_separation == "shared_space"
+
+    def test_set_literal_syntax_repaired(self) -> None:
+        """Set-literal syntax: valueless first key followed by valid pairs.
+
+        Production failure: '{"primary_is_double", "has_built_in_wardrobe": "no", ...}'
+        The first entry has no colon/value (Python set-literal syntax).
+        json_repair should produce a dict preserving the valid key-value pairs.
+        """
+        s = (
+            '{"primary_is_double", "has_built_in_wardrobe": "no",'
+            ' "can_fit_desk": "yes", "office_separation": "shared_space",'
+            ' "notes": "Decent room"}'
+        )
+        result = _attempt_json_repair(s)
+        assert result is not None
+        assert isinstance(result, dict)
+        # Valid key-value pairs should be preserved
+        assert result["can_fit_desk"] == "yes"
+        assert result["office_separation"] == "shared_space"
+        assert result["notes"] == "Decent room"
+
+    def test_python_booleans_repaired(self) -> None:
+        """Python True/False should be converted to JSON true/false."""
+        result = _attempt_json_repair('{"a": True, "b": False}')
+        assert result is not None
+        assert result["a"] is True
+        assert result["b"] is False
+
+    def test_single_quotes_repaired(self) -> None:
+        """Single-quoted JSON should be repaired."""
+        result = _attempt_json_repair("{'key': 'value', 'num': 42}")
+        assert result is not None
+        assert result["key"] == "value"
+        assert result["num"] == 42
+
+
+class TestSetLiteralSyntaxThroughLayers:
+    """End-to-end: set-literal syntax repair through each defense layer."""
+
+    SET_LITERAL_BEDROOM = (
+        '{"primary_is_double", "has_built_in_wardrobe": "no",'
+        ' "can_fit_desk": "yes", "office_separation": "shared_space",'
+        ' "notes": "Decent room"}'
+    )
+
+    def test_clean_value_repairs_set_literal(self) -> None:
+        """Layer 1: _clean_value should repair set-literal syntax via json_repair."""
+        result = _clean_value(self.SET_LITERAL_BEDROOM)
+        assert isinstance(result, dict)
+        assert result["can_fit_desk"] == "yes"
+        assert result["office_separation"] == "shared_space"
+
+    def test_coerce_json_strings_repairs_set_literal(self) -> None:
+        """Layer 3: coerce_json_strings model validator repairs set-literal syntax."""
+        analysis = PropertyQualityAnalysis(
+            kitchen=KitchenAnalysis(),
+            condition=ConditionAnalysis(),
+            light_space=LightSpaceAnalysis(),
+            space=SpaceAnalysis(),
+            summary="Test",
+            bedroom=self.SET_LITERAL_BEDROOM,  # type: ignore[arg-type]
+        )
+        assert analysis.bedroom is not None
+        assert analysis.bedroom.can_fit_desk == "yes"
+        assert analysis.bedroom.office_separation == "shared_space"
+
+    def test_merge_analysis_repairs_set_literal(
+        self,
+        sample_visual_response: dict[str, Any],
+        sample_evaluation_response: dict[str, Any],
+    ) -> None:
+        """Full pipeline: _merge_analysis_results repairs set-literal bedroom."""
+        sample_visual_response["bedroom"] = self.SET_LITERAL_BEDROOM
+
+        analysis = PropertyQualityFilter._merge_analysis_results(
+            sample_visual_response,
+            sample_evaluation_response,
+            bedrooms=2,
+            property_id="test-set-literal",
+        )
+
+        assert analysis is not None
+        assert analysis.bedroom is not None
+        assert analysis.bedroom.can_fit_desk == "yes"
         assert analysis.bedroom.office_separation == "shared_space"
