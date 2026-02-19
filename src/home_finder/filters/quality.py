@@ -798,18 +798,19 @@ class PropertyQualityFilter:
         merged: MergedProperty,
         *,
         data_dir: str | None = None,
-    ) -> tuple[MergedProperty, PropertyQualityAnalysis]:
+    ) -> tuple[MergedProperty, PropertyQualityAnalysis | None]:
         """Analyze quality for a single pre-enriched merged property.
 
         Does NOT sleep between calls — caller controls pacing.
         Handles errors internally (returns minimal analysis on failure).
+        Returns ``None`` analysis when images are incomplete (missing cache).
 
         Args:
             merged: Enriched merged property to analyze.
             data_dir: Data directory for image cache.
 
         Returns:
-            Tuple of (merged_property, analysis).
+            Tuple of (merged_property, analysis_or_none).
         """
         prop = merged.canonical
         value = assess_value(prop.price_pcm, prop.postcode, prop.bedrooms)
@@ -834,6 +835,24 @@ class PropertyQualityFilter:
                 )
         else:
             gallery_cached = [None] * len(gallery_urls)
+
+        # Require all gallery images cached before spending API budget.
+        # Missing images indicate failed enrichment or stale cache — defer
+        # analysis until images are available (next enrichment run).
+        if data_dir and gallery_urls:
+            effective_max = self._max_images - (
+                1 if floorplan_url and is_valid_image_url(floorplan_url) else 0
+            )
+            expected = min(len(gallery_urls), effective_max)
+            cached_count = sum(1 for p in gallery_cached[:expected] if p is not None)
+            if cached_count < expected:
+                logger.warning(
+                    "skipping_analysis_insufficient_images",
+                    property_id=merged.unique_id,
+                    cached=cached_count,
+                    expected=expected,
+                )
+                return merged, None
 
         if not gallery_urls and not floorplan_url:
             logger.info(
@@ -924,7 +943,7 @@ class PropertyQualityFilter:
         properties: list[MergedProperty],
         *,
         data_dir: str | None = None,
-    ) -> list[tuple[MergedProperty, PropertyQualityAnalysis]]:
+    ) -> list[tuple[MergedProperty, PropertyQualityAnalysis | None]]:
         """Analyze quality for pre-enriched merged properties.
 
         Properties should already have images and floorplan populated
@@ -936,9 +955,9 @@ class PropertyQualityFilter:
                 cached images from disk instead of downloading.
 
         Returns:
-            List of (merged_property, analysis) tuples.
+            List of (merged_property, analysis_or_none) tuples.
         """
-        results: list[tuple[MergedProperty, PropertyQualityAnalysis]] = []
+        results: list[tuple[MergedProperty, PropertyQualityAnalysis | None]] = []
 
         for merged in properties:
             results.append(await self.analyze_single_merged(merged, data_dir=data_dir))

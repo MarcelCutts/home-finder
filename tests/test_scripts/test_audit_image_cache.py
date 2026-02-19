@@ -18,6 +18,7 @@ _spec.loader.exec_module(_mod)
 phase1_db_to_disk = _mod.phase1_db_to_disk
 phase2_disk_to_db = _mod.phase2_disk_to_db
 purge_disk_files = _mod.purge_disk_files
+reflag_partial = _mod.reflag_partial
 main = _mod.main
 
 
@@ -26,11 +27,13 @@ def _setup_db(
     rows: list[tuple[str, str, str, str]],
     *,
     property_ids: list[str] | None = None,
+    quality_analyses: list[tuple[str, str]] | None = None,
 ) -> None:
-    """Create property_images and properties tables and insert rows.
+    """Create property_images, properties, and quality_analyses tables and insert rows.
 
     Each row is (property_unique_id, source, url, image_type).
     property_ids: optional list of unique_ids to insert into properties table.
+    quality_analyses: optional list of (property_unique_id, analysis_json) to insert.
     """
     conn = sqlite3.connect(str(db_path))
     try:
@@ -54,6 +57,15 @@ def _setup_db(
             "  title TEXT NOT NULL DEFAULT ''"
             ")"
         )
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS quality_analyses ("
+            "  property_unique_id TEXT PRIMARY KEY,"
+            "  analysis_json TEXT NOT NULL,"
+            "  overall_rating INTEGER,"
+            "  reanalysis_requested_at TEXT,"
+            "  FOREIGN KEY (property_unique_id) REFERENCES properties(unique_id)"
+            ")"
+        )
         for prop_id, source, url, img_type in rows:
             conn.execute(
                 "INSERT INTO property_images (property_unique_id, source, url, image_type)"
@@ -65,6 +77,13 @@ def _setup_db(
                 conn.execute(
                     "INSERT OR IGNORE INTO properties (unique_id) VALUES (?)",
                     (uid,),
+                )
+        if quality_analyses:
+            for uid, analysis_json in quality_analyses:
+                conn.execute(
+                    "INSERT INTO quality_analyses (property_unique_id, analysis_json)"
+                    " VALUES (?, ?)",
+                    (uid, analysis_json),
                 )
         conn.commit()
     finally:
@@ -603,3 +622,198 @@ class TestPurgeDiskFiles:
         main(data_dir, purge_disk=True)
 
         assert not orphan_dir.exists()
+
+
+class TestReflagPartial:
+    """Tests for reflag_partial — re-flag properties with incomplete image caches."""
+
+    def test_flags_property_with_missing_gallery_images(
+        self, tmp_path: Path, db_conn: sqlite3.Connection
+    ) -> None:
+        """Property with uncached gallery images should be flagged for reanalysis."""
+        data_dir = str(tmp_path)
+        uid = "zoopla:reflag1"
+        cached_url = "https://example.com/img1.jpg"
+        missing_url = "https://example.com/img2.jpg"
+
+        # Cache only one of two images
+        cache_dir = get_cache_dir(data_dir, uid)
+        save_image_bytes(cache_dir / url_to_filename(cached_url, "gallery", 0), b"ok")
+
+        _setup_db(
+            tmp_path / "properties.db",
+            [
+                (uid, "zoopla", cached_url, "gallery"),
+                (uid, "zoopla", missing_url, "gallery"),
+            ],
+            property_ids=[uid],
+            quality_analyses=[(uid, '{"summary": "test"}')],
+        )
+
+        total, flagged = reflag_partial(db_conn, data_dir)
+
+        assert total == 1
+        assert flagged == 1
+
+        # Verify DB was updated
+        row = db_conn.execute(
+            "SELECT reanalysis_requested_at FROM quality_analyses WHERE property_unique_id = ?",
+            (uid,),
+        ).fetchone()
+        assert row["reanalysis_requested_at"] is not None
+
+    def test_skips_fully_cached_property(
+        self, tmp_path: Path, db_conn: sqlite3.Connection
+    ) -> None:
+        """Property with all gallery images cached should not be flagged."""
+        data_dir = str(tmp_path)
+        uid = "rightmove:reflag2"
+        url1 = "https://example.com/a.jpg"
+        url2 = "https://example.com/b.jpg"
+
+        cache_dir = get_cache_dir(data_dir, uid)
+        save_image_bytes(cache_dir / url_to_filename(url1, "gallery", 0), b"a")
+        save_image_bytes(cache_dir / url_to_filename(url2, "gallery", 1), b"b")
+
+        _setup_db(
+            tmp_path / "properties.db",
+            [
+                (uid, "rightmove", url1, "gallery"),
+                (uid, "rightmove", url2, "gallery"),
+            ],
+            property_ids=[uid],
+            quality_analyses=[(uid, '{"summary": "test"}')],
+        )
+
+        total, flagged = reflag_partial(db_conn, data_dir)
+
+        assert total == 1
+        assert flagged == 0
+
+        row = db_conn.execute(
+            "SELECT reanalysis_requested_at FROM quality_analyses WHERE property_unique_id = ?",
+            (uid,),
+        ).fetchone()
+        assert row["reanalysis_requested_at"] is None
+
+    def test_dry_run_does_not_update_db(
+        self, tmp_path: Path, db_conn: sqlite3.Connection
+    ) -> None:
+        """--reflag-partial --dry-run should report but not update DB."""
+        data_dir = str(tmp_path)
+        uid = "zoopla:reflag3"
+        missing_url = "https://example.com/missing.jpg"
+
+        _setup_db(
+            tmp_path / "properties.db",
+            [(uid, "zoopla", missing_url, "gallery")],
+            property_ids=[uid],
+            quality_analyses=[(uid, '{"summary": "test"}')],
+        )
+
+        total, flagged = reflag_partial(db_conn, data_dir, dry_run=True)
+
+        assert total == 1
+        assert flagged == 1
+
+        # DB should NOT be updated
+        row = db_conn.execute(
+            "SELECT reanalysis_requested_at FROM quality_analyses WHERE property_unique_id = ?",
+            (uid,),
+        ).fetchone()
+        assert row["reanalysis_requested_at"] is None
+
+    def test_skips_already_flagged_properties(
+        self, tmp_path: Path, db_conn: sqlite3.Connection
+    ) -> None:
+        """Properties already flagged for reanalysis should not be re-checked."""
+        data_dir = str(tmp_path)
+        uid = "zoopla:reflag4"
+        missing_url = "https://example.com/gone.jpg"
+
+        db_path = tmp_path / "properties.db"
+        _setup_db(
+            db_path,
+            [(uid, "zoopla", missing_url, "gallery")],
+            property_ids=[uid],
+            quality_analyses=[(uid, '{"summary": "test"}')],
+        )
+
+        # Pre-flag the property
+        flag_conn = sqlite3.connect(str(db_path))
+        flag_conn.execute(
+            "UPDATE quality_analyses SET reanalysis_requested_at = '2025-01-01T00:00:00'"
+            " WHERE property_unique_id = ?",
+            (uid,),
+        )
+        flag_conn.commit()
+        flag_conn.close()
+
+        # Re-read the state into db_conn
+        total, flagged = reflag_partial(db_conn, data_dir)
+
+        # Already flagged → not in the query results
+        assert total == 0
+        assert flagged == 0
+
+    def test_accounts_for_floorplan_in_effective_max(
+        self, tmp_path: Path, db_conn: sqlite3.Connection
+    ) -> None:
+        """Effective max should be reduced by 1 when floorplan exists."""
+        data_dir = str(tmp_path)
+        uid = "zoopla:reflag5"
+
+        # 2 gallery images + 1 floorplan; max_images=3 → effective_max=2
+        gallery_url1 = "https://example.com/g1.jpg"
+        gallery_url2 = "https://example.com/g2.jpg"
+        floorplan_url = "https://example.com/floor.jpg"
+
+        # Cache both gallery images
+        cache_dir = get_cache_dir(data_dir, uid)
+        save_image_bytes(cache_dir / url_to_filename(gallery_url1, "gallery", 0), b"g1")
+        save_image_bytes(cache_dir / url_to_filename(gallery_url2, "gallery", 1), b"g2")
+
+        _setup_db(
+            tmp_path / "properties.db",
+            [
+                (uid, "zoopla", gallery_url1, "gallery"),
+                (uid, "zoopla", gallery_url2, "gallery"),
+                (uid, "zoopla", floorplan_url, "floorplan"),
+            ],
+            property_ids=[uid],
+            quality_analyses=[(uid, '{"summary": "test"}')],
+        )
+
+        # With max_images=3, effective_max=2 (floorplan takes 1 slot)
+        # Both gallery images are cached → should NOT flag
+        total, flagged = reflag_partial(db_conn, data_dir, max_images=3)
+
+        assert total == 1
+        assert flagged == 0
+
+    def test_reflag_partial_via_main(self, tmp_path: Path) -> None:
+        """main(reflag_partial_mode=True) should flag incomplete properties."""
+        data_dir = str(tmp_path)
+        uid = "zoopla:reflag_main"
+        missing_url = "https://example.com/missing.jpg"
+
+        _setup_db(
+            tmp_path / "properties.db",
+            [(uid, "zoopla", missing_url, "gallery")],
+            property_ids=[uid],
+            quality_analyses=[(uid, '{"summary": "test"}')],
+        )
+
+        main(data_dir, reflag_partial_mode=True)
+
+        conn = sqlite3.connect(str(tmp_path / "properties.db"))
+        conn.row_factory = sqlite3.Row
+        try:
+            row = conn.execute(
+                "SELECT reanalysis_requested_at FROM quality_analyses WHERE property_unique_id = ?",
+                (uid,),
+            ).fetchone()
+        finally:
+            conn.close()
+
+        assert row["reanalysis_requested_at"] is not None

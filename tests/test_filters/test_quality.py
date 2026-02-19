@@ -1485,6 +1485,123 @@ class TestAnalyzeSingleMerged:
         assert analysis.space.confidence == "low"
 
 
+class TestInsufficientImageSkip:
+    """Tests for skipping analysis when gallery images are not fully cached."""
+
+    async def test_skips_analysis_when_images_uncached(
+        self,
+        sample_merged_property: MergedProperty,
+        tmp_path: Any,
+    ) -> None:
+        """Should return None analysis when some gallery images are not cached."""
+        data_dir = str(tmp_path)
+
+        # Create cache dir but do NOT populate images — all will be missing
+        quality_filter = PropertyQualityFilter(api_key="test-key")
+        merged, analysis = await quality_filter.analyze_single_merged(
+            sample_merged_property, data_dir=data_dir
+        )
+
+        assert merged is sample_merged_property
+        assert analysis is None
+
+    async def test_proceeds_when_all_images_cached(
+        self,
+        sample_merged_property: MergedProperty,
+        sample_visual_response: dict[str, Any],
+        sample_evaluation_response: dict[str, Any],
+        tmp_path: Any,
+    ) -> None:
+        """Should proceed with analysis when all gallery images are cached."""
+        data_dir = str(tmp_path)
+        _populate_image_cache(data_dir, sample_merged_property)
+
+        quality_filter = PropertyQualityFilter(api_key="test-key")
+        quality_filter._client = MagicMock()
+        quality_filter._client.messages.create = _make_two_phase_mock(
+            sample_visual_response, sample_evaluation_response
+        )
+
+        merged, analysis = await quality_filter.analyze_single_merged(
+            sample_merged_property, data_dir=data_dir
+        )
+
+        assert merged is sample_merged_property
+        assert analysis is not None
+        assert analysis.kitchen.overall_quality == "modern"
+
+    async def test_no_skip_when_data_dir_not_set(
+        self,
+        sample_merged_property: MergedProperty,
+        sample_visual_response: dict[str, Any],
+        sample_evaluation_response: dict[str, Any],
+    ) -> None:
+        """Should not skip analysis when data_dir is not set (no cache mode)."""
+        quality_filter = PropertyQualityFilter(api_key="test-key")
+        quality_filter._client = MagicMock()
+        quality_filter._client.messages.create = _make_two_phase_mock(
+            sample_visual_response, sample_evaluation_response
+        )
+
+        # No data_dir — should proceed (cache paths all None, but check is skipped)
+        merged, analysis = await quality_filter.analyze_single_merged(
+            sample_merged_property
+        )
+
+        assert merged is sample_merged_property
+        assert analysis is not None
+
+    async def test_skips_when_partial_cache(
+        self,
+        sample_property: Property,
+        tmp_path: Any,
+    ) -> None:
+        """Should skip when only some images are cached (partial enrichment)."""
+        from home_finder.utils.image_cache import get_cached_image_path, save_image_bytes
+        from io import BytesIO
+        from PIL import Image
+
+        # Create a merged property with 5 gallery images
+        images = tuple(
+            PropertyImage(
+                url=HttpUrl(f"https://example.com/img{i}.jpg"),
+                source=sample_property.source,
+                image_type="gallery",
+            )
+            for i in range(5)
+        )
+        merged = MergedProperty(
+            canonical=sample_property,
+            sources=(sample_property.source,),
+            source_urls={sample_property.source: sample_property.url},
+            images=images,
+            floorplan=None,
+            min_price=sample_property.price_pcm,
+            max_price=sample_property.price_pcm,
+        )
+
+        data_dir = str(tmp_path)
+
+        # Cache only 3 of the 5 images
+        buf = BytesIO()
+        Image.new("RGB", (10, 10), color="red").save(buf, format="JPEG")
+        jpeg_bytes = buf.getvalue()
+
+        for idx in range(3):
+            path = get_cached_image_path(
+                data_dir, merged.unique_id, str(images[idx].url), "gallery", idx
+            )
+            save_image_bytes(path, jpeg_bytes)
+
+        quality_filter = PropertyQualityFilter(api_key="test-key")
+        merged_out, analysis = await quality_filter.analyze_single_merged(
+            merged, data_dir=data_dir
+        )
+
+        assert merged_out is merged
+        assert analysis is None
+
+
 class TestBackwardCompatValidators:
     """Test that bool/None values are coerced to tri-state strings."""
 

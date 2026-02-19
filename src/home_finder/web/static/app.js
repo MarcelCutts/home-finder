@@ -528,6 +528,8 @@ L.GridLayer.include({
         card.scrollIntoView({ behavior: "smooth", block: "center" });
         card.classList.add("card-highlighted");
         setTimeout(function () { card.classList.remove("card-highlighted"); }, 2000);
+      } else {
+        window.location.href = "/property/" + encodeURIComponent(p.id);
       }
     });
     marker.on("popupopen", function () {

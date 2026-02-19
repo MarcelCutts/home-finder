@@ -309,12 +309,99 @@ def purge_disk_files(
     return orphan_dirs, orphan_dir_files, stale_files, total
 
 
+def reflag_partial(
+    conn: sqlite3.Connection,
+    data_dir: str,
+    *,
+    dry_run: bool = False,
+    max_images: int = 20,
+) -> tuple[int, int]:
+    """Re-flag properties whose quality analysis used incomplete image sets.
+
+    Checks each property with a quality analysis: if any gallery image (up
+    to ``max_images``, minus 1 when a floorplan exists) is not cached on
+    disk, the property is flagged for reanalysis.
+
+    Returns:
+        Tuple of (total_checked, flagged_count).
+    """
+    from datetime import UTC, datetime
+
+    # Fetch all properties with quality analyses
+    rows = conn.execute(
+        "SELECT q.property_unique_id "
+        "FROM quality_analyses q "
+        "WHERE q.reanalysis_requested_at IS NULL"
+    ).fetchall()
+
+    total = len(rows)
+    to_flag: list[str] = []
+
+    for row in rows:
+        uid = row["property_unique_id"]
+
+        # Get gallery images for this property
+        img_rows = conn.execute(
+            "SELECT url FROM property_images "
+            "WHERE property_unique_id = ? AND image_type = 'gallery' "
+            "ORDER BY id",
+            (uid,),
+        ).fetchall()
+
+        # Check if a floorplan exists
+        fp_row = conn.execute(
+            "SELECT url FROM property_images "
+            "WHERE property_unique_id = ? AND image_type = 'floorplan' "
+            "LIMIT 1",
+            (uid,),
+        ).fetchone()
+
+        has_floorplan = fp_row is not None
+        effective_max = max_images - (1 if has_floorplan else 0)
+        gallery_urls = [r["url"] for r in img_rows]
+        expected = min(len(gallery_urls), effective_max)
+
+        if expected == 0:
+            continue
+
+        cached_count = sum(
+            1
+            for url in gallery_urls[:expected]
+            if find_cached_file(data_dir, uid, url, "gallery") is not None
+        )
+
+        if cached_count < expected:
+            to_flag.append(uid)
+
+    # Report
+    print(f"\nReflag partial: checked {total} analysed properties")
+    print(f"  Incomplete image cache: {len(to_flag)}")
+
+    if to_flag and not dry_run:
+        now = datetime.now(UTC).isoformat()
+        conn.executemany(
+            "UPDATE quality_analyses SET reanalysis_requested_at = ? "
+            "WHERE property_unique_id = ?",
+            [(now, uid) for uid in to_flag],
+        )
+        conn.commit()
+        print(f"  Flagged {len(to_flag)} properties for reanalysis")
+    elif to_flag and dry_run:
+        print(f"  Dry run — would flag {len(to_flag)} properties for reanalysis")
+        for uid in sorted(to_flag):
+            print(f"    {uid}")
+
+    return total, len(to_flag)
+
+
 def main(
     data_dir: str,
     *,
     fix: bool = False,
     dry_run: bool = False,
     purge_disk: bool = False,
+    reflag_partial_mode: bool = False,
+    max_images: int = 20,
 ) -> None:
     db_path = Path(data_dir) / "properties.db"
     if not db_path.is_file():
@@ -324,10 +411,13 @@ def main(
     conn = sqlite3.connect(str(db_path))
     conn.row_factory = sqlite3.Row
     try:
-        phase1_db_to_disk(conn, data_dir, fix=fix, dry_run=dry_run)
-        phase2_disk_to_db(conn, data_dir)
-        if purge_disk:
-            purge_disk_files(conn, data_dir, dry_run=dry_run)
+        if reflag_partial_mode:
+            reflag_partial(conn, data_dir, dry_run=dry_run, max_images=max_images)
+        else:
+            phase1_db_to_disk(conn, data_dir, fix=fix, dry_run=dry_run)
+            phase2_disk_to_db(conn, data_dir)
+            if purge_disk:
+                purge_disk_files(conn, data_dir, dry_run=dry_run)
     finally:
         conn.close()
 
@@ -348,11 +438,30 @@ if __name__ == "__main__":
         help="Delete stale disk files (files with no matching DB record)",
     )
     parser.add_argument(
+        "--reflag-partial",
+        action="store_true",
+        help="Re-flag properties with incomplete image caches for reanalysis",
+    )
+    parser.add_argument(
+        "--max-images",
+        type=int,
+        default=20,
+        help="Max gallery images expected per property (default: 20)",
+    )
+    parser.add_argument(
         "--dry-run",
         action="store_true",
-        help="Preview deletions without making changes (requires --fix or --purge-disk)",
+        help="Preview changes without making them "
+        "(requires --fix, --purge-disk, or --reflag-partial)",
     )
     args = parser.parse_args()
-    if args.dry_run and not args.fix and not args.purge_disk:
-        parser.error("--dry-run only makes sense with --fix or --purge-disk")
-    main(args.data_dir, fix=args.fix, dry_run=args.dry_run, purge_disk=args.purge_disk)
+    if args.dry_run and not args.fix and not args.purge_disk and not args.reflag_partial:
+        parser.error("--dry-run only makes sense with --fix, --purge-disk, or --reflag-partial")
+    main(
+        args.data_dir,
+        fix=args.fix,
+        dry_run=args.dry_run,
+        purge_disk=args.purge_disk,
+        reflag_partial_mode=args.reflag_partial,
+        max_images=args.max_images,
+    )
