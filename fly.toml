@@ -16,6 +16,7 @@ primary_region = "lhr"
 [env]
   MALLOC_ARENA_MAX = "2"
   HOME_FINDER_DATABASE_PATH = "/app/data/properties.db"
+  HOME_FINDER_WEB_BASE_URL = "https://home-finder.fly.dev"
 
 [http_service]
   internal_port = 8000

@@ -3,6 +3,15 @@ set -euo pipefail
 
 APP="home-finder"
 DATA_DIR="$(cd "$(dirname "$0")/.." && pwd)/data"
+FULL_SYNC=false
+
+# Parse flags
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --full) FULL_SYNC=true; shift ;;
+    *) echo "Usage: $0 [--full]"; exit 1 ;;
+  esac
+done
 
 # Get machine ID non-interactively
 MACHINE_ID=$(fly machine list --app "$APP" --json | python3 -c "import sys,json; print(json.load(sys.stdin)[0]['id'])")
@@ -31,26 +40,39 @@ fly ssh console -C "sh -c 'rm -f /app/data/properties.db /app/data/properties.db
 fly sftp put "$DATA_DIR/properties.db" /app/data/properties.db --app "$APP" -q
 fly ssh console --app "$APP" -C "sh -c 'chown -R appuser:appuser /app/data/'" 2>/dev/null || true
 
-echo "==> Syncing image cache (incremental)..."
-REMOTE_DIRS=$(fly ssh console --app "$APP" -C "ls /app/data/image_cache/ 2>/dev/null" 2>/dev/null | tr -d '\r' || echo "")
-LOCAL_DIRS=$(ls "$DATA_DIR/image_cache/")
-NEW_DIRS=$(comm -23 <(echo "$LOCAL_DIRS" | sort) <(echo "$REMOTE_DIRS" | sort) || true)
-
-if [ -z "$NEW_DIRS" ]; then
-  echo "    Image cache is up to date."
-else
-  COUNT=$(echo "$NEW_DIRS" | wc -l | tr -d ' ')
-  echo "    Uploading $COUNT new property directories..."
-
+if [ "$FULL_SYNC" = true ]; then
+  echo "==> Syncing image cache (full replacement)..."
   cd "$DATA_DIR/image_cache"
-  # shellcheck disable=SC2086
-  tar czf /tmp/hf_new_images.tar.gz --no-xattrs --no-mac-metadata $NEW_DIRS
-  SIZE=$(du -h /tmp/hf_new_images.tar.gz | cut -f1)
+  tar czf /tmp/hf_all_images.tar.gz --no-xattrs --no-mac-metadata .
+  SIZE=$(du -h /tmp/hf_all_images.tar.gz | cut -f1)
   echo "    Compressed size: $SIZE"
 
-  fly sftp put /tmp/hf_new_images.tar.gz /app/data/hf_new_images.tar.gz --app "$APP" -q
-  fly ssh console --app "$APP" -C "sh -c 'mkdir -p /app/data/image_cache && cd /app/data/image_cache && tar xzf /app/data/hf_new_images.tar.gz && rm /app/data/hf_new_images.tar.gz'"
-  rm /tmp/hf_new_images.tar.gz
+  fly ssh console --app "$APP" -C "sh -c 'mkdir -p /app/data/image_cache'" 2>/dev/null || true
+  fly sftp put /tmp/hf_all_images.tar.gz /app/data/hf_all_images.tar.gz --app "$APP" -q
+  fly ssh console --app "$APP" -C "sh -c 'cd /app/data/image_cache && tar xzf /app/data/hf_all_images.tar.gz && rm /app/data/hf_all_images.tar.gz'"
+  rm /tmp/hf_all_images.tar.gz
+else
+  echo "==> Syncing image cache (incremental — use --full to sync updates to existing properties)..."
+  REMOTE_DIRS=$(fly ssh console --app "$APP" -C "ls /app/data/image_cache/ 2>/dev/null" 2>/dev/null | tr -d '\r' || echo "")
+  LOCAL_DIRS=$(ls "$DATA_DIR/image_cache/")
+  NEW_DIRS=$(comm -23 <(echo "$LOCAL_DIRS" | sort) <(echo "$REMOTE_DIRS" | sort) || true)
+
+  if [ -z "$NEW_DIRS" ]; then
+    echo "    Image cache is up to date (no new directories)."
+  else
+    COUNT=$(echo "$NEW_DIRS" | wc -l | tr -d ' ')
+    echo "    Uploading $COUNT new property directories..."
+
+    cd "$DATA_DIR/image_cache"
+    # shellcheck disable=SC2086
+    tar czf /tmp/hf_new_images.tar.gz --no-xattrs --no-mac-metadata $NEW_DIRS
+    SIZE=$(du -h /tmp/hf_new_images.tar.gz | cut -f1)
+    echo "    Compressed size: $SIZE"
+
+    fly sftp put /tmp/hf_new_images.tar.gz /app/data/hf_new_images.tar.gz --app "$APP" -q
+    fly ssh console --app "$APP" -C "sh -c 'mkdir -p /app/data/image_cache && cd /app/data/image_cache && tar xzf /app/data/hf_new_images.tar.gz && rm /app/data/hf_new_images.tar.gz'"
+    rm /tmp/hf_new_images.tar.gz
+  fi
 fi
 
 echo "==> Restarting app..."

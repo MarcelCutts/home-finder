@@ -422,6 +422,21 @@ L.GridLayer.include({
   var markersByPropertyId = {};
   var pinnedCardRequestId = 0;
 
+  function buildPinnedSkeleton() {
+    var s = document.createElement("div");
+    s.className = "pinned-skeleton";
+    s.setAttribute("aria-hidden", "true");
+    s.innerHTML =
+      '<div class="skel-image"></div>' +
+      '<div class="skel-body">' +
+        '<div class="skel-line skel-line-short"></div>' +
+        '<div class="skel-line skel-line-long"></div>' +
+        '<div class="skel-line skel-line-med"></div>' +
+      '</div>' +
+      '<div class="skel-footer"><div class="skel-pill"></div><div class="skel-pill"></div></div>';
+    return s;
+  }
+
   function createPricePillIcon(price, id) {
     var formatted = "\u00A3" + Number(price).toLocaleString();
     return L.divIcon({
@@ -536,10 +551,23 @@ L.GridLayer.include({
       if (prev) prev.remove();
 
       var thisRequest = ++pinnedCardRequestId;
-      var loader = document.createElement("div");
-      loader.className = "pinned-card pinned-card-loading";
-      loader.textContent = "Loading\u2026";
-      resultsEl.insertBefore(loader, resultsEl.firstChild);
+      var reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+      var fadeMs = reducedMotion ? 0 : 300;
+
+      // Build stable wrapper with skeleton inside
+      var wrapper = document.createElement("div");
+      wrapper.className = "pinned-card";
+      var dismiss = document.createElement("button");
+      dismiss.className = "pinned-card-dismiss";
+      dismiss.setAttribute("aria-label", "Dismiss pinned card");
+      dismiss.textContent = "\u00d7";
+      dismiss.onclick = function () { wrapper.remove(); };
+      wrapper.appendChild(dismiss);
+      var inner = document.createElement("div");
+      inner.className = "pinned-card-inner";
+      inner.appendChild(buildPinnedSkeleton());
+      wrapper.appendChild(inner);
+      resultsEl.insertBefore(wrapper, resultsEl.firstChild);
       resultsEl.scrollTop = 0;
 
       fetch("/property/" + encodeURIComponent(p.id) + "/card")
@@ -549,29 +577,23 @@ L.GridLayer.include({
         })
         .then(function (html) {
           if (thisRequest !== pinnedCardRequestId) return;
-          loader.remove();
-          var wrapper = document.createElement("div");
-          wrapper.className = "pinned-card";
-          var dismiss = document.createElement("button");
-          dismiss.className = "pinned-card-dismiss";
-          dismiss.setAttribute("aria-label", "Dismiss pinned card");
-          dismiss.textContent = "\u00d7";
-          dismiss.onclick = function () { wrapper.remove(); };
-          wrapper.appendChild(dismiss);
-          var cardDiv = document.createElement("div");
-          cardDiv.innerHTML = html;
-          wrapper.appendChild(cardDiv);
-          resultsEl.insertBefore(wrapper, resultsEl.firstChild);
-          var pinned = wrapper.querySelector(".property-card");
-          if (pinned) {
-            pinned.scrollIntoView({ behavior: "smooth", block: "center" });
-            pinned.classList.add("card-highlighted");
-            setTimeout(function () { pinned.classList.remove("card-highlighted"); }, 2000);
-          }
+          // Fade out skeleton
+          inner.classList.add("fade-out");
+          setTimeout(function () {
+            if (thisRequest !== pinnedCardRequestId) return;
+            inner.innerHTML = html;
+            inner.classList.remove("fade-out");
+            var pinned = wrapper.querySelector(".property-card");
+            if (pinned) {
+              pinned.scrollIntoView({ behavior: "smooth", block: "center" });
+              pinned.classList.add("card-highlighted");
+              setTimeout(function () { pinned.classList.remove("card-highlighted"); }, 2000);
+            }
+          }, fadeMs);
         })
         .catch(function () {
           if (thisRequest !== pinnedCardRequestId) return;
-          loader.remove();
+          wrapper.remove();
           window.location.href = "/property/" + encodeURIComponent(p.id);
         });
     });
@@ -780,23 +802,6 @@ L.GridLayer.include({
   });
 })();
 
-// Benchmark bar fill animation
-(function () {
-  var bars = document.querySelectorAll(".benchmark-fill");
-  if (!("IntersectionObserver" in window) || bars.length === 0) return;
-
-  var observer = new IntersectionObserver(function (entries) {
-    entries.forEach(function (entry) {
-      if (entry.isIntersecting) {
-        entry.target.classList.add("animate");
-        observer.unobserve(entry.target);
-      }
-    });
-  }, { threshold: 0.3 });
-
-  bars.forEach(function (bar) { observer.observe(bar); });
-})();
-
 // Status selector popover: toggle on click, close on outside click / Escape
 (function () {
   document.addEventListener("click", function (e) {
@@ -866,3 +871,25 @@ L.GridLayer.include({
     }
   });
 })();
+
+// Copy viewing message to clipboard
+function copyViewingMessage() {
+  var textarea = document.getElementById("viewing-msg-text");
+  if (!textarea) return;
+
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(textarea.value).then(function () {
+      var btn = document.querySelector(".viewing-msg-copy");
+      if (btn) {
+        var original = btn.textContent;
+        btn.textContent = "Copied!";
+        setTimeout(function () { btn.textContent = original; }, 1500);
+      }
+    });
+  } else {
+    // Fallback: select text for manual copy
+    textarea.removeAttribute("readonly");
+    textarea.select();
+    textarea.setAttribute("readonly", "");
+  }
+}

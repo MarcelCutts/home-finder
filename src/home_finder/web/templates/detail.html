@@ -101,18 +101,6 @@
                 <span class="listing-age-pill">Listed {{ dom }}d ago{% if dom >= 14 %} &middot; May be negotiable{% endif %}</span>
                 {% endif %}
                 {% endif %}
-                {% if benchmark %}
-                {% set bdiff = prop.price_pcm - benchmark.median_rent %}
-                <span class="benchmark-chip {% if bdiff < 0 %}benchmark-below{% elif bdiff > 100 %}benchmark-above{% else %}benchmark-at{% endif %}">
-                    {% if bdiff < 0 %}
-                        &pound;{{ (-bdiff)|int }} below avg
-                    {% elif bdiff > 0 %}
-                        &pound;{{ bdiff|int }} above avg
-                    {% else %}
-                        At area avg
-                    {% endif %}
-                </span>
-                {% endif %}
             </div>
         </div>
     </div>
@@ -139,6 +127,7 @@
             {% if qa %}<li><a href="#section-overview">Overview</a></li>{% endif %}
             {% if qa %}<li><a href="#section-quality">Quality</a></li>{% endif %}
             {% if qa and qa.viewing_notes and (qa.viewing_notes.check_items or qa.viewing_notes.questions_for_agent or qa.viewing_notes.deal_breaker_tests) %}<li><a href="#section-viewing">Viewing Prep</a></li>{% endif %}
+            {% if qa %}<li><a href="#section-message">Message</a></li>{% endif %}
             {% if prop.floorplan_images %}<li><a href="#section-floorplan">Floorplan</a></li>{% endif %}
             {% if best_description %}<li><a href="#section-description">Description</a></li>{% endif %}
             {% if prop.latitude and prop.longitude %}<li><a href="#section-location">Location</a></li>{% endif %}
@@ -235,17 +224,21 @@
         <details class="overview-card negotiation-card">
             <summary>
                 Negotiation Intel
-                <span class="badge {% if negotiation.strength == 'strong' %}badge-green{% elif negotiation.strength == 'moderate' %}badge-amber{% else %}badge-red{% endif %}">
+                <span class="badge {% if negotiation.strength == 'strong' %}badge-green{% elif negotiation.strength == 'moderate' %}badge-amber{% elif negotiation.strength == 'balanced' %}badge-amber{% else %}badge-red{% endif %}">
                     {{ negotiation.strength | capitalize }}
                 </span>
             </summary>
             <ul class="negotiation-points">
-                <li>{{ negotiation.days_context }}</li>
-                <li>{{ negotiation.price_context }}</li>
-                <li>{{ negotiation.history_context }}</li>
-                <li>{{ negotiation.seasonal_context }}</li>
+                {% for signal in negotiation.signals %}
+                {% if signal.weight > 0 or signal.direction != 'neutral' %}
+                <li class="signal-{{ signal.direction }}">{{ signal.text }}</li>
+                {% endif %}
+                {% endfor %}
             </ul>
             <p class="negotiation-approach">{{ negotiation.suggested_approach }}</p>
+            {% if negotiation.benchmark_source %}
+            <p class="negotiation-source">Benchmark: {{ negotiation.benchmark_source }}</p>
+            {% endif %}
         </details>
         {% endif %}
 
@@ -450,6 +443,22 @@
         {% endif %}
     </section>
     {% endif %}
+    {% endif %}
+
+    {# 2c. Viewing Message — AI-drafted enquiry #}
+    {% if qa %}
+    <section id="section-message" class="detail-section">
+        <h3>Viewing Message</h3>
+        <div id="viewing-message-container">
+            <p class="viewing-msg-hint">AI-drafted enquiry ready to paste into the portal.</p>
+            <button class="viewing-msg-btn viewing-msg-generate"
+                    hx-post="/property/{{ prop.unique_id }}/viewing-message"
+                    hx-target="#viewing-message-container"
+                    hx-disabled-elt="this"
+                    hx-indicator="#msg-spinner">Draft Viewing Message</button>
+            <span class="htmx-indicator" id="msg-spinner">Generating…</span>
+        </div>
+    </section>
     {% endif %}
 
     {# 3. Floorplan — spatial understanding #}

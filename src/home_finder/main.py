@@ -291,6 +291,7 @@ async def _cross_run_deduplicate(
     # Split: anchors that gained new sources vs genuinely new properties
     genuinely_new: list[MergedProperty] = []
     anchors_updated = 0
+    seen_anchor_ids: set[str] = set()
     for merged in dedup_results:
         # Check if this result involves any DB anchor (by URL match)
         matched_anchor_id: str | None = None
@@ -301,11 +302,28 @@ async def _cross_run_deduplicate(
                 break
 
         if matched_anchor_id is not None:
-            original_anchor = anchor_by_id[matched_anchor_id]
-            if set(merged.sources) != set(original_anchor.sources):
-                await storage.update_merged_sources(matched_anchor_id, merged)
-                anchors_updated += 1
+            if matched_anchor_id in seen_anchor_ids:
+                continue
+            seen_anchor_ids.add(matched_anchor_id)
 
+            # Check if any new property was actually merged into this anchor
+            # (vs the anchor just passing through dedup unchanged)
+            new_property_merged = any(
+                str(url) in new_url_to_unique_id
+                for url in merged.source_urls.values()
+            )
+            if not new_property_merged:
+                continue
+
+            original_anchor = anchor_by_id[matched_anchor_id]
+
+            # Always update metadata (URLs, descriptions, prices)
+            await storage.update_merged_sources(matched_anchor_id, merged)
+            anchors_updated += 1
+
+            # Only copy images + reanalyze when genuinely new sources added
+            truly_new_sources = set(merged.sources) - set(original_anchor.sources)
+            if truly_new_sources:
                 # Copy cached images from new source(s) to anchor directory
                 if data_dir:
                     original_urls = {str(u) for u in original_anchor.source_urls.values()}
@@ -320,7 +338,7 @@ async def _cross_run_deduplicate(
                 logger.info(
                     "cross_run_reanalysis_flagged",
                     anchor_id=matched_anchor_id,
-                    new_sources=[s.value for s in merged.sources],
+                    added_sources=[s.value for s in truly_new_sources],
                     original_sources=[s.value for s in original_anchor.sources],
                 )
         else:
@@ -1295,10 +1313,6 @@ async def run_pipeline(
             notified_count=notified_count,
         )
         await storage.complete_pipeline_run(run_id, "completed")
-
-        # Recompute rent benchmarks with fresh data
-        benchmark_count = await storage.compute_rent_benchmarks()
-        logger.info("rent_benchmarks_refreshed", count=benchmark_count)
 
         logger.info(
             "pipeline_complete",

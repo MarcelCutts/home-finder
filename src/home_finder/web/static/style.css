@@ -13,6 +13,8 @@
     --accent-hover: #a78bfa;
     --accent-subtle: rgba(139, 92, 246, 0.06);
     --star: #f5a623;
+    --skel-base: #1e1f28;
+    --skel-shimmer: #2a2b35;
 
     /* Typography */
     --font-heading: 'Plus Jakarta Sans', system-ui, -apple-system, sans-serif;
@@ -2618,22 +2620,41 @@ nav.container-fluid li {
     background: rgba(0, 0, 0, 0.8);
 }
 
-.pinned-card-loading {
-    padding: 1.5rem;
-    text-align: center;
-    color: var(--text-muted, #888);
-    font-size: 0.9rem;
-    animation: pinned-pulse 1s ease-in-out infinite alternate;
+/* Skeleton structure */
+.pinned-skeleton { background: var(--bg-card); border-radius: 10px 10px 0 0; }
+.skel-image   { width: 100%; aspect-ratio: 16/10; border-radius: 10px 10px 0 0; }
+.skel-body    { padding: 0.625rem 0.75rem; display: flex; flex-direction: column; gap: 0.5rem; }
+.skel-line    { height: 0.75rem; border-radius: 4px; }
+.skel-line-short { width: 40%; }  .skel-line-med { width: 70%; }  .skel-line-long { width: 90%; }
+.skel-footer  { display: flex; gap: 0.35rem; padding: 0 0.75rem 0.5rem; }
+.skel-pill    { width: 22px; height: 22px; border-radius: 6px; }
+
+/* Shimmer animation on skeleton elements */
+.pinned-skeleton .skel-image,
+.pinned-skeleton .skel-line,
+.pinned-skeleton .skel-pill {
+    background: linear-gradient(100deg,
+        var(--skel-base) 0%, var(--skel-base) 40%,
+        var(--skel-shimmer) 50%, var(--skel-base) 60%, var(--skel-base) 100%);
+    background-size: 200% 100%;
+    animation: skel-shimmer 1.8s ease-in-out infinite;
 }
+@keyframes skel-shimmer { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
+
+/* Crossfade inner content */
+.pinned-card-inner { transition: opacity 0.3s ease; }
+.pinned-card-inner.fade-out { opacity: 0; }
 
 @keyframes pinned-slide-in {
     from { opacity: 0; transform: translateY(-8px); }
     to   { opacity: 1; transform: translateY(0); }
 }
 
-@keyframes pinned-pulse {
-    from { opacity: 0.5; }
-    to   { opacity: 1; }
+/* Reduced motion */
+@media (prefers-reduced-motion: reduce) {
+    .pinned-skeleton .skel-image, .pinned-skeleton .skel-line, .pinned-skeleton .skel-pill { animation: none; }
+    .pinned-card-inner { transition: none; }
+    .pinned-card { animation: none; }
 }
 
 /* Leaflet popup dark mode */
@@ -3268,29 +3289,6 @@ nav.container-fluid li {
     font-size: 0.75rem;
 }
 
-/* ===== Benchmark chip (overlay on card + detail) ===== */
-.benchmark-chip {
-    display: inline-flex;
-    align-items: center;
-    padding: 0.12rem 0.45rem;
-    font-size: 0.7rem;
-    font-weight: 600;
-    border-radius: 4px;
-    white-space: nowrap;
-}
-.benchmark-below {
-    background: rgba(16, 185, 129, 0.15);
-    color: #34d399;
-}
-.benchmark-above {
-    background: rgba(239, 68, 68, 0.15);
-    color: #fca5a5;
-}
-.benchmark-at {
-    background: rgba(139, 92, 246, 0.12);
-    color: #a78bfa;
-}
-
 /* ===== Price history timeline (Ticket 10) ===== */
 .price-history-card h4 {
     margin-bottom: 0.5rem;
@@ -3362,6 +3360,15 @@ nav.container-fluid li {
 .negotiation-points li {
     padding: 0.15rem 0;
 }
+.negotiation-points li.signal-buyer {
+    color: var(--green, #2a9d3e);
+}
+.negotiation-points li.signal-seller {
+    color: var(--red, #c0392b);
+}
+.negotiation-points li.signal-neutral {
+    color: var(--text-muted);
+}
 .negotiation-approach {
     font-size: 0.85rem;
     color: var(--text);
@@ -3369,4 +3376,107 @@ nav.container-fluid li {
     background: var(--bg-elevated);
     border-radius: 6px;
     margin-top: 0.25rem;
+}
+.negotiation-source {
+    font-size: 0.75rem;
+    color: var(--text-muted);
+    margin-top: 0.25rem;
+    font-style: italic;
+}
+
+/* ===== Viewing message (Ticket 8) ===== */
+.viewing-msg-hint {
+    font-size: 0.84rem;
+    color: var(--text-muted);
+    margin: 0 0 0.75rem 0;
+}
+.viewing-msg-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    padding: 0.45rem 1rem;
+    font-size: 0.84rem;
+    font-weight: 600;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--bg-elevated);
+    color: var(--text);
+    cursor: pointer;
+    transition: background 0.15s, border-color 0.15s;
+}
+.viewing-msg-btn:hover {
+    background: var(--bg-card-hover);
+    border-color: var(--border-hover);
+}
+.viewing-msg-generate {
+    background: var(--accent-subtle);
+    border-color: var(--accent);
+    color: var(--accent-hover);
+}
+.viewing-msg-generate:hover {
+    background: var(--accent);
+    color: #fff;
+}
+.viewing-msg-card {
+    margin-top: 0.75rem;
+}
+.viewing-msg-text {
+    width: 100%;
+    resize: vertical;
+    font-size: 0.88rem;
+    line-height: 1.55;
+    padding: 0.75rem;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--bg-card);
+    color: var(--text);
+    font-family: var(--font-body);
+}
+.viewing-msg-actions {
+    display: flex;
+    gap: 0.5rem;
+    margin-top: 0.5rem;
+}
+.viewing-msg-copy {
+    background: var(--accent-subtle);
+    border-color: var(--accent);
+    color: var(--accent-hover);
+}
+.viewing-msg-copy:hover {
+    background: var(--accent);
+    color: #fff;
+}
+.viewing-msg-portals {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    margin-top: 0.5rem;
+    flex-wrap: wrap;
+}
+.viewing-msg-portals-label {
+    font-size: 0.8rem;
+    color: var(--text-muted);
+    font-weight: 500;
+}
+.viewing-msg-portal-link {
+    font-size: 0.8rem;
+    font-weight: 600;
+    color: var(--accent-hover);
+    text-decoration: none;
+    padding: 0.2rem 0.5rem;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    transition: background 0.15s, border-color 0.15s;
+}
+.viewing-msg-portal-link:hover {
+    background: var(--accent-subtle);
+    border-color: var(--accent);
+}
+.viewing-msg-error {
+    font-size: 0.84rem;
+    color: var(--commute-amber-text);
+    background: var(--commute-amber-bg);
+    padding: 0.5rem 0.75rem;
+    border-radius: 6px;
+    margin-top: 0.75rem;
 }

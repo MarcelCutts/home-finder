@@ -643,26 +643,34 @@ def _get_best_image_url(merged: MergedProperty) -> str | None:
 
 
 def _resolve_photo(
-    url: str, unique_id: str, data_dir: str
+    url: str, unique_id: str, data_dir: str, *, prefer_thumbnail: bool = True
 ) -> "FSInputFile | str":
     """Resolve a CDN URL to a local FSInputFile if cached, else return the URL.
 
-    Prefers thumbnails for single-photo sends (smaller upload, faster).
-    Falls back to the original URL when the image is not in the local cache.
+    Args:
+        url: Original CDN image URL.
+        unique_id: Property unique ID (for cache directory lookup).
+        data_dir: Base data directory containing the image cache.
+        prefer_thumbnail: Use thumbnail when available. True for single hero
+            images (smaller upload), False for albums (full quality).
     """
     from aiogram.types import FSInputFile
 
     from home_finder.utils.image_cache import find_cached_file, find_thumbnail
 
+    # Only gallery images are sent in notifications
     cached = find_cached_file(data_dir, unique_id, url, "gallery")
     if cached is not None:
-        thumb = find_thumbnail(cached)
-        return FSInputFile(thumb if thumb is not None else cached)
+        if prefer_thumbnail:
+            thumb = find_thumbnail(cached)
+            if thumb is not None:
+                return FSInputFile(thumb)
+        return FSInputFile(cached)
     return url
 
 
 def _resolve_gallery_photos(
-    urls: list[str], unique_id: str, data_dir: str
+    urls: list[str], unique_id: str, data_dir: str, *, prefer_thumbnail: bool = True
 ) -> "list[FSInputFile | str]":
     """Resolve a list of gallery URLs to FSInputFile or URL strings.
 
@@ -670,7 +678,23 @@ def _resolve_gallery_photos(
     """
     if not data_dir:
         return list(urls)
-    return [_resolve_photo(url, unique_id, data_dir) for url in urls]
+
+    from aiogram.types import FSInputFile
+
+    photos = [
+        _resolve_photo(url, unique_id, data_dir, prefer_thumbnail=prefer_thumbnail)
+        for url in urls
+    ]
+    cached = sum(1 for p in photos if isinstance(p, FSInputFile))
+    if cached:
+        logger.debug(
+            "gallery_photos_resolved",
+            unique_id=unique_id,
+            cached=cached,
+            url_fallback=len(photos) - cached,
+            total=len(photos),
+        )
+    return photos
 
 
 class TelegramNotifier:
@@ -806,10 +830,9 @@ class TelegramNotifier:
             bot = self._get_bot()
             keyboard = _build_inline_keyboard(merged, web_base_url=self.web_base_url)
             gallery_urls = _get_gallery_urls(merged)
-            photos = _resolve_gallery_photos(gallery_urls, merged.unique_id, self.data_dir)
 
             sent_photo = False
-            if photos:
+            if gallery_urls:
                 caption = format_merged_property_caption(
                     merged,
                     commute_minutes=commute_minutes,
@@ -817,8 +840,12 @@ class TelegramNotifier:
                     quality_analysis=quality_analysis,
                 )
                 try:
-                    if is_high_rated and len(photos) >= 3:
-                        # High-rated: album with viewing notes follow-up
+                    if is_high_rated and len(gallery_urls) >= 3:
+                        # High-rated: album — full-size images for swipe gallery
+                        photos = _resolve_gallery_photos(
+                            gallery_urls, merged.unique_id, self.data_dir,
+                            prefer_thumbnail=False,
+                        )
                         followup_text = _format_followup_detail(
                             quality_analysis=quality_analysis,
                         )
@@ -829,10 +856,14 @@ class TelegramNotifier:
                             followup_text=followup_text,
                         )
                     else:
-                        # Single hero image with caption + keyboard
+                        # Single hero image — thumbnail is fine (faster upload)
+                        photo = _resolve_photo(
+                            gallery_urls[0], merged.unique_id, self.data_dir,
+                            prefer_thumbnail=True,
+                        ) if self.data_dir else gallery_urls[0]
                         await bot.send_photo(
                             chat_id=self.chat_id,
-                            photo=photos[0],
+                            photo=photo,
                             caption=caption,
                             reply_markup=keyboard,
                         )

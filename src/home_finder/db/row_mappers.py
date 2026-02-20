@@ -65,8 +65,6 @@ class PropertyListItem(TypedDict, total=False):
     # Price history (Ticket 10)
     last_price_change: int | None
     price_changed_at: str | None
-    area_median: int | None
-    benchmark_diff: int | None
 
 
 class PropertyDetailItem(PropertyListItem, total=False):

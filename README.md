@@ -322,7 +322,11 @@ Deploys to London (`lhr`) for UK IP. The `--serve` flag runs the web dashboard w
 ```bash
 fly apps create home-finder
 fly volumes create home_finder_data --region lhr --size 1
-fly secrets set HOME_FINDER_TELEGRAM_BOT_TOKEN=xxx HOME_FINDER_TELEGRAM_CHAT_ID=xxx ...
+fly secrets set \
+  HOME_FINDER_TELEGRAM_BOT_TOKEN=xxx \
+  HOME_FINDER_TELEGRAM_CHAT_ID=xxx \
+  HOME_FINDER_ANTHROPIC_API_KEY=xxx \
+  HOME_FINDER_TELEGRAM_WEBHOOK_SECRET=xxx
 fly deploy
 ```
 

@@ -24,13 +24,6 @@
                 {% endif %}
                 <div class="card-overlay-right">
                     <span class="badge badge-neutral">{% if prop.bedrooms == 0 %}Studio{% else %}{{ prop.bedrooms }} bed{% endif %}</span>
-                    {% if prop.benchmark_diff is defined and prop.benchmark_diff is not none %}
-                    {% if prop.benchmark_diff < 0 %}
-                    <span class="benchmark-chip benchmark-below">&minus;&pound;{{ (-prop.benchmark_diff)|int }}</span>
-                    {% elif prop.benchmark_diff > 0 %}
-                    <span class="benchmark-chip benchmark-above">&plus;&pound;{{ prop.benchmark_diff|int }}</span>
-                    {% endif %}
-                    {% endif %}
                 </div>
             </div>
             {{ fit_badge(prop.fit_score, prop.fit_breakdown) }}

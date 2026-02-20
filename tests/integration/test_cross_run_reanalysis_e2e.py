@@ -1050,7 +1050,131 @@ class TestNoMergeScenarios:
 
 
 # ---------------------------------------------------------------------------
-# Class 7: TestDryRunPath
+# Class 7: TestRescrapeSubsetRegression
+# ---------------------------------------------------------------------------
+
+
+class TestRescrapeSubsetRegression:
+    """Regression tests for the root cause: re-scraping a subset of an anchor's
+    known sources should NOT trigger reanalysis.
+
+    The production bug was ~30+ properties with 4 sources being spuriously
+    reanalyzed every run because ``!=`` treated subset sources as "changed".
+    The fix uses set difference (``-``) so a subset yields an empty diff.
+    """
+
+    async def test_4_source_anchor_rescrape_2_known_no_reanalysis(
+        self,
+        storage: PropertyStorage,
+        make_property: Callable[..., Property],
+        quality_v1: PropertyQualityAnalysis,
+    ):
+        """Anchor has {openrent, rightmove, zoopla, onthemarket}.
+        Re-scrape just {openrent, rightmove}.
+        Assert: metadata update happens (anchors_updated == 1) but
+        request_reanalysis is NOT called."""
+        # Build the 4-source anchor incrementally
+        or_prop = make_property(
+            source=PropertySource.OPENRENT,
+            postcode="E8 3RH",
+            price_pcm=1800,
+            bedrooms=2,
+            latitude=51.5465,
+            longitude=-0.0553,
+        )
+        rm_prop = make_property(
+            source=PropertySource.RIGHTMOVE,
+            postcode="E8 3RH",
+            price_pcm=1800,
+            bedrooms=2,
+            latitude=51.5465,
+            longitude=-0.0553,
+        )
+        zp_prop = make_property(
+            source=PropertySource.ZOOPLA,
+            postcode="E8 3RH",
+            price_pcm=1850,
+            bedrooms=2,
+            latitude=51.5465,
+            longitude=-0.0553,
+        )
+        otm_prop = make_property(
+            source=PropertySource.ONTHEMARKET,
+            postcode="E8 3RH",
+            price_pcm=1800,
+            bedrooms=2,
+            latitude=51.5465,
+            longitude=-0.0553,
+        )
+
+        # Run 1: save OpenRent as anchor
+        await _populate_run1(storage, or_prop, quality_v1)
+
+        deduplicator = Deduplicator(enable_cross_platform=True)
+
+        # Run 2: Rightmove merges in
+        result = await _cross_run_deduplicate(
+            deduplicator, [_wrap_merged(rm_prop)], storage, set()
+        )
+        assert result.anchors_updated == 1
+        await _assert_db_sources(storage, or_prop.unique_id, {"openrent", "rightmove"})
+
+        # Run 3: Zoopla merges in
+        result = await _cross_run_deduplicate(
+            deduplicator, [_wrap_merged(zp_prop)], storage, set()
+        )
+        assert result.anchors_updated == 1
+        await _assert_db_sources(
+            storage, or_prop.unique_id, {"openrent", "rightmove", "zoopla"}
+        )
+
+        # Run 4: OnTheMarket merges in
+        result = await _cross_run_deduplicate(
+            deduplicator, [_wrap_merged(otm_prop)], storage, set()
+        )
+        assert result.anchors_updated == 1
+        await _assert_db_sources(
+            storage,
+            or_prop.unique_id,
+            {"openrent", "rightmove", "zoopla", "onthemarket"},
+        )
+
+        # Clear any reanalysis flags from the merge phase
+        conn = await storage._get_connection()
+        await conn.execute(
+            "UPDATE quality_analyses SET reanalysis_requested_at = NULL "
+            "WHERE property_unique_id = ?",
+            (or_prop.unique_id,),
+        )
+        await conn.commit()
+
+        # -- The actual regression scenario --
+        # Run 5: Re-scrape only OpenRent + Rightmove (subset of 4 known sources)
+        result = await _cross_run_deduplicate(
+            deduplicator,
+            [_wrap_merged(or_prop), _wrap_merged(rm_prop)],
+            storage,
+            set(),
+        )
+
+        # Metadata update happens (new_property_merged is True because these
+        # URLs belong to new MergedProperty objects), but no NEW sources →
+        # request_reanalysis must NOT be called.
+        assert result.anchors_updated == 1
+        await _assert_reanalysis_state(
+            storage, or_prop.unique_id, requested=False
+        )
+
+        # Sources should still be all 4 (update_merged_sources unions, not overwrites)
+        await _assert_db_sources(
+            storage,
+            or_prop.unique_id,
+            {"openrent", "rightmove", "zoopla", "onthemarket"},
+        )
+
+
+# ---------------------------------------------------------------------------
+# Class 8: TestDryRunPath
 # ---------------------------------------------------------------------------
 
 

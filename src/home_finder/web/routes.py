@@ -600,16 +600,14 @@ async def property_detail(
 
     # Price history (Ticket 10)
     price_history = await storage.get_price_history(unique_id)
-    benchmark = None
-    if outcode:
-        benchmark = await storage.get_rent_benchmark(outcode, prop.get("bedrooms", 0) or 0)
 
     # Negotiation intelligence (Ticket 10)
     negotiation = generate_negotiation_brief(
         days_listed=days_since_filter(prop.get("first_seen")),
         price_history=price_history,
-        benchmark_diff=prop.get("price_pcm", 0) - benchmark["median_rent"] if benchmark else None,
-        area_median=benchmark["median_rent"] if benchmark else None,
+        price_pcm=prop.get("price_pcm", 0) or 0,
+        outcode=outcode,
+        bedrooms=prop.get("bedrooms", 0) or 0,
     )
 
     # OG image: use first gallery image as absolute URL for social previews
@@ -643,7 +641,6 @@ async def property_detail(
             "status_meta": USER_STATUS_META,
             "status_history": status_history,
             "price_history": price_history,
-            "benchmark": benchmark,
             "negotiation": negotiation,
         },
     )
@@ -754,3 +751,96 @@ async def request_reanalysis(unique_id: str, storage: StorageDep) -> JSONRespons
             status_code=404,
         )
     return JSONResponse({"status": "queued"})
+
+
+def _viewing_msg_success(
+    request: Request,
+    message: str,
+    unique_id: str,
+    source_urls: dict[str, str],
+) -> HTMLResponse:
+    """Render the viewing message success partial."""
+    return templates.TemplateResponse(
+        "_viewing_message.html",
+        {
+            "request": request,
+            "message": message,
+            "unique_id": unique_id,
+            "source_urls": source_urls,
+            "source_names": SOURCE_NAMES,
+        },
+    )
+
+
+def _viewing_msg_error(request: Request, error: str) -> HTMLResponse:
+    """Render the viewing message error partial."""
+    return templates.TemplateResponse(
+        "_viewing_message.html",
+        {"request": request, "error": error},
+    )
+
+
+@router.post("/property/{unique_id}/viewing-message", response_class=HTMLResponse)
+async def generate_viewing_msg(
+    request: Request,
+    unique_id: str,
+    storage: StorageDep,
+) -> HTMLResponse:
+    """Generate (or return cached) AI viewing request message."""
+    settings = request.app.state.settings
+
+    # Check cache first (cheap query, avoids loading full property)
+    cached = await storage.get_viewing_message(unique_id)
+
+    # Load full property (needed for source_urls on cache hit, and everything on miss)
+    prop = await storage.get_property_detail(unique_id)
+    if prop is None:
+        return HTMLResponse("Property not found", status_code=404)
+
+    if cached:
+        return _viewing_msg_success(
+            request, cached, unique_id, prop.get("source_urls_dict", {})
+        )
+
+    # Validate API key
+    api_key = settings.anthropic_api_key.get_secret_value()
+    if not api_key:
+        return _viewing_msg_error(request, "Anthropic API key not configured.")
+
+    # Validate quality analysis exists
+    qa = prop.get("quality_analysis")
+    if qa is None:
+        return _viewing_msg_error(request, "Quality analysis required to generate a message.")
+
+    # Generate message
+    from home_finder.utils.viewing_message import generate_viewing_message
+
+    try:
+        message = await generate_viewing_message(
+            api_key=api_key,
+            title=prop.get("title", ""),
+            postcode=prop.get("postcode"),
+            source_name=SOURCE_NAMES.get(str(prop.get("source", "")), str(prop.get("source", ""))),
+            quality_analysis=qa,
+            profile=settings.viewing_message_profile,
+        )
+    except Exception:
+        logger.error("viewing_message_generation_failed", unique_id=unique_id, exc_info=True)
+        return _viewing_msg_error(request, "Failed to generate message. Please try again.")
+
+    # Cache and return
+    await storage.save_viewing_message(unique_id, message)
+    return _viewing_msg_success(
+        request, message, unique_id, prop.get("source_urls_dict", {})
+    )
+
+
+@router.post("/property/{unique_id}/viewing-message/regenerate", response_class=HTMLResponse)
+async def regenerate_viewing_msg(
+    request: Request,
+    unique_id: str,
+    storage: StorageDep,
+) -> HTMLResponse:
+    """Delete cached message and regenerate."""
+    await storage.delete_viewing_message(unique_id)
+    return await generate_viewing_msg(request, unique_id, storage)

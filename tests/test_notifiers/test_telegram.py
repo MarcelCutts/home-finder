@@ -1285,6 +1285,31 @@ class TestResolvePhoto:
         assert isinstance(result, FSInputFile)
         assert THUMBNAIL_PREFIX in str(result.path)
 
+    def test_skips_thumbnail_when_not_preferred(self, tmp_path: Path) -> None:
+        """prefer_thumbnail=False should return original even when thumbnail exists."""
+        from aiogram.types import FSInputFile
+
+        from home_finder.utils.image_cache import (
+            THUMBNAIL_PREFIX,
+            get_cache_dir,
+            url_to_filename,
+        )
+
+        unique_id = "openrent:12345"
+        url = "https://example.com/img1.jpg"
+        cache_dir = get_cache_dir(str(tmp_path), unique_id)
+        cache_dir.mkdir(parents=True)
+        filename = url_to_filename(url, "gallery", 0)
+        original = cache_dir / filename
+        original.write_bytes(b"\xff\xd8\xff" + b"\x00" * 100)
+        stem = original.stem
+        thumb = cache_dir / f"{THUMBNAIL_PREFIX}{stem}.jpg"
+        thumb.write_bytes(b"\xff\xd8\xff" + b"\x00" * 50)
+
+        result = _resolve_photo(url, unique_id, str(tmp_path), prefer_thumbnail=False)
+        assert isinstance(result, FSInputFile)
+        assert THUMBNAIL_PREFIX not in str(result.path)
+
     def test_returns_url_when_not_cached(self, tmp_path: Path) -> None:
         """Missing cache should fall back to the original URL string."""
         url = "https://example.com/img1.jpg"
@@ -1394,15 +1419,19 @@ class TestNotificationWithFSInputFile:
         assert isinstance(photo_arg, str)
 
     @pytest.mark.asyncio
-    async def test_album_uses_fsinputfile(
+    async def test_album_uses_full_size_originals(
         self,
         sample_property: Property,
         tmp_path: Path,
     ) -> None:
-        """Media group should receive FSInputFile items when cached."""
+        """Media group should use full-size originals, not thumbnails."""
         from aiogram.types import FSInputFile
 
-        from home_finder.utils.image_cache import get_cache_dir, url_to_filename
+        from home_finder.utils.image_cache import (
+            THUMBNAIL_PREFIX,
+            get_cache_dir,
+            url_to_filename,
+        )
 
         images = tuple(
             PropertyImage(
@@ -1421,12 +1450,15 @@ class TestNotificationWithFSInputFile:
             max_price=1900,
         )
 
-        # Cache all images
+        # Cache all images AND create thumbnails
         cache_dir = get_cache_dir(str(tmp_path), merged.unique_id)
         cache_dir.mkdir(parents=True)
         for i, img in enumerate(images):
             filename = url_to_filename(str(img.url), "gallery", i)
-            (cache_dir / filename).write_bytes(b"\xff\xd8\xff" + b"\x00" * 100)
+            original = cache_dir / filename
+            original.write_bytes(b"\xff\xd8\xff" + b"\x00" * 100)
+            thumb = cache_dir / f"{THUMBNAIL_PREFIX}{original.stem}.jpg"
+            thumb.write_bytes(b"\xff\xd8\xff" + b"\x00" * 50)
 
         high_rated = PropertyQualityAnalysis(
             kitchen=KitchenAnalysis(),
@@ -1454,6 +1486,9 @@ class TestNotificationWithFSInputFile:
 
         assert result is True
         mock_bot.send_media_group.assert_called_once()
-        # Verify the media list contains FSInputFile objects
         media_list = mock_bot.send_media_group.call_args[1]["media"]
-        assert any(isinstance(m.media, FSInputFile) for m in media_list)
+        # All items should be FSInputFile (cached)
+        for m in media_list:
+            assert isinstance(m.media, FSInputFile)
+            # None should be thumbnails — albums use full-size
+            assert THUMBNAIL_PREFIX not in str(m.media.path)

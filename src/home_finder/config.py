@@ -76,6 +76,16 @@ class Settings(BaseSettings):
         description="Max enrichment retry attempts before giving up on a property",
     )
 
+    # Viewing message generation
+    viewing_message_profile: str = Field(
+        default=(
+            "I'm a remote software consultant running a small company from home. "
+            "I have excellent references and I'm ready to move quickly with all "
+            "documents prepared."
+        ),
+        description="Tenant profile included in AI-generated viewing request messages",
+    )
+
     # Deduplication
     enable_image_hash_matching: bool = Field(
         default=True,

@@ -89,8 +89,12 @@ async def _split_dedup_results(
 ) -> tuple[list[MergedProperty], list[tuple[str, MergedProperty]]]:
     """Run dedup and split results into genuinely new vs updated anchors.
 
-    Uses URL-based detection (same logic as main.py) to handle cases where
-    the deduplicator picks a different canonical than the DB anchor.
+    Simplified version of the logic in main.py's ``_cross_run_deduplicate``.
+    Tests *new-source detection* specifically: an anchor is "updated" only when
+    the dedup result contains a source not already in the anchor.  Unlike
+    production code, this helper omits the ``new_property_merged`` URL guard
+    and the ``seen_anchor_ids`` dedup — those are tested via the e2e tests in
+    ``test_cross_run_reanalysis_e2e.py``.
 
     Returns:
         (genuinely_new, anchors_updated) where anchors_updated is a list of
@@ -121,7 +125,7 @@ async def _split_dedup_results(
 
         if matched_anchor_id is not None:
             original = anchor_by_id[matched_anchor_id]
-            if set(merged.sources) != set(original.sources):
+            if set(merged.sources) - set(original.sources):
                 anchors_updated.append((matched_anchor_id, merged))
         else:
             genuinely_new.append(merged)
@@ -389,3 +393,57 @@ class TestCrossPlatformRerun:
         assert qa is not None
         assert qa.overall_rating == 4
         assert qa.summary == "Good flat."
+
+    @pytest.mark.asyncio
+    async def test_rescrape_existing_source_does_not_trigger_reanalysis(
+        self, storage: PropertyStorage
+    ) -> None:
+        """Anchor has openrent+zoopla. Re-scrape openrent only → no reanalysis
+        (subset of known sources, no new platform)."""
+        # Build anchor with two sources already merged
+        merged_or = _make_merged(OPENRENT_FLAT)
+        await storage.save_merged_property(merged_or)
+
+        db_anchors = await storage.get_recent_properties_for_dedup(days=30)
+        merged_zp = _make_merged(ZOOPLA_SAME_FLAT)
+        _, first_update = await _split_dedup_results([merged_zp], db_anchors)
+        assert len(first_update) == 1
+        await storage.update_merged_sources(first_update[0][0], first_update[0][1])
+
+        # Now re-scrape just OpenRent (subset of anchor's known sources)
+        db_anchors = await storage.get_recent_properties_for_dedup(days=30)
+        rescrape_or = _make_merged(OPENRENT_FLAT)
+
+        _, anchors_updated = await _split_dedup_results([rescrape_or], db_anchors)
+
+        # No reanalysis — openrent is already a known source
+        assert len(anchors_updated) == 0
+
+    @pytest.mark.asyncio
+    async def test_rescrape_two_existing_sources_does_not_trigger_reanalysis(
+        self, storage: PropertyStorage
+    ) -> None:
+        """Anchor has openrent+zoopla. Re-scrape both → no reanalysis.
+        Matches the exact scenario from production logs where every run
+        spuriously triggered reanalysis."""
+        # Build anchor with two sources
+        merged_or = _make_merged(OPENRENT_FLAT)
+        await storage.save_merged_property(merged_or)
+
+        db_anchors = await storage.get_recent_properties_for_dedup(days=30)
+        merged_zp = _make_merged(ZOOPLA_SAME_FLAT)
+        _, first_update = await _split_dedup_results([merged_zp], db_anchors)
+        assert len(first_update) == 1
+        await storage.update_merged_sources(first_update[0][0], first_update[0][1])
+
+        # Re-scrape both platforms (typical production scenario)
+        db_anchors = await storage.get_recent_properties_for_dedup(days=30)
+        rescrape_or = _make_merged(OPENRENT_FLAT)
+        rescrape_zp = _make_merged(ZOOPLA_SAME_FLAT)
+
+        _, anchors_updated = await _split_dedup_results(
+            [rescrape_or, rescrape_zp], db_anchors
+        )
+
+        # No reanalysis — both sources already known
+        assert len(anchors_updated) == 0

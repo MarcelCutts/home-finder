@@ -42,17 +42,12 @@ _CARD_COLUMNS = """
      ORDER BY ph.detected_at DESC LIMIT 1) as last_price_change,
     (SELECT ph.detected_at FROM price_history ph
      WHERE ph.property_unique_id = p.unique_id
-     ORDER BY ph.detected_at DESC LIMIT 1) as price_changed_at,
-    rb.median_rent as area_median,
-    (p.price_pcm - rb.median_rent) as benchmark_diff
+     ORDER BY ph.detected_at DESC LIMIT 1) as price_changed_at
 """
 
 _CARD_JOINS = """
     FROM properties p
     LEFT JOIN quality_analyses q ON p.unique_id = q.property_unique_id
-    LEFT JOIN rent_benchmarks rb
-        ON rb.outcode = UPPER(SUBSTR(p.postcode, 1, INSTR(p.postcode || ' ', ' ') - 1))
-        AND rb.bedrooms = p.bedrooms
 """
 
 _QUALITY_FIELD_DEFAULTS: dict[str, Any] = {

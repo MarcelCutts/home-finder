@@ -872,6 +872,7 @@ dependencies = [
     { name = "pillow" },
     { name = "pydantic" },
     { name = "pydantic-settings" },
+    { name = "python-multipart" },
     { name = "structlog" },
     { name = "traveltimepy" },
     { name = "uvicorn", extra = ["standard"] },
@@ -894,11 +895,6 @@ dev = [
     { name = "pytest-xdist" },
     { name = "respx" },
     { name = "ruff" },
-]
-
-[package.dev-dependencies]
-dev = [
-    { name = "python-multipart" },
 ]
 
 [package.metadata]
@@ -929,6 +925,7 @@ requires-dist = [
     { name = "pytest-socket", marker = "extra == 'dev'", specifier = ">=0.7" },
     { name = "pytest-timeout", marker = "extra == 'dev'", specifier = ">=2.3" },
     { name = "pytest-xdist", marker = "extra == 'dev'", specifier = ">=3.5" },
+    { name = "python-multipart", specifier = ">=0.0.22" },
     { name = "respx", marker = "extra == 'dev'", specifier = ">=0.22" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.8" },
     { name = "structlog", specifier = ">=24.1" },
@@ -936,9 +933,6 @@ requires-dist = [
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.34" },
 ]
 provides-extras = ["dev"]
-
-[package.metadata.requires-dev]
-dev = [{ name = "python-multipart", specifier = ">=0.0.22" }]
 
 [[package]]
 name = "html5lib"

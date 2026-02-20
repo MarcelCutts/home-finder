@@ -2344,38 +2344,6 @@ class TestPriceHistoryDetail:
         assert "Dropped" in resp.text
 
     @pytest.mark.asyncio
-    async def test_benchmark_chip_on_detail(
-        self, client: TestClient, storage: PropertyStorage, merged_a: MergedProperty
-    ) -> None:
-        """If benchmarks exist, the detail page should show a benchmark chip."""
-        await storage.save_merged_property(merged_a)
-        # Create enough properties for benchmarks
-        for i, price in enumerate([1800, 1900, 2100], start=10):
-            prop = Property(
-                source=PropertySource.OPENRENT,
-                source_id=str(i),
-                url=HttpUrl(f"https://openrent.com/{i}"),
-                title=f"Flat {i}",
-                price_pcm=price,
-                bedrooms=1,
-                address=f"{i} Street",
-                postcode="E8 3RH",
-            )
-            m = MergedProperty(
-                canonical=prop,
-                sources=(PropertySource.OPENRENT,),
-                source_urls={PropertySource.OPENRENT: prop.url},
-                min_price=price,
-                max_price=price,
-            )
-            await storage.save_merged_property(m)
-            await storage.mark_notified(m.unique_id)
-        await storage.compute_rent_benchmarks()
-        resp = client.get(f"/property/{merged_a.unique_id}")
-        assert resp.status_code == 200
-        assert "benchmark-chip" in resp.text
-
-    @pytest.mark.asyncio
     async def test_status_bar_on_detail(
         self, client: TestClient, storage: PropertyStorage, merged_a: MergedProperty
     ) -> None:
@@ -2415,3 +2383,176 @@ class TestPriceHistoryDetail:
         assert resp.status_code == 200
         assert "listing-age-pill" in resp.text
         assert "May be negotiable" in resp.text
+
+
+# ---------------------------------------------------------------------------
+# Viewing message (Ticket 8)
+# ---------------------------------------------------------------------------
+
+
+class TestViewingMessage:
+    @pytest.mark.asyncio
+    async def test_viewing_message_cached(
+        self,
+        client: TestClient,
+        storage: PropertyStorage,
+        merged_a: MergedProperty,
+    ) -> None:
+        """POST returns cached message with textarea when cache exists."""
+        await storage.save_merged_property(merged_a)
+        await storage.save_viewing_message(merged_a.unique_id, "Cached message text.")
+        resp = client.post(f"/property/{merged_a.unique_id}/viewing-message")
+        assert resp.status_code == 200
+        assert "Cached message text." in resp.text
+        assert "textarea" in resp.text
+
+    @pytest.mark.asyncio
+    async def test_viewing_message_no_analysis_shows_error(
+        self,
+        client: TestClient,
+        storage: PropertyStorage,
+        merged_a: MergedProperty,
+        settings: Settings,
+    ) -> None:
+        """Without quality analysis, returns error partial."""
+        # Ensure API key is set so we reach the analysis check
+        settings.anthropic_api_key = SecretStr("fake-key")
+        app = FastAPI()
+        app.state.storage = storage
+        app.state.settings = settings
+        app.include_router(router)
+        test_client = TestClient(app)
+
+        await storage.save_merged_property(merged_a)
+        resp = test_client.post(f"/property/{merged_a.unique_id}/viewing-message")
+        assert resp.status_code == 200
+        assert "Quality analysis required" in resp.text
+
+    @pytest.mark.asyncio
+    async def test_viewing_message_copy_button_present(
+        self,
+        client: TestClient,
+        storage: PropertyStorage,
+        merged_a: MergedProperty,
+    ) -> None:
+        """Cached message response includes copy button."""
+        await storage.save_merged_property(merged_a)
+        await storage.save_viewing_message(merged_a.unique_id, "Test message.")
+        resp = client.post(f"/property/{merged_a.unique_id}/viewing-message")
+        assert resp.status_code == 200
+        assert "copyViewingMessage" in resp.text
+
+    @pytest.mark.asyncio
+    async def test_viewing_message_regenerate_clears_cache(
+        self,
+        client: TestClient,
+        storage: PropertyStorage,
+        merged_a: MergedProperty,
+        settings: Settings,
+    ) -> None:
+        """Regenerate endpoint deletes cache before re-generating."""
+        settings.anthropic_api_key = SecretStr("fake-key")
+        app = FastAPI()
+        app.state.storage = storage
+        app.state.settings = settings
+        app.include_router(router)
+        test_client = TestClient(app)
+
+        await storage.save_merged_property(merged_a)
+        await storage.save_viewing_message(merged_a.unique_id, "Old message.")
+        # Regenerate — no quality analysis means it will error, but cache should be cleared
+        resp = test_client.post(f"/property/{merged_a.unique_id}/viewing-message/regenerate")
+        assert resp.status_code == 200
+        # Cache should have been deleted
+        cached = await storage.get_viewing_message(merged_a.unique_id)
+        assert cached is None
+        # Should show the error since there's no quality analysis
+        assert "Quality analysis required" in resp.text
+
+    @pytest.mark.asyncio
+    async def test_viewing_message_generation_happy_path(
+        self,
+        storage: PropertyStorage,
+        merged_a: MergedProperty,
+        base_analysis: PropertyQualityAnalysis,
+        settings: Settings,
+    ) -> None:
+        """Full generation path: API called, message saved to DB, rendered in textarea."""
+        from unittest.mock import AsyncMock, MagicMock, patch
+
+        settings.anthropic_api_key = SecretStr("fake-key")
+        test_app = FastAPI()
+        test_app.state.storage = storage
+        test_app.state.settings = settings
+        test_app.include_router(router)
+        test_client = TestClient(test_app)
+
+        await storage.save_merged_property(merged_a)
+        await storage.save_quality_analysis(merged_a.unique_id, base_analysis)
+
+        mock_text_block = MagicMock()
+        mock_text_block.text = "The gas hob is great. Happy to view this week."
+
+        mock_response = MagicMock()
+        mock_response.content = [mock_text_block]
+
+        mock_messages = MagicMock()
+        mock_messages.create = AsyncMock(return_value=mock_response)
+
+        mock_client = AsyncMock()
+        mock_client.messages = mock_messages
+        mock_client.close = AsyncMock()
+
+        with patch("anthropic.AsyncAnthropic", return_value=mock_client):
+            resp = test_client.post(f"/property/{merged_a.unique_id}/viewing-message")
+
+        assert resp.status_code == 200
+        assert "The gas hob is great" in resp.text
+        assert "textarea" in resp.text
+
+        # Verify it was cached in DB
+        cached = await storage.get_viewing_message(merged_a.unique_id)
+        assert cached == "The gas hob is great. Happy to view this week."
+
+    @pytest.mark.asyncio
+    async def test_viewing_message_api_failure_shows_error(
+        self,
+        storage: PropertyStorage,
+        merged_a: MergedProperty,
+        base_analysis: PropertyQualityAnalysis,
+        settings: Settings,
+    ) -> None:
+        """API error returns a user-friendly error partial."""
+        from unittest.mock import AsyncMock, MagicMock, patch
+
+        settings.anthropic_api_key = SecretStr("fake-key")
+        test_app = FastAPI()
+        test_app.state.storage = storage
+        test_app.state.settings = settings
+        test_app.include_router(router)
+        test_client = TestClient(test_app)
+
+        await storage.save_merged_property(merged_a)
+        await storage.save_quality_analysis(merged_a.unique_id, base_analysis)
+
+        mock_messages = MagicMock()
+        mock_messages.create = AsyncMock(side_effect=RuntimeError("timeout"))
+
+        mock_client = AsyncMock()
+        mock_client.messages = mock_messages
+        mock_client.close = AsyncMock()
+
+        with patch("anthropic.AsyncAnthropic", return_value=mock_client):
+            resp = test_client.post(f"/property/{merged_a.unique_id}/viewing-message")
+
+        assert resp.status_code == 200
+        assert "Failed to generate message" in resp.text
+
+        # Nothing should be cached
+        cached = await storage.get_viewing_message(merged_a.unique_id)
+        assert cached is None
+
+    def test_viewing_message_unknown_property_404(self, client: TestClient) -> None:
+        """Nonexistent property returns 404."""
+        resp = client.post("/property/nonexistent:999/viewing-message")
+        assert resp.status_code == 404

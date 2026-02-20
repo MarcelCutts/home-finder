@@ -412,7 +412,7 @@ class TestCrossPlatformPipeline:
                     break
             if matched_anchor_id is not None:
                 original = anchor_by_id[matched_anchor_id]
-                if set(merged.sources) != set(original.sources):
+                if set(merged.sources) - set(original.sources):
                     await storage.update_merged_sources(matched_anchor_id, merged)
             else:
                 genuinely_new.append(merged)
