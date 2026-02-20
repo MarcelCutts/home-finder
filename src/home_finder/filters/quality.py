@@ -216,6 +216,14 @@ class _VisualAnalysisResponse(BaseModel):
         living_room_sqm: float | None = Field(
             description="Estimated living room size in sqm from floorplan"
         )
+        total_area_sqm: float | None = Field(
+            default=None,
+            description=(
+                "Estimated total floor area in sqm by summing all rooms from the floorplan. "
+                "Include all rooms: bedrooms, living room, kitchen, bathroom, hallway, storage. "
+                "Only estimate if a floorplan with dimensions is available. null if no floorplan."
+            ),
+        )
         is_spacious_enough: bool = Field(description="True if can fit office AND host 8+ people")
         confidence: Literal["high", "medium", "low"]
         hosting_layout: Literal["excellent", "good", "awkward", "poor", "unknown"] = Field(
@@ -888,6 +896,7 @@ class PropertyQualityFilter:
                 gallery_cached_paths=gallery_cached[: self._max_images],
                 floorplan_cached_path=floorplan_cached,
                 data_dir=data_dir,
+                floor_area_sqft=merged.floor_area_sqft,
             )
         except APIUnavailableError:
             raise  # Propagate to caller for circuit breaker handling
@@ -1333,11 +1342,8 @@ class PropertyQualityFilter:
         if bedrooms >= 2 and not analysis.space.is_spacious_enough:
             analysis = analysis.model_copy(
                 update={
-                    "space": SpaceAnalysis(
-                        living_room_sqm=analysis.space.living_room_sqm,
-                        is_spacious_enough=True,
-                        confidence="high",
-                        hosting_layout=analysis.space.hosting_layout,
+                    "space": analysis.space.model_copy(
+                        update={"is_spacious_enough": True, "confidence": "high"},
                     ),
                 },
             )
@@ -1365,6 +1371,7 @@ class PropertyQualityFilter:
         gallery_cached_paths: list[Path | None] | None = None,
         floorplan_cached_path: Path | None = None,
         data_dir: str | None = None,
+        floor_area_sqft: int | None = None,
     ) -> PropertyQualityAnalysis | None:
         """Analyze a single property using two-phase chained Claude analysis.
 
@@ -1440,6 +1447,7 @@ class PropertyQualityFilter:
             energy_estimate=energy_estimate,
             hosting_tolerance=hosting_tolerance,
             has_labeled_floorplan=has_floorplan,
+            floor_area_sqft=floor_area_sqft,
         )
         content.append(TextBlockParam(type="text", text=user_prompt))
 

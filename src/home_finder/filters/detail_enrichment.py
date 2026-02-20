@@ -170,6 +170,8 @@ async def _enrich_single(
         floorplan_image: PropertyImage | None = None
         best_description: str | None = None
         best_features: list[str] | None = None
+        floor_area_sqft: int | None = None
+        floor_area_source: str | None = None
         canon_updates: dict[str, float | str] = {}
 
         for source, url in merged.source_urls.items():
@@ -289,6 +291,11 @@ async def _enrich_single(
                     if not current_pc or is_outcode(current_pc):
                         canon_updates["postcode"] = detail_data.postcode
 
+                # First non-null floor area wins
+                if floor_area_sqft is None and detail_data.floor_area_sqft:
+                    floor_area_sqft = detail_data.floor_area_sqft
+                    floor_area_source = detail_data.floor_area_source
+
         # Detect and remove EPC charts from gallery before floorplan detection
         if data_dir and all_images:
             all_images = await asyncio.to_thread(
@@ -331,6 +338,8 @@ async def _enrich_single(
             min_price=merged.min_price,
             max_price=merged.max_price,
             descriptions=merged.descriptions,
+            floor_area_sqft=floor_area_sqft,
+            floor_area_source=floor_area_source,
         )
 
         logger.info(
@@ -339,6 +348,7 @@ async def _enrich_single(
             sources=[s.value for s in merged.sources],
             gallery_count=len(all_images),
             has_floorplan=floorplan_image is not None,
+            floor_area_sqft=floor_area_sqft,
         )
 
         return updated
@@ -389,6 +399,8 @@ async def _load_cached_property(
         min_price=merged.min_price,
         max_price=merged.max_price,
         descriptions=merged.descriptions,
+        floor_area_sqft=merged.floor_area_sqft,
+        floor_area_source=merged.floor_area_source,
     )
 
 

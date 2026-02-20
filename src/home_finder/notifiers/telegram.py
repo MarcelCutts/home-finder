@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Final
 from home_finder.logging import get_logger
 from home_finder.models import (
     SOURCE_NAMES,
+    SQM_PER_SQFT,
     MergedProperty,
     Property,
     PropertyQualityAnalysis,
@@ -77,21 +78,35 @@ def _format_light_space_info(analysis: PropertyQualityAnalysis) -> str:
     return " | ".join(parts)
 
 
-def _format_space_info(analysis: PropertyQualityAnalysis) -> str:
+def _format_space_info(
+    analysis: PropertyQualityAnalysis, *, floor_area_sqft: int | None = None
+) -> str:
     """Format space analysis for display."""
     space = analysis.space
+    parts: list[str] = []
+
+    # Total floor area (scraped or estimated)
+    if floor_area_sqft:
+        sqm = round(floor_area_sqft * SQM_PER_SQFT)
+        parts.append(f"{floor_area_sqft} ft² ({sqm}m²)")
+    elif space.total_area_sqm:
+        sqft = round(space.total_area_sqm / SQM_PER_SQFT)
+        parts.append(f"~{sqft} ft² (~{space.total_area_sqm:.0f}m²)")
+
     if space.living_room_sqm:
-        sqm = f"~{space.living_room_sqm:.0f}m²"
+        sqm_label = f"~{space.living_room_sqm:.0f}m² living"
         if space.is_spacious_enough is True:
-            return f"{sqm} (good for office + hosting)"
+            parts.append(f"{sqm_label} (good for hosting)")
         elif space.is_spacious_enough is False:
-            return f"{sqm} (may be tight for office + hosting)"
-        return sqm  # Unknown spaciousness
-    if space.is_spacious_enough is True:
-        return "Size unknown (likely spacious)"
+            parts.append(f"{sqm_label} (may be tight)")
+        else:
+            parts.append(sqm_label)
+    elif space.is_spacious_enough is True:
+        parts.append("Likely spacious")
     elif space.is_spacious_enough is False:
-        return "May be compact"
-    return "Size unknown"
+        parts.append("May be compact")
+
+    return " · ".join(parts) if parts else "Size unknown"
 
 
 def _format_value_info(analysis: PropertyQualityAnalysis, *, brief: bool = False) -> str | None:
@@ -284,7 +299,9 @@ def _format_viewing_notes(analysis: PropertyQualityAnalysis) -> list[str]:
     return lines
 
 
-def _format_quality_block(analysis: PropertyQualityAnalysis) -> list[str]:
+def _format_quality_block(
+    analysis: PropertyQualityAnalysis, *, floor_area_sqft: int | None = None
+) -> list[str]:
     """Build full quality analysis lines for text messages.
 
     Used by format_property_message and format_merged_property_message
@@ -314,7 +331,7 @@ def _format_quality_block(analysis: PropertyQualityAnalysis) -> list[str]:
         lines.append(f"Bathroom: {bathroom_info}")
 
     lines.append(f"Light: {_format_light_space_info(analysis)}")
-    lines.append(f"Space: {_format_space_info(analysis)}")
+    lines.append(f"Space: {_format_space_info(analysis, floor_area_sqft=floor_area_sqft)}")
     lines.append(f"Condition: {analysis.condition.overall_condition}")
 
     outdoor_info = _format_outdoor_info(analysis)
@@ -421,7 +438,9 @@ def format_merged_property_message(
     )
 
     if quality_analysis:
-        lines.extend(_format_quality_block(quality_analysis))
+        lines.extend(
+            _format_quality_block(quality_analysis, floor_area_sqft=merged.floor_area_sqft)
+        )
 
     # Image count and floorplan
     if merged.images or merged.floorplan:

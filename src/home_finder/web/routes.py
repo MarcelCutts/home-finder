@@ -31,6 +31,7 @@ from home_finder.logging import get_logger
 from home_finder.models import (
     SOURCE_BADGES,
     SOURCE_NAMES,
+    SQM_PER_SQFT,
     USER_STATUS_META,
     PropertyHighlight,
     PropertyImage,
@@ -160,6 +161,7 @@ def listing_age_filter(iso_str: str | None) -> str:
 
 
 templates.env.filters["listing_age"] = listing_age_filter
+templates.env.globals["SQM_PER_SQFT"] = SQM_PER_SQFT
 
 
 def days_since_filter(iso_str: str | None) -> int:
@@ -593,6 +595,15 @@ async def property_detail(
                 service_charge_pcm=service_charge_pcm,
                 bills_included=bills_included,
             )
+
+    # Resolve floor area: prefer scraped, fall back to Claude estimate from floorplan
+    if not prop.get("floor_area_sqft") and qa is not None:
+        space = getattr(qa, "space", None)
+        if space:
+            total_sqm = getattr(space, "total_area_sqm", None)
+            if isinstance(total_sqm, (int, float)) and total_sqm > 0:
+                prop["floor_area_sqft"] = round(total_sqm / SQM_PER_SQFT)
+                prop["floor_area_source"] = "estimated"
 
     # Status tracking (Ticket 7)
     user_status = prop.get("user_status") or "new"

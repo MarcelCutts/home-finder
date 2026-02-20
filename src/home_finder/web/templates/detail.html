@@ -52,10 +52,7 @@
         {% endif %}
         <div class="hero-photo-count">{{ gallery|length }} photos</div>
     </div>
-    {# Hidden images for lightbox navigation #}
-    {% for img in gallery[hero_count:] %}
-    <img src="{{ image_url_map.get(img.url|string, img.url) }}" alt="Property photo {{ hero_count + loop.index }}" data-lightbox hidden>
-    {% endfor %}
+    {# All gallery URLs as data for JS gallery (no hidden imgs needed) #}
     {% endif %}
 
     {# Header — Price is dominant (largest element), title secondary, meta tertiary #}
@@ -73,7 +70,10 @@
         </div>
         <div class="detail-header-row">
             <p class="detail-meta">
-                {{ prop.bedrooms }} bed &middot; {{ prop.address }}{% if prop.postcode %}, {{ prop.postcode }}{% endif %}
+                {{ prop.bedrooms }} bed
+                {%- if prop.floor_area_sqft %} &middot; {{ prop.floor_area_sqft }} ft² ({{ (prop.floor_area_sqft * SQM_PER_SQFT) | round(0) | int }} m²)
+                {%- if prop.floor_area_source %} <span class="meta-dim">via {{ prop.floor_area_source | title }}</span>{% endif %}
+                {%- endif %} &middot; {{ prop.address }}{% if prop.postcode %}, {{ prop.postcode }}{% endif %}
                 {%- for source_key in prop.sources_list -%}
                 {%- set url = prop.source_urls_dict.get(source_key) -%}
                 {%- if url %}
@@ -460,7 +460,7 @@
         <div class="floorplan-section">
             {% for img in prop.floorplan_images %}
             <div class="floorplan-frame">
-                <img src="{{ image_url_map.get(img.url|string, img.url) }}" alt="Floorplan" loading="lazy" class="floorplan-image" data-lightbox>
+                <img src="{{ image_url_map.get(img.url|string, img.url) }}" alt="Floorplan" loading="lazy" class="floorplan-image" data-lightbox="floorplan">
             </div>
             {% endfor %}
         </div>
@@ -544,12 +544,64 @@
     {% endif %}
 </article>
 
-{# Lightbox overlay #}
-<div id="lightbox" class="lightbox" hidden>
-    <button class="lightbox-close" aria-label="Close">&times;</button>
-    <button class="lightbox-prev" aria-label="Previous">&lsaquo;</button>
-    <img class="lightbox-img" src="" alt="Full size">
-    <button class="lightbox-next" aria-label="Next">&rsaquo;</button>
-    <div class="lightbox-counter"></div>
+{# Gallery view overlay #}
+{% if prop.gallery_images or prop.floorplan_images %}
+<div id="gallery-view" class="gallery-view" role="dialog" aria-modal="true" aria-label="Property gallery" hidden>
+    <div class="gallery-topbar">
+        <button class="gallery-close" aria-label="Close gallery">&times;</button>
+        {% set gallery_images = prop.gallery_images or [] %}
+        {% set floorplan_images = prop.floorplan_images or [] %}
+        {% if gallery_images and floorplan_images %}
+        <div class="gallery-tabs" role="tablist" aria-label="Gallery tabs">
+            <button class="gallery-tab active" role="tab" aria-selected="true" aria-controls="gallery-panel-photos" id="gallery-tab-photos" data-tab="photos">Photos {{ gallery_images|length }}</button>
+            <button class="gallery-tab" role="tab" aria-selected="false" aria-controls="gallery-panel-floorplan" id="gallery-tab-floorplan" data-tab="floorplan">Floorplan {{ floorplan_images|length }}</button>
+        </div>
+        {% elif floorplan_images %}
+        <div class="gallery-tabs" role="tablist" aria-label="Gallery tabs">
+            <button class="gallery-tab active" role="tab" aria-selected="true" aria-controls="gallery-panel-floorplan" id="gallery-tab-floorplan" data-tab="floorplan">Floorplan {{ floorplan_images|length }}</button>
+        </div>
+        {% endif %}
+    </div>
+
+    {# Photos panel #}
+    {% if gallery_images %}
+    <div class="gallery-panel" id="gallery-panel-photos" role="tabpanel" aria-labelledby="gallery-tab-photos">
+        <div class="gallery-stage">
+            <button class="gallery-prev" aria-label="Previous image">&lsaquo;</button>
+            <div class="gallery-img-wrap">
+                <img class="gallery-main-img" src="" alt="Property photo">
+                <img class="gallery-main-img gallery-main-img-next" src="" alt="" aria-hidden="true">
+                <div class="gallery-spinner" hidden>
+                    <div class="gallery-spinner-ring"></div>
+                </div>
+            </div>
+            <button class="gallery-next" aria-label="Next image">&rsaquo;</button>
+        </div>
+        <div class="gallery-filmstrip-wrap">
+            <div class="gallery-filmstrip" role="listbox" aria-label="Image thumbnails">
+                {% for img in gallery_images %}
+                <button class="gallery-filmstrip-thumb{% if loop.first %} active{% endif %}" role="option" aria-selected="{{ 'true' if loop.first else 'false' }}" data-index="{{ loop.index0 }}" data-src="{{ image_url_map.get(img.url|string, img.url) }}">
+                    <img src="{{ image_url_map.get(img.url|string, img.url) }}" alt="Thumbnail {{ loop.index }}" loading="lazy">
+                </button>
+                {% endfor %}
+            </div>
+            <div class="gallery-counter" aria-live="polite"></div>
+        </div>
+    </div>
+    {% endif %}
+
+    {# Floorplan panel #}
+    {% if floorplan_images %}
+    <div class="gallery-panel gallery-panel-floorplan{% if gallery_images %} gallery-panel-hidden{% endif %}" id="gallery-panel-floorplan" role="tabpanel" aria-labelledby="gallery-tab-floorplan">
+        <div class="gallery-floorplan-scroll">
+            {% for img in floorplan_images %}
+            <div class="gallery-floorplan-frame">
+                <img src="{{ image_url_map.get(img.url|string, img.url) }}" alt="Floorplan {{ loop.index }}" loading="lazy" class="gallery-floorplan-img">
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+    {% endif %}
 </div>
+{% endif %}
 {% endblock %}

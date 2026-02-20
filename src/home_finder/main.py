@@ -27,6 +27,7 @@ from home_finder.filters.detail_enrichment import is_floorplan_exempt
 from home_finder.filters.quality import APIUnavailableError
 from home_finder.logging import configure_logging, get_logger
 from home_finder.models import (
+    SQM_PER_SQFT,
     FurnishType,
     MergedProperty,
     Property,
@@ -1022,6 +1023,15 @@ async def _run_quality_and_save(
     ) -> None:
         commute_info = pre.commute_lookup.get(merged.canonical.unique_id)
         await _save_one(merged, commute_info, quality_analysis, storage)
+
+        # Persist Claude's floor area estimate if no scraped value exists
+        if merged.floor_area_sqft is None and quality_analysis is not None:
+            space = quality_analysis.space
+            if space and space.total_area_sqm and space.total_area_sqm > 0:
+                sqft = round(space.total_area_sqm / SQM_PER_SQFT)
+                if 100 <= sqft <= 5000:
+                    await storage.update_floor_area(merged.unique_id, sqft, "estimated")
+
         await on_result(merged, commute_info, quality_analysis)
 
     try:
@@ -1195,6 +1205,13 @@ async def _drain_reanalysis_queue(
         nonlocal completed
         if quality_analysis:
             await storage.complete_reanalysis(merged.unique_id, quality_analysis)
+            # Persist Claude's floor area estimate if no scraped value exists
+            if merged.floor_area_sqft is None:
+                space = quality_analysis.space
+                if space and space.total_area_sqm and space.total_area_sqm > 0:
+                    sqft = round(space.total_area_sqm / SQM_PER_SQFT)
+                    if 100 <= sqft <= 5000:
+                        await storage.update_floor_area(merged.unique_id, sqft, "estimated")
             completed += 1
 
     try:
@@ -1598,6 +1615,13 @@ async def run_reanalysis(
             nonlocal completed, failed
             if quality_analysis:
                 await storage.complete_reanalysis(merged.unique_id, quality_analysis)
+                # Persist Claude's floor area estimate if no scraped value exists
+                if merged.floor_area_sqft is None:
+                    space = quality_analysis.space
+                    if space and space.total_area_sqm and space.total_area_sqm > 0:
+                        sqft = round(space.total_area_sqm / SQM_PER_SQFT)
+                        if 100 <= sqft <= 5000:
+                            await storage.update_floor_area(merged.unique_id, sqft, "estimated")
                 completed += 1
             else:
                 failed += 1

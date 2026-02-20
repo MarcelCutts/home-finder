@@ -16,6 +16,8 @@ from home_finder.scrapers.constants import BROWSER_HEADERS
 from home_finder.utils.image_cache import is_valid_image_bytes
 
 _MAX_RETRIES = 2  # cross-run retry handles persistent failures
+_FLOOR_AREA_MIN_SQFT = 100
+_FLOOR_AREA_MAX_SQFT = 5000
 _RETRY_BASE_DELAY = 2.0  # seconds, doubled each retry (2, 4)
 _ZOOPLA_MIN_INTERVAL = 1.5  # seconds between Zoopla detail page requests
 _OTM_MIN_INTERVAL = 0.3  # seconds between OnTheMarket requests (less aggressive)
@@ -252,6 +254,36 @@ def _zoopla_images_from_full_urls(
     return [url for _, url in sorted_imgs[:remaining]]
 
 
+def _zoopla_size_from_rsc(html: str) -> int | None:
+    """Extract sizeSqft from RSC taxonomy payload.
+
+    Returns floor area in sqft, or None if not found/invalid.
+    """
+    rsc_pattern = r"self\.__next_f\.push\(\s*\[(.*?)\]\s*\)"
+    for m in re.finditer(rsc_pattern, html, re.DOTALL):
+        match_text = m.group(1)
+        if "sizeSqft" not in match_text:
+            continue
+        try:
+            arr = json.loads(f"[{match_text}]")
+            if len(arr) >= 2 and isinstance(arr[1], str):
+                payload = arr[1]
+                colon_idx = payload.find(":")
+                if colon_idx >= 0:
+                    parsed = json.loads(payload[colon_idx + 1 :])
+                    taxonomy = _find_dict_with_key(parsed, "sizeSqft")
+                    if taxonomy:
+                        raw = taxonomy.get("sizeSqft")
+                        if (
+                            isinstance(raw, (int, float))
+                            and _FLOOR_AREA_MIN_SQFT <= raw <= _FLOOR_AREA_MAX_SQFT
+                        ):
+                            return int(raw)
+        except (json.JSONDecodeError, TypeError):
+            continue
+    return None
+
+
 def _zoopla_floorplan_from_html(html: str) -> str | None:
     """Extract floorplan URL from lc.zoocdn.com references in HTML."""
     # Try extension-based match first (more specific)
@@ -282,6 +314,8 @@ class DetailPageData:
     latitude: float | None = None
     longitude: float | None = None
     postcode: str | None = None
+    floor_area_sqft: int | None = None
+    floor_area_source: str | None = None  # "rightmove" | "zoopla" | "onthemarket"
 
 
 class DetailFetcher:
@@ -495,6 +529,19 @@ class DetailFetcher:
             if outcode and incode:
                 postcode = f"{outcode} {incode}"
 
+            # Extract floor area from sizings
+            floor_area_sqft: int | None = None
+            sizings = property_data.get("sizings", [])
+            for sizing in sizings:
+                if sizing.get("unit") == "sqft":
+                    raw = sizing.get("maximumSize") or sizing.get("minimumSize")
+                    if (
+                        isinstance(raw, (int, float))
+                        and _FLOOR_AREA_MIN_SQFT <= raw <= _FLOOR_AREA_MAX_SQFT
+                    ):
+                        floor_area_sqft = int(raw)
+                        break
+
             return DetailPageData(
                 floorplan_url=floorplan_url,
                 gallery_urls=gallery_urls if gallery_urls else None,
@@ -503,6 +550,8 @@ class DetailFetcher:
                 latitude=latitude,
                 longitude=longitude,
                 postcode=postcode,
+                floor_area_sqft=floor_area_sqft,
+                floor_area_source="rightmove" if floor_area_sqft else None,
             )
 
         except Exception as e:
@@ -561,11 +610,16 @@ class DetailFetcher:
             if not floorplan_url:
                 floorplan_url = _zoopla_floorplan_from_html(html)
 
+            # Extract floor area from RSC payload
+            floor_area_sqft = _zoopla_size_from_rsc(html)
+
             return DetailPageData(
                 floorplan_url=floorplan_url,
                 gallery_urls=gallery_urls if gallery_urls else None,
                 description=description,
                 features=features if features else None,
+                floor_area_sqft=floor_area_sqft,
+                floor_area_source="zoopla" if floor_area_sqft else None,
             )
 
         except Exception as e:
@@ -756,11 +810,22 @@ class DetailFetcher:
                 if isinstance(feat, dict) and feat.get("feature"):
                     features.append(feat["feature"])
 
+            # Extract floor area
+            floor_area_sqft: int | None = None
+            raw_sqft = property_data.get("minimumAreaSqFt")
+            if (
+                isinstance(raw_sqft, (int, float))
+                and _FLOOR_AREA_MIN_SQFT <= raw_sqft <= _FLOOR_AREA_MAX_SQFT
+            ):
+                floor_area_sqft = int(raw_sqft)
+
             return DetailPageData(
                 floorplan_url=floorplan_url,
                 gallery_urls=gallery_urls if gallery_urls else None,
                 description=description,
                 features=features if features else None,
+                floor_area_sqft=floor_area_sqft,
+                floor_area_source="onthemarket" if floor_area_sqft else None,
             )
 
         except Exception as e:

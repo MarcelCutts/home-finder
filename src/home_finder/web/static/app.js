@@ -57,6 +57,9 @@ L.GridLayer.include({
       // Reset beds toggle to "Any"
       var anyRadio = form.querySelector('input[name="bedrooms"][value=""]');
       if (anyRadio) anyRadio.checked = true;
+    } else if (key === "off_market") {
+      var cb = form.querySelector('input[name="off_market"]');
+      if (cb) cb.checked = false;
     } else {
       var field = form.querySelector('[name="' + key + '"]');
       if (field) {
@@ -230,84 +233,267 @@ L.GridLayer.include({
   });
 })();
 
-// Lightbox with focus trapping, touch/swipe, event delegation, and preloading
+// Gallery view: full-page overlay with filmstrip, tabs, crossfade, keyboard/touch
 (function () {
-  var lightbox = document.getElementById("lightbox");
-  if (!lightbox) return;
+  var gallery = document.getElementById("gallery-view");
+  if (!gallery) return;
 
-  var img = lightbox.querySelector(".lightbox-img");
-  var counter = lightbox.querySelector(".lightbox-counter");
-  var images = Array.from(document.querySelectorAll("[data-lightbox]"));
+  var mainImg = gallery.querySelector(".gallery-main-img");
+  var nextImg = gallery.querySelector(".gallery-main-img-next");
+  var counter = gallery.querySelector(".gallery-counter");
+  var filmstrip = gallery.querySelector(".gallery-filmstrip");
+  var stage = gallery.querySelector(".gallery-stage");
+  var spinner = gallery.querySelector(".gallery-spinner");
+  var thumbs = filmstrip ? Array.from(filmstrip.querySelectorAll(".gallery-filmstrip-thumb")) : [];
+  var imageSrcs = thumbs.map(function (t) { return t.dataset.src; });
+  var tabs = Array.from(gallery.querySelectorAll(".gallery-tab"));
+  var panels = Array.from(gallery.querySelectorAll(".gallery-panel"));
+
   var currentIndex = 0;
+  var navigateId = 0;
+  var crossfadeTimer = null;
+  var imageCache = {};  // src → Image object (holding ref prevents GC/cache eviction)
   var previousFocus = null;
   var touchStartX = 0;
   var touchStartY = 0;
+  var reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
-  function open(index) {
+  // Collect all hero/page [data-lightbox] images to map click → gallery index
+  var heroImages = Array.from(document.querySelectorAll("[data-lightbox]"));
+
+  function loadImage(src) {
+    if (imageCache[src]) return Promise.resolve(true);
+    return new Promise(function (resolve) {
+      var img = new Image();
+      img.onload = function () {
+        imageCache[src] = img;
+        resolve(true);
+      };
+      img.onerror = function () {
+        resolve(false);
+      };
+      img.src = src;
+    });
+  }
+
+  function showSpinner() {
+    if (spinner) spinner.hidden = false;
+  }
+
+  function hideSpinner() {
+    if (spinner) spinner.hidden = true;
+  }
+
+  function updateFilmstrip(index) {
+    thumbs.forEach(function (t, i) {
+      var isActive = i === index;
+      t.classList.toggle("active", isActive);
+      t.setAttribute("aria-selected", isActive ? "true" : "false");
+    });
+    if (filmstrip && thumbs[index]) {
+      var thumb = thumbs[index];
+      var scrollLeft = thumb.offsetLeft - filmstrip.clientWidth / 2 + thumb.offsetWidth / 2;
+      filmstrip.scrollLeft = scrollLeft;
+    }
+  }
+
+  function updateCounter(index) {
+    if (counter) {
+      counter.textContent = (index + 1) + " / " + imageSrcs.length;
+    }
+  }
+
+  function doSwap(src, index, animate) {
+    if (animate && mainImg && nextImg) {
+      clearTimeout(crossfadeTimer);
+      mainImg.classList.remove("crossfade-out");
+      nextImg.classList.remove("crossfade-in");
+
+      nextImg.src = src;
+      nextImg.alt = "Property photo " + (index + 1);
+      mainImg.classList.add("crossfade-out");
+      nextImg.classList.add("crossfade-in");
+
+      crossfadeTimer = setTimeout(function () {
+        mainImg.src = src;
+        mainImg.alt = "Property photo " + (index + 1);
+        mainImg.classList.remove("crossfade-out");
+        nextImg.classList.remove("crossfade-in");
+        nextImg.src = "";
+      }, 200);
+    } else if (mainImg) {
+      mainImg.src = src;
+      mainImg.alt = "Property photo " + (index + 1);
+    }
+  }
+
+  function preloadAround(index) {
+    for (var offset = 1; offset <= 3; offset++) {
+      var fwd = (index + offset) % imageSrcs.length;
+      var bwd = (index - offset + imageSrcs.length) % imageSrcs.length;
+      if (fwd !== index) loadImage(imageSrcs[fwd]);
+      if (bwd !== index && bwd !== fwd) loadImage(imageSrcs[bwd]);
+    }
+  }
+
+  function showImage(index, animate) {
+    if (imageSrcs.length === 0) return;
+    index = ((index % imageSrcs.length) + imageSrcs.length) % imageSrcs.length;
     currentIndex = index;
-    img.src = images[index].src;
-    counter.textContent = (index + 1) + " / " + images.length;
-    lightbox.hidden = false;
+    var thisNav = ++navigateId;
+
+    updateFilmstrip(index);
+    updateCounter(index);
+
+    var src = imageSrcs[index];
+
+    if (imageCache[src]) {
+      hideSpinner();
+      doSwap(src, index, animate && !reducedMotion);
+      preloadAround(index);
+      return;
+    }
+
+    showSpinner();
+    loadImage(src).then(function (ok) {
+      if (thisNav !== navigateId) return;
+      hideSpinner();
+      if (ok) {
+        doSwap(src, index, false);
+      } else {
+        doSwap(src, index, false);
+        if (mainImg) mainImg.alt = "Image unavailable";
+      }
+      preloadAround(index);
+    });
+  }
+
+  function open(index, tab) {
+    tab = tab || "photos";
+    gallery.hidden = false;
     document.body.style.overflow = "hidden";
     previousFocus = document.activeElement;
-    lightbox.querySelector(".lightbox-close").focus();
-    preloadAdjacent();
+    switchTab(tab);
+    if (tab === "photos" && imageSrcs.length > 0) {
+      showImage(index, false);
+    }
+    gallery.querySelector(".gallery-close").focus();
   }
 
   function close() {
-    lightbox.hidden = true;
+    gallery.hidden = true;
     document.body.style.overflow = "";
-    img.src = "";
+    clearTimeout(crossfadeTimer);
+    hideSpinner();
+    if (mainImg) mainImg.src = "";
+    if (nextImg) nextImg.src = "";
     if (previousFocus) {
       previousFocus.focus();
       previousFocus = null;
     }
   }
 
+  function switchTab(tabName) {
+    tabs.forEach(function (t) {
+      var isActive = t.dataset.tab === tabName;
+      t.classList.toggle("active", isActive);
+      t.setAttribute("aria-selected", isActive ? "true" : "false");
+    });
+    panels.forEach(function (p) {
+      var panelTab = p.id.replace("gallery-panel-", "");
+      if (panelTab === tabName) {
+        p.classList.remove("gallery-panel-hidden");
+      } else {
+        p.classList.add("gallery-panel-hidden");
+      }
+    });
+  }
+
   function prev() {
-    open((currentIndex - 1 + images.length) % images.length);
+    showImage(currentIndex - 1, true);
   }
 
   function next() {
-    open((currentIndex + 1) % images.length);
+    showImage(currentIndex + 1, true);
   }
 
-  function preloadAdjacent() {
-    var nextIdx = (currentIndex + 1) % images.length;
-    if (nextIdx !== currentIndex) {
-      new Image().src = images[nextIdx].src;
-    }
-  }
-
-  // Event delegation for lightbox triggers
+  // Click delegation for opening gallery from hero images and floorplan images
   document.addEventListener("click", function (e) {
+    // "+N more" overlay
+    var moreOverlay = e.target.closest("[data-gallery-more]");
+    if (moreOverlay) {
+      e.preventDefault();
+      e.stopPropagation();
+      var startIdx = parseInt(moreOverlay.dataset.galleryMore, 10);
+      open(startIdx, "photos");
+      return;
+    }
+
     var target = e.target.closest("[data-lightbox]");
     if (!target) return;
-    var idx = images.indexOf(target);
-    if (idx >= 0) {
-      e.preventDefault();
-      open(idx);
+    e.preventDefault();
+
+    if (target.dataset.lightbox === "floorplan") {
+      open(0, "floorplan");
+      return;
     }
+
+    // Hero gallery image — find matching index in filmstrip by src
+    var clickedSrc = target.tagName === "IMG" ? target.src : (target.querySelector("img") || {}).src;
+    var galleryIdx = 0;
+    if (clickedSrc) {
+      for (var i = 0; i < imageSrcs.length; i++) {
+        // Compare by checking if src ends with same path
+        if (clickedSrc === imageSrcs[i] || clickedSrc.indexOf(imageSrcs[i]) >= 0 || imageSrcs[i].indexOf(clickedSrc.split("/").pop()) >= 0) {
+          galleryIdx = i;
+          break;
+        }
+      }
+      // Fallback: use position in hero images array
+      if (galleryIdx === 0 && heroImages.indexOf(target) > 0) {
+        var heroIdx = heroImages.indexOf(target);
+        if (heroIdx < imageSrcs.length) galleryIdx = heroIdx;
+      }
+    }
+    open(galleryIdx, "photos");
   });
 
-  lightbox.querySelector(".lightbox-close").addEventListener("click", close);
-  lightbox.querySelector(".lightbox-prev").addEventListener("click", prev);
-  lightbox.querySelector(".lightbox-next").addEventListener("click", next);
+  // Close button
+  gallery.querySelector(".gallery-close").addEventListener("click", close);
 
-  lightbox.addEventListener("click", function (e) {
-    if (e.target === lightbox) close();
+  // Nav arrows
+  var prevBtn = gallery.querySelector(".gallery-prev");
+  var nextBtn = gallery.querySelector(".gallery-next");
+  if (prevBtn) prevBtn.addEventListener("click", prev);
+  if (nextBtn) nextBtn.addEventListener("click", next);
+
+  // Filmstrip thumb clicks
+  if (filmstrip) {
+    filmstrip.addEventListener("click", function (e) {
+      var thumb = e.target.closest(".gallery-filmstrip-thumb");
+      if (!thumb) return;
+      var idx = parseInt(thumb.dataset.index, 10);
+      if (!isNaN(idx)) showImage(idx, true);
+    });
+  }
+
+  // Tab clicks
+  tabs.forEach(function (tab) {
+    tab.addEventListener("click", function () {
+      switchTab(tab.dataset.tab);
+    });
   });
 
   // Keyboard: navigation + focus trap
   document.addEventListener("keydown", function (e) {
-    if (lightbox.hidden) return;
+    if (gallery.hidden) return;
     if (e.key === "Escape") { close(); return; }
     if (e.key === "ArrowLeft") { prev(); return; }
     if (e.key === "ArrowRight") { next(); return; }
 
     // Focus trap
     if (e.key === "Tab") {
-      var focusable = lightbox.querySelectorAll("button:not([hidden])");
+      var focusable = Array.from(gallery.querySelectorAll("button:not([hidden]):not([disabled])"));
       if (focusable.length === 0) return;
       var first = focusable[0];
       var last = focusable[focusable.length - 1];
@@ -325,24 +511,26 @@ L.GridLayer.include({
     }
   });
 
-  // Touch/swipe support
-  lightbox.addEventListener("touchstart", function (e) {
-    if (e.touches.length === 1) {
-      touchStartX = e.touches[0].clientX;
-      touchStartY = e.touches[0].clientY;
-    }
-  }, { passive: true });
-
-  lightbox.addEventListener("touchend", function (e) {
-    if (e.changedTouches.length === 1) {
-      var dx = e.changedTouches[0].clientX - touchStartX;
-      var dy = e.changedTouches[0].clientY - touchStartY;
-      if (Math.abs(dx) > 50 && Math.abs(dx) > Math.abs(dy)) {
-        if (dx < 0) next();
-        else prev();
+  // Touch/swipe support on stage
+  if (stage) {
+    stage.addEventListener("touchstart", function (e) {
+      if (e.touches.length === 1) {
+        touchStartX = e.touches[0].clientX;
+        touchStartY = e.touches[0].clientY;
       }
-    }
-  }, { passive: true });
+    }, { passive: true });
+
+    stage.addEventListener("touchend", function (e) {
+      if (e.changedTouches.length === 1) {
+        var dx = e.changedTouches[0].clientX - touchStartX;
+        var dy = e.changedTouches[0].clientY - touchStartY;
+        if (Math.abs(dx) > 50 && Math.abs(dx) > Math.abs(dy)) {
+          if (dx < 0) next();
+          else prev();
+        }
+      }
+    }, { passive: true });
+  }
 })();
 
 // Detail page Leaflet map (single property)
@@ -787,21 +975,7 @@ L.GridLayer.include({
   });
 })();
 
-// Gallery "+N more" overlay handler
-(function () {
-  var overlay = document.querySelector("[data-gallery-more]");
-  if (!overlay) return;
-
-  overlay.addEventListener("click", function (e) {
-    e.stopPropagation();
-    var images = Array.from(document.querySelectorAll("[data-lightbox]"));
-    var startIndex = parseInt(overlay.dataset.galleryMore, 10);
-    // Open lightbox at the first hidden image index
-    if (startIndex >= 0 && startIndex < images.length) {
-      images[startIndex].click();
-    }
-  });
-})();
+// ("+N more" overlay is now handled inside the gallery controller above)
 
 // Status selector popover: toggle on click, close on outside click / Escape
 (function () {
@@ -841,6 +1015,100 @@ L.GridLayer.include({
         var trigger = s.querySelector(".status-selector-trigger");
         trigger.setAttribute("aria-expanded", "false");
         trigger.focus();
+      });
+    }
+  });
+})();
+
+// Dashboard status filter popover: toggle, select, close on outside click / Escape
+// Uses document-level event delegation (no re-binding needed after HTMX swaps)
+(function () {
+  document.addEventListener("click", function (e) {
+    // 1. Trigger click — toggle popover
+    var trigger = e.target.closest(".status-filter-trigger");
+    if (trigger) {
+      e.preventDefault();
+      var filter = trigger.closest(".status-filter");
+      var wasOpen = filter.classList.contains("open");
+
+      // Close any other open filters first
+      document.querySelectorAll(".status-filter.open").forEach(function (f) {
+        f.classList.remove("open");
+        var t = f.querySelector(".status-filter-trigger");
+        if (t) t.setAttribute("aria-expanded", "false");
+      });
+
+      if (!wasOpen) {
+        filter.classList.add("open");
+        trigger.setAttribute("aria-expanded", "true");
+      }
+      return;
+    }
+
+    // 2. Option click — update value, trigger label, and submit
+    var option = e.target.closest(".status-filter-option");
+    if (option) {
+      var filter = option.closest(".status-filter");
+      var trigger = filter.querySelector(".status-filter-trigger");
+      var hiddenInput = filter.querySelector('input[name="status"]');
+      if (!trigger || !hiddenInput) return;
+
+      var value = option.dataset.statusValue;
+      hiddenInput.value = value;
+
+      // Update trigger appearance
+      var color = option.style.getPropertyValue("--option-color") || "#888";
+      trigger.style.setProperty("--status-color", color);
+
+      if (value) {
+        trigger.innerHTML =
+          '<span class="status-filter-dot"></span>' +
+          option.textContent.trim() +
+          ' <svg class="status-filter-chevron" width="12" height="12" viewBox="0 0 12 12" fill="none">' +
+          '<path d="M3 4.5L6 7.5L9 4.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>' +
+          "</svg>";
+      } else {
+        trigger.style.setProperty("--status-color", "#888");
+        trigger.innerHTML =
+          "Status" +
+          ' <svg class="status-filter-chevron" width="12" height="12" viewBox="0 0 12 12" fill="none">' +
+          '<path d="M3 4.5L6 7.5L9 4.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>' +
+          "</svg>";
+      }
+
+      // Update active state on all options
+      var allOptions = filter.querySelectorAll(".status-filter-option");
+      for (var i = 0; i < allOptions.length; i++) {
+        allOptions[i].classList.toggle("active", allOptions[i].dataset.statusValue === value);
+      }
+
+      // Close and submit
+      filter.classList.remove("open");
+      trigger.setAttribute("aria-expanded", "false");
+      var form = filter.closest("form");
+      if (form) htmx.trigger(form, "submit");
+      return;
+    }
+
+    // 3. Outside click — close all open filters
+    if (!e.target.closest(".status-filter")) {
+      document.querySelectorAll(".status-filter.open").forEach(function (f) {
+        f.classList.remove("open");
+        var t = f.querySelector(".status-filter-trigger");
+        if (t) t.setAttribute("aria-expanded", "false");
+      });
+    }
+  });
+
+  document.addEventListener("keydown", function (e) {
+    if (e.key === "Escape") {
+      document.querySelectorAll(".status-filter.open").forEach(function (f) {
+        f.classList.remove("open");
+        var t = f.querySelector(".status-filter-trigger");
+        if (t) {
+          t.setAttribute("aria-expanded", "false");
+          t.focus();
+        }
       });
     }
   });

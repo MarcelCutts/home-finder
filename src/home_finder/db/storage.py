@@ -182,6 +182,8 @@ class PropertyStorage:
             ("ward", "TEXT", None),
             ("analysis_attempts", "INTEGER", "0"),
             ("user_status", "TEXT", "'new'"),
+            ("floor_area_sqft", "INTEGER", None),
+            ("floor_area_source", "TEXT", None),
         ]:
             try:
                 default_clause = f" DEFAULT {default}" if default is not None else ""
@@ -1337,6 +1339,21 @@ class PropertyStorage:
     ) -> None:
         """Complete quality analysis for a property and transition to pending notification."""
         await self._pipeline.complete_analysis(unique_id, quality_analysis)
+
+    async def update_floor_area(
+        self, unique_id: str, floor_area_sqft: int, floor_area_source: str
+    ) -> None:
+        """Update floor area for a property (only if not already set)."""
+        conn = await self._get_connection()
+        await conn.execute(
+            """
+            UPDATE properties
+            SET floor_area_sqft = ?, floor_area_source = ?
+            WHERE unique_id = ? AND floor_area_sqft IS NULL
+            """,
+            (floor_area_sqft, floor_area_source, unique_id),
+        )
+        await conn.commit()
 
     async def reset_failed_analyses(self) -> int:
         """Reset properties with fallback analysis for re-analysis."""

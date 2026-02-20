@@ -89,7 +89,7 @@ Scan the description for cost and quality signals to cross-reference with images
 
 3. Natural Light & Space: Window sizes, brightness, spacious vs cramped feel, ceiling heights if visible.
 
-4. Living Room Size & Hosting Layout: From floorplan if included, estimate sqm. Target: fits a home office AND hosts 8+ people (~20-25 sqm minimum). Assess hosting_layout: how well does the layout flow for hosting 8+ guests? Consider kitchen-to-living connection (open-plan is ideal), bathroom accessibility without crossing bedrooms, practical entrance flow. Rate excellent/good/awkward/poor.
+4. Living Room Size & Hosting Layout: From floorplan if included, estimate sqm. Target: fits a home office AND hosts 8+ people (~20-25 sqm minimum). Also estimate total_area_sqm — sum all rooms from the floorplan (bedrooms, living, kitchen, bathroom, hallway, storage). Only provide this if a dimensioned floorplan is available; use null otherwise. Assess hosting_layout: how well does the layout flow for hosting 8+ guests? Consider kitchen-to-living connection (open-plan is ideal), bathroom accessibility without crossing bedrooms, practical entrance flow. Rate excellent/good/awkward/poor.
 
 5. Overall Summary: 1-2 sentences — property character and what it's like to live here. Don't restate condition concerns (they're listed separately).
 
@@ -544,6 +544,11 @@ class TestToolSchemaSnapshots:
                                     "living_room_sqm": {
                                         "anyOf": [{"type": "number"}, {"type": "null"}],
                                         "description": "Estimated living room size in sqm from floorplan",
+                                    },
+                                    "total_area_sqm": {
+                                        "anyOf": [{"type": "number"}, {"type": "null"}],
+                                        "default": None,
+                                        "description": "Estimated total floor area in sqm by summing all rooms from the floorplan. Include all rooms: bedrooms, living room, kitchen, bathroom, hallway, storage. Only estimate if a floorplan with dimensions is available. null if no floorplan.",
                                     },
                                     "is_spacious_enough": {
                                         "description": "True if can fit office AND host 8+ people",

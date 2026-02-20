@@ -32,6 +32,10 @@ SOURCE_NAMES: Final[dict[str, str]] = {k: v["name"] for k, v in _SOURCE_META.ite
 SOURCE_BADGES: Final[dict[str, dict[str, str]]] = _SOURCE_META
 
 
+SQM_PER_SQFT: Final[float] = 0.0929
+"""Square metres per square foot. Used for sqft↔sqm conversions throughout."""
+
+
 class FurnishType(StrEnum):
     """Furnishing type for property search filters."""
 
@@ -221,6 +225,10 @@ class MergedProperty(BaseModel):
 
     # Combined descriptions (keyed by source)
     descriptions: dict[PropertySource, str] = Field(default_factory=dict)
+
+    # Total floor area from structured listing data or Claude estimation
+    floor_area_sqft: int | None = None
+    floor_area_source: str | None = None  # "rightmove" | "zoopla" | "onthemarket" | "estimated"
 
     @property
     def unique_id(self) -> str:

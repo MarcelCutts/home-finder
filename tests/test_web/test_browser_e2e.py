@@ -338,15 +338,16 @@ class TestPropertyDetailBrowser:
         page.wait_for_load_state("networkidle")
 
         # Check if there are gallery images
-        gallery_imgs = page.locator(".gallery img, .gallery-image, [data-lightbox] img")
+        gallery_imgs = page.locator("[data-lightbox] img, [data-lightbox]")
         if gallery_imgs.count() > 0:
             gallery_imgs.first.click()
-            # Check if lightbox overlay appears
-            lightbox = page.locator(".lightbox, .lightbox-overlay, [role='dialog']")
-            if lightbox.count() > 0:
-                assert lightbox.first.is_visible()
+            # Check if gallery overlay appears
+            gallery_view = page.locator("#gallery-view")
+            if gallery_view.count() > 0:
+                assert gallery_view.first.is_visible()
                 # Press Escape to close
                 page.keyboard.press("Escape")
+                assert not gallery_view.first.is_visible()
 
     def test_quality_analysis_section(self, server_url, page):
         # Property 1003 has quality analysis

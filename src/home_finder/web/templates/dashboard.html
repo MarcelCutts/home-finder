@@ -46,15 +46,46 @@
                     {% endfor %}
                 </select>
 
-                <select name="status" aria-label="Status filter"
-                        hx-get="/" hx-target="#results" hx-push-url="true" hx-indicator="#loading">
-                    <option value="">All statuses</option>
-                    {% for s in user_statuses %}
-                    <option value="{{ s.value }}" {% if status == s.value %}selected{% endif %}>
-                        {{ status_meta[s.value].label }}
-                    </option>
-                    {% endfor %}
-                </select>
+                <div class="status-filter" id="status-filter">
+                    <button type="button" class="status-filter-trigger"
+                            style="--status-color: {{ status_meta[status].color if status else '#888' }}"
+                            aria-expanded="false" aria-haspopup="true">
+                        {% if status %}
+                        <span class="status-filter-dot"></span>
+                        {{ status_meta[status].label }}
+                        {% else %}
+                        Status
+                        {% endif %}
+                        <svg class="status-filter-chevron" width="12" height="12" viewBox="0 0 12 12" fill="none">
+                            <path d="M3 4.5L6 7.5L9 4.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+                        </svg>
+                    </button>
+                    <input type="hidden" name="status" value="{{ status or '' }}">
+                    <div class="status-filter-popover" role="menu">
+                        <button type="button" class="status-filter-option {% if not status %}active{% endif %}"
+                                data-status-value="" role="menuitem">
+                            All
+                        </button>
+                        {% set groups = [
+                            ("Triage", ["new", "interested", "archived"]),
+                            ("Progress", ["enquired", "viewing_booked", "viewed"]),
+                            ("Outcome", ["applied", "offered", "rejected"]),
+                        ] %}
+                        {% for group_label, statuses in groups %}
+                        <div class="status-filter-group" role="group" aria-label="{{ group_label }}">
+                            <span class="status-filter-group-label">{{ group_label }}</span>
+                            {% for s in statuses %}
+                            <button type="button" class="status-filter-option {% if status == s %}active{% endif %}"
+                                    style="--option-color: {{ status_meta[s].color }}"
+                                    data-status-value="{{ s }}" role="menuitem">
+                                <span class="status-filter-option-dot"></span>
+                                {{ status_meta[s].label }}
+                            </button>
+                            {% endfor %}
+                        </div>
+                        {% endfor %}
+                    </div>
+                </div>
 
                 <select name="sort" aria-label="Sort">
                     <option value="newest" {% if sort == "newest" %}selected{% endif %}>Newest</option>

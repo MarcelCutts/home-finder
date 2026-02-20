@@ -3,6 +3,7 @@
 from home_finder.models.core import (
     SOURCE_BADGES,
     SOURCE_NAMES,
+    SQM_PER_SQFT,
     USER_STATUS_META,
     FurnishType,
     MergedProperty,
@@ -40,6 +41,7 @@ from home_finder.models.quality import (
 __all__ = [
     "SOURCE_BADGES",
     "SOURCE_NAMES",
+    "SQM_PER_SQFT",
     "USER_STATUS_META",
     "BathroomAnalysis",
     "BedroomAnalysis",

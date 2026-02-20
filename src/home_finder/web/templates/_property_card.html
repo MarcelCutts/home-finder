@@ -27,6 +27,9 @@
                 </div>
                 {% endif %}
                 <div class="card-overlay-right">
+                    {% if prop.floor_area_sqft %}
+                    <span class="badge badge-neutral">{{ prop.floor_area_sqft }} ft²</span>
+                    {% endif %}
                     <span class="badge badge-neutral">{% if prop.bedrooms == 0 %}Studio{% else %}{{ prop.bedrooms }} bed{% endif %}</span>
                 </div>
             </div>

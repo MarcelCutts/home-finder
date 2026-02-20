@@ -3,6 +3,8 @@
 import json
 from typing import Any, Final
 
+from home_finder.models.core import SQM_PER_SQFT
+
 # System prompt for Phase 1: Visual analysis - cached for cost savings
 VISUAL_ANALYSIS_SYSTEM_PROMPT: Final = """\
 You are an expert London rental property analyst with perfect vision \
@@ -97,6 +99,9 @@ ceiling heights if visible.
 
 4. Living Room Size & Hosting Layout: From floorplan if included, estimate sqm. \
 Target: fits a home office AND hosts 8+ people (~20-25 sqm minimum). \
+Also estimate total_area_sqm — sum all rooms from the floorplan (bedrooms, living, \
+kitchen, bathroom, hallway, storage). Only provide this if a dimensioned floorplan \
+is available; use null otherwise. \
 Assess hosting_layout: how well does the layout flow for hosting 8+ guests? \
 Consider kitchen-to-living connection (open-plan is ideal), bathroom accessibility \
 without crossing bedrooms, practical entrance flow. Rate excellent/good/awkward/poor.
@@ -307,6 +312,7 @@ def build_user_prompt(
     energy_estimate: float | None = None,
     hosting_tolerance: str | None = None,
     has_labeled_floorplan: bool = True,
+    floor_area_sqft: int | None = None,
 ) -> str:
     """Build the user prompt with property-specific context.
 
@@ -332,6 +338,15 @@ def build_user_prompt(
         prompt += "\n\n<listing_features>\n"
         prompt += "\n".join(f"- {f}" for f in features[:15])
         prompt += "\n</listing_features>"
+
+    if floor_area_sqft:
+        sqm = round(floor_area_sqft * SQM_PER_SQFT, 1)
+        prompt += (
+            f"\n\n<scraped_floor_area>\n"
+            f"Total floor area from listing: {floor_area_sqft} sq ft ({sqm} m²). "
+            f"Cross-reference this with your floorplan estimate if available.\n"
+            f"</scraped_floor_area>"
+        )
 
     if not has_labeled_floorplan:
         prompt += (

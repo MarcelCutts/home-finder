@@ -198,6 +198,25 @@ def _score_hosting(analysis: dict[str, Any], _bedrooms: int) -> _DimensionResult
                 {"label": f"Small living room (~{int(living_sqm)}sqm)", "state": "missed"}
             )
 
+    total_area_sqm = space.get("total_area_sqm")
+    if isinstance(total_area_sqm, (int, float)) and total_area_sqm > 0:
+        # 0 at <=30sqm, 15 at >=55sqm, graduated between
+        area_score = max(0.0, min(15.0, (total_area_sqm - 30) * (15 / 25)))
+        score += area_score
+        signals += 1
+        if area_score >= 10:
+            factors.append(
+                {"label": f"Good total area (~{int(total_area_sqm)}sqm)", "state": "earned"}
+            )
+        elif area_score > 0:
+            factors.append(
+                {"label": f"Total area ~{int(total_area_sqm)}sqm", "state": "earned"}
+            )
+        else:
+            factors.append(
+                {"label": f"Small total area (~{int(total_area_sqm)}sqm)", "state": "missed"}
+            )
+
     light_space = analysis.get("light_space") or {}
     feels_spacious = light_space.get("feels_spacious")
     if feels_spacious is True:

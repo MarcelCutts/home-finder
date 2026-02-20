@@ -316,6 +316,24 @@ class Deduplicator:
         # Price range across all sources
         prices = [mp.min_price for mp in sorted_mps] + [mp.max_price for mp in sorted_mps]
 
+        # Pick floor area by source reliability: zoopla > onthemarket > rightmove
+        _FLOOR_AREA_SOURCE_PRIORITY: dict[str | None, int] = {
+            "zoopla": 3,
+            "onthemarket": 2,
+            "rightmove": 1,
+            "estimated": 0,
+        }
+        best_floor_area: int | None = None
+        best_floor_source: str | None = None
+        best_priority = -1
+        for mp in sorted_mps:
+            if mp.floor_area_sqft is not None:
+                priority = _FLOOR_AREA_SOURCE_PRIORITY.get(mp.floor_area_source, 0)
+                if priority > best_priority:
+                    best_floor_area = mp.floor_area_sqft
+                    best_floor_source = mp.floor_area_source
+                    best_priority = priority
+
         result = MergedProperty(
             canonical=canonical,
             sources=tuple(all_sources),
@@ -325,6 +343,8 @@ class Deduplicator:
             min_price=min(prices),
             max_price=max(prices),
             descriptions=all_descriptions,
+            floor_area_sqft=best_floor_area,
+            floor_area_source=best_floor_source,
         )
 
         # Consolidate image cache: copy cached files from secondary sources
