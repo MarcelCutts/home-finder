@@ -2,6 +2,8 @@
 
 import argparse
 import asyncio
+import contextlib
+import json
 import random
 import sys
 from collections.abc import Awaitable, Callable
@@ -280,9 +282,11 @@ async def _cross_run_deduplicate(
     # Map source URLs from new properties to their original unique_id so we
     # can copy cached images from the new source to the anchor after merge.
     new_url_to_unique_id: dict[str, str] = {}
+    new_id_to_price: dict[str, int] = {}
     for mp in merged_to_notify:
         for url in mp.source_urls.values():
             new_url_to_unique_id[str(url)] = mp.canonical.unique_id
+        new_id_to_price[mp.canonical.unique_id] = mp.canonical.price_pcm
 
     # Combine new properties with DB anchors for dedup comparison
     combined_for_dedup = merged_to_notify + db_anchors
@@ -324,6 +328,32 @@ async def _cross_run_deduplicate(
             # Only copy images + reanalyze when genuinely new sources added
             truly_new_sources = set(merged.sources) - set(original_anchor.sources)
             if truly_new_sources:
+                # Detect cross-platform price drops: if a new source lists at
+                # a lower price than the anchor's DB price, record the change.
+                # _detect_price_changes (Step 3b) uses single-source unique_ids
+                # that don't match DB anchors, so this is the only path for
+                # cross-platform price detection.
+                new_source_prices: list[int] = []
+                for url in merged.source_urls.values():
+                    url_str = str(url)
+                    nid = new_url_to_unique_id.get(url_str)
+                    if nid is not None and nid in new_id_to_price:
+                        new_source_prices.append(new_id_to_price[nid])
+                if new_source_prices:
+                    lowest_new_price = min(new_source_prices)
+                    change = await storage.detect_and_record_price_change(
+                        matched_anchor_id,
+                        lowest_new_price,
+                        source="cross_platform",
+                    )
+                    if change is not None and change < 0:
+                        logger.info(
+                            "cross_platform_price_drop",
+                            anchor_id=matched_anchor_id,
+                            change=change,
+                            new_price=lowest_new_price,
+                        )
+
                 # Copy cached images from new source(s) to anchor directory
                 if data_dir:
                     original_urls = {str(u) for u in original_anchor.source_urls.values()}
@@ -600,15 +630,22 @@ async def _run_enrichment(
 
 async def _run_post_enrichment(
     merged: list[MergedProperty],
-    deduplicator: Deduplicator,
     storage: PropertyStorage,
     settings: Settings,
     re_enrichment_ids: set[str],
 ) -> tuple[list[MergedProperty], int] | None:
     """Cross-run dedup and floorplan gate. Returns None if nothing remains."""
     logger.info("pipeline_started", phase="deduplication_merge")
+    # Cross-run dedup always uses image hashing for same-building disambiguation,
+    # independent of the global enable_image_hash_matching flag. By this point
+    # both sides have cached gallery images on disk.
+    cross_run_deduplicator = Deduplicator(
+        enable_cross_platform=True,
+        enable_image_hashing=True,
+        data_dir=settings.data_dir,
+    )
     dedup_result = await _cross_run_deduplicate(
-        deduplicator, merged, storage, re_enrichment_ids, data_dir=settings.data_dir
+        cross_run_deduplicator, merged, storage, re_enrichment_ids, data_dir=settings.data_dir
     )
     merged_to_notify = dedup_result.genuinely_new
     anchors_updated = dedup_result.anchors_updated
@@ -762,7 +799,7 @@ async def _run_pre_analysis_pipeline(
     # Step 7: Post-enrichment dedup + floorplan gate
     # Use geocoded list (not enriched) so coordinates from geocoding are preserved
     post_result = await _run_post_enrichment(
-        geocoded, deduplicator, storage, settings, re_enrichment_ids
+        geocoded, storage, settings, re_enrichment_ids
     )
     if post_result is None:
         return None
@@ -1645,6 +1682,118 @@ async def run_backfill_commute(settings: Settings) -> None:
         await storage.close()
 
 
+async def run_check_off_market(
+    settings: Settings,
+    *,
+    only_scrapers: set[str] | None = None,
+) -> None:
+    """Check active properties for off-market removal signals.
+
+    Visits each property's listing URL(s) and checks for definitive removal
+    signals. Only flags as off-market when ALL sources return REMOVED.
+
+    Args:
+        settings: Application settings.
+        only_scrapers: If set, only check URLs for these platforms.
+    """
+    from home_finder.filters.off_market import ListingStatus, OffMarketChecker
+
+    storage = PropertyStorage(settings.database_path)
+    await storage.initialize()
+
+    try:
+        db_props = await storage.get_properties_for_off_market_check(
+            sources=only_scrapers,
+        )
+        if not db_props:
+            print("No properties to check.")
+            return
+
+        print(f"Checking {len(db_props)} properties for off-market signals...")
+
+        # Expand multi-source properties into individual URL checks
+        checks: list[tuple[str, str, str]] = []  # (property_id, source, url)
+        for prop in db_props:
+            source_urls: dict[str, str] = {}
+            if prop.get("source_urls"):
+                with contextlib.suppress(json.JSONDecodeError, TypeError):
+                    source_urls = json.loads(prop["source_urls"])
+
+            if source_urls:
+                for source, url in source_urls.items():
+                    if only_scrapers and source not in only_scrapers:
+                        continue
+                    checks.append((prop["unique_id"], source, url))
+            else:
+                # Single-source property
+                source = prop["source"]
+                if only_scrapers and source not in only_scrapers:
+                    continue
+                checks.append((prop["unique_id"], source, prop["url"]))
+
+        if not checks:
+            print("No URLs to check (source filter may have excluded all).")
+            return
+
+        print(f"Checking {len(checks)} URLs across {len(db_props)} properties...")
+
+        checker = OffMarketChecker(proxy_url=settings.proxy_url)
+        try:
+            results = await checker.check_batch(checks)
+        finally:
+            await checker.close()
+
+        # Aggregate per-property: only flag off-market if ALL sources are REMOVED
+        # (no source returned ACTIVE)
+        per_property: dict[str, dict[str, ListingStatus]] = {}
+        for r in results:
+            per_property.setdefault(r.property_id, {})[r.source] = r.status
+
+        marked_off = 0
+        marked_returned = 0
+        for prop in db_props:
+            uid = prop["unique_id"]
+            source_statuses = per_property.get(uid, {})
+            if not source_statuses:
+                continue
+
+            has_active = any(s == ListingStatus.ACTIVE for s in source_statuses.values())
+            all_removed = all(s == ListingStatus.REMOVED for s in source_statuses.values())
+            was_off_market = bool(prop.get("is_off_market"))
+
+            if all_removed and not has_active:
+                if not was_off_market:
+                    await storage.mark_off_market(uid)
+                    marked_off += 1
+                    logger.info(
+                        "property_confirmed_off_market",
+                        unique_id=uid,
+                        sources=list(source_statuses.keys()),
+                    )
+            elif has_active and was_off_market:
+                await storage.mark_returned_to_market(uid)
+                marked_returned += 1
+                logger.info(
+                    "property_returned_to_market",
+                    unique_id=uid,
+                    active_sources=[
+                        s for s, st in source_statuses.items() if st == ListingStatus.ACTIVE
+                    ],
+                )
+
+        # Summary
+        status_counts = {s.value: 0 for s in ListingStatus}
+        for r in results:
+            status_counts[r.status.value] += 1
+
+        print(f"\nResults: {status_counts}")
+        print(f"Newly off-market: {marked_off}")
+        print(f"Returned to market: {marked_returned}")
+
+    finally:
+        await storage.close()
+
+
 async def run_dedup_existing(settings: Settings) -> None:
     """Retroactively merge duplicate properties already in the database.
 
@@ -1805,6 +1954,11 @@ def main() -> None:
         help="Flag ALL analyzed properties for re-analysis. Use with --reanalyze",
     )
     parser.add_argument(
+        "--check-off-market",
+        action="store_true",
+        help="Check active properties for off-market removal signals via URL spot-check",
+    )
+    parser.add_argument(
         "--serve",
         action="store_true",
         help="Start web server with background pipeline scheduler",
@@ -1881,6 +2035,8 @@ def main() -> None:
                 request_only=args.request_only,
             )
         )
+    elif args.check_off_market:
+        asyncio.run(run_check_off_market(settings, only_scrapers=only_scrapers))
     elif args.serve:
         import uvicorn
 

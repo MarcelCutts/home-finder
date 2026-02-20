@@ -361,9 +361,11 @@ class PropertyStorage:
                 ON enquiry_log(property_unique_id)
         """)
 
-        # Migrate: add price_drop_notified column (Ticket 10)
+        # Migrate: add price_drop_notified and off-market columns
         for column, col_type, default in [
             ("price_drop_notified", "INTEGER", "0"),
+            ("is_off_market", "INTEGER", "0"),
+            ("off_market_since", "TEXT", None),
         ]:
             try:
                 default_clause = f" DEFAULT {default}" if default is not None else ""
@@ -373,6 +375,11 @@ class PropertyStorage:
             except aiosqlite.OperationalError as e:
                 if "duplicate column" not in str(e).lower():
                     raise
+
+        # Off-market detection index
+        await conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_off_market ON properties(is_off_market)"
+        )
 
         await conn.commit()
 
@@ -1638,6 +1645,99 @@ class PropertyStorage:
             (unique_id, portal),
         )
         return await cursor.fetchone() is not None
+
+    # ------------------------------------------------------------------
+    # Off-market detection
+    # ------------------------------------------------------------------
+
+    async def mark_off_market(self, unique_id: str) -> bool:
+        """Mark a property as off-market. Preserves original off_market_since date.
+
+        Returns True if the row was updated, False if property not found.
+        """
+        conn = await self._get_connection()
+        cursor = await conn.execute(
+            """
+            UPDATE properties
+            SET is_off_market = 1,
+                off_market_since = COALESCE(off_market_since, ?)
+            WHERE unique_id = ?
+            """,
+            (datetime.now(UTC).isoformat(), unique_id),
+        )
+        await conn.commit()
+        updated = cursor.rowcount > 0
+        if updated:
+            logger.info("property_marked_off_market", unique_id=unique_id)
+        return updated
+
+    async def mark_returned_to_market(self, unique_id: str) -> bool:
+        """Clear off-market flag for a property that is back on the market.
+
+        Returns True if the row was updated, False if property not found.
+        """
+        conn = await self._get_connection()
+        cursor = await conn.execute(
+            """
+            UPDATE properties
+            SET is_off_market = 0, off_market_since = NULL
+            WHERE unique_id = ?
+            """,
+            (unique_id,),
+        )
+        await conn.commit()
+        updated = cursor.rowcount > 0
+        if updated:
+            logger.info("property_returned_to_market", unique_id=unique_id)
+        return updated
+
+    async def get_properties_for_off_market_check(
+        self, *, sources: set[str] | None = None
+    ) -> list[dict[str, Any]]:
+        """Get properties for off-market URL spot-checking.
+
+        Returns properties with their URLs and source info. Excludes
+        properties still pending enrichment or analysis. Includes
+        already-off-market properties so the caller can detect
+        return-to-market transitions.
+
+        Args:
+            sources: If set, only return properties with at least one of these sources.
+
+        Returns:
+            List of dicts with unique_id, url, source, source_urls, is_off_market.
+        """
+        conn = await self._get_connection()
+        cursor = await conn.execute(
+            """
+            SELECT unique_id, url, source, source_urls, is_off_market
+            FROM properties
+            WHERE COALESCE(enrichment_status, 'enriched') != 'pending'
+              AND notification_status NOT IN ('pending_enrichment', 'pending_analysis')
+            ORDER BY first_seen DESC
+            """
+        )
+        rows = await cursor.fetchall()
+        results = [dict(row) for row in rows]
+
+        if sources:
+            filtered = []
+            for r in results:
+                # Check primary source
+                if r["source"] in sources:
+                    filtered.append(r)
+                    continue
+                # Check multi-source URLs
+                if r.get("source_urls"):
+                    try:
+                        urls_dict = json.loads(r["source_urls"])
+                        if any(s in sources for s in urls_dict):
+                            filtered.append(r)
+                    except (json.JSONDecodeError, TypeError):
+                        pass
+            results = filtered
+
+        return results
 
     # ------------------------------------------------------------------
     # Internal helpers

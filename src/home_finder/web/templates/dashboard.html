@@ -213,6 +213,12 @@
                             <option value="yes" {% if pets == "yes" %}selected{% endif %}>Pets allowed</option>
                         </select>
                     </div>
+                    <div class="tag-chips-wrap">
+                        <label class="tag-chip">
+                            <input type="checkbox" name="off_market" value="show" class="sr-only" {% if off_market == "show" %}checked{% endif %}>
+                            Include off-market
+                        </label>
+                    </div>
                 </fieldset>
 
                 {% if tag_categories %}

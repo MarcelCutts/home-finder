@@ -21,6 +21,15 @@
 {% block content %}
 {% set qa = prop.quality_analysis %}
 <article>
+    {% if prop.is_off_market %}
+    <div class="off-market-banner">
+        This property has been removed from the listing platform.
+        {% if prop.off_market_since %}
+        Detected {{ prop.off_market_since | days_since }} day{{ 's' if prop.off_market_since | days_since != 1 else '' }} ago.
+        {% endif %}
+    </div>
+    {% endif %}
+
     {# Hero Gallery — visual anchor, full-bleed #}
     {% if prop.gallery_images %}
     {% set gallery = prop.gallery_images %}
@@ -127,7 +136,6 @@
             {% if qa %}<li><a href="#section-overview">Overview</a></li>{% endif %}
             {% if qa %}<li><a href="#section-quality">Quality</a></li>{% endif %}
             {% if qa and qa.viewing_notes and (qa.viewing_notes.check_items or qa.viewing_notes.questions_for_agent or qa.viewing_notes.deal_breaker_tests) %}<li><a href="#section-viewing">Viewing Prep</a></li>{% endif %}
-            {% if qa %}<li><a href="#section-message">Message</a></li>{% endif %}
             {% if prop.floorplan_images %}<li><a href="#section-floorplan">Floorplan</a></li>{% endif %}
             {% if best_description %}<li><a href="#section-description">Description</a></li>{% endif %}
             {% if prop.latitude and prop.longitude %}<li><a href="#section-location">Location</a></li>{% endif %}
@@ -443,22 +451,6 @@
         {% endif %}
     </section>
     {% endif %}
-    {% endif %}
-
-    {# 2c. Viewing Message — AI-drafted enquiry #}
-    {% if qa %}
-    <section id="section-message" class="detail-section">
-        <h3>Viewing Message</h3>
-        <div id="viewing-message-container">
-            <p class="viewing-msg-hint">AI-drafted enquiry ready to paste into the portal.</p>
-            <button class="viewing-msg-btn viewing-msg-generate"
-                    hx-post="/property/{{ prop.unique_id }}/viewing-message"
-                    hx-target="#viewing-message-container"
-                    hx-disabled-elt="this"
-                    hx-indicator="#msg-spinner">Draft Viewing Message</button>
-            <span class="htmx-indicator" id="msg-spinner">Generating…</span>
-        </div>
-    </section>
     {% endif %}
 
     {# 3. Floorplan — spatial understanding #}

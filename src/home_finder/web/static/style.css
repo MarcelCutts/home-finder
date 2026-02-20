@@ -2933,6 +2933,10 @@ nav.container-fluid li {
         flex-direction: column;
         gap: 0.25rem;
     }
+    .detail-header-meta {
+        flex-wrap: wrap;
+        gap: 0.5rem;
+    }
     /* Hero gallery: stack on tablet */
     .hero-gallery {
         grid-template-columns: 1fr;
@@ -3033,9 +3037,14 @@ nav.container-fluid li {
     .split-active #dashboard-map {
         height: 50vh !important;
     }
-    /* Detail page: single column */
-    .detail-header {
-        grid-template-columns: 1fr;
+    /* Detail page: stack address + badges vertically on mobile */
+    .detail-header-row {
+        flex-direction: column;
+        gap: 0.25rem;
+    }
+    .detail-header-meta {
+        flex-wrap: wrap;
+        gap: 0.5rem;
     }
     /* Hero gallery: single hero, no thumbs */
     .hero-gallery {
@@ -3384,99 +3393,56 @@ nav.container-fluid li {
     font-style: italic;
 }
 
-/* ===== Viewing message (Ticket 8) ===== */
-.viewing-msg-hint {
-    font-size: 0.84rem;
-    color: var(--text-muted);
-    margin: 0 0 0.75rem 0;
-}
-.viewing-msg-btn {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.35rem;
-    padding: 0.45rem 1rem;
-    font-size: 0.84rem;
-    font-weight: 600;
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    background: var(--bg-elevated);
-    color: var(--text);
-    cursor: pointer;
-    transition: background 0.15s, border-color 0.15s;
-}
-.viewing-msg-btn:hover {
-    background: var(--bg-card-hover);
-    border-color: var(--border-hover);
-}
-.viewing-msg-generate {
-    background: var(--accent-subtle);
-    border-color: var(--accent);
-    color: var(--accent-hover);
-}
-.viewing-msg-generate:hover {
-    background: var(--accent);
-    color: #fff;
-}
-.viewing-msg-card {
-    margin-top: 0.75rem;
-}
-.viewing-msg-text {
-    width: 100%;
-    resize: vertical;
-    font-size: 0.88rem;
-    line-height: 1.55;
-    padding: 0.75rem;
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    background: var(--bg-card);
-    color: var(--text);
-    font-family: var(--font-body);
-}
-.viewing-msg-actions {
-    display: flex;
-    gap: 0.5rem;
-    margin-top: 0.5rem;
-}
-.viewing-msg-copy {
-    background: var(--accent-subtle);
-    border-color: var(--accent);
-    color: var(--accent-hover);
-}
-.viewing-msg-copy:hover {
-    background: var(--accent);
-    color: #fff;
-}
-.viewing-msg-portals {
+/* ===== Off-market property styles ===== */
+
+/* Card overlay badge */
+.off-market-overlay {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
     display: flex;
     align-items: center;
-    gap: 0.5rem;
-    margin-top: 0.5rem;
-    flex-wrap: wrap;
+    justify-content: center;
+    z-index: 2;
+    pointer-events: none;
 }
-.viewing-msg-portals-label {
-    font-size: 0.8rem;
-    color: var(--text-muted);
-    font-weight: 500;
-}
-.viewing-msg-portal-link {
-    font-size: 0.8rem;
-    font-weight: 600;
-    color: var(--accent-hover);
-    text-decoration: none;
-    padding: 0.2rem 0.5rem;
-    border: 1px solid var(--border);
+.off-market-badge {
+    background: rgba(220, 38, 38, 0.85);
+    color: #fff;
+    font-size: 0.7rem;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    padding: 0.25rem 0.75rem;
     border-radius: 4px;
-    transition: background 0.15s, border-color 0.15s;
 }
-.viewing-msg-portal-link:hover {
-    background: var(--accent-subtle);
-    border-color: var(--accent);
+
+/* Dimmed card image + body when off-market */
+.property-card-off-market .card-image {
+    filter: grayscale(0.6);
+    opacity: 0.55;
 }
-.viewing-msg-error {
-    font-size: 0.84rem;
-    color: var(--commute-amber-text);
-    background: var(--commute-amber-bg);
-    padding: 0.5rem 0.75rem;
-    border-radius: 6px;
-    margin-top: 0.75rem;
+.property-card-off-market .card-body {
+    opacity: 0.6;
+}
+
+/* Detail page off-market banner */
+.off-market-banner {
+    background: rgba(220, 38, 38, 0.12);
+    border: 1px solid rgba(220, 38, 38, 0.3);
+    color: #f87171;
+    padding: 0.75rem 1rem;
+    border-radius: 8px;
+    margin-bottom: 1rem;
+    font-size: 0.9rem;
+    font-weight: 500;
+    text-align: center;
+}
+
+/* Map marker pill dimming for off-market */
+.price-pill-off-market {
+    opacity: 0.4;
+    filter: grayscale(0.8);
 }

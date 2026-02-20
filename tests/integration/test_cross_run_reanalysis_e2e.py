@@ -21,6 +21,7 @@ from home_finder.filters.detail_enrichment import EnrichmentResult
 from home_finder.main import (
     _cross_run_deduplicate,
     _drain_reanalysis_queue,
+    _run_post_enrichment,
     run_dry_run,
     run_pipeline,
 )
@@ -1260,3 +1261,564 @@ class TestDryRunPath:
 
         finally:
             await shared_storage.close()
+
+
+# ---------------------------------------------------------------------------
+# Helpers for image-based tests
+# ---------------------------------------------------------------------------
+
+
+def _create_solid_image(color: str = "red", size: tuple[int, int] = (100, 100)) -> bytes:
+    """Create a solid-color JPEG image."""
+    import io
+
+    from PIL import Image
+
+    img = Image.new("RGB", size, color=color)
+    buf = io.BytesIO()
+    img.save(buf, format="JPEG")
+    return buf.getvalue()
+
+
+def _create_checkerboard_image(
+    cell_size: int = 10,
+    size: tuple[int, int] = (100, 100),
+) -> bytes:
+    """Create a checkerboard JPEG image — structurally distinct from solid colors.
+
+    pHash tolerates color variations between solid-color images, so we need
+    structurally different patterns for images that must NOT match.
+    """
+    import io
+
+    from PIL import Image, ImageDraw
+
+    img = Image.new("RGB", size, (255, 255, 255))
+    draw = ImageDraw.Draw(img)
+    for x in range(0, size[0], cell_size):
+        for y in range(0, size[1], cell_size):
+            if (x + y) % (cell_size * 2) == 0:
+                draw.rectangle([x, y, x + cell_size, y + cell_size], fill=(0, 0, 0))
+    buf = io.BytesIO()
+    img.save(buf, format="JPEG")
+    return buf.getvalue()
+
+
+def _make_real_image_cache_matching(
+    tmp_path: Any,
+    unique_id: str,
+    count: int = 3,
+) -> list[str]:
+    """Create real solid-color image files in the cache dir.
+
+    All images from this helper use the same colors, so two properties
+    created with this helper WILL match on image hashing.
+    """
+    colors = ["red", "blue", "green", "orange", "purple"]
+    cache_dir = get_cache_dir(str(tmp_path), unique_id)
+    filenames = []
+    for i in range(count):
+        fname = f"gallery_{i:03d}_real{i:04d}.jpg"
+        path = cache_dir / fname
+        save_image_bytes(path, _create_solid_image(colors[i % len(colors)]))
+        filenames.append(fname)
+    return filenames
+
+
+def _make_real_image_cache_distinct(
+    tmp_path: Any,
+    unique_id: str,
+    count: int = 3,
+) -> list[str]:
+    """Create structurally distinct image files (checkerboard patterns).
+
+    Images from this helper will NOT match solid-color images on pHash.
+    """
+    cache_dir = get_cache_dir(str(tmp_path), unique_id)
+    filenames = []
+    for i in range(count):
+        fname = f"gallery_{i:03d}_real{i:04d}.jpg"
+        path = cache_dir / fname
+        # Vary cell size to make each image different from each other too
+        save_image_bytes(path, _create_checkerboard_image(cell_size=5 + i * 5))
+        filenames.append(fname)
+    return filenames
+
+
+# ---------------------------------------------------------------------------
+# Class 9: TestSameBuildingDisambiguation
+# ---------------------------------------------------------------------------
+
+
+class TestSameBuildingDisambiguation:
+    """Cross-run dedup must NOT merge different flats in the same building.
+
+    When image hashing is active, the gallery rejection guard prevents
+    merging when both properties have gallery hashes but zero images match.
+    F1 hardened the cross-run path to always enable image hashing.
+    """
+
+    async def test_same_building_different_flats_not_merged(
+        self,
+        storage: PropertyStorage,
+        make_property: Callable[..., Property],
+        quality_v1: PropertyQualityAnalysis,
+        tmp_path: Any,
+    ):
+        """Two flats in the same building (same postcode, coords, price, beds)
+        but with different gallery images → NOT merged during cross-run dedup."""
+        data_dir = str(tmp_path)
+
+        # Same building: identical postcode, coordinates, price, bedrooms
+        anchor = make_property(
+            source=PropertySource.OPENRENT,
+            postcode="E8 3RH",
+            price_pcm=1800,
+            bedrooms=2,
+            latitude=51.5465,
+            longitude=-0.0553,
+        )
+        new = make_property(
+            source=PropertySource.ZOOPLA,
+            postcode="E8 3RH",
+            price_pcm=1800,
+            bedrooms=2,
+            latitude=51.5465,
+            longitude=-0.0553,
+        )
+
+        await _populate_run1(storage, anchor, quality_v1)
+
+        # Create structurally DIFFERENT gallery images for each property.
+        # Anchor: solid-color images, new property: checkerboard patterns.
+        # pHash tolerates color variations, so we need structural differences.
+        _make_real_image_cache_matching(tmp_path, anchor.unique_id, count=3)
+        _make_real_image_cache_distinct(tmp_path, new.unique_id, count=3)
+
+        # Cross-run dedup with image hashing enabled (F1 fix)
+        deduplicator = Deduplicator(
+            enable_cross_platform=True,
+            enable_image_hashing=True,
+            data_dir=data_dir,
+        )
+        result = await _cross_run_deduplicate(
+            deduplicator,
+            [_wrap_merged(new)],
+            storage,
+            set(),
+            data_dir=data_dir,
+        )
+
+        # Should NOT merge — different flats in same building
+        assert result.anchors_updated == 0
+        assert len(result.genuinely_new) == 1
+        assert result.genuinely_new[0].canonical.unique_id == new.unique_id
+
+    async def test_same_building_same_flat_merged_with_matching_images(
+        self,
+        storage: PropertyStorage,
+        make_property: Callable[..., Property],
+        quality_v1: PropertyQualityAnalysis,
+        tmp_path: Any,
+    ):
+        """Same flat listed on two platforms with matching gallery images → merged."""
+        data_dir = str(tmp_path)
+
+        anchor = make_property(
+            source=PropertySource.OPENRENT,
+            postcode="E8 3RH",
+            price_pcm=1800,
+            bedrooms=2,
+            latitude=51.5465,
+            longitude=-0.0553,
+        )
+        new = make_property(
+            source=PropertySource.ZOOPLA,
+            postcode="E8 3RH",
+            price_pcm=1800,
+            bedrooms=2,
+            latitude=51.5465,
+            longitude=-0.0553,
+        )
+
+        await _populate_run1(storage, anchor, quality_v1)
+
+        # Create IDENTICAL gallery images for both (same flat, different platforms)
+        _make_real_image_cache_matching(tmp_path, anchor.unique_id, count=3)
+        _make_real_image_cache_matching(tmp_path, new.unique_id, count=3)
+
+        deduplicator = Deduplicator(
+            enable_cross_platform=True,
+            enable_image_hashing=True,
+            data_dir=data_dir,
+        )
+        result = await _cross_run_deduplicate(
+            deduplicator,
+            [_wrap_merged(new)],
+            storage,
+            set(),
+            data_dir=data_dir,
+        )
+
+        # Should merge — same flat on different platforms
+        assert result.anchors_updated == 1
+        assert len(result.genuinely_new) == 0
+        await _assert_db_sources(storage, anchor.unique_id, {"openrent", "zoopla"})
+
+    async def test_global_image_hashing_disabled_still_prevents_merge(
+        self,
+        storage: PropertyStorage,
+        make_property: Callable[..., Property],
+        quality_v1: PropertyQualityAnalysis,
+        tmp_path: Any,
+    ):
+        """F1 integration: _run_post_enrichment uses image hashing even when
+        the global enable_image_hash_matching setting is False.
+
+        This is the core F1 scenario — if someone disables image hashing for
+        performance, same-building disambiguation must still work in cross-run
+        dedup because _run_post_enrichment unconditionally enables it.
+        """
+        data_dir = str(tmp_path)
+
+        # Settings with image hashing DISABLED globally, DB in tmp_path so
+        # data_dir resolves to tmp_path for image cache lookup.
+        db_path = str(tmp_path / "test.db")
+        settings = Settings(
+            telegram_bot_token=SecretStr("fake:token"),
+            telegram_chat_id=0,
+            database_path=db_path,
+            search_areas="e8",
+            min_price=1500,
+            max_price=2500,
+            min_bedrooms=1,
+            max_bedrooms=2,
+            enable_image_hash_matching=False,  # ← globally disabled
+            require_floorplan=False,
+        )
+
+        anchor = make_property(
+            source=PropertySource.OPENRENT,
+            postcode="E8 3RH",
+            price_pcm=1800,
+            bedrooms=2,
+            latitude=51.5465,
+            longitude=-0.0553,
+        )
+        new = make_property(
+            source=PropertySource.ZOOPLA,
+            postcode="E8 3RH",
+            price_pcm=1800,
+            bedrooms=2,
+            latitude=51.5465,
+            longitude=-0.0553,
+        )
+
+        await _populate_run1(storage, anchor, quality_v1)
+
+        # Structurally different images → different flats
+        _make_real_image_cache_matching(tmp_path, anchor.unique_id, count=3)
+        _make_real_image_cache_distinct(tmp_path, new.unique_id, count=3)
+
+        # Go through _run_post_enrichment (the production code path)
+        # rather than constructing a Deduplicator manually.
+        post_result = await _run_post_enrichment(
+            [_wrap_merged(new)], storage, settings, set()
+        )
+
+        # Should NOT merge — F1 ensures cross-run dedup always hashes
+        assert post_result is not None
+        merged_to_notify, anchors_updated = post_result
+        assert anchors_updated == 0
+        assert len(merged_to_notify) == 1
+        assert merged_to_notify[0].canonical.unique_id == new.unique_id
+
+    async def test_no_cached_images_merges_on_location_signals(
+        self,
+        storage: PropertyStorage,
+        make_property: Callable[..., Property],
+        quality_v1: PropertyQualityAnalysis,
+        tmp_path: Any,
+    ):
+        """When NEITHER property has cached gallery images, the gallery
+        rejection guard is bypassed and merge proceeds on location signals.
+
+        This is expected: old anchors from before image caching was added
+        won't have cached images. The guard can only fire when both sides
+        have hashable galleries. Without images, we accept the location match.
+        """
+        data_dir = str(tmp_path)
+
+        anchor = make_property(
+            source=PropertySource.OPENRENT,
+            postcode="E8 3RH",
+            price_pcm=1800,
+            bedrooms=2,
+            latitude=51.5465,
+            longitude=-0.0553,
+        )
+        new = make_property(
+            source=PropertySource.ZOOPLA,
+            postcode="E8 3RH",
+            price_pcm=1800,
+            bedrooms=2,
+            latitude=51.5465,
+            longitude=-0.0553,
+        )
+
+        await _populate_run1(storage, anchor, quality_v1)
+
+        # Deliberately NO cached images for either property.
+        # hash_cached_gallery returns {} → guard bypassed.
+        deduplicator = Deduplicator(
+            enable_cross_platform=True,
+            enable_image_hashing=True,
+            data_dir=data_dir,
+        )
+        result = await _cross_run_deduplicate(
+            deduplicator,
+            [_wrap_merged(new)],
+            storage,
+            set(),
+            data_dir=data_dir,
+        )
+
+        # DOES merge — no image evidence to reject, location signals sufficient
+        assert result.anchors_updated == 1
+        assert len(result.genuinely_new) == 0
+        await _assert_db_sources(storage, anchor.unique_id, {"openrent", "zoopla"})
+
+
+# ---------------------------------------------------------------------------
+# Class 10: TestCrossPlatformPriceDropDetection
+# ---------------------------------------------------------------------------
+
+
+class TestCrossPlatformPriceDropDetection:
+    """F2: Price drops detected when a new platform lists at a lower price."""
+
+    async def test_new_source_lower_price_records_drop(
+        self,
+        storage: PropertyStorage,
+        make_property: Callable[..., Property],
+        quality_v1: PropertyQualityAnalysis,
+    ):
+        """Anchor at £1800, new source at £1700 → price_history row with change=-100."""
+        anchor, new = _make_matching_pair(
+            make_property,
+            PropertySource.OPENRENT,
+            PropertySource.ZOOPLA,
+            price_a=1800,
+            price_b=1700,
+        )
+        await _populate_run1(storage, anchor, quality_v1)
+
+        result = await _cross_run_deduplicate(
+            Deduplicator(enable_cross_platform=True),
+            [_wrap_merged(new)],
+            storage,
+            set(),
+        )
+
+        assert result.anchors_updated == 1
+
+        # Verify price_history row was inserted
+        conn = await storage._get_connection()
+        cursor = await conn.execute(
+            "SELECT old_price, new_price, change_amount, source "
+            "FROM price_history WHERE property_unique_id = ?",
+            (anchor.unique_id,),
+        )
+        row = await cursor.fetchone()
+        assert row is not None, "Expected price_history row for cross-platform price drop"
+        assert row["old_price"] == 1800
+        assert row["new_price"] == 1700
+        assert row["change_amount"] == -100
+        assert row["source"] == "cross_platform"
+
+        # price_pcm should be updated to the new lower price
+        # price_drop_notified should be 0 (triggers Telegram notification flow)
+        cursor = await conn.execute(
+            "SELECT price_pcm, price_drop_notified FROM properties WHERE unique_id = ?",
+            (anchor.unique_id,),
+        )
+        price_row = await cursor.fetchone()
+        assert price_row is not None
+        assert price_row["price_pcm"] == 1700
+        assert price_row["price_drop_notified"] == 0
+
+    async def test_new_source_same_price_no_history(
+        self,
+        storage: PropertyStorage,
+        make_property: Callable[..., Property],
+        quality_v1: PropertyQualityAnalysis,
+    ):
+        """Same price on new platform → no price_history row."""
+        anchor, new = _make_matching_pair(
+            make_property,
+            PropertySource.OPENRENT,
+            PropertySource.ZOOPLA,
+            price_a=1800,
+            price_b=1800,
+        )
+        await _populate_run1(storage, anchor, quality_v1)
+
+        result = await _cross_run_deduplicate(
+            Deduplicator(enable_cross_platform=True),
+            [_wrap_merged(new)],
+            storage,
+            set(),
+        )
+
+        assert result.anchors_updated == 1
+
+        conn = await storage._get_connection()
+        cursor = await conn.execute(
+            "SELECT * FROM price_history WHERE property_unique_id = ?",
+            (anchor.unique_id,),
+        )
+        row = await cursor.fetchone()
+        assert row is None, "No price_history expected when prices match"
+
+    async def test_new_source_higher_price_records_increase(
+        self,
+        storage: PropertyStorage,
+        make_property: Callable[..., Property],
+        quality_v1: PropertyQualityAnalysis,
+    ):
+        """Anchor at £1800, new source at £2000 → price_history with change=+200."""
+        anchor, new = _make_matching_pair(
+            make_property,
+            PropertySource.OPENRENT,
+            PropertySource.ZOOPLA,
+            price_a=1800,
+            price_b=2000,
+        )
+        await _populate_run1(storage, anchor, quality_v1)
+
+        result = await _cross_run_deduplicate(
+            Deduplicator(enable_cross_platform=True),
+            [_wrap_merged(new)],
+            storage,
+            set(),
+        )
+
+        assert result.anchors_updated == 1
+
+        conn = await storage._get_connection()
+        cursor = await conn.execute(
+            "SELECT change_amount FROM price_history WHERE property_unique_id = ?",
+            (anchor.unique_id,),
+        )
+        row = await cursor.fetchone()
+        assert row is not None
+        assert row["change_amount"] == 200
+
+    async def test_two_new_sources_different_prices_records_lowest(
+        self,
+        storage: PropertyStorage,
+        make_property: Callable[..., Property],
+        quality_v1: PropertyQualityAnalysis,
+    ):
+        """Two new sources merge into same anchor: Zoopla at £1700, Rightmove
+        at £1750, anchor at £1800. Should record drop to £1700 (the lowest)."""
+        anchor = make_property(
+            source=PropertySource.OPENRENT,
+            postcode="E8 3RH",
+            price_pcm=1800,
+            bedrooms=2,
+            latitude=51.5465,
+            longitude=-0.0553,
+        )
+        new_z = make_property(
+            source=PropertySource.ZOOPLA,
+            postcode="E8 3RH",
+            price_pcm=1700,
+            bedrooms=2,
+            latitude=51.5465,
+            longitude=-0.0553,
+        )
+        new_rm = make_property(
+            source=PropertySource.RIGHTMOVE,
+            postcode="E8 3RH",
+            price_pcm=1750,
+            bedrooms=2,
+            latitude=51.5465,
+            longitude=-0.0553,
+        )
+
+        await _populate_run1(storage, anchor, quality_v1)
+
+        result = await _cross_run_deduplicate(
+            Deduplicator(enable_cross_platform=True),
+            [_wrap_merged(new_z), _wrap_merged(new_rm)],
+            storage,
+            set(),
+        )
+
+        assert result.anchors_updated >= 1
+        assert len(result.genuinely_new) == 0
+
+        # Should record the drop to £1700 (lowest new source price)
+        conn = await storage._get_connection()
+        cursor = await conn.execute(
+            "SELECT old_price, new_price, change_amount "
+            "FROM price_history WHERE property_unique_id = ?",
+            (anchor.unique_id,),
+        )
+        row = await cursor.fetchone()
+        assert row is not None, "Expected price_history row for multi-source drop"
+        assert row["old_price"] == 1800
+        assert row["new_price"] == 1700
+        assert row["change_amount"] == -100
+
+    async def test_rescrape_known_source_no_price_record(
+        self,
+        storage: PropertyStorage,
+        make_property: Callable[..., Property],
+        quality_v1: PropertyQualityAnalysis,
+    ):
+        """Rescraping a known source at the same price should NOT create a
+        price_history entry via the F2 path.
+
+        truly_new_sources is empty for known sources, so the F2 price
+        detection block is never entered. Step 3b (_detect_price_changes)
+        handles same-source price changes separately.
+        """
+        anchor, new = _make_matching_pair(
+            make_property,
+            PropertySource.OPENRENT,
+            PropertySource.ZOOPLA,
+            price_a=1800,
+            price_b=1800,
+        )
+        await _populate_run1(storage, anchor, quality_v1)
+
+        # First cross-run: Zoopla merges in (new source)
+        await _cross_run_deduplicate(
+            Deduplicator(enable_cross_platform=True),
+            [_wrap_merged(new)],
+            storage,
+            set(),
+        )
+        await _assert_db_sources(storage, anchor.unique_id, {"openrent", "zoopla"})
+
+        # Rescrape: Zoopla arrives again at same price (no longer a new source)
+        result = await _cross_run_deduplicate(
+            Deduplicator(enable_cross_platform=True),
+            [_wrap_merged(new)],
+            storage,
+            set(),
+        )
+
+        # Metadata updated but no NEW sources → truly_new_sources is empty
+        assert result.anchors_updated == 1
+
+        # No price_history at all — first merge was same price, rescrape skipped
+        conn = await storage._get_connection()
+        cursor = await conn.execute(
+            "SELECT * FROM price_history WHERE property_unique_id = ?",
+            (anchor.unique_id,),
+        )
+        row = await cursor.fetchone()
+        assert row is None, "Rescrape of known source should not create price_history"

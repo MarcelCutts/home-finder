@@ -1,7 +1,8 @@
 {% from "_macros.html" import commute_pill, fit_badge, lifestyle_icons %}
-<article class="property-card"
+<article class="property-card{% if prop.is_off_market %} property-card-off-market{% endif %}"
          data-property-id="{{ prop.unique_id }}"
          data-status="{{ prop.user_status or 'new' }}"
+         {% if prop.is_off_market %}data-off-market="true"{% endif %}
          style="{% if prop.user_status and prop.user_status != 'new' and status_meta is defined %}--card-status-color: {{ status_meta[prop.user_status].color }}{% endif %}">
     <a href="/property/{{ prop.unique_id }}" class="card-link">
         <div class="card-image-wrapper">
@@ -9,6 +10,9 @@
             <img src="{{ prop.image_url }}" alt="{% if prop.bedrooms == 0 %}Studio{% else %}{{ prop.bedrooms }} bed{% endif %} — {{ prop.postcode or 'Property' }}" loading="lazy" class="card-image">
             {% else %}
             <div class="card-image card-image-placeholder">No image</div>
+            {% endif %}
+            {% if prop.is_off_market %}
+            <div class="off-market-overlay"><span class="off-market-badge">OFF MARKET</span></div>
             {% endif %}
             <div class="card-overlay">
                 {% if prop.min_price and prop.max_price and prop.min_price != prop.max_price %}

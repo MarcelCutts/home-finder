@@ -1,0 +1,386 @@
+"""Off-market property detection via URL spot-checking.
+
+Visits each active property's listing URL and checks for definitive removal
+signals (404, "no longer available" text, redirect to search). Only flags
+on positive confirmation — never on 429s, timeouts, or Cloudflare challenges.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import re
+from collections.abc import Callable
+from dataclasses import dataclass, field
+from enum import Enum
+from typing import Final, Protocol
+
+import httpx
+
+from home_finder.logging import get_logger
+from home_finder.scrapers.constants import BROWSER_HEADERS
+
+logger = get_logger(__name__)
+
+
+class CheckableResponse(Protocol):
+    """Minimal interface for HTTP responses used by checker functions.
+
+    Both httpx.Response and _CurlResponseAdapter satisfy this protocol.
+    """
+
+    @property
+    def status_code(self) -> int: ...
+
+    @property
+    def text(self) -> str: ...
+
+    @property
+    def url(self) -> object: ...
+
+
+class ListingStatus(Enum):
+    """Result of checking a single listing URL."""
+
+    ACTIVE = "active"
+    REMOVED = "removed"
+    UNKNOWN = "unknown"
+
+
+# Per-source rate limiting (seconds between requests)
+_SOURCE_DELAYS: Final[dict[str, float]] = {
+    "zoopla": 2.0,
+    "onthemarket": 1.0,
+    "openrent": 1.0,
+    "rightmove": 0.5,
+}
+
+# Circuit breaker: abort source after this many consecutive UNKNOWN results
+_CIRCUIT_BREAKER_THRESHOLD: Final = 5
+
+# Cloudflare challenge indicators
+_CLOUDFLARE_PATTERNS: Final = (
+    "checking your browser",
+    "cloudflare",
+    "just a moment",
+    "ray id",
+    "enable javascript and cookies",
+)
+
+# Removal text patterns per source
+_REMOVAL_PATTERNS: Final[dict[str, list[re.Pattern[str]]]] = {
+    "rightmove": [
+        re.compile(r"property has been removed", re.IGNORECASE),
+        re.compile(r"no longer available", re.IGNORECASE),
+        re.compile(r"no longer on the market", re.IGNORECASE),
+    ],
+    "zoopla": [
+        re.compile(r"no longer available", re.IGNORECASE),
+        re.compile(r"this property has been removed", re.IGNORECASE),
+    ],
+    "openrent": [
+        re.compile(r"no longer available", re.IGNORECASE),
+        re.compile(r"property not found", re.IGNORECASE),
+    ],
+    "onthemarket": [
+        re.compile(r"no longer available", re.IGNORECASE),
+        re.compile(r"property has been removed", re.IGNORECASE),
+    ],
+}
+
+
+def _is_cloudflare_challenge(html: str) -> bool:
+    """Detect Cloudflare challenge pages (should be treated as UNKNOWN, not REMOVED)."""
+    lower = html.lower()[:3000]
+    return any(p in lower for p in _CLOUDFLARE_PATTERNS)
+
+
+def _check_rightmove(response: CheckableResponse) -> ListingStatus:
+    """Check Rightmove listing status."""
+    if response.status_code in (404, 410):
+        return ListingStatus.REMOVED
+
+    if response.status_code == 200:
+        html = response.text
+        if _is_cloudflare_challenge(html):
+            return ListingStatus.UNKNOWN
+        # Redirect to search results page
+        url_str = str(response.url)
+        if "/property-to-rent/find" in url_str and "/properties/" not in url_str:
+            return ListingStatus.REMOVED
+        for pattern in _REMOVAL_PATTERNS["rightmove"]:
+            if pattern.search(html[:5000]):
+                return ListingStatus.REMOVED
+        return ListingStatus.ACTIVE
+
+    if response.status_code == 429 or response.status_code >= 500:
+        return ListingStatus.UNKNOWN
+
+    return ListingStatus.UNKNOWN
+
+
+def _check_zoopla(response: CheckableResponse) -> ListingStatus:
+    """Check Zoopla listing status."""
+    if response.status_code in (404, 410):
+        return ListingStatus.REMOVED
+
+    if response.status_code == 200:
+        html = response.text
+        if _is_cloudflare_challenge(html):
+            return ListingStatus.UNKNOWN
+        for pattern in _REMOVAL_PATTERNS["zoopla"]:
+            if pattern.search(html[:5000]):
+                return ListingStatus.REMOVED
+        return ListingStatus.ACTIVE
+
+    if response.status_code == 429 or response.status_code >= 500:
+        return ListingStatus.UNKNOWN
+
+    return ListingStatus.UNKNOWN
+
+
+def _check_openrent(response: CheckableResponse) -> ListingStatus:
+    """Check OpenRent listing status."""
+    if response.status_code in (404, 410):
+        return ListingStatus.REMOVED
+
+    if response.status_code == 200:
+        html = response.text
+        # Redirect to search page (property removed)
+        url_str = str(response.url)
+        if "/properties-to-rent" in url_str or "homepage" in html.lower()[:1000]:
+            return ListingStatus.REMOVED
+        if _is_cloudflare_challenge(html):
+            return ListingStatus.UNKNOWN
+        for pattern in _REMOVAL_PATTERNS["openrent"]:
+            if pattern.search(html[:5000]):
+                return ListingStatus.REMOVED
+        return ListingStatus.ACTIVE
+
+    if response.status_code == 429 or response.status_code >= 500:
+        return ListingStatus.UNKNOWN
+
+    return ListingStatus.UNKNOWN
+
+
+def _check_onthemarket(response: CheckableResponse) -> ListingStatus:
+    """Check OnTheMarket listing status."""
+    if response.status_code in (404, 410):
+        return ListingStatus.REMOVED
+
+    if response.status_code == 200:
+        html = response.text
+        if _is_cloudflare_challenge(html):
+            return ListingStatus.UNKNOWN
+        # Redirect to search (no /details/ in URL)
+        url_str = str(response.url)
+        if "/details/" not in url_str and "/to-rent/" in url_str:
+            return ListingStatus.REMOVED
+        for pattern in _REMOVAL_PATTERNS["onthemarket"]:
+            if pattern.search(html[:5000]):
+                return ListingStatus.REMOVED
+        return ListingStatus.ACTIVE
+
+    if response.status_code == 429 or response.status_code >= 500:
+        return ListingStatus.UNKNOWN
+
+    return ListingStatus.UNKNOWN
+
+
+# Type alias for checker functions
+_CheckerFn = Callable[[CheckableResponse], ListingStatus]
+
+# Maps source name to checker function
+_SOURCE_CHECKERS: Final[dict[str, _CheckerFn]] = {
+    "rightmove": _check_rightmove,
+    "zoopla": _check_zoopla,
+    "openrent": _check_openrent,
+    "onthemarket": _check_onthemarket,
+}
+
+# Sources that need curl_cffi for TLS fingerprinting
+_CURL_SOURCES: Final = {"zoopla", "onthemarket", "openrent"}
+
+
+@dataclass
+class CheckResult:
+    """Result of checking a single source URL."""
+
+    source: str
+    url: str
+    status: ListingStatus
+    property_id: str
+
+
+@dataclass
+class OffMarketChecker:
+    """Check listing URLs for off-market signals.
+
+    Uses the same HTTP client selection as the scraper codebase:
+    curl_cffi for Zoopla/OTM/OpenRent, httpx for Rightmove.
+    """
+
+    proxy_url: str = ""
+    _httpx_client: httpx.AsyncClient | None = field(default=None, init=False, repr=False)
+
+    async def _get_httpx_client(self) -> httpx.AsyncClient:
+        if self._httpx_client is None:
+            self._httpx_client = httpx.AsyncClient(
+                headers=BROWSER_HEADERS,
+                follow_redirects=True,
+                timeout=30,
+                proxy=self.proxy_url or None,
+            )
+        return self._httpx_client
+
+    async def _fetch_with_curl(self, url: str) -> CheckableResponse | None:
+        """Fetch a URL using curl_cffi with Chrome impersonation."""
+        try:
+            from curl_cffi.requests import AsyncSession
+
+            async with AsyncSession(proxy=self.proxy_url or None) as session:
+                response = await session.get(
+                    url,
+                    impersonate="chrome",
+                    headers=BROWSER_HEADERS,
+                    timeout=30,
+                    allow_redirects=True,
+                )
+                return _CurlResponseAdapter(response)
+        except Exception as e:
+            logger.debug("curl_fetch_failed", url=url, error=str(e))
+            return None
+
+    async def _fetch_with_httpx(self, url: str) -> CheckableResponse | None:
+        """Fetch a URL using httpx."""
+        try:
+            client = await self._get_httpx_client()
+            return await client.get(url)
+        except Exception as e:
+            logger.debug("httpx_fetch_failed", url=url, error=str(e))
+            return None
+
+    async def check_url(self, source: str, url: str) -> ListingStatus:
+        """Check a single listing URL for removal signals.
+
+        Args:
+            source: Platform name (e.g. "rightmove", "zoopla").
+            url: The listing URL to check.
+
+        Returns:
+            ListingStatus indicating whether the listing is active, removed, or unknown.
+        """
+        checker = _SOURCE_CHECKERS.get(source)
+        if checker is None:
+            return ListingStatus.UNKNOWN
+
+        if source in _CURL_SOURCES:
+            response = await self._fetch_with_curl(url)
+        else:
+            response = await self._fetch_with_httpx(url)
+
+        if response is None:
+            return ListingStatus.UNKNOWN
+
+        return checker(response)
+
+    async def check_batch(
+        self,
+        checks: list[tuple[str, str, str]],
+    ) -> list[CheckResult]:
+        """Check multiple listing URLs with rate limiting and circuit breaker.
+
+        Different sources run concurrently; within each source, requests are
+        sequential with per-source rate-limiting delays.
+
+        Args:
+            checks: List of (property_id, source, url) tuples.
+
+        Returns:
+            List of CheckResult for each check.
+        """
+        # Group by source for rate limiting and circuit breaker
+        by_source: dict[str, list[tuple[str, str]]] = {}
+        for prop_id, source, url in checks:
+            by_source.setdefault(source, []).append((prop_id, url))
+
+        async def _check_source(
+            source: str, items: list[tuple[str, str]]
+        ) -> list[CheckResult]:
+            source_results: list[CheckResult] = []
+            consecutive_unknown = 0
+            delay = _SOURCE_DELAYS.get(source, 1.0)
+
+            for i, (prop_id, url) in enumerate(items):
+                if consecutive_unknown >= _CIRCUIT_BREAKER_THRESHOLD:
+                    logger.warning(
+                        "off_market_circuit_breaker",
+                        source=source,
+                        skipped=len(items) - i,
+                        threshold=_CIRCUIT_BREAKER_THRESHOLD,
+                    )
+                    for remaining_id, remaining_url in items[i:]:
+                        source_results.append(
+                            CheckResult(
+                                source=source,
+                                url=remaining_url,
+                                status=ListingStatus.UNKNOWN,
+                                property_id=remaining_id,
+                            )
+                        )
+                    break
+
+                status = await self.check_url(source, url)
+                source_results.append(
+                    CheckResult(
+                        source=source,
+                        url=url,
+                        status=status,
+                        property_id=prop_id,
+                    )
+                )
+
+                if status == ListingStatus.UNKNOWN:
+                    consecutive_unknown += 1
+                else:
+                    consecutive_unknown = 0
+
+                if i < len(items) - 1:
+                    await asyncio.sleep(delay)
+
+            return source_results
+
+        # Run all sources concurrently (rate limiting is per-source)
+        source_tasks = [
+            _check_source(source, items) for source, items in by_source.items()
+        ]
+        all_source_results = await asyncio.gather(*source_tasks)
+
+        results: list[CheckResult] = []
+        for source_results in all_source_results:
+            results.extend(source_results)
+        return results
+
+    async def close(self) -> None:
+        """Close HTTP clients."""
+        if self._httpx_client is not None:
+            await self._httpx_client.aclose()
+            self._httpx_client = None
+
+
+class _CurlResponseAdapter:
+    """Adapt curl_cffi response to satisfy CheckableResponse protocol."""
+
+    def __init__(self, response: object) -> None:
+        self._response = response
+
+    @property
+    def status_code(self) -> int:
+        return self._response.status_code  # type: ignore[attr-defined]
+
+    @property
+    def text(self) -> str:
+        return self._response.text  # type: ignore[attr-defined]
+
+    @property
+    def url(self) -> object:
+        return self._response.url  # type: ignore[attr-defined]

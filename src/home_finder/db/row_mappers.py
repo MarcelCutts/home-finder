@@ -65,6 +65,9 @@ class PropertyListItem(TypedDict, total=False):
     # Price history (Ticket 10)
     last_price_change: int | None
     price_changed_at: str | None
+    # Off-market detection
+    is_off_market: bool
+    off_market_since: str | None
 
 
 class PropertyDetailItem(PropertyListItem, total=False):

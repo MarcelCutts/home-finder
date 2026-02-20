@@ -181,7 +181,7 @@ async with AsyncSession() as session:
 | `enable_quality_filter` | True | Enable Claude vision property analysis |
 | `require_floorplan` | True | Drop properties without floorplans |
 | `quality_filter_max_images` | 20 | Max gallery images to analyze (1-20) |
-| `enable_image_hash_matching` | False | Perceptual image hash for dedup |
+| `enable_image_hash_matching` | True | Perceptual image hash for dedup |
 | `proxy_url` | `""` | HTTP/SOCKS5 proxy for geo-restricted sites |
 
 ## ADR Writing Guide

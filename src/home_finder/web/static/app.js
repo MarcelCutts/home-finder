@@ -437,11 +437,12 @@ L.GridLayer.include({
     return s;
   }
 
-  function createPricePillIcon(price, id) {
+  function createPricePillIcon(price, id, isOffMarket) {
     var formatted = "\u00A3" + Number(price).toLocaleString();
+    var cls = "price-pill" + (isOffMarket ? " price-pill-off-market" : "");
     return L.divIcon({
       className: "price-pill-marker",
-      html: '<div class="price-pill" data-property-id="' + id + '">' + formatted + "</div>",
+      html: '<div class="' + cls + '" data-property-id="' + id + '">' + formatted + "</div>",
       iconSize: null,
       iconAnchor: [30, 15],
       popupAnchor: [0, -18],
@@ -614,7 +615,7 @@ L.GridLayer.include({
 
     for (var i = 0; i < data.length; i++) {
       var p = data[i];
-      var icon = createPricePillIcon(p.price, p.id);
+      var icon = createPricePillIcon(p.price, p.id, p.is_off_market);
       var marker = L.marker([p.lat, p.lon], { icon: icon });
       marker.bindPopup(buildRichPopup(p), { maxWidth: 280, minWidth: 220 });
       attachMarkerEvents(marker, p);
@@ -871,25 +872,3 @@ L.GridLayer.include({
     }
   });
 })();
-
-// Copy viewing message to clipboard
-function copyViewingMessage() {
-  var textarea = document.getElementById("viewing-msg-text");
-  if (!textarea) return;
-
-  if (navigator.clipboard && navigator.clipboard.writeText) {
-    navigator.clipboard.writeText(textarea.value).then(function () {
-      var btn = document.querySelector(".viewing-msg-copy");
-      if (btn) {
-        var original = btn.textContent;
-        btn.textContent = "Copied!";
-        setTimeout(function () { btn.textContent = original; }, 1500);
-      }
-    });
-  } else {
-    // Fallback: select text for manual copy
-    textarea.removeAttribute("readonly");
-    textarea.select();
-    textarea.setAttribute("readonly", "");
-  }
-}

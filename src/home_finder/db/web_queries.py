@@ -212,6 +212,13 @@ def build_filter_clauses(
             escaped = t.replace("%", "\\%").replace("_", "\\_")
             params.extend([f"%{escaped}%", f"%{escaped}%"])
 
+    # Off-market filter: default hides off-market, "show" shows all, "only" shows only off-market
+    if filters.off_market == "only":
+        where_clauses.append("COALESCE(p.is_off_market, 0) = 1")
+    elif filters.off_market != "show":
+        # Default: hide off-market properties
+        where_clauses.append("COALESCE(p.is_off_market, 0) = 0")
+
     where_sql = " AND ".join(where_clauses) if where_clauses else "1=1"
     return where_sql, params
 
@@ -274,6 +281,7 @@ class WebQueryService:
             SELECT p.unique_id, p.latitude, p.longitude, p.price_pcm,
                    p.bedrooms, p.title, p.postcode,
                    p.commute_minutes, p.image_url,
+                   p.is_off_market,
                    q.overall_rating as quality_rating,
                    json_extract(q.analysis_json, '$.value.quality_adjusted_rating') as value_rating,
                    json_extract(q.analysis_json, '$.one_line') as one_line
@@ -300,6 +308,7 @@ class WebQueryService:
                 "commute_minutes": row["commute_minutes"],
                 "value_rating": row["value_rating"],
                 "one_line": row["one_line"],
+                "is_off_market": bool(row["is_off_market"]),
             }
             for row in rows
         ]

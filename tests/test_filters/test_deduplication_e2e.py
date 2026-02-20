@@ -961,7 +961,7 @@ class TestRealWorldEdgeCases:
         assert score.is_match is True
 
     async def test_transitive_merge_three_platforms(self) -> None:
-        """If A matches B and B matches C, all three merge (union-find).
+        """If A matches B and B matches C, all three merge (greedy group expansion).
         Test with OTM, Zoopla, and OpenRent all having same full postcode."""
         otm = _make_property(
             source=PropertySource.ONTHEMARKET,

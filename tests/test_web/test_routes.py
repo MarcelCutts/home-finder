@@ -2386,173 +2386,79 @@ class TestPriceHistoryDetail:
 
 
 # ---------------------------------------------------------------------------
-# Viewing message (Ticket 8)
+# Off-market display
 # ---------------------------------------------------------------------------
 
 
-class TestViewingMessage:
-    @pytest.mark.asyncio
-    async def test_viewing_message_cached(
-        self,
-        client: TestClient,
-        storage: PropertyStorage,
-        merged_a: MergedProperty,
-    ) -> None:
-        """POST returns cached message with textarea when cache exists."""
-        await storage.save_merged_property(merged_a)
-        await storage.save_viewing_message(merged_a.unique_id, "Cached message text.")
-        resp = client.post(f"/property/{merged_a.unique_id}/viewing-message")
-        assert resp.status_code == 200
-        assert "Cached message text." in resp.text
-        assert "textarea" in resp.text
+class TestOffMarketDisplay:
+    """Tests for off-market badge on cards, banner on detail, and filter."""
 
     @pytest.mark.asyncio
-    async def test_viewing_message_no_analysis_shows_error(
-        self,
-        client: TestClient,
-        storage: PropertyStorage,
-        merged_a: MergedProperty,
-        settings: Settings,
+    async def test_off_market_badge_on_card(
+        self, client: TestClient, storage: PropertyStorage, merged_a: MergedProperty
     ) -> None:
-        """Without quality analysis, returns error partial."""
-        # Ensure API key is set so we reach the analysis check
-        settings.anthropic_api_key = SecretStr("fake-key")
-        app = FastAPI()
-        app.state.storage = storage
-        app.state.settings = settings
-        app.include_router(router)
-        test_client = TestClient(app)
-
         await storage.save_merged_property(merged_a)
-        resp = test_client.post(f"/property/{merged_a.unique_id}/viewing-message")
+        await storage.mark_off_market(merged_a.unique_id)
+
+        # off_market=show to include off-market in results
+        resp = client.get("/?off_market=show")
         assert resp.status_code == 200
-        assert "Quality analysis required" in resp.text
+        assert "OFF MARKET" in resp.text
+        assert "property-card-off-market" in resp.text
 
     @pytest.mark.asyncio
-    async def test_viewing_message_copy_button_present(
-        self,
-        client: TestClient,
-        storage: PropertyStorage,
-        merged_a: MergedProperty,
+    async def test_off_market_hidden_by_default(
+        self, client: TestClient, storage: PropertyStorage, merged_a: MergedProperty
     ) -> None:
-        """Cached message response includes copy button."""
         await storage.save_merged_property(merged_a)
-        await storage.save_viewing_message(merged_a.unique_id, "Test message.")
-        resp = client.post(f"/property/{merged_a.unique_id}/viewing-message")
+        await storage.mark_off_market(merged_a.unique_id)
+
+        resp = client.get("/")
         assert resp.status_code == 200
-        assert "copyViewingMessage" in resp.text
+        # Should not appear in default view
+        assert "OFF MARKET" not in resp.text
 
     @pytest.mark.asyncio
-    async def test_viewing_message_regenerate_clears_cache(
-        self,
-        client: TestClient,
-        storage: PropertyStorage,
-        merged_a: MergedProperty,
-        settings: Settings,
+    async def test_off_market_only_filter(
+        self, client: TestClient, storage: PropertyStorage, merged_a: MergedProperty
     ) -> None:
-        """Regenerate endpoint deletes cache before re-generating."""
-        settings.anthropic_api_key = SecretStr("fake-key")
-        app = FastAPI()
-        app.state.storage = storage
-        app.state.settings = settings
-        app.include_router(router)
-        test_client = TestClient(app)
-
         await storage.save_merged_property(merged_a)
-        await storage.save_viewing_message(merged_a.unique_id, "Old message.")
-        # Regenerate — no quality analysis means it will error, but cache should be cleared
-        resp = test_client.post(f"/property/{merged_a.unique_id}/viewing-message/regenerate")
+        await storage.mark_off_market(merged_a.unique_id)
+
+        resp = client.get("/?off_market=only")
         assert resp.status_code == 200
-        # Cache should have been deleted
-        cached = await storage.get_viewing_message(merged_a.unique_id)
-        assert cached is None
-        # Should show the error since there's no quality analysis
-        assert "Quality analysis required" in resp.text
+        assert "OFF MARKET" in resp.text
 
     @pytest.mark.asyncio
-    async def test_viewing_message_generation_happy_path(
-        self,
-        storage: PropertyStorage,
-        merged_a: MergedProperty,
-        base_analysis: PropertyQualityAnalysis,
-        settings: Settings,
+    async def test_off_market_banner_on_detail(
+        self, client: TestClient, storage: PropertyStorage, merged_a: MergedProperty
     ) -> None:
-        """Full generation path: API called, message saved to DB, rendered in textarea."""
-        from unittest.mock import AsyncMock, MagicMock, patch
-
-        settings.anthropic_api_key = SecretStr("fake-key")
-        test_app = FastAPI()
-        test_app.state.storage = storage
-        test_app.state.settings = settings
-        test_app.include_router(router)
-        test_client = TestClient(test_app)
-
         await storage.save_merged_property(merged_a)
-        await storage.save_quality_analysis(merged_a.unique_id, base_analysis)
+        await storage.mark_off_market(merged_a.unique_id)
 
-        mock_text_block = MagicMock()
-        mock_text_block.text = "The gas hob is great. Happy to view this week."
-
-        mock_response = MagicMock()
-        mock_response.content = [mock_text_block]
-
-        mock_messages = MagicMock()
-        mock_messages.create = AsyncMock(return_value=mock_response)
-
-        mock_client = AsyncMock()
-        mock_client.messages = mock_messages
-        mock_client.close = AsyncMock()
-
-        with patch("anthropic.AsyncAnthropic", return_value=mock_client):
-            resp = test_client.post(f"/property/{merged_a.unique_id}/viewing-message")
-
+        resp = client.get(f"/property/{merged_a.unique_id}")
         assert resp.status_code == 200
-        assert "The gas hob is great" in resp.text
-        assert "textarea" in resp.text
-
-        # Verify it was cached in DB
-        cached = await storage.get_viewing_message(merged_a.unique_id)
-        assert cached == "The gas hob is great. Happy to view this week."
+        assert "off-market-banner" in resp.text
+        assert "removed from the listing platform" in resp.text
 
     @pytest.mark.asyncio
-    async def test_viewing_message_api_failure_shows_error(
-        self,
-        storage: PropertyStorage,
-        merged_a: MergedProperty,
-        base_analysis: PropertyQualityAnalysis,
-        settings: Settings,
+    async def test_no_banner_for_active_property(
+        self, client: TestClient, storage: PropertyStorage, merged_a: MergedProperty
     ) -> None:
-        """API error returns a user-friendly error partial."""
-        from unittest.mock import AsyncMock, MagicMock, patch
-
-        settings.anthropic_api_key = SecretStr("fake-key")
-        test_app = FastAPI()
-        test_app.state.storage = storage
-        test_app.state.settings = settings
-        test_app.include_router(router)
-        test_client = TestClient(test_app)
-
         await storage.save_merged_property(merged_a)
-        await storage.save_quality_analysis(merged_a.unique_id, base_analysis)
 
-        mock_messages = MagicMock()
-        mock_messages.create = AsyncMock(side_effect=RuntimeError("timeout"))
-
-        mock_client = AsyncMock()
-        mock_client.messages = mock_messages
-        mock_client.close = AsyncMock()
-
-        with patch("anthropic.AsyncAnthropic", return_value=mock_client):
-            resp = test_client.post(f"/property/{merged_a.unique_id}/viewing-message")
-
+        resp = client.get(f"/property/{merged_a.unique_id}")
         assert resp.status_code == 200
-        assert "Failed to generate message" in resp.text
+        assert "off-market-banner" not in resp.text
 
-        # Nothing should be cached
-        cached = await storage.get_viewing_message(merged_a.unique_id)
-        assert cached is None
+    @pytest.mark.asyncio
+    async def test_map_markers_include_off_market(
+        self, client: TestClient, storage: PropertyStorage, merged_a: MergedProperty
+    ) -> None:
+        await storage.save_merged_property(merged_a)
+        await storage.mark_off_market(merged_a.unique_id)
 
-    def test_viewing_message_unknown_property_404(self, client: TestClient) -> None:
-        """Nonexistent property returns 404."""
-        resp = client.post("/property/nonexistent:999/viewing-message")
-        assert resp.status_code == 404
+        resp = client.get("/?off_market=show")
+        assert resp.status_code == 200
+        # Map markers JSON includes is_off_market
+        assert "is_off_market" in resp.text
