@@ -188,18 +188,6 @@ L.GridLayer.include({
   isMobile.addEventListener("change", toggleMobileInputs);
 })();
 
-// Fit badge popover: click-outside close
-(function () {
-  document.addEventListener("click", function (e) {
-    var openDetails = document.querySelectorAll("details.fit-popover-wrap[open]");
-    for (var i = 0; i < openDetails.length; i++) {
-      if (!openDetails[i].contains(e.target)) {
-        openDetails[i].removeAttribute("open");
-      }
-    }
-  });
-})();
-
 // Fit breakdown bar fill animation (detail page)
 (function () {
   var bars = document.querySelectorAll(".fit-breakdown-fill");
@@ -1004,140 +992,52 @@ L.GridLayer.include({
 
 // ("+N more" overlay is now handled inside the gallery controller above)
 
-// Status selector popover: toggle on click, close on outside click / Escape
+// Dashboard status filter: option selection business logic
+// Toggle/outside-click/Escape handled by native popover; this handles option → hidden input → form submit
 (function () {
   document.addEventListener("click", function (e) {
-    var trigger = e.target.closest(".status-selector-trigger");
-    if (trigger) {
-      e.preventDefault();
-      var selector = trigger.closest(".status-selector");
-      var wasOpen = selector.classList.contains("open");
-
-      // Close any other open selectors
-      document.querySelectorAll(".status-selector.open").forEach(function (s) {
-        s.classList.remove("open");
-        s.querySelector(".status-selector-trigger").setAttribute("aria-expanded", "false");
-      });
-
-      if (!wasOpen) {
-        selector.classList.add("open");
-        trigger.setAttribute("aria-expanded", "true");
-      }
-      return;
-    }
-
-    // Close on click outside
-    if (!e.target.closest(".status-popover")) {
-      document.querySelectorAll(".status-selector.open").forEach(function (s) {
-        s.classList.remove("open");
-        s.querySelector(".status-selector-trigger").setAttribute("aria-expanded", "false");
-      });
-    }
-  });
-
-  document.addEventListener("keydown", function (e) {
-    if (e.key === "Escape") {
-      document.querySelectorAll(".status-selector.open").forEach(function (s) {
-        s.classList.remove("open");
-        var trigger = s.querySelector(".status-selector-trigger");
-        trigger.setAttribute("aria-expanded", "false");
-        trigger.focus();
-      });
-    }
-  });
-})();
-
-// Dashboard status filter popover: toggle, select, close on outside click / Escape
-// Uses document-level event delegation (no re-binding needed after HTMX swaps)
-(function () {
-  document.addEventListener("click", function (e) {
-    // 1. Trigger click — toggle popover
-    var trigger = e.target.closest(".status-filter-trigger");
-    if (trigger) {
-      e.preventDefault();
-      var filter = trigger.closest(".status-filter");
-      var wasOpen = filter.classList.contains("open");
-
-      // Close any other open filters first
-      document.querySelectorAll(".status-filter.open").forEach(function (f) {
-        f.classList.remove("open");
-        var t = f.querySelector(".status-filter-trigger");
-        if (t) t.setAttribute("aria-expanded", "false");
-      });
-
-      if (!wasOpen) {
-        filter.classList.add("open");
-        trigger.setAttribute("aria-expanded", "true");
-      }
-      return;
-    }
-
-    // 2. Option click — update value, trigger label, and submit
     var option = e.target.closest(".status-filter-option");
-    if (option) {
-      var filter = option.closest(".status-filter");
-      var trigger = filter.querySelector(".status-filter-trigger");
-      var hiddenInput = filter.querySelector('input[name="status"]');
-      if (!trigger || !hiddenInput) return;
+    if (!option) return;
 
-      var value = option.dataset.statusValue;
-      hiddenInput.value = value;
+    var filter = option.closest(".status-filter");
+    var trigger = filter.querySelector(".status-filter-trigger");
+    var hiddenInput = filter.querySelector('input[name="status"]');
+    if (!trigger || !hiddenInput) return;
 
-      // Update trigger appearance
-      var color = option.style.getPropertyValue("--option-color") || "#888";
-      trigger.style.setProperty("--status-color", color);
+    var value = option.dataset.statusValue;
+    hiddenInput.value = value;
 
-      if (value) {
-        trigger.innerHTML =
-          '<span class="status-filter-dot"></span>' +
-          option.textContent.trim() +
-          ' <svg class="status-filter-chevron" width="12" height="12" viewBox="0 0 12 12" fill="none">' +
-          '<path d="M3 4.5L6 7.5L9 4.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>' +
-          "</svg>";
-      } else {
-        trigger.style.setProperty("--status-color", "#888");
-        trigger.innerHTML =
-          "Status" +
-          ' <svg class="status-filter-chevron" width="12" height="12" viewBox="0 0 12 12" fill="none">' +
-          '<path d="M3 4.5L6 7.5L9 4.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>' +
-          "</svg>";
-      }
+    // Update trigger appearance
+    var color = option.style.getPropertyValue("--option-color") || "#888";
+    trigger.style.setProperty("--status-color", color);
 
-      // Update active state on all options
-      var allOptions = filter.querySelectorAll(".status-filter-option");
-      for (var i = 0; i < allOptions.length; i++) {
-        allOptions[i].classList.toggle("active", allOptions[i].dataset.statusValue === value);
-      }
-
-      // Close and submit
-      filter.classList.remove("open");
-      trigger.setAttribute("aria-expanded", "false");
-      var form = filter.closest("form");
-      if (form) htmx.trigger(form, "submit");
-      return;
+    if (value) {
+      trigger.innerHTML =
+        '<span class="status-filter-dot"></span>' +
+        option.textContent.trim() +
+        ' <svg class="status-filter-chevron" width="12" height="12" viewBox="0 0 12 12" fill="none">' +
+        '<path d="M3 4.5L6 7.5L9 4.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>' +
+        "</svg>";
+    } else {
+      trigger.style.setProperty("--status-color", "#888");
+      trigger.innerHTML =
+        "Status" +
+        ' <svg class="status-filter-chevron" width="12" height="12" viewBox="0 0 12 12" fill="none">' +
+        '<path d="M3 4.5L6 7.5L9 4.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>' +
+        "</svg>";
     }
 
-    // 3. Outside click — close all open filters
-    if (!e.target.closest(".status-filter")) {
-      document.querySelectorAll(".status-filter.open").forEach(function (f) {
-        f.classList.remove("open");
-        var t = f.querySelector(".status-filter-trigger");
-        if (t) t.setAttribute("aria-expanded", "false");
-      });
+    // Update active state on all options
+    var allOptions = filter.querySelectorAll(".status-filter-option");
+    for (var i = 0; i < allOptions.length; i++) {
+      allOptions[i].classList.toggle("active", allOptions[i].dataset.statusValue === value);
     }
-  });
 
-  document.addEventListener("keydown", function (e) {
-    if (e.key === "Escape") {
-      document.querySelectorAll(".status-filter.open").forEach(function (f) {
-        f.classList.remove("open");
-        var t = f.querySelector(".status-filter-trigger");
-        if (t) {
-          t.setAttribute("aria-expanded", "false");
-          t.focus();
-        }
-      });
-    }
+    // Close popover and submit
+    var popoverEl = filter.querySelector("[popover]");
+    if (popoverEl) popoverEl.hidePopover();
+    var form = filter.closest("form");
+    if (form) htmx.trigger(form, "submit");
   });
 })();
 

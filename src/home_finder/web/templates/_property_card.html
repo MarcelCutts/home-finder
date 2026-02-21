@@ -35,7 +35,7 @@
                     <span class="badge badge-neutral">{% if prop.bedrooms == 0 %}Studio{% else %}{{ prop.bedrooms }} bed{% endif %}</span>
                 </div>
             </div>
-            {{ fit_badge(prop.fit_score, prop.fit_breakdown) }}
+            {{ fit_badge(prop.fit_score, prop.fit_breakdown, prop.unique_id) }}
         </div>
         <div class="card-body">
             {# Meta row: rating | postcode | commute pill #}

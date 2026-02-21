@@ -48,8 +48,9 @@
 
                 <div class="status-filter" id="status-filter">
                     <button type="button" class="status-filter-trigger"
-                            style="--status-color: {{ status_meta[status].color if status else '#888' }}"
-                            aria-expanded="false" aria-haspopup="true">
+                            style="--status-color: {{ status_meta[status].color if status else '#888' }}; anchor-name: --status-filter-trigger"
+                            popovertarget="status-filter-popover"
+                            aria-haspopup="true">
                         {% if status %}
                         <span class="status-filter-dot"></span>
                         {{ status_meta[status].label }}
@@ -61,7 +62,7 @@
                         </svg>
                     </button>
                     <input type="hidden" name="status" value="{{ status or '' }}">
-                    <div class="status-filter-popover" role="menu">
+                    <div class="status-filter-popover" id="status-filter-popover" popover style="position-anchor: --status-filter-trigger" role="menu">
                         <button type="button" class="status-filter-option {% if not status %}active{% endif %}"
                                 data-status-value="" role="menuitem">
                             All

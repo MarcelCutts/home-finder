@@ -523,7 +523,7 @@ nav.container-fluid li {
 .status-filter-trigger:focus-visible,
 .card-action-btn:focus-visible,
 .description-toggle:focus-visible,
-.fit-popover-wrap > summary:focus-visible,
+.fit-popover-wrap > .fit-badge:focus-visible,
 .view-toggle-btn:focus-visible,
 .viewing-group-header:focus-visible {
     outline: 2px solid var(--accent);
@@ -1061,41 +1061,39 @@ nav.container-fluid li {
 .fit-amber { border-color: #fbbf24; }
 .fit-dim { border-color: #888; }
 
-/* Fit popover (details/summary on card) */
+/* Fit popover (button + native popover on card) */
 .fit-popover-wrap {
     position: absolute;
     top: 0.5rem;
     right: 0.5rem;
     z-index: 10;
 }
-.fit-popover-wrap > summary {
-    list-style: none;
-    cursor: pointer;
-    padding: 0;
-    margin: 0;
-}
-.fit-popover-wrap > summary::-webkit-details-marker { display: none; }
-.fit-popover-wrap > summary::marker { display: none; content: ""; }
-.fit-popover-wrap > summary::before,
-.fit-popover-wrap > summary::after { display: none; }
-.fit-popover-wrap[open] > .fit-popover {
-    display: block;
-}
 .fit-popover-wrap > .fit-badge {
-    position: static;
+    cursor: pointer;
 }
 .fit-popover {
-    display: none;
-    position: absolute;
-    top: calc(100% + 6px);
-    right: 0;
+    inset: unset;
+    margin: 0;
+    top: calc(anchor(bottom) + 6px);
+    right: anchor(right);
     width: 200px;
     background: var(--bg-elevated);
     border: 1px solid var(--border-hover);
     border-radius: 10px;
     padding: 0.75rem;
     box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
-    z-index: 20;
+    opacity: 0;
+    transition: opacity 0.15s ease,
+                display 0.15s allow-discrete,
+                overlay 0.15s allow-discrete;
+}
+.fit-popover:popover-open {
+    opacity: 1;
+}
+@starting-style {
+    .fit-popover:popover-open {
+        opacity: 0;
+    }
 }
 .fit-popover-title {
     font-size: 0.72rem;
@@ -3337,20 +3335,20 @@ nav.container-fluid li {
     opacity: 0.6;
     flex-shrink: 0;
 }
-.status-selector.open .status-selector-chevron {
+.status-selector:has(:popover-open) .status-selector-chevron {
     transform: rotate(180deg);
 }
-.status-selector.open .status-selector-trigger {
+.status-selector:has(:popover-open) .status-selector-trigger {
     background: color-mix(in srgb, var(--status-color, #888) 18%, transparent);
     border-color: color-mix(in srgb, var(--status-color, #888) 50%, transparent);
 }
 
 /* Popover panel */
 .status-popover {
-    position: absolute;
-    top: calc(100% + 6px);
-    left: 0;
-    z-index: 200;
+    inset: unset;
+    margin: 0;
+    top: calc(anchor(bottom) + 6px);
+    left: anchor(left);
     min-width: 180px;
     padding: 0.35rem;
     background: var(--bg-elevated, #1c1c21);
@@ -3358,17 +3356,22 @@ nav.container-fluid li {
     border-radius: 10px;
     box-shadow: 0 8px 32px rgba(0,0,0,0.45), 0 2px 8px rgba(0,0,0,0.3);
 
-    /* hidden by default */
     opacity: 0;
-    visibility: hidden;
     transform: translateY(-4px) scale(0.97);
     transform-origin: top left;
-    transition: opacity 0.15s ease, transform 0.15s ease, visibility 0.15s;
+    transition: opacity 0.15s ease, transform 0.15s ease,
+                display 0.15s allow-discrete,
+                overlay 0.15s allow-discrete;
 }
-.status-selector.open .status-popover {
+.status-popover:popover-open {
     opacity: 1;
-    visibility: visible;
     transform: translateY(0) scale(1);
+}
+@starting-style {
+    .status-popover:popover-open {
+        opacity: 0;
+        transform: translateY(-4px) scale(0.97);
+    }
 }
 
 /* Group within popover — horizontal pill row */
@@ -3480,18 +3483,18 @@ nav.container-fluid li {
     opacity: 0.6;
     flex-shrink: 0;
 }
-.status-filter.open .status-filter-chevron {
+.status-filter:has(:popover-open) .status-filter-chevron {
     transform: rotate(180deg);
 }
-.status-filter.open .status-filter-trigger {
+.status-filter:has(:popover-open) .status-filter-trigger {
     background: color-mix(in srgb, var(--status-color, #888) 18%, transparent);
     border-color: color-mix(in srgb, var(--status-color, #888) 50%, transparent);
 }
 .status-filter-popover {
-    position: absolute;
-    top: calc(100% + 6px);
-    left: 0;
-    z-index: 200;
+    inset: unset;
+    margin: 0;
+    top: calc(anchor(bottom) + 6px);
+    left: anchor(left);
     min-width: 180px;
     padding: 0.35rem;
     background: var(--bg-elevated, #1c1c21);
@@ -3499,15 +3502,21 @@ nav.container-fluid li {
     border-radius: 10px;
     box-shadow: 0 8px 32px rgba(0,0,0,0.45), 0 2px 8px rgba(0,0,0,0.3);
     opacity: 0;
-    visibility: hidden;
     transform: translateY(-4px) scale(0.97);
     transform-origin: top left;
-    transition: opacity 0.15s ease, transform 0.15s ease, visibility 0.15s;
+    transition: opacity 0.15s ease, transform 0.15s ease,
+                display 0.15s allow-discrete,
+                overlay 0.15s allow-discrete;
 }
-.status-filter.open .status-filter-popover {
+.status-filter-popover:popover-open {
     opacity: 1;
-    visibility: visible;
     transform: translateY(0) scale(1);
+}
+@starting-style {
+    .status-filter-popover:popover-open {
+        opacity: 0;
+        transform: translateY(-4px) scale(0.97);
+    }
 }
 .status-filter-group {
     display: flex;

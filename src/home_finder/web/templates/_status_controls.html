@@ -1,7 +1,7 @@
 <div class="status-selector" id="status-selector-{{ unique_id }}">
     <button class="status-selector-trigger"
-            style="--status-color: {{ status_meta[current_status].color }}"
-            aria-expanded="false"
+            style="--status-color: {{ status_meta[current_status].color }}; anchor-name: --status-trigger"
+            popovertarget="status-popover-{{ unique_id }}"
             aria-haspopup="true">
         <span class="status-selector-dot"></span>
         {{ status_meta[current_status].label }}
@@ -9,7 +9,7 @@
             <path d="M3 4.5L6 7.5L9 4.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
         </svg>
     </button>
-    <div class="status-popover" role="menu">
+    <div class="status-popover" id="status-popover-{{ unique_id }}" popover style="position-anchor: --status-trigger" role="menu">
         {% set groups = [
             ("Triage", ["new", "interested", "archived"]),
             ("Progress", ["enquired", "viewing_booked", "viewed"]),

@@ -665,12 +665,12 @@ class TestFitScorePopover:
         """Clicking the fit badge opens a popover with dimension bars."""
         page.goto(server_url)
         page.wait_for_load_state("networkidle")
-        details = page.locator("details.fit-popover-wrap").first
-        details.locator(".fit-badge").click()
-        popover = details.locator(".fit-popover")
+        wrap = page.locator(".fit-popover-wrap").first
+        wrap.locator(".fit-badge").click()
+        popover = wrap.locator(".fit-popover")
         expect(popover).to_be_visible()
         # Should show 6 dimension rows within this popover
-        dim_rows = details.locator(".fit-dim-row")
+        dim_rows = popover.locator(".fit-dim-row")
         assert dim_rows.count() == 6
 
     def test_clicking_badge_does_not_navigate(self, server_url, page):
@@ -684,18 +684,16 @@ class TestFitScorePopover:
         assert page.url == original_url
 
     def test_click_outside_closes_popover(self, server_url, page):
-        """Clicking outside an open popover closes it."""
+        """Clicking outside an open popover closes it (light-dismiss)."""
         page.goto(server_url)
         page.wait_for_load_state("networkidle")
         badge = page.locator(".fit-badge").first
         badge.click()
         expect(page.locator(".fit-popover").first).to_be_visible()
-        # Click on body (outside)
+        # Click on body (outside) — light-dismiss closes native popover
         page.locator("body").click(position={"x": 10, "y": 10})
         page.wait_for_timeout(300)
-        # Popover should be closed (details not open)
-        open_popovers = page.locator("details.fit-popover-wrap[open]")
-        assert open_popovers.count() == 0
+        expect(page.locator(".fit-popover").first).not_to_be_visible()
 
     def test_detail_page_shows_fit_breakdown(self, server_url, page):
         """Detail page for analyzed property shows fit breakdown card."""
