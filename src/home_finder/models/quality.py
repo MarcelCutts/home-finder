@@ -269,7 +269,6 @@ class SpaceAnalysis(_LenientLiteralModel):
     living_room_sqm: float | None = None
     total_area_sqm: float | None = None  # Claude's estimate from floorplan
     is_spacious_enough: bool | None = None  # None = unknown
-    confidence: Literal["high", "medium", "low"] = "low"
     hosting_layout: Literal["excellent", "good", "awkward", "poor", "unknown"] = "unknown"
 
 

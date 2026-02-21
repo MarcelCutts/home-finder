@@ -243,7 +243,7 @@ Value-for-quality rating:
   poor = Overpriced relative to quality/condition. Renter is overpaying.
 </value_rating_criteria>
 
-Always use the property_evaluation tool to return your assessment."""
+Always return your assessment as JSON matching the provided output schema."""
 
 
 def _format_property_context(
@@ -406,6 +406,6 @@ def build_evaluation_prompt(
         prompt += "\n</acoustic_context>"
 
     prompt += "\n\nBased on the visual analysis observations above, provide your "
-    prompt += "evaluation using the property_evaluation tool."
+    prompt += "evaluation as JSON matching the output schema."
 
     return prompt

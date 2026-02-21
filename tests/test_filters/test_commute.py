@@ -378,10 +378,10 @@ class TestCommuteFilter:
         assert CommuteFilter._geocoding_cache["SW1A 1AA"] == (51.5034, -0.1276)
 
     @pytest.mark.asyncio
-    async def test_rate_limit_error_logged_as_warning(
+    async def test_rate_limit_error_graceful_degradation(
         self, sample_properties: list[Property]
     ) -> None:
-        """Test that rate limit errors are logged as warnings, not errors."""
+        """Test that rate limit errors pass all properties through (graceful degradation)."""
         commute_filter = CommuteFilter(
             app_id="test-app-id",
             api_key="test-api-key",
@@ -404,16 +404,20 @@ class TestCommuteFilter:
                 transport_mode=TransportMode.CYCLING,
             )
 
-        assert results == []
-        mock_logger.warning.assert_called_once()
-        call_args = mock_logger.warning.call_args
-        assert call_args[0][0] == "rate_limit_hit"
+        # Graceful degradation: all properties pass through with within_limit=True
+        assert len(results) == len(sample_properties)
+        assert all(r.within_limit for r in results)
+        assert all(r.travel_time_minutes == 0 for r in results)
+        # Rate limit logged as warning, then commute_filter_skipped also logged
+        warning_events = [call[0][0] for call in mock_logger.warning.call_args_list]
+        assert "rate_limit_hit" in warning_events
+        assert "commute_filter_skipped" in warning_events
 
     @pytest.mark.asyncio
-    async def test_general_api_error_logged_as_error(
+    async def test_general_api_error_graceful_degradation(
         self, sample_properties: list[Property]
     ) -> None:
-        """Test that non-rate-limit errors are logged as errors."""
+        """Test that non-rate-limit errors pass all properties through (graceful degradation)."""
         commute_filter = CommuteFilter(
             app_id="test-app-id",
             api_key="test-api-key",
@@ -436,10 +440,16 @@ class TestCommuteFilter:
                 transport_mode=TransportMode.CYCLING,
             )
 
-        assert results == []
+        # Graceful degradation: all properties pass through with within_limit=True
+        assert len(results) == len(sample_properties)
+        assert all(r.within_limit for r in results)
+        assert all(r.travel_time_minutes == 0 for r in results)
         mock_logger.error.assert_called_once()
         call_args = mock_logger.error.call_args
         assert call_args[0][0] == "traveltime_api_error"
+        # Also check commute_filter_skipped was logged
+        warning_events = [call[0][0] for call in mock_logger.warning.call_args_list]
+        assert "commute_filter_skipped" in warning_events
 
 
 class TestCommuteResult:

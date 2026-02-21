@@ -131,7 +131,6 @@ def _make_analyzed_property(
         space=SpaceAnalysis(
             living_room_sqm=20.0,
             is_spacious_enough=True,
-            confidence="high",
             hosting_layout="good",
         ),
         bedroom=BedroomAnalysis(

@@ -1,5 +1,6 @@
 // Fix Leaflet tile gap rendering (white lines between tiles)
 // https://github.com/Leaflet/Leaflet/issues/3575
+// Still needed as of Leaflet 1.9.4 — revisit when upgrading to 2.x
 var _origInitTile = L.GridLayer.prototype._initTile;
 L.GridLayer.include({
   _initTile: function (tile) {
@@ -265,14 +266,13 @@ L.GridLayer.include({
     if (imageCache[src]) return Promise.resolve(true);
     return new Promise(function (resolve) {
       var img = new Image();
-      img.onload = function () {
+      img.src = src;
+      img.decode().then(function () {
         imageCache[src] = img;
         resolve(true);
-      };
-      img.onerror = function () {
+      }).catch(function () {
         resolve(false);
-      };
-      img.src = src;
+      });
     });
   }
 
@@ -303,27 +303,48 @@ L.GridLayer.include({
     }
   }
 
-  function doSwap(src, index, animate) {
-    if (animate && mainImg && nextImg) {
-      clearTimeout(crossfadeTimer);
-      mainImg.classList.remove("crossfade-out");
-      nextImg.classList.remove("crossfade-in");
+  function doSwap(src, index, animate, navId) {
+    if (!mainImg) return;
+    clearTimeout(crossfadeTimer);
+    mainImg.classList.remove("crossfade-out");
+    if (nextImg) nextImg.classList.remove("crossfade-in");
 
+    if (animate && nextImg) {
       nextImg.src = src;
       nextImg.alt = "Property photo " + (index + 1);
-      mainImg.classList.add("crossfade-out");
-      nextImg.classList.add("crossfade-in");
 
-      crossfadeTimer = setTimeout(function () {
-        mainImg.src = src;
-        mainImg.alt = "Property photo " + (index + 1);
-        mainImg.classList.remove("crossfade-out");
-        nextImg.classList.remove("crossfade-in");
-        nextImg.src = "";
-      }, 200);
-    } else if (mainImg) {
+      function startFade() {
+        if (navId !== navigateId) return;
+        mainImg.classList.add("crossfade-out");
+        nextImg.classList.add("crossfade-in");
+        crossfadeTimer = setTimeout(function () {
+          if (navId !== navigateId) return;
+          mainImg.src = src;
+          mainImg.alt = "Property photo " + (index + 1);
+
+          function finishSwap() {
+            if (navId !== navigateId) return;
+            // Disable transition — this is a bookkeeping swap, not a visual crossfade.
+            mainImg.style.transition = "none";
+            nextImg.style.transition = "none";
+            mainImg.classList.remove("crossfade-out");
+            nextImg.classList.remove("crossfade-in");
+            // Force reflow so the browser commits the instant opacity change.
+            void mainImg.offsetHeight;
+            // Re-enable CSS transitions for the next crossfade.
+            mainImg.style.transition = "";
+            nextImg.style.transition = "";
+          }
+
+          mainImg.decode().then(finishSwap).catch(finishSwap);
+        }, 200);
+      }
+
+      nextImg.decode().then(startFade).catch(startFade);
+    } else {
       mainImg.src = src;
       mainImg.alt = "Property photo " + (index + 1);
+      mainImg.decode().catch(function () {});
     }
   }
 
@@ -349,7 +370,7 @@ L.GridLayer.include({
 
     if (imageCache[src]) {
       hideSpinner();
-      doSwap(src, index, animate && !reducedMotion);
+      doSwap(src, index, animate && !reducedMotion, thisNav);
       preloadAround(index);
       return;
     }
@@ -359,9 +380,9 @@ L.GridLayer.include({
       if (thisNav !== navigateId) return;
       hideSpinner();
       if (ok) {
-        doSwap(src, index, false);
+        doSwap(src, index, false, thisNav);
       } else {
-        doSwap(src, index, false);
+        doSwap(src, index, false, thisNav);
         if (mainImg) mainImg.alt = "Image unavailable";
       }
       preloadAround(index);
@@ -385,8 +406,9 @@ L.GridLayer.include({
     document.body.style.overflow = "";
     clearTimeout(crossfadeTimer);
     hideSpinner();
-    if (mainImg) mainImg.src = "";
-    if (nextImg) nextImg.src = "";
+    if (mainImg) { mainImg.classList.remove("crossfade-out"); mainImg.src = ""; }
+    if (nextImg) { nextImg.classList.remove("crossfade-in"); nextImg.src = ""; }
+    imageCache = {};
     if (previousFocus) {
       previousFocus.focus();
       previousFocus = null;
@@ -665,7 +687,7 @@ L.GridLayer.include({
     container.appendChild(meta);
 
     // Dot rating
-    if (p.rating) {
+    if (p.rating && typeof p.rating === "number" && p.rating >= 1 && p.rating <= 5) {
       var dots = document.createElement("span");
       dots.className = "quality-dots quality-dots-" + p.rating;
       dots.style.marginTop = "4px";
@@ -770,7 +792,12 @@ L.GridLayer.include({
           inner.classList.add("fade-out");
           setTimeout(function () {
             if (thisRequest !== pinnedCardRequestId) return;
-            inner.innerHTML = html;
+            var parser = new DOMParser();
+            var doc = parser.parseFromString(html, "text/html");
+            inner.textContent = "";
+            while (doc.body.firstChild) {
+              inner.appendChild(doc.body.firstChild);
+            }
             inner.classList.remove("fade-out");
             var pinned = wrapper.querySelector(".property-card");
             if (pinned) {
@@ -1127,6 +1154,28 @@ L.GridLayer.include({
   });
 })();
 
+// Toggle aria-busy on #results during HTMX requests
+(function () {
+  var results = document.getElementById("results");
+  if (!results) return;
+
+  document.addEventListener("htmx:beforeRequest", function (e) {
+    if (e.detail.target === results) {
+      results.setAttribute("aria-busy", "true");
+    }
+  });
+  document.addEventListener("htmx:afterSwap", function (e) {
+    if (e.detail.target === results) {
+      results.setAttribute("aria-busy", "false");
+    }
+  });
+  document.addEventListener("htmx:responseError", function (e) {
+    if (e.detail.target === results) {
+      results.setAttribute("aria-busy", "false");
+    }
+  });
+})();
+
 // Scroll to top of results after HTMX pagination swap
 (function () {
   var results = document.getElementById("results");
@@ -1138,5 +1187,33 @@ L.GridLayer.include({
     if (trigger && trigger.closest && trigger.closest(".pagination")) {
       results.scrollIntoView({ behavior: "smooth", block: "start" });
     }
+  });
+})();
+
+// Hero gallery keyboard activation (Enter/Space on hero-main/hero-thumb)
+(function () {
+  document.addEventListener("keydown", function (e) {
+    if (e.key !== "Enter" && e.key !== " ") return;
+    var target = e.target;
+    if (!target.classList) return;
+    if (target.classList.contains("hero-main") || target.classList.contains("hero-thumb")) {
+      e.preventDefault();
+      var lightboxEl = target.querySelector("[data-lightbox]");
+      if (lightboxEl) lightboxEl.click();
+    }
+  });
+})();
+
+// Viewing group header toggle (event delegation)
+(function () {
+  document.addEventListener("click", function (e) {
+    var header = e.target.closest(".viewing-group-header");
+    if (!header) return;
+    var body = header.nextElementSibling;
+    if (body) body.classList.toggle("open");
+    var toggle = header.querySelector(".viewing-group-toggle");
+    if (toggle) toggle.classList.toggle("expanded");
+    var expanded = header.getAttribute("aria-expanded") === "true";
+    header.setAttribute("aria-expanded", String(!expanded));
   });
 })();

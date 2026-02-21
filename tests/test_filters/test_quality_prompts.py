@@ -10,8 +10,9 @@ from typing import Any
 from inline_snapshot import snapshot
 
 from home_finder.filters.quality import (
-    EVALUATION_TOOL,
     VISUAL_ANALYSIS_TOOL,
+    _EvaluationResponse,
+    _inline_refs,
 )
 from home_finder.filters.quality_prompts import (
     EVALUATION_SYSTEM_PROMPT,
@@ -141,10 +142,10 @@ class TestEvaluationSystemPromptSnapshot:
             "You are an expert London rental property evaluator"
         )
 
-    def test_prompt_ends_with_tool_instruction(self) -> None:
-        """System prompt should end with instruction to use the tool."""
+    def test_prompt_ends_with_output_instruction(self) -> None:
+        """System prompt should end with instruction to return JSON."""
         assert EVALUATION_SYSTEM_PROMPT.endswith(
-            "Always use the property_evaluation tool to return your assessment."
+            "Always return your assessment as JSON matching the provided output schema."
         )
 
     def test_prompt_contains_key_sections(self) -> None:
@@ -196,7 +197,7 @@ Value-for-quality rating:
   poor = Overpriced relative to quality/condition. Renter is overpaying.
 </value_rating_criteria>
 
-Always use the property_evaluation tool to return your assessment.\
+Always return your assessment as JSON matching the provided output schema.\
 """)
             == EVALUATION_SYSTEM_PROMPT
         )
@@ -350,7 +351,7 @@ class TestBuildEvaluationPromptSnapshot:
 Price: £1,800/month | Bedrooms: 1 | Area avg: £1,900/month (£100 below)
 </property>
 
-Based on the visual analysis observations above, provide your evaluation using the property_evaluation tool.\
+Based on the visual analysis observations above, provide your evaluation as JSON matching the output schema.\
 """)
 
     def test_evaluation_prompt_with_description(self) -> None:
@@ -381,7 +382,7 @@ Price: £1,600/month | Bedrooms: 1 | Area avg: £1,900/month (£300 below)
 Charming period flat in need of updating.
 </listing_description>
 
-Based on the visual analysis observations above, provide your evaluation using the property_evaluation tool.\
+Based on the visual analysis observations above, provide your evaluation as JSON matching the output schema.\
 """)
 
     def test_evaluation_prompt_wraps_phase1_json(self) -> None:
@@ -554,10 +555,6 @@ class TestToolSchemaSnapshots:
                                         "description": "True if can fit office AND host 8+ people",
                                         "type": "boolean",
                                     },
-                                    "confidence": {
-                                        "enum": ["high", "medium", "low"],
-                                        "type": "string",
-                                    },
                                     "hosting_layout": {
                                         "description": "Layout flow for hosting: excellent = open-plan kitchen/living + accessible bathroom + practical entrance; good = mostly good flow; awkward = hosting friction (disconnected kitchen, narrow entrance, guests pass bedrooms); poor = fundamentally unsuitable (through-rooms, isolated kitchen)",
                                         "enum": ["excellent", "good", "awkward", "poor", "unknown"],
@@ -567,7 +564,6 @@ class TestToolSchemaSnapshots:
                                 "required": [
                                     "living_room_sqm",
                                     "is_spacious_enough",
-                                    "confidence",
                                     "hosting_layout",
                                 ],
                                 "type": "object",
@@ -818,241 +814,230 @@ class TestToolSchemaSnapshots:
             == VISUAL_ANALYSIS_TOOL
         )
 
-    def test_evaluation_tool_snapshot(self) -> None:
-        """Full evaluation tool schema should be stable."""
+    def test_evaluation_response_schema_snapshot(self) -> None:
+        """Full _EvaluationResponse JSON schema should be stable."""
+        schema = _inline_refs(_EvaluationResponse.model_json_schema())
+        schema.pop("description", None)
         assert (
             snapshot(
                 {
-                    "name": "property_evaluation",
-                    "description": "Return property evaluation based on visual analysis observations",
-                    "input_schema": {
-                        "additionalProperties": False,
-                        "properties": {
-                            "listing_extraction": {
-                                "additionalProperties": False,
-                                "properties": {
-                                    "epc_rating": {
-                                        "enum": ["A", "B", "C", "D", "E", "F", "G", "unknown"],
-                                        "type": "string",
-                                    },
-                                    "service_charge_pcm": {
-                                        "anyOf": [{"type": "integer"}, {"type": "null"}]
-                                    },
-                                    "deposit_weeks": {
-                                        "anyOf": [{"type": "integer"}, {"type": "null"}]
-                                    },
-                                    "bills_included": {
-                                        "enum": ["yes", "no", "unknown"],
-                                        "type": "string",
-                                    },
-                                    "pets_allowed": {
-                                        "enum": ["yes", "no", "unknown"],
-                                        "type": "string",
-                                    },
-                                    "parking": {
-                                        "enum": ["dedicated", "street", "none", "unknown"],
-                                        "type": "string",
-                                    },
-                                    "council_tax_band": {
-                                        "enum": ["A", "B", "C", "D", "E", "F", "G", "H", "unknown"],
-                                        "type": "string",
-                                    },
-                                    "property_type": {
-                                        "enum": [
-                                            "victorian",
-                                            "edwardian",
-                                            "georgian",
-                                            "new_build",
-                                            "purpose_built",
-                                            "warehouse",
-                                            "ex_council",
-                                            "period_conversion",
-                                            "unknown",
-                                        ],
-                                        "type": "string",
-                                    },
-                                    "furnished_status": {
-                                        "enum": [
-                                            "furnished",
-                                            "unfurnished",
-                                            "part_furnished",
-                                            "unknown",
-                                        ],
-                                        "type": "string",
-                                    },
-                                    "broadband_type": {
-                                        "description": "Broadband type from listing: fttp = fibre/FTTP/FTTH/Hyperoptic/Community Fibre/full fibre/1Gbps; fttc = superfast/FTTC/up to 80Mbps; cable = Virgin Media/cable; standard = broadband alone/ADSL",
-                                        "enum": ["fttp", "fttc", "cable", "standard", "unknown"],
-                                        "type": "string",
-                                    },
+                    "additionalProperties": False,
+                    "properties": {
+                        "listing_extraction": {
+                            "additionalProperties": False,
+                            "properties": {
+                                "epc_rating": {
+                                    "enum": ["A", "B", "C", "D", "E", "F", "G", "unknown"],
+                                    "type": "string",
                                 },
-                                "required": [
-                                    "epc_rating",
-                                    "service_charge_pcm",
-                                    "deposit_weeks",
-                                    "bills_included",
-                                    "pets_allowed",
-                                    "parking",
-                                    "council_tax_band",
-                                    "property_type",
-                                    "furnished_status",
-                                    "broadband_type",
-                                ],
-                                "type": "object",
-                            },
-                            "viewing_notes": {
-                                "additionalProperties": False,
-                                "properties": {
-                                    "check_items": {
-                                        "description": "Property-specific things to inspect during viewing",
-                                        "items": {"type": "string"},
-                                        "type": "array",
-                                    },
-                                    "questions_for_agent": {
-                                        "description": "Questions to ask the letting agent",
-                                        "items": {"type": "string"},
-                                        "type": "array",
-                                    },
-                                    "deal_breaker_tests": {
-                                        "description": "Quick tests to determine deal-breakers",
-                                        "items": {"type": "string"},
-                                        "type": "array",
-                                    },
+                                "service_charge_pcm": {
+                                    "anyOf": [{"type": "integer"}, {"type": "null"}]
                                 },
-                                "required": [
-                                    "check_items",
-                                    "questions_for_agent",
-                                    "deal_breaker_tests",
-                                ],
-                                "type": "object",
-                            },
-                            "highlights": {
-                                "description": "Top 3-5 positive features from the allowed highlight tags",
-                                "items": {
+                                "deposit_weeks": {
+                                    "anyOf": [{"type": "integer"}, {"type": "null"}]
+                                },
+                                "bills_included": {
+                                    "enum": ["yes", "no", "unknown"],
+                                    "type": "string",
+                                },
+                                "pets_allowed": {
+                                    "enum": ["yes", "no", "unknown"],
+                                    "type": "string",
+                                },
+                                "parking": {
+                                    "enum": ["dedicated", "street", "none", "unknown"],
+                                    "type": "string",
+                                },
+                                "council_tax_band": {
+                                    "enum": ["A", "B", "C", "D", "E", "F", "G", "H", "unknown"],
+                                    "type": "string",
+                                },
+                                "property_type": {
                                     "enum": [
-                                        "Gas hob",
-                                        "Induction hob",
-                                        "Dishwasher included",
-                                        "Washing machine",
-                                        "Modern kitchen",
-                                        "Modern bathroom",
-                                        "Two bathrooms",
-                                        "Ensuite bathroom",
-                                        "Excellent natural light",
-                                        "Good natural light",
-                                        "Floor-to-ceiling windows",
-                                        "High ceilings",
-                                        "Spacious living room",
-                                        "Open-plan layout",
-                                        "Built-in wardrobes",
-                                        "Good storage",
-                                        "Private balcony",
-                                        "Private garden",
-                                        "Private terrace",
-                                        "Shared garden",
-                                        "Communal gardens",
-                                        "Roof terrace",
-                                        "Excellent condition",
-                                        "Recently refurbished",
-                                        "Period features",
-                                        "Double glazing",
-                                        "On-site gym",
-                                        "Concierge",
-                                        "Bike storage",
-                                        "Parking included",
-                                        "Pets allowed",
-                                        "Bills included",
-                                        "Canal views",
-                                        "Park views",
-                                        "Ultrafast broadband (FTTP)",
-                                        "Dedicated office room",
-                                        "Separate work area",
-                                        "Great hosting layout",
+                                        "victorian",
+                                        "edwardian",
+                                        "georgian",
+                                        "new_build",
+                                        "purpose_built",
+                                        "warehouse",
+                                        "ex_council",
+                                        "period_conversion",
+                                        "unknown",
                                     ],
                                     "type": "string",
                                 },
-                                "type": "array",
-                            },
-                            "lowlights": {
-                                "description": "Top 1-3 concerns from the allowed lowlight tags",
-                                "items": {
+                                "furnished_status": {
                                     "enum": [
-                                        "No dishwasher",
-                                        "No washing machine",
-                                        "Dated kitchen",
-                                        "Electric hob",
-                                        "Compact living room",
-                                        "Small living room",
-                                        "Small bedroom",
-                                        "Compact bedroom",
-                                        "Poor storage",
-                                        "No storage",
-                                        "Dated bathroom",
-                                        "No outdoor space",
-                                        "No interior photos",
-                                        "No bathroom photos",
-                                        "Missing key photos",
-                                        "Potential traffic noise",
-                                        "New-build acoustics",
-                                        "Service charge unstated",
-                                        "Balcony cracking",
-                                        "Needs updating",
-                                        "Basic broadband only",
-                                        "No work-life separation",
-                                        "Poor hosting layout",
+                                        "furnished",
+                                        "unfurnished",
+                                        "part_furnished",
+                                        "unknown",
                                     ],
                                     "type": "string",
                                 },
-                                "type": "array",
+                                "broadband_type": {
+                                    "description": "Broadband type from listing: fttp = fibre/FTTP/FTTH/Hyperoptic/Community Fibre/full fibre/1Gbps; fttc = superfast/FTTC/up to 80Mbps; cable = Virgin Media/cable; standard = broadband alone/ADSL",
+                                    "enum": ["fttp", "fttc", "cable", "standard", "unknown"],
+                                    "type": "string",
+                                },
                             },
-                            "one_line": {
-                                "description": "6-12 word tagline capturing the property's character",
+                            "required": [
+                                "epc_rating",
+                                "service_charge_pcm",
+                                "deposit_weeks",
+                                "bills_included",
+                                "pets_allowed",
+                                "parking",
+                                "council_tax_band",
+                                "property_type",
+                                "furnished_status",
+                                "broadband_type",
+                            ],
+                            "type": "object",
+                        },
+                        "viewing_notes": {
+                            "additionalProperties": False,
+                            "properties": {
+                                "check_items": {
+                                    "description": "Property-specific things to inspect during viewing",
+                                    "items": {"type": "string"},
+                                    "type": "array",
+                                },
+                                "questions_for_agent": {
+                                    "description": "Questions to ask the letting agent",
+                                    "items": {"type": "string"},
+                                    "type": "array",
+                                },
+                                "deal_breaker_tests": {
+                                    "description": "Quick tests to determine deal-breakers",
+                                    "items": {"type": "string"},
+                                    "type": "array",
+                                },
+                            },
+                            "required": [
+                                "check_items",
+                                "questions_for_agent",
+                                "deal_breaker_tests",
+                            ],
+                            "type": "object",
+                        },
+                        "highlights": {
+                            "description": "Top 3-5 positive features from the allowed highlight tags",
+                            "items": {
+                                "enum": [
+                                    "Gas hob",
+                                    "Induction hob",
+                                    "Dishwasher included",
+                                    "Washing machine",
+                                    "Modern kitchen",
+                                    "Modern bathroom",
+                                    "Two bathrooms",
+                                    "Ensuite bathroom",
+                                    "Excellent natural light",
+                                    "Good natural light",
+                                    "Floor-to-ceiling windows",
+                                    "High ceilings",
+                                    "Spacious living room",
+                                    "Open-plan layout",
+                                    "Built-in wardrobes",
+                                    "Good storage",
+                                    "Private balcony",
+                                    "Private garden",
+                                    "Private terrace",
+                                    "Shared garden",
+                                    "Communal gardens",
+                                    "Roof terrace",
+                                    "Excellent condition",
+                                    "Recently refurbished",
+                                    "Period features",
+                                    "Double glazing",
+                                    "On-site gym",
+                                    "Concierge",
+                                    "Bike storage",
+                                    "Parking included",
+                                    "Pets allowed",
+                                    "Bills included",
+                                    "Canal views",
+                                    "Park views",
+                                    "Ultrafast broadband (FTTP)",
+                                    "Dedicated office room",
+                                    "Separate work area",
+                                    "Great hosting layout",
+                                ],
                                 "type": "string",
                             },
-                            "value_for_quality": {
-                                "additionalProperties": False,
-                                "properties": {
-                                    "rating": {
-                                        "description": "Value rating considering quality vs price",
-                                        "enum": ["excellent", "good", "fair", "poor"],
-                                        "type": "string",
-                                    },
-                                    "reasoning": {
-                                        "description": "Value justification: why this price is or isn't fair for what you get. Focus on price factors: stock type premium/discount, true monthly cost, area rent trajectory, service charges, incentives. Reference condition only as 'condition justifies/doesn't justify price' — don't restate specific issues.",
-                                        "type": "string",
-                                    },
-                                },
-                                "required": ["rating", "reasoning"],
-                                "type": "object",
-                            },
+                            "type": "array",
                         },
-                        "required": [
-                            "listing_extraction",
-                            "viewing_notes",
-                            "highlights",
-                            "lowlights",
-                            "one_line",
-                            "value_for_quality",
-                        ],
-                        "type": "object",
+                        "lowlights": {
+                            "description": "Top 1-3 concerns from the allowed lowlight tags",
+                            "items": {
+                                "enum": [
+                                    "No dishwasher",
+                                    "No washing machine",
+                                    "Dated kitchen",
+                                    "Electric hob",
+                                    "Compact living room",
+                                    "Small living room",
+                                    "Small bedroom",
+                                    "Compact bedroom",
+                                    "Poor storage",
+                                    "No storage",
+                                    "Dated bathroom",
+                                    "No outdoor space",
+                                    "No interior photos",
+                                    "No bathroom photos",
+                                    "Missing key photos",
+                                    "Potential traffic noise",
+                                    "New-build acoustics",
+                                    "Service charge unstated",
+                                    "Balcony cracking",
+                                    "Needs updating",
+                                    "Basic broadband only",
+                                    "No work-life separation",
+                                    "Poor hosting layout",
+                                ],
+                                "type": "string",
+                            },
+                            "type": "array",
+                        },
+                        "one_line": {
+                            "description": "6-12 word tagline capturing the property's character",
+                            "type": "string",
+                        },
+                        "value_for_quality": {
+                            "additionalProperties": False,
+                            "properties": {
+                                "rating": {
+                                    "description": "Value rating considering quality vs price",
+                                    "enum": ["excellent", "good", "fair", "poor"],
+                                    "type": "string",
+                                },
+                                "reasoning": {
+                                    "description": "Value justification: why this price is or isn't fair for what you get. Focus on price factors: stock type premium/discount, true monthly cost, area rent trajectory, service charges, incentives. Reference condition only as 'condition justifies/doesn't justify price' — don't restate specific issues.",
+                                    "type": "string",
+                                },
+                            },
+                            "required": ["rating", "reasoning"],
+                            "type": "object",
+                        },
                     },
-                    "strict": True,
+                    "required": [
+                        "listing_extraction",
+                        "viewing_notes",
+                        "highlights",
+                        "lowlights",
+                        "one_line",
+                        "value_for_quality",
+                    ],
+                    "type": "object",
                 }
             )
-            == EVALUATION_TOOL
+            == schema
         )
 
     def test_visual_tool_name(self) -> None:
         """Visual tool should have the correct name."""
         assert VISUAL_ANALYSIS_TOOL["name"] == "property_visual_analysis"
-
-    def test_evaluation_tool_name(self) -> None:
-        """Evaluation tool should have the correct name."""
-        assert EVALUATION_TOOL["name"] == "property_evaluation"
-
-    def test_evaluation_tool_is_strict(self) -> None:
-        """Evaluation tool should have strict mode enabled."""
-        assert EVALUATION_TOOL.get("strict") is True
 
     def test_visual_tool_is_not_strict(self) -> None:
         """Visual tool should NOT have strict mode — schema exceeds grammar limits."""
@@ -1271,5 +1256,5 @@ class TestAcousticContextInEvaluationPrompt:
             acoustic_context="Building construction: timber_frame",
         )
         acoustic_pos = prompt.index("<acoustic_context>")
-        tool_pos = prompt.index("property_evaluation tool")
+        tool_pos = prompt.index("JSON matching the output schema")
         assert acoustic_pos < tool_pos

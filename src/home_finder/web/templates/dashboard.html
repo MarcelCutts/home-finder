@@ -11,7 +11,7 @@
 
 <section class="filter-bar">
     <form class="filter-form" method="GET" action="/"
-          hx-get="/" hx-target="#results" hx-push-url="true" hx-indicator="#loading">
+          hx-get="/" hx-target="#results" hx-push-url="true" hx-indicator="#loading" hx-sync="this:abort">
         <div class="filter-row">
             <div class="filter-controls" role="group">
                 <fieldset class="beds-toggle" aria-label="Bedrooms">
@@ -209,6 +209,7 @@
                             <option value="{{ l }}" {% if natural_light == l %}selected{% endif %}>{{ l | title }} light</option>
                             {% endfor %}
                         </select>
+                        <input type="number" name="min_living_room_sqm" placeholder="Min m² living" value="{{ min_living_room_sqm or '' }}" aria-label="Minimum living room size" step="1" min="5" max="60">
                         <select name="floor_level" aria-label="Floor level">
                             <option value="">Any floor</option>
                             {% for f in ["basement", "ground", "lower", "upper", "top"] %}
@@ -279,12 +280,12 @@
     </form>
 </section>
 
-<script>var propertiesMapData = {{ properties_json | safe }};</script>
+<script>var propertiesMapData = {{ properties_json | json_script_safe | safe }};</script>
 
 <div id="split-container" class="split-container">
-    <div id="results">
+    <div id="results" role="region" aria-label="Property results" aria-busy="false">
         {% include "_results.html" %}
     </div>
-    <div id="dashboard-map" hidden></div>
+    <div id="dashboard-map" hx-preserve hidden></div>
 </div>
 {% endblock %}

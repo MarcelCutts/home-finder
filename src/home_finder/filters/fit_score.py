@@ -166,7 +166,7 @@ def _score_workspace(analysis: dict[str, Any], bedrooms: int) -> _DimensionResul
     return _DimensionResult(score, confidence, factors)
 
 
-def _score_hosting(analysis: dict[str, Any], _bedrooms: int) -> _DimensionResult:
+def _score_hosting(analysis: dict[str, Any], bedrooms: int) -> _DimensionResult:
     score = 0.0
     signals = 0
     factors: list[FitFactor] = []
@@ -179,7 +179,12 @@ def _score_hosting(analysis: dict[str, Any], _bedrooms: int) -> _DimensionResult
         factors.append({"label": "Spacious", "state": "earned"})
     elif is_spacious is False:
         signals += 1
-        factors.append({"label": "Not spacious", "state": "missed"})
+        if bedrooms >= 2:
+            # 2-bed preference: office in spare room makes size less critical
+            score += 15
+            factors.append({"label": "2-bed — size less critical", "state": "earned"})
+        else:
+            factors.append({"label": "Not spacious", "state": "missed"})
 
     living_sqm = space.get("living_room_sqm")
     if isinstance(living_sqm, (int, float)) and living_sqm > 0:
@@ -798,7 +803,7 @@ def compute_lifestyle_icons(
         "hosting": _icon_hosting(analysis, bedrooms),
         "kitchen": _icon_kitchen(analysis),
         "vibe": _icon_vibe(analysis),
-        "space": _icon_space(analysis),
+        "space": _icon_space(analysis, bedrooms),
         "internet": _icon_internet(analysis),
     }
 
@@ -852,6 +857,8 @@ def _icon_hosting(analysis: dict[str, Any], bedrooms: int) -> LifestyleIcon:
         noise_indicators = flooring.get("noise_indicators") or []
         if isinstance(noise_indicators, list) and len(noise_indicators) > 0:
             return {"state": "concern", "tooltip": "Compact space + noise concerns"}
+        if bedrooms >= 2:
+            return {"state": "neutral", "tooltip": "2-bed — compact but size less critical"}
         return {"state": "concern", "tooltip": "Compact — limited hosting space"}
     if is_spacious is True:
         return {"state": "neutral", "tooltip": "Spacious but sound insulation unknown"}
@@ -920,7 +927,7 @@ def _icon_vibe(analysis: dict[str, Any]) -> LifestyleIcon:
     return {"state": "neutral", "tooltip": "Style unclear"}
 
 
-def _icon_space(analysis: dict[str, Any]) -> LifestyleIcon:
+def _icon_space(analysis: dict[str, Any], bedrooms: int = 0) -> LifestyleIcon:
     space = analysis.get("space") or {}
     outdoor = analysis.get("outdoor_space") or {}
     is_spacious = space.get("is_spacious_enough")
@@ -935,6 +942,8 @@ def _icon_space(analysis: dict[str, Any]) -> LifestyleIcon:
     if is_spacious is True:
         return {"state": "good", "tooltip": "Spacious layout"}
     if is_spacious is False:
+        if bedrooms >= 2:
+            return {"state": "neutral", "tooltip": "2-bed — size less critical"}
         return {"state": "concern", "tooltip": "Not spacious enough"}
     if has_outdoor:
         return {"state": "neutral", "tooltip": "Has outdoor space, size unclear"}

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import contextlib
 import json
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -246,10 +245,10 @@ class PropertyStorage:
 
         # Migrate: fix one_line fields that were stored as JSON objects
         # instead of plain strings (LLM wrapping bug).
-        # Suppresses OperationalError because json_extract/json_type throw on
-        # rows with malformed analysis_json; the Pydantic unwrap_one_line
-        # validator already handles this at read time.
-        with contextlib.suppress(aiosqlite.OperationalError):
+        # Suppresses JSON-related and schema-related OperationalErrors (malformed
+        # analysis_json or missing json functions); lets genuine errors (disk full,
+        # DB locked beyond timeout) propagate.
+        try:
             await conn.execute("""
                 UPDATE quality_analyses
                 SET analysis_json = json_set(
@@ -260,6 +259,12 @@ class PropertyStorage:
                 WHERE json_valid(analysis_json)
                   AND json_type(json_extract(analysis_json, '$.one_line')) = 'object'
             """)
+        except aiosqlite.OperationalError as e:
+            err_msg = str(e).lower()
+            if "no such column" in err_msg or "no such function" in err_msg or "json" in err_msg:
+                pass  # Expected: malformed analysis_json or missing json functions
+            else:
+                raise
 
         # Migrate: add fit_score column for SQL-based sorting
         try:
@@ -897,14 +902,16 @@ class PropertyStorage:
                 existing_unique_id,
             ),
         )
-        await conn.commit()
 
         # Save any new images from the merged property
         new_images = list(merged.images)
         if merged.floorplan:
             new_images.append(merged.floorplan)
         if new_images:
-            await self.save_property_images(existing_unique_id, new_images)
+            await self.save_property_images(existing_unique_id, new_images, _commit=False)
+
+        # Single commit after both UPDATE and image INSERT
+        await conn.commit()
 
         logger.info(
             "merged_sources_updated",
@@ -1006,12 +1013,16 @@ class PropertyStorage:
         rows = await cursor.fetchall()
         return [dict(row) for row in rows]
 
-    async def save_property_images(self, unique_id: str, images: list[PropertyImage]) -> None:
+    async def save_property_images(
+        self, unique_id: str, images: list[PropertyImage], *, _commit: bool = True
+    ) -> None:
         """Save property images to the database.
 
         Args:
             unique_id: Property unique ID.
             images: List of images to save.
+            _commit: Whether to commit the transaction. Pass False when
+                called from a parent operation that manages its own commit.
         """
         if not images:
             return
@@ -1027,7 +1038,8 @@ class PropertyStorage:
             """,
             rows,
         )
-        await conn.commit()
+        if _commit:
+            await conn.commit()
 
         logger.debug(
             "property_images_saved",
@@ -1177,13 +1189,15 @@ class PropertyStorage:
         return result
 
     async def save_quality_analysis(
-        self, unique_id: str, analysis: PropertyQualityAnalysis
+        self, unique_id: str, analysis: PropertyQualityAnalysis, *, _commit: bool = True
     ) -> None:
         """Save a quality analysis result for a property.
 
         Args:
             unique_id: Property unique ID.
             analysis: PropertyQualityAnalysis instance.
+            _commit: Whether to commit the transaction. Pass False when
+                called from a parent operation that manages its own commit.
         """
         conn = await self._get_connection()
 
@@ -1264,7 +1278,8 @@ class PropertyStorage:
                 datetime.now(UTC).isoformat(),
             ),
         )
-        await conn.commit()
+        if _commit:
+            await conn.commit()
         logger.debug("quality_analysis_saved", unique_id=unique_id)
 
     async def get_quality_analysis(self, unique_id: str) -> PropertyQualityAnalysis | None:

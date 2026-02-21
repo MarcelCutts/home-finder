@@ -97,6 +97,7 @@ class PropertyFilter(BaseModel):
     hosting_layout: str | None = None
     hosting_noise_risk: str | None = None
     broadband_type: str | None = None
+    min_living_room_sqm: int | None = None
     tags: list[str] = []
     added: str | None = None
     status: str | None = None
@@ -206,6 +207,16 @@ class PropertyFilter(BaseModel):
     @classmethod
     def validate_broadband_type(cls, v: object) -> str | None:
         return _validate_enum_field(v, VALID_BROADBAND_TYPE)
+
+    @field_validator("min_living_room_sqm", mode="before")
+    @classmethod
+    def coerce_min_living_room_sqm(cls, v: object) -> int | None:
+        if v is None:
+            return None
+        parsed = v if isinstance(v, int) else _parse_optional_int(str(v))
+        if parsed is None:
+            return None
+        return max(5, min(60, parsed))
 
     @field_validator("tags", mode="before")
     @classmethod
@@ -319,6 +330,13 @@ class PropertyFilter(BaseModel):
                     "label": f"{self.broadband_type.upper()} broadband",
                 }
             )
+        if self.min_living_room_sqm is not None:
+            chips.append(
+                {
+                    "key": "min_living_room_sqm",
+                    "label": f"Min {self.min_living_room_sqm}m\u00b2 living",
+                }
+            )
         for t in self.tags:
             chips.append({"key": "tag", "label": t, "value": t})
         if self.status:
@@ -349,6 +367,7 @@ class PropertyFilter(BaseModel):
                 self.hosting_layout,
                 self.hosting_noise_risk,
                 self.broadband_type,
+                self.min_living_room_sqm,
                 self.tags,
             ]
         )
@@ -371,6 +390,7 @@ class PropertyFilter(BaseModel):
                 self.hosting_layout,
                 self.hosting_noise_risk,
                 self.broadband_type,
+                self.min_living_room_sqm,
                 self.off_market,
             ]
             if v is not None
@@ -400,6 +420,7 @@ def parse_filters(
     hosting_layout: str | None = None,
     hosting_noise_risk: str | None = None,
     broadband_type: str | None = None,
+    min_living_room_sqm: str | None = None,
     tag: list[str] = Query(default=[]),
     added: str | None = None,
     status: str | None = None,
@@ -425,6 +446,7 @@ def parse_filters(
             "hosting_layout": hosting_layout,
             "hosting_noise_risk": hosting_noise_risk,
             "broadband_type": broadband_type,
+            "min_living_room_sqm": min_living_room_sqm,
             "tags": tag,
             "added": added,
             "status": status,

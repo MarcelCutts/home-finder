@@ -12,7 +12,6 @@ from home_finder.filters.quality import (  # type: ignore[attr-defined]
     _CIRCUIT_BREAKER_COOLDOWN,
     _CIRCUIT_BREAKER_THRESHOLD,
     _MODEL_PAIRS,
-    EVALUATION_TOOL,
     VISUAL_ANALYSIS_TOOL,
     APIUnavailableError,
     PropertyQualityFilter,
@@ -22,6 +21,7 @@ from home_finder.filters.quality import (  # type: ignore[attr-defined]
     _clean_value,
     _EvaluationResponse,
     _VisualAnalysisResponse,
+    _inline_refs,
     assess_value,
     build_evaluation_prompt,
 )
@@ -100,8 +100,14 @@ class TestKitchenAnalysis:
         assert analysis.overall_quality == "unknown"
 
 
+def _eval_schema_props() -> dict[str, Any]:
+    """Get the evaluation response schema properties (mirrors old EVALUATION_TOOL)."""
+    schema = _inline_refs(_EvaluationResponse.model_json_schema())
+    return schema["properties"]
+
+
 class TestToolSchema:
-    """Tests for VISUAL_ANALYSIS_TOOL and EVALUATION_TOOL schema structure."""
+    """Tests for VISUAL_ANALYSIS_TOOL and _EvaluationResponse schema structure."""
 
     def test_uses_plain_types_for_boolean_and_enum_fields(self) -> None:
         """Strict mode: boolean and enum fields use plain types (no anyOf)."""
@@ -132,7 +138,7 @@ class TestToolSchema:
     def test_tristate_fields_use_string_enum(self) -> None:
         """High-impact fields should use string enum yes/no/unknown."""
         visual_schema = VISUAL_ANALYSIS_TOOL["input_schema"]["properties"]
-        eval_schema = EVALUATION_TOOL["input_schema"]["properties"]
+        eval_schema = _eval_schema_props()
         expected_enum = ["yes", "no", "unknown"]
 
         # condition tri-state fields (Phase 1)
@@ -193,7 +199,7 @@ class TestToolSchema:
     def test_keeps_anyof_for_nullable_numeric_fields(self) -> None:
         """Strict mode: only numeric fields retain anyOf for null."""
         visual_schema = VISUAL_ANALYSIS_TOOL["input_schema"]["properties"]
-        eval_schema = EVALUATION_TOOL["input_schema"]["properties"]
+        eval_schema = _eval_schema_props()
 
         # Space living_room_sqm should still use anyOf (numeric) — Phase 1
         living_room_sqm = visual_schema["space"]["properties"]["living_room_sqm"]
@@ -209,10 +215,9 @@ class TestToolSchema:
         service_charge = eval_schema["listing_extraction"]["properties"]["service_charge_pcm"]
         assert "anyOf" in service_charge
 
-    def test_strict_mode_on_tools(self) -> None:
-        """Phase 1 is non-strict (schema too large), Phase 2 is strict."""
+    def test_strict_mode_on_visual_tool(self) -> None:
+        """Phase 1 tool is non-strict (schema exceeds grammar limits)."""
         assert "strict" not in VISUAL_ANALYSIS_TOOL
-        assert EVALUATION_TOOL.get("strict") is True
 
     def test_visual_tool_does_not_contain_evaluation_fields(self) -> None:
         """Visual analysis tool should not contain Phase 2 fields."""
@@ -229,9 +234,9 @@ class TestToolSchema:
         assert "listing_extraction" not in visual_required
         assert "value_for_quality" not in visual_required
 
-    def test_evaluation_tool_does_not_contain_visual_fields(self) -> None:
-        """Evaluation tool should not contain Phase 1 fields."""
-        eval_props = EVALUATION_TOOL["input_schema"]["properties"]
+    def test_evaluation_schema_does_not_contain_visual_fields(self) -> None:
+        """Evaluation response schema should not contain Phase 1 fields."""
+        eval_props = _eval_schema_props()
 
         assert "kitchen" not in eval_props
         assert "condition" not in eval_props
@@ -556,7 +561,6 @@ def sample_visual_response() -> dict[str, Any]:
         "space": {
             "living_room_sqm": 22,
             "is_spacious_enough": True,
-            "confidence": "high",
             "hosting_layout": "good",
         },
         "bathroom": {
@@ -666,7 +670,6 @@ def sample_visual_response_with_nulls() -> dict[str, Any]:
         "space": {
             "living_room_sqm": None,
             "is_spacious_enough": None,
-            "confidence": "low",
         },
         "overall_rating": 3,
         "condition_concerns": False,
@@ -696,7 +699,7 @@ def create_mock_response(
     stop_reason: str = "tool_use",
     tool_name: str = "property_visual_analysis",
 ) -> MagicMock:
-    """Create a mock API response with tool use block."""
+    """Create a mock API response with tool use block (Phase 1)."""
     tool_block = ToolUseBlock(
         id="toolu_123",
         type="tool_use",
@@ -712,14 +715,34 @@ def create_mock_response(
     return mock_response
 
 
-def _make_two_phase_mock(
+def create_mock_parsed_response(eval_data: dict[str, Any]) -> MagicMock:
+    """Create a mock ParsedMessage for Phase 2 (messages.parse).
+
+    Simulates the SDK's ``messages.parse()`` return value where
+    ``parsed_output`` is an ``_EvaluationResponse`` instance and
+    ``model_dump()`` returns the original dict.
+    """
+    mock_response = MagicMock()
+    mock_parsed = MagicMock()
+    mock_parsed.model_dump.return_value = eval_data
+    mock_response.parsed_output = mock_parsed
+    mock_response.stop_reason = "end_turn"
+    mock_response.usage = MagicMock()
+    mock_response.usage.cache_read_input_tokens = 0
+    mock_response.usage.cache_creation_input_tokens = 0
+    return mock_response
+
+
+def _setup_two_phase_mocks(
+    client_mock: MagicMock,
     visual_response: dict[str, Any],
     eval_response: dict[str, Any],
-) -> AsyncMock:
-    """Create an AsyncMock that returns Phase 1 then Phase 2 responses."""
+) -> None:
+    """Set up Phase 1 (messages.create) and Phase 2 (messages.parse) mocks on a client."""
     mock_visual = create_mock_response(visual_response, tool_name="property_visual_analysis")
-    mock_eval = create_mock_response(eval_response, tool_name="property_evaluation")
-    return AsyncMock(side_effect=[mock_visual, mock_eval])
+    client_mock.messages.create = AsyncMock(return_value=mock_visual)
+    mock_eval = create_mock_parsed_response(eval_response)
+    client_mock.messages.parse = AsyncMock(return_value=mock_eval)
 
 
 class TestPropertyQualityFilter:
@@ -768,7 +791,7 @@ class TestPropertyQualityFilter:
         assert len(results) == 1
         _, analysis = results[0]
         assert "No images available" in analysis.summary
-        assert analysis.space.confidence == "low"
+        assert analysis.space.is_spacious_enough is None
 
     async def test_analyzes_property_with_images(
         self,
@@ -779,7 +802,7 @@ class TestPropertyQualityFilter:
         """Should analyze property with gallery images using two-phase structured outputs."""
         quality_filter = PropertyQualityFilter(api_key="test-key")
         quality_filter._client = MagicMock()
-        quality_filter._client.messages.create = _make_two_phase_mock(
+        _setup_two_phase_mocks(quality_filter._client,
             sample_visual_response, sample_evaluation_response
         )
 
@@ -805,7 +828,7 @@ class TestPropertyQualityFilter:
 
         quality_filter = PropertyQualityFilter(api_key="test-key")
         quality_filter._client = MagicMock()
-        quality_filter._client.messages.create = _make_two_phase_mock(
+        _setup_two_phase_mocks(quality_filter._client,
             sample_visual_response, sample_evaluation_response
         )
 
@@ -832,7 +855,7 @@ class TestPropertyQualityFilter:
                 "confidence": "high",
             },
             "light_space": {"natural_light": "good", "feels_spacious": True, "notes": ""},
-            "space": {"living_room_sqm": 15, "is_spacious_enough": False, "confidence": "high"},
+            "space": {"living_room_sqm": 15, "is_spacious_enough": False},
             "overall_rating": 3,
             "condition_concerns": False,
             "concern_severity": "none",
@@ -841,16 +864,15 @@ class TestPropertyQualityFilter:
 
         quality_filter = PropertyQualityFilter(api_key="test-key")
         quality_filter._client = MagicMock()
-        quality_filter._client.messages.create = _make_two_phase_mock(
+        _setup_two_phase_mocks(quality_filter._client,
             visual_response, sample_evaluation_response
         )
 
         results = await quality_filter.analyze_merged_properties([sample_merged_property])
 
         _, analysis = results[0]
-        # Should be overridden because property has 2 bedrooms
-        assert analysis.space.is_spacious_enough is True
-        assert analysis.space.confidence == "high"
+        # No override in analysis layer — Claude's raw assessment preserved
+        assert analysis.space.is_spacious_enough is False
 
     async def test_does_not_override_space_for_one_bed(
         self,
@@ -869,7 +891,7 @@ class TestPropertyQualityFilter:
                 "confidence": "high",
             },
             "light_space": {"natural_light": "good", "feels_spacious": True, "notes": ""},
-            "space": {"living_room_sqm": 15, "is_spacious_enough": False, "confidence": "high"},
+            "space": {"living_room_sqm": 15, "is_spacious_enough": False},
             "overall_rating": 3,
             "condition_concerns": False,
             "concern_severity": "none",
@@ -878,7 +900,7 @@ class TestPropertyQualityFilter:
 
         quality_filter = PropertyQualityFilter(api_key="test-key")
         quality_filter._client = MagicMock()
-        quality_filter._client.messages.create = _make_two_phase_mock(
+        _setup_two_phase_mocks(quality_filter._client,
             visual_response, sample_evaluation_response
         )
 
@@ -935,7 +957,7 @@ class TestPropertyQualityFilter:
 
         quality_filter = PropertyQualityFilter(api_key="test-key", max_images=10)
         quality_filter._client = MagicMock()
-        quality_filter._client.messages.create = _make_two_phase_mock(
+        _setup_two_phase_mocks(quality_filter._client,
             sample_visual_response, sample_evaluation_response
         )
 
@@ -990,7 +1012,7 @@ class TestPropertyQualityFilter:
 
         quality_filter = PropertyQualityFilter(api_key="test-key", max_images=5)
         quality_filter._client = MagicMock()
-        quality_filter._client.messages.create = _make_two_phase_mock(
+        _setup_two_phase_mocks(quality_filter._client,
             sample_visual_response, sample_evaluation_response
         )
 
@@ -1019,20 +1041,19 @@ class TestPropertyQualityFilter:
         sample_visual_response: dict[str, Any],
         sample_evaluation_response: dict[str, Any],
     ) -> None:
-        """Phase 1 uses auto tool_choice with thinking; Phase 2 uses forced tool."""
+        """Phase 1 uses auto tool_choice with thinking; Phase 2 uses output_format."""
         quality_filter = PropertyQualityFilter(api_key="test-key")
         quality_filter._client = MagicMock()
-        quality_filter._client.messages.create = _make_two_phase_mock(
+        _setup_two_phase_mocks(quality_filter._client,
             sample_visual_response, sample_evaluation_response
         )
 
         await quality_filter.analyze_merged_properties([sample_merged_property])
 
-        calls = quality_filter._client.messages.create.call_args_list
-        assert len(calls) == 2
-
-        # Phase 1: auto tool_choice with extended thinking
-        phase1_kwargs = calls[0].kwargs
+        # Phase 1: auto tool_choice with extended thinking (messages.create)
+        create_calls = quality_filter._client.messages.create.call_args_list
+        assert len(create_calls) == 1
+        phase1_kwargs = create_calls[0].kwargs
         assert phase1_kwargs["tool_choice"] == {"type": "auto"}
         assert phase1_kwargs["thinking"] == {
             "type": "adaptive",
@@ -1040,15 +1061,14 @@ class TestPropertyQualityFilter:
         assert len(phase1_kwargs["tools"]) == 1
         assert phase1_kwargs["tools"][0]["name"] == "property_visual_analysis"
 
-        # Phase 2: forced tool choice, no extended thinking
-        phase2_kwargs = calls[1].kwargs
-        assert phase2_kwargs["tool_choice"] == {
-            "type": "tool",
-            "name": "property_evaluation",
-        }
+        # Phase 2: output_format via messages.parse (no tools, no tool_choice)
+        parse_calls = quality_filter._client.messages.parse.call_args_list
+        assert len(parse_calls) == 1
+        phase2_kwargs = parse_calls[0].kwargs
+        assert phase2_kwargs["output_format"] is _EvaluationResponse
+        assert "tools" not in phase2_kwargs
+        assert "tool_choice" not in phase2_kwargs
         assert "thinking" not in phase2_kwargs
-        assert len(phase2_kwargs["tools"]) == 1
-        assert phase2_kwargs["tools"][0]["name"] == "property_evaluation"
 
     async def test_uses_cached_system_prompt(
         self,
@@ -1059,23 +1079,23 @@ class TestPropertyQualityFilter:
         """Should use system prompt with cache_control for cost savings."""
         quality_filter = PropertyQualityFilter(api_key="test-key")
         quality_filter._client = MagicMock()
-        quality_filter._client.messages.create = _make_two_phase_mock(
+        _setup_two_phase_mocks(quality_filter._client,
             sample_visual_response, sample_evaluation_response
         )
 
         await quality_filter.analyze_merged_properties([sample_merged_property])
 
-        calls = quality_filter._client.messages.create.call_args_list
-
-        # Phase 1 system prompt
-        system1 = calls[0].kwargs["system"]
+        # Phase 1 system prompt (messages.create)
+        create_calls = quality_filter._client.messages.create.call_args_list
+        system1 = create_calls[0].kwargs["system"]
         assert len(system1) == 1
         assert system1[0]["type"] == "text"
         assert system1[0]["cache_control"] == {"type": "ephemeral"}
         assert "expert London rental property analyst" in system1[0]["text"]
 
-        # Phase 2 system prompt
-        system2 = calls[1].kwargs["system"]
+        # Phase 2 system prompt (messages.parse)
+        parse_calls = quality_filter._client.messages.parse.call_args_list
+        system2 = parse_calls[0].kwargs["system"]
         assert len(system2) == 1
         assert system2[0]["type"] == "text"
         assert system2[0]["cache_control"] == {"type": "ephemeral"}
@@ -1090,7 +1110,7 @@ class TestPropertyQualityFilter:
         """Should extract quality-adjusted value rating from Phase 2 response."""
         quality_filter = PropertyQualityFilter(api_key="test-key")
         quality_filter._client = MagicMock()
-        quality_filter._client.messages.create = _make_two_phase_mock(
+        _setup_two_phase_mocks(quality_filter._client,
             sample_visual_response, sample_evaluation_response
         )
 
@@ -1112,13 +1132,13 @@ class TestPropertyQualityFilter:
         mock_visual = create_mock_response(
             sample_visual_response, stop_reason="end_turn", tool_name="property_visual_analysis"
         )
-        mock_eval = create_mock_response(
-            sample_evaluation_response, tool_name="property_evaluation"
-        )
 
         quality_filter = PropertyQualityFilter(api_key="test-key")
         quality_filter._client = MagicMock()
-        quality_filter._client.messages.create = AsyncMock(side_effect=[mock_visual, mock_eval])
+        quality_filter._client.messages.create = AsyncMock(return_value=mock_visual)
+        quality_filter._client.messages.parse = AsyncMock(
+            return_value=create_mock_parsed_response(sample_evaluation_response)
+        )
 
         results = await quality_filter.analyze_merged_properties([sample_merged_property])
 
@@ -1160,7 +1180,7 @@ class TestPropertyQualityFilter:
 
         quality_filter = PropertyQualityFilter(api_key="test-key")
         quality_filter._client = MagicMock()
-        quality_filter._client.messages.create = _make_two_phase_mock(
+        _setup_two_phase_mocks(quality_filter._client,
             sample_visual_response, sample_evaluation_response
         )
 
@@ -1187,7 +1207,7 @@ class TestPropertyQualityFilter:
         # Use 1-bed property to avoid space override for 2+ beds
         quality_filter = PropertyQualityFilter(api_key="test-key")
         quality_filter._client = MagicMock()
-        quality_filter._client.messages.create = _make_two_phase_mock(
+        _setup_two_phase_mocks(quality_filter._client,
             sample_visual_response_with_nulls, sample_evaluation_response_with_nulls
         )
 
@@ -1208,7 +1228,6 @@ class TestPropertyQualityFilter:
 
         assert analysis.space.living_room_sqm is None
         assert analysis.space.is_spacious_enough is None
-        assert analysis.space.confidence == "low"
 
         assert analysis.concern_severity == "none"
 
@@ -1221,17 +1240,20 @@ class TestPropertyQualityFilter:
         """Phase 1 JSON output should appear in Phase 2 prompt."""
         quality_filter = PropertyQualityFilter(api_key="test-key")
         quality_filter._client = MagicMock()
-        quality_filter._client.messages.create = _make_two_phase_mock(
+        _setup_two_phase_mocks(quality_filter._client,
             sample_visual_response, sample_evaluation_response
         )
 
         await quality_filter.analyze_merged_properties([sample_merged_property])
 
-        calls = quality_filter._client.messages.create.call_args_list
-        assert len(calls) == 2
+        # Phase 1 via messages.create
+        create_calls = quality_filter._client.messages.create.call_args_list
+        assert len(create_calls) == 1
 
-        # Phase 2 prompt should contain Phase 1 output in <visual_analysis> tags
-        phase2_content = calls[1].kwargs["messages"][0]["content"]
+        # Phase 2 prompt (via messages.parse) should contain Phase 1 output
+        parse_calls = quality_filter._client.messages.parse.call_args_list
+        assert len(parse_calls) == 1
+        phase2_content = parse_calls[0].kwargs["messages"][0]["content"]
         assert "<visual_analysis>" in phase2_content
         assert '"overall_quality": "modern"' in phase2_content
         assert "</visual_analysis>" in phase2_content
@@ -1249,8 +1271,9 @@ class TestPropertyQualityFilter:
         quality_filter = PropertyQualityFilter(api_key="test-key")
         quality_filter._client = MagicMock()
         # Phase 1 succeeds, Phase 2 raises
-        quality_filter._client.messages.create = AsyncMock(
-            side_effect=[mock_visual, Exception("Phase 2 API error")]
+        quality_filter._client.messages.create = AsyncMock(return_value=mock_visual)
+        quality_filter._client.messages.parse = AsyncMock(
+            side_effect=Exception("Phase 2 API error")
         )
 
         results = await quality_filter.analyze_merged_properties([sample_merged_property])
@@ -1279,16 +1302,15 @@ class TestPropertyQualityFilter:
         """Phase 2 should be text-only (no images)."""
         quality_filter = PropertyQualityFilter(api_key="test-key")
         quality_filter._client = MagicMock()
-        quality_filter._client.messages.create = _make_two_phase_mock(
+        _setup_two_phase_mocks(quality_filter._client,
             sample_visual_response, sample_evaluation_response
         )
 
         await quality_filter.analyze_merged_properties([sample_merged_property])
 
-        calls = quality_filter._client.messages.create.call_args_list
-
-        # Phase 2 content is a string (text-only), not a list of content blocks
-        phase2_content = calls[1].kwargs["messages"][0]["content"]
+        # Phase 2 uses messages.parse — content is a string (text-only)
+        parse_calls = quality_filter._client.messages.parse.call_args_list
+        phase2_content = parse_calls[0].kwargs["messages"][0]["content"]
         assert isinstance(phase2_content, str)
 
 
@@ -1320,7 +1342,7 @@ class TestFloorplanNoteWiring:
 
         quality_filter = PropertyQualityFilter(api_key="test-key")
         quality_filter._client = MagicMock()
-        quality_filter._client.messages.create = _make_two_phase_mock(
+        _setup_two_phase_mocks(quality_filter._client,
             sample_visual_response, sample_evaluation_response
         )
 
@@ -1344,7 +1366,7 @@ class TestFloorplanNoteWiring:
         """Property with floorplan → Phase 1 prompt does NOT contain <floorplan_note>."""
         quality_filter = PropertyQualityFilter(api_key="test-key")
         quality_filter._client = MagicMock()
-        quality_filter._client.messages.create = _make_two_phase_mock(
+        _setup_two_phase_mocks(quality_filter._client,
             sample_visual_response, sample_evaluation_response
         )
 
@@ -1411,15 +1433,15 @@ class TestBuildEvaluationPrompt:
         assert '<area_context outcode="E8">' in prompt
         assert "Trendy East London area" in prompt
 
-    def test_ends_with_tool_instruction(self) -> None:
-        """Should end with instruction to use evaluation tool."""
+    def test_ends_with_output_instruction(self) -> None:
+        """Should end with instruction to return JSON matching output schema."""
         prompt = build_evaluation_prompt(
             visual_data={},
             price_pcm=1800,
             bedrooms=1,
             area_average=1900,
         )
-        assert "property_evaluation tool" in prompt
+        assert "evaluation as JSON matching the output schema" in prompt
 
 
 class TestAnalyzeSingleMerged:
@@ -1434,7 +1456,7 @@ class TestAnalyzeSingleMerged:
         """Should return (merged, analysis) when images are present."""
         quality_filter = PropertyQualityFilter(api_key="test-key")
         quality_filter._client = MagicMock()
-        quality_filter._client.messages.create = _make_two_phase_mock(
+        _setup_two_phase_mocks(quality_filter._client,
             sample_visual_response, sample_evaluation_response
         )
 
@@ -1467,7 +1489,7 @@ class TestAnalyzeSingleMerged:
 
         assert result_merged is merged
         assert "No images available" in analysis.summary
-        assert analysis.space.confidence == "low"
+        assert analysis.space.is_spacious_enough is None
 
     async def test_api_failure_returns_minimal(
         self,
@@ -1482,7 +1504,7 @@ class TestAnalyzeSingleMerged:
 
         assert merged is sample_merged_property
         assert "No images available" in analysis.summary
-        assert analysis.space.confidence == "low"
+        assert analysis.space.is_spacious_enough is None
 
 
 class TestInsufficientImageSkip:
@@ -1518,7 +1540,7 @@ class TestInsufficientImageSkip:
 
         quality_filter = PropertyQualityFilter(api_key="test-key")
         quality_filter._client = MagicMock()
-        quality_filter._client.messages.create = _make_two_phase_mock(
+        _setup_two_phase_mocks(quality_filter._client,
             sample_visual_response, sample_evaluation_response
         )
 
@@ -1539,7 +1561,7 @@ class TestInsufficientImageSkip:
         """Should not skip analysis when data_dir is not set (no cache mode)."""
         quality_filter = PropertyQualityFilter(api_key="test-key")
         quality_filter._client = MagicMock()
-        quality_filter._client.messages.create = _make_two_phase_mock(
+        _setup_two_phase_mocks(quality_filter._client,
             sample_visual_response, sample_evaluation_response
         )
 
@@ -1692,7 +1714,7 @@ class TestNewMarcelFields:
 
     def test_broadband_type_in_evaluation_schema(self) -> None:
         """broadband_type appears in Phase 2 listing_extraction."""
-        eval_schema = EVALUATION_TOOL["input_schema"]["properties"]
+        eval_schema = _eval_schema_props()
         le_props = eval_schema["listing_extraction"]["properties"]
         assert "broadband_type" in le_props
         assert le_props["broadband_type"]["type"] == "string"
@@ -1707,9 +1729,9 @@ class TestNewMarcelFields:
         assert len(sep_enum) == 5
         assert "yes" not in sep_enum
 
-    def test_new_highlights_in_strict_eval_schema(self) -> None:
-        """New highlight enum values are present in strict Phase 2 schema."""
-        eval_schema = EVALUATION_TOOL["input_schema"]["properties"]
+    def test_new_highlights_in_eval_schema(self) -> None:
+        """New highlight enum values are present in Phase 2 schema."""
+        eval_schema = _eval_schema_props()
         hl_items = eval_schema["highlights"]["items"]
         enum_values = hl_items.get("enum", [])
         assert "Ultrafast broadband (FTTP)" in enum_values
@@ -1717,9 +1739,9 @@ class TestNewMarcelFields:
         assert "Separate work area" in enum_values
         assert "Great hosting layout" in enum_values
 
-    def test_new_lowlights_in_strict_eval_schema(self) -> None:
-        """New lowlight enum values are present in strict Phase 2 schema."""
-        eval_schema = EVALUATION_TOOL["input_schema"]["properties"]
+    def test_new_lowlights_in_eval_schema(self) -> None:
+        """New lowlight enum values are present in Phase 2 schema."""
+        eval_schema = _eval_schema_props()
         ll_items = eval_schema["lowlights"]["items"]
         enum_values = ll_items.get("enum", [])
         assert "Basic broadband only" in enum_values
@@ -1738,7 +1760,7 @@ class TestNewFieldBackwardCompat:
 
     def test_space_without_hosting_layout(self) -> None:
         """Old DB rows without hosting_layout default to 'unknown'."""
-        old_data = {"living_room_sqm": 20, "is_spacious_enough": True, "confidence": "high"}
+        old_data = {"living_room_sqm": 20, "is_spacious_enough": True}
         space = SpaceAnalysis.model_validate(old_data)
         assert space.hosting_layout == "unknown"
 
@@ -1791,7 +1813,6 @@ class TestNewFieldBackwardCompat:
             "space": {
                 "living_room_sqm": 20,
                 "is_spacious_enough": True,
-                "confidence": "high",
             },
             "summary": "Nice flat",
         }
@@ -1832,7 +1853,6 @@ class TestNewFieldsPipelineFlow:
             "space": {
                 "living_room_sqm": 22,
                 "is_spacious_enough": True,
-                "confidence": "high",
                 "hosting_layout": "excellent",
             },
             "bedroom": {
@@ -1880,7 +1900,7 @@ class TestNewFieldsPipelineFlow:
 
         quality_filter = PropertyQualityFilter(api_key="test-key")
         quality_filter._client = MagicMock()
-        quality_filter._client.messages.create = _make_two_phase_mock(visual, eval_resp)
+        _setup_two_phase_mocks(quality_filter._client,visual, eval_resp)
 
         results = await quality_filter.analyze_merged_properties([sample_merged_property])
         _, analysis = results[0]
@@ -1962,7 +1982,7 @@ class TestCircuitBreaker:
         assert not quality_filter._circuit_open
 
         # Then: succeed — counter should reset
-        quality_filter._client.messages.create = _make_two_phase_mock(
+        _setup_two_phase_mocks(quality_filter._client,
             sample_visual_response, sample_evaluation_response
         )
         await quality_filter.analyze_single_merged(sample_merged_property)
@@ -2116,7 +2136,7 @@ class TestCircuitBreaker:
         quality_filter._circuit_open = True
         quality_filter._circuit_opened_at = time.monotonic() - (_CIRCUIT_BREAKER_COOLDOWN + 1)
         quality_filter._client = MagicMock()
-        quality_filter._client.messages.create = _make_two_phase_mock(
+        _setup_two_phase_mocks(quality_filter._client,
             sample_visual_response, sample_evaluation_response
         )
 
@@ -2137,7 +2157,7 @@ class TestCircuitBreaker:
         quality_filter._circuit_open = True
         quality_filter._circuit_opened_at = time.monotonic() - (_CIRCUIT_BREAKER_COOLDOWN + 1)
         quality_filter._client = MagicMock()
-        quality_filter._client.messages.create = _make_two_phase_mock(
+        _setup_two_phase_mocks(quality_filter._client,
             sample_visual_response, sample_evaluation_response
         )
 
@@ -2892,7 +2912,7 @@ _SUB_MODEL_JSON_SAMPLES: dict[str, tuple[str, str, object]] = {
         "good",
     ),
     "light_space": ('{"natural_light": "excellent"}', "natural_light", "excellent"),
-    "space": ('{"living_room_sqm": 18, "confidence": "high"}', "living_room_sqm", 18),
+    "space": ('{"living_room_sqm": 18}', "living_room_sqm", 18),
     "bathroom": ('{"overall_condition": "modern", "has_bathtub": "yes"}', "has_bathtub", "yes"),
     "bedroom": (
         '{"primary_is_double": "yes", "office_separation": "dedicated_room"}',
@@ -3190,11 +3210,6 @@ class TestLiteralCoercion:
         # ConditionAnalysis.confidence defaults to "medium"
         analysis = ConditionAnalysis(confidence="mega")  # type: ignore[arg-type]
         assert analysis.confidence == "medium"
-
-    def test_different_default_same_type(self) -> None:
-        """SpaceAnalysis.confidence defaults to 'low' (different from ConditionAnalysis)."""
-        analysis = SpaceAnalysis(confidence="mega")  # type: ignore[arg-type]
-        assert analysis.confidence == "low"
 
     def test_optional_literal_fallback_to_none(self) -> None:
         """Optional Literal field should coerce to None (field default)."""

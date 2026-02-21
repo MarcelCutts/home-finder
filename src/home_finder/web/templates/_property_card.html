@@ -29,6 +29,8 @@
                 <div class="card-overlay-right">
                     {% if prop.floor_area_sqft %}
                     <span class="badge badge-neutral">{{ prop.floor_area_sqft }} ft²</span>
+                    {% elif prop.living_room_sqm %}
+                    <span class="badge badge-neutral badge-estimate">~{{ prop.living_room_sqm | int }}m² living</span>
                     {% endif %}
                     <span class="badge badge-neutral">{% if prop.bedrooms == 0 %}Studio{% else %}{{ prop.bedrooms }} bed{% endif %}</span>
                 </div>
@@ -133,6 +135,7 @@
                 hx-vals='{"status": "interested", "source": "card"}'
                 hx-target="closest article"
                 hx-swap="outerHTML"
+                hx-disabled-elt="this"
                 title="Interested">
             &#9733;
         </button>
@@ -141,6 +144,7 @@
                 hx-vals='{"status": "archived", "source": "card"}'
                 hx-target="closest article"
                 hx-swap="outerHTML"
+                hx-disabled-elt="this"
                 title="Skip">
             &#10005;
         </button>

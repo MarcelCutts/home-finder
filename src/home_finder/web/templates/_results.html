@@ -57,6 +57,6 @@
 
 <script>
 if (typeof window._updateMapData === "function") {
-    window._updateMapData({{ properties_json | safe }});
+    window._updateMapData({{ properties_json | json_script_safe | safe }});
 }
 </script>

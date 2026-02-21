@@ -174,7 +174,22 @@ class CommuteFilter:
                 logger.warning("rate_limit_hit", error=str(e), exc_info=True)
             else:
                 logger.error("traveltime_api_error", error=str(e), exc_info=True)
-            return []
+            # Graceful degradation: skip commute filtering rather than dropping all properties
+            logger.warning(
+                "commute_filter_skipped",
+                reason="api_failure",
+                property_count=len(properties),
+            )
+            return [
+                CommuteResult(
+                    property_id=p.unique_id,
+                    destination_postcode=self.destination_postcode,
+                    travel_time_minutes=0,
+                    transport_mode=transport_mode,
+                    within_limit=True,
+                )
+                for p in properties
+            ]
 
         # Process results
         results: list[CommuteResult] = []

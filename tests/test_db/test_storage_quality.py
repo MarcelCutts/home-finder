@@ -77,7 +77,7 @@ def sample_analysis() -> PropertyQualityAnalysis:
         kitchen=KitchenAnalysis(overall_quality="modern", hob_type="gas", has_dishwasher="yes"),
         condition=ConditionAnalysis(overall_condition="good", confidence="high"),
         light_space=LightSpaceAnalysis(natural_light="good", feels_spacious=True),
-        space=SpaceAnalysis(living_room_sqm=18.0, is_spacious_enough=True, confidence="high"),
+        space=SpaceAnalysis(living_room_sqm=18.0, is_spacious_enough=True),
         condition_concerns=False,
         value=ValueAnalysis(
             area_average=2200, difference=-300, rating="excellent", note="Below avg"
@@ -228,7 +228,7 @@ class TestSaveAndGetQualityAnalysis:
             ' "has_visible_damp": false, "has_visible_mold": false,'
             ' "has_worn_fixtures": false, "maintenance_concerns": [],'
             ' "confidence": "high"}, "light_space": {"natural_light": "good",'
-            ' "notes": ""}, "space": {"confidence": "low"}}'
+            ' "notes": ""}, "space": {}}'
         )
         await conn.execute(
             "INSERT INTO quality_analyses"
@@ -469,7 +469,7 @@ class TestGetPropertiesPaginated:
             kitchen=KitchenAnalysis(overall_quality="modern", hob_type="gas", has_dishwasher="yes"),
             condition=ConditionAnalysis(overall_condition="good", confidence="high"),
             light_space=LightSpaceAnalysis(natural_light="good", feels_spacious=True),
-            space=SpaceAnalysis(living_room_sqm=18.0, is_spacious_enough=True, confidence="high"),
+            space=SpaceAnalysis(living_room_sqm=18.0, is_spacious_enough=True),
             value=ValueAnalysis(
                 area_average=2200,
                 difference=-300,

@@ -149,7 +149,7 @@ class TestTelegramNotificationE2E:
                 confidence="high",
             ),
             light_space=LightSpaceAnalysis(natural_light="fair", notes=""),
-            space=SpaceAnalysis(confidence="low"),
+            space=SpaceAnalysis(),
             condition_concerns=True,
             concern_severity="moderate",
             overall_rating=2,

@@ -161,7 +161,12 @@ def listing_age_filter(iso_str: str | None) -> str:
 
 
 templates.env.filters["listing_age"] = listing_age_filter
+templates.env.filters["json_script_safe"] = lambda s: s.replace("</", r"<\/")
 templates.env.globals["SQM_PER_SQFT"] = SQM_PER_SQFT
+
+from home_finder.web.app import _compute_static_version
+
+templates.env.globals["static_version"] = _compute_static_version()
 
 
 def days_since_filter(iso_str: str | None) -> int:
@@ -382,9 +387,13 @@ async def dashboard(
 
     # HTMX partial rendering
     if request.headers.get("HX-Request"):
-        return templates.TemplateResponse("_results.html", context)
+        response = templates.TemplateResponse("_results.html", context)
+        response.headers["Vary"] = "HX-Request"
+        return response
 
-    return templates.TemplateResponse("dashboard.html", context)
+    response = templates.TemplateResponse("dashboard.html", context)
+    response.headers["Vary"] = "HX-Request"
+    return response
 
 
 _IMAGE_MEDIA_TYPES: Final = {

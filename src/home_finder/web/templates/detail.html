@@ -35,13 +35,13 @@
     {% set gallery = prop.gallery_images %}
     {% set hero_count = [gallery|length, 5] | min %}
     <div class="hero-gallery">
-        <div class="hero-main">
-            <img src="{{ image_url_map.get(gallery[0].url|string, gallery[0].url) }}" alt="{{ prop.title }}" loading="eager" data-lightbox>
+        <div class="hero-main" tabindex="0" role="button" aria-label="Open photo gallery">
+            <img src="{{ image_url_map.get(gallery[0].url|string, gallery[0].url) }}" alt="{{ prop.title }}" loading="eager" fetchpriority="high" data-lightbox>
         </div>
         {% if gallery|length > 1 %}
         <div class="hero-thumbs">
             {% for img in gallery[1:hero_count] %}
-            <div class="hero-thumb">
+            <div class="hero-thumb" tabindex="0" role="button" aria-label="Open photo {{ loop.index + 1 }} in gallery">
                 <img src="{{ image_url_map.get(img.url|string, img.url) }}" alt="Property photo {{ loop.index + 1 }}" loading="eager" data-lightbox>
                 {% if loop.last and gallery|length > hero_count %}
                 <div class="hero-more-overlay" data-gallery-more="{{ hero_count }}">+{{ gallery|length - hero_count }} more</div>
@@ -406,10 +406,10 @@
         <h3>Viewing Prep</h3>
         {% if vn.check_items %}
         <div class="viewing-checklist-group">
-            <div class="viewing-group-header" onclick="this.nextElementSibling.classList.toggle('open');this.querySelector('.viewing-group-toggle').classList.toggle('expanded')">
+            <button type="button" class="viewing-group-header" aria-expanded="true">
                 <h4>Things to Check</h4>
                 <span class="viewing-group-toggle">&#9660;</span>
-            </div>
+            </button>
             <div class="viewing-group-body open">
                 <ul class="viewing-checklist">
                 {% for item in vn.check_items %}
@@ -421,10 +421,10 @@
         {% endif %}
         {% if vn.questions_for_agent %}
         <div class="viewing-checklist-group">
-            <div class="viewing-group-header" onclick="this.nextElementSibling.classList.toggle('open');this.querySelector('.viewing-group-toggle').classList.toggle('expanded')">
+            <button type="button" class="viewing-group-header" aria-expanded="true">
                 <h4>Ask the Agent</h4>
                 <span class="viewing-group-toggle">&#9660;</span>
-            </div>
+            </button>
             <div class="viewing-group-body open">
                 <ul class="viewing-checklist">
                 {% for q in vn.questions_for_agent %}
@@ -436,10 +436,10 @@
         {% endif %}
         {% if vn.deal_breaker_tests %}
         <div class="viewing-checklist-group">
-            <div class="viewing-group-header" onclick="this.nextElementSibling.classList.toggle('open');this.querySelector('.viewing-group-toggle').classList.toggle('expanded')">
+            <button type="button" class="viewing-group-header" aria-expanded="true">
                 <h4>Quick Tests</h4>
                 <span class="viewing-group-toggle">&#9660;</span>
-            </div>
+            </button>
             <div class="viewing-group-body open">
                 <ul class="viewing-checklist">
                 {% for t in vn.deal_breaker_tests %}

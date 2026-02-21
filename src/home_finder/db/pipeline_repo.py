@@ -29,7 +29,7 @@ class PipelineRepository:
         get_connection: Callable[[], Coroutine[Any, Any, aiosqlite.Connection]],
         get_property_images: Callable[[str], Coroutine[Any, Any, list[PropertyImage]]],
         save_quality_analysis: Callable[
-            [str, PropertyQualityAnalysis], Coroutine[Any, Any, None]
+            ..., Coroutine[Any, Any, None]
         ],
     ) -> None:
         self._get_connection = get_connection
@@ -262,12 +262,15 @@ class PipelineRepository:
         sets notification_status to 'pending'.  Only transitions properties
         that are currently 'pending_analysis'.
 
+        Uses a single commit for both the quality save and the status update
+        to prevent inconsistent state on crash.
+
         Args:
             unique_id: Property unique ID.
             quality_analysis: Analysis result, or None if analysis was skipped.
         """
         if quality_analysis:
-            await self._save_quality_analysis(unique_id, quality_analysis)
+            await self._save_quality_analysis(unique_id, quality_analysis, _commit=False)
 
         conn = await self._get_connection()
         await conn.execute(
@@ -514,12 +517,14 @@ class PipelineRepository:
         """Save updated quality analysis and clear the re-analysis flag.
 
         Does NOT touch notification_status — property stays 'sent'.
+        Uses a single commit for both the quality save and the flag clear
+        to prevent inconsistent state on crash.
 
         Args:
             unique_id: Property unique ID.
             analysis: New quality analysis result.
         """
-        await self._save_quality_analysis(unique_id, analysis)
+        await self._save_quality_analysis(unique_id, analysis, _commit=False)
 
         conn = await self._get_connection()
         await conn.execute(

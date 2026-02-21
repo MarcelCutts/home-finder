@@ -223,6 +223,8 @@ def generate_thumbnail(
     """
     from PIL import Image
 
+    import home_finder.utils.image_processing  # noqa: F401  (sets MAX_IMAGE_PIXELS)
+
     thumb_path = original_path.parent / f"{THUMBNAIL_PREFIX}{original_path.stem}.jpg"
     if thumb_path.is_file():
         return thumb_path

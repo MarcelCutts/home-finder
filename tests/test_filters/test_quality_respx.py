@@ -130,61 +130,61 @@ PHASE1_VISUAL_RESPONSE: dict[str, Any] = {
     },
 }
 
+_PHASE2_EVAL_DATA: dict[str, Any] = {
+    "listing_extraction": {
+        "epc_rating": "C",
+        "service_charge_pcm": None,
+        "deposit_weeks": 5,
+        "bills_included": "no",
+        "pets_allowed": "unknown",
+        "parking": "street",
+        "council_tax_band": "C",
+        "property_type": "victorian",
+        "furnished_status": "furnished",
+        "broadband_type": "fttc",
+    },
+    "viewing_notes": {
+        "check_items": [
+            "Check water pressure in shower",
+            "Inspect sash windows for drafts",
+            "Test broadband speed",
+        ],
+        "questions_for_agent": [
+            "What is the service charge?",
+            "Any planned building works?",
+        ],
+        "deal_breaker_tests": [
+            "Run hot water for 2 minutes",
+            "Check mobile signal in all rooms",
+        ],
+    },
+    "highlights": [
+        "Gas hob",
+        "Modern kitchen",
+        "Excellent natural light",
+        "Private balcony",
+        "Dedicated office room",
+    ],
+    "lowlights": ["No dishwasher"],
+    "one_line": "Bright Victorian conversion with modern kitchen and dedicated office",
+    "value_for_quality": {
+        "rating": "good",
+        "reasoning": "Well-maintained property at fair price for E8 Victorian stock",
+    },
+}
+
 PHASE2_EVALUATION_RESPONSE: dict[str, Any] = {
     "id": "msg_01YGDUEZKgBBDzvnqtvWpZFL",
     "type": "message",
     "role": "assistant",
     "content": [
         {
-            "type": "tool_use",
-            "id": "toolu_01B19r91rw91mr928946mCSR",
-            "name": "property_evaluation",
-            "input": {
-                "listing_extraction": {
-                    "epc_rating": "C",
-                    "service_charge_pcm": None,
-                    "deposit_weeks": 5,
-                    "bills_included": "no",
-                    "pets_allowed": "unknown",
-                    "parking": "street",
-                    "council_tax_band": "C",
-                    "property_type": "victorian",
-                    "furnished_status": "furnished",
-                    "broadband_type": "fttc",
-                },
-                "viewing_notes": {
-                    "check_items": [
-                        "Check water pressure in shower",
-                        "Inspect sash windows for drafts",
-                        "Test broadband speed",
-                    ],
-                    "questions_for_agent": [
-                        "What is the service charge?",
-                        "Any planned building works?",
-                    ],
-                    "deal_breaker_tests": [
-                        "Run hot water for 2 minutes",
-                        "Check mobile signal in all rooms",
-                    ],
-                },
-                "highlights": [
-                    "Gas hob",
-                    "Modern kitchen",
-                    "Excellent natural light",
-                    "Private balcony",
-                    "Dedicated office room",
-                ],
-                "lowlights": ["No dishwasher"],
-                "one_line": "Bright Victorian conversion with modern kitchen and dedicated office",
-                "value_for_quality": {
-                    "rating": "good",
-                    "reasoning": "Well-maintained property at fair price for E8 Victorian stock",
-                },
-            },
+            "type": "text",
+            "text": json.dumps(_PHASE2_EVAL_DATA),
         }
     ],
     "model": "claude-sonnet-4-6",
-    "stop_reason": "tool_use",
+    "stop_reason": "end_turn",
     "usage": {
         "input_tokens": 892,
         "output_tokens": 187,
@@ -402,7 +402,7 @@ class TestTwoPhaseAnalysisViaHTTP:
 
     @respx.mock
     async def test_phase2_request_is_text_only(self, test_merged_property: MergedProperty) -> None:
-        """Phase 2 should send text-only (no images) with forced tool choice."""
+        """Phase 2 should send text-only (no images) with output_config."""
         route = respx.post("https://api.anthropic.com/v1/messages").mock(
             side_effect=[
                 httpx.Response(200, json=PHASE1_VISUAL_RESPONSE),
@@ -425,11 +425,11 @@ class TestTwoPhaseAnalysisViaHTTP:
         assert "<visual_analysis>" in phase2_content
         assert "</visual_analysis>" in phase2_content
 
-        # Forced tool choice for Phase 2
-        assert phase2_body["tool_choice"] == {
-            "type": "tool",
-            "name": "property_evaluation",
-        }
+        # output_config with JSON schema (no tools/tool_choice)
+        assert "output_config" in phase2_body
+        assert phase2_body["output_config"]["format"]["type"] == "json_schema"
+        assert "tools" not in phase2_body
+        assert "tool_choice" not in phase2_body
 
         # No extended thinking in Phase 2
         assert "thinking" not in phase2_body

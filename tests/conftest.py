@@ -343,7 +343,6 @@ def sample_quality_analysis() -> PropertyQualityAnalysis:
         space=SpaceAnalysis(
             living_room_sqm=22.0,
             is_spacious_enough=True,
-            confidence="high",
         ),
         condition_concerns=False,
         value=ValueAnalysis(

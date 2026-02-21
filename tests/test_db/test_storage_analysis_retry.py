@@ -33,7 +33,7 @@ def _make_fallback_analysis() -> PropertyQualityAnalysis:
             feels_spacious=None,
             notes="No images available for analysis",
         ),
-        space=SpaceAnalysis(is_spacious_enough=None, confidence="low"),
+        space=SpaceAnalysis(is_spacious_enough=None),
         condition_concerns=False,
         summary="No images available for quality analysis",
     )

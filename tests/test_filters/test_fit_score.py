@@ -43,7 +43,6 @@ def _full_analysis(**overrides: object) -> dict[str, Any]:
         "space": {
             "living_room_sqm": 20,
             "is_spacious_enough": True,
-            "confidence": "high",
         },
         "bedroom": {
             "primary_is_double": "yes",
@@ -759,9 +758,17 @@ class TestHostingScorer:
         assert result.score == 25
         assert result.confidence == 0.4  # 1 signal
 
-    def test_not_spacious_counts_signal_no_score(self):
+    def test_not_spacious_2bed_gets_partial_bonus(self):
+        """2-bed with is_spacious_enough=False gets partial +15 (preference rule)."""
         analysis = _hosting_analysis(space={"is_spacious_enough": False})
         result = _score_hosting(analysis, 2)
+        assert result.score == 15
+        assert result.confidence == 0.4  # 1 signal
+
+    def test_not_spacious_1bed_no_score(self):
+        """1-bed with is_spacious_enough=False gets 0 points."""
+        analysis = _hosting_analysis(space={"is_spacious_enough": False})
+        result = _score_hosting(analysis, 1)
         assert result.score == 0
         assert result.confidence == 0.4  # 1 signal (counts but no points)
 

@@ -225,7 +225,6 @@ class _VisualAnalysisResponse(BaseModel):
             ),
         )
         is_spacious_enough: bool = Field(description="True if can fit office AND host 8+ people")
-        confidence: Literal["high", "medium", "low"]
         hosting_layout: Literal["excellent", "good", "awkward", "poor", "unknown"] = Field(
             description=(
                 "Layout flow for hosting: excellent = open-plan kitchen/living + accessible "
@@ -546,13 +545,6 @@ VISUAL_ANALYSIS_TOOL: Final[dict[str, Any]] = _build_tool_schema(
     _VisualAnalysisResponse,
     # No strict=True — schema exceeds Anthropic grammar compilation limits
     # (55 properties across 10 nested objects, ~7.8KB)
-)
-
-EVALUATION_TOOL: Final[dict[str, Any]] = _build_tool_schema(
-    "property_evaluation",
-    "Return property evaluation based on visual analysis observations",
-    _EvaluationResponse,
-    strict=True,
 )
 
 
@@ -991,7 +983,6 @@ class PropertyQualityFilter:
             ),
             space=SpaceAnalysis(
                 is_spacious_enough=None,
-                confidence="low",
             ),
             condition_concerns=False,
             value=value,
@@ -1021,6 +1012,7 @@ class PropertyQualityFilter:
         from anthropic import (
             APIConnectionError,
             APIStatusError,
+            AuthenticationError,
             BadRequestError,
             InternalServerError,
             RateLimitError,
@@ -1045,7 +1037,7 @@ class PropertyQualityFilter:
                     }
                 ],
                 "messages": [{"role": "user", "content": content}],
-                "tools": [visual_tool],
+                "tools": [{**visual_tool, "cache_control": {"type": "ephemeral"}}],
             }
 
             if self._enable_extended_thinking:
@@ -1111,6 +1103,16 @@ class PropertyQualityFilter:
                 )
             return None
 
+        except AuthenticationError as e:
+            self._record_api_failure()
+            logger.critical(
+                "authentication_error",
+                property_id=property_id,
+                phase="visual",
+                error=str(e),
+            )
+            raise APIUnavailableError(f"Authentication failed: {e}") from e
+
         except (RateLimitError, InternalServerError, APIConnectionError) as e:
             self._record_api_failure()
             if isinstance(e, RateLimitError):
@@ -1169,7 +1171,11 @@ class PropertyQualityFilter:
         energy_estimate: float | None,
         hosting_tolerance: str | None,
     ) -> dict[str, Any]:
-        """Run Phase 2 evaluation API call.
+        """Run Phase 2 evaluation API call using structured JSON output.
+
+        Uses the SDK's ``messages.parse()`` with ``output_format`` for
+        guaranteed schema-valid JSON output.  Phase 2 is text-only (no
+        images, no thinking), making it ideal for JSON output mode.
 
         Args:
             visual_data: Phase 1 visual analysis output.
@@ -1189,7 +1195,9 @@ class PropertyQualityFilter:
         Returns:
             Evaluation data dict (empty if Phase 2 failed).
         """
-        from anthropic.types import ToolParam, ToolUseBlock
+        if self._is_circuit_open():
+            logger.info("circuit_breaker_open_skipping_evaluation", property_id=property_id)
+            return {}
 
         client = self._get_client()
 
@@ -1212,10 +1220,15 @@ class PropertyQualityFilter:
                         f"{profile['summary']}"
                     )
 
+        from anthropic import (
+            APIConnectionError,
+            AuthenticationError,
+            InternalServerError,
+            RateLimitError,
+        )
+
         eval_data: dict[str, Any] = {}
         try:
-            eval_tool: ToolParam = EVALUATION_TOOL  # type: ignore[assignment]
-
             eval_prompt = build_evaluation_prompt(
                 visual_data=visual_data,
                 description=description,
@@ -1232,7 +1245,7 @@ class PropertyQualityFilter:
                 acoustic_context=acoustic_context,
             )
 
-            eval_response = await client.messages.create(
+            eval_response = await client.messages.parse(
                 model="claude-sonnet-4-6",
                 max_tokens=4096,
                 system=[
@@ -1243,23 +1256,38 @@ class PropertyQualityFilter:
                     }
                 ],
                 messages=[{"role": "user", "content": eval_prompt}],
-                tools=[eval_tool],
-                tool_choice={"type": "tool", "name": "property_evaluation"},
+                output_format=_EvaluationResponse,
             )
 
-            eval_block = next(
-                (block for block in eval_response.content if isinstance(block, ToolUseBlock)),
-                None,
-            )
-            if eval_block:
-                eval_data = eval_block.input
+            if eval_response.parsed_output:
+                eval_data = eval_response.parsed_output.model_dump()
+                self._record_api_success()
             else:
                 logger.warning(
-                    "no_tool_use_in_response",
+                    "no_parsed_output_in_response",
                     property_id=property_id,
                     phase="evaluation",
                     stop_reason=eval_response.stop_reason,
                 )
+
+        except AuthenticationError as e:
+            self._record_api_failure()
+            logger.critical(
+                "authentication_error",
+                property_id=property_id,
+                phase="evaluation",
+                error=str(e),
+            )
+
+        except (RateLimitError, InternalServerError, APIConnectionError) as e:
+            self._record_api_failure()
+            logger.warning(
+                "evaluation_phase_api_unavailable",
+                property_id=property_id,
+                error=str(e),
+                error_type=type(e).__name__,
+                exc_info=True,
+            )
 
         except Exception as e:
             logger.warning(
@@ -1336,17 +1364,6 @@ class PropertyQualityFilter:
                 exc_info=True,
             )
             return None
-
-        # For 2+ bed properties, override space assessment
-        # (office can go in spare room)
-        if bedrooms >= 2 and not analysis.space.is_spacious_enough:
-            analysis = analysis.model_copy(
-                update={
-                    "space": analysis.space.model_copy(
-                        update={"is_spacious_enough": True, "confidence": "high"},
-                    ),
-                },
-            )
 
         return analysis
 

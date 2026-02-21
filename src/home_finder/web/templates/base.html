@@ -30,13 +30,16 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap">
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css">
-    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
-    <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css">
-    <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css">
-    <link rel="stylesheet" href="/static/style.css">
+    <style>@import url("https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css") layer(framework);</style>
+    <style>
+    @import url("https://unpkg.com/leaflet@1.9.4/dist/leaflet.css") layer(framework);
+    @import url("https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css") layer(framework);
+    @import url("https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css") layer(framework);
+    </style>
+    <link rel="stylesheet" href="/static/style.css?v={{ static_version }}">
 </head>
 <body>
+    <a href="#main-content" class="skip-link">Skip to content</a>
     <nav class="container-fluid">
         <ul>
             <li><a href="/" class="nav-logo">
@@ -52,7 +55,7 @@
         </ul>
     </nav>
 
-    <main class="container-fluid">
+    <main class="container-fluid" id="main-content">
         {% block content %}{% endblock %}
     </main>
 
@@ -60,9 +63,9 @@
         <small>I hate moving.</small>
     </footer>
 
-    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-    <script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
-    <script src="https://unpkg.com/htmx.org@2.0.4/dist/htmx.min.js"></script>
-    <script src="/static/app.js"></script>
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha384-cxOPjt7s7Iz04uaHJceBmS+qpjv2JkIHNVcuOrM+YHwZOmJGBXI00mdUXEq65HTH" crossorigin="anonymous"></script>
+    <script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js" integrity="sha384-eXVCORTRlv4FUUgS/xmOyr66XBVraen8ATNLMESp92FKXLAMiKkerixTiBvXriZr" crossorigin="anonymous"></script>
+    <script src="https://unpkg.com/htmx.org@2.0.4/dist/htmx.min.js" integrity="sha384-HGfztofotfshcF7+8n44JQL2oJmowVChPTg48S+jvZoztPfvwD79OC/LTtG6dMp+" crossorigin="anonymous"></script>
+    <script src="/static/app.js?v={{ static_version }}"></script>
 </body>
 </html>

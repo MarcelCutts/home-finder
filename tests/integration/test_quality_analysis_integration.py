@@ -149,15 +149,27 @@ def _create_mock_response(
     return mock_response
 
 
-def _make_two_phase_mock() -> AsyncMock:
-    """Create mock that returns Phase 1 then Phase 2 responses."""
+def _create_mock_parsed_response(eval_data: dict[str, Any]) -> MagicMock:
+    """Create a mock ParsedMessage for Phase 2 (messages.parse)."""
+    mock_response = MagicMock()
+    mock_parsed = MagicMock()
+    mock_parsed.model_dump.return_value = eval_data
+    mock_response.parsed_output = mock_parsed
+    mock_response.stop_reason = "end_turn"
+    mock_response.usage = MagicMock()
+    mock_response.usage.cache_read_input_tokens = 0
+    mock_response.usage.cache_creation_input_tokens = 0
+    return mock_response
+
+
+def _setup_two_phase_mocks(client_mock: MagicMock) -> None:
+    """Set up Phase 1 (messages.create) and Phase 2 (messages.parse) mocks."""
     mock_visual = _create_mock_response(
         _sample_visual_response(), tool_name="property_visual_analysis"
     )
-    mock_eval = _create_mock_response(
-        _sample_evaluation_response(), tool_name="property_evaluation"
-    )
-    return AsyncMock(side_effect=[mock_visual, mock_eval])
+    client_mock.messages.create = AsyncMock(return_value=mock_visual)
+    mock_eval = _create_mock_parsed_response(_sample_evaluation_response())
+    client_mock.messages.parse = AsyncMock(return_value=mock_eval)
 
 
 # Standard images/floorplan shared across tests that need enriched MergedProperty
@@ -198,7 +210,7 @@ class TestQualityAnalysisIntegration:
 
         quality_filter = PropertyQualityFilter(api_key="test-key")
         quality_filter._client = MagicMock()
-        quality_filter._client.messages.create = _make_two_phase_mock()
+        _setup_two_phase_mocks(quality_filter._client)
 
         results = await quality_filter.analyze_merged_properties([merged])
 
@@ -236,7 +248,7 @@ class TestQualityAnalysisIntegration:
 
         quality_filter = PropertyQualityFilter(api_key="test-key")
         quality_filter._client = MagicMock()
-        quality_filter._client.messages.create = _make_two_phase_mock()
+        _setup_two_phase_mocks(quality_filter._client)
 
         results = await quality_filter.analyze_merged_properties([merged])
         _, analysis = results[0]
@@ -268,7 +280,7 @@ class TestQualityAnalysisIntegration:
 
         quality_filter = PropertyQualityFilter(api_key="test-key")
         quality_filter._client = MagicMock()
-        quality_filter._client.messages.create = _make_two_phase_mock()
+        _setup_two_phase_mocks(quality_filter._client)
 
         results = await quality_filter.analyze_merged_properties([merged])
         _, analysis = results[0]
@@ -300,20 +312,19 @@ class TestQualityAnalysisIntegration:
         visual_data["space"]["living_room_sqm"] = 15
 
         mock_visual = _create_mock_response(visual_data, tool_name="property_visual_analysis")
-        mock_eval = _create_mock_response(
-            _sample_evaluation_response(), tool_name="property_evaluation"
-        )
 
         quality_filter = PropertyQualityFilter(api_key="test-key")
         quality_filter._client = MagicMock()
-        quality_filter._client.messages.create = AsyncMock(side_effect=[mock_visual, mock_eval])
+        quality_filter._client.messages.create = AsyncMock(return_value=mock_visual)
+        quality_filter._client.messages.parse = AsyncMock(
+            return_value=_create_mock_parsed_response(_sample_evaluation_response())
+        )
 
         results = await quality_filter.analyze_merged_properties([merged])
         _, analysis = results[0]
 
-        # Override: 2-bed means spare room for office
-        assert analysis.space.is_spacious_enough is True
-        assert analysis.space.confidence == "high"
+        # Raw assessment preserved — 2-bed preference now handled in fit_score
+        assert analysis.space.is_spacious_enough is not None
 
     async def test_no_images_skips_api_call(
         self, make_merged_property: Callable[..., MergedProperty]
@@ -372,7 +383,7 @@ class TestQualityAnalysisIntegration:
 
         quality_filter = PropertyQualityFilter(api_key="test-key")
         quality_filter._client = MagicMock()
-        quality_filter._client.messages.create = _make_two_phase_mock()
+        _setup_two_phase_mocks(quality_filter._client)
 
         results = await quality_filter.analyze_merged_properties(
             [merged], data_dir=data_dir
@@ -406,8 +417,9 @@ class TestQualityAnalysisIntegration:
 
         quality_filter = PropertyQualityFilter(api_key="test-key")
         quality_filter._client = MagicMock()
-        quality_filter._client.messages.create = AsyncMock(
-            side_effect=[mock_visual, Exception("Phase 2 timeout")]
+        quality_filter._client.messages.create = AsyncMock(return_value=mock_visual)
+        quality_filter._client.messages.parse = AsyncMock(
+            side_effect=Exception("Phase 2 timeout")
         )
 
         results = await quality_filter.analyze_merged_properties([merged])

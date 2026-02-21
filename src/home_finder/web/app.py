@@ -107,6 +107,17 @@ async def _register_telegram_webhook(settings: Settings) -> None:
         logger.warning("telegram_webhook_registration_failed", exc_info=True)
 
 
+def _compute_static_version() -> str:
+    """Return a cache-busting version string from the mtime of static assets."""
+    static_dir = WEB_DIR / "static"
+    mtime = 0.0
+    for name in ("app.js", "style.css"):
+        path = static_dir / name
+        if path.exists():
+            mtime = max(mtime, path.stat().st_mtime)
+    return str(int(mtime))
+
+
 def create_app(settings: Settings | None = None, *, run_pipeline: bool = True) -> FastAPI:
     """Create the FastAPI application.
 

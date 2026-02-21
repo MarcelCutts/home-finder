@@ -451,13 +451,22 @@ async def enrich_merged_properties(
 
     semaphore = asyncio.Semaphore(_ENRICHMENT_CONCURRENCY)
     tasks = [_enrich_single(merged, detail_fetcher, semaphore, data_dir) for merged in to_enrich]
-    enriched_list = list(await asyncio.gather(*tasks))
+    enriched_list = list(await asyncio.gather(*tasks, return_exceptions=True))
 
-    for merged in enriched_list:
-        if merged.images or merged.floorplan:
-            result.enriched.append(merged)
+    for i, item in enumerate(enriched_list):
+        if isinstance(item, BaseException):
+            logger.warning(
+                "enrichment_task_failed",
+                property_id=to_enrich[i].unique_id,
+                error=str(item),
+                error_type=type(item).__name__,
+                exc_info=item,
+            )
+            result.failed.append(to_enrich[i])
+        elif item.images or item.floorplan:
+            result.enriched.append(item)
         else:
-            result.failed.append(merged)
+            result.failed.append(item)
 
     return result
 

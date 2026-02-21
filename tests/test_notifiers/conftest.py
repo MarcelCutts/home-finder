@@ -85,7 +85,7 @@ def sample_quality_analysis() -> PropertyQualityAnalysis:
         ),
         condition=ConditionAnalysis(overall_condition="good", confidence="high"),
         light_space=LightSpaceAnalysis(natural_light="good", feels_spacious=True, notes="Bright"),
-        space=SpaceAnalysis(living_room_sqm=20.0, is_spacious_enough=True, confidence="high"),
+        space=SpaceAnalysis(living_room_sqm=20.0, is_spacious_enough=True),
         condition_concerns=False,
         value=ValueAnalysis(
             area_average=2200,

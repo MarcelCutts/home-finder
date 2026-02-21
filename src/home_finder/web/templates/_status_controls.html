@@ -26,6 +26,7 @@
                     hx-vals='{"status": "{{ s }}"}'
                     hx-target="closest .status-selector-wrap"
                     hx-swap="innerHTML"
+                    hx-disabled-elt="this"
                     {% if s == current_status %}disabled{% endif %}>
                 <span class="status-option-dot"></span>
                 {{ status_meta[s].label }}

@@ -58,6 +58,7 @@ _QUALITY_FIELD_DEFAULTS: dict[str, Any] = {
     "one_line": None,
     "property_type": None,
     "epc_rating": None,
+    "living_room_sqm": None,
 }
 
 
@@ -99,6 +100,9 @@ def _row_to_card_dict(row: aiosqlite.Row) -> PropertyListItem:
     listing_ext = analysis.get("listing_extraction") or {}
     prop_dict["property_type"] = listing_ext.get("property_type")
     prop_dict["epc_rating"] = listing_ext.get("epc_rating")
+
+    space = analysis.get("space") or {}
+    prop_dict["living_room_sqm"] = space.get("living_room_sqm")
 
     return cast(PropertyListItem, prop_dict)
 
@@ -203,6 +207,11 @@ def build_filter_clauses(
             "json_extract(q.analysis_json, '$.listing_extraction.broadband_type') = ?"
         )
         params.append(filters.broadband_type)
+    if filters.min_living_room_sqm is not None:
+        where_clauses.append(
+            "CAST(json_extract(q.analysis_json, '$.space.living_room_sqm') AS REAL) >= ?"
+        )
+        params.append(filters.min_living_room_sqm)
     if filters.tags:
         for t in filters.tags:
             where_clauses.append(

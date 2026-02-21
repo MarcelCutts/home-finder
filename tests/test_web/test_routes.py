@@ -172,7 +172,7 @@ def base_analysis() -> PropertyQualityAnalysis:
         kitchen=KitchenAnalysis(overall_quality="modern", hob_type="gas", has_dishwasher="yes"),
         condition=ConditionAnalysis(overall_condition="good", confidence="high"),
         light_space=LightSpaceAnalysis(natural_light="good", feels_spacious=True),
-        space=SpaceAnalysis(living_room_sqm=18.0, is_spacious_enough=True, confidence="high"),
+        space=SpaceAnalysis(living_room_sqm=18.0, is_spacious_enough=True),
         overall_rating=4,
         summary="Nice place.",
     )
@@ -1314,7 +1314,7 @@ class TestNewFilters:
     ) -> None:
         analysis = base_analysis.model_copy(
             update={
-                "space": SpaceAnalysis(confidence="high", hosting_layout="excellent"),
+                "space": SpaceAnalysis(hosting_layout="excellent"),
             }
         )
         await storage.save_merged_property(merged_a)
