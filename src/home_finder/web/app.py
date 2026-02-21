@@ -3,6 +3,7 @@
 import asyncio
 import contextlib
 import random
+import secrets
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -33,13 +34,15 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
     """Add security headers to all responses."""
 
     async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
+        nonce = secrets.token_urlsafe(16)
+        request.state.csp_nonce = nonce
         response = await call_next(request)
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["X-Frame-Options"] = "DENY"
         response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
         response.headers["Content-Security-Policy"] = (
             "default-src 'self'; "
-            "script-src 'self' 'unsafe-inline' https://unpkg.com; "
+            f"script-src 'self' 'nonce-{nonce}' https://unpkg.com; "
             "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net "
             "https://unpkg.com https://fonts.googleapis.com; "
             "font-src https://fonts.gstatic.com; "
@@ -51,6 +54,8 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
             "connect-src 'self'; "
             "frame-ancestors 'none'"
         )
+        if request.url.path.startswith("/static/"):
+            response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
         return response
 
 
@@ -111,9 +116,12 @@ def _compute_static_version() -> str:
     """Return a cache-busting version string from the mtime of static assets."""
     static_dir = WEB_DIR / "static"
     mtime = 0.0
-    for name in ("app.js", "style.css"):
-        path = static_dir / name
-        if path.exists():
+    css_path = static_dir / "style.css"
+    if css_path.exists():
+        mtime = max(mtime, css_path.stat().st_mtime)
+    modules_dir = static_dir / "modules"
+    if modules_dir.is_dir():
+        for path in modules_dir.glob("*.js"):
             mtime = max(mtime, path.stat().st_mtime)
     return str(int(mtime))
 

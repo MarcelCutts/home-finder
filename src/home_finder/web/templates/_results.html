@@ -55,8 +55,4 @@
 </div>
 {% endif %}
 
-<script>
-if (typeof window._updateMapData === "function") {
-    window._updateMapData({{ properties_json | json_script_safe | safe }});
-}
-</script>
+<script type="application/json" id="properties-map-data">{{ properties_json | json_script_safe | safe }}</script>

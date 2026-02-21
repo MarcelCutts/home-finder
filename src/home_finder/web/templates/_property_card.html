@@ -42,9 +42,9 @@
             <div class="card-meta">
                 <div class="card-meta-left">
                     {% set rating = prop.quality_rating or 0 %}
-                    <span class="quality-dots quality-dots-{{ rating }}">
-                        {{ rating }}/5
-                        {% for i in range(1, 6) %}{% if i <= rating %}<span class="dot filled">&#9679;</span>{% else %}<span class="dot empty">&#9679;</span>{% endif %}{% endfor %}
+                    <span class="quality-dots quality-dots-{{ rating }}" role="img" aria-label="Rating: {{ rating }} out of 5">
+                        <span aria-hidden="true">{{ rating }}/5</span>
+                        {% for i in range(1, 6) %}{% if i <= rating %}<span class="dot filled" aria-hidden="true">&#9679;</span>{% else %}<span class="dot empty" aria-hidden="true">&#9679;</span>{% endif %}{% endfor %}
                     </span>
                     {% if prop.postcode %}
                     <span class="card-postcode">{{ prop.postcode }}</span>
@@ -134,7 +134,8 @@
                 hx-patch="/property/{{ prop.unique_id }}/status"
                 hx-vals='{"status": "interested", "source": "card"}'
                 hx-target="closest article"
-                hx-swap="outerHTML"
+                hx-swap="morph:outerHTML"
+                hx-target-4*="#error-toast"
                 hx-disabled-elt="this"
                 title="Interested">
             &#9733;
@@ -143,7 +144,8 @@
                 hx-patch="/property/{{ prop.unique_id }}/status"
                 hx-vals='{"status": "archived", "source": "card"}'
                 hx-target="closest article"
-                hx-swap="outerHTML"
+                hx-swap="morph:outerHTML"
+                hx-target-4*="#error-toast"
                 hx-disabled-elt="this"
                 title="Skip">
             &#10005;

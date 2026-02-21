@@ -3,6 +3,7 @@
 import json
 import math
 from datetime import UTC, datetime
+from html import escape as html_escape
 from pathlib import Path
 from typing import Annotated, Any, Final, cast
 
@@ -722,10 +723,20 @@ async def update_property_status(
     try:
         new_status = UserStatus(status_value)
     except ValueError:
+        if request.headers.get("HX-Request"):
+            return HTMLResponse(
+                f'<p class="toast-message">Invalid status: {html_escape(status_value)}</p>',
+                status_code=400,
+            )
         return JSONResponse({"error": f"Invalid status: {status_value}"}, status_code=400)
 
     prev = await storage.update_user_status(unique_id, new_status)
     if prev is None:
+        if request.headers.get("HX-Request"):
+            return HTMLResponse(
+                '<p class="toast-message">Property not found</p>',
+                status_code=404,
+            )
         return JSONResponse({"error": "Property not found"}, status_code=404)
 
     # Card-level swap: return full card partial (same as /property/{id}/card)

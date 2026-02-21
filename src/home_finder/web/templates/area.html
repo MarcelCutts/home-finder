@@ -115,12 +115,8 @@
     </section>
 </article>
 
-{% if highlight %}
-<script>
-document.addEventListener('DOMContentLoaded', function() {
-    var el = document.getElementById('highlighted');
-    if (el) el.scrollIntoView({behavior: 'smooth', block: 'center'});
-});
-</script>
-{% endif %}
+{% endblock %}
+
+{% block page_scripts %}
+<script type="module" src="/static/modules/sections.js?v={{ static_version }}"></script>
 {% endblock %}

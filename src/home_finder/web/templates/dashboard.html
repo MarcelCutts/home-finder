@@ -11,19 +11,29 @@
 
 <section class="filter-bar">
     <form class="filter-form" method="GET" action="/"
-          hx-get="/" hx-target="#results" hx-push-url="true" hx-indicator="#loading" hx-sync="this:abort">
+          hx-get="/" hx-target="#results" hx-push-url="true" hx-indicator="#loading" hx-sync="this:abort"
+          hx-target-4*="#error-toast" hx-target-5*="#error-toast">
         <div class="filter-row">
             <div class="filter-controls" role="group">
-                <fieldset class="beds-toggle" aria-label="Bedrooms">
-                    {% for val, label in [("", "Any"), ("0", "Studio"), ("1", "1"), ("2", "2")] %}
-                    <input type="radio" name="bedrooms" id="beds-{{ val or 'any' }}" value="{{ val }}"
-                           class="sr-only" {% if (val == "" and bedrooms is none) or (val != "" and bedrooms is not none and bedrooms == val|int) %}checked{% endif %}>
-                    <label for="beds-{{ val or 'any' }}">{{ label }}</label>
-                    {% endfor %}
-                </fieldset>
+                <div id="primary-filters" class="primary-filters">
+                    <fieldset class="beds-toggle" aria-label="Bedrooms">
+                        {% for val, label in [("", "Any"), ("0", "Studio"), ("1", "1"), ("2", "2")] %}
+                        <input type="radio" name="bedrooms" id="beds-{{ val or 'any' }}" value="{{ val }}"
+                               class="sr-only" {% if (val == "" and bedrooms is none) or (val != "" and bedrooms is not none and bedrooms == val|int) %}checked{% endif %}>
+                        <label for="beds-{{ val or 'any' }}">{{ label }}</label>
+                        {% endfor %}
+                    </fieldset>
 
-                <input type="number" name="min_price" placeholder="Min price" value="{{ min_price or '' }}" aria-label="Min price" step="50" class="desktop-only">
-                <input type="number" name="max_price" placeholder="Max price" value="{{ max_price or '' }}" aria-label="Max price" step="50" class="desktop-only">
+                    <input type="number" name="min_price" placeholder="Min price" value="{{ min_price or '' }}" aria-label="Min price" step="50">
+                    <input type="number" name="max_price" placeholder="Max price" value="{{ max_price or '' }}" aria-label="Max price" step="50">
+
+                    <select name="min_rating" aria-label="Min rating">
+                        <option value="">Any rating</option>
+                        {% for r in [3, 4, 5] %}
+                        <option value="{{ r }}" {% if min_rating == r %}selected{% endif %}>{{ r }}+ stars</option>
+                        {% endfor %}
+                    </select>
+                </div>
 
                 <select name="area" aria-label="Area">
                     <option value="">All areas</option>
@@ -36,13 +46,6 @@
                     <option value="">All time</option>
                     {% for val, label, _days in added_options %}
                     <option value="{{ val }}" {% if added == val %}selected{% endif %}>{{ label }}</option>
-                    {% endfor %}
-                </select>
-
-                <select name="min_rating" aria-label="Min rating" class="desktop-only">
-                    <option value="">Any rating</option>
-                    {% for r in [3, 4, 5] %}
-                    <option value="{{ r }}" {% if min_rating == r %}selected{% endif %}>{{ r }}+ stars</option>
                     {% endfor %}
                 </select>
 
@@ -128,25 +131,7 @@
                 <h2>Filters</h2>
             </header>
             <div class="filter-modal-body">
-                <div class="mobile-primary-section">
-                    <fieldset class="beds-toggle" aria-label="Bedrooms (mobile)">
-                        {% for val, label in [("", "Any"), ("0", "Studio"), ("1", "1"), ("2", "2")] %}
-                        <input type="radio" name="bedrooms_mobile" id="beds-m-{{ val or 'any' }}" value="{{ val }}"
-                               class="sr-only" {% if (val == "" and bedrooms is none) or (val != "" and bedrooms is not none and bedrooms == val|int) %}checked{% endif %} disabled>
-                        <label for="beds-m-{{ val or 'any' }}">{{ label }}</label>
-                        {% endfor %}
-                    </fieldset>
-                    <div class="mobile-price-row">
-                        <input type="number" name="min_price_mobile" placeholder="Min price" value="{{ min_price or '' }}" aria-label="Min price" step="50" disabled>
-                        <input type="number" name="max_price_mobile" placeholder="Max price" value="{{ max_price or '' }}" aria-label="Max price" step="50" disabled>
-                    </div>
-                    <select name="min_rating_mobile" aria-label="Min rating" disabled>
-                        <option value="">Any rating</option>
-                        {% for r in [3, 4, 5] %}
-                        <option value="{{ r }}" {% if min_rating == r %}selected{% endif %}>{{ r }}+ stars</option>
-                        {% endfor %}
-                    </select>
-                </div>
+                <div id="dialog-primary-slot" class="dialog-primary-slot"></div>
 
                 <fieldset class="filter-group">
                     <legend><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg> Workspace</legend>
@@ -281,12 +266,16 @@
     </form>
 </section>
 
-<script>var propertiesMapData = {{ properties_json | json_script_safe | safe }};</script>
-
 <div id="split-container" class="split-container">
     <div id="results" role="region" aria-label="Property results" aria-busy="false">
         {% include "_results.html" %}
     </div>
     <div id="dashboard-map" hx-preserve hidden></div>
 </div>
+{% endblock %}
+
+{% block page_scripts %}
+<script type="module" src="/static/modules/filters.js?v={{ static_version }}"></script>
+<script type="module" src="/static/modules/map-dashboard.js?v={{ static_version }}"></script>
+<script type="module" src="/static/modules/status.js?v={{ static_version }}"></script>
 {% endblock %}

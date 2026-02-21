@@ -418,26 +418,26 @@ nav.container-fluid li {
     border-color: rgba(239, 68, 68, 0.3);
 }
 
-/* Mobile primary section inside modal (hidden on desktop) */
-.mobile-primary-section {
+/* Primary filters: display:contents on desktop so children participate in parent flex */
+.primary-filters {
+    display: contents;
+}
+/* Dialog primary slot: hidden when empty, styled when populated */
+.dialog-primary-slot:empty {
     display: none;
 }
-.mobile-price-row {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 0.5rem;
+.dialog-primary-slot .primary-filters {
+    display: flex;
+    flex-direction: column;
+    gap: 0.65rem;
+    padding-bottom: 1rem;
+    border-bottom: 1px solid var(--border);
 }
-.mobile-primary-section select,
-.mobile-primary-section input[type="number"] {
-    margin-bottom: 0;
-    height: 2.25rem;
-    font-size: 0.82rem;
-}
-.mobile-primary-section .beds-toggle {
+.dialog-primary-slot .primary-filters .beds-toggle {
     width: 100%;
     justify-content: stretch;
 }
-.mobile-primary-section .beds-toggle label {
+.dialog-primary-slot .primary-filters .beds-toggle label {
     flex: 1;
     text-align: center;
 }
@@ -613,6 +613,11 @@ nav.container-fluid li {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
     gap: 1rem;
+    container-type: inline-size;
+}
+@container (max-width: 400px) {
+    .highlight-chip { display: none; }
+    .card-summary { font-size: 0.75rem; -webkit-line-clamp: 1; }
 }
 
 /* ===== Card entrance animation ===== */
@@ -620,6 +625,8 @@ nav.container-fluid li {
     animation: cardFadeIn 0.4s ease-out both;
     animation-delay: calc(var(--card-index, 0) * 50ms);
     display: flex;
+    content-visibility: auto;
+    contain-intrinsic-size: auto 380px;
 }
 @keyframes cardFadeIn {
     from {
@@ -1511,18 +1518,23 @@ nav.container-fluid li {
     border-radius: 6px;
 }
 
-/* ===== Gallery View (full-page overlay) ===== */
+/* ===== Gallery View (<dialog> overlay) ===== */
 .gallery-view {
-    position: fixed;
-    inset: 0;
+    border: none;
+    padding: 0;
+    max-width: 100vw;
+    max-height: 100vh;
+    width: 100%;
+    height: 100%;
     background: rgba(0, 0, 0, 0.94);
-    backdrop-filter: blur(20px);
-    -webkit-backdrop-filter: blur(20px);
-    z-index: 9999;
     display: flex;
     flex-direction: column;
 }
-.gallery-view[hidden] { display: none; }
+.gallery-view::backdrop {
+    background: rgba(0, 0, 0, 0.5);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+}
 
 /* Top bar */
 .gallery-topbar {
@@ -1590,6 +1602,7 @@ nav.container-fluid li {
     position: relative;
     min-height: 0;
     padding: 0 3.5rem;
+    touch-action: pan-y;
 }
 .gallery-img-wrap {
     position: relative;
@@ -3065,16 +3078,6 @@ nav.container-fluid li {
     .card-grid {
         grid-template-columns: 1fr;
     }
-    .desktop-only {
-        display: none;
-    }
-    .mobile-primary-section {
-        display: flex;
-        flex-direction: column;
-        gap: 0.65rem;
-        padding-bottom: 1rem;
-        border-bottom: 1px solid var(--border);
-    }
     .filter-modal {
         max-width: 100vw;
         width: 100vw;
@@ -3793,6 +3796,28 @@ nav.container-fluid li {
     .pinned-card {
         animation: none;
     }
+}
+
+/* ===== Error toast ===== */
+.error-toast {
+  position: fixed;
+  bottom: 1.5rem;
+  right: 1.5rem;
+  z-index: 9999;
+  max-width: 360px;
+}
+.error-toast:empty { display: none; }
+.toast-message {
+  background: var(--pico-del-color, #e53e3e);
+  color: #fff;
+  padding: 0.75rem 1rem;
+  border-radius: 8px;
+  font-size: 0.875rem;
+  animation: toast-in 0.3s ease;
+}
+@keyframes toast-in {
+  from { opacity: 0; transform: translateY(10px); }
+  to   { opacity: 1; transform: translateY(0); }
 }
 
 /* ===== High contrast ===== */

@@ -25,7 +25,8 @@
                     hx-patch="/property/{{ unique_id }}/status"
                     hx-vals='{"status": "{{ s }}"}'
                     hx-target="closest .status-selector-wrap"
-                    hx-swap="innerHTML"
+                    hx-swap="morph:innerHTML"
+                    hx-target-4*="#error-toast"
                     hx-disabled-elt="this"
                     {% if s == current_status %}disabled{% endif %}>
                 <span class="status-option-dot"></span>

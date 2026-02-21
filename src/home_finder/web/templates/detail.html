@@ -93,12 +93,12 @@
                     {% include "_status_controls.html" %}
                 </div>
                 {% if prop.quality_rating %}
-                <span class="star-rating">
+                <span class="star-rating" role="img" aria-label="Rating: {{ prop.quality_rating }} out of 5 stars">
                     {% for i in range(1, 6) %}
                         {% if i <= prop.quality_rating %}
-                            <span class="star filled">&#9733;</span>
+                            <span class="star filled" aria-hidden="true">&#9733;</span>
                         {% else %}
-                            <span class="star empty">&#9734;</span>
+                            <span class="star empty" aria-hidden="true">&#9734;</span>
                         {% endif %}
                     {% endfor %}
                 </span>
@@ -473,7 +473,7 @@
         <h3>Description</h3>
         <div class="description-container">
             <div class="description-text" id="description-text">{{ best_description | e | replace("\n", "<br>") | safe }}</div>
-            <button class="description-toggle" id="description-toggle" hidden>Read more</button>
+            <button class="description-toggle" id="description-toggle" hidden aria-expanded="false">Read more</button>
         </div>
     </section>
     {% endif %}
@@ -546,7 +546,7 @@
 
 {# Gallery view overlay #}
 {% if prop.gallery_images or prop.floorplan_images %}
-<div id="gallery-view" class="gallery-view" role="dialog" aria-modal="true" aria-label="Property gallery" hidden>
+<dialog id="gallery-view" class="gallery-view" aria-label="Property gallery">
     <div class="gallery-topbar">
         <button class="gallery-close" aria-label="Close gallery">&times;</button>
         {% set gallery_images = prop.gallery_images or [] %}
@@ -602,6 +602,13 @@
         </div>
     </div>
     {% endif %}
-</div>
+</dialog>
 {% endif %}
+{% endblock %}
+
+{% block page_scripts %}
+<script type="module" src="/static/modules/gallery.js?v={{ static_version }}"></script>
+<script type="module" src="/static/modules/map-detail.js?v={{ static_version }}"></script>
+<script type="module" src="/static/modules/sections.js?v={{ static_version }}"></script>
+<script type="module" src="/static/modules/status.js?v={{ static_version }}"></script>
 {% endblock %}

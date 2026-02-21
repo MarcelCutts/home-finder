@@ -88,6 +88,30 @@ class TestSecurityHeaders:
         assert "default-src 'self'" in csp
         assert "script-src" in csp
         assert "frame-ancestors 'none'" in csp
+        # Verify unsafe-inline removed from script-src
+        script_src = csp.split("script-src")[1].split(";")[0]
+        assert "'unsafe-inline'" not in script_src
+        assert "'nonce-" in script_src
+
+    def test_csp_nonce_unique_per_request(self, settings: Settings) -> None:
+        import re
+
+        from fastapi.testclient import TestClient
+
+        test_app = FastAPI()
+        test_app.add_middleware(SecurityHeadersMiddleware)
+        mock_storage = AsyncMock()
+        mock_storage.get_last_pipeline_run.return_value = None
+        test_app.state.storage = mock_storage
+        test_app.state.settings = settings
+        test_app.include_router(router)
+
+        client = TestClient(test_app)
+        resp1 = client.get("/health")
+        resp2 = client.get("/health")
+        nonce1 = re.search(r"'nonce-([^']+)'", resp1.headers["Content-Security-Policy"]).group(1)
+        nonce2 = re.search(r"'nonce-([^']+)'", resp2.headers["Content-Security-Policy"]).group(1)
+        assert nonce1 != nonce2
 
 
 class TestPipelineConfig:
