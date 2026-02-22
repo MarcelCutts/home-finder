@@ -8,9 +8,9 @@ import random
 import sys
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from typing import Final
 
 import httpx
+import structlog
 
 from home_finder.config import Settings
 from home_finder.db import PropertyStorage
@@ -68,7 +68,19 @@ def _source_counts(properties: list[Property] | list[MergedProperty]) -> dict[st
     return counts
 
 
-_QUALITY_CONCURRENCY: Final = 15
+async def _persist_estimated_floor_area(
+    merged: MergedProperty,
+    quality_analysis: PropertyQualityAnalysis | None,
+    storage: PropertyStorage,
+) -> None:
+    """Persist Claude's floor area estimate if no scraped value exists."""
+    if merged.floor_area_sqft is not None or quality_analysis is None:
+        return
+    space = quality_analysis.space
+    if space and space.total_area_sqm and space.total_area_sqm > 0:
+        sqft = round(space.total_area_sqm / SQM_PER_SQFT)
+        if 100 <= sqft <= 5000:
+            await storage.update_floor_area(merged.unique_id, sqft, "estimated")
 
 
 async def scrape_all_platforms(
@@ -165,7 +177,7 @@ async def scrape_all_platforms(
                     remaining = (
                         max_per_scraper - scraper_count if max_per_scraper is not None else None
                     )
-                    properties = await scraper.scrape(
+                    result = await scraper.scrape(
                         min_price=min_price,
                         max_price=max_price,
                         min_bedrooms=min_bedrooms,
@@ -177,6 +189,18 @@ async def scrape_all_platforms(
                         max_results=remaining,
                         known_source_ids=scraper_known,
                     )
+                    properties = result.properties
+
+                    if not result.is_healthy:
+                        logger.warning(
+                            "scraper_unhealthy",
+                            platform=scraper.source.value,
+                            area=area,
+                            pages_fetched=result.pages_fetched,
+                            pages_failed=result.pages_failed,
+                            parse_errors=result.parse_errors,
+                        )
+
                     # Cross-area dedup: remove properties already seen in other areas
                     before_dedup = len(properties)
                     properties = [p for p in properties if p.source_id not in scraper_seen_ids]
@@ -202,6 +226,8 @@ async def scrape_all_platforms(
                         platform=scraper.source.value,
                         area=area,
                         count=len(properties),
+                        pages_fetched=result.pages_fetched,
+                        pages_failed=result.pages_failed,
                     )
                 except Exception as e:
                     logger.error(
@@ -901,6 +927,7 @@ async def _run_concurrent_analysis(
     analyze_fn: _AnalyzeFn,
     on_result: _OnAnalysisResult,
     *,
+    concurrency: int = 15,
     on_error: Callable[[], None] | None = None,
     breaker_log_event: str = "api_circuit_breaker_activated",
     error_log_event: str = "analysis_failed",
@@ -921,7 +948,7 @@ async def _run_concurrent_analysis(
     Returns:
         Number of properties successfully processed.
     """
-    semaphore = asyncio.Semaphore(_QUALITY_CONCURRENCY)
+    semaphore = asyncio.Semaphore(concurrency)
     count = 0
 
     async def _bounded(
@@ -932,28 +959,36 @@ async def _run_concurrent_analysis(
 
     tasks = [asyncio.create_task(_bounded(m)) for m in items]
 
-    for coro in asyncio.as_completed(tasks):
-        try:
-            merged, quality_analysis = await coro
-        except APIUnavailableError:
-            remaining = [t for t in tasks if not t.done()]
+    try:
+        for coro in asyncio.as_completed(tasks):
+            try:
+                merged, quality_analysis = await coro
+            except APIUnavailableError:
+                remaining = [t for t in tasks if not t.done()]
+                for t in remaining:
+                    t.cancel()
+                await asyncio.gather(*remaining, return_exceptions=True)
+                logger.warning(
+                    breaker_log_event,
+                    deferred_properties=len(remaining),
+                    processed=count,
+                )
+                break
+            except Exception:
+                logger.error(error_log_event, exc_info=True)
+                if on_error:
+                    on_error()
+                continue
+
+            await on_result(merged, quality_analysis)
+            count += 1
+    finally:
+        # Ensure all child tasks are cleaned up on cancellation or any exit
+        remaining = [t for t in tasks if not t.done()]
+        if remaining:
             for t in remaining:
                 t.cancel()
             await asyncio.gather(*remaining, return_exceptions=True)
-            logger.warning(
-                breaker_log_event,
-                deferred_properties=len(remaining),
-                processed=count,
-            )
-            break
-        except Exception:
-            logger.error(error_log_event, exc_info=True)
-            if on_error:
-                on_error()
-            continue
-
-        await on_result(merged, quality_analysis)
-        count += 1
 
     return count
 
@@ -1000,6 +1035,16 @@ async def _run_quality_and_save(
 
     all_to_analyze = list(pre.merged_to_process) + retried
 
+    max_per_run = settings.max_analysis_per_run
+    if len(all_to_analyze) > max_per_run:
+        logger.warning(
+            "analysis_budget_cap_applied",
+            total=len(all_to_analyze),
+            cap=max_per_run,
+            deferred=len(all_to_analyze) - max_per_run,
+        )
+        all_to_analyze = all_to_analyze[:max_per_run]
+
     use_quality = settings.anthropic_api_key.get_secret_value() and settings.enable_quality_filter
     quality_filter: PropertyQualityFilter | None = None
     if use_quality:
@@ -1023,15 +1068,7 @@ async def _run_quality_and_save(
     ) -> None:
         commute_info = pre.commute_lookup.get(merged.canonical.unique_id)
         await _save_one(merged, commute_info, quality_analysis, storage)
-
-        # Persist Claude's floor area estimate if no scraped value exists
-        if merged.floor_area_sqft is None and quality_analysis is not None:
-            space = quality_analysis.space
-            if space and space.total_area_sqm and space.total_area_sqm > 0:
-                sqft = round(space.total_area_sqm / SQM_PER_SQFT)
-                if 100 <= sqft <= 5000:
-                    await storage.update_floor_area(merged.unique_id, sqft, "estimated")
-
+        await _persist_estimated_floor_area(merged, quality_analysis, storage)
         await on_result(merged, commute_info, quality_analysis)
 
     try:
@@ -1039,6 +1076,7 @@ async def _run_quality_and_save(
             all_to_analyze,
             _analyze,
             _handle_result,
+            concurrency=settings.quality_concurrency,
             breaker_log_event="api_circuit_breaker_activated",
             error_log_event="property_processing_failed",
         )
@@ -1205,13 +1243,7 @@ async def _drain_reanalysis_queue(
         nonlocal completed
         if quality_analysis:
             await storage.complete_reanalysis(merged.unique_id, quality_analysis)
-            # Persist Claude's floor area estimate if no scraped value exists
-            if merged.floor_area_sqft is None:
-                space = quality_analysis.space
-                if space and space.total_area_sqm and space.total_area_sqm > 0:
-                    sqft = round(space.total_area_sqm / SQM_PER_SQFT)
-                    if 100 <= sqft <= 5000:
-                        await storage.update_floor_area(merged.unique_id, sqft, "estimated")
+            await _persist_estimated_floor_area(merged, quality_analysis, storage)
             completed += 1
 
     try:
@@ -1219,6 +1251,7 @@ async def _drain_reanalysis_queue(
             queue,
             _analyze,
             _handle_result,
+            concurrency=settings.quality_concurrency,
             breaker_log_event="reanalysis_api_circuit_breaker",
             error_log_event="reanalysis_failed",
         )
@@ -1251,6 +1284,7 @@ async def run_pipeline(
     await storage.initialize()
 
     run_id = await storage.create_pipeline_run()
+    structlog.contextvars.bind_contextvars(run_id=run_id)
     logger.info("pipeline_run_created", run_id=run_id)
 
     notifier = TelegramNotifier(
@@ -1375,10 +1409,15 @@ async def run_pipeline(
             price_drops=price_drop_count,
         )
 
+    except asyncio.CancelledError:
+        logger.warning("pipeline_cancelled", run_id=run_id)
+        await storage.complete_pipeline_run(run_id, "cancelled")
+        raise
     except Exception as exc:
         await storage.complete_pipeline_run(run_id, "failed", error_message=str(exc))
         raise
     finally:
+        structlog.contextvars.clear_contextvars()
         await notifier.close()
         await storage.close()
 
@@ -1615,13 +1654,7 @@ async def run_reanalysis(
             nonlocal completed, failed
             if quality_analysis:
                 await storage.complete_reanalysis(merged.unique_id, quality_analysis)
-                # Persist Claude's floor area estimate if no scraped value exists
-                if merged.floor_area_sqft is None:
-                    space = quality_analysis.space
-                    if space and space.total_area_sqm and space.total_area_sqm > 0:
-                        sqft = round(space.total_area_sqm / SQM_PER_SQFT)
-                        if 100 <= sqft <= 5000:
-                            await storage.update_floor_area(merged.unique_id, sqft, "estimated")
+                await _persist_estimated_floor_area(merged, quality_analysis, storage)
                 completed += 1
             else:
                 failed += 1
@@ -1635,6 +1668,7 @@ async def run_reanalysis(
                 queue,
                 _analyze,
                 _handle_result,
+                concurrency=settings.quality_concurrency,
                 on_error=_count_error,
                 breaker_log_event="reanalysis_api_circuit_breaker",
                 error_log_event="reanalysis_failed",
@@ -1995,7 +2029,8 @@ def main() -> None:
     parser.add_argument(
         "--full-scrape",
         action="store_true",
-        help="Disable pagination early-stop — scrape all pages even if properties are already in DB",
+        help="Disable pagination early-stop — scrape all pages"
+        " even if properties are already in DB",
     )
     parser.add_argument(
         "--debug",

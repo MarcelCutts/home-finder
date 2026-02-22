@@ -2275,7 +2275,7 @@ class TestStatusRoutes:
         assert resp.status_code == 200
         soup = BeautifulSoup(resp.text, "html.parser")
         buttons = soup.select("button.status-option")
-        # There should be 9 status buttons (3 groups × 3)
+        # There should be 9 status buttons (3 groups x 3)
         assert len(buttons) == 9
         for btn in buttons:
             assert btn.get("hx-target") == "closest .status-selector-wrap"

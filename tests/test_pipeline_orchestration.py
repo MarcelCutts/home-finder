@@ -17,6 +17,7 @@ from home_finder.db import PropertyStorage
 from home_finder.filters.detail_enrichment import EnrichmentResult
 from home_finder.main import (
     PreAnalysisResult,
+    _persist_estimated_floor_area,
     _run_pre_analysis_pipeline,
     _run_quality_and_save,
     _run_scrape,
@@ -28,8 +29,10 @@ from home_finder.models import (
     Property,
     PropertyQualityAnalysis,
     PropertySource,
+    SpaceAnalysis,
     TransportMode,
 )
+from home_finder.scrapers.base import ScrapeResult
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -69,7 +72,8 @@ def _mock_scraper(source: PropertySource, **kwargs: Any) -> AsyncMock:
     s.should_skip_remaining_areas = False
     s.max_areas_per_run = None
     s.area_delay = AsyncMock()
-    s.scrape = AsyncMock(return_value=kwargs.get("return_value", []))
+    default_return = ScrapeResult(properties=kwargs.get("return_value", []), pages_fetched=1)
+    s.scrape = AsyncMock(return_value=default_return)
     s.close = AsyncMock()
     if "side_effect" in kwargs:
         s.scrape.side_effect = kwargs["side_effect"]
@@ -627,3 +631,73 @@ class TestPreAnalysisPipeline:
         result = await _run_pre_analysis_pipeline(settings, storage)
         # No floorplan → filtered out
         assert result is None
+
+
+# ---------------------------------------------------------------------------
+# _persist_estimated_floor_area
+# ---------------------------------------------------------------------------
+
+
+class TestPersistEstimatedFloorArea:
+    async def test_skips_when_floor_area_already_set(
+        self,
+        storage: PropertyStorage,
+        make_merged_property: Callable[..., MergedProperty],
+        sample_quality_analysis: PropertyQualityAnalysis,
+    ) -> None:
+        """No DB update when merged.floor_area_sqft is already set."""
+        merged = make_merged_property(floor_area_sqft=500)
+        storage.update_floor_area = AsyncMock()  # type: ignore[method-assign]
+
+        await _persist_estimated_floor_area(merged, sample_quality_analysis, storage)
+        storage.update_floor_area.assert_not_called()
+
+    async def test_skips_when_analysis_is_none(
+        self,
+        storage: PropertyStorage,
+        make_merged_property: Callable[..., MergedProperty],
+    ) -> None:
+        """No DB update when quality_analysis is None."""
+        merged = make_merged_property()
+        storage.update_floor_area = AsyncMock()  # type: ignore[method-assign]
+
+        await _persist_estimated_floor_area(merged, None, storage)
+        storage.update_floor_area.assert_not_called()
+
+    async def test_persists_valid_estimate(
+        self,
+        storage: PropertyStorage,
+        make_merged_property: Callable[..., MergedProperty],
+        make_quality_analysis: Callable[..., PropertyQualityAnalysis],
+    ) -> None:
+        """Persists estimate when space.total_area_sqm is within range."""
+        merged = make_merged_property()
+        analysis = make_quality_analysis(space=SpaceAnalysis(total_area_sqm=50.0))
+        await storage.save_pre_analysis_properties([merged], {})
+
+        await _persist_estimated_floor_area(merged, analysis, storage)
+
+        conn = await storage._get_connection()
+        cursor = await conn.execute(
+            "SELECT floor_area_sqft, floor_area_source FROM properties WHERE unique_id = ?",
+            (merged.unique_id,),
+        )
+        row = await cursor.fetchone()
+        assert row is not None
+        assert row["floor_area_sqft"] == 538  # round(50 / 0.0929)
+        assert row["floor_area_source"] == "estimated"
+
+    async def test_rejects_out_of_range(
+        self,
+        storage: PropertyStorage,
+        make_merged_property: Callable[..., MergedProperty],
+        make_quality_analysis: Callable[..., PropertyQualityAnalysis],
+    ) -> None:
+        """Does not persist when estimate is below 100 sqft."""
+        merged = make_merged_property()
+        # 5 sqm ≈ 54 sqft — below the 100 floor
+        analysis = make_quality_analysis(space=SpaceAnalysis(total_area_sqm=5.0))
+        storage.update_floor_area = AsyncMock()  # type: ignore[method-assign]
+
+        await _persist_estimated_floor_area(merged, analysis, storage)
+        storage.update_floor_area.assert_not_called()

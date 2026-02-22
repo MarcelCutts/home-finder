@@ -36,7 +36,7 @@ class TestRightmoveDetailFetcher:
             )
         finally:
             await scraper.close()
-        return results[0] if results else None
+        return results.properties[0] if results.properties else None
 
     async def test_gallery_extraction(self):
         prop = await self._get_sample_listing()
@@ -110,7 +110,7 @@ class TestZooplaDetailFetcher:
             )
         finally:
             await scraper.close()
-        return results[0] if results else None
+        return results.properties[0] if results.properties else None
 
     async def test_gallery_extraction(self):
         prop = await self._get_sample_listing()
@@ -185,7 +185,7 @@ class TestOpenRentDetailFetcher:
             )
         finally:
             await scraper.close()
-        return results[0] if results else None
+        return results.properties[0] if results.properties else None
 
     async def test_gallery_from_lightbox(self):
         prop = await self._get_sample_listing()
@@ -260,7 +260,7 @@ class TestOnTheMarketDetailFetcher:
             )
         finally:
             await scraper.close()
-        return results[0] if results else None
+        return results.properties[0] if results.properties else None
 
     async def test_gallery_from_redux_state(self):
         prop = await self._get_sample_listing()

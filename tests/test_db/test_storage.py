@@ -1036,3 +1036,88 @@ class TestGetPropertyImagesAndRow:
         )
         assert result_images == []
         assert result_prop is None
+
+
+class TestOnDeleteCascade:
+    """Verify ON DELETE CASCADE removes child rows when parent is deleted."""
+
+    async def test_cascade_deletes_child_rows(
+        self, storage: PropertyStorage, storage_sample_property: Property
+    ) -> None:
+        """Deleting a parent property row should cascade to all 6 child tables."""
+        prop = storage_sample_property
+        uid = prop.unique_id
+
+        # Insert parent
+        await storage.save_property(prop)
+
+        conn = await storage._get_connection()
+
+        # Insert child rows into all 6 FK tables
+        img = PropertyImage(
+            source=prop.source,
+            url="https://example.com/img.jpg",
+            image_type="gallery",
+        )
+        await storage.save_property_images(uid, [img])
+
+        # quality_analyses — raw SQL to avoid needing a full analysis object
+        await conn.execute(
+            "INSERT OR IGNORE INTO quality_analyses"
+            " (property_unique_id, analysis_json) VALUES (?, ?)",
+            (uid, '{"overall_rating": 4}'),
+        )
+        await conn.execute(
+            "INSERT INTO status_events"
+            " (property_unique_id, to_status) VALUES (?, ?)",
+            (uid, "shortlisted"),
+        )
+        await conn.execute(
+            "INSERT OR IGNORE INTO viewing_messages"
+            " (property_unique_id, message) VALUES (?, ?)",
+            (uid, "Hello"),
+        )
+        await conn.execute(
+            "INSERT INTO price_history (property_unique_id,"
+            " old_price, new_price, change_amount)"
+            " VALUES (?, ?, ?, ?)",
+            (uid, 2000, 1900, -100),
+        )
+        await conn.execute(
+            "INSERT OR IGNORE INTO enquiry_log"
+            " (property_unique_id, portal, message) VALUES (?, ?, ?)",
+            (uid, "openrent", "Hi there"),
+        )
+        await conn.commit()
+
+        # Verify children exist
+        for table in (
+            "property_images",
+            "quality_analyses",
+            "status_events",
+            "viewing_messages",
+            "price_history",
+            "enquiry_log",
+        ):
+            cursor = await conn.execute(
+                f"SELECT COUNT(*) FROM {table} WHERE property_unique_id = ?", (uid,)
+            )
+            assert (await cursor.fetchone())[0] > 0, f"Expected rows in {table}"
+
+        # Delete parent directly (bypasses delete_property's manual cascade)
+        await conn.execute("DELETE FROM properties WHERE unique_id = ?", (uid,))
+        await conn.commit()
+
+        # All children should be gone via CASCADE
+        for table in (
+            "property_images",
+            "quality_analyses",
+            "status_events",
+            "viewing_messages",
+            "price_history",
+            "enquiry_log",
+        ):
+            cursor = await conn.execute(
+                f"SELECT COUNT(*) FROM {table} WHERE property_unique_id = ?", (uid,)
+            )
+            assert (await cursor.fetchone())[0] == 0, f"Expected 0 rows in {table} after CASCADE"

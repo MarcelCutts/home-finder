@@ -13,6 +13,10 @@ from __future__ import annotations
 
 from typing import Any, Final, TypedDict
 
+# Increment when the scoring algorithm changes (weights, signals, dimensions).
+# Triggers automatic recomputation via _backfill_fit_scores().
+FIT_SCORE_VERSION: Final = 1
+
 # ── Highlight/Lowlight signal scoring (used by _score_vibe cluster 6) ────────
 
 _HIGHLIGHT_SCORES: Final[dict[str, float]] = {

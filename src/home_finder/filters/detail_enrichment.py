@@ -104,9 +104,12 @@ def _generate_gallery_thumbnails(
     count = 0
     for img in images:
         cached_path = find_cached_file(data_dir, unique_id, str(img.url), "gallery")
-        if cached_path and not find_thumbnail(cached_path):
-            if generate_thumbnail(cached_path) is not None:
-                count += 1
+        if (
+            cached_path
+            and not find_thumbnail(cached_path)
+            and generate_thumbnail(cached_path) is not None
+        ):
+            count += 1
     return count
 
 

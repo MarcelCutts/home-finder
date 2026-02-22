@@ -375,8 +375,8 @@ class TestOpenRentScraperIntegration:
                 area="hackney",
             )
 
-        assert len(result) == 3
-        assert all(p.source == PropertySource.OPENRENT for p in result)
+        assert len(result.properties) == 3
+        assert all(p.source == PropertySource.OPENRENT for p in result.properties)
 
 
 class TestOpenRentNoEarlyStop:
@@ -437,7 +437,7 @@ class TestOpenRentNoEarlyStop:
             )
 
         assert len(pages_fetched) >= 2  # Did NOT early-stop on page 1
-        assert len(result) == len(page1_props)  # Page 1 props still returned
+        assert len(result.properties) == len(page1_props)  # Page 1 props still returned
 
 
 class TestOpenRent429Handling:

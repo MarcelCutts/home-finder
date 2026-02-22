@@ -68,6 +68,20 @@ class Settings(BaseSettings):
         default=True,
         description="Enable extended thinking for deeper quality analysis",
     )
+    # AI analysis budget
+    max_analysis_per_run: int = Field(
+        default=75,
+        ge=1,
+        le=500,
+        description="Maximum properties to analyze per pipeline run; excess deferred to next run",
+    )
+    quality_concurrency: int = Field(
+        default=15,
+        ge=1,
+        le=50,
+        description="Maximum concurrent quality analysis API calls",
+    )
+
     # Enrichment retry
     max_enrichment_attempts: int = Field(
         default=3,

@@ -25,7 +25,7 @@ from home_finder.scrapers.detail_fetcher import DetailFetcher
 async def _scrape_platform(scraper, area="e8", max_results=5) -> list[Property]:
     """Scrape a single platform, returning empty list on failure."""
     try:
-        results = await scraper.scrape(
+        result = await scraper.scrape(
             min_price=1800,
             max_price=2200,
             min_bedrooms=1,
@@ -33,7 +33,7 @@ async def _scrape_platform(scraper, area="e8", max_results=5) -> list[Property]:
             area=area,
             max_results=max_results,
         )
-        return list(results)
+        return list(result.properties)
     except Exception:
         return []
     finally:

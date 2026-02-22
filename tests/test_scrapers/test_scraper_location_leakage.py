@@ -285,7 +285,7 @@ class TestLiveScraperLocationLeakage:
     async def test_rightmove_hackney_postcodes(self) -> None:
         """Test what postcodes Rightmove returns for hackney search."""
         scraper = RightmoveScraper()
-        properties = await scraper.scrape(
+        result = await scraper.scrape(
             min_price=1800,
             max_price=2200,
             min_bedrooms=1,
@@ -293,13 +293,13 @@ class TestLiveScraperLocationLeakage:
             area="hackney",
         )
 
-        self._analyze_location_leakage(properties, "hackney", "rightmove")
+        self._analyze_location_leakage(result.properties, "hackney", "rightmove")
 
     @pytest.mark.asyncio
     async def test_rightmove_e8_postcodes(self) -> None:
         """Test what postcodes Rightmove returns for E8 outcode search."""
         scraper = RightmoveScraper()
-        properties = await scraper.scrape(
+        result = await scraper.scrape(
             min_price=1800,
             max_price=2200,
             min_bedrooms=1,
@@ -307,13 +307,13 @@ class TestLiveScraperLocationLeakage:
             area="e8",
         )
 
-        self._analyze_location_leakage(properties, "e8", "rightmove")
+        self._analyze_location_leakage(result.properties, "e8", "rightmove")
 
     @pytest.mark.asyncio
     async def test_zoopla_hackney_postcodes(self) -> None:
         """Test what postcodes Zoopla returns for hackney search."""
         scraper = ZooplaScraper()
-        properties = await scraper.scrape(
+        result = await scraper.scrape(
             min_price=1800,
             max_price=2200,
             min_bedrooms=1,
@@ -321,13 +321,13 @@ class TestLiveScraperLocationLeakage:
             area="hackney",
         )
 
-        self._analyze_location_leakage(properties, "hackney", "zoopla")
+        self._analyze_location_leakage(result.properties, "hackney", "zoopla")
 
     @pytest.mark.asyncio
     async def test_zoopla_e8_postcodes(self) -> None:
         """Test what postcodes Zoopla returns for E8 outcode search."""
         scraper = ZooplaScraper()
-        properties = await scraper.scrape(
+        result = await scraper.scrape(
             min_price=1800,
             max_price=2200,
             min_bedrooms=1,
@@ -335,13 +335,13 @@ class TestLiveScraperLocationLeakage:
             area="e8",
         )
 
-        self._analyze_location_leakage(properties, "e8", "zoopla")
+        self._analyze_location_leakage(result.properties, "e8", "zoopla")
 
     @pytest.mark.asyncio
     async def test_openrent_hackney_postcodes(self) -> None:
         """Test what postcodes OpenRent returns for hackney search."""
         scraper = OpenRentScraper()
-        properties = await scraper.scrape(
+        result = await scraper.scrape(
             min_price=1800,
             max_price=2200,
             min_bedrooms=1,
@@ -349,13 +349,13 @@ class TestLiveScraperLocationLeakage:
             area="hackney",
         )
 
-        self._analyze_location_leakage(properties, "hackney", "openrent")
+        self._analyze_location_leakage(result.properties, "hackney", "openrent")
 
     @pytest.mark.asyncio
     async def test_openrent_e8_postcodes(self) -> None:
         """Test what postcodes OpenRent returns for E8 outcode search."""
         scraper = OpenRentScraper()
-        properties = await scraper.scrape(
+        result = await scraper.scrape(
             min_price=1800,
             max_price=2200,
             min_bedrooms=1,
@@ -363,13 +363,13 @@ class TestLiveScraperLocationLeakage:
             area="e8",
         )
 
-        self._analyze_location_leakage(properties, "e8", "openrent")
+        self._analyze_location_leakage(result.properties, "e8", "openrent")
 
     @pytest.mark.asyncio
     async def test_onthemarket_hackney_postcodes(self) -> None:
         """Test what postcodes OnTheMarket returns for hackney search."""
         scraper = OnTheMarketScraper()
-        properties = await scraper.scrape(
+        result = await scraper.scrape(
             min_price=1800,
             max_price=2200,
             min_bedrooms=1,
@@ -377,7 +377,7 @@ class TestLiveScraperLocationLeakage:
             area="hackney",
         )
 
-        self._analyze_location_leakage(properties, "hackney", "onthemarket")
+        self._analyze_location_leakage(result.properties, "hackney", "onthemarket")
 
     def _analyze_location_leakage(
         self,

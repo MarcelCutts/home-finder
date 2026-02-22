@@ -6,6 +6,7 @@ postcode extraction. These discover edge cases that example-based tests miss.
 
 from hypothesis import assume, given
 from hypothesis import strategies as st
+from pydantic import HttpUrl
 
 from home_finder.filters.scoring import (
     MATCH_THRESHOLD,
@@ -17,8 +18,6 @@ from home_finder.filters.scoring import (
     haversine_distance,
     is_full_postcode,
 )
-from pydantic import HttpUrl
-
 from home_finder.models import Property, PropertySource
 from home_finder.utils.address import extract_outcode, is_outcode, normalize_street_name
 

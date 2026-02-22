@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import random
 import re
 from typing import Any
 
@@ -10,7 +11,7 @@ from pydantic import HttpUrl
 
 from home_finder.logging import get_logger
 from home_finder.models import FurnishType, Property, PropertySource
-from home_finder.scrapers.base import BaseScraper
+from home_finder.scrapers.base import BaseScraper, ScrapeResult
 from home_finder.scrapers.constants import BROWSER_HEADERS
 from home_finder.scrapers.parsing import extract_bedrooms, extract_postcode, extract_price
 
@@ -25,6 +26,11 @@ class OnTheMarketScraper(BaseScraper):
     # Pagination constants
     MAX_PAGES = 20
     PAGE_DELAY_SECONDS = 0.5
+
+    # Retry constants
+    MAX_RETRIES = 4
+    INITIAL_BACKOFF_SECONDS = 2.0
+    MAX_BACKOFF_SECONDS = 30.0
 
     def __init__(self, *, proxy_url: str = "") -> None:
         self._session: AsyncSession | None = None  # type: ignore[type-arg]
@@ -59,7 +65,7 @@ class OnTheMarketScraper(BaseScraper):
         include_let_agreed: bool = True,
         max_results: int | None = None,
         known_source_ids: set[str] | None = None,
-    ) -> list[Property]:
+    ) -> ScrapeResult:
         """Scrape OnTheMarket for matching properties (all pages)."""
         search_url = self._build_search_url(
             area=area,
@@ -71,18 +77,22 @@ class OnTheMarketScraper(BaseScraper):
             min_bathrooms=min_bathrooms,
             include_let_agreed=include_let_agreed,
         )
+        parse_errors = 0
 
-        async def fetch_page(page_idx: int) -> list[Property]:
+        async def fetch_page(page_idx: int) -> list[Property] | None:
+            nonlocal parse_errors
             page = page_idx + 1  # OnTheMarket uses 1-based pages
             url = f"{search_url}&page={page}" if page > 1 else search_url
 
             html = await self._fetch_page(url)
-            if not html:
-                logger.warning("onthemarket_fetch_failed", url=url, page=page)
-                return []
+            if html is None:
+                return None  # Signals fetch failure to _paginate
 
             # Parse __NEXT_DATA__ JSON
             properties = self._parse_next_data(html)
+            if properties is None:
+                parse_errors += 1
+                return []
             logger.info(
                 "scraped_onthemarket_page",
                 url=url,
@@ -94,49 +104,97 @@ class OnTheMarketScraper(BaseScraper):
         async def delay() -> None:
             await asyncio.sleep(self.PAGE_DELAY_SECONDS)
 
-        all_properties = await self._paginate(
+        result = await self._paginate(
             fetch_page,
             max_pages=self.MAX_PAGES,
             known_source_ids=known_source_ids,
             max_results=max_results,
             page_delay=delay,
         )
+        result.parse_errors = parse_errors
 
         logger.info(
             "scraped_onthemarket_complete",
             area=area,
-            total_properties=len(all_properties),
+            total_properties=len(result.properties),
+            pages_fetched=result.pages_fetched,
+            pages_failed=result.pages_failed,
         )
 
-        return all_properties
+        return result
 
     async def _fetch_page(self, url: str) -> str | None:
-        """Fetch page using curl_cffi with Chrome impersonation."""
-        try:
-            session = await self._get_session()
-            kwargs: dict[str, object] = {
-                "impersonate": "chrome",
-                "headers": BROWSER_HEADERS,
-                "timeout": 30,
-            }
-            if self._proxy_url:
-                kwargs["proxy"] = self._proxy_url
-            response = await session.get(url, **kwargs)  # type: ignore[arg-type]
-            if response.status_code == 200:
-                text: str = response.text
-                return text
-            logger.warning(
-                "onthemarket_http_error",
-                status=response.status_code,
-                url=url,
-            )
-            return None
-        except Exception as e:
-            logger.error("onthemarket_fetch_exception", error=str(e), url=url)
-            return None
+        """Fetch page using curl_cffi with Chrome impersonation and retry on 429/5xx."""
+        session = await self._get_session()
+        backoff = self.INITIAL_BACKOFF_SECONDS
 
-    def _parse_next_data(self, html: str) -> list[Property]:
-        """Parse properties from __NEXT_DATA__ JSON."""
+        for attempt in range(1, self.MAX_RETRIES + 1):
+            try:
+                kwargs: dict[str, object] = {
+                    "impersonate": "chrome",
+                    "headers": BROWSER_HEADERS,
+                    "timeout": 30,
+                }
+                if self._proxy_url:
+                    kwargs["proxy"] = self._proxy_url
+                response = await session.get(url, **kwargs)  # type: ignore[arg-type]
+
+                if response.status_code == 200:
+                    text: str = response.text
+                    return text
+
+                if response.status_code == 429 or response.status_code >= 500:
+                    if attempt < self.MAX_RETRIES:
+                        jitter = random.uniform(0, 1.0)
+                        logger.warning(
+                            "onthemarket_retry",
+                            url=url,
+                            status=response.status_code,
+                            attempt=attempt,
+                            backoff=round(backoff + jitter, 1),
+                        )
+                        await asyncio.sleep(backoff + jitter)
+                        backoff = min(backoff * 2, self.MAX_BACKOFF_SECONDS)
+                        continue
+                    logger.warning(
+                        "onthemarket_retries_exhausted",
+                        url=url,
+                        status=response.status_code,
+                        attempts=self.MAX_RETRIES,
+                    )
+                    return None
+
+                logger.warning(
+                    "onthemarket_http_error",
+                    status=response.status_code,
+                    url=url,
+                )
+                return None
+            except Exception as e:
+                if attempt < self.MAX_RETRIES:
+                    jitter = random.uniform(0, 1.0)
+                    logger.warning(
+                        "onthemarket_fetch_exception_retrying",
+                        error=str(e),
+                        url=url,
+                        attempt=attempt,
+                        backoff=round(backoff + jitter, 1),
+                    )
+                    await asyncio.sleep(backoff + jitter)
+                    backoff = min(backoff * 2, self.MAX_BACKOFF_SECONDS)
+                else:
+                    logger.error(
+                        "onthemarket_fetch_exception", error=str(e), url=url, exc_info=True
+                    )
+                    return None
+
+        return None
+
+    def _parse_next_data(self, html: str) -> list[Property] | None:
+        """Parse properties from __NEXT_DATA__ JSON.
+
+        Returns None on parse error (distinct from empty list meaning no listings).
+        """
         match = re.search(
             r'<script id="__NEXT_DATA__"[^>]*>(.*?)</script>',
             html,
@@ -144,7 +202,7 @@ class OnTheMarketScraper(BaseScraper):
         )
         if not match:
             logger.warning("onthemarket_no_next_data")
-            return []
+            return None
 
         try:
             data = json.loads(match.group(1))
@@ -156,7 +214,7 @@ class OnTheMarketScraper(BaseScraper):
             )
         except (json.JSONDecodeError, KeyError) as e:
             logger.warning("onthemarket_parse_failed", error=str(e))
-            return []
+            return None
 
         properties: list[Property] = []
         for listing in listings:

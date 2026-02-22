@@ -211,7 +211,11 @@ def _zoopla_images_from_rsc_captions(
         if caption is not None:
             caption_lower = caption.lower()
             # Skip EPC rating graphs and floorplans — not gallery images
-            if "epc" in caption_lower or "floorplan" in caption_lower or "ee rating" in caption_lower:
+            if (
+                "epc" in caption_lower
+                or "floorplan" in caption_lower
+                or "ee rating" in caption_lower
+            ):
                 continue
         url = f"https://lid.zoocdn.com/u/1024/768/{filename}"
         gallery_urls.append(url)
@@ -854,7 +858,7 @@ class DetailFetcher:
                 if response.status_code != 200:
                     logger.debug("image_download_failed", url=url, status=response.status_code)
                     return None
-                data: bytes = response.content  # type: ignore[assignment]
+                data: bytes = response.content
             else:
                 response = await self._httpx_get_with_retry(url)
                 data = response.content

@@ -47,6 +47,7 @@ from home_finder.utils.image_cache import (
     safe_dir_name,
 )
 from home_finder.utils.negotiation import generate_negotiation_brief
+from home_finder.web.app import _compute_static_version
 from home_finder.web.filters import (
     ADDED_OPTIONS,
     VALID_SORT_OPTIONS,
@@ -164,8 +165,6 @@ def listing_age_filter(iso_str: str | None) -> str:
 templates.env.filters["listing_age"] = listing_age_filter
 templates.env.filters["json_script_safe"] = lambda s: s.replace("</", r"<\/")
 templates.env.globals["SQM_PER_SQFT"] = SQM_PER_SQFT
-
-from home_finder.web.app import _compute_static_version
 
 templates.env.globals["static_version"] = _compute_static_version()
 
@@ -624,7 +623,7 @@ async def property_detail(
 
     # Negotiation intelligence (Ticket 10)
     negotiation = generate_negotiation_brief(
-        days_listed=days_since_filter(prop.get("first_seen")),
+        days_listed=days_since_filter(cast("str | None", prop.get("first_seen"))),
         price_history=price_history,
         price_pcm=prop.get("price_pcm", 0) or 0,
         outcode=outcode,

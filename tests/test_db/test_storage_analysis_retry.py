@@ -393,6 +393,48 @@ class TestCompleteAnalysis:
         assert tracked.notification_status == NotificationStatus.SENT
 
 
+class TestCompleteAnalysisAtomicity:
+    @pytest.mark.asyncio
+    async def test_complete_analysis_atomic_on_error(
+        self,
+        storage: PropertyStorage,
+        make_merged_property: Callable[..., MergedProperty],
+        make_quality_analysis: Callable[..., PropertyQualityAnalysis],
+    ) -> None:
+        """Crash during complete_analysis should roll back both writes."""
+        merged = make_merged_property()
+        await storage.save_pre_analysis_properties([merged], {})
+
+        # Poison save_quality_analysis so it writes then raises mid-transaction
+        original_save = storage.save_quality_analysis
+
+        async def _save_then_crash(
+            uid: str, analysis: PropertyQualityAnalysis, *, _commit: bool = True
+        ) -> None:
+            await original_save(uid, analysis, _commit=_commit)
+            raise RuntimeError("simulated crash after quality write")
+
+        storage._pipeline._save_quality_analysis = _save_then_crash
+
+        with pytest.raises(RuntimeError, match="simulated crash"):
+            await storage.complete_analysis(
+                merged.unique_id, make_quality_analysis()
+            )
+
+        # Both writes should have been rolled back
+        conn = await storage._get_connection()
+        cursor = await conn.execute(
+            "SELECT notification_status FROM properties WHERE unique_id = ?",
+            (merged.unique_id,),
+        )
+        row = await cursor.fetchone()
+        assert row is not None
+        assert row["notification_status"] == NotificationStatus.PENDING_ANALYSIS.value
+
+        stored = await storage.get_quality_analysis(merged.unique_id)
+        assert stored is None
+
+
 class TestDashboardExcludesPendingAnalysis:
     @pytest.mark.asyncio
     async def test_excludes_pending_analysis_from_paginated(

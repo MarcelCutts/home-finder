@@ -369,7 +369,8 @@ class WebQueryService:
 
         offset = (page - 1) * per_page
         cursor = await conn.execute(
-            f"SELECT {_CARD_COLUMNS} {_CARD_JOINS} WHERE {where_sql} ORDER BY {order_sql} LIMIT ? OFFSET ?",
+            f"SELECT {_CARD_COLUMNS} {_CARD_JOINS}"
+            f" WHERE {where_sql} ORDER BY {order_sql} LIMIT ? OFFSET ?",
             [*params, per_page, offset],
         )
         rows = await cursor.fetchall()

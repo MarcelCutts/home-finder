@@ -20,8 +20,8 @@ from home_finder.filters.quality import (  # type: ignore[attr-defined]
     _clean_list,
     _clean_value,
     _EvaluationResponse,
-    _VisualAnalysisResponse,
     _inline_refs,
+    _VisualAnalysisResponse,
     assess_value,
     build_evaluation_prompt,
 )
@@ -1579,9 +1579,11 @@ class TestInsufficientImageSkip:
         tmp_path: Any,
     ) -> None:
         """Should skip when only some images are cached (partial enrichment)."""
-        from home_finder.utils.image_cache import get_cached_image_path, save_image_bytes
         from io import BytesIO
+
         from PIL import Image
+
+        from home_finder.utils.image_cache import get_cached_image_path, save_image_bytes
 
         # Create a merged property with 5 gallery images
         images = tuple(
@@ -1912,6 +1914,56 @@ class TestNewFieldsPipelineFlow:
         assert analysis.flooring_noise.hosting_noise_risk == "low"
         assert analysis.listing_extraction is not None
         assert analysis.listing_extraction.broadband_type == "fttp"
+
+
+class TestPhase2CircuitBreakerRaise:
+    """Phase 2 API errors must raise APIUnavailableError (matching Phase 1)."""
+
+    async def test_phase2_auth_error_raises_api_unavailable(
+        self,
+        sample_merged_property: MergedProperty,
+        sample_visual_response: dict[str, Any],
+    ) -> None:
+        """AuthenticationError in Phase 2 should raise APIUnavailableError."""
+        from anthropic import AuthenticationError
+
+        mock_visual = create_mock_response(
+            sample_visual_response, tool_name="property_visual_analysis"
+        )
+        quality_filter = PropertyQualityFilter(api_key="test-key")
+        quality_filter._client = MagicMock()
+        quality_filter._client.messages.create = AsyncMock(return_value=mock_visual)
+        quality_filter._client.messages.parse = AsyncMock(
+            side_effect=AuthenticationError(
+                message="invalid key",
+                response=MagicMock(status_code=401, headers={}),
+                body=None,
+            )
+        )
+
+        with pytest.raises(APIUnavailableError, match="Authentication failed"):
+            await quality_filter.analyze_single_merged(sample_merged_property)
+
+    async def test_phase2_transient_error_raises_api_unavailable(
+        self,
+        sample_merged_property: MergedProperty,
+        sample_visual_response: dict[str, Any],
+    ) -> None:
+        """Transient API errors in Phase 2 should raise APIUnavailableError."""
+        from anthropic import APIConnectionError
+
+        mock_visual = create_mock_response(
+            sample_visual_response, tool_name="property_visual_analysis"
+        )
+        quality_filter = PropertyQualityFilter(api_key="test-key")
+        quality_filter._client = MagicMock()
+        quality_filter._client.messages.create = AsyncMock(return_value=mock_visual)
+        quality_filter._client.messages.parse = AsyncMock(
+            side_effect=APIConnectionError(request=MagicMock())
+        )
+
+        with pytest.raises(APIUnavailableError):
+            await quality_filter.analyze_single_merged(sample_merged_property)
 
 
 class TestCircuitBreaker:

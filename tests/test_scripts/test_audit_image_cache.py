@@ -6,7 +6,11 @@ from pathlib import Path
 
 import pytest
 
-from home_finder.utils.image_cache import get_cache_dir, safe_dir_name, save_image_bytes, url_to_filename
+from home_finder.utils.image_cache import (
+    get_cache_dir,
+    save_image_bytes,
+    url_to_filename,
+)
 
 # Import the script module from the scripts/ directory (not a package)
 _SCRIPT_PATH = Path(__file__).parent.parent.parent / "scripts" / "audit_image_cache.py"
@@ -521,7 +525,7 @@ class TestPurgeDiskFiles:
             property_ids=[uid],
         )
 
-        orphan_dirs, orphan_files, stale_files, total = purge_disk_files(
+        orphan_dirs, _orphan_files, stale_files, total = purge_disk_files(
             db_conn, data_dir
         )
 
@@ -597,7 +601,7 @@ class TestPurgeDiskFiles:
 
         _setup_db(tmp_path / "properties.db", [], property_ids=[uid])
 
-        orphan_dirs, orphan_files, stale_files, total = purge_disk_files(
+        orphan_dirs, _orphan_files, stale_files, total = purge_disk_files(
             db_conn, data_dir
         )
 

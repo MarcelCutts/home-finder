@@ -17,6 +17,7 @@ import respx
 from pydantic import HttpUrl
 
 from home_finder.filters.quality import (
+    APIUnavailableError,
     PropertyQualityFilter,
 )
 from home_finder.models import (
@@ -498,10 +499,10 @@ class TestHTTPErrorHandling:
             await quality_filter.close()
 
     @respx.mock
-    async def test_phase2_failure_returns_partial(
+    async def test_phase2_failure_raises_api_unavailable(
         self, test_merged_property: MergedProperty
     ) -> None:
-        """Phase 2 HTTP failure should return partial analysis with Phase 1 data."""
+        """Phase 2 HTTP 500 should raise APIUnavailableError (circuit breaker)."""
         respx.post("https://api.anthropic.com/v1/messages").mock(
             side_effect=[
                 httpx.Response(200, json=PHASE1_VISUAL_RESPONSE),
@@ -521,22 +522,10 @@ class TestHTTPErrorHandling:
         quality_filter._client = anthropic.AsyncAnthropic(api_key="test-key", max_retries=0)
 
         try:
-            results = await quality_filter.analyze_merged_properties([test_merged_property])
+            with pytest.raises(APIUnavailableError):
+                await quality_filter.analyze_merged_properties([test_merged_property])
         finally:
             await quality_filter.close()
-
-        assert len(results) == 1
-        _, analysis = results[0]
-
-        # Phase 1 visual data should be present
-        assert analysis.kitchen.overall_quality == "modern"
-        assert analysis.condition.overall_condition == "good"
-        assert analysis.overall_rating == 4
-
-        # Phase 2 evaluation data should be absent
-        assert analysis.listing_extraction is None
-        assert analysis.highlights is None
-        assert analysis.one_line is None
 
 
 class TestTokenUsageParsing:

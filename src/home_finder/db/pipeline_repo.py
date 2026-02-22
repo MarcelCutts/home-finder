@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Coroutine
+from contextlib import AbstractAsyncContextManager
 from datetime import UTC, datetime
 from typing import Any
 
@@ -31,10 +32,12 @@ class PipelineRepository:
         save_quality_analysis: Callable[
             ..., Coroutine[Any, Any, None]
         ],
+        transaction: Callable[[], AbstractAsyncContextManager[aiosqlite.Connection]],
     ) -> None:
         self._get_connection = get_connection
         self._get_property_images = get_property_images
         self._save_quality_analysis = save_quality_analysis
+        self._transaction = transaction
 
     # ------------------------------------------------------------------
     # Pipeline run tracking
@@ -269,25 +272,24 @@ class PipelineRepository:
             unique_id: Property unique ID.
             quality_analysis: Analysis result, or None if analysis was skipped.
         """
-        if quality_analysis:
-            await self._save_quality_analysis(unique_id, quality_analysis, _commit=False)
+        async with self._transaction() as conn:
+            if quality_analysis:
+                await self._save_quality_analysis(unique_id, quality_analysis, _commit=False)
 
-        conn = await self._get_connection()
-        await conn.execute(
-            """
-            UPDATE properties
-            SET notification_status = ?,
-                analysis_attempts = COALESCE(analysis_attempts, 0) + 1
-            WHERE unique_id = ?
-              AND notification_status = ?
-            """,
-            (
-                NotificationStatus.PENDING.value,
-                unique_id,
-                NotificationStatus.PENDING_ANALYSIS.value,
-            ),
-        )
-        await conn.commit()
+            await conn.execute(
+                """
+                UPDATE properties
+                SET notification_status = ?,
+                    analysis_attempts = COALESCE(analysis_attempts, 0) + 1
+                WHERE unique_id = ?
+                  AND notification_status = ?
+                """,
+                (
+                    NotificationStatus.PENDING.value,
+                    unique_id,
+                    NotificationStatus.PENDING_ANALYSIS.value,
+                ),
+            )
         logger.debug("analysis_completed", unique_id=unique_id)
 
     async def reset_failed_analyses(self, *, max_analysis_attempts: int = 3) -> int:
@@ -524,16 +526,15 @@ class PipelineRepository:
             unique_id: Property unique ID.
             analysis: New quality analysis result.
         """
-        await self._save_quality_analysis(unique_id, analysis, _commit=False)
+        async with self._transaction() as conn:
+            await self._save_quality_analysis(unique_id, analysis, _commit=False)
 
-        conn = await self._get_connection()
-        await conn.execute(
-            """
-            UPDATE quality_analyses
-            SET reanalysis_requested_at = NULL
-            WHERE property_unique_id = ?
-            """,
-            (unique_id,),
-        )
-        await conn.commit()
+            await conn.execute(
+                """
+                UPDATE quality_analyses
+                SET reanalysis_requested_at = NULL
+                WHERE property_unique_id = ?
+                """,
+                (unique_id,),
+            )
         logger.debug("reanalysis_completed", unique_id=unique_id)

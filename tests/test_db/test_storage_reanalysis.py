@@ -485,6 +485,53 @@ class TestCompleteReanalysis:
         assert tracked.notification_status == NotificationStatus.SENT
 
 
+class TestCompleteReanalysisAtomicity:
+    @pytest.mark.asyncio
+    async def test_complete_reanalysis_atomic_on_error(
+        self,
+        storage: PropertyStorage,
+        make_property: Callable[..., Property],
+        make_merged_property: Callable[..., MergedProperty],
+        make_quality_analysis: Callable[..., PropertyQualityAnalysis],
+    ) -> None:
+        """Crash during complete_reanalysis should roll back both writes."""
+        merged = await _save_analyzed_property(
+            storage, make_property, make_merged_property, make_quality_analysis, rating=3
+        )
+        await storage.request_reanalysis([merged.unique_id])
+
+        # Snapshot original quality data
+        original = await storage.get_quality_analysis(merged.unique_id)
+        assert original is not None
+        assert original.overall_rating == 3
+
+        # Poison save_quality_analysis so it writes then raises
+        original_save = storage.save_quality_analysis
+
+        async def _save_then_crash(
+            uid: str,
+            analysis: PropertyQualityAnalysis,
+            *,
+            _commit: bool = True,
+        ) -> None:
+            await original_save(uid, analysis, _commit=_commit)
+            raise RuntimeError("simulated crash after quality write")
+
+        storage._pipeline._save_quality_analysis = _save_then_crash
+
+        with pytest.raises(RuntimeError, match="simulated crash"):
+            await storage.complete_reanalysis(merged.unique_id, make_quality_analysis(rating=5))
+
+        # Quality data should still be the original (rating=3), not the new (rating=5)
+        stored = await storage.get_quality_analysis(merged.unique_id)
+        assert stored is not None
+        assert stored.overall_rating == 3
+
+        # Reanalysis flag should still be set
+        queue = await storage.get_reanalysis_queue()
+        assert len(queue) == 1
+
+
 class TestReanalysisIntegration:
     @pytest.mark.asyncio
     async def test_full_lifecycle(

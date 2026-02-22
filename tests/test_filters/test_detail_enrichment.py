@@ -25,9 +25,9 @@ from home_finder.models import (
 )
 from home_finder.scrapers.detail_fetcher import DetailFetcher, DetailPageData
 from home_finder.utils.image_cache import (
+    find_cached_file,
     get_cache_dir,
     get_cached_image_path,
-    find_cached_file,
     save_image_bytes,
 )
 

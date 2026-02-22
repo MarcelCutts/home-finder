@@ -6,6 +6,15 @@ import random
 import urllib.parse
 from typing import TYPE_CHECKING, Final
 
+from aiogram.exceptions import (
+    TelegramBadRequest,
+    TelegramForbiddenError,
+    TelegramNotFound,
+    TelegramRetryAfter,
+    TelegramServerError,
+    TelegramUnauthorizedError,
+)
+
 from home_finder.logging import get_logger
 from home_finder.models import (
     SOURCE_NAMES,
@@ -801,11 +810,34 @@ class TelegramNotifier:
                 chat_id=self.chat_id,
             )
             return True
-        except Exception as e:
+        except TelegramRetryAfter:
+            raise  # Already handled by outer retry logic (or re-raise for caller)
+        except (
+            TelegramBadRequest, TelegramForbiddenError, TelegramNotFound, TelegramUnauthorizedError
+        ) as e:
             logger.error(
-                "notification_failed",
+                "notification_permanent_failure",
                 property_id=prop.unique_id,
                 error=str(e),
+                error_type=type(e).__name__,
+                exc_info=True,
+            )
+            return False
+        except TelegramServerError as e:
+            logger.warning(
+                "notification_transient_failure",
+                property_id=prop.unique_id,
+                error=str(e),
+                error_type=type(e).__name__,
+                exc_info=True,
+            )
+            return False
+        except Exception as e:
+            logger.error(
+                "notification_unexpected_failure",
+                property_id=prop.unique_id,
+                error=str(e),
+                error_type=type(e).__name__,
                 exc_info=True,
             )
             return False
@@ -837,8 +869,6 @@ class TelegramNotifier:
         Returns:
             True if notification was sent successfully.
         """
-        from aiogram.exceptions import TelegramRetryAfter
-
         is_high_rated = (
             quality_analysis is not None
             and quality_analysis.overall_rating is not None
@@ -938,6 +968,7 @@ class TelegramNotifier:
                     property_id=merged.unique_id,
                     retries=_retry_count,
                     error=str(e),
+                    exc_info=True,
                 )
                 return False
             logger.info(
@@ -955,11 +986,32 @@ class TelegramNotifier:
                 _retry_count=_retry_count + 1,
             )
 
-        except Exception as e:
+        except (
+            TelegramBadRequest, TelegramForbiddenError, TelegramNotFound, TelegramUnauthorizedError
+        ) as e:
             logger.error(
-                "notification_failed",
+                "notification_permanent_failure",
                 property_id=merged.unique_id,
                 error=str(e),
+                error_type=type(e).__name__,
+                exc_info=True,
+            )
+            return False
+        except TelegramServerError as e:
+            logger.warning(
+                "notification_transient_failure",
+                property_id=merged.unique_id,
+                error=str(e),
+                error_type=type(e).__name__,
+                exc_info=True,
+            )
+            return False
+        except Exception as e:
+            logger.error(
+                "notification_unexpected_failure",
+                property_id=merged.unique_id,
+                error=str(e),
+                error_type=type(e).__name__,
                 exc_info=True,
             )
             return False
@@ -1049,8 +1101,33 @@ class TelegramNotifier:
                 disable_notification=True,
             )
             return True
+        except TelegramRetryAfter:
+            raise  # Already handled by outer retry logic (or re-raise for caller)
+        except (
+            TelegramBadRequest, TelegramForbiddenError, TelegramNotFound, TelegramUnauthorizedError
+        ) as e:
+            logger.error(
+                "notification_permanent_failure",
+                error=str(e),
+                error_type=type(e).__name__,
+                exc_info=True,
+            )
+            return False
+        except TelegramServerError as e:
+            logger.warning(
+                "notification_transient_failure",
+                error=str(e),
+                error_type=type(e).__name__,
+                exc_info=True,
+            )
+            return False
         except Exception as e:
-            logger.error("status_message_failed", error=str(e), exc_info=True)
+            logger.error(
+                "notification_unexpected_failure",
+                error=str(e),
+                error_type=type(e).__name__,
+                exc_info=True,
+            )
             return False
 
     async def send_price_drop_notification(
@@ -1096,11 +1173,34 @@ class TelegramNotifier:
             )
             logger.info("price_drop_notification_sent", unique_id=unique_id, drop=drop)
             return True
-        except Exception as e:
+        except TelegramRetryAfter:
+            raise  # Already handled by outer retry logic (or re-raise for caller)
+        except (
+            TelegramBadRequest, TelegramForbiddenError, TelegramNotFound, TelegramUnauthorizedError
+        ) as e:
             logger.error(
-                "price_drop_notification_failed",
+                "notification_permanent_failure",
                 unique_id=unique_id,
                 error=str(e),
+                error_type=type(e).__name__,
+                exc_info=True,
+            )
+            return False
+        except TelegramServerError as e:
+            logger.warning(
+                "notification_transient_failure",
+                unique_id=unique_id,
+                error=str(e),
+                error_type=type(e).__name__,
+                exc_info=True,
+            )
+            return False
+        except Exception as e:
+            logger.error(
+                "notification_unexpected_failure",
+                unique_id=unique_id,
+                error=str(e),
+                error_type=type(e).__name__,
                 exc_info=True,
             )
             return False

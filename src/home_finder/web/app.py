@@ -75,6 +75,9 @@ async def _pipeline_loop(settings: Settings, interval_minutes: int) -> None:
                 logger.info("pipeline_scheduler_running")
                 try:
                     await run_pipeline(settings)
+                except asyncio.CancelledError:
+                    logger.info("pipeline_scheduler_cancelled")
+                    raise
                 except Exception:
                     logger.error("pipeline_scheduler_error", exc_info=True)
 

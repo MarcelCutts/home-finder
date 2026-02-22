@@ -375,11 +375,11 @@ class _CurlResponseAdapter:
 
     @property
     def status_code(self) -> int:
-        return self._response.status_code  # type: ignore[attr-defined]
+        return self._response.status_code  # type: ignore[attr-defined, no-any-return]
 
     @property
     def text(self) -> str:
-        return self._response.text  # type: ignore[attr-defined]
+        return self._response.text  # type: ignore[attr-defined, no-any-return]
 
     @property
     def url(self) -> object:

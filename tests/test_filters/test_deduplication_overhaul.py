@@ -928,7 +928,7 @@ def _multi_source_merged_property_st(draw: st.DrawFn) -> MergedProperty:
         latitude=lat,
         longitude=lon,
     )
-    source_urls = {s: prop.url for s in sources}
+    source_urls = dict.fromkeys(sources, prop.url)
     return MergedProperty(
         canonical=prop,
         sources=sources,
@@ -1444,7 +1444,7 @@ class TestImageEvidenceRequirement:
         assert len(groups) == 2
         assert all(len(g) == 1 for g in groups)
 
-    async def test_same_building_different_flat_rejected(self) -> None:
+    async def test_same_building_different_flat_rejected_gallery_mismatch(self) -> None:
         """Two properties at the same address with different galleries → separate.
 
         Simulates the real-world false positive: identical postcode, coords,

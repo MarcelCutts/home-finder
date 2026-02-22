@@ -1,5 +1,7 @@
 """Tests for area context data loading and accessor functions."""
 
+from typing import ClassVar
+
 import pytest
 
 from home_finder.data.area_context import (
@@ -9,11 +11,11 @@ from home_finder.data.area_context import (
     CREATIVE_SCENE,
     ENERGY_COSTS_MONTHLY,
     HOSTING_TOLERANCE,
-    MicroArea,
     NOISE_ENFORCEMENT,
     SERVICE_CHARGE_RANGES,
     WARD_TO_MICRO_AREA,
     WATER_COSTS_MONTHLY,
+    MicroArea,
     PropertyContext,
     build_property_context,
     get_area_overview,
@@ -74,21 +76,27 @@ class TestMicroAreaValidation:
                 result.append((outcode, name, ma))
         return result
 
-    def test_hosting_tolerance_values(self, all_micro_areas: list[tuple[str, str, MicroArea]]) -> None:
+    def test_hosting_tolerance_values(
+        self, all_micro_areas: list[tuple[str, str, MicroArea]],
+    ) -> None:
         for outcode, name, ma in all_micro_areas:
             if "hosting_tolerance" in ma:
                 assert ma["hosting_tolerance"] in VALID_HOSTING_VALUES, (
                     f"{outcode}/{name}: invalid hosting_tolerance '{ma['hosting_tolerance']}'"
                 )
 
-    def test_wfh_suitability_values(self, all_micro_areas: list[tuple[str, str, MicroArea]]) -> None:
+    def test_wfh_suitability_values(
+        self, all_micro_areas: list[tuple[str, str, MicroArea]],
+    ) -> None:
         for outcode, name, ma in all_micro_areas:
             if "wfh_suitability" in ma:
                 assert ma["wfh_suitability"] in VALID_WFH_VALUES, (
                     f"{outcode}/{name}: invalid wfh_suitability '{ma['wfh_suitability']}'"
                 )
 
-    def test_micro_areas_have_required_fields(self, all_micro_areas: list[tuple[str, str, MicroArea]]) -> None:
+    def test_micro_areas_have_required_fields(
+        self, all_micro_areas: list[tuple[str, str, MicroArea]],
+    ) -> None:
         required = {"character", "transport", "hosting_tolerance", "wfh_suitability"}
         for outcode, name, ma in all_micro_areas:
             missing = required - set(ma.keys())
@@ -456,7 +464,7 @@ class TestWardCoverage:
     """Ensure all known wards from the DB audit have mappings in WARD_TO_MICRO_AREA."""
 
     # All wards observed in production data, grouped by outcode.
-    KNOWN_WARDS: dict[str, list[str]] = {
+    KNOWN_WARDS: ClassVar[dict[str, list[str]]] = {
         "E2": [
             "Bethnal Green West",
             "Bethnal Green East",
@@ -551,7 +559,7 @@ class TestWardCoverage:
         assert not missing, f"Unmapped wards: {missing}"
 
     def test_all_mapped_wards_resolve_to_existing_micro_areas(self) -> None:
-        """Every ward in KNOWN_WARDS should resolve to an actual micro-area via get_micro_area_for_ward."""
+        """Every ward in KNOWN_WARDS should resolve to an actual micro-area."""
         unresolved = []
         for outcode, wards in self.KNOWN_WARDS.items():
             for ward in wards:

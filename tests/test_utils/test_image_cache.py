@@ -5,7 +5,6 @@ from pathlib import Path
 from pydantic import HttpUrl
 
 from home_finder.utils.image_cache import (
-    THUMBNAIL_PREFIX,
     backfill_thumbnails,
     clear_image_cache,
     copy_cached_images,
@@ -381,8 +380,9 @@ class TestGalleryCacheCoverage:
 
 def _create_test_image(width: int = 800, height: int = 600) -> bytes:
     """Create a minimal valid JPEG image of the given size."""
-    from PIL import Image
     import io
+
+    from PIL import Image
 
     img = Image.new("RGB", (width, height), color=(100, 150, 200))
     buf = io.BytesIO()
@@ -439,8 +439,9 @@ class TestGenerateThumbnail:
 
     def test_converts_rgba_to_rgb(self, tmp_path: Path) -> None:
         """Should convert RGBA images to RGB for JPEG output."""
-        from PIL import Image
         import io
+
+        from PIL import Image
 
         img = Image.new("RGBA", (800, 600), color=(100, 150, 200, 128))
         buf = io.BytesIO()
@@ -558,7 +559,7 @@ class TestBackfillThumbnails:
                 _create_test_image(800, 600)
             )
 
-        generated, skipped, deleted = backfill_thumbnails(data_dir)
+        generated, _skipped, deleted = backfill_thumbnails(data_dir)
         assert generated == 2
         assert deleted == 0
 
@@ -575,7 +576,7 @@ class TestBackfillThumbnails:
         corrupt_file = cache_dir / "gallery_001_bbb22222.jpg"
         corrupt_file.write_bytes(b"<!DOCTYPE html><html><body>CDN Error</body></html>")
 
-        generated, skipped, deleted = backfill_thumbnails(data_dir)
+        generated, _skipped, deleted = backfill_thumbnails(data_dir)
         assert generated == 1
         assert deleted == 1
         assert not corrupt_file.exists()

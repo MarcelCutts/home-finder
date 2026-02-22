@@ -1,6 +1,7 @@
 """Tests for weighted scoring deduplication."""
 
 import pytest
+from pydantic import HttpUrl
 
 from home_finder.filters.scoring import (
     MATCH_THRESHOLD,
@@ -11,8 +12,6 @@ from home_finder.filters.scoring import (
     graduated_coordinate_score,
     graduated_price_score,
 )
-from pydantic import HttpUrl
-
 from home_finder.models import Property, PropertySource
 from home_finder.utils.address import extract_outcode, normalize_street_name
 

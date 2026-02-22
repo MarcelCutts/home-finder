@@ -460,7 +460,7 @@ class TestZooplaEarlyStop:
             )
 
         assert mock_fetch.call_count == 1  # Only page 1 fetched
-        assert result == []  # All known → nothing returned
+        assert result.properties == []  # All known → nothing returned
 
     @pytest.mark.asyncio
     async def test_continues_when_some_results_new(self, zoopla_scraper: ZooplaScraper) -> None:
@@ -510,7 +510,7 @@ class TestZooplaEarlyStop:
             )
 
         assert mock_fetch.call_count >= 2  # Continued past page 1
-        assert len(result) == 2  # Both page 1 properties returned
+        assert len(result.properties) == 2  # Both page 1 properties returned
 
 
 def _make_response(

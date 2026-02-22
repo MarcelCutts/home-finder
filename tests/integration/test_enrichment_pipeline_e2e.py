@@ -20,7 +20,7 @@ class TestEnrichmentPipelineE2E:
     async def _scrape_openrent(self, max_results: int = 3):
         scraper = OpenRentScraper()
         try:
-            return await scraper.scrape(
+            result = await scraper.scrape(
                 min_price=1800,
                 max_price=2200,
                 min_bedrooms=1,
@@ -28,6 +28,7 @@ class TestEnrichmentPipelineE2E:
                 area="e8",
                 max_results=max_results,
             )
+            return result.properties
         finally:
             await scraper.close()
 

@@ -1130,6 +1130,7 @@ class PropertyQualityFilter:
                 request_id=getattr(e, "_request_id", None)
                 if not isinstance(e, APIConnectionError)
                 else None,
+                exc_info=True,
             )
             raise APIUnavailableError(str(e)) from e
 
@@ -1194,6 +1195,10 @@ class PropertyQualityFilter:
 
         Returns:
             Evaluation data dict (empty if Phase 2 failed).
+
+        Raises:
+            APIUnavailableError: On authentication, rate-limit, server, or
+                connection errors (mirrors Phase 1 contract).
         """
         if self._is_circuit_open():
             logger.info("circuit_breaker_open_skipping_evaluation", property_id=property_id)
@@ -1278,6 +1283,7 @@ class PropertyQualityFilter:
                 phase="evaluation",
                 error=str(e),
             )
+            raise APIUnavailableError(f"Authentication failed: {e}") from e
 
         except (RateLimitError, InternalServerError, APIConnectionError) as e:
             self._record_api_failure()
@@ -1288,6 +1294,7 @@ class PropertyQualityFilter:
                 error_type=type(e).__name__,
                 exc_info=True,
             )
+            raise APIUnavailableError(str(e)) from e
 
         except Exception as e:
             logger.warning(

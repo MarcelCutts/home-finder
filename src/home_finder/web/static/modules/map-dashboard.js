@@ -78,11 +78,13 @@ if (mapEl && resultsEl) {
       dots.className = "quality-dots quality-dots-" + p.rating;
       dots.style.marginTop = "4px";
       dots.style.display = "inline-block";
-      let dotsHtml = p.rating + "/5 ";
+      dots.appendChild(document.createTextNode(p.rating + "/5 "));
       for (let d = 1; d <= 5; d++) {
-        dotsHtml += '<span class="dot ' + (d <= p.rating ? "filled" : "empty") + '">\u25CF</span>';
+        var dot = document.createElement("span");
+        dot.className = "dot " + (d <= p.rating ? "filled" : "empty");
+        dot.textContent = "\u25CF";
+        dots.appendChild(dot);
       }
-      dots.innerHTML = dotsHtml;
       container.appendChild(dots);
     }
 

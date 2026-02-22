@@ -333,7 +333,9 @@ class TestDetectEpc:
             draw.rectangle([w // 2 + 10, 30, w - 30, h // 2 - 10], outline="black", width=3)
             draw.rectangle([30, h // 2 + 10, w - 30, h - 30], outline="black", width=3)
             # Door arcs
-            draw.arc([w // 2 - 30, h // 2 - 30, w // 2 + 30, h // 2 + 30], 0, 90, fill="black", width=2)
+            draw.arc(
+                [w // 2 - 30, h // 2 - 30, w // 2 + 30, h // 2 + 30], 0, 90, fill="black", width=2,
+            )
             # Blue dimension labels — saturated blue text/lines (~10% coverage)
             blue = (0, 100, 220)
             # Horizontal dimension lines
@@ -352,7 +354,9 @@ class TestDetectEpc:
 
         img_bytes = _make_image_bytes(size=(400, 300), draw_fn=_draw_blue_annotated_floorplan)
         is_epc, confidence = detect_epc(img_bytes)
-        assert is_epc is False, f"Blue-annotated floorplan falsely detected as EPC (confidence={confidence})"
+        assert is_epc is False, (
+            f"Blue-annotated floorplan falsely detected as EPC (confidence={confidence})"
+        )
 
     def test_dark_image_not_detected(self) -> None:
         """A dark image should not be detected as an EPC chart."""

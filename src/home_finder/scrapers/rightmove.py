@@ -13,7 +13,7 @@ from pydantic import HttpUrl
 from home_finder.data.location_mappings import RIGHTMOVE_LOCATIONS, RIGHTMOVE_OUTCODES
 from home_finder.logging import get_logger
 from home_finder.models import FurnishType, Property, PropertySource
-from home_finder.scrapers.base import BaseScraper
+from home_finder.scrapers.base import BaseScraper, ScrapeResult
 from home_finder.scrapers.parsing import extract_bedrooms, extract_postcode, extract_price
 from home_finder.utils.address import is_outcode
 
@@ -98,7 +98,7 @@ class RightmoveScraper(BaseScraper):
         include_let_agreed: bool = True,
         max_results: int | None = None,
         known_source_ids: set[str] | None = None,
-    ) -> list[Property]:
+    ) -> ScrapeResult:
         """Scrape Rightmove for matching properties (all pages)."""
         search_url = await self._build_search_url(
             area=area,
@@ -111,13 +111,14 @@ class RightmoveScraper(BaseScraper):
             include_let_agreed=include_let_agreed,
         )
         if not search_url:
-            return []
+            return ScrapeResult()
 
-        async def fetch_page(page_idx: int) -> list[Property]:
+        async def fetch_page(page_idx: int) -> list[Property] | None:
             index = page_idx * self.RESULTS_PER_PAGE
             url = f"{search_url}&index={index}" if page_idx > 0 else search_url
 
             page_properties: list[Property] = []
+            crawl_failed = False
 
             async def handle_page(
                 context: BeautifulSoupCrawlingContext,
@@ -132,7 +133,16 @@ class RightmoveScraper(BaseScraper):
                 storage_client=MemoryStorageClient(),
             )
             crawler.router.default_handler(handle_page)
-            await crawler.run([url])
+            try:
+                await crawler.run([url])
+            except Exception as e:
+                logger.warning(
+                    "rightmove_crawl_failed", url=url, error=str(e), exc_info=True
+                )
+                crawl_failed = True
+
+            if crawl_failed and not page_properties:
+                return None  # Signals fetch failure to _paginate
 
             logger.info(
                 "scraped_rightmove_page",
@@ -145,7 +155,7 @@ class RightmoveScraper(BaseScraper):
         async def delay() -> None:
             await asyncio.sleep(self.PAGE_DELAY_SECONDS)
 
-        properties = await self._paginate(
+        result = await self._paginate(
             fetch_page,
             max_pages=self.MAX_PAGES,
             known_source_ids=known_source_ids,
@@ -156,10 +166,12 @@ class RightmoveScraper(BaseScraper):
         logger.info(
             "scraped_rightmove_complete",
             area=area,
-            total_properties=len(properties),
+            total_properties=len(result.properties),
+            pages_fetched=result.pages_fetched,
+            pages_failed=result.pages_failed,
         )
 
-        return properties
+        return result
 
     async def _build_search_url(
         self,
@@ -191,13 +203,13 @@ class RightmoveScraper(BaseScraper):
                     # URL encoding: ^ becomes %5E
                     location_id = api_id.replace("^", "%5E")
                 else:
-                    logger.error("rightmove_outcode_not_found", outcode=area)
+                    logger.warning("rightmove_outcode_not_found", outcode=area)
                     return ""
         else:
             # Borough lookup
             location_id = RIGHTMOVE_LOCATIONS.get(area_key)
             if not location_id:
-                logger.error("rightmove_borough_not_found", area=area_key)
+                logger.warning("rightmove_borough_not_found", area=area_key)
                 return ""
 
         params = [

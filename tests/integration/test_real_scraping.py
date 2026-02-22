@@ -87,6 +87,8 @@ class TestRealOpenRentScraping:
 
         # Should find some properties (London always has listings)
         # We don't assert exact count since it varies
+        properties = properties.properties
+
         assert isinstance(properties, list)
 
         if properties:
@@ -123,6 +125,8 @@ class TestRealRightmoveScraping:
             max_bedrooms=2,
             area="hackney",
         )
+
+        properties = properties.properties
 
         assert isinstance(properties, list)
 
@@ -164,6 +168,8 @@ class TestRealRightmoveScraping:
             area=outcode,
         )
 
+        properties = properties.properties
+
         assert isinstance(properties, list)
         print(f"\nRightmove ({outcode} - {area_name}): Found {len(properties)} properties")
 
@@ -203,6 +209,8 @@ class TestRealZooplaScraping:
             area="hackney",
         )
 
+        properties = properties.properties
+
         assert isinstance(properties, list)
 
         if properties:
@@ -239,6 +247,8 @@ class TestRealOnTheMarketScraping:
             max_bedrooms=2,
             area="hackney",
         )
+
+        properties = properties.properties
 
         assert isinstance(properties, list)
 
@@ -280,13 +290,14 @@ class TestRealFullPipeline:
         all_properties = []
         for scraper in scrapers:
             try:
-                properties = await scraper.scrape(
+                scrape_result = await scraper.scrape(
                     min_price=1800,
                     max_price=2200,
                     min_bedrooms=1,
                     max_bedrooms=2,
                     area="hackney",
                 )
+                properties = scrape_result.properties
                 all_properties.extend(properties)
                 print(f"\n{scraper.source.value}: {len(properties)} properties")
             except Exception as e:

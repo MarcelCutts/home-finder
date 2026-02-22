@@ -4,11 +4,27 @@ import asyncio
 import random
 from abc import ABC, abstractmethod
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass, field
 
 from home_finder.logging import get_logger
 from home_finder.models import FurnishType, Property, PropertySource
 
 logger = get_logger(__name__)
+
+
+@dataclass
+class ScrapeResult:
+    """Result of a scrape operation with metadata for distinguishing success from failure."""
+
+    properties: list[Property] = field(default_factory=list)
+    pages_fetched: int = 0
+    pages_failed: int = 0
+    parse_errors: int = 0
+
+    @property
+    def is_healthy(self) -> bool:
+        """True if scrape succeeded at least partially (pages fetched, no parse errors)."""
+        return self.pages_fetched > 0 and self.parse_errors == 0
 
 
 class BaseScraper(ABC):
@@ -34,7 +50,7 @@ class BaseScraper(ABC):
         include_let_agreed: bool = True,
         max_results: int | None = None,
         known_source_ids: set[str] | None = None,
-    ) -> list[Property]:
+    ) -> ScrapeResult:
         """Scrape properties matching the given criteria.
 
         Args:
@@ -50,37 +66,49 @@ class BaseScraper(ABC):
             known_source_ids: Source IDs already in DB; enables early-stop pagination.
 
         Returns:
-            List of Property objects found.
+            ScrapeResult with properties and scrape health metadata.
         """
         ...
 
     async def _paginate(
         self,
-        fetch_page: Callable[[int], Awaitable[list[Property]]],
+        fetch_page: Callable[[int], Awaitable[list[Property] | None]],
         *,
         max_pages: int,
         known_source_ids: set[str] | None = None,
         max_results: int | None = None,
         page_delay: Callable[[], Awaitable[None]] | None = None,
-    ) -> list[Property]:
+    ) -> ScrapeResult:
         """Generic pagination loop shared by all scrapers.
 
         Args:
-            fetch_page: Async callable receiving 0-based page index, returns
-                properties for that page (empty list signals end of results).
+            fetch_page: Async callable receiving 0-based page index. Returns
+                properties for that page, empty list for end of results, or
+                None for fetch failure.
             max_pages: Maximum number of pages to fetch.
             known_source_ids: Source IDs already in DB; enables early-stop.
             max_results: Maximum total results to return (None = unlimited).
             page_delay: Optional async callable invoked between pages.
 
         Returns:
-            Deduplicated list of properties across all pages.
+            ScrapeResult with deduplicated properties and health metadata.
         """
         all_properties: list[Property] = []
         seen_ids: set[str] = set()
+        pages_fetched = 0
+        pages_failed = 0
 
         for page_idx in range(max_pages):
             properties = await fetch_page(page_idx)
+
+            if properties is None:
+                pages_failed += 1
+                # Don't break — try next page
+                if page_delay is not None and page_idx < max_pages - 1:
+                    await page_delay()
+                continue
+
+            pages_fetched += 1
 
             if not properties:
                 break
@@ -114,7 +142,11 @@ class BaseScraper(ABC):
             if page_delay is not None and page_idx < max_pages - 1:
                 await page_delay()
 
-        return all_properties
+        return ScrapeResult(
+            properties=all_properties,
+            pages_fetched=pages_fetched,
+            pages_failed=pages_failed,
+        )
 
     async def area_delay(self) -> None:
         """Delay between area searches. Override for scraper-specific pacing."""

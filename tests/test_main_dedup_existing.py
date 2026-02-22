@@ -107,6 +107,7 @@ async def _run_with_storage(
             self_storage._get_connection,
             self_storage.get_property_images,
             self_storage.save_quality_analysis,
+            self_storage._transaction,
         )
 
     original_close = PropertyStorage.close

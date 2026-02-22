@@ -154,7 +154,7 @@ class TestOnTheMarketScraper:
         assert call_kwargs["impersonate"] == "chrome"
 
         # Verify properties were parsed from first page
-        assert len(properties) == 3
+        assert len(properties.properties) == 3
 
 
 class TestOnTheMarketParser:
@@ -261,7 +261,7 @@ class TestOnTheMarketParser:
         """Test parsing page without __NEXT_DATA__."""
         html = "<html><body><p>No data</p></body></html>"
         properties = onthemarket_scraper._parse_next_data(html)
-        assert len(properties) == 0
+        assert properties is None
 
 
 class TestOnTheMarketEarlyStop:
@@ -297,7 +297,7 @@ class TestOnTheMarketEarlyStop:
             )
 
         assert mock_fetch.call_count == 1  # Only page 1 fetched
-        assert result == []  # All known → nothing returned
+        assert result.properties == []  # All known → nothing returned
 
     @pytest.mark.asyncio
     async def test_continues_when_some_results_new(
@@ -327,4 +327,4 @@ class TestOnTheMarketEarlyStop:
             )
 
         assert mock_fetch.call_count >= 2  # Continued past page 1
-        assert len(result) == 3  # All page 1 properties returned
+        assert len(result.properties) == 3  # All page 1 properties returned

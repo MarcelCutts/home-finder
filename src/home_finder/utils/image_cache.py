@@ -35,9 +35,7 @@ def is_valid_image_bytes(data: bytes) -> bool:
         return True
     if data[:4] == b"GIF8":
         return True
-    if data[:4] == b"RIFF" and data[8:12] == b"WEBP":
-        return True
-    return False
+    return data[:4] == b"RIFF" and data[8:12] == b"WEBP"
 
 
 def is_valid_image_url(url: str) -> bool:
@@ -223,7 +221,7 @@ def generate_thumbnail(
     """
     from PIL import Image
 
-    import home_finder.utils.image_processing  # noqa: F401  (sets MAX_IMAGE_PIXELS)
+    Image.MAX_IMAGE_PIXELS = 50_000_000  # Guard against decompression bombs
 
     thumb_path = original_path.parent / f"{THUMBNAIL_PREFIX}{original_path.stem}.jpg"
     if thumb_path.is_file():
@@ -279,7 +277,7 @@ def backfill_thumbnails(data_dir: str) -> tuple[int, int, int]:
             if find_thumbnail(img_file) is not None:
                 skipped += 1
                 continue
-            with open(img_file, "rb") as f:
+            with img_file.open("rb") as f:
                 header = f.read(12)
             if not is_valid_image_bytes(header):
                 logger.warning(

@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Final
@@ -60,7 +62,10 @@ class PropertyStorage:
         self._ensure_directory()
         self._web = WebQueryService(self._get_connection, self.get_property_images)
         self._pipeline = PipelineRepository(
-            self._get_connection, self.get_property_images, self.save_quality_analysis
+            self._get_connection,
+            self.get_property_images,
+            self.save_quality_analysis,
+            self._transaction,
         )
 
     def _ensure_directory(self) -> None:
@@ -86,6 +91,25 @@ class PropertyStorage:
         if self._conn is not None:
             await self._conn.close()
             self._conn = None
+
+    @asynccontextmanager
+    async def _transaction(self) -> AsyncIterator[aiosqlite.Connection]:
+        """Explicit transaction scope with automatic rollback on error.
+
+        Usage:
+            async with self._transaction() as conn:
+                await conn.execute(...)
+                await conn.execute(...)
+            # Commits on clean exit, rolls back on exception
+        """
+        conn = await self._get_connection()
+        await conn.execute("BEGIN IMMEDIATE")
+        try:
+            yield conn
+            await conn.commit()
+        except BaseException:
+            await conn.rollback()
+            raise
 
     async def initialize(self) -> None:
         """Initialize the database schema."""
@@ -142,7 +166,7 @@ class PropertyStorage:
                 url TEXT NOT NULL,
                 image_type TEXT NOT NULL,
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY (property_unique_id) REFERENCES properties(unique_id),
+                FOREIGN KEY (property_unique_id) REFERENCES properties(unique_id) ON DELETE CASCADE,
                 UNIQUE(property_unique_id, url)
             )
         """)
@@ -161,7 +185,7 @@ class PropertyStorage:
                 condition_concerns BOOLEAN DEFAULT 0,
                 concern_severity TEXT,
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY (property_unique_id) REFERENCES properties(unique_id)
+                FOREIGN KEY (property_unique_id) REFERENCES properties(unique_id) ON DELETE CASCADE
             )
         """)
         await conn.execute("""
@@ -276,7 +300,16 @@ class PropertyStorage:
             "CREATE INDEX IF NOT EXISTS idx_quality_fit_score ON quality_analyses(fit_score)"
         )
 
-        # Backfill fit_score for existing rows
+        # Migrate: add fit_score_version column for algorithm versioning
+        try:
+            await conn.execute(
+                "ALTER TABLE quality_analyses ADD COLUMN fit_score_version INTEGER"
+            )
+        except aiosqlite.OperationalError as e:
+            if "duplicate column" not in str(e).lower():
+                raise
+
+        # Backfill fit_score for existing rows (or recompute on version mismatch)
         await self._backfill_fit_scores(conn)
 
         # User status index
@@ -294,7 +327,7 @@ class PropertyStorage:
                 note TEXT,
                 source TEXT NOT NULL DEFAULT 'web',
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY (property_unique_id) REFERENCES properties(unique_id)
+                FOREIGN KEY (property_unique_id) REFERENCES properties(unique_id) ON DELETE CASCADE
             )
         """)
         await conn.execute("""
@@ -308,7 +341,7 @@ class PropertyStorage:
                 property_unique_id TEXT PRIMARY KEY,
                 message TEXT NOT NULL,
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY (property_unique_id) REFERENCES properties(unique_id)
+                FOREIGN KEY (property_unique_id) REFERENCES properties(unique_id) ON DELETE CASCADE
             )
         """)
 
@@ -322,7 +355,7 @@ class PropertyStorage:
                 change_amount INTEGER NOT NULL,
                 source TEXT,
                 detected_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY (property_unique_id) REFERENCES properties(unique_id)
+                FOREIGN KEY (property_unique_id) REFERENCES properties(unique_id) ON DELETE CASCADE
             )
         """)
         await conn.execute("""
@@ -359,7 +392,7 @@ class PropertyStorage:
                 error TEXT,
                 screenshot_path TEXT,
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY (property_unique_id) REFERENCES properties(unique_id),
+                FOREIGN KEY (property_unique_id) REFERENCES properties(unique_id) ON DELETE CASCADE,
                 UNIQUE(property_unique_id, portal)
             )
         """)
@@ -393,18 +426,26 @@ class PropertyStorage:
         logger.info("database_initialized", db_path=self.db_path)
 
     async def _backfill_fit_scores(self, conn: aiosqlite.Connection) -> None:
-        """Backfill fit_score for existing quality analyses that lack it."""
-        cursor = await conn.execute("""
+        """Backfill fit_score for rows that lack it or have an outdated version."""
+        from home_finder.filters.fit_score import FIT_SCORE_VERSION
+
+        cursor = await conn.execute(
+            """
             SELECT q.property_unique_id, q.analysis_json, p.bedrooms, p.postcode
             FROM quality_analyses q
             JOIN properties p ON p.unique_id = q.property_unique_id
-            WHERE q.fit_score IS NULL AND q.analysis_json IS NOT NULL
-        """)
+            WHERE q.analysis_json IS NOT NULL
+              AND (q.fit_score IS NULL
+                   OR q.fit_score_version IS NULL
+                   OR q.fit_score_version != ?)
+            """,
+            (FIT_SCORE_VERSION,),
+        )
         rows = await cursor.fetchall()
         if not rows:
             return
 
-        updates: list[tuple[int | None, str]] = []
+        updates: list[tuple[int | None, int, str]] = []
         for row in rows:
             try:
                 analysis = json.loads(row["analysis_json"])
@@ -419,14 +460,17 @@ class PropertyStorage:
             bedrooms = row["bedrooms"] or 0
             score = compute_fit_score(analysis, bedrooms)
             if score is not None:
-                updates.append((score, row["property_unique_id"]))
+                updates.append((score, FIT_SCORE_VERSION, row["property_unique_id"]))
 
         if updates:
             await conn.executemany(
-                "UPDATE quality_analyses SET fit_score = ? WHERE property_unique_id = ?",
+                "UPDATE quality_analyses SET fit_score = ?, fit_score_version = ?"
+                " WHERE property_unique_id = ?",
                 updates,
             )
-            logger.info("fit_score_backfill_complete", updated=len(updates))
+            logger.info(
+                "fit_score_backfill_complete", updated=len(updates), version=FIT_SCORE_VERSION
+            )
 
     async def save_property(
         self,
@@ -755,24 +799,23 @@ class PropertyStorage:
 
         Used to clean up unenriched rows consumed by cross-platform anchor merges.
         """
-        conn = await self._get_connection()
-        for table in (
-            "property_images",
-            "quality_analyses",
-            "status_events",
-            "viewing_messages",
-            "price_history",
-            "enquiry_log",
-        ):
+        async with self._transaction() as conn:
+            for table in (
+                "property_images",
+                "quality_analyses",
+                "status_events",
+                "viewing_messages",
+                "price_history",
+                "enquiry_log",
+            ):
+                await conn.execute(
+                    f"DELETE FROM {table} WHERE property_unique_id = ?",
+                    (unique_id,),
+                )
             await conn.execute(
-                f"DELETE FROM {table} WHERE property_unique_id = ?",
+                "DELETE FROM properties WHERE unique_id = ?",
                 (unique_id,),
             )
-        await conn.execute(
-            "DELETE FROM properties WHERE unique_id = ?",
-            (unique_id,),
-        )
-        await conn.commit()
         logger.debug("property_deleted", unique_id=unique_id)
 
     async def get_recent_properties_for_dedup(
@@ -841,77 +884,73 @@ class PropertyStorage:
             existing_unique_id: The unique_id of the existing DB record.
             merged: The MergedProperty containing combined source data.
         """
-        conn = await self._get_connection()
+        async with self._transaction() as conn:
+            # Read current DB state
+            cursor = await conn.execute(
+                "SELECT sources, source_urls, descriptions_json, min_price, max_price, price_pcm "
+                "FROM properties WHERE unique_id = ?",
+                (existing_unique_id,),
+            )
+            row = await cursor.fetchone()
+            if row is None:
+                logger.warning("update_merged_sources_not_found", unique_id=existing_unique_id)
+                return
 
-        # Read current DB state
-        cursor = await conn.execute(
-            "SELECT sources, source_urls, descriptions_json, min_price, max_price, price_pcm "
-            "FROM properties WHERE unique_id = ?",
-            (existing_unique_id,),
-        )
-        row = await cursor.fetchone()
-        if row is None:
-            logger.warning("update_merged_sources_not_found", unique_id=existing_unique_id)
-            return
+            # Merge sources
+            existing_sources: list[str] = json.loads(row["sources"]) if row["sources"] else []
+            existing_source_urls: dict[str, str] = (
+                json.loads(row["source_urls"]) if row["source_urls"] else {}
+            )
+            existing_descriptions: dict[str, str] = (
+                json.loads(row["descriptions_json"]) if row["descriptions_json"] else {}
+            )
 
-        # Merge sources
-        existing_sources: list[str] = json.loads(row["sources"]) if row["sources"] else []
-        existing_source_urls: dict[str, str] = (
-            json.loads(row["source_urls"]) if row["source_urls"] else {}
-        )
-        existing_descriptions: dict[str, str] = (
-            json.loads(row["descriptions_json"]) if row["descriptions_json"] else {}
-        )
+            for src in merged.sources:
+                if src.value not in existing_sources:
+                    existing_sources.append(src.value)
+                if src in merged.source_urls:
+                    existing_source_urls[src.value] = str(merged.source_urls[src])
+                if src in merged.descriptions:
+                    existing_descriptions[src.value] = merged.descriptions[src]
 
-        for src in merged.sources:
-            if src.value not in existing_sources:
-                existing_sources.append(src.value)
-            if src in merged.source_urls:
-                existing_source_urls[src.value] = str(merged.source_urls[src])
-            if src in merged.descriptions:
-                existing_descriptions[src.value] = merged.descriptions[src]
+            # Expand price range
+            db_min = row["min_price"] if row["min_price"] is not None else row["price_pcm"]
+            db_max = row["max_price"] if row["max_price"] is not None else row["price_pcm"]
+            new_min = min(db_min, merged.min_price)
+            new_max = max(db_max, merged.max_price)
 
-        # Expand price range
-        db_min = row["min_price"] if row["min_price"] is not None else row["price_pcm"]
-        db_max = row["max_price"] if row["max_price"] is not None else row["price_pcm"]
-        new_min = min(db_min, merged.min_price)
-        new_max = max(db_max, merged.max_price)
+            sources_json = json.dumps(existing_sources)
+            source_urls_json = json.dumps(existing_source_urls)
+            descriptions_json = json.dumps(existing_descriptions) if existing_descriptions else None
 
-        sources_json = json.dumps(existing_sources)
-        source_urls_json = json.dumps(existing_source_urls)
-        descriptions_json = json.dumps(existing_descriptions) if existing_descriptions else None
+            await conn.execute(
+                """
+                UPDATE properties SET
+                    sources = ?,
+                    source_urls = ?,
+                    descriptions_json = ?,
+                    min_price = ?,
+                    max_price = ?,
+                    sources_updated_at = ?
+                WHERE unique_id = ?
+                """,
+                (
+                    sources_json,
+                    source_urls_json,
+                    descriptions_json,
+                    new_min,
+                    new_max,
+                    datetime.now(UTC).isoformat(),
+                    existing_unique_id,
+                ),
+            )
 
-        await conn.execute(
-            """
-            UPDATE properties SET
-                sources = ?,
-                source_urls = ?,
-                descriptions_json = ?,
-                min_price = ?,
-                max_price = ?,
-                sources_updated_at = ?
-            WHERE unique_id = ?
-            """,
-            (
-                sources_json,
-                source_urls_json,
-                descriptions_json,
-                new_min,
-                new_max,
-                datetime.now(UTC).isoformat(),
-                existing_unique_id,
-            ),
-        )
-
-        # Save any new images from the merged property
-        new_images = list(merged.images)
-        if merged.floorplan:
-            new_images.append(merged.floorplan)
-        if new_images:
-            await self.save_property_images(existing_unique_id, new_images, _commit=False)
-
-        # Single commit after both UPDATE and image INSERT
-        await conn.commit()
+            # Save any new images from the merged property
+            new_images = list(merged.images)
+            if merged.floorplan:
+                new_images.append(merged.floorplan)
+            if new_images:
+                await self.save_property_images(existing_unique_id, new_images, _commit=False)
 
         logger.info(
             "merged_sources_updated",
@@ -1207,7 +1246,12 @@ class PropertyStorage:
         try:
             analysis_json = json.dumps(analysis.model_dump(mode="json"))
         except (ValueError, TypeError) as e:
-            logger.error("analysis_json_serialization_failed", unique_id=unique_id, error=str(e))
+            logger.error(
+                "analysis_json_serialization_failed",
+                unique_id=unique_id,
+                error=str(e),
+                exc_info=True,
+            )
             return
 
         # Denormalize key fields for SQL filtering
@@ -1248,13 +1292,16 @@ class PropertyStorage:
                     analysis_dict["_area_hosting_tolerance"] = ht.get("rating")
             fit_score_val = compute_fit_score(analysis_dict, prop_row["bedrooms"] or 0)
 
+        from home_finder.filters.fit_score import FIT_SCORE_VERSION
+
         await conn.execute(
             """
             INSERT INTO quality_analyses (
                 property_unique_id, analysis_json, overall_rating,
                 condition_concerns, concern_severity, epc_rating,
-                has_outdoor_space, red_flag_count, fit_score, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                has_outdoor_space, red_flag_count, fit_score,
+                fit_score_version, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(property_unique_id) DO UPDATE SET
                 analysis_json = excluded.analysis_json,
                 overall_rating = excluded.overall_rating,
@@ -1263,7 +1310,8 @@ class PropertyStorage:
                 epc_rating = excluded.epc_rating,
                 has_outdoor_space = excluded.has_outdoor_space,
                 red_flag_count = excluded.red_flag_count,
-                fit_score = excluded.fit_score
+                fit_score = excluded.fit_score,
+                fit_score_version = excluded.fit_score_version
             """,
             (
                 unique_id,
@@ -1275,6 +1323,7 @@ class PropertyStorage:
                 has_outdoor_space,
                 red_flag_count,
                 fit_score_val,
+                FIT_SCORE_VERSION,
                 datetime.now(UTC).isoformat(),
             ),
         )
@@ -1458,28 +1507,27 @@ class PropertyStorage:
 
         Returns the previous status, or None if property not found.
         """
-        conn = await self._get_connection()
-        cursor = await conn.execute(
-            "SELECT user_status FROM properties WHERE unique_id = ?",
-            (unique_id,),
-        )
-        row = await cursor.fetchone()
-        if row is None:
-            return None
+        async with self._transaction() as conn:
+            cursor = await conn.execute(
+                "SELECT user_status FROM properties WHERE unique_id = ?",
+                (unique_id,),
+            )
+            row = await cursor.fetchone()
+            if row is None:
+                return None
 
-        from_status = row["user_status"] or "new"
+            from_status = row["user_status"] or "new"
 
-        await conn.execute(
-            "UPDATE properties SET user_status = ? WHERE unique_id = ?",
-            (new_status.value, unique_id),
-        )
-        await conn.execute(
-            """INSERT INTO status_events
-               (property_unique_id, from_status, to_status, note, source)
-               VALUES (?, ?, ?, ?, ?)""",
-            (unique_id, from_status, new_status.value, note, source),
-        )
-        await conn.commit()
+            await conn.execute(
+                "UPDATE properties SET user_status = ? WHERE unique_id = ?",
+                (new_status.value, unique_id),
+            )
+            await conn.execute(
+                """INSERT INTO status_events
+                   (property_unique_id, from_status, to_status, note, source)
+                   VALUES (?, ?, ?, ?, ?)""",
+                (unique_id, from_status, new_status.value, note, source),
+            )
         logger.debug(
             "user_status_updated",
             unique_id=unique_id,
@@ -1551,30 +1599,29 @@ class PropertyStorage:
 
         Returns change_amount (negative = drop) or None if no change / not found.
         """
-        conn = await self._get_connection()
-        cursor = await conn.execute(
-            "SELECT price_pcm FROM properties WHERE unique_id = ?",
-            (unique_id,),
-        )
-        row = await cursor.fetchone()
-        if row is None:
-            return None
-        old_price = row["price_pcm"]
-        if old_price == new_price:
-            return None
+        async with self._transaction() as conn:
+            cursor = await conn.execute(
+                "SELECT price_pcm FROM properties WHERE unique_id = ?",
+                (unique_id,),
+            )
+            row = await cursor.fetchone()
+            if row is None:
+                return None
+            old_price = row["price_pcm"]
+            if old_price == new_price:
+                return None
 
-        change_amount = new_price - old_price
-        await conn.execute(
-            """INSERT INTO price_history
-               (property_unique_id, old_price, new_price, change_amount, source)
-               VALUES (?, ?, ?, ?, ?)""",
-            (unique_id, old_price, new_price, change_amount, source),
-        )
-        await conn.execute(
-            "UPDATE properties SET price_pcm = ?, price_drop_notified = 0 WHERE unique_id = ?",
-            (new_price, unique_id),
-        )
-        await conn.commit()
+            change_amount = new_price - old_price
+            await conn.execute(
+                """INSERT INTO price_history
+                   (property_unique_id, old_price, new_price, change_amount, source)
+                   VALUES (?, ?, ?, ?, ?)""",
+                (unique_id, old_price, new_price, change_amount, source),
+            )
+            await conn.execute(
+                "UPDATE properties SET price_pcm = ?, price_drop_notified = 0 WHERE unique_id = ?",
+                (new_price, unique_id),
+            )
         logger.info(
             "price_change_detected",
             unique_id=unique_id,
@@ -1582,7 +1629,7 @@ class PropertyStorage:
             new_price=new_price,
             change=change_amount,
         )
-        return change_amount
+        return int(change_amount)
 
     async def get_price_history(self, unique_id: str) -> list[dict[str, Any]]:
         """Get price change history for a property, newest first."""

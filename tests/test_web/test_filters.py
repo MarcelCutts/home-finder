@@ -279,5 +279,7 @@ class TestSortOptions:
     def test_all_expected_sort_options(self) -> None:
         from home_finder.web.filters import VALID_SORT_OPTIONS
 
-        expected = {"newest", "price_asc", "price_desc", "rating_desc", "fit_desc", "longest_listed"}
+        expected = {
+            "newest", "price_asc", "price_desc", "rating_desc", "fit_desc", "longest_listed",
+        }
         assert expected == VALID_SORT_OPTIONS

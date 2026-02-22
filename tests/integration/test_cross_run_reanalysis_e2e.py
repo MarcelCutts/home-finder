@@ -1479,8 +1479,6 @@ class TestSameBuildingDisambiguation:
         performance, same-building disambiguation must still work in cross-run
         dedup because _run_post_enrichment unconditionally enables it.
         """
-        data_dir = str(tmp_path)
-
         # Settings with image hashing DISABLED globally, DB in tmp_path so
         # data_dir resolves to tmp_path for image cache lookup.
         db_path = str(tmp_path / "test.db")

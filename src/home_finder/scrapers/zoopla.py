@@ -17,7 +17,7 @@ from pydantic import BaseModel, ConfigDict, Field, HttpUrl, TypeAdapter, Validat
 from home_finder.data.location_mappings import BOROUGH_AREAS
 from home_finder.logging import get_logger
 from home_finder.models import FurnishType, Property, PropertySource
-from home_finder.scrapers.base import BaseScraper
+from home_finder.scrapers.base import BaseScraper, ScrapeResult
 from home_finder.scrapers.constants import BROWSER_HEADERS
 from home_finder.scrapers.parsing import extract_bedrooms, extract_postcode, extract_price
 from home_finder.utils.address import is_outcode
@@ -304,7 +304,7 @@ class ZooplaScraper(BaseScraper):
         include_let_agreed: bool = True,
         max_results: int | None = None,
         known_source_ids: set[str] | None = None,
-    ) -> list[Property]:
+    ) -> ScrapeResult:
         """Scrape Zoopla for matching properties (all pages)."""
         # Establish cookies on first search of the session
         await self._warm_up()
@@ -312,7 +312,7 @@ class ZooplaScraper(BaseScraper):
         # Pick one browser profile per area (switching mid-session is suspicious)
         impersonate_target = self._pick_impersonate_target()
 
-        async def fetch_page(page_idx: int) -> list[Property]:
+        async def fetch_page(page_idx: int) -> list[Property] | None:
             page = page_idx + 1  # Zoopla uses 1-based pages
             url = self._build_search_url(
                 area=area,
@@ -327,9 +327,8 @@ class ZooplaScraper(BaseScraper):
             )
 
             html = await self._fetch_page(url, impersonate_target=impersonate_target)
-            if not html:
-                logger.warning("zoopla_fetch_failed", url=url, page=page)
-                return []
+            if html is None:
+                return None  # Signals fetch failure to _paginate
 
             # Try RSC extraction first (primary method)
             properties = self._parse_rsc_properties(html)
@@ -350,7 +349,7 @@ class ZooplaScraper(BaseScraper):
             )
             return properties
 
-        all_properties = await self._paginate(
+        result = await self._paginate(
             fetch_page,
             max_pages=self.MAX_PAGES,
             known_source_ids=known_source_ids,
@@ -361,10 +360,12 @@ class ZooplaScraper(BaseScraper):
         logger.info(
             "scraped_zoopla_complete",
             area=area,
-            total_properties=len(all_properties),
+            total_properties=len(result.properties),
+            pages_fetched=result.pages_fetched,
+            pages_failed=result.pages_failed,
         )
 
-        return all_properties
+        return result
 
     async def _fetch_page(self, url: str, *, impersonate_target: str = "chrome") -> str | None:
         """Fetch page using curl_cffi with TLS impersonation and Cloudflare retry."""
@@ -416,7 +417,7 @@ class ZooplaScraper(BaseScraper):
                     )
                     await asyncio.sleep(delay)
                 else:
-                    logger.error("zoopla_fetch_exception", error=str(e), url=url)
+                    logger.error("zoopla_fetch_exception", error=str(e), url=url, exc_info=True)
                     return None
 
         # All retries exhausted — this area was blocked

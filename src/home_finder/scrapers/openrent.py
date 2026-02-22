@@ -10,7 +10,7 @@ from pydantic import HttpUrl
 
 from home_finder.logging import get_logger
 from home_finder.models import FurnishType, Property, PropertySource
-from home_finder.scrapers.base import BaseScraper
+from home_finder.scrapers.base import BaseScraper, ScrapeResult
 from home_finder.scrapers.constants import BROWSER_HEADERS
 
 logger = get_logger(__name__)
@@ -106,7 +106,7 @@ class OpenRentScraper(BaseScraper):
                 )
                 return None
             except Exception as e:
-                logger.error("openrent_fetch_exception", error=str(e), url=url)
+                logger.error("openrent_fetch_exception", error=str(e), url=url, exc_info=True)
                 return None
 
         return None
@@ -124,7 +124,7 @@ class OpenRentScraper(BaseScraper):
         include_let_agreed: bool = True,
         max_results: int | None = None,
         known_source_ids: set[str] | None = None,
-    ) -> list[Property]:
+    ) -> ScrapeResult:
         """Scrape OpenRent for matching properties (all pages)."""
         base_url = self._build_search_url(
             area=area,
@@ -137,14 +137,13 @@ class OpenRentScraper(BaseScraper):
             include_let_agreed=include_let_agreed,
         )
 
-        async def fetch_page(page_idx: int) -> list[Property]:
+        async def fetch_page(page_idx: int) -> list[Property] | None:
             skip = page_idx * self.RESULTS_PER_PAGE
             url = f"{base_url}&skip={skip}" if page_idx > 0 else base_url
 
             html = await self._fetch_page(url)
-            if not html:
-                logger.warning("openrent_fetch_failed", url=url, page=page_idx + 1)
-                return []
+            if html is None:
+                return None  # Signals fetch failure to _paginate
 
             soup = BeautifulSoup(html, "html.parser")
             page_properties = self._parse_search_results(soup, url)
@@ -164,7 +163,7 @@ class OpenRentScraper(BaseScraper):
         # 0=Distance, 1=Price↑, 2=Price↓). Results default to distance order,
         # so the early-stop assumption (all-known page ⇒ everything after is
         # older) doesn't hold. Disable early-stop by not passing known_source_ids.
-        all_properties = await self._paginate(
+        result = await self._paginate(
             fetch_page,
             max_pages=self.MAX_PAGES,
             known_source_ids=None,
@@ -175,10 +174,12 @@ class OpenRentScraper(BaseScraper):
         logger.info(
             "scraped_openrent_complete",
             area=area,
-            total_properties=len(all_properties),
+            total_properties=len(result.properties),
+            pages_fetched=result.pages_fetched,
+            pages_failed=result.pages_failed,
         )
 
-        return all_properties
+        return result
 
     def _build_search_url(
         self,
