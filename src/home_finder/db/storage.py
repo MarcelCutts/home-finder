@@ -86,6 +86,13 @@ class PropertyStorage:
             await self._conn.execute("PRAGMA foreign_keys=ON")
         return self._conn
 
+    async def __aenter__(self) -> PropertyStorage:
+        await self.initialize()
+        return self
+
+    async def __aexit__(self, *exc: object) -> None:
+        await self.close()
+
     async def close(self) -> None:
         """Close the database connection."""
         if self._conn is not None:
@@ -420,6 +427,22 @@ class PropertyStorage:
         await conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_off_market ON properties(is_off_market)"
         )
+
+        # Migrate: add per-stage timing columns to pipeline_runs
+        for column in [
+            "scraping_seconds",
+            "filtering_seconds",
+            "enrichment_seconds",
+            "analysis_seconds",
+            "notification_seconds",
+        ]:
+            try:
+                await conn.execute(
+                    f"ALTER TABLE pipeline_runs ADD COLUMN {column} REAL"
+                )
+            except aiosqlite.OperationalError as e:
+                if "duplicate column" not in str(e).lower():
+                    raise
 
         await conn.commit()
 
@@ -1358,7 +1381,7 @@ class PropertyStorage:
         """Create a new pipeline run record."""
         return await self._pipeline.create_pipeline_run()
 
-    async def update_pipeline_run(self, run_id: int, **counts: int) -> None:
+    async def update_pipeline_run(self, run_id: int, **counts: int | float) -> None:
         """Update count columns on a pipeline run."""
         await self._pipeline.update_pipeline_run(run_id, **counts)
 
@@ -1597,6 +1620,11 @@ class PropertyStorage:
     ) -> int | None:
         """Compare new_price against DB; record change if different.
 
+        When a price change is detected, also recomputes the rule-based
+        value rating and fit_score in quality_analyses (if analysis exists).
+        Clears the stale LLM quality_adjusted_rating since it was assessed
+        at the old price.
+
         Returns change_amount (negative = drop) or None if no change / not found.
         """
         async with self._transaction() as conn:
@@ -1622,6 +1650,62 @@ class PropertyStorage:
                 "UPDATE properties SET price_pcm = ?, price_drop_notified = 0 WHERE unique_id = ?",
                 (new_price, unique_id),
             )
+
+            # Recompute value rating and fit_score for the new price
+            qa_cursor = await conn.execute(
+                "SELECT q.analysis_json, p.postcode, p.bedrooms "
+                "FROM quality_analyses q "
+                "JOIN properties p ON p.unique_id = q.property_unique_id "
+                "WHERE q.property_unique_id = ?",
+                (unique_id,),
+            )
+            qa_row = await qa_cursor.fetchone()
+            if qa_row and qa_row["analysis_json"]:
+                try:
+                    from home_finder.filters.quality import assess_value
+
+                    analysis = json.loads(qa_row["analysis_json"])
+                    new_value = assess_value(
+                        new_price, qa_row["postcode"], qa_row["bedrooms"] or 0
+                    )
+                    value_dict = analysis.get("value") or {}
+                    value_dict.update(
+                        {
+                            "area_average": new_value.area_average,
+                            "difference": new_value.difference,
+                            "rating": new_value.rating,
+                            "note": new_value.note,
+                            "quality_adjusted_rating": None,
+                            "quality_adjusted_note": "",
+                        }
+                    )
+                    analysis["value"] = value_dict
+                    updated_json = json.dumps(analysis)
+
+                    # Recompute fit_score
+                    from home_finder.filters.fit_score import FIT_SCORE_VERSION
+
+                    postcode = qa_row["postcode"] or ""
+                    outcode = postcode.split()[0] if postcode else None
+                    if outcode:
+                        ht = HOSTING_TOLERANCE.get(outcode)
+                        if ht:
+                            analysis["_area_hosting_tolerance"] = ht.get("rating")
+                    fit = compute_fit_score(analysis, qa_row["bedrooms"] or 0)
+
+                    await conn.execute(
+                        "UPDATE quality_analyses "
+                        "SET analysis_json = ?, fit_score = ?, fit_score_version = ? "
+                        "WHERE property_unique_id = ?",
+                        (updated_json, fit, FIT_SCORE_VERSION, unique_id),
+                    )
+                except (json.JSONDecodeError, TypeError, ImportError):
+                    logger.debug(
+                        "value_recompute_skipped",
+                        unique_id=unique_id,
+                        reason="json_or_import_error",
+                    )
+
         logger.info(
             "price_change_detected",
             unique_id=unique_id,

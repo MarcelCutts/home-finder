@@ -1205,6 +1205,12 @@ class TelegramNotifier:
             )
             return False
 
+    async def __aenter__(self) -> "TelegramNotifier":
+        return self
+
+    async def __aexit__(self, *exc: object) -> None:
+        await self.close()
+
     async def close(self) -> None:
         """Close the bot session."""
         if self._bot is not None:

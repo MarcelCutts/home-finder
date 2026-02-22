@@ -7,12 +7,12 @@ from unittest.mock import AsyncMock, patch
 from pydantic import HttpUrl
 
 from home_finder.config import Settings
-from home_finder.main import _download_missing_images, _re_enrich_incomplete
 from home_finder.models import (
     MergedProperty,
     PropertyImage,
     PropertySource,
 )
+from home_finder.pipeline.analysis import _download_missing_images, _re_enrich_incomplete
 from home_finder.scrapers.detail_fetcher import DetailFetcher
 from home_finder.utils.image_cache import (
     find_cached_file,
@@ -240,9 +240,19 @@ class TestReEnrichIncomplete:
         )
         mock_storage = AsyncMock()
 
-        with patch("home_finder.main.DetailFetcher") as mock_cls:
+        with patch("home_finder.pipeline.analysis.DetailFetcher") as mock_cls:
             mock_fetcher = AsyncMock()
             mock_fetcher.download_image_bytes = AsyncMock(return_value=b"fake")
+            mock_fetcher.close = AsyncMock()
+
+            async def _fetcher_aenter(*a):
+                return mock_fetcher
+
+            async def _fetcher_aexit(*a):
+                await mock_fetcher.close()
+
+            mock_fetcher.__aenter__ = _fetcher_aenter
+            mock_fetcher.__aexit__ = _fetcher_aexit
             mock_cls.return_value = mock_fetcher
 
             result = await _re_enrich_incomplete(
@@ -260,7 +270,7 @@ class TestReEnrichIncomplete:
         )
 
         # Fetcher closed
-        mock_fetcher.close.assert_called_once()
+        mock_fetcher.close.assert_awaited_once()
 
     async def test_only_downloads_for_incomplete_properties(
         self,
@@ -307,9 +317,19 @@ class TestReEnrichIncomplete:
         )
         mock_storage = AsyncMock()
 
-        with patch("home_finder.main.DetailFetcher") as mock_cls:
+        with patch("home_finder.pipeline.analysis.DetailFetcher") as mock_cls:
             mock_fetcher = AsyncMock()
             mock_fetcher.download_image_bytes = AsyncMock(return_value=b"fake")
+            mock_fetcher.close = AsyncMock()
+
+            async def _fetcher_aenter(*a):
+                return mock_fetcher
+
+            async def _fetcher_aexit(*a):
+                await mock_fetcher.close()
+
+            mock_fetcher.__aenter__ = _fetcher_aenter
+            mock_fetcher.__aexit__ = _fetcher_aexit
             mock_cls.return_value = mock_fetcher
 
             result = await _re_enrich_incomplete(

@@ -79,7 +79,7 @@ class TestRunCheckOffMarketIntegration:
         only_scrapers: set[str] | None = None,
     ) -> None:
         """Invoke run_check_off_market with patched storage and checker."""
-        from home_finder.main import run_check_off_market
+        from home_finder.pipeline.commands import run_check_off_market
 
         settings = _mock_settings()
 
@@ -92,7 +92,7 @@ class TestRunCheckOffMarketIntegration:
         storage.close = AsyncMock()  # prevent closing our fixture
 
         with (
-            patch("home_finder.main.PropertyStorage", mock_storage_cls),
+            patch("home_finder.pipeline.commands.PropertyStorage", mock_storage_cls),
             patch(
                 "home_finder.filters.off_market.OffMarketChecker.check_batch",
                 new_callable=AsyncMock,

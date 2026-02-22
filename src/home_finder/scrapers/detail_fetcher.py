@@ -870,6 +870,12 @@ class DetailFetcher:
             logger.debug("image_download_error", url=url, error=str(e))
             return None
 
+    async def __aenter__(self) -> "DetailFetcher":
+        return self
+
+    async def __aexit__(self, *exc: object) -> None:
+        await self.close()
+
     async def close(self) -> None:
         """Close the HTTP clients."""
         if self._client:

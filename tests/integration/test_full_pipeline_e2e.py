@@ -9,12 +9,13 @@ from pydantic import SecretStr
 from home_finder.config import Settings
 from home_finder.db import PropertyStorage
 from home_finder.filters.detail_enrichment import EnrichmentResult
-from home_finder.main import _run_pre_analysis_pipeline, _save_one
 from home_finder.models import (
     Property,
     PropertySource,
     TransportMode,
 )
+from home_finder.pipeline.analysis import _save_one
+from home_finder.pipeline.stages import _run_pre_analysis_pipeline
 
 
 @pytest.fixture
@@ -57,17 +58,17 @@ class TestFullPipelineE2E:
 
         with (
             patch(
-                "home_finder.main.scrape_all_platforms",
+                "home_finder.pipeline.scraping.scrape_all_platforms",
                 new_callable=AsyncMock,
                 return_value=synthetic_properties,
             ),
             patch(
-                "home_finder.main.enrich_merged_properties",
+                "home_finder.pipeline.stages.enrich_merged_properties",
                 new_callable=AsyncMock,
                 side_effect=lambda merged, *a, **kw: EnrichmentResult(enriched=merged),
             ),
             patch(
-                "home_finder.main.DetailFetcher",
+                "home_finder.pipeline.stages.DetailFetcher",
             ) as MockFetcher,
         ):
             mock_fetcher_instance = MagicMock()
@@ -137,20 +138,20 @@ class TestFullPipelineE2E:
 
         with (
             patch(
-                "home_finder.main.scrape_all_platforms",
+                "home_finder.pipeline.scraping.scrape_all_platforms",
                 new_callable=AsyncMock,
                 return_value=synthetic_properties,
             ),
             patch(
-                "home_finder.main.enrich_merged_properties",
+                "home_finder.pipeline.stages.enrich_merged_properties",
                 new_callable=AsyncMock,
                 side_effect=lambda merged, *a, **kw: EnrichmentResult(enriched=merged),
             ),
             patch(
-                "home_finder.main.DetailFetcher",
+                "home_finder.pipeline.stages.DetailFetcher",
             ) as MockFetcher,
             patch(
-                "home_finder.main.CommuteFilter",
+                "home_finder.pipeline.stages.CommuteFilter",
             ) as MockCommuteFilter,
         ):
             mock_fetcher_instance = MagicMock()
@@ -181,7 +182,7 @@ class TestFullPipelineE2E:
         await storage.initialize()
 
         with patch(
-            "home_finder.main.scrape_all_platforms",
+            "home_finder.pipeline.scraping.scrape_all_platforms",
             new_callable=AsyncMock,
             return_value=[],
         ):
@@ -226,17 +227,17 @@ class TestFullPipelineE2E:
 
         with (
             patch(
-                "home_finder.main.scrape_all_platforms",
+                "home_finder.pipeline.scraping.scrape_all_platforms",
                 new_callable=AsyncMock,
                 return_value=props,
             ),
             patch(
-                "home_finder.main.enrich_merged_properties",
+                "home_finder.pipeline.stages.enrich_merged_properties",
                 new_callable=AsyncMock,
                 side_effect=lambda merged, *a, **kw: EnrichmentResult(enriched=merged),
             ),
             patch(
-                "home_finder.main.DetailFetcher",
+                "home_finder.pipeline.stages.DetailFetcher",
             ) as MockFetcher,
         ):
             mock_fetcher_instance = MagicMock()

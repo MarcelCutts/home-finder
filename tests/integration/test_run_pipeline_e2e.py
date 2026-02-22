@@ -90,11 +90,30 @@ def _pipeline_mocks(
     mock_notifier = MagicMock()
     mock_notifier.send_property_notification = AsyncMock(return_value=notify_return)
     mock_notifier.send_merged_property_notification = AsyncMock(return_value=notify_return)
+    mock_notifier.send_price_drop_notification = AsyncMock(return_value=True)
     mock_notifier.close = AsyncMock()
+
+    async def _notifier_aenter(*a):
+        return mock_notifier
+
+    async def _notifier_aexit(*a):
+        await mock_notifier.close()
+
+    mock_notifier.__aenter__ = _notifier_aenter
+    mock_notifier.__aexit__ = _notifier_aexit
 
     # -- DetailFetcher mock --
     mock_fetcher_instance = MagicMock()
     mock_fetcher_instance.close = AsyncMock()
+
+    async def _fetcher_aenter(*a):
+        return mock_fetcher_instance
+
+    async def _fetcher_aexit(*a):
+        await mock_fetcher_instance.close()
+
+    mock_fetcher_instance.__aenter__ = _fetcher_aenter
+    mock_fetcher_instance.__aexit__ = _fetcher_aexit
 
     # -- Quality filter mock --
     mock_quality_instance = MagicMock()
@@ -107,30 +126,39 @@ def _pipeline_mocks(
         )
     mock_quality_instance.close = AsyncMock()
 
+    async def _quality_aenter(*a):
+        return mock_quality_instance
+
+    async def _quality_aexit(*a):
+        await mock_quality_instance.close()
+
+    mock_quality_instance.__aenter__ = _quality_aenter
+    mock_quality_instance.__aexit__ = _quality_aexit
+
     with (
         patch(
-            "home_finder.main.scrape_all_platforms",
+            "home_finder.pipeline.scraping.scrape_all_platforms",
             new_callable=AsyncMock,
             return_value=scrape_return,
         ),
         patch(
-            "home_finder.main.enrich_merged_properties",
+            "home_finder.pipeline.stages.enrich_merged_properties",
             new_callable=AsyncMock,
             side_effect=enrich_side_effect,
         ),
         patch(
-            "home_finder.main.DetailFetcher",
+            "home_finder.pipeline.stages.DetailFetcher",
             return_value=mock_fetcher_instance,
         ) as mock_fetcher_cls,
         patch(
-            "home_finder.main.PropertyQualityFilter",
+            "home_finder.pipeline.analysis.PropertyQualityFilter",
             return_value=mock_quality_instance,
         ) as mock_quality_cls,
         patch(
             "home_finder.main.TelegramNotifier",
             return_value=mock_notifier,
         ) as mock_notifier_cls,
-        patch("home_finder.main._lookup_wards", new_callable=AsyncMock),
+        patch("home_finder.pipeline.analysis._lookup_wards", new_callable=AsyncMock),
         patch("home_finder.main.asyncio.sleep", new_callable=AsyncMock),
         patch.object(PropertyStorage, "__init__", _patched_storage_init),
     ):
@@ -386,7 +414,7 @@ class TestRunPipelineE2E:
             with (
                 patch.object(PropertyStorage, "close", _intercept_close),
                 patch(
-                    "home_finder.main.scrape_all_platforms",
+                    "home_finder.pipeline.scraping.scrape_all_platforms",
                     new_callable=AsyncMock,
                     side_effect=RuntimeError(error_msg),
                 ),

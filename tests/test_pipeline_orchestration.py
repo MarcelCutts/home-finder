@@ -15,15 +15,6 @@ from pydantic import SecretStr
 from home_finder.config import Settings
 from home_finder.db import PropertyStorage
 from home_finder.filters.detail_enrichment import EnrichmentResult
-from home_finder.main import (
-    PreAnalysisResult,
-    _persist_estimated_floor_area,
-    _run_pre_analysis_pipeline,
-    _run_quality_and_save,
-    _run_scrape,
-    _save_one,
-    scrape_all_platforms,
-)
 from home_finder.models import (
     MergedProperty,
     Property,
@@ -31,6 +22,19 @@ from home_finder.models import (
     PropertySource,
     SpaceAnalysis,
     TransportMode,
+)
+from home_finder.pipeline.analysis import (
+    _persist_estimated_floor_area,
+    _run_quality_and_save,
+    _save_one,
+)
+from home_finder.pipeline.scraping import (
+    _run_scrape,
+    scrape_all_platforms,
+)
+from home_finder.pipeline.stages import (
+    PreAnalysisResult,
+    _run_pre_analysis_pipeline,
 )
 from home_finder.scrapers.base import ScrapeResult
 
@@ -140,7 +144,7 @@ class TestSaveOne:
 # ---------------------------------------------------------------------------
 
 
-@patch("home_finder.main._lookup_wards", new_callable=AsyncMock)
+@patch("home_finder.pipeline.analysis._lookup_wards", new_callable=AsyncMock)
 class TestRunQualityAndSave:
     async def test_processes_all_properties(
         self,
@@ -255,10 +259,10 @@ class TestScrapeAllPlatforms:
         )
         assert result == []
 
-    @patch("home_finder.main.OpenRentScraper")
-    @patch("home_finder.main.RightmoveScraper")
-    @patch("home_finder.main.ZooplaScraper")
-    @patch("home_finder.main.OnTheMarketScraper")
+    @patch("home_finder.pipeline.scraping.OpenRentScraper")
+    @patch("home_finder.pipeline.scraping.RightmoveScraper")
+    @patch("home_finder.pipeline.scraping.ZooplaScraper")
+    @patch("home_finder.pipeline.scraping.OnTheMarketScraper")
     async def test_collects_from_all_scrapers(
         self,
         mock_otm_cls: Any,
@@ -290,10 +294,10 @@ class TestScrapeAllPlatforms:
 
         assert len(result) == 4
 
-    @patch("home_finder.main.OpenRentScraper")
-    @patch("home_finder.main.RightmoveScraper")
-    @patch("home_finder.main.ZooplaScraper")
-    @patch("home_finder.main.OnTheMarketScraper")
+    @patch("home_finder.pipeline.scraping.OpenRentScraper")
+    @patch("home_finder.pipeline.scraping.RightmoveScraper")
+    @patch("home_finder.pipeline.scraping.ZooplaScraper")
+    @patch("home_finder.pipeline.scraping.OnTheMarketScraper")
     async def test_respects_max_per_scraper(
         self,
         mock_otm_cls: Any,
@@ -330,10 +334,10 @@ class TestScrapeAllPlatforms:
         call_kwargs = or_scraper.scrape.call_args
         assert call_kwargs.kwargs.get("max_results") == 3
 
-    @patch("home_finder.main.OpenRentScraper")
-    @patch("home_finder.main.RightmoveScraper")
-    @patch("home_finder.main.ZooplaScraper")
-    @patch("home_finder.main.OnTheMarketScraper")
+    @patch("home_finder.pipeline.scraping.OpenRentScraper")
+    @patch("home_finder.pipeline.scraping.RightmoveScraper")
+    @patch("home_finder.pipeline.scraping.ZooplaScraper")
+    @patch("home_finder.pipeline.scraping.OnTheMarketScraper")
     async def test_continues_on_scraper_error(
         self,
         mock_otm_cls: Any,
@@ -371,10 +375,10 @@ class TestScrapeAllPlatforms:
         # Should have results from 3 working scrapers
         assert len(result) == 3
 
-    @patch("home_finder.main.OpenRentScraper")
-    @patch("home_finder.main.RightmoveScraper")
-    @patch("home_finder.main.ZooplaScraper")
-    @patch("home_finder.main.OnTheMarketScraper")
+    @patch("home_finder.pipeline.scraping.OpenRentScraper")
+    @patch("home_finder.pipeline.scraping.RightmoveScraper")
+    @patch("home_finder.pipeline.scraping.ZooplaScraper")
+    @patch("home_finder.pipeline.scraping.OnTheMarketScraper")
     async def test_cross_area_dedup(
         self,
         mock_otm_cls: Any,
@@ -408,10 +412,10 @@ class TestScrapeAllPlatforms:
         # Property should only appear once despite 2 areas
         assert len(result) == 1
 
-    @patch("home_finder.main.OpenRentScraper")
-    @patch("home_finder.main.RightmoveScraper")
-    @patch("home_finder.main.ZooplaScraper")
-    @patch("home_finder.main.OnTheMarketScraper")
+    @patch("home_finder.pipeline.scraping.OpenRentScraper")
+    @patch("home_finder.pipeline.scraping.RightmoveScraper")
+    @patch("home_finder.pipeline.scraping.ZooplaScraper")
+    @patch("home_finder.pipeline.scraping.OnTheMarketScraper")
     async def test_backfills_outcode(
         self,
         mock_otm_cls: Any,
@@ -445,10 +449,10 @@ class TestScrapeAllPlatforms:
         assert len(result) == 1
         assert result[0].postcode == "E8"
 
-    @patch("home_finder.main.OpenRentScraper")
-    @patch("home_finder.main.RightmoveScraper")
-    @patch("home_finder.main.ZooplaScraper")
-    @patch("home_finder.main.OnTheMarketScraper")
+    @patch("home_finder.pipeline.scraping.OpenRentScraper")
+    @patch("home_finder.pipeline.scraping.RightmoveScraper")
+    @patch("home_finder.pipeline.scraping.ZooplaScraper")
+    @patch("home_finder.pipeline.scraping.OnTheMarketScraper")
     async def test_known_ids_passed_to_scrapers(
         self,
         mock_otm_cls: Any,
@@ -498,7 +502,7 @@ class TestScrapeAllPlatforms:
         otm_known = mock_scrapers[3].scrape.call_args.kwargs.get("known_source_ids")
         assert otm_known is None
 
-    @patch("home_finder.main.scrape_all_platforms", new_callable=AsyncMock)
+    @patch("home_finder.pipeline.scraping.scrape_all_platforms", new_callable=AsyncMock)
     async def test_full_scrape_skips_known_ids_lookup(
         self,
         mock_scrape: AsyncMock,
@@ -523,7 +527,7 @@ class TestScrapeAllPlatforms:
 
 
 class TestPreAnalysisPipeline:
-    @patch("home_finder.main.scrape_all_platforms")
+    @patch("home_finder.pipeline.scraping.scrape_all_platforms")
     async def test_returns_none_on_no_results(
         self,
         mock_scrape: Any,
@@ -534,7 +538,7 @@ class TestPreAnalysisPipeline:
         result = await _run_pre_analysis_pipeline(test_settings, storage)
         assert result is None
 
-    @patch("home_finder.main.scrape_all_platforms")
+    @patch("home_finder.pipeline.scraping.scrape_all_platforms")
     async def test_returns_none_when_all_filtered(
         self,
         mock_scrape: Any,
@@ -547,8 +551,8 @@ class TestPreAnalysisPipeline:
         result = await _run_pre_analysis_pipeline(test_settings, storage)
         assert result is None
 
-    @patch("home_finder.main.enrich_merged_properties", new_callable=AsyncMock)
-    @patch("home_finder.main.scrape_all_platforms")
+    @patch("home_finder.pipeline.stages.enrich_merged_properties", new_callable=AsyncMock)
+    @patch("home_finder.pipeline.scraping.scrape_all_platforms")
     async def test_returns_result_for_valid_properties(
         self,
         mock_scrape: Any,
@@ -566,8 +570,8 @@ class TestPreAnalysisPipeline:
         assert result is not None
         assert len(result.merged_to_process) == 1
 
-    @patch("home_finder.main.enrich_merged_properties", new_callable=AsyncMock)
-    @patch("home_finder.main.scrape_all_platforms")
+    @patch("home_finder.pipeline.stages.enrich_merged_properties", new_callable=AsyncMock)
+    @patch("home_finder.pipeline.scraping.scrape_all_platforms")
     async def test_filters_already_seen_properties(
         self,
         mock_scrape: Any,
@@ -599,8 +603,8 @@ class TestPreAnalysisPipeline:
         result = await _run_pre_analysis_pipeline(test_settings, storage)
         assert result is None  # No new properties
 
-    @patch("home_finder.main.enrich_merged_properties", new_callable=AsyncMock)
-    @patch("home_finder.main.scrape_all_platforms")
+    @patch("home_finder.pipeline.stages.enrich_merged_properties", new_callable=AsyncMock)
+    @patch("home_finder.pipeline.scraping.scrape_all_platforms")
     async def test_floorplan_gate_drops_properties(
         self,
         mock_scrape: Any,

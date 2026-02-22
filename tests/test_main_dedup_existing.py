@@ -4,16 +4,17 @@ import json
 from pathlib import Path
 
 import pytest
+import structlog.testing
 from pydantic import HttpUrl, SecretStr
 
 from home_finder.config import Settings
 from home_finder.db.storage import PropertyStorage
-from home_finder.main import run_dedup_existing
 from home_finder.models import (
     MergedProperty,
     Property,
     PropertySource,
 )
+from home_finder.pipeline.commands import run_dedup_existing
 from home_finder.utils.image_cache import get_cache_dir, save_image_bytes
 
 
@@ -182,7 +183,6 @@ class TestRunDedupExisting:
         self,
         settings: Settings,
         merged_otm: MergedProperty,
-        capsys: pytest.CaptureFixture[str],
     ) -> None:
         """When there are no duplicates, nothing should be merged."""
         storage = PropertyStorage(":memory:")
@@ -190,10 +190,11 @@ class TestRunDedupExisting:
 
         await storage.save_merged_property(merged_otm)
 
-        await _run_with_storage(storage, settings)
+        with structlog.testing.capture_logs() as captured:
+            await _run_with_storage(storage, settings)
 
-        captured = capsys.readouterr()
-        assert "No duplicates found" in captured.out
+        events = [e["event"] for e in captured]
+        assert "dedup_no_duplicates_found" in events
 
         remaining = await storage.get_all_properties()
         assert len(remaining) == 1
@@ -204,15 +205,15 @@ class TestRunDedupExisting:
     async def test_empty_database(
         self,
         settings: Settings,
-        capsys: pytest.CaptureFixture[str],
     ) -> None:
-        """Empty database should print message and return."""
+        """Empty database should log message and return."""
         storage = PropertyStorage(":memory:")
         await storage.initialize()
 
-        await _run_with_storage(storage, settings)
+        with structlog.testing.capture_logs() as captured:
+            await _run_with_storage(storage, settings)
 
-        captured = capsys.readouterr()
-        assert "No properties in database" in captured.out
+        events = [e["event"] for e in captured]
+        assert "dedup_no_properties_in_database" in events
 
         await storage.close()

@@ -1,0 +1,69 @@
+"""Pipeline package — extracted pipeline stages from main.py."""
+
+from home_finder.pipeline.analysis import (
+    _CommInfo,
+    _download_missing_images,
+    _drain_reanalysis_queue,
+    _lookup_wards,
+    _OnResult,
+    _persist_estimated_floor_area,
+    _re_enrich_incomplete,
+    _run_concurrent_analysis,
+    _run_quality_and_save,
+    _save_one,
+    run_reanalysis,
+)
+from home_finder.pipeline.commands import (
+    run_backfill_commute,
+    run_check_off_market,
+    run_dedup_existing,
+)
+from home_finder.pipeline.scraping import (
+    _run_scrape,
+    _source_counts,
+    scrape_all_platforms,
+)
+from home_finder.pipeline.stages import (
+    CrossRunDedupResult,
+    PreAnalysisResult,
+    _cross_run_deduplicate,
+    _days_since,
+    _detect_price_changes,
+    _geocode_and_compute_commute,
+    _load_unenriched,
+    _run_criteria_and_location_filters,
+    _run_enrichment,
+    _run_post_enrichment,
+    _run_pre_analysis_pipeline,
+)
+
+__all__ = [
+    "CrossRunDedupResult",
+    "PreAnalysisResult",
+    "_CommInfo",
+    "_OnResult",
+    "_cross_run_deduplicate",
+    "_days_since",
+    "_detect_price_changes",
+    "_download_missing_images",
+    "_drain_reanalysis_queue",
+    "_geocode_and_compute_commute",
+    "_load_unenriched",
+    "_lookup_wards",
+    "_persist_estimated_floor_area",
+    "_re_enrich_incomplete",
+    "_run_concurrent_analysis",
+    "_run_criteria_and_location_filters",
+    "_run_enrichment",
+    "_run_post_enrichment",
+    "_run_pre_analysis_pipeline",
+    "_run_quality_and_save",
+    "_run_scrape",
+    "_save_one",
+    "_source_counts",
+    "run_backfill_commute",
+    "run_check_off_market",
+    "run_dedup_existing",
+    "run_reanalysis",
+    "scrape_all_platforms",
+]

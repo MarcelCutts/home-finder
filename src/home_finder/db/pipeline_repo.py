@@ -57,12 +57,13 @@ class PipelineRepository:
         await conn.commit()
         return cursor.lastrowid  # type: ignore[return-value]
 
-    async def update_pipeline_run(self, run_id: int, **counts: int) -> None:
+    async def update_pipeline_run(self, run_id: int, **counts: int | float) -> None:
         """Update count columns on a pipeline run.
 
         Args:
             run_id: The pipeline run ID.
-            **counts: Column name/value pairs to update (e.g. scraped_count=42).
+            **counts: Column name/value pairs to update (e.g. scraped_count=42,
+                scraping_seconds=12.3).
         """
         if not counts:
             return

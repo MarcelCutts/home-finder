@@ -360,6 +360,12 @@ class OffMarketChecker:
             results.extend(source_results)
         return results
 
+    async def __aenter__(self) -> OffMarketChecker:
+        return self
+
+    async def __aexit__(self, *exc: object) -> None:
+        await self.close()
+
     async def close(self) -> None:
         """Close HTTP clients."""
         if self._httpx_client is not None:

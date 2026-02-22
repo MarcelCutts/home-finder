@@ -155,3 +155,57 @@ class TestPipelineRunLifecycle:
         assert result["notified_count"] == 8
         assert result["status"] == "completed"
         assert result["duration_seconds"] >= 0
+
+
+class TestPerStageTimings:
+    @pytest.mark.asyncio
+    async def test_timing_values_stored_via_update(self, storage: PropertyStorage) -> None:
+        run_id = await storage.create_pipeline_run()
+        await storage.update_pipeline_run(
+            run_id, scraping_seconds=12.5, filtering_seconds=0.3
+        )
+
+        conn = await storage._get_connection()
+        cursor = await conn.execute(
+            "SELECT scraping_seconds, filtering_seconds FROM pipeline_runs WHERE id = ?",
+            (run_id,),
+        )
+        row = await cursor.fetchone()
+        assert row is not None
+        assert row["scraping_seconds"] == pytest.approx(12.5)
+        assert row["filtering_seconds"] == pytest.approx(0.3)
+
+    @pytest.mark.asyncio
+    async def test_timing_values_returned_by_get_last(self, storage: PropertyStorage) -> None:
+        run_id = await storage.create_pipeline_run()
+        await storage.update_pipeline_run(
+            run_id,
+            scraping_seconds=10.0,
+            filtering_seconds=1.5,
+            enrichment_seconds=25.3,
+            analysis_seconds=45.7,
+            notification_seconds=2.1,
+        )
+        await storage.complete_pipeline_run(run_id, "completed")
+
+        result = await storage.get_last_pipeline_run()
+        assert result is not None
+        assert result["scraping_seconds"] == pytest.approx(10.0)
+        assert result["filtering_seconds"] == pytest.approx(1.5)
+        assert result["enrichment_seconds"] == pytest.approx(25.3)
+        assert result["analysis_seconds"] == pytest.approx(45.7)
+        assert result["notification_seconds"] == pytest.approx(2.1)
+
+    @pytest.mark.asyncio
+    async def test_timing_columns_nullable(self, storage: PropertyStorage) -> None:
+        run_id = await storage.create_pipeline_run()
+        await storage.update_pipeline_run(run_id, scraping_seconds=5.0)
+        await storage.complete_pipeline_run(run_id, "completed")
+
+        result = await storage.get_last_pipeline_run()
+        assert result is not None
+        assert result["scraping_seconds"] == pytest.approx(5.0)
+        assert result["filtering_seconds"] is None
+        assert result["enrichment_seconds"] is None
+        assert result["analysis_seconds"] is None
+        assert result["notification_seconds"] is None

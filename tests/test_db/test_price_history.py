@@ -1,5 +1,6 @@
 """Tests for price history and rent benchmarks (Ticket 10)."""
 
+import json
 from collections.abc import AsyncGenerator
 
 import pytest
@@ -8,9 +9,15 @@ from pydantic import HttpUrl
 
 from home_finder.db.storage import PropertyStorage
 from home_finder.models import (
+    ConditionAnalysis,
+    KitchenAnalysis,
+    LightSpaceAnalysis,
     MergedProperty,
     Property,
+    PropertyQualityAnalysis,
     PropertySource,
+    SpaceAnalysis,
+    ValueAnalysis,
 )
 
 
@@ -161,3 +168,124 @@ class TestGetUnsentPriceDrops:
         await storage.mark_price_drop_notified(merged_a.unique_id)
         drops = await storage.get_unsent_price_drops()
         assert drops == []
+
+
+def _make_analysis(value: ValueAnalysis | None = None) -> PropertyQualityAnalysis:
+    """Build a minimal PropertyQualityAnalysis for testing."""
+    return PropertyQualityAnalysis(
+        kitchen=KitchenAnalysis(),
+        condition=ConditionAnalysis(),
+        light_space=LightSpaceAnalysis(),
+        space=SpaceAnalysis(),
+        summary="Nice flat",
+        value=value,
+    )
+
+
+class TestValueRecomputeOnPriceChange:
+    @pytest.mark.asyncio
+    async def test_price_change_recomputes_value_rating(
+        self, storage: PropertyStorage, merged_a: MergedProperty
+    ) -> None:
+        await storage.save_merged_property(merged_a)
+        analysis = _make_analysis(
+            value=ValueAnalysis(
+                area_average=1800,
+                difference=100,
+                rating="fair",
+                note="Above average",
+                quality_adjusted_rating="fair",
+                quality_adjusted_note="Condition matches price",
+            ),
+        )
+        await storage.save_quality_analysis(merged_a.unique_id, analysis)
+
+        result = await storage.detect_and_record_price_change(merged_a.unique_id, 1750)
+        assert result == -150
+
+        conn = await storage._get_connection()
+        cursor = await conn.execute(
+            "SELECT analysis_json FROM quality_analyses WHERE property_unique_id = ?",
+            (merged_a.unique_id,),
+        )
+        row = await cursor.fetchone()
+        data = json.loads(row["analysis_json"])
+        # Rating should have been recomputed for the new price
+        assert data["value"]["rating"] is not None
+        # quality_adjusted_rating should be cleared (stale LLM assessment)
+        assert data["value"]["quality_adjusted_rating"] is None
+        assert data["value"]["quality_adjusted_note"] == ""
+
+    @pytest.mark.asyncio
+    async def test_price_change_recomputes_fit_score(
+        self, storage: PropertyStorage, merged_a: MergedProperty
+    ) -> None:
+        await storage.save_merged_property(merged_a)
+        analysis = _make_analysis(
+            value=ValueAnalysis(
+                area_average=1800,
+                difference=100,
+                rating="fair",
+                note="Above average",
+                quality_adjusted_rating="fair",
+                quality_adjusted_note="Condition matches price",
+            ),
+        )
+        await storage.save_quality_analysis(merged_a.unique_id, analysis)
+
+        # Record original fit_score
+        conn = await storage._get_connection()
+        cursor = await conn.execute(
+            "SELECT fit_score FROM quality_analyses WHERE property_unique_id = ?",
+            (merged_a.unique_id,),
+        )
+        original = await cursor.fetchone()
+        original_score = original["fit_score"]
+
+        # Price drop should trigger fit_score recompute
+        await storage.detect_and_record_price_change(merged_a.unique_id, 1750)
+
+        cursor = await conn.execute(
+            "SELECT fit_score FROM quality_analyses WHERE property_unique_id = ?",
+            (merged_a.unique_id,),
+        )
+        updated = await cursor.fetchone()
+        # fit_score should have changed (lower price = better value = different score)
+        assert updated["fit_score"] != original_score
+
+    @pytest.mark.asyncio
+    async def test_no_crash_without_quality_analysis(
+        self, storage: PropertyStorage, merged_a: MergedProperty
+    ) -> None:
+        await storage.save_merged_property(merged_a)
+        # No quality analysis saved — should not crash
+        result = await storage.detect_and_record_price_change(merged_a.unique_id, 1750)
+        assert result == -150
+
+    @pytest.mark.asyncio
+    async def test_cleared_quality_adjusted_rating(
+        self, storage: PropertyStorage, merged_a: MergedProperty
+    ) -> None:
+        await storage.save_merged_property(merged_a)
+        analysis = _make_analysis(
+            value=ValueAnalysis(
+                area_average=1800,
+                difference=100,
+                rating="fair",
+                note="Above average",
+                quality_adjusted_rating="good",
+                quality_adjusted_note="Quality lifts value",
+            ),
+        )
+        await storage.save_quality_analysis(merged_a.unique_id, analysis)
+
+        await storage.detect_and_record_price_change(merged_a.unique_id, 1750)
+
+        conn = await storage._get_connection()
+        cursor = await conn.execute(
+            "SELECT analysis_json FROM quality_analyses WHERE property_unique_id = ?",
+            (merged_a.unique_id,),
+        )
+        row = await cursor.fetchone()
+        data = json.loads(row["analysis_json"])
+        assert data["value"]["quality_adjusted_rating"] is None

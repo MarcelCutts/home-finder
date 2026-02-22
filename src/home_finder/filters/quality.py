@@ -1523,6 +1523,12 @@ class PropertyQualityFilter:
         # Phase 3: Merge and validate
         return self._merge_analysis_results(visual_data, eval_data, bedrooms, property_id)
 
+    async def __aenter__(self) -> "PropertyQualityFilter":
+        return self
+
+    async def __aexit__(self, *exc: object) -> None:
+        await self.close()
+
     async def close(self) -> None:
         """Close clients."""
         if self._client is not None:

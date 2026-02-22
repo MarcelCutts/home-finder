@@ -7,20 +7,36 @@ and mocks PropertyQualityFilter as the single I/O boundary.
 
 from collections.abc import AsyncGenerator, Callable
 from pathlib import Path
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 import pytest_asyncio
+import structlog.testing
 from pydantic import SecretStr
 
 from home_finder.config import Settings
 from home_finder.db import PropertyStorage
 from home_finder.filters.quality import APIUnavailableError
-from home_finder.main import run_reanalysis
 from home_finder.models import (
     MergedProperty,
     PropertyQualityAnalysis,
 )
+from home_finder.pipeline.analysis import run_reanalysis
+
+
+def _make_async_cm(mock_filter: MagicMock) -> MagicMock:
+    """Add async context manager protocol to a mock quality filter."""
+
+    async def _aenter(*a):
+        return mock_filter
+
+    async def _aexit(*a):
+        await mock_filter.close()
+
+    mock_filter.__aenter__ = _aenter
+    mock_filter.__aexit__ = _aexit
+    return mock_filter
+
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -91,7 +107,7 @@ class TestRunReanalysisRequestOnly:
             await populated_storage.complete_analysis(merged.unique_id, make_quality_analysis())
             await populated_storage.mark_notified(merged.unique_id)
 
-        with patch("home_finder.main.PropertyQualityFilter") as mock_qf_cls:
+        with patch("home_finder.pipeline.analysis.PropertyQualityFilter") as mock_qf_cls:
             await run_reanalysis(
                 reanalysis_settings,
                 outcodes=["E8"],
@@ -117,7 +133,7 @@ class TestRunReanalysisRequestOnly:
             await populated_storage.complete_analysis(merged.unique_id, make_quality_analysis())
             await populated_storage.mark_notified(merged.unique_id)
 
-        with patch("home_finder.main.PropertyQualityFilter") as mock_qf_cls:
+        with patch("home_finder.pipeline.analysis.PropertyQualityFilter") as mock_qf_cls:
             await run_reanalysis(
                 reanalysis_settings,
                 reanalyze_all=True,
@@ -139,15 +155,17 @@ class TestRunReanalysisEarlyReturns:
         self,
         populated_storage: PropertyStorage,
         reanalysis_settings: Settings,
-        capsys: pytest.CaptureFixture[str],
     ) -> None:
         """No flagged properties → early return without creating quality filter."""
-        with patch("home_finder.main.PropertyQualityFilter") as mock_qf_cls:
+        with (
+            structlog.testing.capture_logs() as captured,
+            patch("home_finder.pipeline.analysis.PropertyQualityFilter") as mock_qf_cls,
+        ):
             await run_reanalysis(reanalysis_settings)
             mock_qf_cls.assert_not_called()
 
-        output = capsys.readouterr().out
-        assert "No properties queued" in output
+        events = [e["event"] for e in captured]
+        assert "reanalysis_queue_empty" in events
 
     async def test_no_api_key_returns_early(
         self,
@@ -155,7 +173,6 @@ class TestRunReanalysisEarlyReturns:
         reanalysis_settings: Settings,
         make_merged_property: Callable[..., MergedProperty],
         make_quality_analysis: Callable[..., PropertyQualityAnalysis],
-        capsys: pytest.CaptureFixture[str],
     ) -> None:
         """Missing API key → early return with error message."""
         # Flag a property
@@ -167,12 +184,15 @@ class TestRunReanalysisEarlyReturns:
             update={"anthropic_api_key": SecretStr("")}
         )
 
-        with patch("home_finder.main.PropertyQualityFilter") as mock_qf_cls:
+        with (
+            structlog.testing.capture_logs() as captured,
+            patch("home_finder.pipeline.analysis.PropertyQualityFilter") as mock_qf_cls,
+        ):
             await run_reanalysis(settings_no_key)
             mock_qf_cls.assert_not_called()
 
-        output = capsys.readouterr().out
-        assert "not configured" in output
+        events = [e["event"] for e in captured]
+        assert "quality_analysis_not_configured" in events
 
 
 # ---------------------------------------------------------------------------
@@ -195,11 +215,11 @@ class TestRunReanalysisSuccess:
 
         new_analysis = make_quality_analysis(rating=5)
 
-        mock_filter = AsyncMock()
+        mock_filter = _make_async_cm(AsyncMock())
         mock_filter.analyze_single_merged = AsyncMock(return_value=(merged, new_analysis))
         mock_filter.close = AsyncMock()
 
-        with patch("home_finder.main.PropertyQualityFilter", return_value=mock_filter):
+        with patch("home_finder.pipeline.analysis.PropertyQualityFilter", return_value=mock_filter):
             await run_reanalysis(reanalysis_settings)
 
         # Verify analysis updated
@@ -220,7 +240,6 @@ class TestRunReanalysisSuccess:
         reanalysis_settings: Settings,
         make_merged_property: Callable[..., MergedProperty],
         make_quality_analysis: Callable[..., PropertyQualityAnalysis],
-        capsys: pytest.CaptureFixture[str],
     ) -> None:
         """Multiple properties all reanalyzed successfully."""
         merged_list = []
@@ -234,20 +253,27 @@ class TestRunReanalysisSuccess:
         async def _mock_analyze(merged: MergedProperty, *, data_dir: str | None = None):
             return (merged, make_quality_analysis(rating=5))
 
-        mock_filter = AsyncMock()
+        mock_filter = _make_async_cm(AsyncMock())
         mock_filter.analyze_single_merged = AsyncMock(side_effect=_mock_analyze)
         mock_filter.close = AsyncMock()
 
-        with patch("home_finder.main.PropertyQualityFilter", return_value=mock_filter):
+        with (
+            structlog.testing.capture_logs() as captured,
+            patch(
+                "home_finder.pipeline.analysis.PropertyQualityFilter",
+                return_value=mock_filter,
+            ),
+        ):
             await run_reanalysis(reanalysis_settings)
 
         # All flags cleared
         queue = await populated_storage.get_reanalysis_queue()
         assert len(queue) == 0
 
-        output = capsys.readouterr().out
-        assert "3 updated" in output
-        assert "0 failed" in output
+        complete_events = [e for e in captured if e["event"] == "reanalysis_complete"]
+        assert len(complete_events) == 1
+        assert complete_events[0]["completed"] == 3
+        assert complete_events[0]["failed"] == 0
 
     async def test_notification_status_unchanged(
         self,
@@ -262,11 +288,11 @@ class TestRunReanalysisSuccess:
         )
 
         new_analysis = make_quality_analysis(rating=5)
-        mock_filter = AsyncMock()
+        mock_filter = _make_async_cm(AsyncMock())
         mock_filter.analyze_single_merged = AsyncMock(return_value=(merged, new_analysis))
         mock_filter.close = AsyncMock()
 
-        with patch("home_finder.main.PropertyQualityFilter", return_value=mock_filter):
+        with patch("home_finder.pipeline.analysis.PropertyQualityFilter", return_value=mock_filter):
             await run_reanalysis(reanalysis_settings)
 
         tracked = await populated_storage.get_property(merged.unique_id)
@@ -305,11 +331,11 @@ class TestRunReanalysisErrorHandling:
                 raise APIUnavailableError("overloaded")
             return (merged, make_quality_analysis(rating=5))
 
-        mock_filter = AsyncMock()
+        mock_filter = _make_async_cm(AsyncMock())
         mock_filter.analyze_single_merged = AsyncMock(side_effect=_mock_analyze)
         mock_filter.close = AsyncMock()
 
-        with patch("home_finder.main.PropertyQualityFilter", return_value=mock_filter):
+        with patch("home_finder.pipeline.analysis.PropertyQualityFilter", return_value=mock_filter):
             await run_reanalysis(reanalysis_settings)
 
         # At least 1 should have completed
@@ -325,7 +351,6 @@ class TestRunReanalysisErrorHandling:
         reanalysis_settings: Settings,
         make_merged_property: Callable[..., MergedProperty],
         make_quality_analysis: Callable[..., PropertyQualityAnalysis],
-        capsys: pytest.CaptureFixture[str],
     ) -> None:
         """RuntimeError on one property doesn't stop the rest."""
         await _save_and_flag(
@@ -346,16 +371,23 @@ class TestRunReanalysisErrorHandling:
                 raise RuntimeError("boom")
             return (merged, make_quality_analysis(rating=5))
 
-        mock_filter = AsyncMock()
+        mock_filter = _make_async_cm(AsyncMock())
         mock_filter.analyze_single_merged = AsyncMock(side_effect=_mock_analyze)
         mock_filter.close = AsyncMock()
 
-        with patch("home_finder.main.PropertyQualityFilter", return_value=mock_filter):
+        with (
+            structlog.testing.capture_logs() as captured,
+            patch(
+                "home_finder.pipeline.analysis.PropertyQualityFilter",
+                return_value=mock_filter,
+            ),
+        ):
             await run_reanalysis(reanalysis_settings)
 
-        output = capsys.readouterr().out
-        assert "1 updated" in output
-        assert "1 failed" in output
+        complete_events = [e for e in captured if e["event"] == "reanalysis_complete"]
+        assert len(complete_events) == 1
+        assert complete_events[0]["completed"] == 1
+        assert complete_events[0]["failed"] == 1
 
     async def test_none_analysis_counts_as_failed(
         self,
@@ -363,23 +395,29 @@ class TestRunReanalysisErrorHandling:
         reanalysis_settings: Settings,
         make_merged_property: Callable[..., MergedProperty],
         make_quality_analysis: Callable[..., PropertyQualityAnalysis],
-        capsys: pytest.CaptureFixture[str],
     ) -> None:
         """analyze_single_merged returning None analysis counts as failure."""
         merged = await _save_and_flag(
             populated_storage, make_merged_property, make_quality_analysis
         )
 
-        mock_filter = AsyncMock()
+        mock_filter = _make_async_cm(AsyncMock())
         mock_filter.analyze_single_merged = AsyncMock(return_value=(merged, None))
         mock_filter.close = AsyncMock()
 
-        with patch("home_finder.main.PropertyQualityFilter", return_value=mock_filter):
+        with (
+            structlog.testing.capture_logs() as captured,
+            patch(
+                "home_finder.pipeline.analysis.PropertyQualityFilter",
+                return_value=mock_filter,
+            ),
+        ):
             await run_reanalysis(reanalysis_settings)
 
-        output = capsys.readouterr().out
-        assert "0 updated" in output
-        assert "1 failed" in output
+        complete_events = [e for e in captured if e["event"] == "reanalysis_complete"]
+        assert len(complete_events) == 1
+        assert complete_events[0]["completed"] == 0
+        assert complete_events[0]["failed"] == 1
 
         # Flag should still be set
         queue = await populated_storage.get_reanalysis_queue()
@@ -395,11 +433,11 @@ class TestRunReanalysisErrorHandling:
         """close() is called even when every analysis raises APIUnavailableError."""
         await _save_and_flag(populated_storage, make_merged_property, make_quality_analysis)
 
-        mock_filter = AsyncMock()
+        mock_filter = _make_async_cm(AsyncMock())
         mock_filter.analyze_single_merged = AsyncMock(side_effect=APIUnavailableError("down"))
         mock_filter.close = AsyncMock()
 
-        with patch("home_finder.main.PropertyQualityFilter", return_value=mock_filter):
+        with patch("home_finder.pipeline.analysis.PropertyQualityFilter", return_value=mock_filter):
             await run_reanalysis(reanalysis_settings)
 
         mock_filter.close.assert_awaited_once()

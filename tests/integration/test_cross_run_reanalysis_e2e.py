@@ -19,9 +19,6 @@ from home_finder.db import PropertyStorage
 from home_finder.filters.deduplication import Deduplicator
 from home_finder.filters.detail_enrichment import EnrichmentResult
 from home_finder.main import (
-    _cross_run_deduplicate,
-    _drain_reanalysis_queue,
-    _run_post_enrichment,
     run_dry_run,
     run_pipeline,
 )
@@ -31,6 +28,11 @@ from home_finder.models import (
     PropertyImage,
     PropertyQualityAnalysis,
     PropertySource,
+)
+from home_finder.pipeline.analysis import _drain_reanalysis_queue
+from home_finder.pipeline.stages import (
+    _cross_run_deduplicate,
+    _run_post_enrichment,
 )
 from home_finder.utils.image_cache import get_cache_dir, save_image_bytes
 
@@ -224,10 +226,29 @@ def _pipeline_mocks(
     mock_notifier = MagicMock()
     mock_notifier.send_property_notification = AsyncMock(return_value=notify_return)
     mock_notifier.send_merged_property_notification = AsyncMock(return_value=notify_return)
+    mock_notifier.send_price_drop_notification = AsyncMock(return_value=True)
     mock_notifier.close = AsyncMock()
+
+    async def _notifier_aenter(*a):
+        return mock_notifier
+
+    async def _notifier_aexit(*a):
+        await mock_notifier.close()
+
+    mock_notifier.__aenter__ = _notifier_aenter
+    mock_notifier.__aexit__ = _notifier_aexit
 
     mock_fetcher_instance = MagicMock()
     mock_fetcher_instance.close = AsyncMock()
+
+    async def _fetcher_aenter(*a):
+        return mock_fetcher_instance
+
+    async def _fetcher_aexit(*a):
+        await mock_fetcher_instance.close()
+
+    mock_fetcher_instance.__aenter__ = _fetcher_aenter
+    mock_fetcher_instance.__aexit__ = _fetcher_aexit
 
     mock_quality_instance = MagicMock()
     if quality_side_effect is not None:
@@ -238,6 +259,15 @@ def _pipeline_mocks(
         )
     mock_quality_instance.close = AsyncMock()
 
+    async def _quality_aenter(*a):
+        return mock_quality_instance
+
+    async def _quality_aexit(*a):
+        await mock_quality_instance.close()
+
+    mock_quality_instance.__aenter__ = _quality_aenter
+    mock_quality_instance.__aexit__ = _quality_aexit
+
     scrape_mock = AsyncMock()
     if scrape_side_effect is not None:
         scrape_mock.side_effect = scrape_side_effect
@@ -245,25 +275,25 @@ def _pipeline_mocks(
         scrape_mock.return_value = scrape_return or []
 
     with (
-        patch("home_finder.main.scrape_all_platforms", scrape_mock),
+        patch("home_finder.pipeline.scraping.scrape_all_platforms", scrape_mock),
         patch(
-            "home_finder.main.enrich_merged_properties",
+            "home_finder.pipeline.stages.enrich_merged_properties",
             new_callable=AsyncMock,
             side_effect=enrich_side_effect,
         ),
         patch(
-            "home_finder.main.DetailFetcher",
+            "home_finder.pipeline.stages.DetailFetcher",
             return_value=mock_fetcher_instance,
         ),
         patch(
-            "home_finder.main.PropertyQualityFilter",
+            "home_finder.pipeline.analysis.PropertyQualityFilter",
             return_value=mock_quality_instance,
         ) as mock_quality_cls,
         patch(
             "home_finder.main.TelegramNotifier",
             return_value=mock_notifier,
         ),
-        patch("home_finder.main._lookup_wards", new_callable=AsyncMock),
+        patch("home_finder.pipeline.analysis._lookup_wards", new_callable=AsyncMock),
         patch("home_finder.main.asyncio.sleep", new_callable=AsyncMock),
         patch.object(PropertyStorage, "__init__", _patched_storage_init),
     ):
@@ -393,13 +423,15 @@ class TestCoreReanalysisFlow:
 
         # -- Drain reanalysis queue --
         with patch(
-            "home_finder.main.PropertyQualityFilter"
+            "home_finder.pipeline.analysis.PropertyQualityFilter"
         ) as mock_qf_cls:
             mock_qf = MagicMock()
             mock_qf.analyze_single_merged = AsyncMock(
                 side_effect=lambda m, **kw: (m, quality_v2)
             )
             mock_qf.close = AsyncMock()
+            mock_qf.__aenter__ = AsyncMock(return_value=mock_qf)
+            mock_qf.__aexit__ = AsyncMock(return_value=False)
             mock_qf_cls.return_value = mock_qf
 
             count = await _drain_reanalysis_queue(settings_quality_on, storage)
@@ -814,7 +846,7 @@ class TestDrainReanalysisQueue:
         settings_quality_on: Settings,
     ):
         """No flagged properties → returns 0, quality filter never constructed."""
-        with patch("home_finder.main.PropertyQualityFilter") as mock_cls:
+        with patch("home_finder.pipeline.analysis.PropertyQualityFilter") as mock_cls:
             count = await _drain_reanalysis_queue(settings_quality_on, storage)
 
         assert count == 0
@@ -860,12 +892,14 @@ class TestDrainReanalysisQueue:
             await storage.request_reanalysis([prop.unique_id])
             anchors.append(prop)
 
-        with patch("home_finder.main.PropertyQualityFilter") as mock_cls:
+        with patch("home_finder.pipeline.analysis.PropertyQualityFilter") as mock_cls:
             mock_qf = MagicMock()
             mock_qf.analyze_single_merged = AsyncMock(
                 side_effect=lambda m, **kw: (m, quality_v2)
             )
             mock_qf.close = AsyncMock()
+            mock_qf.__aenter__ = AsyncMock(return_value=mock_qf)
+            mock_qf.__aexit__ = AsyncMock(return_value=False)
             mock_cls.return_value = mock_qf
 
             count = await _drain_reanalysis_queue(settings_quality_on, storage)
@@ -924,10 +958,12 @@ class TestDrainReanalysisQueue:
                 raise RuntimeError("API timeout")
             return (merged, quality_v2)
 
-        with patch("home_finder.main.PropertyQualityFilter") as mock_cls:
+        with patch("home_finder.pipeline.analysis.PropertyQualityFilter") as mock_cls:
             mock_qf = MagicMock()
             mock_qf.analyze_single_merged = AsyncMock(side_effect=_flaky_analyze)
             mock_qf.close = AsyncMock()
+            mock_qf.__aenter__ = AsyncMock(return_value=mock_qf)
+            mock_qf.__aexit__ = AsyncMock(return_value=False)
             mock_cls.return_value = mock_qf
 
             count = await _drain_reanalysis_queue(settings_quality_on, storage)
