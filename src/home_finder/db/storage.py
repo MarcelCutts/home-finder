@@ -67,7 +67,41 @@ _CLOSE_PRAGMAS: Final[tuple[str, ...]] = (
 
 
 class PropertyStorage:
-    """SQLite-based storage for tracking properties."""
+    """SQLite-based storage for tracking properties.
+
+    Method Index
+    ============
+    Infrastructure: __init__, _get_connection, _transaction, initialize, close
+    Property CRUD: save_property, is_seen, get_property, get_all_properties,
+        save_merged_property, filter_new, filter_new_merged, delete_property,
+        get_recent_properties_for_dedup, update_merged_sources,
+        get_all_known_source_ids
+    Notifications: get_pending_notifications, get_unsent_notifications,
+        mark_notified, mark_notification_failed
+    Quality Analysis: save_quality_analysis, get_quality_analysis
+    Images: save_property_images, get_property_images,
+        get_property_images_and_row
+    Commute & Ward: get_properties_needing_commute, update_commute_data,
+        get_properties_without_ward, update_wards, update_floor_area
+    User Interactions: update_user_status, get_status_history,
+        get_viewing_message, save_viewing_message, delete_viewing_message,
+        log_enquiry, get_enquiries_for_property, has_enquiry
+    Price & Off-Market: detect_and_record_price_change, get_price_history,
+        get_unsent_price_drops, mark_price_drop_notified, mark_off_market,
+        mark_returned_to_market, get_properties_for_off_market_check
+    Facade — PipelineRepository: create_pipeline_run, update_pipeline_run,
+        complete_pipeline_run, get_last_pipeline_run, save_scraper_runs,
+        insert_property_events, cleanup_old_events, save_dropped_properties,
+        save_pre_analysis_properties, get_pending_analysis_properties,
+        complete_analysis, reset_failed_analyses, request_reanalysis,
+        request_reanalysis_by_filter, get_reanalysis_queue,
+        complete_reanalysis, save_unenriched_property,
+        get_unenriched_properties, get_unenriched_retry_stats,
+        mark_enriched, expire_unenriched
+    Facade — WebQueryService: get_filter_count, get_map_markers,
+        get_properties_paginated, get_property_card, get_property_detail,
+        get_property_count
+    """
 
     # Interval between SELECT 1 health probes (seconds)
     _HEALTH_CHECK_INTERVAL: Final = 30.0
@@ -102,7 +136,7 @@ class PropertyStorage:
         Uses a throttled ``SELECT 1`` probe every 30 s to detect hung or
         corrupted connections, then reconnects with full PRAGMA configuration.
         """
-        if self._conn is not None:
+        if self._conn is not None:  # noqa: SIM102
             # Throttled SELECT 1 probe
             if (time.monotonic() - self._last_health_check) > self._HEALTH_CHECK_INTERVAL:
                 try:
@@ -429,137 +463,6 @@ class PropertyStorage:
         """
         seen = await self._get_seen_ids([m.canonical.unique_id for m in properties])
         return [m for m in properties if m.canonical.unique_id not in seen]
-
-    async def save_unenriched_property(
-        self,
-        merged: MergedProperty,
-        *,
-        commute_minutes: int | None = None,
-        transport_mode: TransportMode | None = None,
-    ) -> None:
-        """Save a property that failed enrichment for retry on next run.
-
-        On INSERT: saves with enrichment_status='pending', enrichment_attempts=1,
-        notification_status='pending_enrichment'.
-        On CONFLICT: just increments enrichment_attempts (preserves other fields).
-        """
-        conn = await self._get_connection()
-        columns, values = build_merged_insert_columns(
-            merged,
-            commute_minutes=commute_minutes,
-            transport_mode=transport_mode,
-            notification_status=NotificationStatus.PENDING_ENRICHMENT,
-        )
-        col_list = ", ".join(columns)
-        placeholders = ", ".join("?" for _ in columns)
-
-        await conn.execute(
-            f"""
-            INSERT INTO properties ({col_list}, enrichment_status, enrichment_attempts)
-            VALUES ({placeholders}, 'pending', 1)
-            ON CONFLICT(unique_id) DO UPDATE SET
-                enrichment_attempts = enrichment_attempts + 1
-        """,
-            values,
-        )
-        await conn.commit()
-        logger.debug("unenriched_property_saved", unique_id=merged.canonical.unique_id)
-
-    async def get_unenriched_properties(self, max_attempts: int = 3) -> list[MergedProperty]:
-        """Load properties that failed enrichment for retry.
-
-        Args:
-            max_attempts: Only return properties with fewer attempts than this.
-
-        Returns:
-            List of MergedProperty objects needing enrichment.
-        """
-        conn = await self._get_connection()
-        cursor = await conn.execute(
-            """
-            SELECT * FROM properties
-            WHERE enrichment_status = 'pending'
-              AND enrichment_attempts < ?
-            ORDER BY first_seen ASC
-            """,
-            (max_attempts,),
-        )
-        rows = await cursor.fetchall()
-
-        results = [await row_to_merged_property(row, load_images=False) for row in rows]
-
-        logger.info("loaded_unenriched_properties", count=len(results))
-        return results
-
-    async def get_unenriched_retry_stats(self, max_attempts: int = 3) -> dict[str, dict[str, int]]:
-        """Return retry backlog stats grouped by source and attempt count.
-
-        Returns:
-            Dict with 'by_attempts' mapping attempt count to property count.
-        """
-        conn = await self._get_connection()
-        cursor = await conn.execute(
-            """
-            SELECT enrichment_attempts, COUNT(*) as cnt
-            FROM properties
-            WHERE enrichment_status = 'pending'
-              AND enrichment_attempts < ?
-            GROUP BY enrichment_attempts
-            """,
-            (max_attempts,),
-        )
-        rows = await cursor.fetchall()
-        by_attempts = {str(row["enrichment_attempts"]): row["cnt"] for row in rows}
-        return {"by_attempts": by_attempts}
-
-    async def mark_enriched(self, unique_id: str) -> None:
-        """Transition a re-enriched property into the normal notification flow.
-
-        Sets enrichment_status='enriched' and notification_status='pending'
-        only for rows that still have notification_status='pending_enrichment'.
-        No-op for genuinely new properties (already 'pending').
-        """
-        conn = await self._get_connection()
-        await conn.execute(
-            """
-            UPDATE properties
-            SET enrichment_status = 'enriched',
-                notification_status = ?
-            WHERE unique_id = ?
-              AND notification_status = ?
-            """,
-            (
-                NotificationStatus.PENDING.value,
-                unique_id,
-                NotificationStatus.PENDING_ENRICHMENT.value,
-            ),
-        )
-        await conn.commit()
-
-    async def expire_unenriched(self, max_attempts: int = 3) -> int:
-        """Give up on properties that exceeded max enrichment retries.
-
-        Args:
-            max_attempts: Threshold for giving up.
-
-        Returns:
-            Number of properties expired.
-        """
-        conn = await self._get_connection()
-        cursor = await conn.execute(
-            """
-            UPDATE properties
-            SET enrichment_status = 'failed'
-            WHERE enrichment_status = 'pending'
-              AND enrichment_attempts >= ?
-            """,
-            (max_attempts,),
-        )
-        await conn.commit()
-        count = cursor.rowcount
-        if count:
-            logger.info("expired_unenriched_properties", count=count)
-        return count
 
     async def delete_property(self, unique_id: str) -> None:
         """Delete a property and all related rows from the database.
@@ -1244,6 +1147,38 @@ class PropertyStorage:
     ) -> None:
         """Save updated quality analysis and clear the re-analysis flag."""
         await self._pipeline.complete_reanalysis(unique_id, analysis)
+
+    # ------------------------------------------------------------------
+    # Facade: enrichment retry (delegates to PipelineRepository)
+    # ------------------------------------------------------------------
+
+    async def save_unenriched_property(
+        self,
+        merged: MergedProperty,
+        *,
+        commute_minutes: int | None = None,
+        transport_mode: TransportMode | None = None,
+    ) -> None:
+        """Save a property that failed enrichment for retry on next run."""
+        await self._pipeline.save_unenriched_property(
+            merged, commute_minutes=commute_minutes, transport_mode=transport_mode
+        )
+
+    async def get_unenriched_properties(self, max_attempts: int = 3) -> list[MergedProperty]:
+        """Load properties that failed enrichment for retry."""
+        return await self._pipeline.get_unenriched_properties(max_attempts)
+
+    async def get_unenriched_retry_stats(self, max_attempts: int = 3) -> dict[str, dict[str, int]]:
+        """Return retry backlog stats grouped by attempt count."""
+        return await self._pipeline.get_unenriched_retry_stats(max_attempts)
+
+    async def mark_enriched(self, unique_id: str) -> None:
+        """Transition a re-enriched property into the normal notification flow."""
+        await self._pipeline.mark_enriched(unique_id)
+
+    async def expire_unenriched(self, max_attempts: int = 3) -> int:
+        """Give up on properties that exceeded max enrichment retries."""
+        return await self._pipeline.expire_unenriched(max_attempts)
 
     # ------------------------------------------------------------------
     # Facade: web dashboard queries (delegates to WebQueryService)

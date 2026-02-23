@@ -438,36 +438,96 @@ class TestFetchAndHashImageSVG:
         assert result is None
 
 
-class TestHashFromDiskCorruptCleanup:
-    """Tests for corrupt cached image cleanup in hash_from_disk."""
+class TestPurgeCorruptCachedImages:
+    """Tests for purge_corrupt_cached_images."""
 
-    def test_corrupt_cached_image_deleted(self, tmp_path: Path) -> None:
-        """Corrupt image in image_cache/ should be deleted."""
+    @staticmethod
+    def _setup_cache(tmp_path: Path, unique_id: str, files: dict[str, bytes]) -> None:
+        from home_finder.utils.image_cache import get_cache_dir
+
+        cache_dir = get_cache_dir(str(tmp_path), unique_id)
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        for filename, data in files.items():
+            (cache_dir / filename).write_bytes(data)
+
+    def test_removes_corrupt_jpeg(self, tmp_path: Path) -> None:
+        """Corrupt JPEG gallery image should be removed."""
+        from home_finder.utils.image_hash import purge_corrupt_cached_images
+
+        self._setup_cache(
+            tmp_path,
+            "openrent:123",
+            {"gallery_000_abc12345.jpg": b"\xff\xd8\xff\xe0truncated"},
+        )
+        removed = purge_corrupt_cached_images(str(tmp_path), ["openrent:123"])
+        assert removed == 1
+        from home_finder.utils.image_cache import get_cache_dir
+
+        cache_dir = get_cache_dir(str(tmp_path), "openrent:123")
+        assert not (cache_dir / "gallery_000_abc12345.jpg").exists()
+
+    def test_removes_corrupt_png(self, tmp_path: Path) -> None:
+        """Corrupt PNG gallery image should be removed."""
+        from home_finder.utils.image_hash import purge_corrupt_cached_images
+
+        self._setup_cache(
+            tmp_path,
+            "zoopla:456",
+            {"gallery_001_def67890.png": b"\x89PNG\r\n\x1a\ntruncated"},
+        )
+        removed = purge_corrupt_cached_images(str(tmp_path), ["zoopla:456"])
+        assert removed == 1
+
+    def test_removes_empty_file(self, tmp_path: Path) -> None:
+        """Empty gallery image file should be removed."""
+        from home_finder.utils.image_hash import purge_corrupt_cached_images
+
+        self._setup_cache(
+            tmp_path,
+            "openrent:789",
+            {"gallery_000_abc12345.jpg": b""},
+        )
+        removed = purge_corrupt_cached_images(str(tmp_path), ["openrent:789"])
+        assert removed == 1
+
+    def test_keeps_valid_images(self, tmp_path: Path) -> None:
+        """Valid gallery images should not be removed."""
+        from home_finder.utils.image_hash import purge_corrupt_cached_images
+
+        self._setup_cache(
+            tmp_path,
+            "openrent:100",
+            {"gallery_000_abc12345.jpg": _make_test_image("red")},
+        )
+        removed = purge_corrupt_cached_images(str(tmp_path), ["openrent:100"])
+        assert removed == 0
+
+    def test_skips_non_gallery_files(self, tmp_path: Path) -> None:
+        """Non-gallery files (e.g. floorplans) should not be touched."""
+        from home_finder.utils.image_hash import purge_corrupt_cached_images
+
+        self._setup_cache(
+            tmp_path,
+            "openrent:200",
+            {"floorplan_000_abc12345.jpg": b"corrupt data"},
+        )
+        removed = purge_corrupt_cached_images(str(tmp_path), ["openrent:200"])
+        assert removed == 0
+
+    def test_missing_cache_dir(self, tmp_path: Path) -> None:
+        """Missing cache directory should not raise."""
+        from home_finder.utils.image_hash import purge_corrupt_cached_images
+
+        removed = purge_corrupt_cached_images(str(tmp_path), ["nonexistent:999"])
+        assert removed == 0
+
+    def test_hash_from_disk_no_longer_deletes(self, tmp_path: Path) -> None:
+        """hash_from_disk should be read-only — corrupt files should remain."""
         cache_dir = tmp_path / "image_cache" / "openrent_123"
         cache_dir.mkdir(parents=True)
         img_path = cache_dir / "gallery_000_abc12345.jpg"
-        img_path.write_bytes(b"\xff\xd8\xff\xe0truncated")  # JPEG magic bytes but corrupt
-
-        result = hash_from_disk(img_path)
-        assert result is None
-        assert not img_path.exists()  # File should be cleaned up
-
-    def test_corrupt_non_cached_image_not_deleted(self, tmp_path: Path) -> None:
-        """Corrupt image NOT in image_cache/ should not be deleted."""
-        img_path = tmp_path / "gallery_000_abc12345.jpg"
         img_path.write_bytes(b"\xff\xd8\xff\xe0truncated")
 
         result = hash_from_disk(img_path)
         assert result is None
         assert img_path.exists()  # File should NOT be deleted
-
-    def test_corrupt_cached_png_deleted(self, tmp_path: Path) -> None:
-        """Corrupt PNG in image_cache/ should be deleted."""
-        cache_dir = tmp_path / "image_cache" / "zoopla_456"
-        cache_dir.mkdir(parents=True)
-        img_path = cache_dir / "gallery_001_def67890.png"
-        img_path.write_bytes(b"\x89PNG\r\n\x1a\ntruncated")  # PNG magic but corrupt
-
-        result = hash_from_disk(img_path)
-        assert result is None
-        assert not img_path.exists()

@@ -19,9 +19,10 @@ from home_finder.filters.quality import (  # type: ignore[attr-defined]
     _clean_dict,
     _clean_list,
     _clean_value,
-    _coerce_evaluation_enums,
     _EvaluationResponse,
+    _extract_eval_json,
     _inline_refs,
+    _sanitize_eval_enums,
     _VisualAnalysisResponse,
     assess_value,
     build_evaluation_prompt,
@@ -712,19 +713,23 @@ def create_mock_response(
     return mock_response
 
 
-def create_mock_parsed_response(eval_data: dict[str, Any]) -> MagicMock:
-    """Create a mock ParsedMessage for Phase 2 (messages.parse).
+def create_mock_eval_response(eval_data: dict[str, Any]) -> MagicMock:
+    """Create a mock messages.create response for Phase 2 (evaluation).
 
-    Simulates the SDK's ``messages.parse()`` return value where
-    ``parsed_output`` is an ``_EvaluationResponse`` instance and
-    ``model_dump()`` returns the original dict.
+    Returns a response with a text content block containing the JSON-serialized
+    eval data, mimicking the ``output_config`` / ``json_schema`` format.
     """
+    import json
+
     mock_response = MagicMock()
-    mock_parsed = MagicMock()
-    mock_parsed.model_dump.return_value = eval_data
-    mock_response.parsed_output = mock_parsed
+    text_block = MagicMock()
+    text_block.type = "text"
+    text_block.text = json.dumps(eval_data)
+    mock_response.content = [text_block]
     mock_response.stop_reason = "end_turn"
     mock_response.usage = MagicMock()
+    mock_response.usage.input_tokens = 100
+    mock_response.usage.output_tokens = 50
     mock_response.usage.cache_read_input_tokens = 0
     mock_response.usage.cache_creation_input_tokens = 0
     return mock_response
@@ -735,11 +740,10 @@ def _setup_two_phase_mocks(
     visual_response: dict[str, Any],
     eval_response: dict[str, Any],
 ) -> None:
-    """Set up Phase 1 (messages.create) and Phase 2 (messages.parse) mocks on a client."""
+    """Set up Phase 1 and Phase 2 mocks on messages.create (both phases use it)."""
     mock_visual = create_mock_response(visual_response, tool_name="property_visual_analysis")
-    client_mock.messages.create = AsyncMock(return_value=mock_visual)
-    mock_eval = create_mock_parsed_response(eval_response)
-    client_mock.messages.parse = AsyncMock(return_value=mock_eval)
+    mock_eval = create_mock_eval_response(eval_response)
+    client_mock.messages.create = AsyncMock(side_effect=[mock_visual, mock_eval])
 
 
 class TestPropertyQualityFilter:
@@ -1041,7 +1045,7 @@ class TestPropertyQualityFilter:
 
         # Phase 1: auto tool_choice with extended thinking (messages.create)
         create_calls = quality_filter._client.messages.create.call_args_list
-        assert len(create_calls) == 1
+        assert len(create_calls) == 2  # Phase 1 + Phase 2
         phase1_kwargs = create_calls[0].kwargs
         assert phase1_kwargs["tool_choice"] == {"type": "auto"}
         assert phase1_kwargs["thinking"] == {
@@ -1050,11 +1054,10 @@ class TestPropertyQualityFilter:
         assert len(phase1_kwargs["tools"]) == 1
         assert phase1_kwargs["tools"][0]["name"] == "property_visual_analysis"
 
-        # Phase 2: output_format via messages.parse (no tools, no tool_choice)
-        parse_calls = quality_filter._client.messages.parse.call_args_list
-        assert len(parse_calls) == 1
-        phase2_kwargs = parse_calls[0].kwargs
-        assert phase2_kwargs["output_format"] is _EvaluationResponse
+        # Phase 2: output_config via messages.create (no tools, no tool_choice)
+        assert len(create_calls) == 2
+        phase2_kwargs = create_calls[1].kwargs
+        assert phase2_kwargs["output_config"]["format"]["type"] == "json_schema"
         assert "tools" not in phase2_kwargs
         assert "tool_choice" not in phase2_kwargs
         assert "thinking" not in phase2_kwargs
@@ -1082,9 +1085,9 @@ class TestPropertyQualityFilter:
         assert system1[0]["cache_control"] == {"type": "ephemeral"}
         assert "expert London rental property analyst" in system1[0]["text"]
 
-        # Phase 2 system prompt (messages.parse)
-        parse_calls = quality_filter._client.messages.parse.call_args_list
-        system2 = parse_calls[0].kwargs["system"]
+        # Phase 2 system prompt (messages.create, second call)
+        assert len(create_calls) == 2
+        system2 = create_calls[1].kwargs["system"]
         assert len(system2) == 1
         assert system2[0]["type"] == "text"
         assert system2[0]["cache_control"] == {"type": "ephemeral"}
@@ -1122,11 +1125,12 @@ class TestPropertyQualityFilter:
             sample_visual_response, stop_reason="end_turn", tool_name="property_visual_analysis"
         )
 
+        mock_eval = create_mock_eval_response(sample_evaluation_response)
+
         quality_filter = PropertyQualityFilter(api_key="test-key")
         quality_filter._client = MagicMock()
-        quality_filter._client.messages.create = AsyncMock(return_value=mock_visual)
-        quality_filter._client.messages.parse = AsyncMock(
-            return_value=create_mock_parsed_response(sample_evaluation_response)
+        quality_filter._client.messages.create = AsyncMock(
+            side_effect=[mock_visual, mock_eval]
         )
 
         results = await quality_filter.analyze_merged_properties([sample_merged_property])
@@ -1237,14 +1241,12 @@ class TestPropertyQualityFilter:
 
         await quality_filter.analyze_merged_properties([sample_merged_property])
 
-        # Phase 1 via messages.create
+        # Both phases via messages.create
         create_calls = quality_filter._client.messages.create.call_args_list
-        assert len(create_calls) == 1
+        assert len(create_calls) == 2
 
-        # Phase 2 prompt (via messages.parse) should contain Phase 1 output
-        parse_calls = quality_filter._client.messages.parse.call_args_list
-        assert len(parse_calls) == 1
-        phase2_content = parse_calls[0].kwargs["messages"][0]["content"]
+        # Phase 2 prompt (second messages.create call) should contain Phase 1 output
+        phase2_content = create_calls[1].kwargs["messages"][0]["content"]
         assert "<visual_analysis>" in phase2_content
         assert '"overall_quality": "modern"' in phase2_content
         assert "</visual_analysis>" in phase2_content
@@ -1262,9 +1264,8 @@ class TestPropertyQualityFilter:
         quality_filter = PropertyQualityFilter(api_key="test-key")
         quality_filter._client = MagicMock()
         # Phase 1 succeeds, Phase 2 raises
-        quality_filter._client.messages.create = AsyncMock(return_value=mock_visual)
-        quality_filter._client.messages.parse = AsyncMock(
-            side_effect=Exception("Phase 2 API error")
+        quality_filter._client.messages.create = AsyncMock(
+            side_effect=[mock_visual, Exception("Phase 2 API error")]
         )
 
         results = await quality_filter.analyze_merged_properties([sample_merged_property])
@@ -1299,9 +1300,10 @@ class TestPropertyQualityFilter:
 
         await quality_filter.analyze_merged_properties([sample_merged_property])
 
-        # Phase 2 uses messages.parse — content is a string (text-only)
-        parse_calls = quality_filter._client.messages.parse.call_args_list
-        phase2_content = parse_calls[0].kwargs["messages"][0]["content"]
+        # Phase 2 uses messages.create — content is a string (text-only)
+        create_calls = quality_filter._client.messages.create.call_args_list
+        assert len(create_calls) == 2
+        phase2_content = create_calls[1].kwargs["messages"][0]["content"]
         assert isinstance(phase2_content, str)
 
 
@@ -1919,13 +1921,15 @@ class TestPhase2CircuitBreakerRaise:
         )
         quality_filter = PropertyQualityFilter(api_key="test-key")
         quality_filter._client = MagicMock()
-        quality_filter._client.messages.create = AsyncMock(return_value=mock_visual)
-        quality_filter._client.messages.parse = AsyncMock(
-            side_effect=AuthenticationError(
-                message="invalid key",
-                response=MagicMock(status_code=401, headers={}),
-                body=None,
-            )
+        quality_filter._client.messages.create = AsyncMock(
+            side_effect=[
+                mock_visual,
+                AuthenticationError(
+                    message="invalid key",
+                    response=MagicMock(status_code=401, headers={}),
+                    body=None,
+                ),
+            ]
         )
 
         with pytest.raises(APIUnavailableError, match="Authentication failed"):
@@ -1944,9 +1948,8 @@ class TestPhase2CircuitBreakerRaise:
         )
         quality_filter = PropertyQualityFilter(api_key="test-key")
         quality_filter._client = MagicMock()
-        quality_filter._client.messages.create = AsyncMock(return_value=mock_visual)
-        quality_filter._client.messages.parse = AsyncMock(
-            side_effect=APIConnectionError(request=MagicMock())
+        quality_filter._client.messages.create = AsyncMock(
+            side_effect=[mock_visual, APIConnectionError(request=MagicMock())]
         )
 
         with pytest.raises(APIUnavailableError):
@@ -3537,112 +3540,66 @@ class TestSetLiteralSyntaxThroughLayers:
         assert analysis.bedroom.office_separation == "shared_space"
 
 
-class TestCoerceEvaluationEnums:
-    """Tests for _coerce_evaluation_enums lenient fallback."""
+class TestEvalHelpers:
+    """Tests for _extract_eval_json and _sanitize_eval_enums."""
 
-    def test_filters_invalid_lowlight_keeps_valid(self) -> None:
-        """Invalid lowlight values should be stripped, valid ones kept."""
+    def test_extract_eval_json_from_text_block(self) -> None:
+        """Should extract JSON dict from a text content block."""
         import json
 
-        raw_data = {
-            "listing_extraction": {
-                "epc_rating": "C",
-                "service_charge_pcm": None,
-                "deposit_weeks": 5,
-                "bills_included": "no",
-                "pets_allowed": "unknown",
-                "parking": "street",
-                "council_tax_band": "C",
-                "property_type": "victorian",
-                "furnished_status": "furnished",
-                "broadband_type": "fttc",
-            },
-            "value_for_quality": {"rating": "good", "reasoning": "Fair price"},
-            "viewing_notes": {
-                "check_items": ["Check windows"],
-                "questions_for_agent": ["Rent increases?"],
-                "deal_breaker_tests": ["Test water"],
-            },
-            "highlights": ["Gas hob", "Modern kitchen"],
-            "lowlights": ["No dishwasher", "Totally invented concern"],
-            "one_line": "Nice flat with good kitchen",
-        }
-
-        # Build a mock response with raw JSON in a text content block
+        raw_data = {"one_line": "Nice flat", "highlights": ["Gas hob"]}
         mock_response = MagicMock()
         text_block = MagicMock()
         text_block.type = "text"
         text_block.text = json.dumps(raw_data)
         mock_response.content = [text_block]
 
-        result = _coerce_evaluation_enums(mock_response, "test:123")
+        result = _extract_eval_json(mock_response)
+        assert result == raw_data
 
-        assert result is not None
-        assert "No dishwasher" in result["lowlights"]
-        assert "Totally invented concern" not in result["lowlights"]
-        assert len(result["lowlights"]) == 1
-        # Rest of data preserved
-        assert result["one_line"] == "Nice flat with good kitchen"
-        assert result["highlights"] == ["Gas hob", "Modern kitchen"]
-
-    def test_filters_invalid_highlight_keeps_valid(self) -> None:
-        """Invalid highlight values should be stripped."""
-        import json
-
-        raw_data = {
-            "listing_extraction": {
-                "epc_rating": "unknown",
-                "service_charge_pcm": None,
-                "deposit_weeks": None,
-                "bills_included": "unknown",
-                "pets_allowed": "unknown",
-                "parking": "unknown",
-                "council_tax_band": "unknown",
-                "property_type": "unknown",
-                "furnished_status": "unknown",
-                "broadband_type": "unknown",
-            },
-            "value_for_quality": {"rating": "fair", "reasoning": "Average"},
-            "viewing_notes": {
-                "check_items": [],
-                "questions_for_agent": [],
-                "deal_breaker_tests": [],
-            },
-            "highlights": ["Gas hob", "Amazing imaginary feature"],
-            "lowlights": [],
-            "one_line": "Average flat",
-        }
-
-        mock_response = MagicMock()
-        text_block = MagicMock()
-        text_block.type = "text"
-        text_block.text = json.dumps(raw_data)
-        mock_response.content = [text_block]
-
-        result = _coerce_evaluation_enums(mock_response, "test:456")
-
-        assert "Gas hob" in result["highlights"]
-        assert "Amazing imaginary feature" not in result["highlights"]
-
-    def test_returns_empty_dict_when_no_content(self) -> None:
-        """Should return empty dict when response has no content blocks."""
+    def test_extract_eval_json_returns_none_when_no_content(self) -> None:
+        """Should return None when response has no content blocks."""
         mock_response = MagicMock()
         mock_response.content = []
+        assert _extract_eval_json(mock_response) is None
 
-        result = _coerce_evaluation_enums(mock_response, "test:789")
-        assert result == {}
+    def test_extract_eval_json_returns_none_on_none_response(self) -> None:
+        """Should return None when response is None (no content attr)."""
+        assert _extract_eval_json(None) is None
 
-    def test_returns_empty_dict_on_none_response(self) -> None:
-        """Should return empty dict when response is None."""
-        result = _coerce_evaluation_enums(None, "test:000")
-        assert result == {}
+    def test_sanitize_eval_enums_filters_invalid_lowlights(self) -> None:
+        """Invalid lowlight values should be stripped, valid ones kept."""
+        raw = {
+            "highlights": ["Gas hob", "Modern kitchen"],
+            "lowlights": ["No dishwasher", "Totally invented concern"],
+        }
+        _sanitize_eval_enums(raw)
+        assert "No dishwasher" in raw["lowlights"]
+        assert "Totally invented concern" not in raw["lowlights"]
+        assert len(raw["lowlights"]) == 1
+
+    def test_sanitize_eval_enums_filters_invalid_highlights(self) -> None:
+        """Invalid highlight values should be stripped."""
+        raw = {
+            "highlights": ["Gas hob", "Amazing imaginary feature"],
+            "lowlights": [],
+        }
+        _sanitize_eval_enums(raw)
+        assert "Gas hob" in raw["highlights"]
+        assert "Amazing imaginary feature" not in raw["highlights"]
+
+    def test_sanitize_eval_enums_no_keys(self) -> None:
+        """Should be a no-op when highlights/lowlights keys are absent."""
+        raw: dict[str, Any] = {"one_line": "Nice flat"}
+        _sanitize_eval_enums(raw)
+        assert raw == {"one_line": "Nice flat"}
 
     async def test_evaluation_coercion_in_pipeline(
         self,
         sample_merged_property: MergedProperty,
         sample_visual_response: dict[str, Any],
     ) -> None:
-        """Phase 2 ValidationError should trigger coercion, not lose the evaluation."""
+        """Phase 2 with invalid lowlight should be coerced, not lost."""
         import json
 
         eval_data_with_invalid = {
@@ -3674,35 +3631,27 @@ class TestCoerceEvaluationEnums:
             sample_visual_response, tool_name="property_visual_analysis"
         )
 
-        # Phase 2 mock: parsed_output raises ValidationError, but content has raw JSON.
-        # Create a real ValidationError by validating definitely-invalid data.
-        _ve: ValidationError | None = None
-        try:
-            _EvaluationResponse.model_validate(
-                {**eval_data_with_invalid, "lowlights": ["ZZZZZ_not_real"]}
-            )
-        except ValidationError as _exc:
-            _ve = _exc
-        assert _ve is not None, "Expected ValidationError for test setup"
-
+        # Phase 2 mock: messages.create returns a response with raw JSON
+        # in a text content block (including an invalid lowlight).
         mock_eval_response = MagicMock()
-        _ve_to_raise = _ve
-        type(mock_eval_response).parsed_output = property(
-            lambda self: (_ for _ in ()).throw(_ve_to_raise)
-        )
         text_block = MagicMock()
         text_block.type = "text"
         text_block.text = json.dumps(eval_data_with_invalid)
         mock_eval_response.content = [text_block]
         mock_eval_response.stop_reason = "end_turn"
         mock_eval_response.usage = MagicMock()
+        mock_eval_response.usage.input_tokens = 100
+        mock_eval_response.usage.output_tokens = 50
         mock_eval_response.usage.cache_read_input_tokens = 0
         mock_eval_response.usage.cache_creation_input_tokens = 0
 
+        # messages.create is called for both Phase 1 and Phase 2.
+        # Return Phase 1 visual response first, then Phase 2 eval response.
         quality_filter = PropertyQualityFilter(api_key="test-key")
         quality_filter._client = MagicMock()
-        quality_filter._client.messages.create = AsyncMock(return_value=mock_visual)
-        quality_filter._client.messages.parse = AsyncMock(return_value=mock_eval_response)
+        quality_filter._client.messages.create = AsyncMock(
+            side_effect=[mock_visual, mock_eval_response]
+        )
 
         results = await quality_filter.analyze_merged_properties([sample_merged_property])
 

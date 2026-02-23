@@ -8,8 +8,8 @@ from dataclasses import dataclass
 from typing import Any, NamedTuple, assert_never
 
 import httpx
-from PIL import Image
 from curl_cffi.requests import AsyncSession
+from PIL import Image
 from tenacity import (
     retry,
     retry_if_exception_type,
@@ -885,9 +885,9 @@ class DetailFetcher:
             if not is_valid_image_bytes(data):
                 logger.warning("image_download_not_image", url=url, prefix=data[:16])
                 return None
-            # Validate PIL can decode it (catches truncated/corrupt downloads)
+            # Validate PIL can fully decode it (catches truncated/corrupt downloads)
             try:
-                Image.open(io.BytesIO(data)).verify()
+                Image.open(io.BytesIO(data)).load()
             except Exception:
                 logger.warning("image_download_corrupt", url=url)
                 return None

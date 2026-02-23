@@ -162,19 +162,39 @@ def hash_from_disk(path: Path) -> str | None:
         return str(imagehash.phash(image))
     except Exception as e:
         logger.debug("hash_from_disk_failed", path=str(path), error=str(e))
-        # Remove confirmed-corrupt cached images so they're re-downloaded
-        if "/image_cache/" in str(path) and path.suffix.lower() in (
-            ".jpg",
-            ".jpeg",
-            ".png",
-            ".webp",
-        ):
-            try:
-                path.unlink()
-                logger.info("corrupt_cached_image_removed", path=str(path))
-            except OSError:
-                pass
         return None
+
+
+def purge_corrupt_cached_images(data_dir: str, unique_ids: list[str]) -> int:
+    """Remove cached gallery images that PIL cannot open.
+
+    Returns the number of files removed.
+    """
+    from home_finder.utils.image_cache import get_cache_dir
+
+    removed = 0
+    for uid in unique_ids:
+        cache_dir = get_cache_dir(data_dir, uid)
+        if not cache_dir.is_dir():
+            continue
+        for img_path in cache_dir.glob("gallery_*"):
+            if img_path.suffix.lower() not in (".jpg", ".jpeg", ".png", ".webp"):
+                continue
+            try:
+                data = img_path.read_bytes()
+                if not data:
+                    img_path.unlink()
+                    removed += 1
+                    continue
+                Image.open(io.BytesIO(data))
+            except Exception:
+                try:
+                    img_path.unlink()
+                    logger.info("corrupt_cached_image_removed", path=str(img_path))
+                    removed += 1
+                except OSError:
+                    pass
+    return removed
 
 
 async def hash_cached_gallery(
@@ -197,6 +217,7 @@ async def hash_cached_gallery(
     from home_finder.utils.image_cache import get_cache_dir
 
     def _hash_all() -> dict[str, list[str]]:
+        purge_corrupt_cached_images(data_dir, unique_ids)
         result: dict[str, list[str]] = {}
         for uid in unique_ids:
             cache_dir = get_cache_dir(data_dir, uid)

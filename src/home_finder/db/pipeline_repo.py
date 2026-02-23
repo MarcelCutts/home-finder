@@ -252,6 +252,141 @@ class PipelineRepository:
         logger.info("dropped_properties_saved", count=len(dropped))
 
     # ------------------------------------------------------------------
+    # Enrichment retry
+    # ------------------------------------------------------------------
+
+    async def save_unenriched_property(
+        self,
+        merged: MergedProperty,
+        *,
+        commute_minutes: int | None = None,
+        transport_mode: TransportMode | None = None,
+    ) -> None:
+        """Save a property that failed enrichment for retry on next run.
+
+        On INSERT: saves with enrichment_status='pending', enrichment_attempts=1,
+        notification_status='pending_enrichment'.
+        On CONFLICT: just increments enrichment_attempts (preserves other fields).
+        """
+        conn = await self._get_connection()
+        columns, values = build_merged_insert_columns(
+            merged,
+            commute_minutes=commute_minutes,
+            transport_mode=transport_mode,
+            notification_status=NotificationStatus.PENDING_ENRICHMENT,
+        )
+        col_list = ", ".join(columns)
+        placeholders = ", ".join("?" for _ in columns)
+
+        await conn.execute(
+            f"""
+            INSERT INTO properties ({col_list}, enrichment_status, enrichment_attempts)
+            VALUES ({placeholders}, 'pending', 1)
+            ON CONFLICT(unique_id) DO UPDATE SET
+                enrichment_attempts = enrichment_attempts + 1
+        """,
+            values,
+        )
+        await conn.commit()
+        logger.debug("unenriched_property_saved", unique_id=merged.canonical.unique_id)
+
+    async def get_unenriched_properties(self, max_attempts: int = 3) -> list[MergedProperty]:
+        """Load properties that failed enrichment for retry.
+
+        Args:
+            max_attempts: Only return properties with fewer attempts than this.
+
+        Returns:
+            List of MergedProperty objects needing enrichment.
+        """
+        conn = await self._get_connection()
+        cursor = await conn.execute(
+            """
+            SELECT * FROM properties
+            WHERE enrichment_status = 'pending'
+              AND enrichment_attempts < ?
+            ORDER BY first_seen ASC
+            """,
+            (max_attempts,),
+        )
+        rows = await cursor.fetchall()
+
+        results = [await row_to_merged_property(row, load_images=False) for row in rows]
+
+        logger.info("loaded_unenriched_properties", count=len(results))
+        return results
+
+    async def get_unenriched_retry_stats(self, max_attempts: int = 3) -> dict[str, dict[str, int]]:
+        """Return retry backlog stats grouped by source and attempt count.
+
+        Returns:
+            Dict with 'by_attempts' mapping attempt count to property count.
+        """
+        conn = await self._get_connection()
+        cursor = await conn.execute(
+            """
+            SELECT enrichment_attempts, COUNT(*) as cnt
+            FROM properties
+            WHERE enrichment_status = 'pending'
+              AND enrichment_attempts < ?
+            GROUP BY enrichment_attempts
+            """,
+            (max_attempts,),
+        )
+        rows = await cursor.fetchall()
+        by_attempts = {str(row["enrichment_attempts"]): row["cnt"] for row in rows}
+        return {"by_attempts": by_attempts}
+
+    async def mark_enriched(self, unique_id: str) -> None:
+        """Transition a re-enriched property into the normal notification flow.
+
+        Sets enrichment_status='enriched' and notification_status='pending'
+        only for rows that still have notification_status='pending_enrichment'.
+        No-op for genuinely new properties (already 'pending').
+        """
+        conn = await self._get_connection()
+        await conn.execute(
+            """
+            UPDATE properties
+            SET enrichment_status = 'enriched',
+                notification_status = ?
+            WHERE unique_id = ?
+              AND notification_status = ?
+            """,
+            (
+                NotificationStatus.PENDING.value,
+                unique_id,
+                NotificationStatus.PENDING_ENRICHMENT.value,
+            ),
+        )
+        await conn.commit()
+
+    async def expire_unenriched(self, max_attempts: int = 3) -> int:
+        """Give up on properties that exceeded max enrichment retries.
+
+        Args:
+            max_attempts: Threshold for giving up.
+
+        Returns:
+            Number of properties expired.
+        """
+        conn = await self._get_connection()
+        cursor = await conn.execute(
+            """
+            UPDATE properties
+            SET enrichment_status = 'failed'
+            WHERE enrichment_status = 'pending'
+              AND enrichment_attempts >= ?
+            """,
+            (max_attempts,),
+        )
+        await conn.commit()
+        count = cursor.rowcount
+        if count:
+            logger.info("expired_unenriched_properties", count=count)
+        return count
+
+    # ------------------------------------------------------------------
     # Quality analysis retry (save-before-analyze pattern)
     # ------------------------------------------------------------------
 

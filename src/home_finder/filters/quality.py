@@ -2,6 +2,7 @@
 
 import asyncio
 import base64
+import functools
 import json as _json
 import re as _re
 from dataclasses import dataclass
@@ -657,42 +658,36 @@ _CONSTRUCTION_TO_PROFILE: dict[str, str] = {
 }
 
 
-def _coerce_evaluation_enums(eval_response: Any, property_id: str) -> dict[str, Any]:
-    """Extract raw JSON from a failed evaluation response and filter invalid enums.
+@functools.cache
+def _eval_json_schema() -> dict[str, Any]:
+    """Return the inlined JSON schema for ``_EvaluationResponse``, cached."""
+    return _inline_refs(_EvaluationResponse.model_json_schema())
 
-    When ``messages.parse()`` raises a ``ValidationError`` (e.g. Claude invented
-    a lowlight value), this function recovers the raw JSON from the response
-    content blocks, strips invalid highlight/lowlight values, and returns the
-    cleaned dict so the property keeps its value rating, one-liner, and viewing
-    notes.
 
-    Returns:
-        Cleaned eval dict, or empty dict if extraction failed.
+def _extract_eval_json(response: Any) -> dict[str, Any] | None:
+    """Extract raw JSON dict from the first text content block in *response*.
+
+    Returns ``None`` when no parseable JSON text block is found.
     """
+    for block in getattr(response, "content", []):
+        if getattr(block, "type", None) == "text":
+            try:
+                parsed = _json.loads(block.text)
+                if isinstance(parsed, dict):
+                    return parsed
+            except (ValueError, _json.JSONDecodeError):
+                continue
+    return None
+
+
+def _sanitize_eval_enums(raw: dict[str, Any]) -> None:
+    """Filter invalid highlight/lowlight enum values from *raw* in-place."""
     valid_highlights = {v.value for v in PropertyHighlight}
     valid_lowlights = {v.value for v in PropertyLowlight}
-    try:
-        # The SDK's response has content blocks; find the JSON text block
-        raw: dict[str, Any] | None = None
-        for block in getattr(eval_response, "content", []):
-            if getattr(block, "type", None) == "text":
-                raw = _json.loads(block.text)
-                break
-        if raw is None:
-            return {}
-        # Filter invalid enum values
-        if "highlights" in raw:
-            raw["highlights"] = [h for h in raw["highlights"] if h in valid_highlights]
-        if "lowlights" in raw:
-            raw["lowlights"] = [l for l in raw["lowlights"] if l in valid_lowlights]
-        return raw
-    except Exception:
-        logger.debug(
-            "evaluation_enum_coercion_failed",
-            property_id=property_id,
-            exc_info=True,
-        )
-        return {}
+    if "highlights" in raw:
+        raw["highlights"] = [h for h in raw["highlights"] if h in valid_highlights]
+    if "lowlights" in raw:
+        raw["lowlights"] = [lo for lo in raw["lowlights"] if lo in valid_lowlights]
 
 
 class PropertyQualityFilter:
@@ -1209,9 +1204,11 @@ class PropertyQualityFilter:
     ) -> dict[str, Any]:
         """Run Phase 2 evaluation API call using structured JSON output.
 
-        Uses the SDK's ``messages.parse()`` with ``output_format`` for
-        guaranteed schema-valid JSON output.  Phase 2 is text-only (no
-        images, no thinking), making it ideal for JSON output mode.
+        Uses ``messages.create()`` with ``output_config`` for JSON schema
+        output, then manually extracts and validates the response. This
+        approach gives us access to the raw JSON even when Pydantic
+        validation fails (e.g. Claude invents a lowlight value), allowing
+        graceful coercion instead of losing the entire evaluation.
 
         Args:
             visual_data: Phase 1 visual analysis output.
@@ -1268,7 +1265,6 @@ class PropertyQualityFilter:
         )
 
         eval_data: dict[str, Any] = {}
-        eval_response: Any = None
         try:
             eval_prompt = build_evaluation_prompt(
                 visual_data=visual_data,
@@ -1286,7 +1282,7 @@ class PropertyQualityFilter:
                 acoustic_context=acoustic_context,
             )
 
-            eval_response = await client.messages.parse(
+            eval_response = await client.messages.create(
                 model="claude-sonnet-4-6",
                 max_tokens=4096,
                 system=[
@@ -1297,21 +1293,41 @@ class PropertyQualityFilter:
                     }
                 ],
                 messages=[{"role": "user", "content": eval_prompt}],
-                output_format=_EvaluationResponse,
+                output_config={
+                    "format": {
+                        "type": "json_schema",
+                        "schema": _eval_json_schema(),
+                    }
+                },
             )
 
             if hasattr(eval_response, "usage"):
                 self.token_usage.add_from_response(eval_response.usage)
 
-            if eval_response.parsed_output:
-                eval_data = eval_response.parsed_output.model_dump()
-                self._breaker.record_success()
+            # Extract raw JSON from text content block
+            raw_json = _extract_eval_json(eval_response)
+            if raw_json is not None:
+                # Filter any invalid enum values before Pydantic validation
+                _sanitize_eval_enums(raw_json)
+                try:
+                    validated = _EvaluationResponse.model_validate(raw_json)
+                    eval_data = validated.model_dump()
+                    self._breaker.record_success()
+                except ValidationError as ve:
+                    # Enum filtering wasn't enough; use raw dict
+                    eval_data = raw_json
+                    self._breaker.record_success()
+                    logger.warning(
+                        "evaluation_coerced_invalid_fields",
+                        property_id=property_id,
+                        error=str(ve),
+                    )
             else:
                 logger.warning(
-                    "no_parsed_output_in_response",
+                    "no_json_in_evaluation_response",
                     property_id=property_id,
                     phase="evaluation",
-                    stop_reason=eval_response.stop_reason,
+                    stop_reason=getattr(eval_response, "stop_reason", None),
                 )
 
         except AuthenticationError as e:
@@ -1334,26 +1350,6 @@ class PropertyQualityFilter:
                 exc_info=True,
             )
             raise APIUnavailableError(str(e)) from e
-
-        except ValidationError as e:
-            # Pydantic rejected a field (e.g. invalid lowlight enum value).
-            # Extract the raw JSON, filter out invalid enum values, and keep
-            # the rest rather than losing the entire evaluation.
-            eval_data = _coerce_evaluation_enums(eval_response, property_id) if eval_response else {}
-            if eval_data:
-                self._breaker.record_success()
-                logger.warning(
-                    "evaluation_coerced_invalid_enums",
-                    property_id=property_id,
-                    error=str(e),
-                )
-            else:
-                logger.warning(
-                    "evaluation_phase_failed",
-                    property_id=property_id,
-                    error=str(e),
-                    error_type="ValidationError",
-                )
 
         except Exception as e:
             logger.warning(

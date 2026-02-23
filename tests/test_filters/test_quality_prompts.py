@@ -979,6 +979,7 @@ class TestToolSchemaSnapshots:
                                     "Small bedroom",
                                     "Compact bedroom",
                                     "Poor storage",
+                                    "No built-in wardrobes",
                                     "No storage",
                                     "Dated bathroom",
                                     "No outdoor space",

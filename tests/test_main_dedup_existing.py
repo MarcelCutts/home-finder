@@ -140,11 +140,19 @@ class TestRunDedupExisting:
         await storage.save_merged_property(merged_otm)
         await storage.save_merged_property(merged_rm)
 
-        # Create cached images for both
+        # Create cached images for both (must be valid images to survive hash_from_disk)
+        import io
+
+        from PIL import Image as _Image
+
+        _buf = io.BytesIO()
+        _Image.new("RGB", (1, 1), color="red").save(_buf, format="JPEG")
+        _valid_jpeg = _buf.getvalue()
+
         otm_dir = get_cache_dir(str(tmp_path), merged_otm.unique_id)
         rm_dir = get_cache_dir(str(tmp_path), merged_rm.unique_id)
-        save_image_bytes(otm_dir / "gallery_000_aaa11111.jpg", b"fake")
-        save_image_bytes(rm_dir / "gallery_000_bbb22222.jpg", b"fake")
+        save_image_bytes(otm_dir / "gallery_000_aaa11111.jpg", _valid_jpeg)
+        save_image_bytes(rm_dir / "gallery_000_bbb22222.jpg", _valid_jpeg)
 
         # Verify both exist before dedup
         all_props = await storage.get_all_properties()
