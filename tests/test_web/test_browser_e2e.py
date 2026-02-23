@@ -236,7 +236,7 @@ def server_url(tmp_path_factory):
         pipeline_interval_minutes=9999,  # Don't run pipeline during tests
     )
 
-    app = create_app(settings)
+    app = create_app(settings, run_pipeline=False)
 
     port = _find_free_port()
     base = f"http://127.0.0.1:{port}"

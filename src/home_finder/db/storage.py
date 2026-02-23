@@ -75,7 +75,13 @@ class PropertyStorage:
             path.parent.mkdir(parents=True, exist_ok=True)
 
     async def _get_connection(self) -> aiosqlite.Connection:
-        """Get or create the database connection."""
+        """Get or create the database connection, reconnecting if stale."""
+        if self._conn is not None:
+            # Verify the underlying sqlite3 connection is still alive
+            if not self._conn._running or self._conn._connection is None:
+                logger.warning("db_connection_stale", db_path=self.db_path)
+                self._conn = None
+
         if self._conn is None:
             self._conn = await aiosqlite.connect(self.db_path)
             self._conn.row_factory = aiosqlite.Row
