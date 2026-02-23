@@ -146,6 +146,7 @@ class NotificationStatus(StrEnum):
     PENDING_ANALYSIS = "pending_analysis"
     SENT = "sent"
     FAILED = "failed"
+    DROPPED = "dropped"
 
 
 class UserStatus(StrEnum):

@@ -174,6 +174,77 @@ class PipelineRepository:
         logger.debug("scraper_runs_saved", count=len(metrics_list))
 
     # ------------------------------------------------------------------
+    # Floorplan-dropped properties (prevent re-enrichment)
+    # ------------------------------------------------------------------
+
+    async def save_dropped_properties(
+        self,
+        dropped: list[MergedProperty],
+        commute_lookup: dict[str, tuple[int, TransportMode]],
+    ) -> None:
+        """Batch save properties dropped by the floorplan gate.
+
+        Saves with notification_status='dropped' and enrichment_status='enriched'
+        so they are marked as "seen" by filter_new_merged() and won't be
+        re-enriched on future pipeline runs.
+
+        Uses INSERT ... ON CONFLICT DO NOTHING — if somehow already in DB,
+        don't overwrite existing data.
+
+        Args:
+            dropped: Properties dropped at the floorplan gate.
+            commute_lookup: Commute data keyed by unique_id.
+        """
+        if not dropped:
+            return
+
+        conn = await self._get_connection()
+        for merged in dropped:
+            prop = merged.canonical
+            commute_info = commute_lookup.get(prop.unique_id)
+            commute_minutes = commute_info[0] if commute_info else None
+            transport_mode = commute_info[1] if commute_info else None
+
+            columns, values = build_merged_insert_columns(
+                merged,
+                commute_minutes=commute_minutes,
+                transport_mode=transport_mode,
+                notification_status=NotificationStatus.DROPPED,
+            )
+            col_list = ", ".join(columns)
+            placeholders = ", ".join("?" for _ in columns)
+
+            await conn.execute(
+                f"""
+                INSERT INTO properties ({col_list}, enrichment_status)
+                VALUES ({placeholders}, 'enriched')
+                ON CONFLICT(unique_id) DO NOTHING
+                """,
+                values,
+            )
+
+            # Save images (important for cross-run dedup image matching)
+            images = list(merged.images)
+            if merged.floorplan:
+                images.append(merged.floorplan)
+            if images:
+                img_rows = [
+                    (prop.unique_id, img.source.value, str(img.url), img.image_type)
+                    for img in images
+                ]
+                await conn.executemany(
+                    """
+                    INSERT OR IGNORE INTO property_images
+                    (property_unique_id, source, url, image_type)
+                    VALUES (?, ?, ?, ?)
+                    """,
+                    img_rows,
+                )
+
+        await conn.commit()
+        logger.info("dropped_properties_saved", count=len(dropped))
+
+    # ------------------------------------------------------------------
     # Quality analysis retry (save-before-analyze pattern)
     # ------------------------------------------------------------------
 

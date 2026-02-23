@@ -519,16 +519,9 @@ class TestCoreReanalysisFlow:
                 quality_side_effect=_quality_side_effect,
                 shared_storage=shared_storage,
             ) as ctx:
-
-                async def _intercept_close(self_storage):
-                    pass  # Don't close — we need the DB across runs
-
-                with patch.object(PropertyStorage, "close", _intercept_close):
-                    await run_pipeline(settings)
-                    await run_pipeline(settings)
-
-                storage = ctx.storage_capture.instance
-                assert storage is not None
+                # Pass storage directly — eliminates dual-connection contention
+                await run_pipeline(settings, storage=shared_storage)
+                await run_pipeline(settings, storage=shared_storage)
 
                 # Should have 1 property (merged) with 2 sources
                 count = await shared_storage.get_property_count()
@@ -1256,12 +1249,8 @@ class TestDryRunPath:
                 quality_side_effect=lambda m, **kw: (m, quality_v2),
                 shared_storage=shared_storage,
             ) as ctx:
-
-                async def _intercept_close(self_storage):
-                    pass
-
-                with patch.object(PropertyStorage, "close", _intercept_close):
-                    await run_dry_run(settings)
+                # Pass storage directly — eliminates dual-connection contention
+                await run_dry_run(settings, storage=shared_storage)
 
             # Quality should be updated (drain ran)
             conn = await shared_storage._get_connection()

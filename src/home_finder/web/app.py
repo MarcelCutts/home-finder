@@ -59,8 +59,14 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         return response
 
 
-async def _pipeline_loop(settings: Settings, interval_minutes: int) -> None:
-    """Run the scraping pipeline on a recurring schedule."""
+async def _pipeline_loop(
+    settings: Settings, interval_minutes: int, storage: PropertyStorage
+) -> None:
+    """Run the scraping pipeline on a recurring schedule.
+
+    Reuses the web server's storage instance to avoid dual-connection
+    contention on the same SQLite database file.
+    """
     from home_finder.main import run_pipeline
 
     # Initial delay so the web server can become responsive first
@@ -74,7 +80,7 @@ async def _pipeline_loop(settings: Settings, interval_minutes: int) -> None:
             async with _pipeline_lock:
                 logger.info("pipeline_scheduler_running")
                 try:
-                    await run_pipeline(settings)
+                    await run_pipeline(settings, storage=storage)
                 except asyncio.CancelledError:
                     logger.info("pipeline_scheduler_cancelled")
                     raise
@@ -161,9 +167,9 @@ def create_app(settings: Settings | None = None, *, run_pipeline: bool = True) -
             await _register_telegram_webhook(settings)
 
         if run_pipeline:
-            # Start background pipeline scheduler
+            # Start background pipeline scheduler (shares web server's storage)
             pipeline_task = asyncio.create_task(
-                _pipeline_loop(settings, settings.pipeline_interval_minutes)
+                _pipeline_loop(settings, settings.pipeline_interval_minutes, storage)
             )
             logger.info(
                 "web_server_started",

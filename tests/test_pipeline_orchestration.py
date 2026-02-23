@@ -642,6 +642,53 @@ class TestPreAnalysisPipeline:
         # No floorplan → filtered out
         assert result is None
 
+    @patch("home_finder.pipeline.stages.enrich_merged_properties", new_callable=AsyncMock)
+    @patch("home_finder.pipeline.scraping.scrape_all_platforms")
+    async def test_floorplan_gate_saves_dropped_properties(
+        self,
+        mock_scrape: Any,
+        mock_enrich: Any,
+        storage: PropertyStorage,
+        make_property: Callable[..., Property],
+    ) -> None:
+        """Dropped properties are saved to DB so they're excluded on next run."""
+        settings = Settings(
+            telegram_bot_token=SecretStr("fake:token"),
+            telegram_chat_id=0,
+            database_path=":memory:",
+            search_areas="e8",
+            min_price=1500,
+            max_price=2500,
+            min_bedrooms=1,
+            max_bedrooms=2,
+            require_floorplan=True,
+            enable_quality_filter=False,
+            traveltime_app_id="",
+            traveltime_api_key=SecretStr(""),
+        )
+        prop = make_property(source=PropertySource.RIGHTMOVE, source_id="drop-save")
+        mock_scrape.return_value = ([prop], [])
+        mock_enrich.side_effect = lambda merged, *a, **kw: EnrichmentResult(enriched=merged)
+
+        result = await _run_pre_analysis_pipeline(settings, storage)
+        assert result is None  # Dropped by floorplan gate
+
+        # Verify: property saved with 'dropped' status
+        conn = await storage._get_connection()
+        cursor = await conn.execute(
+            "SELECT notification_status, enrichment_status FROM properties WHERE unique_id = ?",
+            (prop.unique_id,),
+        )
+        row = await cursor.fetchone()
+        assert row is not None
+        assert row["notification_status"] == "dropped"
+        assert row["enrichment_status"] == "enriched"
+
+        # Second run: same property should be filtered as "already seen"
+        mock_scrape.return_value = ([prop], [])
+        result2 = await _run_pre_analysis_pipeline(settings, storage)
+        assert result2 is None  # No new properties
+
 
 # ---------------------------------------------------------------------------
 # _persist_estimated_floor_area

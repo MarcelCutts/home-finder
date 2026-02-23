@@ -151,6 +151,7 @@ async def run_pipeline(
     only_scrapers: set[str] | None = None,
     full_scrape: bool = False,
     dry_run: bool = False,
+    storage: PropertyStorage | None = None,
 ) -> None:
     """Run the full scraping and notification pipeline.
 
@@ -163,199 +164,232 @@ async def run_pipeline(
         only_scrapers: If set, only run these scrapers (by source value).
         full_scrape: Disable early-stop pagination (scrape all pages).
         dry_run: If True, save to DB but skip Telegram notifications.
+        storage: Optional pre-existing storage instance (e.g. from web server).
+            When provided, the caller owns the connection lifecycle.
+            When None (CLI mode), a fresh storage is created and closed.
     """
-    async with PropertyStorage(settings.database_path) as storage:
-        # Pipeline run tracking — only in live mode
-        run_id: int | None = None
-        if not dry_run:
-            run_id = await storage.create_pipeline_run()
-            structlog.contextvars.bind_contextvars(run_id=run_id)
-            logger.info("pipeline_run_created", run_id=run_id)
-
-        # Notifier context — real TelegramNotifier in live mode, nullcontext for dry run
-        notifier_cm: contextlib.AbstractAsyncContextManager[TelegramNotifier | None]
-        if dry_run:
-            notifier_cm = contextlib.nullcontext(None)
-        else:
-            notifier_cm = TelegramNotifier(
-                bot_token=settings.telegram_bot_token.get_secret_value(),
-                chat_id=settings.telegram_chat_id,
-                web_base_url=settings.web_base_url,
-                data_dir=settings.data_dir,
+    if storage is not None:
+        await _run_pipeline_with_storage(
+            settings,
+            storage,
+            max_per_scraper=max_per_scraper,
+            only_scrapers=only_scrapers,
+            full_scrape=full_scrape,
+            dry_run=dry_run,
+        )
+    else:
+        async with PropertyStorage(settings.database_path) as own_storage:
+            await _run_pipeline_with_storage(
+                settings,
+                own_storage,
+                max_per_scraper=max_per_scraper,
+                only_scrapers=only_scrapers,
+                full_scrape=full_scrape,
+                dry_run=dry_run,
             )
 
-        # T4: EventRecorder for property audit trail
-        recorder_cm: contextlib.AbstractAsyncContextManager[EventRecorder | None]
-        if run_id is not None:
-            recorder_cm = EventRecorder(storage, run_id)
-        else:
-            recorder_cm = contextlib.nullcontext(None)
 
-        async with notifier_cm as notifier, recorder_cm as recorder:
-            try:
-                # Step 0: Retry unsent notifications (live mode only)
-                if not dry_run and notifier is not None:
-                    unsent = await storage.get_unsent_notifications()
-                    if unsent:
-                        logger.info("retrying_unsent_notifications", count=len(unsent))
-                        for tracked in unsent:
-                            success = await notifier.send_property_notification(
-                                tracked.property,
-                                commute_minutes=tracked.commute_minutes,
-                                transport_mode=tracked.transport_mode,
-                            )
-                            if success:
-                                await storage.mark_notified(tracked.property.unique_id)
-                                logger.info(
-                                    "retry_notification_sent",
-                                    unique_id=tracked.property.unique_id,
-                                )
-                            else:
-                                logger.warning(
-                                    "retry_notification_failed",
-                                    unique_id=tracked.property.unique_id,
-                                )
-                            await asyncio.sleep(1)
+async def _run_pipeline_with_storage(
+    settings: Settings,
+    storage: PropertyStorage,
+    *,
+    max_per_scraper: int | None = None,
+    only_scrapers: set[str] | None = None,
+    full_scrape: bool = False,
+    dry_run: bool = False,
+) -> None:
+    """Pipeline body that operates on a provided storage instance."""
+    # Pipeline run tracking — only in live mode
+    run_id: int | None = None
+    if not dry_run:
+        run_id = await storage.create_pipeline_run()
+        structlog.contextvars.bind_contextvars(run_id=run_id)
+        logger.info("pipeline_run_created", run_id=run_id)
 
-                pre = await _run_pre_analysis_pipeline(
-                    settings,
-                    storage,
-                    max_per_scraper=max_per_scraper,
-                    only_scrapers=only_scrapers,
-                    full_scrape=full_scrape,
-                    recorder=recorder,
-                )
-                if pre is None:
-                    if dry_run:
-                        logger.info("dry_run_no_new_properties")
-                    elif run_id is not None:
-                        await storage.complete_pipeline_run(run_id, "completed")
-                    return
+    # Notifier context — real TelegramNotifier in live mode, nullcontext for dry run
+    notifier_cm: contextlib.AbstractAsyncContextManager[TelegramNotifier | None]
+    if dry_run:
+        notifier_cm = contextlib.nullcontext(None)
+    else:
+        notifier_cm = TelegramNotifier(
+            bot_token=settings.telegram_bot_token.get_secret_value(),
+            chat_id=settings.telegram_chat_id,
+            web_base_url=settings.web_base_url,
+            data_dir=settings.data_dir,
+        )
 
-                if not dry_run and run_id is not None:
-                    await storage.update_pipeline_run(
-                        run_id,
-                        scraped_count=pre.scraped_count,
-                        new_count=len(pre.merged_to_process),
-                        enriched_count=pre.enriched_count,
-                        anchors_updated=pre.anchors_updated,
-                        criteria_filtered_count=pre.criteria_filtered_count,
-                        location_filtered_count=pre.location_filtered_count,
-                        new_property_count=pre.new_property_count,
-                        commute_within_limit_count=pre.commute_within_limit_count,
-                        post_dedup_count=pre.post_dedup_count,
-                        post_floorplan_count=pre.post_floorplan_count,
-                        **pre.stage_timings,
-                    )
-                    if pre.scraper_metrics:
-                        await storage.save_scraper_runs(
-                            run_id, [asdict(m) for m in pre.scraper_metrics]
-                        )
+    # T4: EventRecorder for property audit trail
+    recorder_cm: contextlib.AbstractAsyncContextManager[EventRecorder | None]
+    if run_id is not None:
+        recorder_cm = EventRecorder(storage, run_id)
+    else:
+        recorder_cm = contextlib.nullcontext(None)
 
-                logger.info(
-                    "pipeline_started",
-                    phase="quality_analysis_and_save" if dry_run else "quality_analysis_and_notify",
-                    count=len(pre.merged_to_process),
-                    dry_run=dry_run,
-                )
-
-                # Build callback
-                notified_counter = [0]  # mutable counter for live mode
-                dry_run_results: list[
-                    tuple[MergedProperty, _CommInfo, PropertyQualityAnalysis | None]
-                ] = []
-
-                if dry_run:
-                    on_result = _make_accumulate_callback(dry_run_results)
-                else:
-                    assert notifier is not None
-                    on_result = _make_notify_callback(
-                        notifier, storage, notified_counter, recorder=recorder
-                    )
-
-                t_analysis = time.monotonic()
-                analyzed_count, token_usage = await _run_quality_and_save(
-                    pre, settings, storage, on_result, recorder=recorder
-                )
-
-                # Re-analyze cross-run merges that gained new source data
-                reanalyzed_count = await _drain_reanalysis_queue(settings, storage)
-                analysis_seconds = time.monotonic() - t_analysis
-
-                if dry_run:
-                    _log_dry_run_summary(dry_run_results)
-                    logger.info(
-                        "dry_run_complete",
-                        saved=analyzed_count,
-                        reanalyzed=reanalyzed_count,
-                    )
-                else:
-                    assert notifier is not None
-                    assert run_id is not None
-                    notified_count = notified_counter[0]
-
-                    # Send price drop notifications
-                    t_notify = time.monotonic()
-                    price_drops = await storage.get_unsent_price_drops()
-                    price_drop_count = 0
-                    for drop in price_drops:
-                        success = await notifier.send_price_drop_notification(
-                            title=drop["title"],
-                            postcode=drop.get("postcode") or "",
-                            old_price=drop["old_price"],
-                            new_price=drop["new_price"],
-                            unique_id=drop["unique_id"],
-                            days_listed=_days_since(drop.get("first_seen")),
+    async with notifier_cm as notifier, recorder_cm as recorder:
+        try:
+            # Step 0: Retry unsent notifications (live mode only)
+            if not dry_run and notifier is not None:
+                unsent = await storage.get_unsent_notifications()
+                if unsent:
+                    logger.info("retrying_unsent_notifications", count=len(unsent))
+                    for tracked in unsent:
+                        success = await notifier.send_property_notification(
+                            tracked.property,
+                            commute_minutes=tracked.commute_minutes,
+                            transport_mode=tracked.transport_mode,
                         )
                         if success:
-                            await storage.mark_price_drop_notified(drop["unique_id"])
-                            price_drop_count += 1
-                            await asyncio.sleep(1)  # Telegram rate limit
-                    if price_drop_count:
-                        logger.info("price_drop_notifications_sent", count=price_drop_count)
-                    notification_seconds = time.monotonic() - t_notify
+                            await storage.mark_notified(tracked.property.unique_id)
+                            logger.info(
+                                "retry_notification_sent",
+                                unique_id=tracked.property.unique_id,
+                            )
+                        else:
+                            logger.warning(
+                                "retry_notification_failed",
+                                unique_id=tracked.property.unique_id,
+                            )
+                        await asyncio.sleep(1)
 
-                    cost_kwargs: dict[str, int | float] = {}
-                    if token_usage is not None:
-                        cost_kwargs = {
-                            "total_input_tokens": token_usage.input_tokens,
-                            "total_output_tokens": token_usage.output_tokens,
-                            "total_cache_read_tokens": token_usage.cache_read_tokens,
-                            "total_cache_creation_tokens": token_usage.cache_creation_tokens,
-                            "estimated_cost_usd": token_usage.estimated_cost_usd,
-                        }
-                    await storage.update_pipeline_run(
-                        run_id,
-                        analyzed_count=analyzed_count,
-                        notified_count=notified_count,
-                        analysis_seconds=analysis_seconds,
-                        notification_seconds=notification_seconds,
-                        **cost_kwargs,
-                    )
+            pre = await _run_pre_analysis_pipeline(
+                settings,
+                storage,
+                max_per_scraper=max_per_scraper,
+                only_scrapers=only_scrapers,
+                full_scrape=full_scrape,
+                recorder=recorder,
+            )
+            if pre is None:
+                if dry_run:
+                    logger.info("dry_run_no_new_properties")
+                elif run_id is not None:
                     await storage.complete_pipeline_run(run_id, "completed")
+                return
 
-                    # T4: prune old property events
-                    await storage.cleanup_old_events(settings.event_retention_runs)
-
-                    logger.info(
-                        "pipeline_complete",
-                        notified=notified_count,
-                        reanalyzed=reanalyzed_count,
-                        price_drops=price_drop_count,
+            if not dry_run and run_id is not None:
+                await storage.update_pipeline_run(
+                    run_id,
+                    scraped_count=pre.scraped_count,
+                    new_count=len(pre.merged_to_process),
+                    enriched_count=pre.enriched_count,
+                    anchors_updated=pre.anchors_updated,
+                    criteria_filtered_count=pre.criteria_filtered_count,
+                    location_filtered_count=pre.location_filtered_count,
+                    new_property_count=pre.new_property_count,
+                    commute_within_limit_count=pre.commute_within_limit_count,
+                    post_dedup_count=pre.post_dedup_count,
+                    post_floorplan_count=pre.post_floorplan_count,
+                    **pre.stage_timings,
+                )
+                if pre.scraper_metrics:
+                    await storage.save_scraper_runs(
+                        run_id, [asdict(m) for m in pre.scraper_metrics]
                     )
 
-            except asyncio.CancelledError:
-                if run_id is not None:
-                    logger.warning("pipeline_cancelled", run_id=run_id)
-                    await storage.complete_pipeline_run(run_id, "cancelled")
-                raise
-            except Exception as exc:
-                if run_id is not None:
-                    await storage.complete_pipeline_run(run_id, "failed", error_message=str(exc))
-                raise
-            finally:
-                if not dry_run:
-                    structlog.contextvars.clear_contextvars()
+            logger.info(
+                "pipeline_started",
+                phase="quality_analysis_and_save" if dry_run else "quality_analysis_and_notify",
+                count=len(pre.merged_to_process),
+                dry_run=dry_run,
+            )
+
+            # Build callback
+            notified_counter = [0]  # mutable counter for live mode
+            dry_run_results: list[
+                tuple[MergedProperty, _CommInfo, PropertyQualityAnalysis | None]
+            ] = []
+
+            if dry_run:
+                on_result = _make_accumulate_callback(dry_run_results)
+            else:
+                assert notifier is not None
+                on_result = _make_notify_callback(
+                    notifier, storage, notified_counter, recorder=recorder
+                )
+
+            t_analysis = time.monotonic()
+            analyzed_count, token_usage = await _run_quality_and_save(
+                pre, settings, storage, on_result, recorder=recorder
+            )
+
+            # Re-analyze cross-run merges that gained new source data
+            reanalyzed_count = await _drain_reanalysis_queue(settings, storage)
+            analysis_seconds = time.monotonic() - t_analysis
+
+            if dry_run:
+                _log_dry_run_summary(dry_run_results)
+                logger.info(
+                    "dry_run_complete",
+                    saved=analyzed_count,
+                    reanalyzed=reanalyzed_count,
+                )
+            else:
+                assert notifier is not None
+                assert run_id is not None
+                notified_count = notified_counter[0]
+
+                # Send price drop notifications
+                t_notify = time.monotonic()
+                price_drops = await storage.get_unsent_price_drops()
+                price_drop_count = 0
+                for drop in price_drops:
+                    success = await notifier.send_price_drop_notification(
+                        title=drop["title"],
+                        postcode=drop.get("postcode") or "",
+                        old_price=drop["old_price"],
+                        new_price=drop["new_price"],
+                        unique_id=drop["unique_id"],
+                        days_listed=_days_since(drop.get("first_seen")),
+                    )
+                    if success:
+                        await storage.mark_price_drop_notified(drop["unique_id"])
+                        price_drop_count += 1
+                        await asyncio.sleep(1)  # Telegram rate limit
+                if price_drop_count:
+                    logger.info("price_drop_notifications_sent", count=price_drop_count)
+                notification_seconds = time.monotonic() - t_notify
+
+                cost_kwargs: dict[str, int | float] = {}
+                if token_usage is not None:
+                    cost_kwargs = {
+                        "total_input_tokens": token_usage.input_tokens,
+                        "total_output_tokens": token_usage.output_tokens,
+                        "total_cache_read_tokens": token_usage.cache_read_tokens,
+                        "total_cache_creation_tokens": token_usage.cache_creation_tokens,
+                        "estimated_cost_usd": token_usage.estimated_cost_usd,
+                    }
+                await storage.update_pipeline_run(
+                    run_id,
+                    analyzed_count=analyzed_count,
+                    notified_count=notified_count,
+                    analysis_seconds=analysis_seconds,
+                    notification_seconds=notification_seconds,
+                    **cost_kwargs,
+                )
+                await storage.complete_pipeline_run(run_id, "completed")
+
+                # T4: prune old property events
+                await storage.cleanup_old_events(settings.event_retention_runs)
+
+                logger.info(
+                    "pipeline_complete",
+                    notified=notified_count,
+                    reanalyzed=reanalyzed_count,
+                    price_drops=price_drop_count,
+                )
+
+        except asyncio.CancelledError:
+            if run_id is not None:
+                logger.warning("pipeline_cancelled", run_id=run_id)
+                await storage.complete_pipeline_run(run_id, "cancelled")
+            raise
+        except Exception as exc:
+            if run_id is not None:
+                await storage.complete_pipeline_run(run_id, "failed", error_message=str(exc))
+            raise
+        finally:
+            if not dry_run:
+                structlog.contextvars.clear_contextvars()
 
 
 async def run_dry_run(

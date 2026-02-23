@@ -601,6 +601,7 @@ async def _run_post_enrichment(
     re_enrichment_ids: set[str],
     *,
     recorder: EventRecorder | None = None,
+    commute_lookup: dict[str, tuple[int, TransportMode]] | None = None,
 ) -> tuple[list[MergedProperty], int, int, int] | None:
     """Cross-run dedup and floorplan gate. Returns None if nothing remains.
 
@@ -653,9 +654,17 @@ async def _run_post_enrichment(
             by_source=_source_counts(merged_to_notify),
         )
 
+        # Compute passed/dropped sets (shared by save + T4 recorder)
+        passed_ids = {m.unique_id for m in merged_to_notify}
+        dropped = [m for m in pre_floorplan if m.unique_id not in passed_ids]
+
+        # Save floorplan-dropped properties so they don't get re-enriched
+        if dropped and commute_lookup is not None:
+            await storage.save_dropped_properties(dropped, commute_lookup)
+            logger.info("dropped_properties_saved", count=len(dropped))
+
         # T4: record floorplan gate events
         if recorder is not None:
-            passed_ids = {m.unique_id for m in merged_to_notify}
             for m in pre_floorplan:
                 uid = m.canonical.unique_id
                 src = m.canonical.source.value
@@ -848,7 +857,8 @@ async def _run_pre_analysis_pipeline(
     # Step 7: Post-enrichment dedup + floorplan gate
     # Use geocoded list (not enriched) so coordinates from geocoding are preserved
     post_result = await _run_post_enrichment(
-        geocoded, storage, settings, re_enrichment_ids, recorder=recorder
+        geocoded, storage, settings, re_enrichment_ids,
+        recorder=recorder, commute_lookup=commute_lookup,
     )
     timings["enrichment_seconds"] = time.monotonic() - t0
     if post_result is None:

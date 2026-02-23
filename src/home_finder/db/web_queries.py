@@ -120,7 +120,7 @@ def build_filter_clauses(
     """
     where_clauses: list[str] = [
         "COALESCE(p.enrichment_status, 'enriched') != 'pending'",
-        "p.notification_status != 'pending_analysis'",
+        "p.notification_status NOT IN ('pending_analysis', 'dropped')",
         # Hide properties with fallback analysis (API failed, no real quality data).
         # A fallback has a quality_analyses row but NULL overall_rating.
         # Properties with no analysis row at all (q.property_unique_id IS NULL) are fine.

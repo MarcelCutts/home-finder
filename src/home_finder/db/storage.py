@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
+import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
@@ -51,6 +53,9 @@ logger = get_logger(__name__)
 class PropertyStorage:
     """SQLite-based storage for tracking properties."""
 
+    # Interval between SELECT 1 health probes (seconds)
+    _HEALTH_CHECK_INTERVAL: Final = 30.0
+
     def __init__(self, db_path: str) -> None:
         """Initialize storage with database path.
 
@@ -59,6 +64,7 @@ class PropertyStorage:
         """
         self.db_path = db_path
         self._conn: aiosqlite.Connection | None = None
+        self._last_health_check: float = 0.0
         self._ensure_directory()
         self._web = WebQueryService(self._get_connection, self.get_property_images)
         self._pipeline = PipelineRepository(
@@ -75,12 +81,33 @@ class PropertyStorage:
             path.parent.mkdir(parents=True, exist_ok=True)
 
     async def _get_connection(self) -> aiosqlite.Connection:
-        """Get or create the database connection, reconnecting if stale."""
+        """Get or create the database connection, reconnecting if dead.
+
+        Uses a layered health check strategy:
+        1. Fast pre-check: is the worker thread still alive? (no I/O)
+        2. Throttled SELECT 1 probe every 30s (catches hung/corrupted connections)
+        3. Reconnect with full PRAGMA configuration if connection is dead
+        """
         if self._conn is not None:
-            # Verify the underlying sqlite3 connection is still alive
-            if not self._conn._running or self._conn._connection is None:
-                logger.warning("db_connection_stale", db_path=self.db_path)
+            # Layer 1: fast thread-alive check (no I/O)
+            thread = getattr(self._conn, "_thread", None)
+            if thread is not None and not thread.is_alive():
+                logger.warning("db_worker_thread_dead", db_path=self.db_path)
                 self._conn = None
+            # Layer 2: throttled SELECT 1 probe
+            elif (time.monotonic() - self._last_health_check) > self._HEALTH_CHECK_INTERVAL:
+                try:
+                    await asyncio.wait_for(
+                        self._conn.execute("SELECT 1"), timeout=5.0
+                    )
+                    self._last_health_check = time.monotonic()
+                except Exception:
+                    logger.warning("db_connection_dead", db_path=self.db_path)
+                    try:
+                        await self._conn.close()
+                    except Exception:
+                        pass
+                    self._conn = None
 
         if self._conn is None:
             self._conn = await aiosqlite.connect(self.db_path)
@@ -90,6 +117,7 @@ class PropertyStorage:
             await self._conn.execute("PRAGMA synchronous=NORMAL")
             await self._conn.execute("PRAGMA cache_size=-64000")
             await self._conn.execute("PRAGMA foreign_keys=ON")
+            self._last_health_check = time.monotonic()
         return self._conn
 
     async def __aenter__(self) -> PropertyStorage:
@@ -1514,6 +1542,14 @@ class PropertyStorage:
     # Facade: quality analysis retry (delegates to PipelineRepository)
     # ------------------------------------------------------------------
 
+    async def save_dropped_properties(
+        self,
+        dropped: list[MergedProperty],
+        commute_lookup: dict[str, tuple[int, TransportMode]],
+    ) -> None:
+        """Save floorplan-dropped properties so they're excluded from re-enrichment."""
+        await self._pipeline.save_dropped_properties(dropped, commute_lookup)
+
     async def save_pre_analysis_properties(
         self,
         merged_list: list[MergedProperty],
@@ -1985,7 +2021,7 @@ class PropertyStorage:
             SELECT unique_id, url, source, source_urls, is_off_market
             FROM properties
             WHERE COALESCE(enrichment_status, 'enriched') != 'pending'
-              AND notification_status NOT IN ('pending_enrichment', 'pending_analysis')
+              AND notification_status NOT IN ('pending_enrichment', 'pending_analysis', 'dropped')
             ORDER BY first_seen DESC
             """
         )
