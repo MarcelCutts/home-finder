@@ -80,9 +80,7 @@ def generate_negotiation_brief(
     }
 
 
-def _resolve_benchmark(
-    outcode: str | None, bedrooms: int
-) -> tuple[int | None, str | None]:
+def _resolve_benchmark(outcode: str | None, bedrooms: int) -> tuple[int | None, str | None]:
     """Look up the static median rent for an outcode + bedroom count."""
     if not outcode:
         return None, None
@@ -146,9 +144,7 @@ def _score_price_drops(price_history: list[dict[str, Any]]) -> NegotiationSignal
     return NegotiationSignal("price_drops", round(weight, 2), "buyer", text)
 
 
-def _score_benchmark(
-    price_pcm: int, median: int, outcode: str | None
-) -> NegotiationSignal:
+def _score_benchmark(price_pcm: int, median: int, outcode: str | None) -> NegotiationSignal:
     """Graduate based on % above/below median. ±5% = neutral zone."""
     diff_pct = ((price_pcm - median) / median) * 100
 
@@ -218,17 +214,23 @@ def _score_seasonal() -> NegotiationSignal:
 
     if month in (1, 2, 11, 12):
         return NegotiationSignal(
-            "seasonal", 0.3, "buyer",
+            "seasonal",
+            0.3,
+            "buyer",
             f"{month_name} — off-peak season, fewer competing tenants",
         )
     elif month in (6, 7, 8, 9):
         return NegotiationSignal(
-            "seasonal", 0.3, "seller",
+            "seasonal",
+            0.3,
+            "seller",
             f"{month_name} — peak rental season, higher competition",
         )
     else:
         return NegotiationSignal(
-            "seasonal", 0.1, "neutral",
+            "seasonal",
+            0.1,
+            "neutral",
             f"{month_name} — moderate season",
         )
 
@@ -241,9 +243,7 @@ def _build_approach(
     outcode: str | None,
 ) -> str:
     """Compose approach text from signal components."""
-    buyer_signals = sorted(
-        [s for s in signals if s.direction == "buyer"], key=lambda s: -s.weight
-    )
+    buyer_signals = sorted([s for s in signals if s.direction == "buyer"], key=lambda s: -s.weight)
 
     if strength == "strong":
         lead = _lead_sentence(buyer_signals)
@@ -255,18 +255,12 @@ def _build_approach(
                 " a strong tenant profile."
             )
         else:
-            guidance = (
-                " Consider offering 5-8% below asking"
-                " with a strong tenant profile."
-            )
+            guidance = " Consider offering 5-8% below asking with a strong tenant profile."
         return lead + guidance
 
     if strength == "moderate":
         lead = _lead_sentence(buyer_signals)
-        guidance = (
-            " A polite offer 3-5% below asking"
-            " with fast move-in readiness could work."
-        )
+        guidance = " A polite offer 3-5% below asking with fast move-in readiness could work."
         return lead + guidance
 
     if strength == "balanced":
@@ -286,9 +280,7 @@ def _build_approach(
         s.text.split(" - ")[0].lower() if " - " in s.text else s.text.lower()
         for s in seller_signals[:2]
     ]
-    reason_text = (
-        " and ".join(reasons) if reasons else "current market conditions"
-    )
+    reason_text = " and ".join(reasons) if reasons else "current market conditions"
     return (
         f"Limited negotiation leverage due to {reason_text}."
         " Focus on being the strongest applicant -"

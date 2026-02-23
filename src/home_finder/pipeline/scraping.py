@@ -1,6 +1,9 @@
 """Scraper orchestration — platform-level scraping and coordination."""
 
 import random
+import time
+from dataclasses import dataclass
+from datetime import UTC, datetime
 
 from home_finder.config import Settings
 from home_finder.db import PropertyStorage
@@ -19,6 +22,24 @@ from home_finder.scrapers import (
 from home_finder.utils.address import is_outcode
 
 logger = get_logger(__name__)
+
+
+@dataclass
+class ScraperMetrics:
+    """Per-scraper performance metrics for a single pipeline run."""
+
+    scraper_name: str = ""
+    started_at: str = ""
+    completed_at: str | None = None
+    duration_seconds: float = 0.0
+    areas_attempted: int = 0
+    areas_completed: int = 0
+    properties_found: int = 0
+    pages_fetched: int = 0
+    pages_failed: int = 0
+    parse_errors: int = 0
+    is_healthy: bool = True
+    error_message: str | None = None
 
 
 def _source_counts(properties: list[Property] | list[MergedProperty]) -> dict[str, int]:
@@ -45,7 +66,7 @@ async def scrape_all_platforms(
     proxy_url: str = "",
     only_scrapers: set[str] | None = None,
     zoopla_max_areas: int | None = None,
-) -> list[Property]:
+) -> tuple[list[Property], list[ScraperMetrics]]:
     """Scrape all platforms for matching properties.
 
     Args:
@@ -63,12 +84,12 @@ async def scrape_all_platforms(
         zoopla_max_areas: Max areas for Zoopla scraper (None for unlimited).
 
     Returns:
-        Combined list of properties from all platforms.
+        Tuple of (combined list of properties, list of per-scraper metrics).
     """
     areas = list(search_areas or [])
     if not areas:
         logger.warning("no_search_areas_configured")
-        return []
+        return ([], [])
     # Shuffle so rate-limited scrapers (Zoopla) don't always block the same areas
     random.shuffle(areas)
     scrapers = [
@@ -81,6 +102,7 @@ async def scrape_all_platforms(
         scrapers = [s for s in scrapers if s.source.value in only_scrapers]
 
     all_properties: list[Property] = []
+    all_metrics: list[ScraperMetrics] = []
 
     try:
         for scraper in scrapers:
@@ -89,6 +111,12 @@ async def scrape_all_platforms(
             )
             scraper_count = 0
             scraper_seen_ids: set[str] = set()
+
+            metrics = ScraperMetrics(
+                scraper_name=scraper.source.value,
+                started_at=datetime.now(UTC).isoformat(),
+            )
+            t_scraper = time.monotonic()
 
             # Apply per-scraper area limit (e.g. Zoopla rotates a subset)
             scraper_areas = areas
@@ -101,6 +129,8 @@ async def scrape_all_platforms(
                         total_areas=len(areas),
                         subset_size=len(scraper_areas),
                     )
+
+            metrics.areas_attempted = len(scraper_areas)
 
             for i, area in enumerate(scraper_areas):
                 if max_per_scraper is not None and scraper_count >= max_per_scraper:
@@ -137,6 +167,12 @@ async def scrape_all_platforms(
                         known_source_ids=scraper_known,
                     )
                     properties = result.properties
+
+                    # Accumulate per-area metrics
+                    metrics.pages_fetched += result.pages_fetched
+                    metrics.pages_failed += result.pages_failed
+                    metrics.parse_errors += result.parse_errors
+                    metrics.areas_completed += 1
 
                     if not result.is_healthy:
                         logger.warning(
@@ -184,14 +220,22 @@ async def scrape_all_platforms(
                         error=str(e),
                         exc_info=True,
                     )
+                    metrics.error_message = str(e)
                 # Delegate inter-area delay to the scraper
                 if i < len(scraper_areas) - 1:
                     await scraper.area_delay()
+
+            # Finalize scraper metrics
+            metrics.completed_at = datetime.now(UTC).isoformat()
+            metrics.duration_seconds = time.monotonic() - t_scraper
+            metrics.properties_found = scraper_count
+            metrics.is_healthy = metrics.pages_fetched > 0 and metrics.parse_errors == 0
+            all_metrics.append(metrics)
     finally:
         for scraper in scrapers:
             await scraper.close()
 
-    return all_properties
+    return all_properties, all_metrics
 
 
 async def _run_scrape(
@@ -201,7 +245,7 @@ async def _run_scrape(
     max_per_scraper: int | None = None,
     only_scrapers: set[str] | None = None,
     full_scrape: bool = False,
-) -> list[Property] | None:
+) -> tuple[list[Property], list[ScraperMetrics]] | None:
     """Scrape all platforms and return results, or None if nothing found."""
     criteria = settings.get_search_criteria()
     search_areas = settings.get_search_areas()
@@ -217,7 +261,7 @@ async def _run_scrape(
         )
 
     logger.info("pipeline_started", phase="scraping")
-    all_properties = await scrape_all_platforms(
+    all_properties, scraper_metrics = await scrape_all_platforms(
         min_price=criteria.min_price,
         max_price=criteria.max_price,
         min_bedrooms=criteria.min_bedrooms,
@@ -242,4 +286,4 @@ async def _run_scrape(
         logger.info("no_properties_found")
         return None
 
-    return all_properties
+    return all_properties, scraper_metrics

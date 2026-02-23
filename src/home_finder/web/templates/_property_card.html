@@ -26,14 +26,7 @@
                     <span class="card-price-label">pcm</span>
                 </div>
                 {% endif %}
-                <div class="card-overlay-right">
-                    {% if prop.floor_area_sqft %}
-                    <span class="badge badge-neutral">{{ prop.floor_area_sqft }} ft²</span>
-                    {% elif prop.living_room_sqm %}
-                    <span class="badge badge-neutral badge-estimate">~{{ prop.living_room_sqm | int }}m² living</span>
-                    {% endif %}
-                    <span class="badge badge-neutral">{% if prop.bedrooms == 0 %}Studio{% else %}{{ prop.bedrooms }} bed{% endif %}</span>
-                </div>
+                <span class="badge badge-neutral">{% if prop.bedrooms == 0 %}Studio{% else %}{{ prop.bedrooms }} bed{% endif %}</span>
             </div>
             {{ fit_badge(prop.fit_score, prop.fit_breakdown, prop.unique_id) }}
         </div>
@@ -48,6 +41,11 @@
                     </span>
                     {% if prop.postcode %}
                     <span class="card-postcode">{{ prop.postcode }}</span>
+                    {% endif %}
+                    {% if prop.floor_area_sqft %}
+                    <span class="card-area">{{ prop.floor_area_sqft }} ft²</span>
+                    {% elif prop.living_room_sqm %}
+                    <span class="card-area card-area-estimate">~{{ prop.living_room_sqm | int }}m²</span>
                     {% endif %}
                     {{ commute_pill(prop.commute_minutes) }}
                 </div>

@@ -166,9 +166,10 @@ class TestRunQualityAndSave:
         )
 
         callback = AsyncMock()
-        count = await _run_quality_and_save(pre, settings, storage, callback)
+        count, token_usage = await _run_quality_and_save(pre, settings, storage, callback)
 
         assert count == 3
+        assert token_usage is None  # quality disabled
         assert callback.await_count == 3
 
     async def test_callback_receives_correct_args(
@@ -199,9 +200,10 @@ class TestRunQualityAndSave:
         async def capture(m: Any, c: Any, q: Any) -> None:
             received.append((m, c, q))
 
-        await _run_quality_and_save(pre, settings, storage, capture)
+        _count, token_usage = await _run_quality_and_save(pre, settings, storage, capture)
 
         assert len(received) == 1
+        assert token_usage is None  # quality disabled
         m, c, q = received[0]
         assert m.canonical.unique_id == merged.canonical.unique_id
         assert c == commute
@@ -228,7 +230,7 @@ class TestRunQualityAndSave:
         )
 
         callback = AsyncMock()
-        count = await _run_quality_and_save(pre, settings, storage, callback)
+        count, _usage = await _run_quality_and_save(pre, settings, storage, callback)
         # All should process since quality is disabled (no errors)
         assert count == 3
 
@@ -240,7 +242,7 @@ class TestRunQualityAndSave:
 
 class TestScrapeAllPlatforms:
     async def test_returns_empty_when_no_areas(self) -> None:
-        result = await scrape_all_platforms(
+        result, metrics = await scrape_all_platforms(
             min_price=1500,
             max_price=2500,
             min_bedrooms=1,
@@ -248,9 +250,10 @@ class TestScrapeAllPlatforms:
             search_areas=[],
         )
         assert result == []
+        assert metrics == []
 
     async def test_returns_empty_when_areas_is_none(self) -> None:
-        result = await scrape_all_platforms(
+        result, metrics = await scrape_all_platforms(
             min_price=1500,
             max_price=2500,
             min_bedrooms=1,
@@ -258,6 +261,7 @@ class TestScrapeAllPlatforms:
             search_areas=None,
         )
         assert result == []
+        assert metrics == []
 
     @patch("home_finder.pipeline.scraping.OpenRentScraper")
     @patch("home_finder.pipeline.scraping.RightmoveScraper")
@@ -284,7 +288,7 @@ class TestScrapeAllPlatforms:
                 return_value=[make_property(source=sources[i], source_id=f"s{i}")],
             )
 
-        result = await scrape_all_platforms(
+        result, metrics = await scrape_all_platforms(
             min_price=1500,
             max_price=2500,
             min_bedrooms=1,
@@ -293,6 +297,7 @@ class TestScrapeAllPlatforms:
         )
 
         assert len(result) == 4
+        assert len(metrics) == 4
 
     @patch("home_finder.pipeline.scraping.OpenRentScraper")
     @patch("home_finder.pipeline.scraping.RightmoveScraper")
@@ -320,7 +325,7 @@ class TestScrapeAllPlatforms:
         ]:
             mock_cls.return_value = _mock_scraper(src)
 
-        await scrape_all_platforms(
+        _result, _metrics = await scrape_all_platforms(
             min_price=1500,
             max_price=2500,
             min_bedrooms=1,
@@ -364,7 +369,7 @@ class TestScrapeAllPlatforms:
                 return_value=[make_property(source=src, source_id=f"ok-{src.value}")],
             )
 
-        result = await scrape_all_platforms(
+        result, metrics = await scrape_all_platforms(
             min_price=1500,
             max_price=2500,
             min_bedrooms=1,
@@ -374,6 +379,7 @@ class TestScrapeAllPlatforms:
 
         # Should have results from 3 working scrapers
         assert len(result) == 3
+        assert len(metrics) == 4  # All scrapers produce metrics, even failing ones
 
     @patch("home_finder.pipeline.scraping.OpenRentScraper")
     @patch("home_finder.pipeline.scraping.RightmoveScraper")
@@ -401,7 +407,7 @@ class TestScrapeAllPlatforms:
         ]:
             mock_cls.return_value = _mock_scraper(src)
 
-        result = await scrape_all_platforms(
+        result, _metrics = await scrape_all_platforms(
             min_price=1500,
             max_price=2500,
             min_bedrooms=1,
@@ -438,7 +444,7 @@ class TestScrapeAllPlatforms:
         ]:
             mock_cls.return_value = _mock_scraper(src)
 
-        result = await scrape_all_platforms(
+        result, _metrics = await scrape_all_platforms(
             min_price=1500,
             max_price=2500,
             min_bedrooms=1,
@@ -480,7 +486,7 @@ class TestScrapeAllPlatforms:
             # onthemarket intentionally omitted — should get None
         }
 
-        await scrape_all_platforms(
+        _result, _metrics = await scrape_all_platforms(
             min_price=1500,
             max_price=2500,
             min_bedrooms=1,
@@ -510,7 +516,7 @@ class TestScrapeAllPlatforms:
         test_settings: Settings,
     ) -> None:
         """full_scrape=True skips DB known-ID lookup and passes None to scrape_all_platforms."""
-        mock_scrape.return_value = []
+        mock_scrape.return_value = ([], [])
 
         # Spy on storage.get_all_known_source_ids
         storage.get_all_known_source_ids = AsyncMock()  # type: ignore[method-assign]
@@ -534,7 +540,7 @@ class TestPreAnalysisPipeline:
         storage: PropertyStorage,
         test_settings: Settings,
     ) -> None:
-        mock_scrape.return_value = []
+        mock_scrape.return_value = ([], [])
         result = await _run_pre_analysis_pipeline(test_settings, storage)
         assert result is None
 
@@ -547,7 +553,7 @@ class TestPreAnalysisPipeline:
         make_property: Callable[..., Property],
     ) -> None:
         # Price way above max
-        mock_scrape.return_value = [make_property(source_id="expensive", price_pcm=99999)]
+        mock_scrape.return_value = ([make_property(source_id="expensive", price_pcm=99999)], [])
         result = await _run_pre_analysis_pipeline(test_settings, storage)
         assert result is None
 
@@ -562,7 +568,7 @@ class TestPreAnalysisPipeline:
         make_property: Callable[..., Property],
     ) -> None:
         prop = make_property(source_id="valid")
-        mock_scrape.return_value = [prop]
+        mock_scrape.return_value = ([prop], [])
         # enrich returns the merged properties unchanged
         mock_enrich.side_effect = lambda merged, *a, **kw: EnrichmentResult(enriched=merged)
 
@@ -597,7 +603,7 @@ class TestPreAnalysisPipeline:
         await storage.save_merged_property(merged_with_prop)
 
         # Now scrape returns the same property
-        mock_scrape.return_value = [prop]
+        mock_scrape.return_value = ([prop], [])
         mock_enrich.side_effect = lambda merged, *a, **kw: EnrichmentResult(enriched=merged)
 
         result = await _run_pre_analysis_pipeline(test_settings, storage)
@@ -628,7 +634,7 @@ class TestPreAnalysisPipeline:
         )
         # Use RIGHTMOVE (not OpenRent) since OpenRent is exempt from floorplan requirement
         prop = make_property(source=PropertySource.RIGHTMOVE, source_id="no-fp")
-        mock_scrape.return_value = [prop]
+        mock_scrape.return_value = ([prop], [])
         # enrich returns merged without floorplan
         mock_enrich.side_effect = lambda merged, *a, **kw: EnrichmentResult(enriched=merged)
 

@@ -193,7 +193,7 @@ class TestZooplaFloorArea:
         """Test the _zoopla_size_from_rsc helper directly with synthetic RSC payload."""
         # Build a minimal RSC chunk with sizeSqft
         rsc_payload = json.dumps({"sizeSqft": 750, "sizeSource": "agent"})
-        rsc_chunk = f'1:{rsc_payload}'
+        rsc_chunk = f"1:{rsc_payload}"
         html = f"""<!DOCTYPE html><html><body>
         <script>self.__next_f.push([1, {json.dumps(rsc_chunk)}])</script>
         </body></html>"""
@@ -209,7 +209,7 @@ class TestZooplaFloorArea:
 
     def test_zoopla_size_from_rsc_rejects_too_small(self) -> None:
         rsc_payload = json.dumps({"sizeSqft": 50})
-        rsc_chunk = f'1:{rsc_payload}'
+        rsc_chunk = f"1:{rsc_payload}"
         html = f"""<!DOCTYPE html><html><body>
         <script>self.__next_f.push([1, {json.dumps(rsc_chunk)}])</script>
         </body></html>"""
@@ -218,7 +218,7 @@ class TestZooplaFloorArea:
 
     def test_zoopla_size_from_rsc_rejects_too_large(self) -> None:
         rsc_payload = json.dumps({"sizeSqft": 6000})
-        rsc_chunk = f'1:{rsc_payload}'
+        rsc_chunk = f"1:{rsc_payload}"
         html = f"""<!DOCTYPE html><html><body>
         <script>self.__next_f.push([1, {json.dumps(rsc_chunk)}])</script>
         </body></html>"""

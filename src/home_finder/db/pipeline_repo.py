@@ -29,9 +29,7 @@ class PipelineRepository:
         self,
         get_connection: Callable[[], Coroutine[Any, Any, aiosqlite.Connection]],
         get_property_images: Callable[[str], Coroutine[Any, Any, list[PropertyImage]]],
-        save_quality_analysis: Callable[
-            ..., Coroutine[Any, Any, None]
-        ],
+        save_quality_analysis: Callable[..., Coroutine[Any, Any, None]],
         transaction: Callable[[], AbstractAsyncContextManager[aiosqlite.Connection]],
     ) -> None:
         self._get_connection = get_connection
@@ -129,6 +127,47 @@ class PipelineRepository:
         if row is None:
             return None
         return dict(row)
+
+    async def save_scraper_runs(
+        self, pipeline_run_id: int | None, metrics_list: list[dict[str, Any]]
+    ) -> None:
+        """Persist per-scraper performance metrics for a pipeline run.
+
+        Args:
+            pipeline_run_id: The pipeline run ID (may be None for dry runs).
+            metrics_list: List of dicts with scraper metric fields.
+        """
+        if not metrics_list:
+            return
+        conn = await self._get_connection()
+        for m in metrics_list:
+            await conn.execute(
+                """
+                INSERT INTO scraper_runs (
+                    pipeline_run_id, scraper_name, started_at, completed_at,
+                    duration_seconds, areas_attempted, areas_completed,
+                    properties_found, pages_fetched, pages_failed,
+                    parse_errors, is_healthy, error_message
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    pipeline_run_id,
+                    m["scraper_name"],
+                    m["started_at"],
+                    m.get("completed_at"),
+                    m.get("duration_seconds"),
+                    m.get("areas_attempted", 0),
+                    m.get("areas_completed", 0),
+                    m.get("properties_found", 0),
+                    m.get("pages_fetched", 0),
+                    m.get("pages_failed", 0),
+                    m.get("parse_errors", 0),
+                    m.get("is_healthy", True),
+                    m.get("error_message"),
+                ),
+            )
+        await conn.commit()
+        logger.debug("scraper_runs_saved", count=len(metrics_list))
 
     # ------------------------------------------------------------------
     # Quality analysis retry (save-before-analyze pattern)
@@ -242,9 +281,7 @@ class PipelineRepository:
         rows = await cursor.fetchall()
 
         results = [
-            await row_to_merged_property(
-                row, get_property_images=self._get_property_images
-            )
+            await row_to_merged_property(row, get_property_images=self._get_property_images)
             for row in rows
         ]
 
@@ -503,9 +540,7 @@ class PipelineRepository:
         rows = await cursor.fetchall()
 
         results = [
-            await row_to_merged_property(
-                row, get_property_images=self._get_property_images
-            )
+            await row_to_merged_property(row, get_property_images=self._get_property_images)
             for row in rows
         ]
 

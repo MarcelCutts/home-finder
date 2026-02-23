@@ -400,12 +400,23 @@ class ViewingNotes(_LenientLiteralModel):
 
 # Fields on PropertyQualityAnalysis expected to be sub-model dicts (not strings).
 # Defined outside the class to avoid Pydantic treating it as a private attribute.
-_QUALITY_SUB_MODEL_FIELDS: frozenset[str] = frozenset({
-    "kitchen", "condition", "light_space", "space", "bathroom",
-    "bedroom", "outdoor_space", "storage", "flooring_noise",
-    "listing_red_flags", "listing_extraction", "viewing_notes",
-    "value",
-})
+_QUALITY_SUB_MODEL_FIELDS: frozenset[str] = frozenset(
+    {
+        "kitchen",
+        "condition",
+        "light_space",
+        "space",
+        "bathroom",
+        "bedroom",
+        "outdoor_space",
+        "storage",
+        "flooring_noise",
+        "listing_red_flags",
+        "listing_extraction",
+        "viewing_notes",
+        "value",
+    }
+)
 
 
 class PropertyQualityAnalysis(_LenientLiteralModel):

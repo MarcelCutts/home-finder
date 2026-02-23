@@ -1394,14 +1394,22 @@ class TestGalleryHashDeduplication:
         shared_img = _make_test_image("red")
         shared_img2 = _make_test_image("green")
 
-        _setup_gallery(tmp_path, APEX_OTM.unique_id, {
-            "gallery_000_aaa00000.jpg": shared_img,
-            "gallery_001_bbb11111.jpg": shared_img2,
-        })
-        _setup_gallery(tmp_path, APEX_RM.unique_id, {
-            "gallery_000_ccc22222.jpg": shared_img,   # Same image bytes
-            "gallery_001_ddd33333.jpg": shared_img2,   # Same image bytes
-        })
+        _setup_gallery(
+            tmp_path,
+            APEX_OTM.unique_id,
+            {
+                "gallery_000_aaa00000.jpg": shared_img,
+                "gallery_001_bbb11111.jpg": shared_img2,
+            },
+        )
+        _setup_gallery(
+            tmp_path,
+            APEX_RM.unique_id,
+            {
+                "gallery_000_ccc22222.jpg": shared_img,  # Same image bytes
+                "gallery_001_ddd33333.jpg": shared_img2,  # Same image bytes
+            },
+        )
 
         mp1 = _make_merged(APEX_OTM)
         mp2 = _make_merged(APEX_RM)
@@ -1450,12 +1458,20 @@ class TestGalleryHashDeduplication:
         img1.save(buf1, format="PNG")
         img2.save(buf2, format="PNG")
 
-        _setup_gallery(tmp_path, APEX_OTM.unique_id, {
-            "gallery_000_aaa00000.jpg": buf1.getvalue(),
-        })
-        _setup_gallery(tmp_path, APEX_RM.unique_id, {
-            "gallery_000_ccc22222.jpg": buf2.getvalue(),
-        })
+        _setup_gallery(
+            tmp_path,
+            APEX_OTM.unique_id,
+            {
+                "gallery_000_aaa00000.jpg": buf1.getvalue(),
+            },
+        )
+        _setup_gallery(
+            tmp_path,
+            APEX_RM.unique_id,
+            {
+                "gallery_000_ccc22222.jpg": buf2.getvalue(),
+            },
+        )
 
         mp1 = _make_merged(APEX_OTM)
         mp2 = _make_merged(APEX_RM)
@@ -1475,14 +1491,22 @@ class TestGalleryHashDeduplication:
         shared_img = _make_test_image("red")
         shared_img2 = _make_test_image("green")
 
-        _setup_gallery(tmp_path, APEX_OTM.unique_id, {
-            "gallery_000_aaa00000.jpg": shared_img,
-            "gallery_001_bbb11111.jpg": shared_img2,
-        })
-        _setup_gallery(tmp_path, APEX_RM.unique_id, {
-            "gallery_000_ccc22222.jpg": shared_img,
-            "gallery_001_ddd33333.jpg": shared_img2,
-        })
+        _setup_gallery(
+            tmp_path,
+            APEX_OTM.unique_id,
+            {
+                "gallery_000_aaa00000.jpg": shared_img,
+                "gallery_001_bbb11111.jpg": shared_img2,
+            },
+        )
+        _setup_gallery(
+            tmp_path,
+            APEX_RM.unique_id,
+            {
+                "gallery_000_ccc22222.jpg": shared_img,
+                "gallery_001_ddd33333.jpg": shared_img2,
+            },
+        )
 
         mp1 = _make_merged(APEX_OTM)
         mp2 = _make_merged(APEX_RM)

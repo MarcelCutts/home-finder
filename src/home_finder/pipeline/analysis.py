@@ -8,7 +8,7 @@ import httpx
 from home_finder.config import Settings
 from home_finder.db import PropertyStorage
 from home_finder.filters import PropertyQualityFilter
-from home_finder.filters.quality import APIUnavailableError
+from home_finder.filters.quality import APIUnavailableError, TokenUsage
 from home_finder.logging import get_logger
 from home_finder.models import (
     SQM_PER_SQFT,
@@ -201,7 +201,7 @@ async def _run_quality_and_save(
     settings: Settings,
     storage: PropertyStorage,
     on_result: _OnResult,
-) -> int:
+) -> tuple[int, TokenUsage | None]:
     """Run quality analysis, save each property, and invoke callback.
 
     Properties are saved to DB *before* analysis starts (with notification_status
@@ -215,7 +215,7 @@ async def _run_quality_and_save(
         on_result: Async callback invoked after each property is analyzed.
 
     Returns:
-        Number of properties processed.
+        Tuple of (number of properties processed, token usage or None).
     """
     # Save all properties to DB before analysis (crash recovery checkpoint)
     await storage.save_pre_analysis_properties(pre.merged_to_process, pre.commute_lookup)
@@ -277,6 +277,7 @@ async def _run_quality_and_save(
             error_log_event="property_processing_failed",
         )
 
+    token_usage: TokenUsage | None = None
     if use_quality:
         async with PropertyQualityFilter(
             api_key=settings.anthropic_api_key.get_secret_value(),
@@ -284,10 +285,11 @@ async def _run_quality_and_save(
             enable_extended_thinking=settings.enable_extended_thinking,
         ) as quality_filter:
             count = await _do_analysis(quality_filter)
+            token_usage = quality_filter.token_usage
     else:
         count = await _do_analysis(None)
 
-    return count
+    return count, token_usage
 
 
 async def _download_missing_images(
@@ -304,9 +306,7 @@ async def _download_missing_images(
     Returns:
         Number of images successfully downloaded.
     """
-    has_fp = merged.floorplan is not None and is_valid_image_url(
-        str(merged.floorplan.url)
-    )
+    has_fp = merged.floorplan is not None and is_valid_image_url(str(merged.floorplan.url))
     effective_max = max_images - (1 if has_fp else 0)
     gallery = [img for img in merged.images if img.image_type == "gallery"]
     to_check = gallery[:effective_max]
@@ -318,9 +318,7 @@ async def _download_missing_images(
             continue
         img_bytes = await detail_fetcher.download_image_bytes(url_str)
         if img_bytes:
-            path = get_cached_image_path(
-                data_dir, merged.unique_id, url_str, "gallery", idx
-            )
+            path = get_cached_image_path(data_dir, merged.unique_id, url_str, "gallery", idx)
             save_image_bytes(path, img_bytes)
             downloaded += 1
         else:
@@ -352,12 +350,8 @@ async def _re_enrich_incomplete(
     # Find properties with incomplete caches
     incomplete: list[MergedProperty] = []
     for merged in queue:
-        gallery_urls = [
-            str(img.url) for img in merged.images if img.image_type == "gallery"
-        ]
-        has_fp = merged.floorplan is not None and is_valid_image_url(
-            str(merged.floorplan.url)
-        )
+        gallery_urls = [str(img.url) for img in merged.images if img.image_type == "gallery"]
+        has_fp = merged.floorplan is not None and is_valid_image_url(str(merged.floorplan.url))
         cached, expected = gallery_cache_coverage(
             settings.data_dir,
             merged.unique_id,
@@ -430,12 +424,11 @@ async def _drain_reanalysis_queue(
         max_images=settings.quality_filter_max_images,
         enable_extended_thinking=settings.enable_extended_thinking,
     ) as quality_filter:
+
         async def _analyze(
             merged: MergedProperty,
         ) -> tuple[MergedProperty, PropertyQualityAnalysis | None]:
-            return await quality_filter.analyze_single_merged(
-                merged, data_dir=settings.data_dir
-            )
+            return await quality_filter.analyze_single_merged(merged, data_dir=settings.data_dir)
 
         async def _handle_result(
             merged: MergedProperty,
@@ -516,6 +509,7 @@ async def run_reanalysis(
             max_images=settings.quality_filter_max_images,
             enable_extended_thinking=settings.enable_extended_thinking,
         ) as quality_filter:
+
             async def _analyze(
                 merged: MergedProperty,
             ) -> tuple[MergedProperty, PropertyQualityAnalysis | None]:

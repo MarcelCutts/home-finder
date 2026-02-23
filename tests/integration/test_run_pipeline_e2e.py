@@ -116,7 +116,10 @@ def _pipeline_mocks(
     mock_fetcher_instance.__aexit__ = _fetcher_aexit
 
     # -- Quality filter mock --
+    from home_finder.filters.quality import TokenUsage
+
     mock_quality_instance = MagicMock()
+    mock_quality_instance.token_usage = TokenUsage()
     if quality_side_effect is not None:
         mock_quality_instance.analyze_single_merged = AsyncMock(side_effect=quality_side_effect)
     else:
@@ -139,7 +142,7 @@ def _pipeline_mocks(
         patch(
             "home_finder.pipeline.scraping.scrape_all_platforms",
             new_callable=AsyncMock,
-            return_value=scrape_return,
+            return_value=(scrape_return, []),
         ),
         patch(
             "home_finder.pipeline.stages.enrich_merged_properties",
@@ -163,15 +166,19 @@ def _pipeline_mocks(
         patch.object(PropertyStorage, "__init__", _patched_storage_init),
     ):
         # Yield a dict of useful references
-        ctx = type("Ctx", (), {
-            "notifier": mock_notifier,
-            "notifier_cls": mock_notifier_cls,
-            "quality_cls": mock_quality_cls,
-            "quality_instance": mock_quality_instance,
-            "fetcher_cls": mock_fetcher_cls,
-            "fetcher_instance": mock_fetcher_instance,
-            "storage_capture": _StorageCapture,
-        })()
+        ctx = type(
+            "Ctx",
+            (),
+            {
+                "notifier": mock_notifier,
+                "notifier_cls": mock_notifier_cls,
+                "quality_cls": mock_quality_cls,
+                "quality_instance": mock_quality_instance,
+                "fetcher_cls": mock_fetcher_cls,
+                "fetcher_instance": mock_fetcher_instance,
+                "storage_capture": _StorageCapture,
+            },
+        )()
         yield ctx
 
     # Clean up: close storage if the pipeline's finally block was intercepted
@@ -291,9 +298,7 @@ class TestRunPipelineE2E:
             # Notifications sent
             assert ctx.notifier.send_merged_property_notification.call_count == 2
             for call in ctx.notifier.send_merged_property_notification.call_args_list:
-                assert call.kwargs.get("quality_analysis") is not None or (
-                    len(call.args) > 0
-                )
+                assert call.kwargs.get("quality_analysis") is not None or (len(call.args) > 0)
 
             # Cleanup
             assert original_close_called
@@ -342,6 +347,7 @@ class TestRunPipelineE2E:
         )
 
         with _pipeline_mocks(scrape_return=[]) as ctx:
+
             async def _intercept_close(self_storage):
                 pass
 
@@ -407,6 +413,7 @@ class TestRunPipelineE2E:
         error_msg = "Scraper network timeout"
 
         with _pipeline_mocks(scrape_return=[]) as ctx:
+
             async def _intercept_close(self_storage):
                 pass
 
@@ -464,6 +471,7 @@ class TestRunPipelineE2E:
         ]
 
         with _pipeline_mocks(scrape_return=props) as ctx:
+
             async def _intercept_close(self_storage):
                 pass
 
@@ -499,6 +507,7 @@ class TestRunPipelineE2E:
             scrape_return=pipeline_properties,
             notify_return=False,  # All notifications fail
         ) as ctx:
+
             async def _intercept_close(self_storage):
                 pass
 
@@ -516,9 +525,7 @@ class TestRunPipelineE2E:
 
             # Properties should be marked as 'failed' notification
             conn = await storage._get_connection()
-            cursor = await conn.execute(
-                "SELECT notification_status FROM properties"
-            )
+            cursor = await conn.execute("SELECT notification_status FROM properties")
             rows = await cursor.fetchall()
             assert len(rows) == 2
             for row in rows:

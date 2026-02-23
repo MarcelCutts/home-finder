@@ -1,11 +1,11 @@
 """Property deduplication and merging logic."""
 
 from collections import defaultdict
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Final
 
-from home_finder.filters.scoring import calculate_match_score, is_full_postcode
+from home_finder.filters.scoring import MatchScore, calculate_match_score, is_full_postcode
 from home_finder.logging import get_logger
 from home_finder.models import MergedProperty, Property, PropertyImage, PropertySource
 from home_finder.utils.address import extract_outcode
@@ -32,6 +32,41 @@ SOURCE_IMAGE_PRIORITY: Final[dict[PropertySource, int]] = {
 _MAX_GROUP_SIZE: Final = 4
 
 
+@dataclass(frozen=True)
+class MatchDecision:
+    """Record of a single accepted dedup match for observability."""
+
+    id_a: str
+    id_b: str
+    score: float
+    signals: dict[str, float]  # non-zero signals only
+    confidence: str
+
+    @classmethod
+    def from_score(cls, id_a: str, id_b: str, score: MatchScore) -> "MatchDecision":
+        """Build from a MatchScore, keeping only non-zero signals."""
+        signals: dict[str, float] = {}
+        _SIGNAL_FIELDS = (
+            "image_hash",
+            "full_postcode",
+            "coordinates",
+            "street_name",
+            "outcode",
+            "price",
+        )
+        for field_name in _SIGNAL_FIELDS:
+            val = getattr(score, field_name)
+            if val > 0:
+                signals[field_name] = val
+        return cls(
+            id_a=id_a,
+            id_b=id_b,
+            score=score.total,
+            signals=signals,
+            confidence=score.confidence.value,
+        )
+
+
 @dataclass(frozen=True, order=True)
 class _ScoredPair:
     """A scored pair of candidate indices for greedy matching.
@@ -43,6 +78,7 @@ class _ScoredPair:
     neg_score: float  # negated so higher scores sort first
     min_idx: int
     max_idx: int
+    match_score: MatchScore = field(default_factory=MatchScore, compare=False)
 
 
 def _dedupe_by_unique_id(properties: list[Property]) -> list[Property]:
@@ -229,8 +265,7 @@ class Deduplicator:
                     for candidates in candidates_by_block.values()
                     if len(candidates) > 1
                     for mp in candidates
-                    if mp.canonical.unique_id in ids_without_gallery
-                    and mp.canonical.image_url
+                    if mp.canonical.unique_id in ids_without_gallery and mp.canonical.image_url
                 ]
                 if props_needing_fetch:
                     hero_hashes = await fetch_image_hashes_batch(props_needing_fetch)
@@ -242,17 +277,33 @@ class Deduplicator:
         results: list[MergedProperty] = []
 
         for block_key, candidates in candidates_by_block.items():
-            groups = _group_items_greedy(candidates, image_hashes)
+            match_log: list[MatchDecision] = []
+            groups = _group_items_greedy(candidates, image_hashes, match_log=match_log)
             for group in groups:
                 if len(group) == 1:
                     results.append(group[0])
                 else:
                     results.append(self._merge_merged_properties(group))
+                    group_ids = [mp.canonical.unique_id for mp in group]
+                    # Find match decisions involving any ID in this group
+                    group_id_set = set(group_ids)
+                    group_matches = [
+                        {
+                            "pair": [m.id_a, m.id_b],
+                            "score": m.score,
+                            "confidence": m.confidence,
+                            "signals": m.signals,
+                        }
+                        for m in match_log
+                        if m.id_a in group_id_set or m.id_b in group_id_set
+                    ]
                     logger.info(
                         "properties_merged",
                         block=block_key,
                         source_count=len(group),
                         sources=[s.value for mp in group for s in mp.sources],
+                        ids=group_ids,
+                        matches=group_matches,
                     )
 
         # Add properties without outcode (can't cross-platform match)
@@ -306,9 +357,7 @@ class Deduplicator:
         # Pass all unique_ids so images cached under any source's directory are found.
         if self.data_dir and len(all_images) > 1:
             all_unique_ids = [mp.canonical.unique_id for mp in sorted_mps]
-            all_images = _perceptual_dedup_images(
-                all_images, self.data_dir, all_unique_ids
-            )
+            all_images = _perceptual_dedup_images(all_images, self.data_dir, all_unique_ids)
 
         # Pick best floorplan by source priority
         floorplan = _select_best_floorplan(sorted_mps)
@@ -418,9 +467,7 @@ def _build_best_canonical(sorted_mps: list[MergedProperty]) -> Property:
 
     # Available from: pick earliest non-null date across all sources
     dates = [
-        mp.canonical.available_from
-        for mp in sorted_mps
-        if mp.canonical.available_from is not None
+        mp.canonical.available_from for mp in sorted_mps if mp.canonical.available_from is not None
     ]
     if dates:
         earliest = min(dates)
@@ -474,9 +521,7 @@ def _perceptual_dedup_images(
     # Hash all images that have cached files
     hashed: list[tuple[PropertyImage, str | None]] = []
     for img in images:
-        cached = _find_cached_across_ids(
-            data_dir, all_unique_ids, str(img.url), "gallery"
-        )
+        cached = _find_cached_across_ids(data_dir, all_unique_ids, str(img.url), "gallery")
         if cached is not None:
             h = hash_from_disk(cached)
             hashed.append((img, h))
@@ -531,6 +576,7 @@ def _select_best_floorplan(sorted_mps: list[MergedProperty]) -> PropertyImage | 
 def _group_items_greedy(
     items: list[MergedProperty],
     image_hashes: dict[str, list[str]],
+    match_log: list[MatchDecision] | None = None,
 ) -> list[list[MergedProperty]]:
     """Group items by greedy pairwise matching with same-source collision guard.
 
@@ -545,6 +591,7 @@ def _group_items_greedy(
     Args:
         items: MergedProperty candidates within a single blocking group.
         image_hashes: Dict mapping unique_id to list of gallery hash strings.
+        match_log: Optional list to collect accepted MatchDecision records.
 
     Returns:
         List of groups where each group contains matching items.
@@ -597,7 +644,9 @@ def _group_items_greedy(
                         score=score.to_dict(),
                     )
                     continue
-                scored_pairs.append(_ScoredPair(-score.total, min(i, j), max(i, j)))
+                scored_pairs.append(
+                    _ScoredPair(-score.total, min(i, j), max(i, j), match_score=score)
+                )
 
     # Sort: best scores first, then by index pair for determinism
     scored_pairs.sort()
@@ -606,6 +655,16 @@ def _group_items_greedy(
     # group_id[i] = index into `groups` list, or -1 if ungrouped
     group_id: list[int] = [-1] * len(items)
     groups: list[list[int]] = []  # each is a list of item indices
+
+    def _record_match(pair: _ScoredPair) -> None:
+        if match_log is not None:
+            match_log.append(
+                MatchDecision.from_score(
+                    items[pair.min_idx].canonical.unique_id,
+                    items[pair.max_idx].canonical.unique_id,
+                    pair.match_score,
+                )
+            )
 
     for pair in scored_pairs:
         i, j = pair.min_idx, pair.max_idx
@@ -621,6 +680,7 @@ def _group_items_greedy(
             groups.append([i, j])
             group_id[i] = new_gid
             group_id[j] = new_gid
+            _record_match(pair)
 
         elif gi >= 0 and gj == -1:
             # i is in a group, try to add j
@@ -633,6 +693,7 @@ def _group_items_greedy(
                 continue
             group.append(j)
             group_id[j] = gi
+            _record_match(pair)
 
         elif gi == -1 and gj >= 0:
             # j is in a group, try to add i
@@ -644,6 +705,7 @@ def _group_items_greedy(
                 continue
             group.append(i)
             group_id[i] = gj
+            _record_match(pair)
 
         else:
             # Both in groups — skip (don't merge groups to avoid transitive chains)

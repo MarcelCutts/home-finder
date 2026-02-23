@@ -26,7 +26,7 @@ _MAX_RETRIES = 2  # cross-run retry handles persistent failures
 _FLOOR_AREA_MIN_SQFT = 100
 _FLOOR_AREA_MAX_SQFT = 5000
 _RETRY_BASE_DELAY = 2.0  # seconds, doubled each retry (2, 4)
-_ZOOPLA_MIN_INTERVAL = 1.5  # seconds between Zoopla detail page requests
+_ZOOPLA_MIN_INTERVAL = 3.0  # seconds between Zoopla detail page requests
 _OTM_MIN_INTERVAL = 0.3  # seconds between OnTheMarket requests (less aggressive)
 _IMAGE_MIN_INTERVAL = 0.1  # seconds between CDN image downloads (rarely rate limited)
 
@@ -84,9 +84,7 @@ class _NextDataResult(NamedTuple):
     features: list[str]
 
 
-def _zoopla_from_next_data(
-    html: str, max_gallery_images: int
-) -> _NextDataResult | None:
+def _zoopla_from_next_data(html: str, max_gallery_images: int) -> _NextDataResult | None:
     """Extract gallery, floorplan, description, features from __NEXT_DATA__."""
     match = re.search(
         r'<script id="__NEXT_DATA__"[^>]*>(.*?)</script>',
@@ -873,11 +871,7 @@ class DetailFetcher:
             Raw image bytes, or None if download failed.
         """
         try:
-            if (
-                "zoocdn.com" in url
-                or "onthemarket.com" in url
-                or "imagescdn.openrent.co.uk" in url
-            ):
+            if "zoocdn.com" in url or "onthemarket.com" in url or "imagescdn.openrent.co.uk" in url:
                 response = await self._curl_get_with_retry(url, min_interval=_IMAGE_MIN_INTERVAL)
                 if response.status_code != 200:
                     logger.debug("image_download_failed", url=url, status=response.status_code)

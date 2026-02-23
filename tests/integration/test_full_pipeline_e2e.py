@@ -60,7 +60,7 @@ class TestFullPipelineE2E:
             patch(
                 "home_finder.pipeline.scraping.scrape_all_platforms",
                 new_callable=AsyncMock,
-                return_value=synthetic_properties,
+                return_value=(synthetic_properties, []),
             ),
             patch(
                 "home_finder.pipeline.stages.enrich_merged_properties",
@@ -140,7 +140,7 @@ class TestFullPipelineE2E:
             patch(
                 "home_finder.pipeline.scraping.scrape_all_platforms",
                 new_callable=AsyncMock,
-                return_value=synthetic_properties,
+                return_value=(synthetic_properties, []),
             ),
             patch(
                 "home_finder.pipeline.stages.enrich_merged_properties",
@@ -184,7 +184,7 @@ class TestFullPipelineE2E:
         with patch(
             "home_finder.pipeline.scraping.scrape_all_platforms",
             new_callable=AsyncMock,
-            return_value=[],
+            return_value=([], []),
         ):
             result = await _run_pre_analysis_pipeline(test_settings, storage)
 
@@ -229,7 +229,7 @@ class TestFullPipelineE2E:
             patch(
                 "home_finder.pipeline.scraping.scrape_all_platforms",
                 new_callable=AsyncMock,
-                return_value=props,
+                return_value=(props, []),
             ),
             patch(
                 "home_finder.pipeline.stages.enrich_merged_properties",

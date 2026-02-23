@@ -21,7 +21,7 @@ from home_finder.models import (
     SearchCriteria,
     TransportMode,
 )
-from home_finder.pipeline.scraping import _run_scrape, _source_counts
+from home_finder.pipeline.scraping import ScraperMetrics, _run_scrape, _source_counts
 from home_finder.scrapers.detail_fetcher import DetailFetcher
 from home_finder.utils.image_cache import (
     clear_image_cache,
@@ -49,6 +49,15 @@ class PreAnalysisResult:
     enriched_count: int = 0
     anchors_updated: int = 0
     stage_timings: dict[str, float] = field(default_factory=dict)
+    # T2: per-scraper performance metrics
+    scraper_metrics: list[ScraperMetrics] = field(default_factory=list)
+    # T3: funnel counts
+    criteria_filtered_count: int = 0
+    location_filtered_count: int = 0
+    new_property_count: int = 0
+    commute_within_limit_count: int = 0
+    post_dedup_count: int = 0
+    post_floorplan_count: int = 0
 
 
 async def _cross_run_deduplicate(
@@ -108,6 +117,7 @@ async def _cross_run_deduplicate(
     genuinely_new: list[MergedProperty] = []
     anchors_updated = 0
     seen_anchor_ids: set[str] = set()
+    absorbed_to_anchor: dict[str, str] = {}  # new_id -> anchor_id
     for merged in dedup_results:
         # Check if this result involves any DB anchor (by URL match)
         matched_anchor_id: str | None = None
@@ -125,8 +135,7 @@ async def _cross_run_deduplicate(
             # Check if any new property was actually merged into this anchor
             # (vs the anchor just passing through dedup unchanged)
             new_property_merged = any(
-                str(url) in new_url_to_unique_id
-                for url in merged.source_urls.values()
+                str(url) in new_url_to_unique_id for url in merged.source_urls.values()
             )
             if not new_property_merged:
                 continue
@@ -136,6 +145,28 @@ async def _cross_run_deduplicate(
             # Always update metadata (URLs, descriptions, prices)
             await storage.update_merged_sources(matched_anchor_id, merged)
             anchors_updated += 1
+
+            # Track which new IDs were absorbed into this anchor
+            absorbed_ids = [
+                new_url_to_unique_id[str(url)]
+                for url in merged.source_urls.values()
+                if str(url) in new_url_to_unique_id
+            ]
+            for aid in absorbed_ids:
+                absorbed_to_anchor[aid] = matched_anchor_id
+
+            new_sources_added = [
+                s.value for s in set(merged.sources) - set(original_anchor.sources)
+            ]
+            logger.info(
+                "cross_run_anchor_match",
+                anchor_id=matched_anchor_id,
+                absorbed_ids=absorbed_ids,
+                anchor_postcode=original_anchor.canonical.postcode,
+                anchor_price=original_anchor.canonical.price_pcm,
+                anchor_sources=[s.value for s in original_anchor.sources],
+                new_sources_added=new_sources_added,
+            )
 
             # Only copy images + reanalyze when genuinely new sources added
             truly_new_sources = set(merged.sources) - set(original_anchor.sources)
@@ -198,6 +229,38 @@ async def _cross_run_deduplicate(
             clear_image_cache(data_dir, uid)
         logger.debug("consumed_retry_cleaned", unique_id=uid)
 
+    # Build per-property fates for observability
+    fates: list[dict[str, str | int]] = []
+    for mp in merged_to_notify:
+        uid = mp.canonical.unique_id
+        entry: dict[str, str | int] = {
+            "id": uid,
+            "source": mp.canonical.source.value,
+            "price": mp.canonical.price_pcm,
+            "postcode": mp.canonical.postcode or "",
+        }
+        if uid in genuinely_new_ids:
+            entry["fate"] = "genuinely_new"
+        elif uid in consumed_retries:
+            entry["fate"] = "consumed_retry"
+            entry["anchor"] = absorbed_to_anchor.get(uid, "")
+        elif uid in absorbed_to_anchor:
+            entry["fate"] = "merged_into_anchor"
+            entry["anchor"] = absorbed_to_anchor[uid]
+        else:
+            entry["fate"] = "merged_into_anchor"
+        fates.append(entry)
+
+    merged_into_anchor_count = sum(1 for f in fates if f["fate"] == "merged_into_anchor")
+    logger.info(
+        "cross_run_property_fates",
+        total=len(fates),
+        genuinely_new=len(genuinely_new_ids),
+        merged_into_anchor=merged_into_anchor_count,
+        consumed_retry=len(consumed_retries),
+        fates=fates,
+    )
+
     logger.info(
         "deduplication_merge_summary",
         dedup_input=len(combined_for_dedup),
@@ -216,11 +279,15 @@ def _run_criteria_and_location_filters(
     properties: list[Property],
     criteria: SearchCriteria,
     search_areas: list[str],
-) -> list[Property] | None:
-    """Apply criteria and location filters. Returns None if nothing passes."""
+) -> tuple[list[Property], int, int] | None:
+    """Apply criteria and location filters.
+
+    Returns None if nothing passes, or (filtered, criteria_count, location_count).
+    """
     logger.info("pipeline_started", phase="criteria_filtering")
     criteria_filter = CriteriaFilter(criteria)
     filtered = criteria_filter.filter_properties(properties)
+    criteria_count = len(filtered)
     logger.info(
         "criteria_filter_summary", matched=len(filtered), by_source=_source_counts(filtered)
     )
@@ -232,6 +299,7 @@ def _run_criteria_and_location_filters(
     logger.info("pipeline_started", phase="location_filtering")
     location_filter = LocationFilter(search_areas, strict=False)
     filtered = location_filter.filter_properties(filtered)
+    location_count = len(filtered)
     logger.info(
         "location_filter_summary", matched=len(filtered), by_source=_source_counts(filtered)
     )
@@ -240,7 +308,7 @@ def _run_criteria_and_location_filters(
         logger.info("no_properties_in_search_areas")
         return None
 
-    return filtered
+    return filtered, criteria_count, location_count
 
 
 async def _load_unenriched(
@@ -252,10 +320,16 @@ async def _load_unenriched(
     unenriched = await storage.get_unenriched_properties(max_attempts=max_attempts)
     re_enrichment_ids: set[str] = set()
     if unenriched:
+        retry_stats = await storage.get_unenriched_retry_stats(max_attempts=max_attempts)
+        oldest_days = max(
+            (_days_since(m.canonical.first_seen.isoformat()) for m in unenriched), default=0
+        )
         logger.info(
             "loaded_unenriched_for_retry",
             count=len(unenriched),
             by_source=_source_counts(unenriched),
+            by_attempts=retry_stats.get("by_attempts", {}),
+            oldest_days=oldest_days,
         )
         for m in unenriched:
             if settings.data_dir:
@@ -268,7 +342,7 @@ async def _geocode_and_compute_commute(
     merged: list[MergedProperty],
     criteria: SearchCriteria,
     settings: Settings,
-) -> tuple[list[MergedProperty], dict[str, tuple[int, TransportMode]]]:
+) -> tuple[list[MergedProperty], dict[str, tuple[int, TransportMode]], int]:
     """Geocode properties and compute commute times via TravelTime API.
 
     This is NOT a hard filter — it returns all properties (geocoded) plus a
@@ -280,7 +354,8 @@ async def _geocode_and_compute_commute(
 
     Returns:
         Tuple of (all properties with geocoded coordinates, commute lookup
-        mapping unique_id -> (minutes, transport_mode) for reachable properties).
+        mapping unique_id -> (minutes, transport_mode) for reachable properties,
+        count of properties within commute limit).
     """
     commute_lookup: dict[str, tuple[int, TransportMode]] = {}
     if settings.traveltime_app_id and settings.traveltime_api_key:
@@ -293,9 +368,7 @@ async def _geocode_and_compute_commute(
 
         merged = await commute_filter.geocode_properties(merged)
 
-        merged_with_coords = [
-            m for m in merged if m.canonical.latitude and m.canonical.longitude
-        ]
+        merged_with_coords = [m for m in merged if m.canonical.latitude and m.canonical.longitude]
         merged_without_coords = [
             m for m in merged if not (m.canonical.latitude and m.canonical.longitude)
         ]
@@ -322,9 +395,7 @@ async def _geocode_and_compute_commute(
                     result.transport_mode,
                 )
 
-        within_limit = [
-            m for m in merged_with_coords if m.canonical.unique_id in commute_lookup
-        ]
+        within_limit = [m for m in merged_with_coords if m.canonical.unique_id in commute_lookup]
         notify_count = len(within_limit) + len(merged_without_coords)
 
         logger.info(
@@ -336,11 +407,12 @@ async def _geocode_and_compute_commute(
         )
 
         if not within_limit and not merged_without_coords:
-            return [], commute_lookup
+            return [], commute_lookup, 0
     else:
+        notify_count = len(merged)
         logger.info("skipping_commute_filter", reason="no_traveltime_credentials")
 
-    return merged, commute_lookup
+    return merged, commute_lookup, notify_count
 
 
 async def _run_enrichment(
@@ -391,8 +463,11 @@ async def _run_post_enrichment(
     storage: PropertyStorage,
     settings: Settings,
     re_enrichment_ids: set[str],
-) -> tuple[list[MergedProperty], int] | None:
-    """Cross-run dedup and floorplan gate. Returns None if nothing remains."""
+) -> tuple[list[MergedProperty], int, int, int] | None:
+    """Cross-run dedup and floorplan gate. Returns None if nothing remains.
+
+    Returns (merged_to_notify, anchors_updated, post_dedup_count, post_floorplan_count).
+    """
     logger.info("pipeline_started", phase="deduplication_merge")
     # Cross-run dedup always uses image hashing for same-building disambiguation,
     # independent of the global enable_image_hash_matching flag. By this point
@@ -411,6 +486,8 @@ async def _run_post_enrichment(
     if not merged_to_notify:
         logger.info("no_new_properties_after_cross_run_dedup")
         return None
+
+    genuinely_new_count = len(merged_to_notify)
 
     if settings.require_floorplan:
         before_count = len(merged_to_notify)
@@ -436,7 +513,18 @@ async def _run_post_enrichment(
             logger.info("no_properties_with_floorplans")
             return None
 
-    return merged_to_notify, anchors_updated
+    retry_input = sum(1 for m in merged if m.unique_id in re_enrichment_ids)
+    logger.info(
+        "post_enrichment_funnel",
+        enriched_input=len(merged),
+        retry_input=retry_input,
+        new_input=len(merged) - retry_input,
+        after_cross_run_dedup=genuinely_new_count,
+        anchors_updated=anchors_updated,
+        after_floorplan_gate=len(merged_to_notify),
+    )
+
+    return merged_to_notify, anchors_updated, genuinely_new_count, len(merged_to_notify)
 
 
 async def _detect_price_changes(
@@ -494,10 +582,11 @@ async def _run_pre_analysis_pipeline(
     Quality analysis is handled separately by the caller for concurrency.
     """
     timings: dict[str, float] = {}
+    scraper_metrics: list[ScraperMetrics] = []
 
     # Step 1: Scrape all platforms
     t0 = time.monotonic()
-    all_properties = await _run_scrape(
+    scrape_result = await _run_scrape(
         settings,
         storage,
         max_per_scraper=max_per_scraper,
@@ -505,17 +594,19 @@ async def _run_pre_analysis_pipeline(
         full_scrape=full_scrape,
     )
     timings["scraping_seconds"] = time.monotonic() - t0
-    if all_properties is None:
+    if scrape_result is None:
         return None
+    all_properties, scraper_metrics = scrape_result
 
     # Step 2: Criteria + location filters
     t0 = time.monotonic()
     criteria = settings.get_search_criteria()
     search_areas = settings.get_search_areas()
-    filtered = _run_criteria_and_location_filters(all_properties, criteria, search_areas)
-    if filtered is None:
+    filter_result = _run_criteria_and_location_filters(all_properties, criteria, search_areas)
+    if filter_result is None:
         timings["filtering_seconds"] = time.monotonic() - t0
         return None
+    filtered, criteria_filtered_count, location_filtered_count = filter_result
 
     # Step 3: Wrap as single-source MergedProperties + filter to new only
     logger.info("pipeline_started", phase="wrap_merged")
@@ -536,6 +627,7 @@ async def _run_pre_analysis_pipeline(
 
     logger.info("pipeline_started", phase="new_property_filter")
     new_merged = await storage.filter_new_merged(merged_properties)
+    new_property_count = len(new_merged)
     logger.info(
         "new_property_summary", new_count=len(new_merged), by_source=_source_counts(new_merged)
     )
@@ -556,7 +648,7 @@ async def _run_pre_analysis_pipeline(
         return None
 
     # Step 6: Geocode + commute (after enrichment so all properties have full coords)
-    geocoded, commute_lookup = await _geocode_and_compute_commute(
+    geocoded, commute_lookup, commute_within_limit_count = await _geocode_and_compute_commute(
         enriched, criteria, settings
     )
     if not geocoded:
@@ -566,14 +658,12 @@ async def _run_pre_analysis_pipeline(
 
     # Step 7: Post-enrichment dedup + floorplan gate
     # Use geocoded list (not enriched) so coordinates from geocoding are preserved
-    post_result = await _run_post_enrichment(
-        geocoded, storage, settings, re_enrichment_ids
-    )
+    post_result = await _run_post_enrichment(geocoded, storage, settings, re_enrichment_ids)
     timings["enrichment_seconds"] = time.monotonic() - t0
     if post_result is None:
         return None
 
-    final_merged, anchors_updated = post_result
+    final_merged, anchors_updated, post_dedup_count, post_floorplan_count = post_result
     return PreAnalysisResult(
         merged_to_process=final_merged,
         commute_lookup=commute_lookup,
@@ -581,4 +671,11 @@ async def _run_pre_analysis_pipeline(
         enriched_count=len(enriched),
         anchors_updated=anchors_updated,
         stage_timings=timings,
+        scraper_metrics=scraper_metrics,
+        criteria_filtered_count=criteria_filtered_count,
+        location_filtered_count=location_filtered_count,
+        new_property_count=new_property_count,
+        commute_within_limit_count=commute_within_limit_count,
+        post_dedup_count=post_dedup_count,
+        post_floorplan_count=post_floorplan_count,
     )

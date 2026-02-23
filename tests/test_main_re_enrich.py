@@ -51,17 +51,13 @@ class TestDownloadMissingImages:
 
         # Pre-cache img1 only
         normalized_url1 = str(HttpUrl(url1))
-        path1 = get_cached_image_path(
-            data_dir, merged.unique_id, normalized_url1, "gallery", 0
-        )
+        path1 = get_cached_image_path(data_dir, merged.unique_id, normalized_url1, "gallery", 0)
         save_image_bytes(path1, b"fake")
 
         fetcher = DetailFetcher()
         mock_download = AsyncMock(return_value=b"fake")
         with patch.object(fetcher, "download_image_bytes", mock_download):
-            downloaded = await _download_missing_images(
-                merged, fetcher, data_dir, max_images=20
-            )
+            downloaded = await _download_missing_images(merged, fetcher, data_dir, max_images=20)
 
         # Only img2 should be downloaded
         assert downloaded == 1
@@ -69,9 +65,9 @@ class TestDownloadMissingImages:
         assert str(HttpUrl(url2)) in mock_download.call_args[0][0]
 
         # img2 should now be on disk
-        assert find_cached_file(
-            data_dir, merged.unique_id, str(HttpUrl(url2)), "gallery"
-        ) is not None
+        assert (
+            find_cached_file(data_dir, merged.unique_id, str(HttpUrl(url2)), "gallery") is not None
+        )
 
     async def test_noop_when_all_cached(
         self, tmp_path: Path, make_merged_property: Callable[..., MergedProperty]
@@ -92,17 +88,13 @@ class TestDownloadMissingImages:
 
         # Pre-cache img1
         normalized_url1 = str(HttpUrl(url1))
-        path1 = get_cached_image_path(
-            data_dir, merged.unique_id, normalized_url1, "gallery", 0
-        )
+        path1 = get_cached_image_path(data_dir, merged.unique_id, normalized_url1, "gallery", 0)
         save_image_bytes(path1, b"fake")
 
         fetcher = DetailFetcher()
         mock_download = AsyncMock(return_value=b"fake")
         with patch.object(fetcher, "download_image_bytes", mock_download):
-            downloaded = await _download_missing_images(
-                merged, fetcher, data_dir, max_images=20
-            )
+            downloaded = await _download_missing_images(merged, fetcher, data_dir, max_images=20)
 
         assert downloaded == 0
         mock_download.assert_not_called()
@@ -127,14 +119,10 @@ class TestDownloadMissingImages:
         fetcher = DetailFetcher()
         mock_download = AsyncMock(return_value=None)  # download fails
         with patch.object(fetcher, "download_image_bytes", mock_download):
-            downloaded = await _download_missing_images(
-                merged, fetcher, data_dir, max_images=20
-            )
+            downloaded = await _download_missing_images(merged, fetcher, data_dir, max_images=20)
 
         assert downloaded == 0
-        assert find_cached_file(
-            data_dir, merged.unique_id, str(HttpUrl(url1)), "gallery"
-        ) is None
+        assert find_cached_file(data_dir, merged.unique_id, str(HttpUrl(url1)), "gallery") is None
 
     async def test_respects_max_images_with_floorplan(
         self, tmp_path: Path, make_merged_property: Callable[..., MergedProperty]
@@ -163,9 +151,7 @@ class TestDownloadMissingImages:
         mock_download = AsyncMock(return_value=b"fake")
         with patch.object(fetcher, "download_image_bytes", mock_download):
             # max_images=3, floorplan=True → effective_max=2, only first 2 checked
-            downloaded = await _download_missing_images(
-                merged, fetcher, data_dir, max_images=3
-            )
+            downloaded = await _download_missing_images(merged, fetcher, data_dir, max_images=3)
 
         assert downloaded == 2
         assert mock_download.call_count == 2
@@ -196,9 +182,7 @@ class TestReEnrichIncomplete:
         # Cache the image
         normalized = str(HttpUrl(url1))
         cache_dir = get_cache_dir(data_dir, merged.unique_id)
-        save_image_bytes(
-            cache_dir / url_to_filename(normalized, "gallery", 0), b"fake"
-        )
+        save_image_bytes(cache_dir / url_to_filename(normalized, "gallery", 0), b"fake")
 
         settings = Settings(
             telegram_bot_token="fake:token",
@@ -255,9 +239,7 @@ class TestReEnrichIncomplete:
             mock_fetcher.__aexit__ = _fetcher_aexit
             mock_cls.return_value = mock_fetcher
 
-            result = await _re_enrich_incomplete(
-                [merged], settings, mock_storage
-            )
+            result = await _re_enrich_incomplete([merged], settings, mock_storage)
 
         # Queue returned unchanged (same list)
         assert len(result) == 1
@@ -332,9 +314,7 @@ class TestReEnrichIncomplete:
             mock_fetcher.__aexit__ = _fetcher_aexit
             mock_cls.return_value = mock_fetcher
 
-            result = await _re_enrich_incomplete(
-                [complete, incomplete], settings, mock_storage
-            )
+            result = await _re_enrich_incomplete([complete, incomplete], settings, mock_storage)
 
         # Both properties returned, same objects
         assert len(result) == 2
@@ -347,9 +327,10 @@ class TestReEnrichIncomplete:
         assert str(HttpUrl(url_b)) in call_url
 
         # Incomplete property's image now on disk
-        assert find_cached_file(
-            str(tmp_path), incomplete.unique_id, str(HttpUrl(url_b)), "gallery"
-        ) is not None
+        assert (
+            find_cached_file(str(tmp_path), incomplete.unique_id, str(HttpUrl(url_b)), "gallery")
+            is not None
+        )
 
     async def test_no_data_dir_returns_unchanged(
         self,

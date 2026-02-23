@@ -155,7 +155,6 @@ class TestSavePreAnalysisProperties:
         assert row is not None
         assert row["notification_status"] == NotificationStatus.PENDING_ANALYSIS.value
 
-
     @pytest.mark.asyncio
     async def test_on_conflict_updates_commute_and_coords(
         self,
@@ -417,9 +416,7 @@ class TestCompleteAnalysisAtomicity:
         storage._pipeline._save_quality_analysis = _save_then_crash
 
         with pytest.raises(RuntimeError, match="simulated crash"):
-            await storage.complete_analysis(
-                merged.unique_id, make_quality_analysis()
-            )
+            await storage.complete_analysis(merged.unique_id, make_quality_analysis())
 
         # Both writes should have been rolled back
         conn = await storage._get_connection()

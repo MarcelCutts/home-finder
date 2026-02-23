@@ -77,7 +77,8 @@ class TestMicroAreaValidation:
         return result
 
     def test_hosting_tolerance_values(
-        self, all_micro_areas: list[tuple[str, str, MicroArea]],
+        self,
+        all_micro_areas: list[tuple[str, str, MicroArea]],
     ) -> None:
         for outcode, name, ma in all_micro_areas:
             if "hosting_tolerance" in ma:
@@ -86,7 +87,8 @@ class TestMicroAreaValidation:
                 )
 
     def test_wfh_suitability_values(
-        self, all_micro_areas: list[tuple[str, str, MicroArea]],
+        self,
+        all_micro_areas: list[tuple[str, str, MicroArea]],
     ) -> None:
         for outcode, name, ma in all_micro_areas:
             if "wfh_suitability" in ma:
@@ -95,7 +97,8 @@ class TestMicroAreaValidation:
                 )
 
     def test_micro_areas_have_required_fields(
-        self, all_micro_areas: list[tuple[str, str, MicroArea]],
+        self,
+        all_micro_areas: list[tuple[str, str, MicroArea]],
     ) -> None:
         required = {"character", "transport", "hosting_tolerance", "wfh_suitability"}
         for outcode, name, ma in all_micro_areas:
@@ -566,6 +569,4 @@ class TestWardCoverage:
                 result = get_micro_area_for_ward(ward, outcode)
                 if result is None:
                     unresolved.append((outcode, ward))
-        assert not unresolved, (
-            f"Wards mapped but micro-area not found in JSON: {unresolved}"
-        )
+        assert not unresolved, f"Wards mapped but micro-area not found in JSON: {unresolved}"

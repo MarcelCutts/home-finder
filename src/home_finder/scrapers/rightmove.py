@@ -143,9 +143,7 @@ class RightmoveScraper(BaseScraper):
             try:
                 await crawler.run([url])
             except Exception as e:
-                logger.warning(
-                    "rightmove_crawl_failed", url=url, error=str(e), exc_info=True
-                )
+                logger.warning("rightmove_crawl_failed", url=url, error=str(e), exc_info=True)
                 crawl_failed = True
 
             if page_parse_failed[0]:

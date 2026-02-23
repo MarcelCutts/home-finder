@@ -309,9 +309,7 @@ class PropertyStorage:
 
         # Migrate: add fit_score_version column for algorithm versioning
         try:
-            await conn.execute(
-                "ALTER TABLE quality_analyses ADD COLUMN fit_score_version INTEGER"
-            )
+            await conn.execute("ALTER TABLE quality_analyses ADD COLUMN fit_score_version INTEGER")
         except aiosqlite.OperationalError as e:
             if "duplicate column" not in str(e).lower():
                 raise
@@ -424,9 +422,7 @@ class PropertyStorage:
                     raise
 
         # Off-market detection index
-        await conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_off_market ON properties(is_off_market)"
-        )
+        await conn.execute("CREATE INDEX IF NOT EXISTS idx_off_market ON properties(is_off_market)")
 
         # Migrate: add per-stage timing columns to pipeline_runs
         for column in [
@@ -437,12 +433,61 @@ class PropertyStorage:
             "notification_seconds",
         ]:
             try:
-                await conn.execute(
-                    f"ALTER TABLE pipeline_runs ADD COLUMN {column} REAL"
-                )
+                await conn.execute(f"ALTER TABLE pipeline_runs ADD COLUMN {column} REAL")
             except aiosqlite.OperationalError as e:
                 if "duplicate column" not in str(e).lower():
                     raise
+
+        # Migrate: add funnel counts + API cost columns to pipeline_runs (T1+T3)
+        for column in [
+            # T3: funnel counts
+            "criteria_filtered_count",
+            "location_filtered_count",
+            "new_property_count",
+            "commute_within_limit_count",
+            "post_dedup_count",
+            "post_floorplan_count",
+            # T1: API cost aggregates
+            "total_input_tokens",
+            "total_output_tokens",
+            "total_cache_read_tokens",
+            "total_cache_creation_tokens",
+        ]:
+            try:
+                await conn.execute(f"ALTER TABLE pipeline_runs ADD COLUMN {column} INTEGER")
+            except aiosqlite.OperationalError as e:
+                if "duplicate column" not in str(e).lower():
+                    raise
+        try:
+            await conn.execute("ALTER TABLE pipeline_runs ADD COLUMN estimated_cost_usd REAL")
+        except aiosqlite.OperationalError as e:
+            if "duplicate column" not in str(e).lower():
+                raise
+
+        # T2: scraper_runs table for per-scraper performance metrics
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS scraper_runs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                pipeline_run_id INTEGER,
+                scraper_name TEXT NOT NULL,
+                started_at TEXT NOT NULL,
+                completed_at TEXT,
+                duration_seconds REAL,
+                areas_attempted INTEGER DEFAULT 0,
+                areas_completed INTEGER DEFAULT 0,
+                properties_found INTEGER DEFAULT 0,
+                pages_fetched INTEGER DEFAULT 0,
+                pages_failed INTEGER DEFAULT 0,
+                parse_errors INTEGER DEFAULT 0,
+                is_healthy BOOLEAN DEFAULT 1,
+                error_message TEXT,
+                FOREIGN KEY (pipeline_run_id) REFERENCES pipeline_runs(id) ON DELETE CASCADE
+            )
+        """)
+        await conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_scraper_runs_pipeline
+            ON scraper_runs(pipeline_run_id)
+        """)
 
         await conn.commit()
 
@@ -767,6 +812,27 @@ class PropertyStorage:
 
         logger.info("loaded_unenriched_properties", count=len(results))
         return results
+
+    async def get_unenriched_retry_stats(self, max_attempts: int = 3) -> dict[str, dict[str, int]]:
+        """Return retry backlog stats grouped by source and attempt count.
+
+        Returns:
+            Dict with 'by_attempts' mapping attempt count to property count.
+        """
+        conn = await self._get_connection()
+        cursor = await conn.execute(
+            """
+            SELECT enrichment_attempts, COUNT(*) as cnt
+            FROM properties
+            WHERE enrichment_status = 'pending'
+              AND enrichment_attempts < ?
+            GROUP BY enrichment_attempts
+            """,
+            (max_attempts,),
+        )
+        rows = await cursor.fetchall()
+        by_attempts = {str(row["enrichment_attempts"]): row["cnt"] for row in rows}
+        return {"by_attempts": by_attempts}
 
     async def mark_enriched(self, unique_id: str) -> None:
         """Transition a re-enriched property into the normal notification flow.
@@ -1399,6 +1465,12 @@ class PropertyStorage:
         """Get the most recent completed pipeline run."""
         return await self._pipeline.get_last_pipeline_run()
 
+    async def save_scraper_runs(
+        self, pipeline_run_id: int | None, metrics_list: list[dict[str, Any]]
+    ) -> None:
+        """Persist per-scraper metrics for a pipeline run."""
+        await self._pipeline.save_scraper_runs(pipeline_run_id, metrics_list)
+
     # ------------------------------------------------------------------
     # Facade: quality analysis retry (delegates to PipelineRepository)
     # ------------------------------------------------------------------
@@ -1665,9 +1737,7 @@ class PropertyStorage:
                     from home_finder.filters.quality import assess_value
 
                     analysis = json.loads(qa_row["analysis_json"])
-                    new_value = assess_value(
-                        new_price, qa_row["postcode"], qa_row["bedrooms"] or 0
-                    )
+                    new_value = assess_value(new_price, qa_row["postcode"], qa_row["bedrooms"] or 0)
                     value_dict = analysis.get("value") or {}
                     value_dict.update(
                         {

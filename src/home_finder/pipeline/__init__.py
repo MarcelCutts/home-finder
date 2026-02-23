@@ -19,6 +19,7 @@ from home_finder.pipeline.commands import (
     run_dedup_existing,
 )
 from home_finder.pipeline.scraping import (
+    ScraperMetrics,
     _run_scrape,
     _source_counts,
     scrape_all_platforms,
@@ -40,6 +41,7 @@ from home_finder.pipeline.stages import (
 __all__ = [
     "CrossRunDedupResult",
     "PreAnalysisResult",
+    "ScraperMetrics",
     "_CommInfo",
     "_OnResult",
     "_cross_run_deduplicate",

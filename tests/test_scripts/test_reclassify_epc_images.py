@@ -25,8 +25,13 @@ def _make_epc_bytes() -> bytes:
     img = Image.new("RGB", (400, 300), (255, 255, 255))
     draw = ImageDraw.Draw(img)
     band_colors = [
-        (0, 128, 0), (50, 180, 50), (140, 200, 60),
-        (255, 255, 0), (255, 165, 0), (255, 100, 0), (255, 0, 0),
+        (0, 128, 0),
+        (50, 180, 50),
+        (140, 200, 60),
+        (255, 255, 0),
+        (255, 165, 0),
+        (255, 100, 0),
+        (255, 0, 0),
     ]
     band_height = 25
     for i, color in enumerate(band_colors):
@@ -104,10 +109,13 @@ class TestReclassifyInDb:
 
         # Set up DB with both as gallery
         db_path = tmp_path / "test.db"
-        _setup_db(db_path, [
-            (unique_id, epc_url, "gallery"),
-            (unique_id, photo_url, "gallery"),
-        ])
+        _setup_db(
+            db_path,
+            [
+                (unique_id, epc_url, "gallery"),
+                (unique_id, photo_url, "gallery"),
+            ],
+        )
 
         scanned, reclassified, errors = _reclassify_in_db(db_path, data_dir, dry_run=False)
 
@@ -118,9 +126,7 @@ class TestReclassifyInDb:
         # DB should have image_type='epc' for the EPC
         conn = sqlite3.connect(str(db_path))
         conn.row_factory = sqlite3.Row
-        rows = conn.execute(
-            "SELECT url, image_type FROM property_images ORDER BY id"
-        ).fetchall()
+        rows = conn.execute("SELECT url, image_type FROM property_images ORDER BY id").fetchall()
         conn.close()
         assert rows[0]["image_type"] == "epc"
         assert rows[1]["image_type"] == "gallery"

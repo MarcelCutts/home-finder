@@ -153,7 +153,7 @@ async def main() -> None:
     )
 
     # Scrape
-    properties = await scrape_all_platforms(
+    properties, _metrics = await scrape_all_platforms(
         min_price=criteria.min_price,
         max_price=criteria.max_price,
         min_bedrooms=criteria.min_bedrooms,

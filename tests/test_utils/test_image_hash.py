@@ -287,10 +287,14 @@ class TestHashCachedGallery:
 
     @pytest.mark.asyncio
     async def test_full_gallery_hashing(self, tmp_path: Path) -> None:
-        self._setup_gallery(tmp_path, "openrent:123", {
-            "gallery_000_abc12345.jpg": _make_test_image("red"),
-            "gallery_001_def67890.jpg": _make_test_image("green"),
-        })
+        self._setup_gallery(
+            tmp_path,
+            "openrent:123",
+            {
+                "gallery_000_abc12345.jpg": _make_test_image("red"),
+                "gallery_001_def67890.jpg": _make_test_image("green"),
+            },
+        )
 
         result = await hash_cached_gallery(["openrent:123"], str(tmp_path))
         assert "openrent:123" in result
@@ -303,11 +307,15 @@ class TestHashCachedGallery:
 
     @pytest.mark.asyncio
     async def test_svg_files_skipped(self, tmp_path: Path) -> None:
-        self._setup_gallery(tmp_path, "rightmove:456", {
-            # SVG content in a .jpg file (Rightmove placeholder scenario)
-            "gallery_000_abc12345.jpg": b"<?xml version='1.0'?><svg>placeholder</svg>",
-            "gallery_001_def67890.jpg": _make_test_image("blue"),
-        })
+        self._setup_gallery(
+            tmp_path,
+            "rightmove:456",
+            {
+                # SVG content in a .jpg file (Rightmove placeholder scenario)
+                "gallery_000_abc12345.jpg": b"<?xml version='1.0'?><svg>placeholder</svg>",
+                "gallery_001_def67890.jpg": _make_test_image("blue"),
+            },
+        )
 
         result = await hash_cached_gallery(["rightmove:456"], str(tmp_path))
         assert "rightmove:456" in result
@@ -315,32 +323,48 @@ class TestHashCachedGallery:
 
     @pytest.mark.asyncio
     async def test_all_svgs_excluded(self, tmp_path: Path) -> None:
-        self._setup_gallery(tmp_path, "rightmove:789", {
-            "gallery_000_abc12345.jpg": b"<?xml version='1.0'?><svg>a</svg>",
-            "gallery_001_def67890.jpg": b"<svg xmlns='http://www.w3.org/2000/svg'/>",
-        })
+        self._setup_gallery(
+            tmp_path,
+            "rightmove:789",
+            {
+                "gallery_000_abc12345.jpg": b"<?xml version='1.0'?><svg>a</svg>",
+                "gallery_001_def67890.jpg": b"<svg xmlns='http://www.w3.org/2000/svg'/>",
+            },
+        )
 
         result = await hash_cached_gallery(["rightmove:789"], str(tmp_path))
         assert "rightmove:789" not in result
 
     @pytest.mark.asyncio
     async def test_empty_gallery_not_included(self, tmp_path: Path) -> None:
-        self._setup_gallery(tmp_path, "openrent:123", {
-            # Only non-gallery files
-            "floorplan_000_abc12345.jpg": _make_test_image("red"),
-        })
+        self._setup_gallery(
+            tmp_path,
+            "openrent:123",
+            {
+                # Only non-gallery files
+                "floorplan_000_abc12345.jpg": _make_test_image("red"),
+            },
+        )
 
         result = await hash_cached_gallery(["openrent:123"], str(tmp_path))
         assert "openrent:123" not in result
 
     @pytest.mark.asyncio
     async def test_multiple_properties(self, tmp_path: Path) -> None:
-        self._setup_gallery(tmp_path, "openrent:1", {
-            "gallery_000_abc12345.jpg": _make_test_image("red"),
-        })
-        self._setup_gallery(tmp_path, "zoopla:2", {
-            "gallery_000_abc12345.jpg": _make_test_image("blue"),
-        })
+        self._setup_gallery(
+            tmp_path,
+            "openrent:1",
+            {
+                "gallery_000_abc12345.jpg": _make_test_image("red"),
+            },
+        )
+        self._setup_gallery(
+            tmp_path,
+            "zoopla:2",
+            {
+                "gallery_000_abc12345.jpg": _make_test_image("blue"),
+            },
+        )
 
         result = await hash_cached_gallery(["openrent:1", "zoopla:2"], str(tmp_path))
         assert "openrent:1" in result

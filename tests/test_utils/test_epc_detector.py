@@ -36,13 +36,13 @@ def _draw_epc_chart(img: Image.Image) -> None:
     # White background is already set by _make_image_bytes
     # Draw horizontal coloured bands (A-G rating scale)
     band_colors = [
-        (0, 128, 0),      # A - dark green
-        (50, 180, 50),    # B - green
-        (140, 200, 60),   # C - yellow-green
-        (255, 255, 0),    # D - yellow
-        (255, 165, 0),    # E - orange
-        (255, 100, 0),    # F - dark orange
-        (255, 0, 0),      # G - red
+        (0, 128, 0),  # A - dark green
+        (50, 180, 50),  # B - green
+        (140, 200, 60),  # C - yellow-green
+        (255, 255, 0),  # D - yellow
+        (255, 165, 0),  # E - orange
+        (255, 100, 0),  # F - dark orange
+        (255, 0, 0),  # G - red
     ]
     band_height = h // 10
     start_y = h // 6
@@ -76,7 +76,7 @@ def _draw_env_impact_chart(img: Image.Image) -> None:
         (140, 140, 140),  # D
         (120, 120, 120),  # E
         (100, 100, 100),  # F
-        (80, 80, 80),     # G - darkest grey
+        (80, 80, 80),  # G - darkest grey
     ]
     band_height = h // 10
     start_y = header_h + 10
@@ -173,8 +173,11 @@ class TestDetectEpc:
     def test_confidence_is_bounded(self) -> None:
         """Confidence should always be between 0 and 1."""
         for draw_fn in [
-            _draw_epc_chart, _draw_env_impact_chart, _draw_colorful_photo,
-            _draw_floorplan, None,
+            _draw_epc_chart,
+            _draw_env_impact_chart,
+            _draw_colorful_photo,
+            _draw_floorplan,
+            None,
         ]:
             _, confidence = detect_epc(_make_image_bytes(draw_fn=draw_fn))
             assert 0.0 <= confidence <= 1.0
@@ -192,8 +195,13 @@ class TestDetectEpc:
             w, h = img.size
 
             band_colors = [
-                (0, 128, 0), (50, 180, 50), (140, 200, 60),
-                (255, 255, 0), (255, 165, 0), (255, 100, 0), (255, 0, 0),
+                (0, 128, 0),
+                (50, 180, 50),
+                (140, 200, 60),
+                (255, 255, 0),
+                (255, 165, 0),
+                (255, 100, 0),
+                (255, 0, 0),
             ]
             band_height = h // 12
 
@@ -334,7 +342,11 @@ class TestDetectEpc:
             draw.rectangle([30, h // 2 + 10, w - 30, h - 30], outline="black", width=3)
             # Door arcs
             draw.arc(
-                [w // 2 - 30, h // 2 - 30, w // 2 + 30, h // 2 + 30], 0, 90, fill="black", width=2,
+                [w // 2 - 30, h // 2 - 30, w // 2 + 30, h // 2 + 30],
+                0,
+                90,
+                fill="black",
+                width=2,
             )
             # Blue dimension labels — saturated blue text/lines (~10% coverage)
             blue = (0, 100, 220)

@@ -125,9 +125,7 @@ WATER_COSTS_MONTHLY: Final[dict[str, int]] = _DATA.get("water_costs_monthly", {}
 
 BROADBAND_COSTS_MONTHLY: Final[dict[str, int]] = _DATA.get("broadband_costs_monthly", {})
 
-SERVICE_CHARGE_RANGES: Final[dict[str, ServiceChargeRange]] = _DATA.get(
-    "service_charge_ranges", {}
-)
+SERVICE_CHARGE_RANGES: Final[dict[str, ServiceChargeRange]] = _DATA.get("service_charge_ranges", {})
 
 HOSTING_TOLERANCE: Final[dict[str, HostingTolerance]] = _DATA.get("hosting_tolerance", {})
 CREATIVE_SCENE: Final[dict[str, CreativeScene]] = _DATA.get("creative_scene", {})
@@ -349,17 +347,45 @@ def get_micro_area_for_ward(ward: str, outcode: str) -> str | None:
 
 
 # Words that appear in micro-area names but don't help distinguish them
-_MA_STOP_WORDS = frozenset({
-    "core", "fringe", "corridor", "side", "border",
-    "the", "and", "of", "in", "a",
-})
+_MA_STOP_WORDS = frozenset(
+    {
+        "core",
+        "fringe",
+        "corridor",
+        "side",
+        "border",
+        "the",
+        "and",
+        "of",
+        "in",
+        "a",
+    }
+)
 
 # Generic words that appear in many addresses and shouldn't score individually
-_MA_GENERIC_WORDS = frozenset({
-    "road", "street", "lane", "drive", "avenue", "place", "close",
-    "way", "walk", "hill", "square", "terrace", "mews", "crescent",
-    "gardens", "rise", "grove", "park", "london",
-})
+_MA_GENERIC_WORDS = frozenset(
+    {
+        "road",
+        "street",
+        "lane",
+        "drive",
+        "avenue",
+        "place",
+        "close",
+        "way",
+        "walk",
+        "hill",
+        "square",
+        "terrace",
+        "mews",
+        "crescent",
+        "gardens",
+        "rise",
+        "grove",
+        "park",
+        "london",
+    }
+)
 
 # Pattern to extract street names from prose (e.g. "Mare Street", "Kingsland Road")
 _STREET_NAME_RE = re.compile(

@@ -84,9 +84,7 @@ def url_to_filename(url: str, image_type: str, index: int) -> str:
     return f"{image_type}_{index:03d}_{url_hash}.{ext}"
 
 
-def find_cached_file(
-    data_dir: str, unique_id: str, url: str, image_type: str
-) -> Path | None:
+def find_cached_file(data_dir: str, unique_id: str, url: str, image_type: str) -> Path | None:
     """Find a cached image file by URL hash, regardless of index.
 
     Extracts the URL hash and globs for any file matching the pattern
@@ -132,9 +130,7 @@ def copy_cached_images(data_dir: str, from_id: str, to_id: str) -> int:
         shutil.copy2(src_file, dst_file)
         copied += 1
     if copied:
-        logger.debug(
-            "cached_images_copied", from_id=from_id, to_id=to_id, count=copied
-        )
+        logger.debug("cached_images_copied", from_id=from_id, to_id=to_id, count=copied)
     return copied
 
 
@@ -210,9 +206,7 @@ def read_image_bytes(path: Path) -> bytes | None:
     return None
 
 
-def generate_thumbnail(
-    original_path: Path, max_dim: int = THUMBNAIL_MAX_DIM
-) -> Path | None:
+def generate_thumbnail(original_path: Path, max_dim: int = THUMBNAIL_MAX_DIM) -> Path | None:
     """Generate a JPEG thumbnail from an image file on disk.
 
     Uses Pillow's thumbnail() — maintains aspect ratio, only shrinks.

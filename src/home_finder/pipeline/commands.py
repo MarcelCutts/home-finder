@@ -231,9 +231,7 @@ async def run_dedup_existing(settings: Settings) -> None:
             # Copy cached images and delete absorbed properties
             for absorbed_id in absorbed_into_this:
                 if settings.data_dir:
-                    copied = copy_cached_images(
-                        settings.data_dir, absorbed_id, anchor_id
-                    )
+                    copied = copy_cached_images(settings.data_dir, absorbed_id, anchor_id)
                     if copied:
                         logger.info(
                             "dedup_images_copied",

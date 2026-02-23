@@ -204,9 +204,7 @@ async def _enrich_single(
                                 data_dir, merged.unique_id, normalized_url, "gallery", idx
                             )
                             if not cache_path.is_file():
-                                img_bytes = await detail_fetcher.download_image_bytes(
-                                    img_url
-                                )
+                                img_bytes = await detail_fetcher.download_image_bytes(img_url)
                                 if img_bytes:
                                     save_image_bytes(cache_path, img_bytes)
                                 else:

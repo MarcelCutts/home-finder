@@ -46,9 +46,7 @@ from home_finder.models import (
 from home_finder.utils.image_cache import is_valid_image_url
 
 
-def _populate_image_cache(
-    data_dir: str, merged: MergedProperty
-) -> None:
+def _populate_image_cache(data_dir: str, merged: MergedProperty) -> None:
     """Create valid JPEG files in the image cache for all images in a MergedProperty."""
     from io import BytesIO
 
@@ -61,9 +59,7 @@ def _populate_image_cache(
     jpeg_bytes = buf.getvalue()
 
     for idx, img in enumerate(merged.images):
-        path = get_cached_image_path(
-            data_dir, merged.unique_id, str(img.url), img.image_type, idx
-        )
+        path = get_cached_image_path(data_dir, merged.unique_id, str(img.url), img.image_type, idx)
         save_image_bytes(path, jpeg_bytes)
 
     if merged.floorplan:
@@ -802,8 +798,8 @@ class TestPropertyQualityFilter:
         """Should analyze property with gallery images using two-phase structured outputs."""
         quality_filter = PropertyQualityFilter(api_key="test-key")
         quality_filter._client = MagicMock()
-        _setup_two_phase_mocks(quality_filter._client,
-            sample_visual_response, sample_evaluation_response
+        _setup_two_phase_mocks(
+            quality_filter._client, sample_visual_response, sample_evaluation_response
         )
 
         results = await quality_filter.analyze_merged_properties([sample_merged_property])
@@ -828,8 +824,8 @@ class TestPropertyQualityFilter:
 
         quality_filter = PropertyQualityFilter(api_key="test-key")
         quality_filter._client = MagicMock()
-        _setup_two_phase_mocks(quality_filter._client,
-            sample_visual_response, sample_evaluation_response
+        _setup_two_phase_mocks(
+            quality_filter._client, sample_visual_response, sample_evaluation_response
         )
 
         results = await quality_filter.analyze_merged_properties([sample_merged_property])
@@ -864,9 +860,7 @@ class TestPropertyQualityFilter:
 
         quality_filter = PropertyQualityFilter(api_key="test-key")
         quality_filter._client = MagicMock()
-        _setup_two_phase_mocks(quality_filter._client,
-            visual_response, sample_evaluation_response
-        )
+        _setup_two_phase_mocks(quality_filter._client, visual_response, sample_evaluation_response)
 
         results = await quality_filter.analyze_merged_properties([sample_merged_property])
 
@@ -900,9 +894,7 @@ class TestPropertyQualityFilter:
 
         quality_filter = PropertyQualityFilter(api_key="test-key")
         quality_filter._client = MagicMock()
-        _setup_two_phase_mocks(quality_filter._client,
-            visual_response, sample_evaluation_response
-        )
+        _setup_two_phase_mocks(quality_filter._client, visual_response, sample_evaluation_response)
 
         results = await quality_filter.analyze_merged_properties([one_bed_merged_property])
 
@@ -957,13 +949,11 @@ class TestPropertyQualityFilter:
 
         quality_filter = PropertyQualityFilter(api_key="test-key", max_images=10)
         quality_filter._client = MagicMock()
-        _setup_two_phase_mocks(quality_filter._client,
-            sample_visual_response, sample_evaluation_response
+        _setup_two_phase_mocks(
+            quality_filter._client, sample_visual_response, sample_evaluation_response
         )
 
-        await quality_filter.analyze_merged_properties(
-            [sample_merged_property], data_dir=data_dir
-        )
+        await quality_filter.analyze_merged_properties([sample_merged_property], data_dir=data_dir)
 
         # Check the Phase 1 API call (first call)
         call_args = quality_filter._client.messages.create.call_args_list[0]
@@ -1012,13 +1002,11 @@ class TestPropertyQualityFilter:
 
         quality_filter = PropertyQualityFilter(api_key="test-key", max_images=5)
         quality_filter._client = MagicMock()
-        _setup_two_phase_mocks(quality_filter._client,
-            sample_visual_response, sample_evaluation_response
+        _setup_two_phase_mocks(
+            quality_filter._client, sample_visual_response, sample_evaluation_response
         )
 
-        await quality_filter.analyze_merged_properties(
-            [many_images_merged], data_dir=data_dir
-        )
+        await quality_filter.analyze_merged_properties([many_images_merged], data_dir=data_dir)
 
         call_args = quality_filter._client.messages.create.call_args_list[0]
         content = call_args.kwargs["messages"][0]["content"]
@@ -1044,8 +1032,8 @@ class TestPropertyQualityFilter:
         """Phase 1 uses auto tool_choice with thinking; Phase 2 uses output_format."""
         quality_filter = PropertyQualityFilter(api_key="test-key")
         quality_filter._client = MagicMock()
-        _setup_two_phase_mocks(quality_filter._client,
-            sample_visual_response, sample_evaluation_response
+        _setup_two_phase_mocks(
+            quality_filter._client, sample_visual_response, sample_evaluation_response
         )
 
         await quality_filter.analyze_merged_properties([sample_merged_property])
@@ -1079,8 +1067,8 @@ class TestPropertyQualityFilter:
         """Should use system prompt with cache_control for cost savings."""
         quality_filter = PropertyQualityFilter(api_key="test-key")
         quality_filter._client = MagicMock()
-        _setup_two_phase_mocks(quality_filter._client,
-            sample_visual_response, sample_evaluation_response
+        _setup_two_phase_mocks(
+            quality_filter._client, sample_visual_response, sample_evaluation_response
         )
 
         await quality_filter.analyze_merged_properties([sample_merged_property])
@@ -1110,8 +1098,8 @@ class TestPropertyQualityFilter:
         """Should extract quality-adjusted value rating from Phase 2 response."""
         quality_filter = PropertyQualityFilter(api_key="test-key")
         quality_filter._client = MagicMock()
-        _setup_two_phase_mocks(quality_filter._client,
-            sample_visual_response, sample_evaluation_response
+        _setup_two_phase_mocks(
+            quality_filter._client, sample_visual_response, sample_evaluation_response
         )
 
         results = await quality_filter.analyze_merged_properties([sample_merged_property])
@@ -1180,8 +1168,8 @@ class TestPropertyQualityFilter:
 
         quality_filter = PropertyQualityFilter(api_key="test-key")
         quality_filter._client = MagicMock()
-        _setup_two_phase_mocks(quality_filter._client,
-            sample_visual_response, sample_evaluation_response
+        _setup_two_phase_mocks(
+            quality_filter._client, sample_visual_response, sample_evaluation_response
         )
 
         await quality_filter.analyze_merged_properties([merged])
@@ -1207,8 +1195,10 @@ class TestPropertyQualityFilter:
         # Use 1-bed property to avoid space override for 2+ beds
         quality_filter = PropertyQualityFilter(api_key="test-key")
         quality_filter._client = MagicMock()
-        _setup_two_phase_mocks(quality_filter._client,
-            sample_visual_response_with_nulls, sample_evaluation_response_with_nulls
+        _setup_two_phase_mocks(
+            quality_filter._client,
+            sample_visual_response_with_nulls,
+            sample_evaluation_response_with_nulls,
         )
 
         results = await quality_filter.analyze_merged_properties([one_bed_merged_property])
@@ -1240,8 +1230,8 @@ class TestPropertyQualityFilter:
         """Phase 1 JSON output should appear in Phase 2 prompt."""
         quality_filter = PropertyQualityFilter(api_key="test-key")
         quality_filter._client = MagicMock()
-        _setup_two_phase_mocks(quality_filter._client,
-            sample_visual_response, sample_evaluation_response
+        _setup_two_phase_mocks(
+            quality_filter._client, sample_visual_response, sample_evaluation_response
         )
 
         await quality_filter.analyze_merged_properties([sample_merged_property])
@@ -1302,8 +1292,8 @@ class TestPropertyQualityFilter:
         """Phase 2 should be text-only (no images)."""
         quality_filter = PropertyQualityFilter(api_key="test-key")
         quality_filter._client = MagicMock()
-        _setup_two_phase_mocks(quality_filter._client,
-            sample_visual_response, sample_evaluation_response
+        _setup_two_phase_mocks(
+            quality_filter._client, sample_visual_response, sample_evaluation_response
         )
 
         await quality_filter.analyze_merged_properties([sample_merged_property])
@@ -1342,8 +1332,8 @@ class TestFloorplanNoteWiring:
 
         quality_filter = PropertyQualityFilter(api_key="test-key")
         quality_filter._client = MagicMock()
-        _setup_two_phase_mocks(quality_filter._client,
-            sample_visual_response, sample_evaluation_response
+        _setup_two_phase_mocks(
+            quality_filter._client, sample_visual_response, sample_evaluation_response
         )
 
         await quality_filter.analyze_merged_properties([merged])
@@ -1366,8 +1356,8 @@ class TestFloorplanNoteWiring:
         """Property with floorplan → Phase 1 prompt does NOT contain <floorplan_note>."""
         quality_filter = PropertyQualityFilter(api_key="test-key")
         quality_filter._client = MagicMock()
-        _setup_two_phase_mocks(quality_filter._client,
-            sample_visual_response, sample_evaluation_response
+        _setup_two_phase_mocks(
+            quality_filter._client, sample_visual_response, sample_evaluation_response
         )
 
         await quality_filter.analyze_merged_properties([sample_merged_property])
@@ -1456,8 +1446,8 @@ class TestAnalyzeSingleMerged:
         """Should return (merged, analysis) when images are present."""
         quality_filter = PropertyQualityFilter(api_key="test-key")
         quality_filter._client = MagicMock()
-        _setup_two_phase_mocks(quality_filter._client,
-            sample_visual_response, sample_evaluation_response
+        _setup_two_phase_mocks(
+            quality_filter._client, sample_visual_response, sample_evaluation_response
         )
 
         merged, analysis = await quality_filter.analyze_single_merged(sample_merged_property)
@@ -1540,8 +1530,8 @@ class TestInsufficientImageSkip:
 
         quality_filter = PropertyQualityFilter(api_key="test-key")
         quality_filter._client = MagicMock()
-        _setup_two_phase_mocks(quality_filter._client,
-            sample_visual_response, sample_evaluation_response
+        _setup_two_phase_mocks(
+            quality_filter._client, sample_visual_response, sample_evaluation_response
         )
 
         merged, analysis = await quality_filter.analyze_single_merged(
@@ -1561,14 +1551,12 @@ class TestInsufficientImageSkip:
         """Should not skip analysis when data_dir is not set (no cache mode)."""
         quality_filter = PropertyQualityFilter(api_key="test-key")
         quality_filter._client = MagicMock()
-        _setup_two_phase_mocks(quality_filter._client,
-            sample_visual_response, sample_evaluation_response
+        _setup_two_phase_mocks(
+            quality_filter._client, sample_visual_response, sample_evaluation_response
         )
 
         # No data_dir — should proceed (cache paths all None, but check is skipped)
-        merged, analysis = await quality_filter.analyze_single_merged(
-            sample_merged_property
-        )
+        merged, analysis = await quality_filter.analyze_single_merged(sample_merged_property)
 
         assert merged is sample_merged_property
         assert analysis is not None
@@ -1618,9 +1606,7 @@ class TestInsufficientImageSkip:
             save_image_bytes(path, jpeg_bytes)
 
         quality_filter = PropertyQualityFilter(api_key="test-key")
-        merged_out, analysis = await quality_filter.analyze_single_merged(
-            merged, data_dir=data_dir
-        )
+        merged_out, analysis = await quality_filter.analyze_single_merged(merged, data_dir=data_dir)
 
         assert merged_out is merged
         assert analysis is None
@@ -1902,7 +1888,7 @@ class TestNewFieldsPipelineFlow:
 
         quality_filter = PropertyQualityFilter(api_key="test-key")
         quality_filter._client = MagicMock()
-        _setup_two_phase_mocks(quality_filter._client,visual, eval_resp)
+        _setup_two_phase_mocks(quality_filter._client, visual, eval_resp)
 
         results = await quality_filter.analyze_merged_properties([sample_merged_property])
         _, analysis = results[0]
@@ -2034,8 +2020,8 @@ class TestCircuitBreaker:
         assert not quality_filter._breaker.is_open()
 
         # Then: succeed — counter should reset
-        _setup_two_phase_mocks(quality_filter._client,
-            sample_visual_response, sample_evaluation_response
+        _setup_two_phase_mocks(
+            quality_filter._client, sample_visual_response, sample_evaluation_response
         )
         await quality_filter.analyze_single_merged(sample_merged_property)
 
@@ -2188,8 +2174,8 @@ class TestCircuitBreaker:
         quality_filter._breaker._open = True
         quality_filter._breaker._opened_at = time.monotonic() - (_CIRCUIT_BREAKER_COOLDOWN + 1)
         quality_filter._client = MagicMock()
-        _setup_two_phase_mocks(quality_filter._client,
-            sample_visual_response, sample_evaluation_response
+        _setup_two_phase_mocks(
+            quality_filter._client, sample_visual_response, sample_evaluation_response
         )
 
         # Should NOT raise — half-open allows retry
@@ -2209,8 +2195,8 @@ class TestCircuitBreaker:
         quality_filter._breaker._open = True
         quality_filter._breaker._opened_at = time.monotonic() - (_CIRCUIT_BREAKER_COOLDOWN + 1)
         quality_filter._client = MagicMock()
-        _setup_two_phase_mocks(quality_filter._client,
-            sample_visual_response, sample_evaluation_response
+        _setup_two_phase_mocks(
+            quality_filter._client, sample_visual_response, sample_evaluation_response
         )
 
         await quality_filter.analyze_single_merged(sample_merged_property)
@@ -2398,9 +2384,7 @@ class TestAcousticContextMapping:
 # ── Helpers for model-pair consistency tests ──────────────────────────
 
 
-def _extract_enum(
-    prop: dict[str, Any], defs: dict[str, Any] | None = None
-) -> list[str] | None:
+def _extract_enum(prop: dict[str, Any], defs: dict[str, Any] | None = None) -> list[str] | None:
     """Extract enum values from a JSON schema property.
 
     Handles plain ``{"enum": [...]}`` as well as ``anyOf`` wrappers that
@@ -2432,9 +2416,7 @@ def _extract_enum(
     return None
 
 
-_PAIR_IDS = [
-    f"{api.__qualname__}-{storage.__name__}" for api, storage in _MODEL_PAIRS
-]
+_PAIR_IDS = [f"{api.__qualname__}-{storage.__name__}" for api, storage in _MODEL_PAIRS]
 
 
 class TestModelPairConsistency:
@@ -2639,12 +2621,14 @@ class TestCleanDict:
 
     def test_recurses_into_nested_dicts(self) -> None:
         """Nested dict values should be cleaned recursively."""
-        result = _clean_dict({
-            "outer": {
-                "inner_str": '{"parsed": true}',
-                "inner_list": ["x", ""],
+        result = _clean_dict(
+            {
+                "outer": {
+                    "inner_str": '{"parsed": true}',
+                    "inner_list": ["x", ""],
+                }
             }
-        })
+        )
         assert result == {
             "outer": {
                 "inner_str": {"parsed": True},
@@ -2726,9 +2710,7 @@ class TestMergeAnalysisWithStringifiedNested:
 
         # JSON string with NUL — json_repair handles this in _clean_value
         bedroom_data = sample_visual_response["bedroom"]
-        bedroom_json_with_ctrl = json.dumps(bedroom_data).replace(
-            '"yes"', '"yes\x00"', 1
-        )
+        bedroom_json_with_ctrl = json.dumps(bedroom_data).replace('"yes"', '"yes\x00"', 1)
         sample_visual_response["bedroom"] = bedroom_json_with_ctrl
 
         with patch("home_finder.filters.quality.logger") as mock_logger:
@@ -2741,7 +2723,8 @@ class TestMergeAnalysisWithStringifiedNested:
 
         # No warning — json_repair in _clean_value handles NUL bytes
         warning_calls = [
-            c for c in mock_logger.warning.call_args_list
+            c
+            for c in mock_logger.warning.call_args_list
             if c[0] and c[0][0] == "clean_dict_missed_json_string"
         ]
         assert len(warning_calls) == 0
@@ -2802,7 +2785,8 @@ class TestMergeAnalysisWarningLog:
 
         assert analysis is not None
         missed_warnings = [
-            c for c in mock_logger.warning.call_args_list
+            c
+            for c in mock_logger.warning.call_args_list
             if c[0] and c[0][0] == "clean_dict_missed_json_string"
         ]
         assert missed_warnings == []
@@ -2835,7 +2819,8 @@ class TestMergeAnalysisWarningLog:
 
         assert analysis is not None
         missed_warnings = [
-            c for c in mock_logger.warning.call_args_list
+            c
+            for c in mock_logger.warning.call_args_list
             if c[0] and c[0][0] == "clean_dict_missed_json_string"
         ]
         warned_fields = {c[1]["field"] for c in missed_warnings}
@@ -3046,7 +3031,7 @@ class TestCoerceJsonStringsModelValidator:
                 light_space=LightSpaceAnalysis(),
                 space=SpaceAnalysis(),
                 summary="Test",
-                bedroom='{not valid json at all}',  # type: ignore[arg-type]
+                bedroom="{not valid json at all}",  # type: ignore[arg-type]
             )
 
     def test_non_json_string_left_alone(self) -> None:
@@ -3080,9 +3065,7 @@ class TestCoerceJsonStringsModelValidator:
         sample_evaluation_response: dict[str, Any],
     ) -> None:
         """End-to-end: _merge_analysis_results handles one_line as {"character": "..."}."""
-        sample_evaluation_response["one_line"] = {
-            "character": "Victorian flat with garden"
-        }
+        sample_evaluation_response["one_line"] = {"character": "Victorian flat with garden"}
 
         analysis = PropertyQualityFilter._merge_analysis_results(
             sample_visual_response,
@@ -3104,9 +3087,7 @@ class TestCoerceJsonStringsModelValidator:
 
         # Stringify with trailing comma (the _clean_dict in merge handles this,
         # but if it didn't, the model validator would catch it)
-        sample_visual_response["bedroom"] = json.dumps(
-            sample_visual_response["bedroom"]
-        )
+        sample_visual_response["bedroom"] = json.dumps(sample_visual_response["bedroom"])
 
         analysis = PropertyQualityFilter._merge_analysis_results(
             sample_visual_response,
@@ -3197,8 +3178,8 @@ class TestCoerceJsonStringsModelValidator:
         """Harmful C0 chars (SOH, VT, US) stripped; tab/LF/CR preserved as JSON whitespace."""
         bedroom_json = (
             '{\n\t"primary_is_double":\x01 "yes",\n'
-            '\t"has_built_in_wardrobe":\x0B "no",\n'
-            '\t"can_fit_desk": "yes",\x1F\n'
+            '\t"has_built_in_wardrobe":\x0b "no",\n'
+            '\t"can_fit_desk": "yes",\x1f\n'
             '\t"notes": "Fine"\n}'
         )
         analysis = PropertyQualityAnalysis(

@@ -107,9 +107,7 @@ class TestRunCheckOffMarketIntegration:
 
         storage.close = original_close  # restore for fixture teardown
 
-    async def test_single_source_removed_marks_off_market(
-        self, storage: PropertyStorage
-    ):
+    async def test_single_source_removed_marks_off_market(self, storage: PropertyStorage):
         merged = _make_merged(PropertySource.OPENRENT, "100")
         await storage.save_merged_property(merged)
         await storage.mark_notified(merged.unique_id)
@@ -134,15 +132,11 @@ class TestRunCheckOffMarketIntegration:
         row = await cursor.fetchone()
         assert row["is_off_market"] == 1
 
-    async def test_multi_source_partial_stays_on_market(
-        self, storage: PropertyStorage
-    ):
+    async def test_multi_source_partial_stays_on_market(self, storage: PropertyStorage):
         merged = _make_merged(
             PropertySource.OPENRENT,
             "200",
-            extra_sources={
-                PropertySource.ZOOPLA: "https://zoopla.co.uk/to-rent/200"
-            },
+            extra_sources={PropertySource.ZOOPLA: "https://zoopla.co.uk/to-rent/200"},
         )
         await storage.save_merged_property(merged)
         await storage.mark_notified(merged.unique_id)

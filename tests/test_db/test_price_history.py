@@ -60,9 +60,7 @@ class TestDetectAndRecordPriceChange:
         self, storage: PropertyStorage, merged_a: MergedProperty
     ) -> None:
         await storage.save_merged_property(merged_a)
-        result = await storage.detect_and_record_price_change(
-            merged_a.unique_id, 1900
-        )
+        result = await storage.detect_and_record_price_change(merged_a.unique_id, 1900)
         assert result is None
 
     @pytest.mark.asyncio
@@ -70,9 +68,7 @@ class TestDetectAndRecordPriceChange:
         self, storage: PropertyStorage, merged_a: MergedProperty
     ) -> None:
         await storage.save_merged_property(merged_a)
-        result = await storage.detect_and_record_price_change(
-            merged_a.unique_id, 1750
-        )
+        result = await storage.detect_and_record_price_change(merged_a.unique_id, 1750)
         assert result == -150
 
     @pytest.mark.asyncio
@@ -80,9 +76,7 @@ class TestDetectAndRecordPriceChange:
         self, storage: PropertyStorage, merged_a: MergedProperty
     ) -> None:
         await storage.save_merged_property(merged_a)
-        result = await storage.detect_and_record_price_change(
-            merged_a.unique_id, 2000
-        )
+        result = await storage.detect_and_record_price_change(merged_a.unique_id, 2000)
         assert result == 100
 
     @pytest.mark.asyncio
@@ -125,9 +119,7 @@ class TestDetectAndRecordPriceChange:
 
 class TestGetPriceHistory:
     @pytest.mark.asyncio
-    async def test_empty(
-        self, storage: PropertyStorage, merged_a: MergedProperty
-    ) -> None:
+    async def test_empty(self, storage: PropertyStorage, merged_a: MergedProperty) -> None:
         await storage.save_merged_property(merged_a)
         history = await storage.get_price_history(merged_a.unique_id)
         assert history == []

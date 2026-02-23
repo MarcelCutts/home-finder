@@ -245,8 +245,11 @@ class TestRunReanalysisSuccess:
         merged_list = []
         for i in range(3):
             m = await _save_and_flag(
-                populated_storage, make_merged_property, make_quality_analysis,
-                source_id=f"z-{i}", postcode="E8 3RH",
+                populated_storage,
+                make_merged_property,
+                make_quality_analysis,
+                source_id=f"z-{i}",
+                postcode="E8 3RH",
             )
             merged_list.append(m)
 
@@ -317,8 +320,11 @@ class TestRunReanalysisErrorHandling:
         merged_list = []
         for i in range(3):
             m = await _save_and_flag(
-                populated_storage, make_merged_property, make_quality_analysis,
-                source_id=f"z-{i}", postcode="E8 3RH",
+                populated_storage,
+                make_merged_property,
+                make_quality_analysis,
+                source_id=f"z-{i}",
+                postcode="E8 3RH",
             )
             merged_list.append(m)
 
@@ -354,12 +360,18 @@ class TestRunReanalysisErrorHandling:
     ) -> None:
         """RuntimeError on one property doesn't stop the rest."""
         await _save_and_flag(
-            populated_storage, make_merged_property, make_quality_analysis,
-            source_id="z-fail", postcode="E8 3RH",
+            populated_storage,
+            make_merged_property,
+            make_quality_analysis,
+            source_id="z-fail",
+            postcode="E8 3RH",
         )
         await _save_and_flag(
-            populated_storage, make_merged_property, make_quality_analysis,
-            source_id="z-ok", postcode="E8 4AA",
+            populated_storage,
+            make_merged_property,
+            make_quality_analysis,
+            source_id="z-ok",
+            postcode="E8 4AA",
         )
 
         call_count = 0

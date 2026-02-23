@@ -1343,9 +1343,7 @@ class TestResolveGalleryPhotos:
         filename = url_to_filename(cached_url, "gallery", 0)
         (cache_dir / filename).write_bytes(b"\xff\xd8\xff" + b"\x00" * 100)
 
-        result = _resolve_gallery_photos(
-            [cached_url, uncached_url], unique_id, str(tmp_path)
-        )
+        result = _resolve_gallery_photos([cached_url, uncached_url], unique_id, str(tmp_path))
         assert len(result) == 2
         assert isinstance(result[0], FSInputFile)
         assert isinstance(result[1], str)

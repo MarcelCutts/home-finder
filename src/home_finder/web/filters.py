@@ -14,7 +14,12 @@ from home_finder.models import PropertyHighlight, PropertyLowlight, UserStatus
 # ---------------------------------------------------------------------------
 
 VALID_SORT_OPTIONS: Final = {
-    "newest", "price_asc", "price_desc", "rating_desc", "fit_desc", "longest_listed",
+    "newest",
+    "price_asc",
+    "price_desc",
+    "rating_desc",
+    "fit_desc",
+    "longest_listed",
 }
 VALID_USER_STATUSES: Final = {s.value for s in UserStatus}
 VALID_PROPERTY_TYPES: Final = {

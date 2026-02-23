@@ -436,7 +436,7 @@ class TestToolSchemaSnapshots:
                                         "type": "string",
                                     },
                                     "has_washing_machine": {
-                                        "description": "Whether a washing machine is visible or mentioned. Look for: freestanding units (usually in the kitchen or a utility area), porthole door, control dials, or listing mentions. Use \"unknown\" if no laundry appliance is visible and the listing doesn't mention one.",
+                                        "description": 'Whether a washing machine is visible or mentioned. Look for: freestanding units (usually in the kitchen or a utility area), porthole door, control dials, or listing mentions. Use "unknown" if no laundry appliance is visible and the listing doesn\'t mention one.',
                                         "enum": ["yes", "no", "unknown"],
                                         "type": "string",
                                     },
@@ -581,7 +581,7 @@ class TestToolSchemaSnapshots:
                                         "type": "string",
                                     },
                                     "shower_type": {
-                                        "description": "Shower type: overhead = rain or fixed head over bath/walk-in; separate_cubicle = standalone enclosed shower (not over bath); electric = wall-mounted unit with built-in heater (white box, dial — common in older UK flats, signals weak hot water system); none = no shower visible. Use \"unknown\" if bathroom not shown.",
+                                        "description": 'Shower type: overhead = rain or fixed head over bath/walk-in; separate_cubicle = standalone enclosed shower (not over bath); electric = wall-mounted unit with built-in heater (white box, dial — common in older UK flats, signals weak hot water system); none = no shower visible. Use "unknown" if bathroom not shown.',
                                         "enum": [
                                             "overhead",
                                             "separate_cubicle",
@@ -611,17 +611,17 @@ class TestToolSchemaSnapshots:
                                 "additionalProperties": False,
                                 "properties": {
                                     "primary_is_double": {
-                                        "description": "Whether the primary bedroom can fit a double bed (≥1.35m wide). Check floorplan dimensions if available — \"double room\" claims in listings are often dubious for rooms under 3m wide. Use \"unknown\" if no floorplan and photos don't show enough of the room.",
+                                        "description": 'Whether the primary bedroom can fit a double bed (≥1.35m wide). Check floorplan dimensions if available — "double room" claims in listings are often dubious for rooms under 3m wide. Use "unknown" if no floorplan and photos don\'t show enough of the room.',
                                         "enum": ["yes", "no", "unknown"],
                                         "type": "string",
                                     },
                                     "has_built_in_wardrobe": {
-                                        "description": "Whether the primary bedroom has a built-in wardrobe. Look for: wardrobe doors (sliding or hinged) along one wall, commonly found in purpose-built and new-build flats. Use \"unknown\" if bedroom photos don't show all walls.",
+                                        "description": 'Whether the primary bedroom has a built-in wardrobe. Look for: wardrobe doors (sliding or hinged) along one wall, commonly found in purpose-built and new-build flats. Use "unknown" if bedroom photos don\'t show all walls.',
                                         "enum": ["yes", "no", "unknown"],
                                         "type": "string",
                                     },
                                     "can_fit_desk": {
-                                        "description": "Whether a desk (~1.2m wide) could fit in any bedroom or dedicated space. Check floorplan dimensions and photos for available wall space beyond bed and wardrobe. Prefer \"unknown\" over \"no\" unless the room is clearly too small or the floorplan confirms insufficient space.",
+                                        "description": 'Whether a desk (~1.2m wide) could fit in any bedroom or dedicated space. Check floorplan dimensions and photos for available wall space beyond bed and wardrobe. Prefer "unknown" over "no" unless the room is clearly too small or the floorplan confirms insufficient space.',
                                         "enum": ["yes", "no", "unknown"],
                                         "type": "string",
                                     },
@@ -669,12 +669,12 @@ class TestToolSchemaSnapshots:
                                 "additionalProperties": False,
                                 "properties": {
                                     "has_built_in_wardrobes": {
-                                        "description": "Whether the property has built-in wardrobes in any bedroom. Look for wardrobe doors in bedroom photos. Common in purpose-built and new-build flats. Use \"unknown\" if bedrooms are not fully shown.",
+                                        "description": 'Whether the property has built-in wardrobes in any bedroom. Look for wardrobe doors in bedroom photos. Common in purpose-built and new-build flats. Use "unknown" if bedrooms are not fully shown.',
                                         "enum": ["yes", "no", "unknown"],
                                         "type": "string",
                                     },
                                     "has_hallway_cupboard": {
-                                        "description": "Whether there is a hallway storage cupboard (airing cupboard, coat cupboard, or utility cupboard). Look for doors in hallway photos. Common in ex-council and purpose-built flats. Use \"unknown\" if hallway is not shown in photos.",
+                                        "description": 'Whether there is a hallway storage cupboard (airing cupboard, coat cupboard, or utility cupboard). Look for doors in hallway photos. Common in ex-council and purpose-built flats. Use "unknown" if hallway is not shown in photos.',
                                         "enum": ["yes", "no", "unknown"],
                                         "type": "string",
                                     },
@@ -833,9 +833,7 @@ class TestToolSchemaSnapshots:
                                 "service_charge_pcm": {
                                     "anyOf": [{"type": "integer"}, {"type": "null"}]
                                 },
-                                "deposit_weeks": {
-                                    "anyOf": [{"type": "integer"}, {"type": "null"}]
-                                },
+                                "deposit_weeks": {"anyOf": [{"type": "integer"}, {"type": "null"}]},
                                 "bills_included": {
                                     "enum": ["yes", "no", "unknown"],
                                     "type": "string",

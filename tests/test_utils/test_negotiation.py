@@ -70,11 +70,13 @@ class TestScorePriceDrops:
         assert sig.weight > _score_price_drops([{"change_amount": -50}]).weight
 
     def test_capped_at_1(self) -> None:
-        sig = _score_price_drops([
-            {"change_amount": -500},
-            {"change_amount": -500},
-            {"change_amount": -500},
-        ])
+        sig = _score_price_drops(
+            [
+                {"change_amount": -500},
+                {"change_amount": -500},
+                {"change_amount": -500},
+            ]
+        )
         assert sig.weight <= 1.0
 
     def test_text_pluralises(self) -> None:
@@ -147,6 +149,7 @@ class TestScoreRentTrend:
 class TestScoreSeasonal:
     def test_off_peak(self) -> None:
         from datetime import datetime as _dt
+
         with patch("home_finder.utils.negotiation.datetime") as mock_dt:
             mock_dt.now.return_value = _dt(2026, 1, 15)
             mock_dt.side_effect = lambda *a, **kw: _dt(*a, **kw)
@@ -156,6 +159,7 @@ class TestScoreSeasonal:
 
     def test_peak(self) -> None:
         from datetime import datetime as _dt
+
         with patch("home_finder.utils.negotiation.datetime") as mock_dt:
             mock_dt.now.return_value = _dt(2026, 7, 15)
             mock_dt.side_effect = lambda *a, **kw: _dt(*a, **kw)
@@ -165,6 +169,7 @@ class TestScoreSeasonal:
 
     def test_moderate(self) -> None:
         from datetime import datetime as _dt
+
         with patch("home_finder.utils.negotiation.datetime") as mock_dt:
             mock_dt.now.return_value = _dt(2026, 4, 15)
             mock_dt.side_effect = lambda *a, **kw: _dt(*a, **kw)

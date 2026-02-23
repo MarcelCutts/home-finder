@@ -245,9 +245,7 @@ def test_merged_property(test_property: Property) -> MergedProperty:
 
 
 @pytest.fixture
-def cached_data_dir(
-    tmp_path: Any, test_merged_property: MergedProperty
-) -> str:
+def cached_data_dir(tmp_path: Any, test_merged_property: MergedProperty) -> str:
     """Populate a temp image cache with valid JPEGs for the test_merged_property."""
     from io import BytesIO
 
@@ -262,9 +260,7 @@ def cached_data_dir(
     data_dir = str(tmp_path)
     merged = test_merged_property
     for idx, img in enumerate(merged.images):
-        path = get_cached_image_path(
-            data_dir, merged.unique_id, str(img.url), img.image_type, idx
-        )
+        path = get_cached_image_path(data_dir, merged.unique_id, str(img.url), img.image_type, idx)
         save_image_bytes(path, jpeg_bytes)
     if merged.floorplan:
         path = get_cached_image_path(

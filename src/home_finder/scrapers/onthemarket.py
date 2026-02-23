@@ -170,9 +170,7 @@ class OnTheMarketScraper(BaseScraper):
             )
             return None
         except Exception as e:
-            logger.error(
-                "onthemarket_fetch_exception", error=str(e), url=url, exc_info=True
-            )
+            logger.error("onthemarket_fetch_exception", error=str(e), url=url, exc_info=True)
             return None
 
     def _parse_next_data(self, html: str) -> list[Property] | None:

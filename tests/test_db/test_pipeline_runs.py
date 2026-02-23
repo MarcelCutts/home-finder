@@ -161,9 +161,7 @@ class TestPerStageTimings:
     @pytest.mark.asyncio
     async def test_timing_values_stored_via_update(self, storage: PropertyStorage) -> None:
         run_id = await storage.create_pipeline_run()
-        await storage.update_pipeline_run(
-            run_id, scraping_seconds=12.5, filtering_seconds=0.3
-        )
+        await storage.update_pipeline_run(run_id, scraping_seconds=12.5, filtering_seconds=0.3)
 
         conn = await storage._get_connection()
         cursor = await conn.execute(

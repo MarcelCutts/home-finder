@@ -123,9 +123,7 @@ class TestOnTheMarketSortVerification:
             assert raw_text is not None
             sort_text = raw_text.lower()
 
-        assert "recent" in sort_text, (
-            f"Expected 'Recent' sort selection, got: {sort_text!r}"
-        )
+        assert "recent" in sort_text, f"Expected 'Recent' sort selection, got: {sort_text!r}"
 
 
 # ---------------------------------------------------------------------------
@@ -162,6 +160,4 @@ class TestZooplaSortVerification:
             raw_text = sort_el.first.text_content()
             assert raw_text is not None
             sort_text = raw_text.lower()
-            assert "recent" in sort_text, (
-                f"Expected 'Most recent' sort, got: {sort_text!r}"
-            )
+            assert "recent" in sort_text, f"Expected 'Most recent' sort, got: {sort_text!r}"

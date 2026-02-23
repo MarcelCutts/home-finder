@@ -441,9 +441,7 @@ class TestCrossPlatformRerun:
         rescrape_or = _make_merged(OPENRENT_FLAT)
         rescrape_zp = _make_merged(ZOOPLA_SAME_FLAT)
 
-        _, anchors_updated = await _split_dedup_results(
-            [rescrape_or, rescrape_zp], db_anchors
-        )
+        _, anchors_updated = await _split_dedup_results([rescrape_or, rescrape_zp], db_anchors)
 
         # No reanalysis — both sources already known
         assert len(anchors_updated) == 0

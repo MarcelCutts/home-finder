@@ -53,9 +53,7 @@ class TestPropertyQualityFilterContextManager:
 class TestTelegramNotifierContextManager:
     @pytest.mark.asyncio
     async def test_calls_close_on_exit(self) -> None:
-        notifier = TelegramNotifier(
-            bot_token="fake:token", chat_id=0, web_base_url="", data_dir=""
-        )
+        notifier = TelegramNotifier(bot_token="fake:token", chat_id=0, web_base_url="", data_dir="")
         notifier.close = AsyncMock()  # type: ignore[method-assign]
         async with notifier:
             pass

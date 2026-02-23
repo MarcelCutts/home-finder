@@ -118,10 +118,13 @@ class TestPhase1DbToDisk:
         cache_dir = get_cache_dir(data_dir, uid)
         save_image_bytes(cache_dir / fname, b"fake")
 
-        _setup_db(tmp_path / "properties.db", [
-            (uid, "zoopla", url_with_file, "gallery"),
-            (uid, "zoopla", url_without_file, "gallery"),
-        ])
+        _setup_db(
+            tmp_path / "properties.db",
+            [
+                (uid, "zoopla", url_with_file, "gallery"),
+                (uid, "zoopla", url_without_file, "gallery"),
+            ],
+        )
 
         total, found, missing = phase1_db_to_disk(db_conn, data_dir)
 
@@ -140,10 +143,13 @@ class TestPhase1DbToDisk:
         save_image_bytes(cache_dir / url_to_filename(url1, "gallery", 0), b"fake")
         save_image_bytes(cache_dir / url_to_filename(url2, "gallery", 1), b"fake")
 
-        _setup_db(tmp_path / "properties.db", [
-            (uid, "rightmove", url1, "gallery"),
-            (uid, "rightmove", url2, "gallery"),
-        ])
+        _setup_db(
+            tmp_path / "properties.db",
+            [
+                (uid, "rightmove", url1, "gallery"),
+                (uid, "rightmove", url2, "gallery"),
+            ],
+        )
 
         total, found, missing = phase1_db_to_disk(db_conn, data_dir)
 
@@ -161,10 +167,13 @@ class TestPhase1DbToDisk:
         cache_dir = get_cache_dir(data_dir, uid)
         save_image_bytes(cache_dir / url_to_filename(good_url, "gallery", 0), b"fake")
 
-        _setup_db(tmp_path / "properties.db", [
-            (uid, "zoopla", good_url, "gallery"),
-            (uid, "zoopla", bad_url, "gallery"),
-        ])
+        _setup_db(
+            tmp_path / "properties.db",
+            [
+                (uid, "zoopla", good_url, "gallery"),
+                (uid, "zoopla", bad_url, "gallery"),
+            ],
+        )
 
         total, found, missing = phase1_db_to_disk(db_conn, data_dir, fix=True)
 
@@ -198,13 +207,16 @@ class TestPhase1DbToDisk:
         cache_b = get_cache_dir(data_dir, uid_b)
         save_image_bytes(cache_b / url_to_filename(good_url_b, "gallery", 0), b"fake")
 
-        _setup_db(tmp_path / "properties.db", [
-            (uid_a, "zoopla", good_url_a, "gallery"),
-            (uid_a, "zoopla", bad_url_a, "gallery"),
-            (uid_b, "rightmove", good_url_b, "gallery"),
-            (uid_b, "rightmove", bad_url_b1, "gallery"),
-            (uid_b, "rightmove", bad_url_b2, "floorplan"),
-        ])
+        _setup_db(
+            tmp_path / "properties.db",
+            [
+                (uid_a, "zoopla", good_url_a, "gallery"),
+                (uid_a, "zoopla", bad_url_a, "gallery"),
+                (uid_b, "rightmove", good_url_b, "gallery"),
+                (uid_b, "rightmove", bad_url_b1, "gallery"),
+                (uid_b, "rightmove", bad_url_b2, "floorplan"),
+            ],
+        )
 
         total, found, missing = phase1_db_to_disk(db_conn, data_dir, fix=True)
 
@@ -301,8 +313,8 @@ class TestPhase2DiskToDb:
 
         _setup_db(tmp_path / "properties.db", [(uid, "zoopla", url_in_db, "gallery")])
 
-        total_files, with_record, without_record, epc_expected, unrecognized = (
-            phase2_disk_to_db(db_conn, data_dir)
+        total_files, with_record, without_record, epc_expected, unrecognized = phase2_disk_to_db(
+            db_conn, data_dir
         )
 
         assert total_files == 2
@@ -325,8 +337,8 @@ class TestPhase2DiskToDb:
 
         _setup_db(tmp_path / "properties.db", [])
 
-        total_files, with_record, without_record, epc_expected, unrecognized = (
-            phase2_disk_to_db(db_conn, data_dir)
+        total_files, with_record, without_record, epc_expected, unrecognized = phase2_disk_to_db(
+            db_conn, data_dir
         )
 
         assert total_files == 1
@@ -340,8 +352,8 @@ class TestPhase2DiskToDb:
         data_dir = str(tmp_path)
         _setup_db(tmp_path / "properties.db", [])
 
-        total_files, with_record, without_record, epc_expected, unrecognized = (
-            phase2_disk_to_db(db_conn, data_dir)
+        total_files, with_record, without_record, epc_expected, unrecognized = phase2_disk_to_db(
+            db_conn, data_dir
         )
 
         assert total_files == 0
@@ -364,8 +376,8 @@ class TestPhase2DiskToDb:
 
         _setup_db(tmp_path / "properties.db", [(uid, "zoopla", url_in_db, "gallery")])
 
-        total_files, with_record, without_record, _epc_expected, unrecognized = (
-            phase2_disk_to_db(db_conn, data_dir)
+        total_files, with_record, without_record, _epc_expected, unrecognized = phase2_disk_to_db(
+            db_conn, data_dir
         )
 
         assert total_files == 3
@@ -394,13 +406,16 @@ class TestPhase2DiskToDb:
             get_cache_dir(data_dir, uid_b) / url_to_filename(url_extra, "gallery", 1), b"fake"
         )
 
-        _setup_db(tmp_path / "properties.db", [
-            (uid_a, "zoopla", url_a, "gallery"),
-            (uid_b, "rightmove", url_b, "gallery"),
-        ])
+        _setup_db(
+            tmp_path / "properties.db",
+            [
+                (uid_a, "zoopla", url_a, "gallery"),
+                (uid_b, "rightmove", url_b, "gallery"),
+            ],
+        )
 
-        total_files, with_record, without_record, epc_expected, unrecognized = (
-            phase2_disk_to_db(db_conn, data_dir)
+        total_files, with_record, without_record, epc_expected, unrecognized = phase2_disk_to_db(
+            db_conn, data_dir
         )
 
         assert total_files == 3
@@ -430,10 +445,13 @@ class TestMain:
         cache_dir = get_cache_dir(data_dir, uid)
         save_image_bytes(cache_dir / url_to_filename(good_url, "gallery", 0), b"fake")
 
-        _setup_db(tmp_path / "properties.db", [
-            (uid, "zoopla", good_url, "gallery"),
-            (uid, "zoopla", bad_url, "gallery"),
-        ])
+        _setup_db(
+            tmp_path / "properties.db",
+            [
+                (uid, "zoopla", good_url, "gallery"),
+                (uid, "zoopla", bad_url, "gallery"),
+            ],
+        )
 
         # Should not raise
         main(data_dir)
@@ -449,10 +467,13 @@ class TestMain:
         save_image_bytes(cache_dir / url_to_filename(good_url, "gallery", 0), b"fake")
 
         db_path = tmp_path / "properties.db"
-        _setup_db(db_path, [
-            (uid, "zoopla", good_url, "gallery"),
-            (uid, "zoopla", bad_url, "gallery"),
-        ])
+        _setup_db(
+            db_path,
+            [
+                (uid, "zoopla", good_url, "gallery"),
+                (uid, "zoopla", bad_url, "gallery"),
+            ],
+        )
 
         main(data_dir, fix=True)
 
@@ -493,9 +514,7 @@ class TestPurgeDiskFiles:
             property_ids=[kept_uid],
         )
 
-        orphan_dirs, orphan_files, stale_files, total = purge_disk_files(
-            db_conn, data_dir
-        )
+        orphan_dirs, orphan_files, stale_files, total = purge_disk_files(db_conn, data_dir)
 
         assert orphan_dirs == 1
         assert orphan_files == 2
@@ -525,9 +544,7 @@ class TestPurgeDiskFiles:
             property_ids=[uid],
         )
 
-        orphan_dirs, _orphan_files, stale_files, total = purge_disk_files(
-            db_conn, data_dir
-        )
+        orphan_dirs, _orphan_files, stale_files, total = purge_disk_files(db_conn, data_dir)
 
         assert orphan_dirs == 0
         assert stale_files == 1
@@ -535,9 +552,7 @@ class TestPurgeDiskFiles:
         assert (cache_dir / tracked_fname).exists()
         assert not (cache_dir / stale_fname).exists()
 
-    def test_dry_run_preserves_files(
-        self, tmp_path: Path, db_conn: sqlite3.Connection
-    ) -> None:
+    def test_dry_run_preserves_files(self, tmp_path: Path, db_conn: sqlite3.Connection) -> None:
         """--purge-disk --dry-run should report but not delete any files."""
         data_dir = str(tmp_path)
         orphan_uid = "zoopla:deleted2"
@@ -579,9 +594,7 @@ class TestPurgeDiskFiles:
         data_dir = str(tmp_path)
         _setup_db(tmp_path / "properties.db", [], property_ids=[])
 
-        orphan_dirs, orphan_files, stale_files, total = purge_disk_files(
-            db_conn, data_dir
-        )
+        orphan_dirs, orphan_files, stale_files, total = purge_disk_files(db_conn, data_dir)
 
         assert orphan_dirs == 0
         assert orphan_files == 0
@@ -601,9 +614,7 @@ class TestPurgeDiskFiles:
 
         _setup_db(tmp_path / "properties.db", [], property_ids=[uid])
 
-        orphan_dirs, _orphan_files, stale_files, total = purge_disk_files(
-            db_conn, data_dir
-        )
+        orphan_dirs, _orphan_files, stale_files, total = purge_disk_files(db_conn, data_dir)
 
         assert orphan_dirs == 0
         assert stale_files == 0
@@ -666,9 +677,7 @@ class TestReflagPartial:
         ).fetchone()
         assert row["reanalysis_requested_at"] is not None
 
-    def test_skips_fully_cached_property(
-        self, tmp_path: Path, db_conn: sqlite3.Connection
-    ) -> None:
+    def test_skips_fully_cached_property(self, tmp_path: Path, db_conn: sqlite3.Connection) -> None:
         """Property with all gallery images cached should not be flagged."""
         data_dir = str(tmp_path)
         uid = "rightmove:reflag2"
@@ -700,9 +709,7 @@ class TestReflagPartial:
         ).fetchone()
         assert row["reanalysis_requested_at"] is None
 
-    def test_dry_run_does_not_update_db(
-        self, tmp_path: Path, db_conn: sqlite3.Connection
-    ) -> None:
+    def test_dry_run_does_not_update_db(self, tmp_path: Path, db_conn: sqlite3.Connection) -> None:
         """--reflag-partial --dry-run should report but not update DB."""
         data_dir = str(tmp_path)
         uid = "zoopla:reflag3"

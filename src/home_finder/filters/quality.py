@@ -4,6 +4,7 @@ import asyncio
 import base64
 import json as _json
 import re as _re
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Final, Literal
 
@@ -65,6 +66,34 @@ _CIRCUIT_BREAKER_COOLDOWN: Final = 300  # seconds (5 min)
 from home_finder.utils.circuit_breaker import (  # noqa: E402
     APIUnavailableError as APIUnavailableError,
 )
+
+
+@dataclass
+class TokenUsage:
+    """Accumulated API token usage across analysis calls."""
+
+    input_tokens: int = 0
+    output_tokens: int = 0
+    cache_read_tokens: int = 0
+    cache_creation_tokens: int = 0
+
+    def add_from_response(self, usage: Any) -> None:
+        """Accumulate token counts from an Anthropic response.usage object."""
+        self.input_tokens += getattr(usage, "input_tokens", 0) or 0
+        self.output_tokens += getattr(usage, "output_tokens", 0) or 0
+        self.cache_read_tokens += getattr(usage, "cache_read_input_tokens", 0) or 0
+        self.cache_creation_tokens += getattr(usage, "cache_creation_input_tokens", 0) or 0
+
+    @property
+    def estimated_cost_usd(self) -> float:
+        """Estimate cost using Sonnet pricing (per million tokens)."""
+        # Sonnet: $3/MTok input, $15/MTok output, $0.30/MTok cache read, $3.75/MTok cache write
+        return (
+            self.input_tokens * 3.0
+            + self.output_tokens * 15.0
+            + self.cache_read_tokens * 0.30
+            + self.cache_creation_tokens * 3.75
+        ) / 1_000_000
 
 
 def assess_value(price_pcm: int, postcode: str | None, bedrooms: int) -> ValueAnalysis:
@@ -163,7 +192,7 @@ class _VisualAnalysisResponse(BaseModel):
             description=(
                 "Whether a washing machine is visible or mentioned. Look for: "
                 "freestanding units (usually in the kitchen or a utility area), "
-                "porthole door, control dials, or listing mentions. Use \"unknown\" "
+                'porthole door, control dials, or listing mentions. Use "unknown" '
                 "if no laundry appliance is visible and the listing doesn't mention one."
             ),
         )
@@ -174,27 +203,27 @@ class _VisualAnalysisResponse(BaseModel):
         overall_condition: Literal["excellent", "good", "fair", "poor", "unknown"]
         has_visible_damp: Literal["yes", "no", "unknown"] = Field(
             description=(
-                'Whether visible damp is present. Look for: water stains on '
-                'ceilings/walls, peeling or bubbling paint near windows, tide marks '
-                'on lower walls (rising damp), discolouration around pipes. '
-                'Victorian/Edwardian conversions are particularly prone to rising '
+                "Whether visible damp is present. Look for: water stains on "
+                "ceilings/walls, peeling or bubbling paint near windows, tide marks "
+                "on lower walls (rising damp), discolouration around pipes. "
+                "Victorian/Edwardian conversions are particularly prone to rising "
                 'damp. Use "unknown" if walls/ceilings are not clearly shown.'
             ),
         )
         has_visible_mold: Literal["yes", "no", "unknown"] = Field(
             description=(
-                'Whether visible mold is present. Look for: dark clusters in '
-                'bathroom corners, around window frames, or on ceilings — black '
-                'mold appears as dark spotty patches. Check bathroom and kitchen '
+                "Whether visible mold is present. Look for: dark clusters in "
+                "bathroom corners, around window frames, or on ceilings — black "
+                "mold appears as dark spotty patches. Check bathroom and kitchen "
                 'photos especially. Use "unknown" if wet areas are not shown.'
             ),
         )
         has_worn_fixtures: Literal["yes", "no", "unknown"] = Field(
             description=(
-                'Whether fixtures look worn or dated. Look for: chipped or '
-                'stained bathroom fittings, tired carpets, scuffed walls, old-style '
+                "Whether fixtures look worn or dated. Look for: chipped or "
+                "stained bathroom fittings, tired carpets, scuffed walls, old-style "
                 'light switches/sockets, worn cupboard edges. Use "unknown" if '
-                'photos are too few or angled to hide fixture condition.'
+                "photos are too few or angled to hide fixture condition."
             ),
         )
         maintenance_concerns: list[str] = Field(description="List of specific maintenance concerns")
@@ -239,27 +268,27 @@ class _VisualAnalysisResponse(BaseModel):
         overall_condition: Literal["modern", "decent", "dated", "unknown"]
         has_bathtub: Literal["yes", "no", "unknown"] = Field(
             description=(
-                'Whether a bathtub is visible. Many London flats are shower-only '
-                '— this is documentation, not a negative. Check for bath/shower '
+                "Whether a bathtub is visible. Many London flats are shower-only "
+                "— this is documentation, not a negative. Check for bath/shower "
                 'combo or standalone tub. Use "unknown" if the bathroom is not '
-                'fully shown in photos.'
+                "fully shown in photos."
             ),
         )
         shower_type: Literal["overhead", "separate_cubicle", "electric", "none", "unknown"] = Field(
             description=(
-                'Shower type: overhead = rain or fixed head over bath/walk-in; '
-                'separate_cubicle = standalone enclosed shower (not over bath); '
-                'electric = wall-mounted unit with built-in heater (white box, '
-                'dial — common in older UK flats, signals weak hot water system); '
+                "Shower type: overhead = rain or fixed head over bath/walk-in; "
+                "separate_cubicle = standalone enclosed shower (not over bath); "
+                "electric = wall-mounted unit with built-in heater (white box, "
+                "dial — common in older UK flats, signals weak hot water system); "
                 'none = no shower visible. Use "unknown" if bathroom not shown.'
             ),
         )
         is_ensuite: Literal["yes", "no", "unknown"] = Field(
             description=(
-                'Whether a bathroom is ensuite (accessed from inside a bedroom). '
-                'Check floorplan layout — ensuite doors open from the bedroom, '
+                "Whether a bathroom is ensuite (accessed from inside a bedroom). "
+                "Check floorplan layout — ensuite doors open from the bedroom, "
                 'not the hallway. Use "unknown" if no floorplan and photos are '
-                'ambiguous.'
+                "ambiguous."
             ),
         )
         notes: str
@@ -268,27 +297,27 @@ class _VisualAnalysisResponse(BaseModel):
         model_config = _Forbid
         primary_is_double: Literal["yes", "no", "unknown"] = Field(
             description=(
-                'Whether the primary bedroom can fit a double bed (≥1.35m wide). '
+                "Whether the primary bedroom can fit a double bed (≥1.35m wide). "
                 'Check floorplan dimensions if available — "double room" claims in '
                 'listings are often dubious for rooms under 3m wide. Use "unknown" '
-                'if no floorplan and photos don\'t show enough of the room.'
+                "if no floorplan and photos don't show enough of the room."
             ),
         )
         has_built_in_wardrobe: Literal["yes", "no", "unknown"] = Field(
             description=(
-                'Whether the primary bedroom has a built-in wardrobe. Look for: '
-                'wardrobe doors (sliding or hinged) along one wall, commonly found '
+                "Whether the primary bedroom has a built-in wardrobe. Look for: "
+                "wardrobe doors (sliding or hinged) along one wall, commonly found "
                 'in purpose-built and new-build flats. Use "unknown" if bedroom '
-                'photos don\'t show all walls.'
+                "photos don't show all walls."
             ),
         )
         can_fit_desk: Literal["yes", "no", "unknown"] = Field(
             description=(
-                'Whether a desk (~1.2m wide) could fit in any bedroom or '
-                'dedicated space. Check floorplan dimensions and photos for '
+                "Whether a desk (~1.2m wide) could fit in any bedroom or "
+                "dedicated space. Check floorplan dimensions and photos for "
                 'available wall space beyond bed and wardrobe. Prefer "unknown" '
                 'over "no" unless the room is clearly too small or the floorplan '
-                'confirms insufficient space.'
+                "confirms insufficient space."
             ),
         )
         office_separation: Literal[
@@ -315,16 +344,16 @@ class _VisualAnalysisResponse(BaseModel):
         model_config = _Forbid
         has_built_in_wardrobes: Literal["yes", "no", "unknown"] = Field(
             description=(
-                'Whether the property has built-in wardrobes in any bedroom. '
-                'Look for wardrobe doors in bedroom photos. Common in purpose-built '
+                "Whether the property has built-in wardrobes in any bedroom. "
+                "Look for wardrobe doors in bedroom photos. Common in purpose-built "
                 'and new-build flats. Use "unknown" if bedrooms are not fully shown.'
             ),
         )
         has_hallway_cupboard: Literal["yes", "no", "unknown"] = Field(
             description=(
-                'Whether there is a hallway storage cupboard (airing cupboard, '
-                'coat cupboard, or utility cupboard). Look for doors in hallway '
-                'photos. Common in ex-council and purpose-built flats. Use '
+                "Whether there is a hallway storage cupboard (airing cupboard, "
+                "coat cupboard, or utility cupboard). Look for doors in hallway "
+                "photos. Common in ex-council and purpose-built flats. Use "
                 '"unknown" if hallway is not shown in photos.'
             ),
         )
@@ -335,12 +364,12 @@ class _VisualAnalysisResponse(BaseModel):
         primary_flooring: Literal["hardwood", "laminate", "carpet", "tile", "mixed", "unknown"]
         has_double_glazing: Literal["yes", "no", "unknown"] = Field(
             description=(
-                'Whether windows are double-glazed. Look for: thick uPVC frames '
-                '(white plastic, ~60mm deep), sealed double-pane units visible in '
-                'profile, or listing mentions. Single glazing: thin timber sash '
-                'frames with visible putty (common in unconverted Victorian/ '
+                "Whether windows are double-glazed. Look for: thick uPVC frames "
+                "(white plastic, ~60mm deep), sealed double-pane units visible in "
+                "profile, or listing mentions. Single glazing: thin timber sash "
+                "frames with visible putty (common in unconverted Victorian/ "
                 'Edwardian properties). Prefer "unknown" over "no" unless you '
-                'can clearly see single-pane windows or the listing states it.'
+                "can clearly see single-pane windows or the listing states it."
             ),
         )
         building_construction: Literal[
@@ -649,6 +678,7 @@ class PropertyQualityFilter:
         self._max_images = max_images
         self._enable_extended_thinking = enable_extended_thinking
         self._client: anthropic.AsyncAnthropic | None = None
+        self.token_usage = TokenUsage()
         # Circuit breaker (asyncio is single-threaded, no lock needed)
         from home_finder.utils.circuit_breaker import CircuitBreaker
 
@@ -1022,6 +1052,7 @@ class PropertyQualityFilter:
 
             if hasattr(response, "usage"):
                 usage = response.usage
+                self.token_usage.add_from_response(usage)
                 cache_read = getattr(usage, "cache_read_input_tokens", 0)
                 cache_creation = getattr(usage, "cache_creation_input_tokens", 0)
                 if cache_read or cache_creation:
@@ -1058,8 +1089,7 @@ class PropertyQualityFilter:
             )
             err_msg = str(e)
             if (
-                "Could not process image" in err_msg
-                or "file format is invalid" in err_msg
+                "Could not process image" in err_msg or "file format is invalid" in err_msg
             ) and data_dir:
                 from home_finder.utils.image_cache import clear_image_cache
 
@@ -1230,6 +1260,9 @@ class PropertyQualityFilter:
                 messages=[{"role": "user", "content": eval_prompt}],
                 output_format=_EvaluationResponse,
             )
+
+            if hasattr(eval_response, "usage"):
+                self.token_usage.add_from_response(eval_response.usage)
 
             if eval_response.parsed_output:
                 eval_data = eval_response.parsed_output.model_dump()
@@ -1454,9 +1487,7 @@ class PropertyQualityFilter:
         )
 
         # Phase 1: Visual Analysis
-        visual_data = await self._run_visual_analysis(
-            content, property_id, data_dir=data_dir
-        )
+        visual_data = await self._run_visual_analysis(content, property_id, data_dir=data_dir)
         if visual_data is None:
             return None
 

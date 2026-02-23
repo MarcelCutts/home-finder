@@ -58,9 +58,7 @@ class TestUpdateUserStatus:
         assert prev == UserStatus.NEW
 
     @pytest.mark.asyncio
-    async def test_updates_column(
-        self, storage: PropertyStorage, merged_a: MergedProperty
-    ) -> None:
+    async def test_updates_column(self, storage: PropertyStorage, merged_a: MergedProperty) -> None:
         await storage.save_merged_property(merged_a)
         await storage.update_user_status(merged_a.unique_id, UserStatus.INTERESTED)
         conn = await storage._get_connection()
@@ -103,9 +101,7 @@ class TestUpdateUserStatus:
 
 class TestGetStatusHistory:
     @pytest.mark.asyncio
-    async def test_empty_history(
-        self, storage: PropertyStorage, merged_a: MergedProperty
-    ) -> None:
+    async def test_empty_history(self, storage: PropertyStorage, merged_a: MergedProperty) -> None:
         await storage.save_merged_property(merged_a)
         history = await storage.get_status_history(merged_a.unique_id)
         assert history == []

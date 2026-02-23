@@ -250,7 +250,10 @@ def _pipeline_mocks(
     mock_fetcher_instance.__aenter__ = _fetcher_aenter
     mock_fetcher_instance.__aexit__ = _fetcher_aexit
 
+    from home_finder.filters.quality import TokenUsage
+
     mock_quality_instance = MagicMock()
+    mock_quality_instance.token_usage = TokenUsage()
     if quality_side_effect is not None:
         mock_quality_instance.analyze_single_merged = AsyncMock(side_effect=quality_side_effect)
     else:
@@ -272,7 +275,7 @@ def _pipeline_mocks(
     if scrape_side_effect is not None:
         scrape_mock.side_effect = scrape_side_effect
     else:
-        scrape_mock.return_value = scrape_return or []
+        scrape_mock.return_value = (scrape_return or [], [])
 
     with (
         patch("home_finder.pipeline.scraping.scrape_all_platforms", scrape_mock),
@@ -297,13 +300,17 @@ def _pipeline_mocks(
         patch("home_finder.main.asyncio.sleep", new_callable=AsyncMock),
         patch.object(PropertyStorage, "__init__", _patched_storage_init),
     ):
-        ctx = type("Ctx", (), {
-            "notifier": mock_notifier,
-            "quality_cls": mock_quality_cls,
-            "quality_instance": mock_quality_instance,
-            "storage_capture": _StorageCapture,
-            "scrape_mock": scrape_mock,
-        })()
+        ctx = type(
+            "Ctx",
+            (),
+            {
+                "notifier": mock_notifier,
+                "quality_cls": mock_quality_cls,
+                "quality_instance": mock_quality_instance,
+                "storage_capture": _StorageCapture,
+                "scrape_mock": scrape_mock,
+            },
+        )()
         yield ctx
 
 
@@ -395,18 +402,14 @@ class TestCoreReanalysisFlow:
         new_merged = _wrap_merged(new_prop)
         deduplicator = Deduplicator(enable_cross_platform=True)
 
-        result = await _cross_run_deduplicate(
-            deduplicator, [new_merged], storage, set()
-        )
+        result = await _cross_run_deduplicate(deduplicator, [new_merged], storage, set())
 
         # Unconditional assertions — the merge MUST happen
         assert result.anchors_updated == 1
         assert len(result.genuinely_new) == 0
 
         # DB should now have both sources
-        await _assert_db_sources(
-            storage, anchor_prop.unique_id, {"rightmove", "zoopla"}
-        )
+        await _assert_db_sources(storage, anchor_prop.unique_id, {"rightmove", "zoopla"})
 
         # Reanalysis should be flagged
         await _assert_reanalysis_state(storage, anchor_prop.unique_id, requested=True)
@@ -422,13 +425,9 @@ class TestCoreReanalysisFlow:
         assert row["notification_status"] == "sent"
 
         # -- Drain reanalysis queue --
-        with patch(
-            "home_finder.pipeline.analysis.PropertyQualityFilter"
-        ) as mock_qf_cls:
+        with patch("home_finder.pipeline.analysis.PropertyQualityFilter") as mock_qf_cls:
             mock_qf = MagicMock()
-            mock_qf.analyze_single_merged = AsyncMock(
-                side_effect=lambda m, **kw: (m, quality_v2)
-            )
+            mock_qf.analyze_single_merged = AsyncMock(side_effect=lambda m, **kw: (m, quality_v2))
             mock_qf.close = AsyncMock()
             mock_qf.__aenter__ = AsyncMock(return_value=mock_qf)
             mock_qf.__aexit__ = AsyncMock(return_value=False)
@@ -493,8 +492,8 @@ class TestCoreReanalysisFlow:
             nonlocal call_count
             call_count += 1
             if call_count == 1:
-                return [prop_rm]
-            return [prop_z]
+                return ([prop_rm], [])
+            return ([prop_z], [])
 
         settings = Settings(
             telegram_bot_token=SecretStr("fake:token"),
@@ -520,6 +519,7 @@ class TestCoreReanalysisFlow:
                 quality_side_effect=_quality_side_effect,
                 shared_storage=shared_storage,
             ) as ctx:
+
                 async def _intercept_close(self_storage):
                     pass  # Don't close — we need the DB across runs
 
@@ -534,9 +534,7 @@ class TestCoreReanalysisFlow:
                 count = await shared_storage.get_property_count()
                 assert count == 1
 
-                await _assert_db_sources(
-                    shared_storage, prop_rm.unique_id, {"rightmove", "zoopla"}
-                )
+                await _assert_db_sources(shared_storage, prop_rm.unique_id, {"rightmove", "zoopla"})
 
                 # Notification should have been sent once (Run 1)
                 assert ctx.notifier.send_merged_property_notification.call_count == 1
@@ -643,9 +641,7 @@ class TestSourceVariety:
         # The two new sources get merged together first, then match anchor
         assert result.anchors_updated >= 1
         assert len(result.genuinely_new) == 0
-        await _assert_db_sources(
-            storage, anchor.unique_id, {"openrent", "zoopla", "rightmove"}
-        )
+        await _assert_db_sources(storage, anchor.unique_id, {"openrent", "zoopla", "rightmove"})
         await _assert_reanalysis_state(storage, anchor.unique_id, requested=True)
 
         # Verify price range expands (anchor=1800, new_z=1850, new_rm=1800)
@@ -860,9 +856,7 @@ class TestDrainReanalysisQueue:
         settings_quality_off: Settings,
     ):
         """Returns 0 when quality filter is disabled. Flag NOT cleared."""
-        anchor = make_property(
-            source=PropertySource.OPENRENT, postcode="E8 3RH", price_pcm=1800
-        )
+        anchor = make_property(source=PropertySource.OPENRENT, postcode="E8 3RH", price_pcm=1800)
         await _populate_run1(storage, anchor, quality_v1)
         await storage.request_reanalysis([anchor.unique_id])
 
@@ -894,9 +888,7 @@ class TestDrainReanalysisQueue:
 
         with patch("home_finder.pipeline.analysis.PropertyQualityFilter") as mock_cls:
             mock_qf = MagicMock()
-            mock_qf.analyze_single_merged = AsyncMock(
-                side_effect=lambda m, **kw: (m, quality_v2)
-            )
+            mock_qf.analyze_single_merged = AsyncMock(side_effect=lambda m, **kw: (m, quality_v2))
             mock_qf.close = AsyncMock()
             mock_qf.__aenter__ = AsyncMock(return_value=mock_qf)
             mock_qf.__aexit__ = AsyncMock(return_value=False)
@@ -1150,20 +1142,14 @@ class TestRescrapeSubsetRegression:
         deduplicator = Deduplicator(enable_cross_platform=True)
 
         # Run 2: Rightmove merges in
-        result = await _cross_run_deduplicate(
-            deduplicator, [_wrap_merged(rm_prop)], storage, set()
-        )
+        result = await _cross_run_deduplicate(deduplicator, [_wrap_merged(rm_prop)], storage, set())
         assert result.anchors_updated == 1
         await _assert_db_sources(storage, or_prop.unique_id, {"openrent", "rightmove"})
 
         # Run 3: Zoopla merges in
-        result = await _cross_run_deduplicate(
-            deduplicator, [_wrap_merged(zp_prop)], storage, set()
-        )
+        result = await _cross_run_deduplicate(deduplicator, [_wrap_merged(zp_prop)], storage, set())
         assert result.anchors_updated == 1
-        await _assert_db_sources(
-            storage, or_prop.unique_id, {"openrent", "rightmove", "zoopla"}
-        )
+        await _assert_db_sources(storage, or_prop.unique_id, {"openrent", "rightmove", "zoopla"})
 
         # Run 4: OnTheMarket merges in
         result = await _cross_run_deduplicate(
@@ -1198,9 +1184,7 @@ class TestRescrapeSubsetRegression:
         # URLs belong to new MergedProperty objects), but no NEW sources →
         # request_reanalysis must NOT be called.
         assert result.anchors_updated == 1
-        await _assert_reanalysis_state(
-            storage, or_prop.unique_id, requested=False
-        )
+        await _assert_reanalysis_state(storage, or_prop.unique_id, requested=False)
 
         # Sources should still be all 4 (update_merged_sources unions, not overwrites)
         await _assert_db_sources(
@@ -1272,6 +1256,7 @@ class TestDryRunPath:
                 quality_side_effect=lambda m, **kw: (m, quality_v2),
                 shared_storage=shared_storage,
             ) as ctx:
+
                 async def _intercept_close(self_storage):
                     pass
 
@@ -1556,13 +1541,11 @@ class TestSameBuildingDisambiguation:
 
         # Go through _run_post_enrichment (the production code path)
         # rather than constructing a Deduplicator manually.
-        post_result = await _run_post_enrichment(
-            [_wrap_merged(new)], storage, settings, set()
-        )
+        post_result = await _run_post_enrichment([_wrap_merged(new)], storage, settings, set())
 
         # Should NOT merge — F1 ensures cross-run dedup always hashes
         assert post_result is not None
-        merged_to_notify, anchors_updated = post_result
+        merged_to_notify, anchors_updated, _post_dedup, _post_fp = post_result
         assert anchors_updated == 0
         assert len(merged_to_notify) == 1
         assert merged_to_notify[0].canonical.unique_id == new.unique_id

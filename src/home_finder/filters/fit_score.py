@@ -218,9 +218,7 @@ def _score_hosting(analysis: dict[str, Any], bedrooms: int) -> _DimensionResult:
                 {"label": f"Good total area (~{int(total_area_sqm)}sqm)", "state": "earned"}
             )
         elif area_score > 0:
-            factors.append(
-                {"label": f"Total area ~{int(total_area_sqm)}sqm", "state": "earned"}
-            )
+            factors.append({"label": f"Total area ~{int(total_area_sqm)}sqm", "state": "earned"})
         else:
             factors.append(
                 {"label": f"Small total area (~{int(total_area_sqm)}sqm)", "state": "missed"}

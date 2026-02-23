@@ -958,8 +958,13 @@ def _make_epc_bytes() -> bytes:
     img = Image.new("RGB", (400, 300), (255, 255, 255))
     draw = ImageDraw.Draw(img)
     band_colors = [
-        (0, 128, 0), (50, 180, 50), (140, 200, 60),
-        (255, 255, 0), (255, 165, 0), (255, 100, 0), (255, 0, 0),
+        (0, 128, 0),
+        (50, 180, 50),
+        (140, 200, 60),
+        (255, 255, 0),
+        (255, 165, 0),
+        (255, 100, 0),
+        (255, 0, 0),
     ]
     band_height = 25
     for i, color in enumerate(band_colors):
@@ -1086,7 +1091,6 @@ class TestDetectEpcInGallery:
             assert not paths[idx].exists()
             epc_name = paths[idx].name.replace("gallery_", "epc_", 1)
             assert (paths[idx].parent / epc_name).exists()
-
 
     def test_detects_env_impact_chart_in_gallery(self, tmp_path: Path) -> None:
         """Should detect Environmental Impact (CO₂) chart and rename to epc_*."""
@@ -1355,5 +1359,3 @@ class TestFloorplanUrlRejectedLogging:
             url="https://example.com/floor.svg",
             reason="failed_image_url_validation",
         )
-
-

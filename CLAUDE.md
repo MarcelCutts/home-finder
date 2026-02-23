@@ -40,6 +40,11 @@ PYTHONUNBUFFERED=1 uv run pytest -n0 tests/test_foo.py   # Run single-threaded (
 PYTHONUNBUFFERED=1 uv run pytest --cov=src               # Run with coverage
 PYTHONUNBUFFERED=1 uv run pytest -m slow                 # Run slow tests (real network scraping)
 
+# Browser E2E tests (excluded from normal test runs, requires Chromium)
+PYTHONUNBUFFERED=1 uv run pytest -m browser tests/test_web/test_browser_e2e.py -v
+PYTHONUNBUFFERED=1 uv run pytest -m browser tests/test_web/test_browser_e2e.py -v --headed  # See the browser
+PYTHONUNBUFFERED=1 uv run pytest -m browser tests/test_web/test_browser_e2e.py -v --tracing=retain-on-failure  # Save traces on failure
+
 # Linting and type checking
 uv run ruff check src tests           # Check for issues
 uv run ruff check --fix src tests     # Auto-fix issues

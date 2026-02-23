@@ -38,9 +38,7 @@ def resize_image_bytes(data: bytes, max_dim: int = MAX_IMAGE_DIMENSION) -> bytes
         new_size = (int(w * scale), int(h * scale))
         # Preserve format before resize (resize clears it)
         fmt = img.format or "JPEG"
-        resized: Image.Image = img.resize(
-            new_size, Image.Resampling.LANCZOS, reducing_gap=3.0
-        )
+        resized: Image.Image = img.resize(new_size, Image.Resampling.LANCZOS, reducing_gap=3.0)
         # JPEG cannot encode RGBA/P/CMYK — convert to RGB
         if fmt == "JPEG" and resized.mode not in ("RGB", "L"):
             resized = resized.convert("RGB")

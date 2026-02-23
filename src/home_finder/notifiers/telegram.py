@@ -664,16 +664,18 @@ def _build_inline_keyboard(
 
     # Status action row (Ticket 7) — callback_data fits 64-byte limit
     uid_short = merged.unique_id[:40]  # Leave room for prefix
-    rows.append([
-        InlineKeyboardButton(
-            text="\U0001f44d Interested",
-            callback_data=f"st:{uid_short}:interested",
-        ),
-        InlineKeyboardButton(
-            text="\u23ed Skip",
-            callback_data=f"st:{uid_short}:archived",
-        ),
-    ])
+    rows.append(
+        [
+            InlineKeyboardButton(
+                text="\U0001f44d Interested",
+                callback_data=f"st:{uid_short}:interested",
+            ),
+            InlineKeyboardButton(
+                text="\u23ed Skip",
+                callback_data=f"st:{uid_short}:archived",
+            ),
+        ]
+    )
 
     for i in range(0, len(buttons), 2):
         rows.append(buttons[i : i + 2])
@@ -750,8 +752,7 @@ def _resolve_gallery_photos(
     from aiogram.types import FSInputFile
 
     photos = [
-        _resolve_photo(url, unique_id, data_dir, prefer_thumbnail=prefer_thumbnail)
-        for url in urls
+        _resolve_photo(url, unique_id, data_dir, prefer_thumbnail=prefer_thumbnail) for url in urls
     ]
     cached = sum(1 for p in photos if isinstance(p, FSInputFile))
     if cached:
@@ -854,7 +855,10 @@ class TelegramNotifier:
         except TelegramRetryAfter:
             raise  # Propagate to tenacity @_telegram_retry decorator
         except (
-            TelegramBadRequest, TelegramForbiddenError, TelegramNotFound, TelegramUnauthorizedError
+            TelegramBadRequest,
+            TelegramForbiddenError,
+            TelegramNotFound,
+            TelegramUnauthorizedError,
         ) as e:
             logger.error(
                 "notification_permanent_failure",
@@ -933,7 +937,9 @@ class TelegramNotifier:
                     if is_high_rated and len(gallery_urls) >= 3:
                         # High-rated: album — full-size images for swipe gallery
                         photos = _resolve_gallery_photos(
-                            gallery_urls, merged.unique_id, self.data_dir,
+                            gallery_urls,
+                            merged.unique_id,
+                            self.data_dir,
                             prefer_thumbnail=False,
                         )
                         followup_text = _format_followup_detail(
@@ -947,10 +953,16 @@ class TelegramNotifier:
                         )
                     else:
                         # Single hero image — thumbnail is fine (faster upload)
-                        photo = _resolve_photo(
-                            gallery_urls[0], merged.unique_id, self.data_dir,
-                            prefer_thumbnail=True,
-                        ) if self.data_dir else gallery_urls[0]
+                        photo = (
+                            _resolve_photo(
+                                gallery_urls[0],
+                                merged.unique_id,
+                                self.data_dir,
+                                prefer_thumbnail=True,
+                            )
+                            if self.data_dir
+                            else gallery_urls[0]
+                        )
                         await bot.send_photo(
                             chat_id=self.chat_id,
                             photo=photo,
@@ -1006,7 +1018,10 @@ class TelegramNotifier:
             raise  # Propagate to tenacity @_telegram_retry decorator
 
         except (
-            TelegramBadRequest, TelegramForbiddenError, TelegramNotFound, TelegramUnauthorizedError
+            TelegramBadRequest,
+            TelegramForbiddenError,
+            TelegramNotFound,
+            TelegramUnauthorizedError,
         ) as e:
             logger.error(
                 "notification_permanent_failure",
@@ -1124,7 +1139,10 @@ class TelegramNotifier:
         except TelegramRetryAfter:
             raise  # Propagate to tenacity @_telegram_retry decorator
         except (
-            TelegramBadRequest, TelegramForbiddenError, TelegramNotFound, TelegramUnauthorizedError
+            TelegramBadRequest,
+            TelegramForbiddenError,
+            TelegramNotFound,
+            TelegramUnauthorizedError,
         ) as e:
             logger.error(
                 "notification_permanent_failure",
@@ -1172,8 +1190,7 @@ class TelegramNotifier:
             "\U0001f4c9 <b>Price Drop</b>",
             "",
             f"<b>{html.escape(title)}</b>",
-            f"\u00a3{old_price:,} \u2192 \u00a3{new_price:,}/mo "
-            f"(<b>-\u00a3{drop:,}</b>)",
+            f"\u00a3{old_price:,} \u2192 \u00a3{new_price:,}/mo (<b>-\u00a3{drop:,}</b>)",
         ]
         if postcode:
             lines.append(f"\U0001f4cd {html.escape(postcode)}")
@@ -1197,7 +1214,10 @@ class TelegramNotifier:
         except TelegramRetryAfter:
             raise  # Propagate to tenacity @_telegram_retry decorator
         except (
-            TelegramBadRequest, TelegramForbiddenError, TelegramNotFound, TelegramUnauthorizedError
+            TelegramBadRequest,
+            TelegramForbiddenError,
+            TelegramNotFound,
+            TelegramUnauthorizedError,
         ) as e:
             logger.error(
                 "notification_permanent_failure",

@@ -136,9 +136,7 @@ class TestMarkOffMarket:
 
 
 class TestMarkReturnedToMarket:
-    async def test_clears_off_market_flag(
-        self, storage: PropertyStorage, merged_a: MergedProperty
-    ):
+    async def test_clears_off_market_flag(self, storage: PropertyStorage, merged_a: MergedProperty):
         await storage.save_merged_property(merged_a)
         await storage.mark_off_market(merged_a.unique_id)
 

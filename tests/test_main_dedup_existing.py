@@ -88,9 +88,7 @@ def merged_rm(prop_rm: Property) -> MergedProperty:
     )
 
 
-async def _run_with_storage(
-    storage: PropertyStorage, settings: Settings
-) -> None:
+async def _run_with_storage(storage: PropertyStorage, settings: Settings) -> None:
     """Run run_dedup_existing sharing the given storage's in-memory DB connection."""
     original_init = PropertyStorage.__init__
 

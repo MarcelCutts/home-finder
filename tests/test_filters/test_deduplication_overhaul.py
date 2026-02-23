@@ -138,19 +138,13 @@ class TestFalsePositiveCascadePrevention:
                     )
                 )
             )
-        items.append(
-            _wrap_merged(
-                _make_prop(PropertySource.ONTHEMARKET, "otm0", price_pcm=1800)
-            )
-        )
+        items.append(_wrap_merged(_make_prop(PropertySource.ONTHEMARKET, "otm0", price_pcm=1800)))
 
         groups = _group_items_greedy(items, {})
 
         for group in groups:
             sources = [mp.canonical.source for mp in group]
-            assert len(sources) == len(set(sources)), (
-                f"Group has duplicate sources: {sources}"
-            )
+            assert len(sources) == len(set(sources)), f"Group has duplicate sources: {sources}"
 
     async def test_same_price_same_building_max_one_per_source(self) -> None:
         """2 RM with identical data -> 2 separate groups (never merge same-source)."""
@@ -167,15 +161,9 @@ class TestFalsePositiveCascadePrevention:
 
     async def test_no_transitive_chain_through_intermediary(self) -> None:
         """A(OR) matches B(ZP), B(ZP) matches C(OR) -> A and C never in same group."""
-        a = _wrap_merged(
-            _make_prop(PropertySource.OPENRENT, "a", price_pcm=1800)
-        )
-        b = _wrap_merged(
-            _make_prop(PropertySource.ZOOPLA, "b", price_pcm=1800)
-        )
-        c = _wrap_merged(
-            _make_prop(PropertySource.OPENRENT, "c", price_pcm=1800)
-        )
+        a = _wrap_merged(_make_prop(PropertySource.OPENRENT, "a", price_pcm=1800))
+        b = _wrap_merged(_make_prop(PropertySource.ZOOPLA, "b", price_pcm=1800))
+        c = _wrap_merged(_make_prop(PropertySource.OPENRENT, "c", price_pcm=1800))
 
         groups = _group_items_greedy([a, b, c], {})
 
@@ -194,10 +182,7 @@ class TestFalsePositiveCascadePrevention:
             PropertySource.OPENRENT,
             PropertySource.ZOOPLA,
         ]
-        items = [
-            _wrap_merged(_make_prop(src, f"p{i}"))
-            for i, src in enumerate(sources)
-        ]
+        items = [_wrap_merged(_make_prop(src, f"p{i}")) for i, src in enumerate(sources)]
 
         groups = _group_items_greedy(items, {})
 
@@ -240,17 +225,11 @@ class TestSameSourceCollisionGuard:
 
     async def test_greedy_best_score_wins(self) -> None:
         """OR_A, ZP_B (strong match), ZP_C (weak match to A) -> A+B merge, C separate."""
-        a = _wrap_merged(
-            _make_prop(PropertySource.OPENRENT, "a", price_pcm=1800)
-        )
+        a = _wrap_merged(_make_prop(PropertySource.OPENRENT, "a", price_pcm=1800))
         # B: very close match to A
-        b = _wrap_merged(
-            _make_prop(PropertySource.ZOOPLA, "b", price_pcm=1800)
-        )
+        b = _wrap_merged(_make_prop(PropertySource.ZOOPLA, "b", price_pcm=1800))
         # C: also Zoopla but slightly different price (still matching)
-        c = _wrap_merged(
-            _make_prop(PropertySource.ZOOPLA, "c", price_pcm=1810)
-        )
+        c = _wrap_merged(_make_prop(PropertySource.ZOOPLA, "c", price_pcm=1810))
 
         groups = _group_items_greedy([a, b, c], {})
 
@@ -271,11 +250,15 @@ class TestBestOfCanonicalFields:
     def test_full_postcode_from_secondary_source(self) -> None:
         """Canonical has outcode "E8", other has "E8 3RH" -> result has "E8 3RH"."""
         p1 = _make_prop(
-            PropertySource.RIGHTMOVE, "rm1", postcode="E8",
+            PropertySource.RIGHTMOVE,
+            "rm1",
+            postcode="E8",
             first_seen=datetime(2025, 1, 1, tzinfo=UTC),
         )
         p2 = _make_prop(
-            PropertySource.ZOOPLA, "zp1", postcode="E8 3RH",
+            PropertySource.ZOOPLA,
+            "zp1",
+            postcode="E8 3RH",
             first_seen=datetime(2025, 1, 2, tzinfo=UTC),
         )
         sorted_mps = [_wrap_merged(p1), _wrap_merged(p2)]
@@ -290,13 +273,17 @@ class TestBestOfCanonicalFields:
     def test_coordinates_backfill_from_other_source(self) -> None:
         """Canonical has None coords, other has coords -> result has coords."""
         p1 = _make_prop(
-            PropertySource.RIGHTMOVE, "rm1",
-            latitude=None, longitude=None,
+            PropertySource.RIGHTMOVE,
+            "rm1",
+            latitude=None,
+            longitude=None,
             first_seen=datetime(2025, 1, 1, tzinfo=UTC),
         )
         p2 = _make_prop(
-            PropertySource.ZOOPLA, "zp1",
-            latitude=51.5465, longitude=-0.0553,
+            PropertySource.ZOOPLA,
+            "zp1",
+            latitude=51.5465,
+            longitude=-0.0553,
             first_seen=datetime(2025, 1, 2, tzinfo=UTC),
         )
         sorted_mps = [_wrap_merged(p1), _wrap_merged(p2)]
@@ -309,11 +296,15 @@ class TestBestOfCanonicalFields:
     def test_keeps_existing_full_postcode(self) -> None:
         """Canonical already has full postcode -> kept unchanged."""
         p1 = _make_prop(
-            PropertySource.RIGHTMOVE, "rm1", postcode="E8 3RH",
+            PropertySource.RIGHTMOVE,
+            "rm1",
+            postcode="E8 3RH",
             first_seen=datetime(2025, 1, 1, tzinfo=UTC),
         )
         p2 = _make_prop(
-            PropertySource.ZOOPLA, "zp1", postcode="E8 4XY",
+            PropertySource.ZOOPLA,
+            "zp1",
+            postcode="E8 4XY",
             first_seen=datetime(2025, 1, 2, tzinfo=UTC),
         )
         sorted_mps = [_wrap_merged(p1), _wrap_merged(p2)]
@@ -325,13 +316,17 @@ class TestBestOfCanonicalFields:
     def test_keeps_existing_coordinates(self) -> None:
         """Canonical already has coords -> kept unchanged."""
         p1 = _make_prop(
-            PropertySource.RIGHTMOVE, "rm1",
-            latitude=51.0, longitude=-0.1,
+            PropertySource.RIGHTMOVE,
+            "rm1",
+            latitude=51.0,
+            longitude=-0.1,
             first_seen=datetime(2025, 1, 1, tzinfo=UTC),
         )
         p2 = _make_prop(
-            PropertySource.ZOOPLA, "zp1",
-            latitude=51.9, longitude=-0.9,
+            PropertySource.ZOOPLA,
+            "zp1",
+            latitude=51.9,
+            longitude=-0.9,
             first_seen=datetime(2025, 1, 2, tzinfo=UTC),
         )
         sorted_mps = [_wrap_merged(p1), _wrap_merged(p2)]
@@ -344,12 +339,14 @@ class TestBestOfCanonicalFields:
     def test_available_from_earliest_selected(self) -> None:
         """Picks earliest non-null available_from date."""
         p1 = _make_prop(
-            PropertySource.RIGHTMOVE, "rm1",
+            PropertySource.RIGHTMOVE,
+            "rm1",
             first_seen=datetime(2025, 1, 1, tzinfo=UTC),
             available_from=datetime(2025, 3, 1, tzinfo=UTC),
         )
         p2 = _make_prop(
-            PropertySource.ZOOPLA, "zp1",
+            PropertySource.ZOOPLA,
+            "zp1",
             first_seen=datetime(2025, 1, 2, tzinfo=UTC),
             available_from=datetime(2025, 2, 15, tzinfo=UTC),
         )
@@ -362,12 +359,14 @@ class TestBestOfCanonicalFields:
     def test_available_from_null_filled_from_other(self) -> None:
         """Null available_from -> gets date from other source."""
         p1 = _make_prop(
-            PropertySource.RIGHTMOVE, "rm1",
+            PropertySource.RIGHTMOVE,
+            "rm1",
             first_seen=datetime(2025, 1, 1, tzinfo=UTC),
             available_from=None,
         )
         p2 = _make_prop(
-            PropertySource.ZOOPLA, "zp1",
+            PropertySource.ZOOPLA,
+            "zp1",
             first_seen=datetime(2025, 1, 2, tzinfo=UTC),
             available_from=datetime(2025, 2, 15, tzinfo=UTC),
         )
@@ -379,12 +378,14 @@ class TestBestOfCanonicalFields:
 
     def test_all_null_available_from_stays_null(self) -> None:
         p1 = _make_prop(
-            PropertySource.RIGHTMOVE, "rm1",
+            PropertySource.RIGHTMOVE,
+            "rm1",
             first_seen=datetime(2025, 1, 1, tzinfo=UTC),
             available_from=None,
         )
         p2 = _make_prop(
-            PropertySource.ZOOPLA, "zp1",
+            PropertySource.ZOOPLA,
+            "zp1",
             first_seen=datetime(2025, 1, 2, tzinfo=UTC),
             available_from=None,
         )
@@ -397,13 +398,19 @@ class TestBestOfCanonicalFields:
     def test_identity_fields_never_change(self) -> None:
         """source, source_id, url, first_seen always from earliest MP."""
         p1 = _make_prop(
-            PropertySource.RIGHTMOVE, "rm1", postcode="E8",
-            latitude=None, longitude=None,
+            PropertySource.RIGHTMOVE,
+            "rm1",
+            postcode="E8",
+            latitude=None,
+            longitude=None,
             first_seen=datetime(2025, 1, 1, tzinfo=UTC),
         )
         p2 = _make_prop(
-            PropertySource.ZOOPLA, "zp1", postcode="E8 3RH",
-            latitude=51.5, longitude=-0.05,
+            PropertySource.ZOOPLA,
+            "zp1",
+            postcode="E8 3RH",
+            latitude=51.5,
+            longitude=-0.05,
             first_seen=datetime(2025, 1, 2, tzinfo=UTC),
         )
         sorted_mps = [_wrap_merged(p1), _wrap_merged(p2)]
@@ -572,9 +579,7 @@ class TestPerceptualImageDedup:
         assert len(result) == 1
         assert result[0] is img
 
-    def test_cross_source_images_found_in_separate_cache_dirs(
-        self, tmp_path: Path
-    ) -> None:
+    def test_cross_source_images_found_in_separate_cache_dirs(self, tmp_path: Path) -> None:
         """Images cached under different unique_ids are found and deduplicated.
 
         This simulates the real pipeline: OpenRent images are cached under
@@ -600,19 +605,13 @@ class TestPerceptualImageDedup:
         # Cache each image under its own source's directory (real pipeline flow)
         cache_or = get_cache_dir(data_dir, uid_or)
         cache_or.mkdir(parents=True, exist_ok=True)
-        save_image_bytes(
-            cache_or / url_to_filename(str(img_or.url), "gallery", 0), same_bytes
-        )
+        save_image_bytes(cache_or / url_to_filename(str(img_or.url), "gallery", 0), same_bytes)
 
         cache_zp = get_cache_dir(data_dir, uid_zp)
         cache_zp.mkdir(parents=True, exist_ok=True)
-        save_image_bytes(
-            cache_zp / url_to_filename(str(img_zp.url), "gallery", 0), same_bytes
-        )
+        save_image_bytes(cache_zp / url_to_filename(str(img_zp.url), "gallery", 0), same_bytes)
 
-        result = _perceptual_dedup_images(
-            [img_or, img_zp], data_dir, [uid_or, uid_zp]
-        )
+        result = _perceptual_dedup_images([img_or, img_zp], data_dir, [uid_or, uid_zp])
 
         assert len(result) == 1
         # Zoopla has higher source priority
@@ -649,9 +648,7 @@ class TestPerceptualImageDedup:
             _make_distinct_image_bytes(),
         )
 
-        result = _perceptual_dedup_images(
-            [img_or, img_zp], data_dir, [uid_or, uid_zp]
-        )
+        result = _perceptual_dedup_images([img_or, img_zp], data_dir, [uid_or, uid_zp])
 
         assert len(result) == 2
 
@@ -675,11 +672,13 @@ class TestFloorplanQualitySelection:
         )
 
         p1 = _make_prop(
-            PropertySource.OPENRENT, "or1",
+            PropertySource.OPENRENT,
+            "or1",
             first_seen=datetime(2025, 1, 1, tzinfo=UTC),
         )
         p2 = _make_prop(
-            PropertySource.ZOOPLA, "zp1",
+            PropertySource.ZOOPLA,
+            "zp1",
             first_seen=datetime(2025, 1, 2, tzinfo=UTC),
         )
 
@@ -778,57 +777,85 @@ class TestRegressionLegitMerges:
         # Pair 1: same property on OR + ZP (E8 3RH, Mare St)
         pair1_a = _wrap_merged(
             _make_prop(
-                PropertySource.OPENRENT, "pair1-or", price_pcm=1800,
-                postcode="E8 3RH", address="123 Mare Street",
-                latitude=51.5465, longitude=-0.0553,
+                PropertySource.OPENRENT,
+                "pair1-or",
+                price_pcm=1800,
+                postcode="E8 3RH",
+                address="123 Mare Street",
+                latitude=51.5465,
+                longitude=-0.0553,
             )
         )
         pair1_b = _wrap_merged(
             _make_prop(
-                PropertySource.ZOOPLA, "pair1-zp", price_pcm=1800,
-                postcode="E8 3RH", address="123 Mare Street",
-                latitude=51.5465, longitude=-0.0553,
+                PropertySource.ZOOPLA,
+                "pair1-zp",
+                price_pcm=1800,
+                postcode="E8 3RH",
+                address="123 Mare Street",
+                latitude=51.5465,
+                longitude=-0.0553,
             )
         )
 
         # Pair 2: same property on RM + OTM (N1 5AB, Upper St — different area)
         pair2_a = _wrap_merged(
             _make_prop(
-                PropertySource.RIGHTMOVE, "pair2-rm", price_pcm=2500,
-                postcode="N1 5AB", address="45 Upper Street",
-                latitude=51.5380, longitude=-0.1030,
+                PropertySource.RIGHTMOVE,
+                "pair2-rm",
+                price_pcm=2500,
+                postcode="N1 5AB",
+                address="45 Upper Street",
+                latitude=51.5380,
+                longitude=-0.1030,
             )
         )
         pair2_b = _wrap_merged(
             _make_prop(
-                PropertySource.ONTHEMARKET, "pair2-otm", price_pcm=2500,
-                postcode="N1 5AB", address="45 Upper Street",
-                latitude=51.5380, longitude=-0.1030,
+                PropertySource.ONTHEMARKET,
+                "pair2-otm",
+                price_pcm=2500,
+                postcode="N1 5AB",
+                address="45 Upper Street",
+                latitude=51.5380,
+                longitude=-0.1030,
             )
         )
 
         # Pair 3: same property on OR + RM (E2 9PQ, Bethnal Green Rd)
         pair3_a = _wrap_merged(
             _make_prop(
-                PropertySource.OPENRENT, "pair3-or", price_pcm=2200,
-                postcode="E2 9PQ", address="78 Bethnal Green Road",
-                latitude=51.5240, longitude=-0.0680,
+                PropertySource.OPENRENT,
+                "pair3-or",
+                price_pcm=2200,
+                postcode="E2 9PQ",
+                address="78 Bethnal Green Road",
+                latitude=51.5240,
+                longitude=-0.0680,
             )
         )
         pair3_b = _wrap_merged(
             _make_prop(
-                PropertySource.RIGHTMOVE, "pair3-rm", price_pcm=2200,
-                postcode="E2 9PQ", address="78 Bethnal Green Road",
-                latitude=51.5240, longitude=-0.0680,
+                PropertySource.RIGHTMOVE,
+                "pair3-rm",
+                price_pcm=2200,
+                postcode="E2 9PQ",
+                address="78 Bethnal Green Road",
+                latitude=51.5240,
+                longitude=-0.0680,
             )
         )
 
         # Singleton: unique property (SW1 area, completely different)
         singleton = _wrap_merged(
             _make_prop(
-                PropertySource.ZOOPLA, "singleton-zp", price_pcm=3500,
-                postcode="SW1A 1AA", address="10 Downing Street",
-                latitude=51.5034, longitude=-0.1276,
+                PropertySource.ZOOPLA,
+                "singleton-zp",
+                price_pcm=3500,
+                postcode="SW1A 1AA",
+                address="10 Downing Street",
+                latitude=51.5034,
+                longitude=-0.1276,
             )
         )
 
@@ -944,9 +971,7 @@ def _multi_source_merged_property_st(draw: st.DrawFn) -> MergedProperty:
 class TestGreedyInvariants:
     @given(items=st.lists(_merged_property_st(), min_size=0, max_size=12))
     @settings(max_examples=50)
-    def test_no_same_source_collision_invariant(
-        self, items: list[MergedProperty]
-    ) -> None:
+    def test_no_same_source_collision_invariant(self, items: list[MergedProperty]) -> None:
         """No group should have duplicate sources."""
         # Deduplicate by unique_id first (hypothesis may generate same source_id)
         seen: dict[str, MergedProperty] = {}
@@ -1044,9 +1069,13 @@ class TestDeduplicatorIntegration:
         # Different property (different outcode entirely — won't match)
         mp3 = _wrap_merged(
             _make_prop(
-                PropertySource.RIGHTMOVE, "rm1", price_pcm=3000,
-                postcode="N1 5AB", address="45 Upper Street",
-                latitude=51.57, longitude=-0.08,
+                PropertySource.RIGHTMOVE,
+                "rm1",
+                price_pcm=3000,
+                postcode="N1 5AB",
+                address="45 Upper Street",
+                latitude=51.57,
+                longitude=-0.08,
             )
         )
 
@@ -1069,13 +1098,19 @@ class TestDeduplicatorIntegration:
 
         # RM has full postcode but no coords
         p1 = _make_prop(
-            PropertySource.RIGHTMOVE, "rm1", postcode="E8 3RH",
-            latitude=None, longitude=None,
+            PropertySource.RIGHTMOVE,
+            "rm1",
+            postcode="E8 3RH",
+            latitude=None,
+            longitude=None,
             first_seen=datetime(2025, 1, 1, tzinfo=UTC),
         )
         p2 = _make_prop(
-            PropertySource.ZOOPLA, "zp1", postcode="E8 3RH",
-            latitude=51.5465, longitude=-0.0553,
+            PropertySource.ZOOPLA,
+            "zp1",
+            postcode="E8 3RH",
+            latitude=51.5465,
+            longitude=-0.0553,
             first_seen=datetime(2025, 1, 2, tzinfo=UTC),
         )
 
@@ -1260,16 +1295,20 @@ class TestImageEvidenceRequirement:
 
         # Rightmove with outcode only (realistic — RM rarely has full postcodes)
         p_rm = _make_prop(
-            PropertySource.RIGHTMOVE, "rm1",
+            PropertySource.RIGHTMOVE,
+            "rm1",
             postcode="E8",
-            latitude=51.5465, longitude=-0.0553,
+            latitude=51.5465,
+            longitude=-0.0553,
             price_pcm=1800,
         )
         # Zoopla with full postcode
         p_zp = _make_prop(
-            PropertySource.ZOOPLA, "zp1",
+            PropertySource.ZOOPLA,
+            "zp1",
             postcode="E8 3RH",
-            latitude=51.5467, longitude=-0.0551,
+            latitude=51.5467,
+            longitude=-0.0551,
             price_pcm=1800,
         )
 
@@ -1299,13 +1338,17 @@ class TestImageEvidenceRequirement:
         Can't penalize for missing data — no galleries means we don't know.
         """
         p_rm = _make_prop(
-            PropertySource.RIGHTMOVE, "rm1",
-            latitude=51.5465, longitude=-0.0553,
+            PropertySource.RIGHTMOVE,
+            "rm1",
+            latitude=51.5465,
+            longitude=-0.0553,
             price_pcm=1800,
         )
         p_zp = _make_prop(
-            PropertySource.ZOOPLA, "zp1",
-            latitude=51.5467, longitude=-0.0551,
+            PropertySource.ZOOPLA,
+            "zp1",
+            latitude=51.5467,
+            longitude=-0.0551,
             price_pcm=1800,
         )
 
@@ -1324,13 +1367,17 @@ class TestImageEvidenceRequirement:
         The "both_have_galleries" check requires BOTH to have hashes.
         """
         p_rm = _make_prop(
-            PropertySource.RIGHTMOVE, "rm1",
-            latitude=51.5465, longitude=-0.0553,
+            PropertySource.RIGHTMOVE,
+            "rm1",
+            latitude=51.5465,
+            longitude=-0.0553,
             price_pcm=1800,
         )
         p_zp = _make_prop(
-            PropertySource.ZOOPLA, "zp1",
-            latitude=51.5467, longitude=-0.0551,
+            PropertySource.ZOOPLA,
+            "zp1",
+            latitude=51.5467,
+            longitude=-0.0551,
             price_pcm=1800,
         )
 
@@ -1350,13 +1397,17 @@ class TestImageEvidenceRequirement:
     async def test_image_match_present_still_merges(self) -> None:
         """Both have galleries AND images match → merges normally."""
         p_rm = _make_prop(
-            PropertySource.RIGHTMOVE, "rm1",
-            latitude=51.5465, longitude=-0.0553,
+            PropertySource.RIGHTMOVE,
+            "rm1",
+            latitude=51.5465,
+            longitude=-0.0553,
             price_pcm=1800,
         )
         p_zp = _make_prop(
-            PropertySource.ZOOPLA, "zp1",
-            latitude=51.5467, longitude=-0.0551,
+            PropertySource.ZOOPLA,
+            "zp1",
+            latitude=51.5467,
+            longitude=-0.0551,
             price_pcm=1800,
         )
 
@@ -1384,15 +1435,19 @@ class TestImageEvidenceRequirement:
         (empty lists), so the MEDIUM match is rejected.
         """
         p_rm = _make_prop(
-            PropertySource.RIGHTMOVE, "rm1",
+            PropertySource.RIGHTMOVE,
+            "rm1",
             postcode="E8",
-            latitude=51.5465, longitude=-0.0553,
+            latitude=51.5465,
+            longitude=-0.0553,
             price_pcm=1800,
         )
         p_zp = _make_prop(
-            PropertySource.ZOOPLA, "zp1",
+            PropertySource.ZOOPLA,
+            "zp1",
             postcode="E8 3RH",
-            latitude=51.5467, longitude=-0.0551,
+            latitude=51.5467,
+            longitude=-0.0551,
             price_pcm=1800,
         )
 
@@ -1421,11 +1476,13 @@ class TestImageEvidenceRequirement:
         so they're uninformative — only image evidence can disambiguate.
         """
         p_rm = _make_prop(
-            PropertySource.RIGHTMOVE, "rm1",
+            PropertySource.RIGHTMOVE,
+            "rm1",
             price_pcm=1800,
         )
         p_zp = _make_prop(
-            PropertySource.ZOOPLA, "zp1",
+            PropertySource.ZOOPLA,
+            "zp1",
             price_pcm=1800,
         )
 
@@ -1451,7 +1508,8 @@ class TestImageEvidenceRequirement:
         street, price (~125 points) but completely different gallery images.
         """
         p_rm = _make_prop(
-            PropertySource.RIGHTMOVE, "rm1",
+            PropertySource.RIGHTMOVE,
+            "rm1",
             price_pcm=1750,
             postcode="E3 4RB",
             latitude=51.5310,
@@ -1459,7 +1517,8 @@ class TestImageEvidenceRequirement:
             address="15 Copperfield Road, London",
         )
         p_or = _make_prop(
-            PropertySource.OPENRENT, "or1",
+            PropertySource.OPENRENT,
+            "or1",
             price_pcm=1750,
             postcode="E3 4RB",
             latitude=51.5310,
@@ -1486,7 +1545,8 @@ class TestImageEvidenceRequirement:
         When gallery images confirm it's the same flat, the match proceeds.
         """
         p_rm = _make_prop(
-            PropertySource.RIGHTMOVE, "rm1",
+            PropertySource.RIGHTMOVE,
+            "rm1",
             price_pcm=1750,
             postcode="E3 4RB",
             latitude=51.5310,
@@ -1494,7 +1554,8 @@ class TestImageEvidenceRequirement:
             address="15 Copperfield Road, London",
         )
         p_zp = _make_prop(
-            PropertySource.ZOOPLA, "zp1",
+            PropertySource.ZOOPLA,
+            "zp1",
             price_pcm=1750,
             postcode="E3 4RB",
             latitude=51.5310,
@@ -1534,9 +1595,7 @@ class TestGreedyInvariantsMultiSource:
 
     @given(items=st.lists(_multi_source_merged_property_st(), min_size=0, max_size=12))
     @settings(max_examples=50)
-    def test_no_source_appears_twice_in_group(
-        self, items: list[MergedProperty]
-    ) -> None:
+    def test_no_source_appears_twice_in_group(self, items: list[MergedProperty]) -> None:
         """No merged group has any PropertySource appearing more than once
         across all member `sources` tuples."""
         seen: dict[str, MergedProperty] = {}

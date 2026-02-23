@@ -305,13 +305,9 @@ class OffMarketChecker:
         for prop_id, source, url in checks:
             by_source.setdefault(source, []).append((prop_id, url))
 
-        async def _check_source(
-            source: str, items: list[tuple[str, str]]
-        ) -> list[CheckResult]:
+        async def _check_source(source: str, items: list[tuple[str, str]]) -> list[CheckResult]:
             source_results: list[CheckResult] = []
-            breaker = ConsecutiveFailureBreaker(
-                threshold=_CIRCUIT_BREAKER_THRESHOLD, name=source
-            )
+            breaker = ConsecutiveFailureBreaker(threshold=_CIRCUIT_BREAKER_THRESHOLD, name=source)
             delay = _SOURCE_DELAYS.get(source, 1.0)
 
             for i, (prop_id, url) in enumerate(items):
@@ -354,9 +350,7 @@ class OffMarketChecker:
             return source_results
 
         # Run all sources concurrently (rate limiting is per-source)
-        source_tasks = [
-            _check_source(source, items) for source, items in by_source.items()
-        ]
+        source_tasks = [_check_source(source, items) for source, items in by_source.items()]
         all_source_results = await asyncio.gather(*source_tasks)
 
         results: list[CheckResult] = []

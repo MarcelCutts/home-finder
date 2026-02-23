@@ -139,9 +139,7 @@ async def row_to_merged_property(
     row: aiosqlite.Row,
     *,
     load_images: bool = True,
-    get_property_images: (
-        Callable[[str], Coroutine[Any, Any, list[PropertyImage]]] | None
-    ) = None,
+    get_property_images: (Callable[[str], Coroutine[Any, Any, list[PropertyImage]]] | None) = None,
 ) -> MergedProperty:
     """Convert a database row to a MergedProperty.
 
@@ -294,19 +292,28 @@ def build_merged_insert_columns(
         if merged.descriptions
         else None
     )
-    columns.extend([
-        "sources", "source_urls", "min_price", "max_price", "descriptions_json",
-        "floor_area_sqft", "floor_area_source",
-    ])
-    values.extend([
-        sources_json,
-        source_urls_json,
-        merged.min_price,
-        merged.max_price,
-        descriptions_json,
-        merged.floor_area_sqft,
-        merged.floor_area_source,
-    ])
+    columns.extend(
+        [
+            "sources",
+            "source_urls",
+            "min_price",
+            "max_price",
+            "descriptions_json",
+            "floor_area_sqft",
+            "floor_area_source",
+        ]
+    )
+    values.extend(
+        [
+            sources_json,
+            source_urls_json,
+            merged.min_price,
+            merged.max_price,
+            descriptions_json,
+            merged.floor_area_sqft,
+            merged.floor_area_source,
+        ]
+    )
     if extra:
         for col, val in extra.items():
             columns.append(col)

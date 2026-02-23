@@ -7,6 +7,7 @@ Requires: pytest-playwright, `uv run playwright install chromium`
 """
 
 import asyncio
+import re
 import socket
 import threading
 import time
@@ -36,6 +37,8 @@ from home_finder.models import (
     TransportMode,
     ValueAnalysis,
 )
+
+from .conftest import wait_for_htmx_settle
 
 
 def _find_free_port() -> int:
@@ -192,9 +195,9 @@ async def _populate_db(db_path: str):
     await storage.close()
 
 
-@pytest.fixture(scope="module")
+@pytest.fixture(scope="session")
 def server_url(tmp_path_factory):
-    """Start a test server with pre-populated data (module-scoped)."""
+    """Start a test server with pre-populated data (session-scoped)."""
     import uvicorn
 
     from home_finder.web.app import create_app
@@ -236,7 +239,7 @@ def server_url(tmp_path_factory):
     app = create_app(settings)
 
     port = _find_free_port()
-    base_url = f"http://127.0.0.1:{port}"
+    base = f"http://127.0.0.1:{port}"
 
     config = uvicorn.Config(
         app,
@@ -254,7 +257,7 @@ def server_url(tmp_path_factory):
 
     for _ in range(50):
         try:
-            resp = httpx.get(f"{base_url}/health", timeout=1)
+            resp = httpx.get(f"{base}/health", timeout=1)
             if resp.status_code == 200:
                 break
         except Exception:
@@ -263,53 +266,50 @@ def server_url(tmp_path_factory):
     else:
         pytest.fail("Test server did not start")
 
-    yield base_url
+    yield base
 
     server.should_exit = True
     thread.join(timeout=5)
+
+
+@pytest.fixture(scope="session")
+def base_url(server_url):
+    """Override pytest-playwright's base_url so tests can use relative paths."""
+    return server_url
 
 
 @pytest.mark.browser
 class TestDashboardBrowser:
     """Test dashboard page in real browser."""
 
-    def test_loads_property_cards(self, server_url, page):
-        page.goto(server_url)
+    def test_loads_property_cards(self, page):
+        page.goto("/")
         cards = page.locator("article.property-card")
-        # We populated 5 properties
-        assert cards.count() >= 1
+        expect(cards.first).to_be_visible()
 
-    def test_filter_by_bedrooms(self, server_url, page):
+    def test_filter_by_bedrooms(self, page):
         # Navigate directly with filter param to test server-side filtering
-        page.goto(f"{server_url}/?bedrooms=1")
-        page.wait_for_load_state("networkidle")
-        # Dropdown should reflect the filter
-        selected = page.locator("select[name='bedrooms']").input_value()
-        assert selected == "1"
-        # All visible cards should be 1-bed (or page is valid HTML)
-        assert page.locator("article").count() >= 0
+        page.goto("/?bedrooms=1")
+        # Radio button should reflect the filter (auto-retries until checked)
+        expect(page.locator("input[name='bedrooms'][value='1']")).to_be_checked()
 
-    def test_filter_by_area(self, server_url, page):
-        page.goto(f"{server_url}/?area=E8")
-        page.wait_for_load_state("networkidle")
-        selected = page.locator("select[name='area']").input_value()
-        assert selected == "E8"
+    def test_filter_by_area(self, page):
+        page.goto("/?area=E8")
+        expect(page.locator("select[name='area']")).to_have_value("E8")
 
-    def test_sort_options(self, server_url, page):
-        page.goto(f"{server_url}/?sort=price_asc")
-        page.wait_for_load_state("networkidle")
-        selected = page.locator("select[name='sort']").input_value()
-        assert selected == "price_asc"
+    def test_sort_options(self, page):
+        page.goto("/?sort=price_asc")
+        expect(page.locator("select[name='sort']")).to_have_value("price_asc")
 
-    def test_htmx_partial_rendering(self, server_url, page):
-        page.goto(server_url)
-        # Page title should be present initially
-        assert page.locator("h1, title").first is not None
+    def test_htmx_partial_rendering(self, page):
+        page.goto("/")
+        # Wait for initial content to render
+        expect(page.locator("article.property-card").first).to_be_visible()
 
         # Trigger HTMX filter — page title should still be present (no full reload)
-        page.select_option("select[name='bedrooms']", "1")
+        page.locator("label[for='beds-1']").click()
         page.click("button[type='submit']")
-        page.wait_for_load_state("networkidle")
+        wait_for_htmx_settle(page)
 
         # Page title should still be present (HTMX only replaces #results)
         title = page.title()
@@ -317,89 +317,116 @@ class TestDashboardBrowser:
 
 
 @pytest.mark.browser
+class TestDialogVisibility:
+    """Regression tests for dialog hidden/visible state.
+
+    Catches the CSS ``display: flex`` bug that overrode ``<dialog>`` hidden
+    state, and CORS/JS errors that shipped silently.
+    """
+
+    def test_filter_dialog_hidden_on_page_load(self, page):
+        """Regression: dialog must not be visible on initial load."""
+        page.goto("/")
+        expect(page.locator("#filter-modal")).not_to_be_visible()
+
+    def test_properties_visible_on_page_load(self, page):
+        """Properties should be visible and not obscured by overlays."""
+        page.goto("/")
+        cards = page.locator("article.property-card")
+        expect(cards.first).to_be_visible()
+
+    def test_filter_dialog_full_lifecycle(self, page):
+        """Hidden -> open -> close -> hidden (full round-trip)."""
+        page.goto("/")
+        dialog = page.locator("#filter-modal")
+        expect(dialog).not_to_be_visible()
+
+        page.get_by_role("button", name="Filters").click()
+        expect(dialog).to_be_visible()
+
+        page.get_by_role("button", name="Close filters").click()
+        expect(dialog).not_to_be_visible()
+
+    def test_no_console_errors_on_dashboard(self, page, console_errors):
+        """No JS/CORS errors on dashboard load."""
+        page.goto("/")
+        # Wait for page content to render (catches errors from JS execution)
+        expect(page.locator("article.property-card").first).to_be_visible()
+        assert not console_errors, f"Console errors: {console_errors}"
+
+    def test_no_console_errors_on_detail(self, page, console_errors):
+        """No JS/CORS errors on detail page load."""
+        page.goto("/property/openrent:1003")
+        expect(page.locator("h1")).to_be_visible()
+        assert not console_errors, f"Console errors: {console_errors}"
+
+
+@pytest.mark.browser
 class TestPropertyDetailBrowser:
     """Test property detail page in real browser."""
 
-    def test_detail_page_loads(self, server_url, page):
-        page.goto(server_url)
+    def test_detail_page_loads(self, page):
+        page.goto("/")
         # Click the first property card link
         first_card_link = page.locator("article.property-card a").first
         first_card_link.click()
-        page.wait_for_load_state("networkidle")
 
         # h1 should be visible on detail page
-        h1 = page.locator("h1")
-        assert h1.is_visible()
+        expect(page.locator("h1")).to_be_visible()
 
-    def test_gallery_lightbox(self, server_url, page):
+    def test_gallery_lightbox(self, page):
         # Navigate to a property with images (analyzed property 1003)
-        page.goto(f"{server_url}/property/openrent:1003")
-        page.wait_for_load_state("networkidle")
+        page.goto("/property/openrent:1003")
+        expect(page.locator("h1")).to_be_visible()
 
-        # Check if there are gallery images
+        # Gallery images depend on disk cache (not populated in test data)
         gallery_imgs = page.locator("[data-lightbox] img, [data-lightbox]")
-        if gallery_imgs.count() > 0:
-            gallery_imgs.first.click()
-            # Check if gallery overlay appears
-            gallery_view = page.locator("#gallery-view")
-            if gallery_view.count() > 0:
-                assert gallery_view.first.is_visible()
-                # Press Escape to close
-                page.keyboard.press("Escape")
-                assert not gallery_view.first.is_visible()
+        if gallery_imgs.count() == 0:
+            pytest.skip("No gallery images rendered (images not cached to disk in test)")
 
-    def test_quality_analysis_section(self, server_url, page):
+        gallery_imgs.first.click()
+        gallery_view = page.locator("#gallery-view")
+        expect(gallery_view).to_be_visible()
+        # Press Escape to close
+        page.keyboard.press("Escape")
+        expect(gallery_view).not_to_be_visible()
+
+    def test_quality_analysis_section(self, page):
         # Property 1003 has quality analysis
-        page.goto(f"{server_url}/property/openrent:1003")
-        page.wait_for_load_state("networkidle")
-
+        page.goto("/property/openrent:1003")
         # Star rating should be visible
         stars = page.locator(".star-rating, .star")
-        assert stars.count() > 0
+        expect(stars.first).to_be_visible()
 
-    def test_map_rendered(self, server_url, page):
+    def test_map_rendered(self, page):
         # Property 1003 has coordinates
-        page.goto(f"{server_url}/property/openrent:1003")
-        page.wait_for_load_state("networkidle")
-
-        # Leaflet map container should exist on the detail page
+        page.goto("/property/openrent:1003")
+        # Leaflet map container should exist and be visible
         map_container = page.locator(".leaflet-container")
-        # May take a moment to initialize
-        if map_container.count() > 0:
-            assert map_container.first.is_visible()
+        expect(map_container.first).to_be_visible()
 
 
 @pytest.mark.browser
 class TestMapViewBrowser:
     """Test dashboard map view."""
 
-    def test_map_toggle(self, server_url, page):
-        page.goto(server_url)
-        page.wait_for_load_state("networkidle")
-
-        # Click map view toggle
+    def test_map_toggle(self, page):
+        page.goto("/")
+        # Map toggle button should exist on the dashboard
         map_btn = page.locator("button[data-view='map']")
-        if map_btn.count() > 0:
-            map_btn.click()
-            # Dashboard map should become visible
-            dashboard_map = page.locator("#dashboard-map")
-            # Wait for it to become visible
-            page.wait_for_timeout(1000)
-            assert not dashboard_map.is_hidden()
+        expect(map_btn).to_be_visible()
+        map_btn.click()
+        # Dashboard map should become visible
+        expect(page.locator("#dashboard-map")).to_be_visible()
 
-    def test_map_markers(self, server_url, page):
-        page.goto(server_url)
-        page.wait_for_load_state("networkidle")
-
+    def test_map_markers(self, page):
+        page.goto("/")
         map_btn = page.locator("button[data-view='map']")
-        if map_btn.count() > 0:
-            map_btn.click()
-            page.wait_for_timeout(2000)  # Wait for map + markers to render
-
-            markers = page.locator(".leaflet-marker-icon")
-            # We have properties with coordinates, so markers should appear
-            if markers.count() > 0:
-                assert markers.count() >= 1
+        expect(map_btn).to_be_visible()
+        map_btn.click()
+        markers = page.locator(".leaflet-marker-icon")
+        # Wait for map + markers to render
+        expect(markers.first).to_be_visible()
 
 
 @pytest.mark.browser
@@ -407,10 +434,11 @@ class TestMapViewBrowser:
 class TestResponsiveBrowser:
     """Test responsive layout at different widths."""
 
-    def test_responsive(self, server_url, page, width):
+    def test_responsive(self, page, width):
         page.set_viewport_size({"width": width, "height": 900})
-        page.goto(server_url)
-        page.wait_for_load_state("networkidle")
+        page.goto("/")
+        # Wait for layout to render before measuring scroll dimensions
+        expect(page.locator("article.property-card").first).to_be_visible()
 
         # Check for no horizontal overflow
         body_scroll_width = page.evaluate("document.body.scrollWidth")
@@ -424,9 +452,9 @@ class TestFilterBehavior:
 
     # -- Group 1: No Auto-Apply --
 
-    def test_select_change_does_not_auto_apply(self, server_url, page):
+    def test_select_change_does_not_auto_apply(self, page):
         """Changing a select should NOT auto-submit the form."""
-        page.goto(server_url)
+        page.goto("/")
         nav_count = page.locator("nav #nav-count")
         expect(nav_count).to_contain_text("5 properties")
 
@@ -434,6 +462,7 @@ class TestFilterBehavior:
         page.on("request", lambda req: requests.append(req.url))
 
         page.get_by_label("Area", exact=True).select_option("E8")
+        # Deliberate delay: verify no auto-submit fires within debounce window
         page.wait_for_timeout(800)
 
         # No main-page HTMX request should have fired
@@ -441,9 +470,9 @@ class TestFilterBehavior:
         assert not htmx_requests, f"Unexpected requests: {htmx_requests}"
         expect(nav_count).to_contain_text("5 properties")
 
-    def test_bedrooms_radio_does_not_auto_apply(self, server_url, page):
+    def test_bedrooms_radio_does_not_auto_apply(self, page):
         """Clicking a bedrooms radio should NOT auto-submit."""
-        page.goto(server_url)
+        page.goto("/")
         nav_count = page.locator("nav #nav-count")
         expect(nav_count).to_contain_text("5 properties")
 
@@ -451,15 +480,16 @@ class TestFilterBehavior:
         page.on("request", lambda req: requests.append(req.url))
 
         page.locator("label[for='beds-2']").click()
+        # Deliberate delay: verify no auto-submit fires within debounce window
         page.wait_for_timeout(800)
 
         htmx_requests = [r for r in requests if "127.0.0.1" in r and "/count" not in r]
         assert not htmx_requests, f"Unexpected requests: {htmx_requests}"
         expect(nav_count).to_contain_text("5 properties")
 
-    def test_apply_button_submits_and_updates(self, server_url, page):
+    def test_apply_button_submits_and_updates(self, page):
         """Clicking Apply submits filters and updates results."""
-        page.goto(server_url)
+        page.goto("/")
         page.get_by_label("Area", exact=True).select_option("E5")
 
         with page.expect_response(lambda r: "127.0.0.1" in r.url and "area=E5" in r.url):
@@ -470,53 +500,59 @@ class TestFilterBehavior:
 
     # -- Group 2: Filter Modal Lifecycle --
 
-    def test_modal_opens(self, server_url, page):
+    def test_modal_opens(self, page):
         """Clicking Filters button opens the dialog."""
-        page.goto(server_url)
-        page.locator("#open-filters-btn").click()
-        expect(page.locator("#filter-modal")).to_be_visible()
+        page.goto("/")
+        dialog = page.locator("#filter-modal")
+        expect(dialog).not_to_be_visible()
+        page.get_by_role("button", name="Filters").click()
+        expect(dialog).to_be_visible()
 
-    def test_modal_stays_open_on_filter_change(self, server_url, page):
+    def test_modal_stays_open_on_filter_change(self, page):
         """Changing a filter inside the modal should NOT close it."""
-        page.goto(server_url)
-        page.locator("#open-filters-btn").click()
-        expect(page.locator("#filter-modal")).to_be_visible()
+        page.goto("/")
+        dialog = page.locator("#filter-modal")
+        expect(dialog).not_to_be_visible()
+        page.get_by_role("button", name="Filters").click()
+        expect(dialog).to_be_visible()
 
         page.get_by_label("Hob type").select_option("gas")
-        # Wait for /count HTMX request to complete
-        page.wait_for_timeout(1000)
-        expect(page.locator("#filter-modal")).to_be_visible()
+        # Wait for /count HTMX request to settle
+        wait_for_htmx_settle(page)
+        expect(dialog).to_be_visible()
 
-    def test_modal_count_updates_on_filter_change(self, server_url, page):
+    def test_modal_count_updates_on_filter_change(self, page):
         """Modal count updates live when filters change."""
-        page.goto(server_url)
-        page.locator("#open-filters-btn").click()
+        page.goto("/")
+        dialog = page.locator("#filter-modal")
+        expect(dialog).not_to_be_visible()
+        page.get_by_role("button", name="Filters").click()
         expect(page.locator("#modal-count")).to_have_text("5")
 
         page.get_by_label("Hob type").select_option("gas")
         # Auto-retries until count updates via /count endpoint
         expect(page.locator("#modal-count")).to_have_text("2")
 
-    def test_modal_apply_closes_and_filters(self, server_url, page):
+    def test_modal_apply_closes_and_filters(self, page):
         """Modal Apply closes dialog and applies filters."""
-        page.goto(server_url)
-        page.locator("#open-filters-btn").click()
+        page.goto("/")
+        page.get_by_role("button", name="Filters").click()
         page.get_by_label("Hob type").select_option("gas")
         expect(page.locator("#modal-count")).to_have_text("2")
 
-        page.locator(".filter-modal-apply").click()
+        page.get_by_role("button", name=re.compile(r"Show \d+ properties")).click()
 
         expect(page.locator("#filter-modal")).not_to_be_visible()
         expect(page.locator("nav #nav-count")).to_contain_text("2 propert")
         assert "hob_type=gas" in page.url
 
-    def test_modal_close_without_applying(self, server_url, page):
+    def test_modal_close_without_applying(self, page):
         """Closing modal without Apply should not change results."""
-        page.goto(server_url)
+        page.goto("/")
         nav_count = page.locator("nav #nav-count")
         expect(nav_count).to_contain_text("5 properties")
 
-        page.locator("#open-filters-btn").click()
+        page.get_by_role("button", name="Filters").click()
         page.get_by_label("Hob type").select_option("gas")
         expect(page.locator("#modal-count")).to_have_text("2")
 
@@ -525,14 +561,14 @@ class TestFilterBehavior:
         expect(page.locator("#filter-modal")).not_to_be_visible()
         expect(nav_count).to_contain_text("5 properties")
 
-    def test_modal_reset_all(self, server_url, page):
+    def test_modal_reset_all(self, page):
         """Reset all clears both modal and primary filters."""
         # Start with an active bedrooms filter
-        page.goto(f"{server_url}/?bedrooms=1")
+        page.goto("/?bedrooms=1")
         nav_count = page.locator("nav #nav-count")
         expect(nav_count).to_contain_text("3 propert")
 
-        page.locator("#open-filters-btn").click()
+        page.get_by_role("button", name="Filters").click()
         page.get_by_label("Hob type").select_option("gas")
         expect(page.locator("#modal-count")).to_have_text("1")
 
@@ -544,52 +580,52 @@ class TestFilterBehavior:
 
     # -- Group 2b: Modal Count Accuracy --
 
-    def test_modal_count_area_filter(self, server_url, page):
+    def test_modal_count_area_filter(self, page):
         """Modal count is accurate with area filter active."""
         # E8 has properties 1001, 1002
-        page.goto(f"{server_url}/?area=E8")
-        page.locator("#open-filters-btn").click()
+        page.goto("/?area=E8")
+        page.get_by_role("button", name="Filters").click()
         expect(page.locator("#modal-count")).to_have_text("2")
 
-    def test_modal_count_bedrooms_filter(self, server_url, page):
+    def test_modal_count_bedrooms_filter(self, page):
         """Modal count is accurate with bedrooms filter active."""
         # 2-bed: properties 1002, 1004
-        page.goto(f"{server_url}/?bedrooms=2")
-        page.locator("#open-filters-btn").click()
+        page.goto("/?bedrooms=2")
+        page.get_by_role("button", name="Filters").click()
         expect(page.locator("#modal-count")).to_have_text("2")
 
-    def test_modal_count_combined_filters(self, server_url, page):
+    def test_modal_count_combined_filters(self, page):
         """Modal count is accurate with primary + modal filters combined."""
         # bedrooms=1 + area=E8 = property 1001 only
-        page.goto(f"{server_url}/?bedrooms=1&area=E8")
-        page.locator("#open-filters-btn").click()
+        page.goto("/?bedrooms=1&area=E8")
+        page.get_by_role("button", name="Filters").click()
         expect(page.locator("#modal-count")).to_have_text("1")
 
         # Adding hob_type=gas should narrow to 0 (1001 has no quality analysis)
         page.get_by_label("Hob type").select_option("gas")
         expect(page.locator("#modal-count")).to_have_text("0")
 
-    def test_modal_reset_then_apply_delivers_all_results(self, server_url, page):
+    def test_modal_reset_then_apply_delivers_all_results(self, page):
         """Reset all followed by Apply returns the full unfiltered result set."""
-        page.goto(f"{server_url}/?bedrooms=1&hob_type=gas")
+        page.goto("/?bedrooms=1&hob_type=gas")
         nav_count = page.locator("nav #nav-count")
         expect(nav_count).to_contain_text("1 propert")
 
-        page.locator("#open-filters-btn").click()
+        page.get_by_role("button", name="Filters").click()
         page.get_by_role("button", name="Reset all").click()
         expect(page.locator("#modal-count")).to_have_text("5")
 
-        page.locator(".filter-modal-apply").click()
+        page.get_by_role("button", name=re.compile(r"Show \d+ properties")).click()
 
         expect(page.locator("#filter-modal")).not_to_be_visible()
         expect(nav_count).to_contain_text("5 properties")
         assert "bedrooms=" not in page.url
         assert "hob_type=" not in page.url
 
-    def test_modal_reset_clears_primary_field_values(self, server_url, page):
+    def test_modal_reset_clears_primary_field_values(self, page):
         """Reset all clears select/radio values for primary filters."""
-        page.goto(f"{server_url}/?area=E8&bedrooms=1")
-        page.locator("#open-filters-btn").click()
+        page.goto("/?area=E8&bedrooms=1")
+        page.get_by_role("button", name="Filters").click()
 
         # Verify the primary fields have filter values pre-selected
         assert page.get_by_label("Area", exact=True).input_value() == "E8"
@@ -603,9 +639,9 @@ class TestFilterBehavior:
 
     # -- Group 3: Empty State & Filter Chips --
 
-    def test_empty_state_when_no_results(self, server_url, page):
+    def test_empty_state_when_no_results(self, page):
         """Studio filter (0 beds) shows empty state."""
-        page.goto(server_url)
+        page.goto("/")
         page.locator("label[for='beds-0']").click()
 
         with page.expect_response(lambda r: "127.0.0.1" in r.url and "bedrooms=0" in r.url):
@@ -615,9 +651,9 @@ class TestFilterBehavior:
         expect(page.locator(".empty-state")).to_contain_text("No properties found")
         expect(page.locator(".empty-state a")).to_be_visible()
 
-    def test_empty_state_reset_link_works(self, server_url, page):
+    def test_empty_state_reset_link_works(self, page):
         """Reset filters link in empty state restores all results."""
-        page.goto(f"{server_url}/?bedrooms=0")
+        page.goto("/?bedrooms=0")
         expect(page.locator(".empty-state")).to_be_visible()
 
         page.locator(".empty-state a").click()
@@ -625,9 +661,9 @@ class TestFilterBehavior:
         expect(page.locator("nav #nav-count")).to_contain_text("5 properties")
         expect(page.locator(".empty-state")).not_to_be_visible()
 
-    def test_filter_chips_appear_and_removal_works(self, server_url, page):
+    def test_filter_chips_appear_and_removal_works(self, page):
         """Filter chips appear for active filters and can be removed."""
-        page.goto(f"{server_url}/?area=E8")
+        page.goto("/?area=E8")
         nav_count = page.locator("nav #nav-count")
         expect(nav_count).to_contain_text("2 propert")
 
@@ -646,70 +682,65 @@ class TestFilterBehavior:
 class TestFitScorePopover:
     """Phase 1: Fit score badge popover and detail breakdown."""
 
-    def test_fit_badge_visible_on_analyzed_cards(self, server_url, page):
+    def test_fit_badge_visible_on_analyzed_cards(self, page):
         """Fit badge appears on cards that have quality analysis."""
-        page.goto(server_url)
-        page.wait_for_load_state("networkidle")
+        page.goto("/")
         badges = page.locator(".fit-badge")
-        assert badges.count() >= 1
+        expect(badges.first).to_be_visible()
 
-    def test_fit_badge_not_on_unanalyzed_cards(self, server_url, page):
+    def test_fit_badge_not_on_unanalyzed_cards(self, page):
         """Unanalyzed cards (1001, 1002, 1005) should not have fit badge."""
-        page.goto(server_url)
-        page.wait_for_load_state("networkidle")
-        # Property 1001 has no analysis
+        page.goto("/")
         card_1001 = page.locator('article[data-property-id="openrent:1001"]')
-        assert card_1001.locator(".fit-badge").count() == 0
+        expect(card_1001).to_be_visible()
+        expect(card_1001.locator(".fit-badge")).to_have_count(0)
 
-    def test_clicking_badge_opens_popover(self, server_url, page):
+    def test_clicking_badge_opens_popover(self, page):
         """Clicking the fit badge opens a popover with dimension bars."""
-        page.goto(server_url)
-        page.wait_for_load_state("networkidle")
+        page.goto("/")
         wrap = page.locator(".fit-popover-wrap").first
+        expect(wrap.locator(".fit-badge")).to_be_visible()
         wrap.locator(".fit-badge").click()
         popover = wrap.locator(".fit-popover")
         expect(popover).to_be_visible()
         # Should show 6 dimension rows within this popover
-        dim_rows = popover.locator(".fit-dim-row")
-        assert dim_rows.count() == 6
+        expect(popover.locator(".fit-dim-row")).to_have_count(6)
 
-    def test_clicking_badge_does_not_navigate(self, server_url, page):
+    def test_clicking_badge_does_not_navigate(self, page):
         """Clicking the fit badge does NOT navigate to the detail page."""
-        page.goto(server_url)
-        page.wait_for_load_state("networkidle")
+        page.goto("/")
+        badge = page.locator(".fit-badge").first
+        expect(badge).to_be_visible()
         original_url = page.url
-        badge = page.locator(".fit-badge").first
         badge.click()
+        # Deliberate delay: verify no navigation occurs within a reasonable window
         page.wait_for_timeout(500)
-        assert page.url == original_url
+        expect(page).to_have_url(original_url)
 
-    def test_click_outside_closes_popover(self, server_url, page):
+    def test_click_outside_closes_popover(self, page):
         """Clicking outside an open popover closes it (light-dismiss)."""
-        page.goto(server_url)
-        page.wait_for_load_state("networkidle")
+        page.goto("/")
         badge = page.locator(".fit-badge").first
+        expect(badge).to_be_visible()
         badge.click()
         expect(page.locator(".fit-popover").first).to_be_visible()
         # Click on body (outside) — light-dismiss closes native popover
         page.locator("body").click(position={"x": 10, "y": 10})
-        page.wait_for_timeout(300)
         expect(page.locator(".fit-popover").first).not_to_be_visible()
 
-    def test_detail_page_shows_fit_breakdown(self, server_url, page):
+    def test_detail_page_shows_fit_breakdown(self, page):
         """Detail page for analyzed property shows fit breakdown card."""
-        page.goto(f"{server_url}/property/openrent:1003")
-        page.wait_for_load_state("networkidle")
+        page.goto("/property/openrent:1003")
         breakdown = page.locator(".fit-breakdown-card")
         expect(breakdown).to_be_visible()
         # Should have 6 dimension rows
-        rows = page.locator(".fit-breakdown-row")
-        assert rows.count() == 6
+        expect(page.locator(".fit-breakdown-row")).to_have_count(6)
 
-    def test_detail_breakdown_labels(self, server_url, page):
+    def test_detail_breakdown_labels(self, page):
         """Detail breakdown shows correct dimension labels."""
-        page.goto(f"{server_url}/property/openrent:1003")
-        page.wait_for_load_state("networkidle")
+        page.goto("/property/openrent:1003")
         labels = page.locator(".fit-breakdown-label")
+        expect(labels.first).to_be_visible()
         label_texts = [labels.nth(i).text_content().strip() for i in range(labels.count())]
         assert "Workspace" in label_texts
         assert "Kitchen" in label_texts
@@ -723,98 +754,92 @@ class TestFitScorePopover:
 class TestMobileViewport:
     """Phase 2: Mobile viewport optimizations."""
 
-    def test_filter_bar_not_sticky_on_mobile(self, server_url, page):
+    def test_filter_bar_not_sticky_on_mobile(self, page):
         """Filter bar should NOT be position:sticky on 375px viewport."""
         page.set_viewport_size({"width": 375, "height": 812})
-        page.goto(server_url)
-        page.wait_for_load_state("networkidle")
-        position = page.locator(".filter-bar").evaluate("el => getComputedStyle(el).position")
+        page.goto("/")
+        filter_bar = page.locator(".filter-bar")
+        expect(filter_bar).to_be_visible()
+        position = filter_bar.evaluate("el => getComputedStyle(el).position")
         assert position == "static"
 
-    def test_filter_bar_sticky_on_desktop(self, server_url, page):
+    def test_filter_bar_sticky_on_desktop(self, page):
         """Filter bar should be position:sticky on 1440px viewport."""
         page.set_viewport_size({"width": 1440, "height": 900})
-        page.goto(server_url)
-        page.wait_for_load_state("networkidle")
-        position = page.locator(".filter-bar").evaluate("el => getComputedStyle(el).position")
+        page.goto("/")
+        filter_bar = page.locator(".filter-bar")
+        expect(filter_bar).to_be_visible()
+        position = filter_bar.evaluate("el => getComputedStyle(el).position")
         assert position == "sticky"
 
-    def test_animation_delay_capped(self, server_url, page):
+    def test_animation_delay_capped(self, page):
         """Card animation delay should be capped at index 8."""
-        page.goto(server_url)
-        page.wait_for_load_state("networkidle")
+        page.goto("/")
         cards = page.locator(".card-entrance")
+        expect(cards.first).to_be_visible()
         count = cards.count()
-        if count > 1:
-            # The last card (index 4, zero-based) should have index capped at 4
-            # since we only have 5 items. Check the style attribute.
-            last_style = cards.nth(count - 1).get_attribute("style")
-            # Extract --card-index value
-            assert last_style is not None
-            # With 5 items, all should be < 8
-            for i in range(count):
-                style = cards.nth(i).get_attribute("style")
-                assert style is not None
-                # Parse the index value
-                idx = int(style.split("--card-index:")[1].strip().rstrip(";").strip())
-                assert idx <= 8
+        assert count > 1, "Expected multiple cards for animation delay test"
+        for i in range(count):
+            style = cards.nth(i).get_attribute("style")
+            assert style is not None
+            # Parse the --card-index value
+            idx = int(style.split("--card-index:")[1].strip().rstrip(";").strip())
+            assert idx <= 8
 
-    def test_view_toggle_icons_only_on_mobile(self, server_url, page):
+    def test_view_toggle_icons_only_on_mobile(self, page):
         """View toggle shows icons but no text labels on mobile."""
         page.set_viewport_size({"width": 375, "height": 812})
-        page.goto(server_url)
-        page.wait_for_load_state("networkidle")
+        page.goto("/")
         labels = page.locator(".view-toggle-label")
-        if labels.count() > 0:
-            visible = labels.first.evaluate("el => getComputedStyle(el).display")
-            assert visible == "none"
+        # Labels exist in DOM but are hidden via CSS on mobile
+        expect(labels.first).to_be_attached()
+        visible = labels.first.evaluate("el => getComputedStyle(el).display")
+        assert visible == "none"
 
 
 @pytest.mark.browser
 class TestSourceBadgeClickTarget:
     """Phase 3: Source badges inside card link."""
 
-    def test_source_badges_inside_card_link(self, server_url, page):
+    def test_source_badges_inside_card_link(self, page):
         """Source badge elements are descendants of .card-link."""
-        page.goto(server_url)
-        page.wait_for_load_state("networkidle")
-        # Source badges should be inside .card-link
+        page.goto("/")
         badges_inside_link = page.locator(".card-link .card-sources")
-        assert badges_inside_link.count() >= 1
+        expect(badges_inside_link.first).to_be_visible()
 
-    def test_clicking_source_badge_area_navigates(self, server_url, page):
+    def test_clicking_source_badge_area_navigates(self, page):
         """Clicking the source badge area navigates to detail page."""
-        page.goto(server_url)
-        page.wait_for_load_state("networkidle")
+        page.goto("/")
         badge = page.locator(".card-sources .source-badge").first
+        expect(badge).to_be_visible()
         badge.click()
-        page.wait_for_load_state("networkidle")
-        assert "/property/" in page.url
+        expect(page).to_have_url(re.compile(r"/property/"))
 
 
 @pytest.mark.browser
 class TestDetailPagePolish:
     """Phase 4: Detail page scroll-to-top link."""
 
-    def test_section_nav_has_top_link(self, server_url, page):
+    def test_section_nav_has_top_link(self, page):
         """Section nav contains a 'Top' link."""
-        page.goto(f"{server_url}/property/openrent:1003")
-        page.wait_for_load_state("networkidle")
+        page.goto("/property/openrent:1003")
         top_link = page.locator(".section-nav-top a")
         expect(top_link).to_be_visible()
         expect(top_link).to_have_text("Top")
 
-    def test_top_link_scrolls_to_top(self, server_url, page):
+    def test_top_link_scrolls_to_top(self, page):
         """Clicking 'Top' scrolls page to top."""
-        page.goto(f"{server_url}/property/openrent:1003")
-        page.wait_for_load_state("networkidle")
+        page.goto("/property/openrent:1003")
+        top_link = page.locator(".section-nav-top a")
+        expect(top_link).to_be_visible()
         # Scroll down first
         page.evaluate("window.scrollTo(0, 1000)")
-        page.wait_for_timeout(300)
+        page.wait_for_timeout(300)  # Wait for scroll to complete
         scroll_before = page.evaluate("window.scrollY")
         assert scroll_before > 0
 
-        page.locator(".section-nav-top a").click()
-        page.wait_for_timeout(800)
+        top_link.click()
+        # Poll via evaluate (wait_for_function blocked by CSP nonce policy)
+        page.wait_for_timeout(800)  # Wait for smooth scroll animation
         scroll_after = page.evaluate("window.scrollY")
         assert scroll_after < scroll_before

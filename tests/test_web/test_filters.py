@@ -214,8 +214,12 @@ class TestSecondaryFilterCount:
     def test_does_not_count_primary_filters(self) -> None:
         """min_price, max_price, bedrooms, min_rating, area, added are not secondary."""
         f = PropertyFilter(
-            min_price=1500, max_price=2500, bedrooms=2,
-            min_rating=3, area="E8", added="3d",
+            min_price=1500,
+            max_price=2500,
+            bedrooms=2,
+            min_rating=3,
+            area="E8",
+            added="3d",
         )
         assert f.secondary_filter_count == 0
 
@@ -280,6 +284,11 @@ class TestSortOptions:
         from home_finder.web.filters import VALID_SORT_OPTIONS
 
         expected = {
-            "newest", "price_asc", "price_desc", "rating_desc", "fit_desc", "longest_listed",
+            "newest",
+            "price_asc",
+            "price_desc",
+            "rating_desc",
+            "fit_desc",
+            "longest_listed",
         }
         assert expected == VALID_SORT_OPTIONS

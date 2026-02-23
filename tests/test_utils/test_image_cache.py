@@ -555,9 +555,7 @@ class TestBackfillThumbnails:
         for uid in ["openrent_100", "rightmove_200"]:
             cache_dir = tmp_path / "image_cache" / uid
             cache_dir.mkdir(parents=True)
-            (cache_dir / "gallery_000_aaa11111.jpg").write_bytes(
-                _create_test_image(800, 600)
-            )
+            (cache_dir / "gallery_000_aaa11111.jpg").write_bytes(_create_test_image(800, 600))
 
         generated, _skipped, deleted = backfill_thumbnails(data_dir)
         assert generated == 2

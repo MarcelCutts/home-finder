@@ -108,9 +108,7 @@ async def fetch_image_hashes_batch(
         async def fetch_one(prop: "Property") -> tuple[str, str | None]:
             async with semaphore:
                 if prop.image_url:
-                    hash_val = await fetch_and_hash_image(
-                        str(prop.image_url), client=client
-                    )
+                    hash_val = await fetch_and_hash_image(str(prop.image_url), client=client)
                     return (prop.unique_id, hash_val)
                 return (prop.unique_id, None)
 

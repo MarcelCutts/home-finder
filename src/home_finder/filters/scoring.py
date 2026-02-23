@@ -56,6 +56,8 @@ class MatchScore:
     street_name: float = 0.0
     outcode: float = 0.0
     price: float = 0.0
+    image_match_count: int = 0
+    image_compared: tuple[int, int] = (0, 0)
 
     @property
     def total(self) -> float:
@@ -98,9 +100,9 @@ class MatchScore:
         """Whether this score constitutes a match."""
         return self.total >= MATCH_THRESHOLD and self.signal_count >= MINIMUM_SIGNALS
 
-    def to_dict(self) -> dict[str, float | int | str]:
+    def to_dict(self) -> dict[str, object]:
         """Convert to dict for logging."""
-        return {
+        d: dict[str, object] = {
             "image_hash": self.image_hash,
             "full_postcode": self.full_postcode,
             "coordinates": self.coordinates,
@@ -111,6 +113,10 @@ class MatchScore:
             "signal_count": self.signal_count,
             "confidence": self.confidence.value,
         }
+        if self.image_match_count > 0:
+            d["image_match_count"] = self.image_match_count
+            d["image_compared"] = self.image_compared
+        return d
 
 
 def is_full_postcode(postcode: str | None) -> bool:
@@ -284,6 +290,9 @@ def calculate_match_score(
         hashes1 = image_hashes.get(prop1.unique_id)
         hashes2 = image_hashes.get(prop2.unique_id)
         match_count = count_gallery_hash_matches(hashes1, hashes2)
+        if hashes1 is not None and hashes2 is not None:
+            score.image_match_count = match_count
+            score.image_compared = (len(hashes1), len(hashes2))
         if match_count >= 2:
             score.image_hash = SCORE_IMAGE_HASH
         elif match_count == 1:

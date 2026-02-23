@@ -918,9 +918,7 @@ class TestGetPropertiesNeedingCommute:
         assert result[0].latitude == 51.5465
 
     @pytest.mark.asyncio
-    async def test_excludes_properties_with_commute_data(
-        self, storage: PropertyStorage
-    ) -> None:
+    async def test_excludes_properties_with_commute_data(self, storage: PropertyStorage) -> None:
         """Should exclude properties that already have commute_minutes."""
         prop = Property(
             source=PropertySource.OPENRENT,
@@ -934,17 +932,13 @@ class TestGetPropertiesNeedingCommute:
             latitude=51.5465,
             longitude=-0.0553,
         )
-        await storage.save_property(
-            prop, commute_minutes=15, transport_mode=TransportMode.CYCLING
-        )
+        await storage.save_property(prop, commute_minutes=15, transport_mode=TransportMode.CYCLING)
 
         result = await storage.get_properties_needing_commute()
         assert len(result) == 0
 
     @pytest.mark.asyncio
-    async def test_excludes_properties_without_coords(
-        self, storage: PropertyStorage
-    ) -> None:
+    async def test_excludes_properties_without_coords(self, storage: PropertyStorage) -> None:
         """Should exclude properties that lack coordinates."""
         prop = Property(
             source=PropertySource.RIGHTMOVE,
@@ -965,9 +959,7 @@ class TestUpdateCommuteData:
     """Tests for update_commute_data."""
 
     @pytest.mark.asyncio
-    async def test_updates_commute_minutes_and_mode(
-        self, storage: PropertyStorage
-    ) -> None:
+    async def test_updates_commute_minutes_and_mode(self, storage: PropertyStorage) -> None:
         """Should update commute_minutes and transport_mode for matching properties."""
         prop = Property(
             source=PropertySource.OPENRENT,
@@ -993,9 +985,7 @@ class TestUpdateCommuteData:
         assert tracked.transport_mode == TransportMode.CYCLING
 
     @pytest.mark.asyncio
-    async def test_returns_zero_for_empty_lookup(
-        self, storage: PropertyStorage
-    ) -> None:
+    async def test_returns_zero_for_empty_lookup(self, storage: PropertyStorage) -> None:
         """Should return 0 when given an empty lookup."""
         assert await storage.update_commute_data({}) == 0
 
@@ -1027,13 +1017,9 @@ class TestGetPropertyImagesAndRow:
         assert result_prop.unique_id == storage_sample_property.unique_id
 
     @pytest.mark.asyncio
-    async def test_returns_none_for_missing_property(
-        self, storage: PropertyStorage
-    ) -> None:
+    async def test_returns_none_for_missing_property(self, storage: PropertyStorage) -> None:
         """Should return empty images and None property for non-existent ID."""
-        result_images, result_prop = await storage.get_property_images_and_row(
-            "nonexistent:999"
-        )
+        result_images, result_prop = await storage.get_property_images_and_row("nonexistent:999")
         assert result_images == []
         assert result_prop is None
 
@@ -1068,13 +1054,11 @@ class TestOnDeleteCascade:
             (uid, '{"overall_rating": 4}'),
         )
         await conn.execute(
-            "INSERT INTO status_events"
-            " (property_unique_id, to_status) VALUES (?, ?)",
+            "INSERT INTO status_events (property_unique_id, to_status) VALUES (?, ?)",
             (uid, "shortlisted"),
         )
         await conn.execute(
-            "INSERT OR IGNORE INTO viewing_messages"
-            " (property_unique_id, message) VALUES (?, ?)",
+            "INSERT OR IGNORE INTO viewing_messages (property_unique_id, message) VALUES (?, ?)",
             (uid, "Hello"),
         )
         await conn.execute(

@@ -385,9 +385,7 @@ class TestQualityAnalysisIntegration:
         quality_filter._client = MagicMock()
         _setup_two_phase_mocks(quality_filter._client)
 
-        results = await quality_filter.analyze_merged_properties(
-            [merged], data_dir=data_dir
-        )
+        results = await quality_filter.analyze_merged_properties([merged], data_dir=data_dir)
 
         assert len(results) == 1
         # Verify the API was called (image was processed)
@@ -418,9 +416,7 @@ class TestQualityAnalysisIntegration:
         quality_filter = PropertyQualityFilter(api_key="test-key")
         quality_filter._client = MagicMock()
         quality_filter._client.messages.create = AsyncMock(return_value=mock_visual)
-        quality_filter._client.messages.parse = AsyncMock(
-            side_effect=Exception("Phase 2 timeout")
-        )
+        quality_filter._client.messages.parse = AsyncMock(side_effect=Exception("Phase 2 timeout"))
 
         results = await quality_filter.analyze_merged_properties([merged])
 

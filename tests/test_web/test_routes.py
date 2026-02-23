@@ -2322,7 +2322,7 @@ class TestStatusRoutes:
             # Trigger button should contain the label
             assert meta["label"] in resp.text
             # Trigger should use the correct --status-color
-            assert f'--status-color: {meta["color"]}' in resp.text
+            assert f"--status-color: {meta['color']}" in resp.text
 
 
 # ---------------------------------------------------------------------------

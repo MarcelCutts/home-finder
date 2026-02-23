@@ -349,9 +349,7 @@ class TestDedupAnchorExclusion:
         await storage.save_unenriched_property(unenriched)
 
         # Save a normal enriched property
-        enriched = make_merged_property(
-            sources=(PropertySource.RIGHTMOVE,), source_id="enriched-1"
-        )
+        enriched = make_merged_property(sources=(PropertySource.RIGHTMOVE,), source_id="enriched-1")
         await storage.save_merged_property(enriched)
 
         anchors = await storage.get_recent_properties_for_dedup(days=7)

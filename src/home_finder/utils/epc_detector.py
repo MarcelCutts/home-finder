@@ -161,10 +161,7 @@ def _analyze(image_bytes: bytes) -> tuple[bool, float]:
 
     # ── Weighted average: colour path (Energy Efficiency charts) ──
     confidence = (
-        0.35 * entropy_score
-        + 0.30 * sat_score
-        + 0.20 * green_red_score
-        + 0.15 * bright_score
+        0.35 * entropy_score + 0.30 * sat_score + 0.20 * green_red_score + 0.15 * bright_score
     )
 
     # ── Monochrome path (Environmental Impact / CO₂ charts) ──
@@ -184,11 +181,7 @@ def _analyze(image_bytes: bytes) -> tuple[bool, float]:
     # diagrams).  Environmental Impact charts have blue_ratio >= 0.08
     # (header region), giving blue_score >= 0.30.
     if blue_score >= 0.30:
-        monochrome_confidence = (
-            0.40 * entropy_score
-            + 0.30 * blue_score
-            + 0.30 * bright_score
-        )
+        monochrome_confidence = 0.40 * entropy_score + 0.30 * blue_score + 0.30 * bright_score
     else:
         monochrome_confidence = 0.0
 

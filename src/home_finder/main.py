@@ -5,6 +5,7 @@ import asyncio
 import contextlib
 import sys
 import time
+from dataclasses import asdict
 
 import structlog
 
@@ -219,8 +220,18 @@ async def run_pipeline(
                         new_count=len(pre.merged_to_process),
                         enriched_count=pre.enriched_count,
                         anchors_updated=pre.anchors_updated,
+                        criteria_filtered_count=pre.criteria_filtered_count,
+                        location_filtered_count=pre.location_filtered_count,
+                        new_property_count=pre.new_property_count,
+                        commute_within_limit_count=pre.commute_within_limit_count,
+                        post_dedup_count=pre.post_dedup_count,
+                        post_floorplan_count=pre.post_floorplan_count,
                         **pre.stage_timings,
                     )
+                    if pre.scraper_metrics:
+                        await storage.save_scraper_runs(
+                            run_id, [asdict(m) for m in pre.scraper_metrics]
+                        )
 
                 logger.info(
                     "pipeline_started",
@@ -242,7 +253,7 @@ async def run_pipeline(
                     on_result = _make_notify_callback(notifier, storage, notified_counter)
 
                 t_analysis = time.monotonic()
-                analyzed_count = await _run_quality_and_save(
+                analyzed_count, token_usage = await _run_quality_and_save(
                     pre, settings, storage, on_result
                 )
 
@@ -283,12 +294,22 @@ async def run_pipeline(
                         logger.info("price_drop_notifications_sent", count=price_drop_count)
                     notification_seconds = time.monotonic() - t_notify
 
+                    cost_kwargs: dict[str, int | float] = {}
+                    if token_usage is not None:
+                        cost_kwargs = {
+                            "total_input_tokens": token_usage.input_tokens,
+                            "total_output_tokens": token_usage.output_tokens,
+                            "total_cache_read_tokens": token_usage.cache_read_tokens,
+                            "total_cache_creation_tokens": token_usage.cache_creation_tokens,
+                            "estimated_cost_usd": token_usage.estimated_cost_usd,
+                        }
                     await storage.update_pipeline_run(
                         run_id,
                         analyzed_count=analyzed_count,
                         notified_count=notified_count,
                         analysis_seconds=analysis_seconds,
                         notification_seconds=notification_seconds,
+                        **cost_kwargs,
                     )
                     await storage.complete_pipeline_run(run_id, "completed")
 
@@ -306,9 +327,7 @@ async def run_pipeline(
                 raise
             except Exception as exc:
                 if run_id is not None:
-                    await storage.complete_pipeline_run(
-                        run_id, "failed", error_message=str(exc)
-                    )
+                    await storage.complete_pipeline_run(run_id, "failed", error_message=str(exc))
                 raise
             finally:
                 if not dry_run:
@@ -340,7 +359,7 @@ async def run_scrape_only(
     search_areas = settings.get_search_areas()
 
     logger.info("scrape_only_started")
-    all_properties = await scrape_all_platforms(
+    all_properties, _metrics = await scrape_all_platforms(
         min_price=criteria.min_price,
         max_price=criteria.max_price,
         min_bedrooms=criteria.min_bedrooms,

@@ -72,11 +72,7 @@ class TestInlineKeyboardStatusButtons:
         # First row: status buttons
         assert "Interested" in kb.inline_keyboard[0][0].text
         # Details button should be present in subsequent rows
-        all_texts = [
-            btn.text
-            for row in kb.inline_keyboard[1:]
-            for btn in row
-        ]
+        all_texts = [btn.text for row in kb.inline_keyboard[1:] for btn in row]
         assert "Details" in all_texts
 
 

@@ -149,16 +149,28 @@ class TestRequestReanalysis:
         make_quality_analysis: Callable[..., PropertyQualityAnalysis],
     ) -> None:
         m1 = await _save_analyzed_property(
-            storage, make_property, make_merged_property, make_quality_analysis,
-            source_id="z-e8", postcode="E8 3RH",
+            storage,
+            make_property,
+            make_merged_property,
+            make_quality_analysis,
+            source_id="z-e8",
+            postcode="E8 3RH",
         )
         m2 = await _save_analyzed_property(
-            storage, make_property, make_merged_property, make_quality_analysis,
-            source_id="z-e2", postcode="E2 7QA",
+            storage,
+            make_property,
+            make_merged_property,
+            make_quality_analysis,
+            source_id="z-e2",
+            postcode="E2 7QA",
         )
         await _save_analyzed_property(
-            storage, make_property, make_merged_property, make_quality_analysis,
-            source_id="z-n1", postcode="N1 5AA",
+            storage,
+            make_property,
+            make_merged_property,
+            make_quality_analysis,
+            source_id="z-n1",
+            postcode="N1 5AA",
         )
 
         count = await storage.request_reanalysis_by_filter(outcodes=["E8"])
@@ -219,7 +231,10 @@ class TestRequestReanalysis:
 
         # Save one with analysis
         await _save_analyzed_property(
-            storage, make_property, make_merged_property, make_quality_analysis,
+            storage,
+            make_property,
+            make_merged_property,
+            make_quality_analysis,
             source_id="z-with-qa",
         )
 
@@ -236,16 +251,28 @@ class TestRequestReanalysis:
     ) -> None:
         """request_reanalysis_by_filter with multiple outcodes matches all of them."""
         m_e8 = await _save_analyzed_property(
-            storage, make_property, make_merged_property, make_quality_analysis,
-            source_id="z-e8", postcode="E8 3RH",
+            storage,
+            make_property,
+            make_merged_property,
+            make_quality_analysis,
+            source_id="z-e8",
+            postcode="E8 3RH",
         )
         m_e2 = await _save_analyzed_property(
-            storage, make_property, make_merged_property, make_quality_analysis,
-            source_id="z-e2", postcode="E2 7QA",
+            storage,
+            make_property,
+            make_merged_property,
+            make_quality_analysis,
+            source_id="z-e2",
+            postcode="E2 7QA",
         )
         m_n1 = await _save_analyzed_property(
-            storage, make_property, make_merged_property, make_quality_analysis,
-            source_id="z-n1", postcode="N1 5AA",
+            storage,
+            make_property,
+            make_merged_property,
+            make_quality_analysis,
+            source_id="z-n1",
+            postcode="N1 5AA",
         )
 
         count = await storage.request_reanalysis_by_filter(outcodes=["E8", "E2"])
@@ -267,8 +294,12 @@ class TestRequestReanalysis:
     ) -> None:
         """Property with postcode=None should not match outcode filter."""
         await _save_analyzed_property(
-            storage, make_property, make_merged_property, make_quality_analysis,
-            source_id="z-null", postcode=None,
+            storage,
+            make_property,
+            make_merged_property,
+            make_quality_analysis,
+            source_id="z-null",
+            postcode=None,
         )
 
         count = await storage.request_reanalysis_by_filter(outcodes=["E8"])
@@ -356,12 +387,20 @@ class TestGetReanalysisQueue:
         make_quality_analysis: Callable[..., PropertyQualityAnalysis],
     ) -> None:
         m_e8 = await _save_analyzed_property(
-            storage, make_property, make_merged_property, make_quality_analysis,
-            source_id="z-e8", postcode="E8 3RH",
+            storage,
+            make_property,
+            make_merged_property,
+            make_quality_analysis,
+            source_id="z-e8",
+            postcode="E8 3RH",
         )
         m_e2 = await _save_analyzed_property(
-            storage, make_property, make_merged_property, make_quality_analysis,
-            source_id="z-e2", postcode="E2 7QA",
+            storage,
+            make_property,
+            make_merged_property,
+            make_quality_analysis,
+            source_id="z-e2",
+            postcode="E2 7QA",
         )
 
         await storage.request_reanalysis([m_e8.unique_id, m_e2.unique_id])

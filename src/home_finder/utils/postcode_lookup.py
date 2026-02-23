@@ -14,9 +14,7 @@ _BASE_URL = "https://api.postcodes.io"
 _TIMEOUT = 10.0
 
 
-async def lookup_ward(
-    postcode: str, *, client: httpx.AsyncClient | None = None
-) -> str | None:
+async def lookup_ward(postcode: str, *, client: httpx.AsyncClient | None = None) -> str | None:
     """Forward lookup: full postcode → admin ward name.
 
     Returns None if the postcode is invalid or the lookup fails.
@@ -28,9 +26,7 @@ async def lookup_ward(
         return await _lookup_ward_with_client(c, postcode)
 
 
-async def _lookup_ward_with_client(
-    client: httpx.AsyncClient, postcode: str
-) -> str | None:
+async def _lookup_ward_with_client(client: httpx.AsyncClient, postcode: str) -> str | None:
     try:
         resp = await client.get(f"{_BASE_URL}/postcodes/{postcode}")
         if resp.status_code != 200:

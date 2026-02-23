@@ -94,9 +94,7 @@ class CircuitBreaker:
     def raise_if_open(self) -> None:
         """Raise ``CircuitBreakerOpenError`` if the circuit is currently open."""
         if self.is_open():
-            raise CircuitBreakerOpenError(
-                f"Circuit breaker '{self._name}' is open — call skipped"
-            )
+            raise CircuitBreakerOpenError(f"Circuit breaker '{self._name}' is open — call skipped")
 
     # -- recording ------------------------------------------------------------
 

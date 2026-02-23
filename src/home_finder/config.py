@@ -60,7 +60,7 @@ class Settings(BaseSettings):
         description="Drop properties without floorplans before quality analysis",
     )
     min_gallery_for_photo_inference: int = Field(
-        default=8,
+        default=5,
         ge=0,
         description="Minimum gallery images to bypass floorplan gate (0 disables)",
     )
