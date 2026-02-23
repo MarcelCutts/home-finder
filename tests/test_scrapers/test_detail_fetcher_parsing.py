@@ -891,7 +891,18 @@ class TestDetailFetcherLifecycle:
 # ---------------------------------------------------------------------------
 
 
-_VALID_JPEG = b"\xff\xd8\xff\xe0" + b"\x00" * 20
+def _make_valid_jpeg() -> bytes:
+    """Create a minimal valid JPEG that PIL can verify."""
+    import io
+
+    from PIL import Image
+
+    buf = io.BytesIO()
+    Image.new("RGB", (1, 1), color="red").save(buf, format="JPEG")
+    return buf.getvalue()
+
+
+_VALID_JPEG = _make_valid_jpeg()
 
 
 class TestDownloadImageBytes:
@@ -960,5 +971,16 @@ class TestDownloadImageBytes:
         fetcher._httpx_get_with_retry = AsyncMock(  # type: ignore[method-assign]
             side_effect=Exception("Network error")
         )
+        result = await fetcher.download_image_bytes("https://example.com/photo.jpg")
+        assert result is None
+
+    async def test_rejects_truncated_jpeg(self) -> None:
+        """JPEG with valid magic bytes but truncated body should be rejected."""
+        truncated = b"\xff\xd8\xff\xe0" + b"\x00" * 20  # Magic bytes but corrupt
+        fetcher = DetailFetcher()
+        mock_resp = MagicMock()
+        mock_resp.content = truncated
+        fetcher._httpx_get_with_retry = AsyncMock(return_value=mock_resp)  # type: ignore[method-assign]
+
         result = await fetcher.download_image_bytes("https://example.com/photo.jpg")
         assert result is None

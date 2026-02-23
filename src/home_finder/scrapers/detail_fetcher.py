@@ -1,12 +1,14 @@
 """Detail page fetcher for extracting gallery and floorplan URLs."""
 
 import asyncio
+import io
 import json
 import re
 from dataclasses import dataclass
 from typing import Any, NamedTuple, assert_never
 
 import httpx
+from PIL import Image
 from curl_cffi.requests import AsyncSession
 from tenacity import (
     retry,
@@ -882,6 +884,12 @@ class DetailFetcher:
                 data = response.content
             if not is_valid_image_bytes(data):
                 logger.warning("image_download_not_image", url=url, prefix=data[:16])
+                return None
+            # Validate PIL can decode it (catches truncated/corrupt downloads)
+            try:
+                Image.open(io.BytesIO(data)).verify()
+            except Exception:
+                logger.warning("image_download_corrupt", url=url)
                 return None
             return data
         except Exception as e:

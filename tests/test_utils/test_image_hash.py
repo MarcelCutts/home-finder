@@ -408,3 +408,66 @@ class TestCountGalleryHashMatches:
         """Same hash in gallery1 twice should only match once against gallery2."""
         h = "a" * 16
         assert count_gallery_hash_matches([h, h], [h]) == 1
+
+
+class TestFetchAndHashImageSVG:
+    """Tests for SVG detection in fetch_and_hash_image."""
+
+    @pytest.mark.asyncio
+    async def test_svg_content_returns_none(self, httpx_mock) -> None:
+        """SVG content should be detected and return None."""
+        svg_bytes = b'<?xml version="1.0"?><svg xmlns="http://www.w3.org/2000/svg"></svg>'
+        httpx_mock.add_response(
+            url="https://example.com/floorplan-white.97dae32e.svg",
+            content=svg_bytes,
+        )
+        result = await fetch_and_hash_image(
+            "https://example.com/floorplan-white.97dae32e.svg"
+        )
+        assert result is None
+
+    @pytest.mark.asyncio
+    async def test_svg_tag_content_returns_none(self, httpx_mock) -> None:
+        """SVG content starting with <svg> tag should return None."""
+        svg_bytes = b'<svg xmlns="http://www.w3.org/2000/svg"><rect/></svg>'
+        httpx_mock.add_response(
+            url="https://example.com/placeholder.svg",
+            content=svg_bytes,
+        )
+        result = await fetch_and_hash_image("https://example.com/placeholder.svg")
+        assert result is None
+
+
+class TestHashFromDiskCorruptCleanup:
+    """Tests for corrupt cached image cleanup in hash_from_disk."""
+
+    def test_corrupt_cached_image_deleted(self, tmp_path: Path) -> None:
+        """Corrupt image in image_cache/ should be deleted."""
+        cache_dir = tmp_path / "image_cache" / "openrent_123"
+        cache_dir.mkdir(parents=True)
+        img_path = cache_dir / "gallery_000_abc12345.jpg"
+        img_path.write_bytes(b"\xff\xd8\xff\xe0truncated")  # JPEG magic bytes but corrupt
+
+        result = hash_from_disk(img_path)
+        assert result is None
+        assert not img_path.exists()  # File should be cleaned up
+
+    def test_corrupt_non_cached_image_not_deleted(self, tmp_path: Path) -> None:
+        """Corrupt image NOT in image_cache/ should not be deleted."""
+        img_path = tmp_path / "gallery_000_abc12345.jpg"
+        img_path.write_bytes(b"\xff\xd8\xff\xe0truncated")
+
+        result = hash_from_disk(img_path)
+        assert result is None
+        assert img_path.exists()  # File should NOT be deleted
+
+    def test_corrupt_cached_png_deleted(self, tmp_path: Path) -> None:
+        """Corrupt PNG in image_cache/ should be deleted."""
+        cache_dir = tmp_path / "image_cache" / "zoopla_456"
+        cache_dir.mkdir(parents=True)
+        img_path = cache_dir / "gallery_001_def67890.png"
+        img_path.write_bytes(b"\x89PNG\r\n\x1a\ntruncated")  # PNG magic but corrupt
+
+        result = hash_from_disk(img_path)
+        assert result is None
+        assert not img_path.exists()

@@ -186,6 +186,7 @@ class PropertyLowlight(StrEnum):
     SMALL_BEDROOM = "Small bedroom"
     COMPACT_BEDROOM = "Compact bedroom"
     POOR_STORAGE = "Poor storage"
+    NO_BUILT_IN_WARDROBES = "No built-in wardrobes"
     NO_STORAGE = "No storage"
     DATED_BATHROOM = "Dated bathroom"
     NO_OUTDOOR_SPACE = "No outdoor space"

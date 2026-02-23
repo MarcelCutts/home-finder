@@ -54,7 +54,11 @@ async def fetch_and_hash_image(
 
         response.raise_for_status()
 
-        def _compute_hash(data: bytes) -> str:
+        def _compute_hash(data: bytes) -> str | None:
+            # Detect SVGs before PIL tries to open them
+            content_start = data[:64].lstrip()
+            if content_start.startswith(_SVG_CONTENT_PREFIXES):
+                return None
             image = Image.open(io.BytesIO(data))
             return str(imagehash.phash(image))
 
@@ -158,6 +162,18 @@ def hash_from_disk(path: Path) -> str | None:
         return str(imagehash.phash(image))
     except Exception as e:
         logger.debug("hash_from_disk_failed", path=str(path), error=str(e))
+        # Remove confirmed-corrupt cached images so they're re-downloaded
+        if "/image_cache/" in str(path) and path.suffix.lower() in (
+            ".jpg",
+            ".jpeg",
+            ".png",
+            ".webp",
+        ):
+            try:
+                path.unlink()
+                logger.info("corrupt_cached_image_removed", path=str(path))
+            except OSError:
+                pass
         return None
 
 

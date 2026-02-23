@@ -82,11 +82,37 @@ class TestReconnectAfterClose:
 
     @pytest.mark.asyncio
     async def test_optimize_runs_on_connect(self) -> None:
-        """PRAGMA optimize=0x10002 should run on every new connection."""
-        from home_finder.db.storage import _CONNECTION_PRAGMAS
+        """PRAGMA optimize=0x10002 should execute on every new connection."""
+        import aiosqlite
 
-        assert "PRAGMA optimize=0x10002" in _CONNECTION_PRAGMAS
-        assert "PRAGMA mmap_size=268435456" not in _CONNECTION_PRAGMAS
+        storage = PropertyStorage(":memory:")
+        await storage.initialize()
+        await storage.close()
+
+        # Patch aiosqlite.connect to track SQL on the fresh connection
+        executed: list[str] = []
+        real_connect = aiosqlite.connect
+
+        async def tracking_connect(*a, **kw):  # type: ignore[no-untyped-def]
+            conn = await real_connect(*a, **kw)
+            orig_execute = conn.execute
+
+            async def tracking_execute(sql, *args, **kwargs):  # type: ignore[no-untyped-def]
+                executed.append(sql)
+                return await orig_execute(sql, *args, **kwargs)
+
+            conn.execute = tracking_execute  # type: ignore[method-assign]
+            return conn
+
+        with patch(
+            "home_finder.db.storage.aiosqlite.connect",
+            side_effect=tracking_connect,
+        ):
+            await storage._get_connection()
+
+        assert "PRAGMA optimize=0x10002" in executed
+        assert not any("mmap_size" in s for s in executed)
+        await storage.close()
 
 
 class TestHealthCheckReconnectsOnFailure:

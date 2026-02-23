@@ -19,6 +19,7 @@ from home_finder.filters.quality import (  # type: ignore[attr-defined]
     _clean_dict,
     _clean_list,
     _clean_value,
+    _coerce_evaluation_enums,
     _EvaluationResponse,
     _inline_refs,
     _VisualAnalysisResponse,
@@ -3534,3 +3535,182 @@ class TestSetLiteralSyntaxThroughLayers:
         assert analysis.bedroom is not None
         assert analysis.bedroom.can_fit_desk == "yes"
         assert analysis.bedroom.office_separation == "shared_space"
+
+
+class TestCoerceEvaluationEnums:
+    """Tests for _coerce_evaluation_enums lenient fallback."""
+
+    def test_filters_invalid_lowlight_keeps_valid(self) -> None:
+        """Invalid lowlight values should be stripped, valid ones kept."""
+        import json
+
+        raw_data = {
+            "listing_extraction": {
+                "epc_rating": "C",
+                "service_charge_pcm": None,
+                "deposit_weeks": 5,
+                "bills_included": "no",
+                "pets_allowed": "unknown",
+                "parking": "street",
+                "council_tax_band": "C",
+                "property_type": "victorian",
+                "furnished_status": "furnished",
+                "broadband_type": "fttc",
+            },
+            "value_for_quality": {"rating": "good", "reasoning": "Fair price"},
+            "viewing_notes": {
+                "check_items": ["Check windows"],
+                "questions_for_agent": ["Rent increases?"],
+                "deal_breaker_tests": ["Test water"],
+            },
+            "highlights": ["Gas hob", "Modern kitchen"],
+            "lowlights": ["No dishwasher", "Totally invented concern"],
+            "one_line": "Nice flat with good kitchen",
+        }
+
+        # Build a mock response with raw JSON in a text content block
+        mock_response = MagicMock()
+        text_block = MagicMock()
+        text_block.type = "text"
+        text_block.text = json.dumps(raw_data)
+        mock_response.content = [text_block]
+
+        result = _coerce_evaluation_enums(mock_response, "test:123")
+
+        assert result is not None
+        assert "No dishwasher" in result["lowlights"]
+        assert "Totally invented concern" not in result["lowlights"]
+        assert len(result["lowlights"]) == 1
+        # Rest of data preserved
+        assert result["one_line"] == "Nice flat with good kitchen"
+        assert result["highlights"] == ["Gas hob", "Modern kitchen"]
+
+    def test_filters_invalid_highlight_keeps_valid(self) -> None:
+        """Invalid highlight values should be stripped."""
+        import json
+
+        raw_data = {
+            "listing_extraction": {
+                "epc_rating": "unknown",
+                "service_charge_pcm": None,
+                "deposit_weeks": None,
+                "bills_included": "unknown",
+                "pets_allowed": "unknown",
+                "parking": "unknown",
+                "council_tax_band": "unknown",
+                "property_type": "unknown",
+                "furnished_status": "unknown",
+                "broadband_type": "unknown",
+            },
+            "value_for_quality": {"rating": "fair", "reasoning": "Average"},
+            "viewing_notes": {
+                "check_items": [],
+                "questions_for_agent": [],
+                "deal_breaker_tests": [],
+            },
+            "highlights": ["Gas hob", "Amazing imaginary feature"],
+            "lowlights": [],
+            "one_line": "Average flat",
+        }
+
+        mock_response = MagicMock()
+        text_block = MagicMock()
+        text_block.type = "text"
+        text_block.text = json.dumps(raw_data)
+        mock_response.content = [text_block]
+
+        result = _coerce_evaluation_enums(mock_response, "test:456")
+
+        assert "Gas hob" in result["highlights"]
+        assert "Amazing imaginary feature" not in result["highlights"]
+
+    def test_returns_empty_dict_when_no_content(self) -> None:
+        """Should return empty dict when response has no content blocks."""
+        mock_response = MagicMock()
+        mock_response.content = []
+
+        result = _coerce_evaluation_enums(mock_response, "test:789")
+        assert result == {}
+
+    def test_returns_empty_dict_on_none_response(self) -> None:
+        """Should return empty dict when response is None."""
+        result = _coerce_evaluation_enums(None, "test:000")
+        assert result == {}
+
+    async def test_evaluation_coercion_in_pipeline(
+        self,
+        sample_merged_property: MergedProperty,
+        sample_visual_response: dict[str, Any],
+    ) -> None:
+        """Phase 2 ValidationError should trigger coercion, not lose the evaluation."""
+        import json
+
+        eval_data_with_invalid = {
+            "listing_extraction": {
+                "epc_rating": "C",
+                "service_charge_pcm": None,
+                "deposit_weeks": 5,
+                "bills_included": "no",
+                "pets_allowed": "unknown",
+                "parking": "street",
+                "council_tax_band": "C",
+                "property_type": "victorian",
+                "furnished_status": "furnished",
+                "broadband_type": "fttc",
+            },
+            "value_for_quality": {"rating": "good", "reasoning": "Fair price"},
+            "viewing_notes": {
+                "check_items": ["Check windows"],
+                "questions_for_agent": ["Rent increases?"],
+                "deal_breaker_tests": ["Test water"],
+            },
+            "highlights": ["Gas hob"],
+            "lowlights": ["No dishwasher", "Completely made up lowlight"],
+            "one_line": "Nice flat",
+        }
+
+        # Phase 1 mock (works normally)
+        mock_visual = create_mock_response(
+            sample_visual_response, tool_name="property_visual_analysis"
+        )
+
+        # Phase 2 mock: parsed_output raises ValidationError, but content has raw JSON.
+        # Create a real ValidationError by validating definitely-invalid data.
+        _ve: ValidationError | None = None
+        try:
+            _EvaluationResponse.model_validate(
+                {**eval_data_with_invalid, "lowlights": ["ZZZZZ_not_real"]}
+            )
+        except ValidationError as _exc:
+            _ve = _exc
+        assert _ve is not None, "Expected ValidationError for test setup"
+
+        mock_eval_response = MagicMock()
+        _ve_to_raise = _ve
+        type(mock_eval_response).parsed_output = property(
+            lambda self: (_ for _ in ()).throw(_ve_to_raise)
+        )
+        text_block = MagicMock()
+        text_block.type = "text"
+        text_block.text = json.dumps(eval_data_with_invalid)
+        mock_eval_response.content = [text_block]
+        mock_eval_response.stop_reason = "end_turn"
+        mock_eval_response.usage = MagicMock()
+        mock_eval_response.usage.cache_read_input_tokens = 0
+        mock_eval_response.usage.cache_creation_input_tokens = 0
+
+        quality_filter = PropertyQualityFilter(api_key="test-key")
+        quality_filter._client = MagicMock()
+        quality_filter._client.messages.create = AsyncMock(return_value=mock_visual)
+        quality_filter._client.messages.parse = AsyncMock(return_value=mock_eval_response)
+
+        results = await quality_filter.analyze_merged_properties([sample_merged_property])
+
+        assert len(results) == 1
+        _, analysis = results[0]
+        assert analysis is not None
+        # The coerced evaluation should preserve valid data
+        assert analysis.one_line == "Nice flat"
+        assert analysis.lowlights is not None
+        assert "No dishwasher" in analysis.lowlights
+        assert "Completely made up lowlight" not in analysis.lowlights

@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Final, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from home_finder.data.area_context import (
     ACOUSTIC_PROFILES,
@@ -657,6 +657,44 @@ _CONSTRUCTION_TO_PROFILE: dict[str, str] = {
 }
 
 
+def _coerce_evaluation_enums(eval_response: Any, property_id: str) -> dict[str, Any]:
+    """Extract raw JSON from a failed evaluation response and filter invalid enums.
+
+    When ``messages.parse()`` raises a ``ValidationError`` (e.g. Claude invented
+    a lowlight value), this function recovers the raw JSON from the response
+    content blocks, strips invalid highlight/lowlight values, and returns the
+    cleaned dict so the property keeps its value rating, one-liner, and viewing
+    notes.
+
+    Returns:
+        Cleaned eval dict, or empty dict if extraction failed.
+    """
+    valid_highlights = {v.value for v in PropertyHighlight}
+    valid_lowlights = {v.value for v in PropertyLowlight}
+    try:
+        # The SDK's response has content blocks; find the JSON text block
+        raw: dict[str, Any] | None = None
+        for block in getattr(eval_response, "content", []):
+            if getattr(block, "type", None) == "text":
+                raw = _json.loads(block.text)
+                break
+        if raw is None:
+            return {}
+        # Filter invalid enum values
+        if "highlights" in raw:
+            raw["highlights"] = [h for h in raw["highlights"] if h in valid_highlights]
+        if "lowlights" in raw:
+            raw["lowlights"] = [l for l in raw["lowlights"] if l in valid_lowlights]
+        return raw
+    except Exception:
+        logger.debug(
+            "evaluation_enum_coercion_failed",
+            property_id=property_id,
+            exc_info=True,
+        )
+        return {}
+
+
 class PropertyQualityFilter:
     """Analyze property quality using Claude vision API."""
 
@@ -1230,6 +1268,7 @@ class PropertyQualityFilter:
         )
 
         eval_data: dict[str, Any] = {}
+        eval_response: Any = None
         try:
             eval_prompt = build_evaluation_prompt(
                 visual_data=visual_data,
@@ -1295,6 +1334,26 @@ class PropertyQualityFilter:
                 exc_info=True,
             )
             raise APIUnavailableError(str(e)) from e
+
+        except ValidationError as e:
+            # Pydantic rejected a field (e.g. invalid lowlight enum value).
+            # Extract the raw JSON, filter out invalid enum values, and keep
+            # the rest rather than losing the entire evaluation.
+            eval_data = _coerce_evaluation_enums(eval_response, property_id) if eval_response else {}
+            if eval_data:
+                self._breaker.record_success()
+                logger.warning(
+                    "evaluation_coerced_invalid_enums",
+                    property_id=property_id,
+                    error=str(e),
+                )
+            else:
+                logger.warning(
+                    "evaluation_phase_failed",
+                    property_id=property_id,
+                    error=str(e),
+                    error_type="ValidationError",
+                )
 
         except Exception as e:
             logger.warning(
