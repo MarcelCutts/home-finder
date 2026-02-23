@@ -188,8 +188,11 @@ class PipelineRepository:
         so they are marked as "seen" by filter_new_merged() and won't be
         re-enriched on future pipeline runs.
 
-        Uses INSERT ... ON CONFLICT DO NOTHING — if somehow already in DB,
-        don't overwrite existing data.
+        Uses INSERT ... ON CONFLICT with a conditional DO UPDATE — if the
+        existing row is still unenriched (pending_enrichment + pending), it
+        gets updated to dropped + enriched, breaking the retry loop. If the
+        row has already progressed (e.g. enriched, sent, or in analysis),
+        the WHERE clause doesn't match and the row is left untouched.
 
         Args:
             dropped: Properties dropped at the floorplan gate.

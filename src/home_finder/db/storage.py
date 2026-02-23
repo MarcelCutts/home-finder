@@ -50,6 +50,21 @@ __all__ = ["PropertyDetailItem", "PropertyListItem", "PropertyStorage"]
 
 logger = get_logger(__name__)
 
+_CONNECTION_PRAGMAS: Final[tuple[str, ...]] = (
+    "PRAGMA journal_mode=WAL",
+    "PRAGMA busy_timeout=5000",
+    "PRAGMA synchronous=NORMAL",
+    "PRAGMA foreign_keys=ON",
+    "PRAGMA cache_size=-32000",
+    "PRAGMA temp_store=MEMORY",
+    "PRAGMA optimize=0x10002",
+)
+
+_CLOSE_PRAGMAS: Final[tuple[str, ...]] = (
+    "PRAGMA optimize",
+    "PRAGMA wal_checkpoint(PASSIVE)",
+)
+
 
 class PropertyStorage:
     """SQLite-based storage for tracking properties."""
@@ -84,19 +99,12 @@ class PropertyStorage:
     async def _get_connection(self) -> aiosqlite.Connection:
         """Get or create the database connection, reconnecting if dead.
 
-        Uses a layered health check strategy:
-        1. Fast pre-check: is the worker thread still alive? (no I/O)
-        2. Throttled SELECT 1 probe every 30s (catches hung/corrupted connections)
-        3. Reconnect with full PRAGMA configuration if connection is dead
+        Uses a throttled ``SELECT 1`` probe every 30 s to detect hung or
+        corrupted connections, then reconnects with full PRAGMA configuration.
         """
         if self._conn is not None:
-            # Layer 1: fast thread-alive check (no I/O)
-            thread = getattr(self._conn, "_thread", None)
-            if thread is not None and not thread.is_alive():
-                logger.warning("db_worker_thread_dead", db_path=self.db_path)
-                self._conn = None
-            # Layer 2: throttled SELECT 1 probe
-            elif (time.monotonic() - self._last_health_check) > self._HEALTH_CHECK_INTERVAL:
+            # Throttled SELECT 1 probe
+            if (time.monotonic() - self._last_health_check) > self._HEALTH_CHECK_INTERVAL:
                 try:
                     await asyncio.wait_for(
                         self._conn.execute("SELECT 1"), timeout=5.0
@@ -104,20 +112,16 @@ class PropertyStorage:
                     self._last_health_check = time.monotonic()
                 except Exception:
                     logger.warning("db_connection_dead", db_path=self.db_path)
-                    try:
-                        await self._conn.close()
-                    except Exception:
-                        pass
+                    # Don't await close() — if the worker thread is hung,
+                    # close() queues through the same SimpleQueue and hangs too.
+                    # Let GC / __del__ clean up the orphaned connection.
                     self._conn = None
 
         if self._conn is None:
             self._conn = await aiosqlite.connect(self.db_path)
             self._conn.row_factory = aiosqlite.Row
-            await self._conn.execute("PRAGMA journal_mode=WAL")
-            await self._conn.execute("PRAGMA busy_timeout=5000")
-            await self._conn.execute("PRAGMA synchronous=NORMAL")
-            await self._conn.execute("PRAGMA cache_size=-64000")
-            await self._conn.execute("PRAGMA foreign_keys=ON")
+            for pragma in _CONNECTION_PRAGMAS:
+                await self._conn.execute(pragma)
             self._last_health_check = time.monotonic()
         return self._conn
 
@@ -131,6 +135,11 @@ class PropertyStorage:
     async def close(self) -> None:
         """Close the database connection."""
         if self._conn is not None:
+            try:
+                for pragma in _CLOSE_PRAGMAS:
+                    await self._conn.execute(pragma)
+            except Exception:
+                logger.debug("close_pragmas_failed", exc_info=True)
             await self._conn.close()
             self._conn = None
 

@@ -95,6 +95,7 @@ async def _run_with_storage(storage: PropertyStorage, settings: Settings) -> Non
     def patched_init(self_storage: PropertyStorage, db_path: str) -> None:
         self_storage.db_path = db_path
         self_storage._conn = storage._conn
+        self_storage._last_health_check = 0.0
         self_storage._ensure_directory()
         from home_finder.db.pipeline_repo import PipelineRepository
         from home_finder.db.web_queries import WebQueryService
