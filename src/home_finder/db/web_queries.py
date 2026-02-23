@@ -104,6 +104,13 @@ def _row_to_card_dict(row: aiosqlite.Row) -> PropertyListItem:
     space = analysis.get("space") or {}
     prop_dict["living_room_sqm"] = space.get("living_room_sqm")
 
+    # Backfill floor_area_sqm from Claude's total_area_sqm estimate
+    if not prop_dict.get("floor_area_sqm"):
+        total_sqm = space.get("total_area_sqm")
+        if isinstance(total_sqm, (int, float)) and total_sqm > 0:
+            prop_dict["floor_area_sqm"] = round(total_sqm, 1)
+            prop_dict["floor_area_source"] = "estimated"
+
     return cast(PropertyListItem, prop_dict)
 
 
@@ -212,6 +219,14 @@ def build_filter_clauses(
             "CAST(json_extract(q.analysis_json, '$.space.living_room_sqm') AS REAL) >= ?"
         )
         params.append(filters.min_living_room_sqm)
+    if filters.min_floor_area_sqm is not None:
+        where_clauses.append(
+            "COALESCE("
+            "    p.floor_area_sqm,"
+            "    CAST(json_extract(q.analysis_json, '$.space.total_area_sqm') AS REAL)"
+            ") >= ?"
+        )
+        params.append(filters.min_floor_area_sqm)
     if filters.tags:
         for t in filters.tags:
             where_clauses.append(

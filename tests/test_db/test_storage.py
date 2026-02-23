@@ -1024,6 +1024,107 @@ class TestGetPropertyImagesAndRow:
         assert result_prop is None
 
 
+class TestSourceAliases:
+    """Tests for source alias recording and filtering."""
+
+    @pytest.mark.asyncio
+    async def test_record_source_aliases_and_filter_new_excludes_them(
+        self, storage: PropertyStorage, storage_sample_property: Property
+    ) -> None:
+        """Aliased IDs should be treated as 'seen' by filter_new_merged."""
+        # Save an anchor property
+        await storage.save_property(storage_sample_property)
+
+        # Record an alias pointing to the anchor
+        alias_uid = "zoopla:99999"
+        await storage.record_source_aliases(
+            [(alias_uid, "zoopla", "99999", storage_sample_property.unique_id)]
+        )
+
+        # Build a MergedProperty with the alias unique_id
+        alias_prop = Property(
+            source=PropertySource.ZOOPLA,
+            source_id="99999",
+            url=HttpUrl("https://zoopla.co.uk/99999"),
+            title="Alias flat",
+            price_pcm=1900,
+            bedrooms=1,
+            address="123 Mare Street",
+        )
+        merged = MergedProperty(
+            canonical=alias_prop,
+            sources=(PropertySource.ZOOPLA,),
+            source_urls={PropertySource.ZOOPLA: alias_prop.url},
+            min_price=1900,
+            max_price=1900,
+        )
+
+        # filter_new_merged should exclude it
+        new = await storage.filter_new_merged([merged])
+        assert len(new) == 0
+
+    @pytest.mark.asyncio
+    async def test_get_all_known_source_ids_includes_aliases(
+        self, storage: PropertyStorage, storage_sample_property: Property
+    ) -> None:
+        """get_all_known_source_ids should return alias source_ids too."""
+        await storage.save_property(storage_sample_property)
+        await storage.record_source_aliases(
+            [("zoopla:99999", "zoopla", "99999", storage_sample_property.unique_id)]
+        )
+
+        known = await storage.get_all_known_source_ids()
+        assert "zoopla" in known
+        assert "99999" in known["zoopla"]
+        # The anchor's own source_id should also be present
+        assert "openrent" in known
+        assert "12345" in known["openrent"]
+
+    @pytest.mark.asyncio
+    async def test_delete_property_cleans_up_aliases(
+        self, storage: PropertyStorage, storage_sample_property: Property
+    ) -> None:
+        """Deleting an anchor should remove its source_aliases."""
+        await storage.save_property(storage_sample_property)
+        anchor_id = storage_sample_property.unique_id
+        await storage.record_source_aliases(
+            [("zoopla:99999", "zoopla", "99999", anchor_id)]
+        )
+
+        # Verify alias exists
+        conn = await storage._get_connection()
+        cursor = await conn.execute(
+            "SELECT COUNT(*) FROM source_aliases WHERE anchor_id = ?", (anchor_id,)
+        )
+        assert (await cursor.fetchone())[0] == 1
+
+        # Delete the anchor
+        await storage.delete_property(anchor_id)
+
+        # Alias should be gone
+        cursor = await conn.execute(
+            "SELECT COUNT(*) FROM source_aliases WHERE anchor_id = ?", (anchor_id,)
+        )
+        assert (await cursor.fetchone())[0] == 0
+
+    @pytest.mark.asyncio
+    async def test_record_source_aliases_idempotent(
+        self, storage: PropertyStorage, storage_sample_property: Property
+    ) -> None:
+        """INSERT OR REPLACE should handle re-recording the same alias."""
+        await storage.save_property(storage_sample_property)
+        alias = ("zoopla:99999", "zoopla", "99999", storage_sample_property.unique_id)
+
+        await storage.record_source_aliases([alias])
+        await storage.record_source_aliases([alias])  # second call
+
+        conn = await storage._get_connection()
+        cursor = await conn.execute(
+            "SELECT COUNT(*) FROM source_aliases WHERE unique_id = ?", ("zoopla:99999",)
+        )
+        assert (await cursor.fetchone())[0] == 1
+
+
 class TestOnDeleteCascade:
     """Verify ON DELETE CASCADE removes child rows when parent is deleted."""
 

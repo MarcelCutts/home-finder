@@ -272,16 +272,21 @@ class PropertyStorage:
     async def is_seen(self, unique_id: str) -> bool:
         """Check if a property has been seen before.
 
+        Checks both canonical properties and absorbed aliases.
+
         Args:
             unique_id: Unique property identifier.
 
         Returns:
-            True if property exists in database.
+            True if property exists in database or source_aliases.
         """
         conn = await self._get_connection()
         cursor = await conn.execute(
-            "SELECT 1 FROM properties WHERE unique_id = ?",
-            (unique_id,),
+            "SELECT 1 FROM properties WHERE unique_id = ?"
+            " UNION ALL"
+            " SELECT 1 FROM source_aliases WHERE unique_id = ?"
+            " LIMIT 1",
+            (unique_id, unique_id),
         )
         row = await cursor.fetchone()
         return row is not None
@@ -391,6 +396,10 @@ class PropertyStorage:
     async def _get_seen_ids(self, unique_ids: list[str]) -> set[str]:
         """Batch-check which unique IDs already exist in the database.
 
+        Checks both the ``properties`` table (canonical IDs) and the
+        ``source_aliases`` table (IDs absorbed into existing anchors during
+        cross-run dedup).
+
         Args:
             unique_ids: List of unique IDs to check.
 
@@ -406,8 +415,10 @@ class PropertyStorage:
             chunk = unique_ids[i : i + chunk_size]
             placeholders = ",".join("?" * len(chunk))
             cursor = await conn.execute(
-                f"SELECT unique_id FROM properties WHERE unique_id IN ({placeholders})",
-                chunk,
+                f"SELECT unique_id FROM properties WHERE unique_id IN ({placeholders})"
+                f" UNION ALL"
+                f" SELECT unique_id FROM source_aliases WHERE unique_id IN ({placeholders})",
+                chunk + chunk,
             )
             rows = await cursor.fetchall()
             seen.update(row[0] for row in rows)
@@ -444,6 +455,8 @@ class PropertyStorage:
         """Delete a property and all related rows from the database.
 
         Used to clean up unenriched rows consumed by cross-platform anchor merges.
+        When an anchor is deleted, its source_aliases are also removed so the
+        secondary properties can re-enter the pipeline on a future run.
         """
         async with self._transaction() as conn:
             for table in (
@@ -458,6 +471,10 @@ class PropertyStorage:
                     f"DELETE FROM {table} WHERE property_unique_id = ?",
                     (unique_id,),
                 )
+            await conn.execute(
+                "DELETE FROM source_aliases WHERE anchor_id = ?",
+                (unique_id,),
+            )
             await conn.execute(
                 "DELETE FROM properties WHERE unique_id = ?",
                 (unique_id,),
@@ -859,14 +876,46 @@ class PropertyStorage:
         await conn.commit()
         return len(commute_lookup)
 
+    async def record_source_aliases(
+        self, aliases: list[tuple[str, str, str, str]]
+    ) -> None:
+        """Record absorbed property IDs so they are recognised as "seen".
+
+        Each tuple is (unique_id, source, source_id, anchor_id).
+        Uses INSERT OR REPLACE so re-runs are idempotent.
+        """
+        if not aliases:
+            return
+        conn = await self._get_connection()
+        await conn.executemany(
+            """
+            INSERT INTO source_aliases (unique_id, source, source_id, anchor_id)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(unique_id) DO UPDATE SET
+                anchor_id = excluded.anchor_id,
+                source = excluded.source,
+                source_id = excluded.source_id
+            """,
+            aliases,
+        )
+        await conn.commit()
+        logger.debug("source_aliases_recorded", count=len(aliases))
+
     async def get_all_known_source_ids(self) -> dict[str, set[str]]:
         """Get all source_ids grouped by property source.
+
+        Includes both canonical properties and absorbed aliases so that
+        scraper early-stop correctly skips previously-seen listings.
 
         Returns:
             Dict mapping source name to set of source_ids.
         """
         conn = await self._get_connection()
-        cursor = await conn.execute("SELECT source, source_id FROM properties")
+        cursor = await conn.execute(
+            "SELECT source, source_id FROM properties"
+            " UNION"
+            " SELECT source, source_id FROM source_aliases"
+        )
         rows = await cursor.fetchall()
         result: dict[str, set[str]] = {}
         for source, source_id in rows:

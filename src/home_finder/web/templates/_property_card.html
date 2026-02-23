@@ -43,9 +43,9 @@
                     <span class="card-postcode">{{ prop.postcode }}</span>
                     {% endif %}
                     {% if prop.floor_area_sqm %}
-                    <span class="card-area">{{ prop.floor_area_sqm | round(0) | int }} m²</span>
-                    {% elif prop.living_room_sqm %}
-                    <span class="card-area card-area-estimate">~{{ prop.living_room_sqm | int }} m² living</span>
+                    <span class="card-area{{ ' card-area-estimate' if prop.floor_area_source == 'estimated' else '' }}">
+                        {{ '~' if prop.floor_area_source == 'estimated' else '' }}{{ prop.floor_area_sqm | round(0) | int }} m²
+                    </span>
                     {% endif %}
                     {{ commute_pill(prop.commute_minutes) }}
                 </div>

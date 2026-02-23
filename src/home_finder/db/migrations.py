@@ -429,11 +429,39 @@ async def migrate_002_floor_area_sqm(conn: aiosqlite.Connection) -> None:
     )
 
 
+async def migrate_003_source_aliases(conn: aiosqlite.Connection) -> None:
+    """Add source_aliases table for tracking absorbed cross-platform duplicates.
+
+    When a new property is absorbed into an existing DB anchor during
+    cross-run dedup, its unique_id is recorded here so subsequent runs
+    recognise it as "already seen" without re-enriching.
+    """
+    await conn.execute("""
+        CREATE TABLE IF NOT EXISTS source_aliases (
+            unique_id TEXT PRIMARY KEY,
+            source TEXT NOT NULL,
+            source_id TEXT NOT NULL,
+            anchor_id TEXT NOT NULL,
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            FOREIGN KEY (anchor_id) REFERENCES properties(unique_id) ON DELETE CASCADE
+        )
+    """)
+    await conn.execute("""
+        CREATE INDEX IF NOT EXISTS idx_source_aliases_anchor
+        ON source_aliases(anchor_id)
+    """)
+    await conn.execute("""
+        CREATE INDEX IF NOT EXISTS idx_source_aliases_source
+        ON source_aliases(source, source_id)
+    """)
+
+
 _MigrationFn = Callable[[aiosqlite.Connection], Coroutine[Any, Any, None]]
 
 MIGRATIONS: list[_MigrationFn] = [
     migrate_001_initial_schema,
     migrate_002_floor_area_sqm,
+    migrate_003_source_aliases,
 ]
 
 

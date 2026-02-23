@@ -231,6 +231,18 @@ async def _cross_run_deduplicate(
             clear_image_cache(data_dir, uid)
         logger.debug("consumed_retry_cleaned", unique_id=uid)
 
+    # Record source aliases for absorbed properties so they're filtered as
+    # "already seen" on future runs (prevents redundant re-enrichment).
+    alias_tuples: list[tuple[str, str, str, str]] = []
+    for new_uid, anchor_id in absorbed_to_anchor.items():
+        if new_uid in consumed_retries:
+            continue
+        source, source_id = new_uid.split(":", 1)
+        alias_tuples.append((new_uid, source, source_id, anchor_id))
+    if alias_tuples:
+        await storage.record_source_aliases(alias_tuples)
+        logger.info("source_aliases_recorded", count=len(alias_tuples))
+
     # Build per-property fates for observability
     fates: list[dict[str, str | int]] = []
     for mp in merged_to_notify:

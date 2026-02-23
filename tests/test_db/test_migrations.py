@@ -57,6 +57,7 @@ class TestRunMigrations:
             "enquiry_log",
             "scraper_runs",
             "property_events",
+            "source_aliases",
         }
         assert expected.issubset(tables), f"Missing tables: {expected - tables}"
 
@@ -194,5 +195,7 @@ class TestRunMigrations:
             "idx_property_events_run",
             "idx_property_events_property",
             "idx_enquiry_log_property",
+            "idx_source_aliases_anchor",
+            "idx_source_aliases_source",
         }
         assert expected_indexes.issubset(indexes), f"Missing indexes: {expected_indexes - indexes}"
