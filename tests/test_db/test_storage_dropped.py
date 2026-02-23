@@ -122,12 +122,12 @@ class TestSaveDroppedProperties:
         results = await storage.get_properties_for_off_market_check()
         assert len(results) == 0
 
-    async def test_on_conflict_does_nothing(
+    async def test_on_conflict_preserves_normal_properties(
         self,
         storage: PropertyStorage,
         make_merged_property: Callable[..., MergedProperty],
     ) -> None:
-        """If a property is already in DB, ON CONFLICT DO NOTHING preserves existing data."""
+        """If a non-unenriched property is already in DB, ON CONFLICT preserves existing data."""
         merged = make_merged_property(source_id="drop-conflict")
 
         # Save as a normal pending property first
@@ -175,3 +175,42 @@ class TestSaveDroppedProperties:
         # Neither should appear on dashboard
         _props, total = await storage.get_properties_paginated(PropertyFilter())
         assert total == 0
+
+    async def test_unenriched_retry_transitions_to_dropped(
+        self,
+        storage: PropertyStorage,
+        make_merged_property: Callable[..., MergedProperty],
+    ) -> None:
+        """Unenriched retries (pending_enrichment + pending) transition to dropped on conflict."""
+        merged = make_merged_property(source_id="drop-unenriched")
+
+        # Save as unenriched (simulates enrichment failure on a previous run)
+        await storage.save_unenriched_property(merged)
+
+        conn = await storage._get_connection()
+        cursor = await conn.execute(
+            "SELECT notification_status, enrichment_status FROM properties WHERE unique_id = ?",
+            (merged.unique_id,),
+        )
+        row = await cursor.fetchone()
+        assert row["notification_status"] == "pending_enrichment"
+        assert row["enrichment_status"] == "pending"
+
+        # Verify it appears in unenriched retry queue
+        unenriched = await storage.get_unenriched_properties()
+        assert any(m.unique_id == merged.unique_id for m in unenriched)
+
+        # Now save as dropped (simulates: re-enriched successfully, then dropped at floorplan gate)
+        await storage.save_dropped_properties([merged], {})
+
+        cursor = await conn.execute(
+            "SELECT notification_status, enrichment_status FROM properties WHERE unique_id = ?",
+            (merged.unique_id,),
+        )
+        row = await cursor.fetchone()
+        assert row["notification_status"] == "dropped"
+        assert row["enrichment_status"] == "enriched"
+
+        # No longer in unenriched retry queue
+        unenriched = await storage.get_unenriched_properties()
+        assert not any(m.unique_id == merged.unique_id for m in unenriched)

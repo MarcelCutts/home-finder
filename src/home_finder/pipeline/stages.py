@@ -661,7 +661,6 @@ async def _run_post_enrichment(
         # Save floorplan-dropped properties so they don't get re-enriched
         if dropped and commute_lookup is not None:
             await storage.save_dropped_properties(dropped, commute_lookup)
-            logger.info("dropped_properties_saved", count=len(dropped))
 
         # T4: record floorplan gate events
         if recorder is not None:

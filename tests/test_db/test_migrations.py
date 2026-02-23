@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from unittest.mock import patch
+
 import aiosqlite
 import pytest
 
@@ -106,3 +108,89 @@ class TestRunMigrations:
         """MIGRATIONS list should contain at least the bootstrap migration."""
         assert len(MIGRATIONS) >= 1
         assert MIGRATIONS[0].__name__ == "migrate_001_initial_schema"
+
+    async def test_multi_migration_sequence(self, fresh_conn: aiosqlite.Connection):
+        """A DB at version 1 should skip migration 1 and run only migration 2."""
+        # Run real migrations first to get to version 1
+        await run_migrations(fresh_conn)
+        assert await _get_user_version(fresh_conn) == 1
+
+        # Define a mock second migration that adds a new table
+        async def migrate_002_add_test_table(conn: aiosqlite.Connection) -> None:
+            await conn.execute(
+                "CREATE TABLE IF NOT EXISTS _test_table (id INTEGER PRIMARY KEY)"
+            )
+
+        fake_migrations = [MIGRATIONS[0], migrate_002_add_test_table]
+        with patch("home_finder.db.migrations.MIGRATIONS", fake_migrations):
+            version = await run_migrations(fresh_conn)
+
+        assert version == 2
+        assert await _get_user_version(fresh_conn) == 2
+        # Verify migration 2 actually ran
+        tables = await _table_names(fresh_conn)
+        assert "_test_table" in tables
+
+    async def test_failed_migration_leaves_version_unchanged(
+        self, fresh_conn: aiosqlite.Connection
+    ):
+        """A migration that raises should roll back, leaving user_version unchanged."""
+        await run_migrations(fresh_conn)
+        assert await _get_user_version(fresh_conn) == 1
+
+        async def migrate_002_failing(conn: aiosqlite.Connection) -> None:
+            await conn.execute(
+                "CREATE TABLE _should_not_persist (id INTEGER PRIMARY KEY)"
+            )
+            raise RuntimeError("simulated failure")
+
+        fake_migrations = [MIGRATIONS[0], migrate_002_failing]
+        with (
+            patch("home_finder.db.migrations.MIGRATIONS", fake_migrations),
+            pytest.raises(RuntimeError, match="simulated failure"),
+        ):
+            await run_migrations(fresh_conn)
+
+        # Version must still be 1 — the failed migration was rolled back
+        assert await _get_user_version(fresh_conn) == 1
+        # The table created inside the failed migration should not exist
+        tables = await _table_names(fresh_conn)
+        assert "_should_not_persist" not in tables
+
+    async def test_forward_version_guard(self, fresh_conn: aiosqlite.Connection):
+        """A DB with a higher version than MIGRATIONS should raise RuntimeError."""
+        await fresh_conn.execute(f"PRAGMA user_version = {len(MIGRATIONS) + 1}")
+        await fresh_conn.commit()
+
+        with pytest.raises(RuntimeError, match="newer than"):
+            await run_migrations(fresh_conn)
+
+    async def test_critical_indexes_exist(self, fresh_conn: aiosqlite.Connection):
+        """Critical indexes should exist after running migrations."""
+        await run_migrations(fresh_conn)
+
+        cursor = await fresh_conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='index' AND name NOT LIKE 'sqlite_%'"
+        )
+        rows = await cursor.fetchall()
+        indexes = {r[0] for r in rows}
+
+        expected_indexes = {
+            "idx_notification_status",
+            "idx_source",
+            "idx_first_seen",
+            "idx_property_images_property",
+            "idx_quality_rating",
+            "idx_enrichment_status",
+            "idx_user_status",
+            "idx_status_events_property",
+            "idx_price_history_property",
+            "idx_price_history_detected",
+            "idx_off_market",
+            "idx_quality_fit_score",
+            "idx_scraper_runs_pipeline",
+            "idx_property_events_run",
+            "idx_property_events_property",
+            "idx_enquiry_log_property",
+        }
+        assert expected_indexes.issubset(indexes), f"Missing indexes: {expected_indexes - indexes}"

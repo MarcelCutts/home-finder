@@ -420,12 +420,20 @@ async def run_migrations(conn: aiosqlite.Connection) -> int:
     """Run unapplied migrations and return the final schema version.
 
     Uses SQLite's built-in ``PRAGMA user_version`` to track which migrations
-    have been applied. Each migration is committed individually so a crash
-    mid-sequence leaves the DB at a known good version.
+    have been applied.  Each migration runs inside an explicit
+    ``BEGIN IMMEDIATE … COMMIT`` transaction so the DDL statements and the
+    version bump are atomic — a crash mid-migration rolls back cleanly
+    instead of leaving the schema half-applied with a stale version number.
     """
     cursor = await conn.execute("PRAGMA user_version")
     row = await cursor.fetchone()
     current_version: int = row[0] if row else 0
+
+    if current_version > len(MIGRATIONS):
+        raise RuntimeError(
+            f"Database schema version {current_version} is newer than "
+            f"this application supports ({len(MIGRATIONS)})"
+        )
 
     for i, migration_fn in enumerate(MIGRATIONS):
         target_version = i + 1
@@ -437,9 +445,14 @@ async def run_migrations(conn: aiosqlite.Connection) -> int:
             from_version=current_version,
             to_version=target_version,
         )
-        await migration_fn(conn)
-        await conn.execute(f"PRAGMA user_version = {target_version}")
-        await conn.commit()
+        await conn.execute("BEGIN IMMEDIATE")
+        try:
+            await migration_fn(conn)
+            await conn.execute(f"PRAGMA user_version = {target_version}")
+            await conn.commit()
+        except BaseException:
+            await conn.rollback()
+            raise
         current_version = target_version
 
     return current_version

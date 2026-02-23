@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Any, Final
 import aiosqlite
 
 from home_finder.data.area_context import HOSTING_TOLERANCE
+from home_finder.db.migrations import run_migrations
 from home_finder.db.pipeline_repo import PipelineRepository
 from home_finder.db.row_mappers import (
     PropertyDetailItem,
@@ -155,10 +156,9 @@ class PropertyStorage:
     async def initialize(self) -> None:
         """Initialize the database schema via versioned migrations."""
         conn = await self._get_connection()
-        from home_finder.db.migrations import run_migrations
-
         version = await run_migrations(conn)
         await self._backfill_fit_scores(conn)
+        # Commit needed for _backfill_fit_scores DML; migrations handle their own commits.
         await conn.commit()
         logger.info("database_initialized", db_path=self.db_path, schema_version=version)
 

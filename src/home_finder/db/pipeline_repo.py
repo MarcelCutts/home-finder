@@ -218,7 +218,11 @@ class PipelineRepository:
                 f"""
                 INSERT INTO properties ({col_list}, enrichment_status)
                 VALUES ({placeholders}, 'enriched')
-                ON CONFLICT(unique_id) DO NOTHING
+                ON CONFLICT(unique_id) DO UPDATE SET
+                    notification_status = 'dropped',
+                    enrichment_status = 'enriched'
+                WHERE properties.notification_status = 'pending_enrichment'
+                  AND properties.enrichment_status = 'pending'
                 """,
                 values,
             )
