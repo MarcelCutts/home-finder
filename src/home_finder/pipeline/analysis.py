@@ -16,6 +16,7 @@ from home_finder.models import (
     PropertyQualityAnalysis,
     TransportMode,
 )
+from home_finder.pipeline.event_recorder import EventRecorder, PropertyEvent
 from home_finder.pipeline.stages import PreAnalysisResult
 from home_finder.scrapers.detail_fetcher import DetailFetcher
 from home_finder.utils.image_cache import (
@@ -201,6 +202,8 @@ async def _run_quality_and_save(
     settings: Settings,
     storage: PropertyStorage,
     on_result: _OnResult,
+    *,
+    recorder: EventRecorder | None = None,
 ) -> tuple[int, TokenUsage | None]:
     """Run quality analysis, save each property, and invoke callback.
 
@@ -268,6 +271,23 @@ async def _run_quality_and_save(
             await _persist_estimated_floor_area(merged, quality_analysis, storage)
             await on_result(merged, commute_info, quality_analysis)
 
+            # T4: record analysis event
+            if recorder is not None:
+                meta: dict[str, object]
+                if quality_analysis and quality_analysis.overall_rating is not None:
+                    meta = {"rating": quality_analysis.overall_rating}
+                else:
+                    meta = {"skipped": True}
+                recorder.record(
+                    PropertyEvent(
+                        merged.canonical.unique_id,
+                        merged.canonical.source.value,
+                        "analyzed",
+                        "analysis",
+                        meta,
+                    )
+                )
+
         return await _run_concurrent_analysis(
             all_to_analyze,
             _analyze,
@@ -288,6 +308,9 @@ async def _run_quality_and_save(
             token_usage = quality_filter.token_usage
     else:
         count = await _do_analysis(None)
+
+    if recorder is not None:
+        await recorder.flush()
 
     return count, token_usage
 

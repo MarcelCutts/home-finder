@@ -30,6 +30,7 @@ from home_finder.pipeline.commands import (
     run_check_off_market,
     run_dedup_existing,
 )
+from home_finder.pipeline.event_recorder import EventRecorder, PropertyEvent
 from home_finder.pipeline.scraping import (
     scrape_all_platforms,
 )
@@ -46,6 +47,8 @@ def _make_notify_callback(
     notifier: TelegramNotifier,
     storage: PropertyStorage,
     counter: list[int],
+    *,
+    recorder: EventRecorder | None = None,
 ) -> _OnResult:
     """Build the on_result callback for live pipeline runs (sends Telegram)."""
 
@@ -69,11 +72,19 @@ def _make_notify_callback(
             quality_analysis=quality_analysis,
         )
 
+        uid = merged.canonical.unique_id
+        src = merged.canonical.source.value
         if success:
-            await storage.mark_notified(merged.unique_id)
+            await storage.mark_notified(uid)
             counter[0] += 1
+            if recorder is not None:
+                recorder.record(PropertyEvent(uid, src, "notified", "notification"))
         else:
-            await storage.mark_notification_failed(merged.unique_id)
+            await storage.mark_notification_failed(uid)
+            if recorder is not None:
+                recorder.record(
+                    PropertyEvent(uid, src, "notification_failed", "notification")
+                )
 
         await asyncio.sleep(1)  # Telegram rate limit
 
@@ -173,7 +184,14 @@ async def run_pipeline(
                 data_dir=settings.data_dir,
             )
 
-        async with notifier_cm as notifier:
+        # T4: EventRecorder for property audit trail
+        recorder_cm: contextlib.AbstractAsyncContextManager[EventRecorder | None]
+        if run_id is not None:
+            recorder_cm = EventRecorder(storage, run_id)
+        else:
+            recorder_cm = contextlib.nullcontext(None)
+
+        async with notifier_cm as notifier, recorder_cm as recorder:
             try:
                 # Step 0: Retry unsent notifications (live mode only)
                 if not dry_run and notifier is not None:
@@ -205,6 +223,7 @@ async def run_pipeline(
                     max_per_scraper=max_per_scraper,
                     only_scrapers=only_scrapers,
                     full_scrape=full_scrape,
+                    recorder=recorder,
                 )
                 if pre is None:
                     if dry_run:
@@ -250,11 +269,13 @@ async def run_pipeline(
                     on_result = _make_accumulate_callback(dry_run_results)
                 else:
                     assert notifier is not None
-                    on_result = _make_notify_callback(notifier, storage, notified_counter)
+                    on_result = _make_notify_callback(
+                        notifier, storage, notified_counter, recorder=recorder
+                    )
 
                 t_analysis = time.monotonic()
                 analyzed_count, token_usage = await _run_quality_and_save(
-                    pre, settings, storage, on_result
+                    pre, settings, storage, on_result, recorder=recorder
                 )
 
                 # Re-analyze cross-run merges that gained new source data
@@ -312,6 +333,9 @@ async def run_pipeline(
                         **cost_kwargs,
                     )
                     await storage.complete_pipeline_run(run_id, "completed")
+
+                    # T4: prune old property events
+                    await storage.cleanup_old_events(settings.event_retention_runs)
 
                     logger.info(
                         "pipeline_complete",

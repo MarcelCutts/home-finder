@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
+import json
 from collections.abc import Callable, Coroutine
 from contextlib import AbstractAsyncContextManager
 from datetime import UTC, datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from home_finder.pipeline.event_recorder import PropertyEvent
 
 import aiosqlite
 
@@ -546,6 +550,71 @@ class PipelineRepository:
 
         logger.info("loaded_reanalysis_queue", count=len(results))
         return results
+
+    # ------------------------------------------------------------------
+    # Property events (T4: audit trail)
+    # ------------------------------------------------------------------
+
+    async def insert_property_events(self, run_id: int, events: list[PropertyEvent]) -> None:
+        """Bulk-insert property events for a pipeline run.
+
+        Args:
+            run_id: The pipeline run ID.
+            events: List of PropertyEvent objects to persist.
+        """
+        if not events:
+            return
+        conn = await self._get_connection()
+        rows = [
+            (
+                run_id,
+                e.property_id,
+                e.source,
+                e.event_type,
+                e.stage,
+                json.dumps(e.metadata) if e.metadata else None,
+            )
+            for e in events
+        ]
+        await conn.executemany(
+            """
+            INSERT INTO property_events
+                (run_id, property_id, source, event_type, stage, metadata_json)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            rows,
+        )
+        await conn.commit()
+        logger.debug("property_events_inserted", count=len(events), run_id=run_id)
+
+    async def cleanup_old_events(self, keep_runs: int = 30) -> int:
+        """Delete property events from runs older than the last N.
+
+        Args:
+            keep_runs: Number of most recent pipeline runs to keep events for.
+
+        Returns:
+            Number of rows deleted.
+        """
+        conn = await self._get_connection()
+        cursor = await conn.execute(
+            """
+            DELETE FROM property_events
+            WHERE run_id NOT IN (
+                SELECT id FROM pipeline_runs ORDER BY id DESC LIMIT ?
+            )
+            """,
+            (keep_runs,),
+        )
+        await conn.commit()
+        deleted = cursor.rowcount
+        if deleted:
+            logger.info("old_property_events_cleaned", deleted=deleted, keep_runs=keep_runs)
+        return deleted
+
+    # ------------------------------------------------------------------
+    # Re-analysis support
+    # ------------------------------------------------------------------
 
     async def complete_reanalysis(
         self,

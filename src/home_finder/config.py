@@ -90,6 +90,13 @@ class Settings(BaseSettings):
         description="Max enrichment retry attempts before giving up on a property",
     )
 
+    # Observability
+    event_retention_runs: int = Field(
+        default=30,
+        ge=1,
+        description="Keep property events for the last N pipeline runs",
+    )
+
     # Deduplication
     enable_image_hash_matching: bool = Field(
         default=True,

@@ -489,6 +489,29 @@ class PropertyStorage:
             ON scraper_runs(pipeline_run_id)
         """)
 
+        # T4: property_events table for per-property pipeline audit trail
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS property_events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                run_id INTEGER NOT NULL,
+                property_id TEXT NOT NULL,
+                source TEXT NOT NULL,
+                event_type TEXT NOT NULL,
+                stage TEXT NOT NULL,
+                metadata_json TEXT,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (run_id) REFERENCES pipeline_runs(id)
+            )
+        """)
+        await conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_property_events_run
+            ON property_events(run_id)
+        """)
+        await conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_property_events_property
+            ON property_events(property_id)
+        """)
+
         await conn.commit()
 
         logger.info("database_initialized", db_path=self.db_path)
@@ -1470,6 +1493,16 @@ class PropertyStorage:
     ) -> None:
         """Persist per-scraper metrics for a pipeline run."""
         await self._pipeline.save_scraper_runs(pipeline_run_id, metrics_list)
+
+    async def insert_property_events(
+        self, run_id: int, events: list[Any]
+    ) -> None:
+        """Insert property events for a pipeline run."""
+        await self._pipeline.insert_property_events(run_id, events)
+
+    async def cleanup_old_events(self, keep_runs: int = 30) -> int:
+        """Delete property events from runs older than the last N."""
+        return await self._pipeline.cleanup_old_events(keep_runs)
 
     # ------------------------------------------------------------------
     # Facade: quality analysis retry (delegates to PipelineRepository)

@@ -18,6 +18,7 @@ from home_finder.pipeline.commands import (
     run_check_off_market,
     run_dedup_existing,
 )
+from home_finder.pipeline.event_recorder import EventRecorder, PropertyEvent
 from home_finder.pipeline.scraping import (
     ScraperMetrics,
     _run_scrape,
@@ -40,7 +41,9 @@ from home_finder.pipeline.stages import (
 
 __all__ = [
     "CrossRunDedupResult",
+    "EventRecorder",
     "PreAnalysisResult",
+    "PropertyEvent",
     "ScraperMetrics",
     "_CommInfo",
     "_OnResult",

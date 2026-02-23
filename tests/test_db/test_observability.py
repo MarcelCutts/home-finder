@@ -1,4 +1,4 @@
-"""Tests for observability features: funnel counts, scraper runs, and API cost columns."""
+"""Tests for observability: funnel counts, scraper runs, API costs, and property events."""
 
 from collections.abc import AsyncGenerator
 
@@ -6,6 +6,7 @@ import pytest
 import pytest_asyncio
 
 from home_finder.db.storage import PropertyStorage
+from home_finder.pipeline.event_recorder import PropertyEvent
 
 
 @pytest_asyncio.fixture
@@ -240,3 +241,85 @@ class TestScraperRuns:
         )
         row = await cursor.fetchone()
         assert row["cnt"] == 4
+
+
+class TestPropertyEvents:
+    """T4: property_events table for pipeline audit trail."""
+
+    async def test_insert_property_events_persists(self, storage: PropertyStorage) -> None:
+        run_id = await storage.create_pipeline_run()
+        events = [
+            PropertyEvent("openrent:1", "openrent", "criteria_passed", "criteria"),
+            PropertyEvent(
+                "zoopla:2", "zoopla", "criteria_dropped", "criteria",
+                {"price": 3000, "bedrooms": 3},
+            ),
+        ]
+        await storage.insert_property_events(run_id, events)
+
+        conn = await storage._get_connection()
+        cursor = await conn.execute(
+            "SELECT * FROM property_events WHERE run_id = ? ORDER BY id",
+            (run_id,),
+        )
+        rows = await cursor.fetchall()
+        assert len(rows) == 2
+
+        first = dict(rows[0])
+        assert first["property_id"] == "openrent:1"
+        assert first["source"] == "openrent"
+        assert first["event_type"] == "criteria_passed"
+        assert first["stage"] == "criteria"
+        assert first["metadata_json"] is None
+
+        second = dict(rows[1])
+        assert second["property_id"] == "zoopla:2"
+        assert second["event_type"] == "criteria_dropped"
+        import json
+
+        meta = json.loads(second["metadata_json"])
+        assert meta["price"] == 3000
+
+    async def test_insert_empty_list_is_noop(self, storage: PropertyStorage) -> None:
+        run_id = await storage.create_pipeline_run()
+        await storage.insert_property_events(run_id, [])
+
+        conn = await storage._get_connection()
+        cursor = await conn.execute("SELECT COUNT(*) as cnt FROM property_events")
+        row = await cursor.fetchone()
+        assert row["cnt"] == 0
+
+    async def test_cleanup_old_events_respects_keep_runs(
+        self, storage: PropertyStorage
+    ) -> None:
+        # Create 3 pipeline runs and add events to each
+        run_ids = []
+        for _ in range(3):
+            rid = await storage.create_pipeline_run()
+            run_ids.append(rid)
+            await storage.insert_property_events(
+                rid,
+                [PropertyEvent("x:1", "x", "criteria_passed", "criteria")],
+            )
+
+        # Keep only the last 2 runs — run_ids[0] should be pruned
+        deleted = await storage.cleanup_old_events(keep_runs=2)
+        assert deleted == 1
+
+        conn = await storage._get_connection()
+        cursor = await conn.execute(
+            "SELECT DISTINCT run_id FROM property_events ORDER BY run_id"
+        )
+        remaining = [row["run_id"] for row in await cursor.fetchall()]
+        assert run_ids[0] not in remaining
+        assert run_ids[1] in remaining
+        assert run_ids[2] in remaining
+
+    async def test_cleanup_with_no_old_events(self, storage: PropertyStorage) -> None:
+        run_id = await storage.create_pipeline_run()
+        await storage.insert_property_events(
+            run_id,
+            [PropertyEvent("x:1", "x", "enriched", "enrichment")],
+        )
+        deleted = await storage.cleanup_old_events(keep_runs=10)
+        assert deleted == 0

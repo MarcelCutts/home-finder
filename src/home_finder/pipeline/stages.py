@@ -21,6 +21,7 @@ from home_finder.models import (
     SearchCriteria,
     TransportMode,
 )
+from home_finder.pipeline.event_recorder import EventRecorder, PropertyEvent
 from home_finder.pipeline.scraping import ScraperMetrics, _run_scrape, _source_counts
 from home_finder.scrapers.detail_fetcher import DetailFetcher
 from home_finder.utils.image_cache import (
@@ -67,6 +68,7 @@ async def _cross_run_deduplicate(
     re_enrichment_ids: set[str],
     *,
     data_dir: str = "",
+    recorder: EventRecorder | None = None,
 ) -> CrossRunDedupResult:
     """Deduplicate new properties against recent DB anchors (cross-run detection).
 
@@ -272,6 +274,39 @@ async def _cross_run_deduplicate(
         by_source=_source_counts(genuinely_new),
     )
 
+    # T4: record dedup events
+    if recorder is not None:
+        for fate_entry in fates:
+            fate = str(fate_entry["fate"])
+            uid = str(fate_entry["id"])
+            src = str(fate_entry["source"])
+            if fate == "genuinely_new":
+                recorder.record(PropertyEvent(uid, src, "dedup_passed", "dedup"))
+            elif fate == "merged_into_anchor":
+                recorder.record(
+                    PropertyEvent(
+                        uid,
+                        src,
+                        "duplicate_merged",
+                        "dedup",
+                        {"anchor_id": str(fate_entry.get("anchor", ""))},
+                    )
+                )
+            elif fate == "consumed_retry":
+                recorder.record(
+                    PropertyEvent(
+                        uid,
+                        src,
+                        "duplicate_merged",
+                        "dedup",
+                        {
+                            "anchor_id": str(fate_entry.get("anchor", "")),
+                            "reason": "consumed_retry",
+                        },
+                    )
+                )
+        await recorder.flush()
+
     return CrossRunDedupResult(genuinely_new=genuinely_new, anchors_updated=anchors_updated)
 
 
@@ -279,6 +314,8 @@ def _run_criteria_and_location_filters(
     properties: list[Property],
     criteria: SearchCriteria,
     search_areas: list[str],
+    *,
+    recorder: EventRecorder | None = None,
 ) -> tuple[list[Property], int, int] | None:
     """Apply criteria and location filters.
 
@@ -292,17 +329,56 @@ def _run_criteria_and_location_filters(
         "criteria_filter_summary", matched=len(filtered), by_source=_source_counts(filtered)
     )
 
+    # T4: record criteria pass/drop events
+    if recorder is not None:
+        filtered_ids = {p.unique_id for p in filtered}
+        for prop in properties:
+            if prop.unique_id in filtered_ids:
+                recorder.record(
+                    PropertyEvent(prop.unique_id, prop.source.value, "criteria_passed", "criteria")
+                )
+            else:
+                recorder.record(
+                    PropertyEvent(
+                        prop.unique_id,
+                        prop.source.value,
+                        "criteria_dropped",
+                        "criteria",
+                        {"price": prop.price_pcm, "bedrooms": prop.bedrooms},
+                    )
+                )
+
     if not filtered:
         logger.info("no_properties_match_criteria")
         return None
 
     logger.info("pipeline_started", phase="location_filtering")
     location_filter = LocationFilter(search_areas, strict=False)
+    pre_location = filtered
     filtered = location_filter.filter_properties(filtered)
     location_count = len(filtered)
     logger.info(
         "location_filter_summary", matched=len(filtered), by_source=_source_counts(filtered)
     )
+
+    # T4: record location pass/drop events
+    if recorder is not None:
+        filtered_ids = {p.unique_id for p in filtered}
+        for prop in pre_location:
+            if prop.unique_id in filtered_ids:
+                recorder.record(
+                    PropertyEvent(prop.unique_id, prop.source.value, "location_passed", "location")
+                )
+            else:
+                recorder.record(
+                    PropertyEvent(
+                        prop.unique_id,
+                        prop.source.value,
+                        "location_dropped",
+                        "location",
+                        {"postcode": prop.postcode},
+                    )
+                )
 
     if not filtered:
         logger.info("no_properties_in_search_areas")
@@ -342,6 +418,8 @@ async def _geocode_and_compute_commute(
     merged: list[MergedProperty],
     criteria: SearchCriteria,
     settings: Settings,
+    *,
+    recorder: EventRecorder | None = None,
 ) -> tuple[list[MergedProperty], dict[str, tuple[int, TransportMode]], int]:
     """Geocode properties and compute commute times via TravelTime API.
 
@@ -406,6 +484,38 @@ async def _geocode_and_compute_commute(
             by_source=_source_counts(merged),
         )
 
+        # T4: record commute events
+        if recorder is not None:
+            for m in merged_with_coords:
+                uid = m.canonical.unique_id
+                src = m.canonical.source.value
+                if uid in commute_lookup:
+                    mins, mode = commute_lookup[uid]
+                    recorder.record(
+                        PropertyEvent(
+                            uid, src, "commute_passed", "commute",
+                            {"minutes": mins, "mode": mode.value},
+                        )
+                    )
+                else:
+                    recorder.record(
+                        PropertyEvent(
+                            uid, src, "commute_dropped", "commute",
+                            {"reason": "beyond_limit"},
+                        )
+                    )
+            for m in merged_without_coords:
+                recorder.record(
+                    PropertyEvent(
+                        m.canonical.unique_id,
+                        m.canonical.source.value,
+                        "commute_passed",
+                        "commute",
+                        {"reason": "no_coords_included"},
+                    )
+                )
+            await recorder.flush()
+
         if not within_limit and not merged_without_coords:
             return [], commute_lookup, 0
     else:
@@ -419,6 +529,8 @@ async def _run_enrichment(
     merged: list[MergedProperty],
     settings: Settings,
     storage: PropertyStorage,
+    *,
+    recorder: EventRecorder | None = None,
 ) -> list[MergedProperty] | None:
     """Enrich with detail page data and handle failures. Returns None if nothing enriched."""
     logger.info("pipeline_started", phase="detail_enrichment")
@@ -451,6 +563,30 @@ async def _run_enrichment(
         by_source=_source_counts(enriched),
     )
 
+    # T4: record enrichment events
+    if recorder is not None:
+        for m in enrichment_result.enriched:
+            recorder.record(
+                PropertyEvent(
+                    m.canonical.unique_id,
+                    m.canonical.source.value,
+                    "enriched",
+                    "enrichment",
+                    {"gallery_count": len(m.images), "has_floorplan": bool(m.floorplan)},
+                )
+            )
+        for m in enrichment_result.failed:
+            recorder.record(
+                PropertyEvent(
+                    m.canonical.unique_id,
+                    m.canonical.source.value,
+                    "enrichment_failed",
+                    "enrichment",
+                    {"error": "enrichment_failure"},
+                )
+            )
+        await recorder.flush()
+
     if not enriched:
         logger.info("no_enriched_properties")
         return None
@@ -463,6 +599,8 @@ async def _run_post_enrichment(
     storage: PropertyStorage,
     settings: Settings,
     re_enrichment_ids: set[str],
+    *,
+    recorder: EventRecorder | None = None,
 ) -> tuple[list[MergedProperty], int, int, int] | None:
     """Cross-run dedup and floorplan gate. Returns None if nothing remains.
 
@@ -478,7 +616,12 @@ async def _run_post_enrichment(
         data_dir=settings.data_dir,
     )
     dedup_result = await _cross_run_deduplicate(
-        cross_run_deduplicator, merged, storage, re_enrichment_ids, data_dir=settings.data_dir
+        cross_run_deduplicator,
+        merged,
+        storage,
+        re_enrichment_ids,
+        data_dir=settings.data_dir,
+        recorder=recorder,
     )
     merged_to_notify = dedup_result.genuinely_new
     anchors_updated = dedup_result.anchors_updated
@@ -491,6 +634,7 @@ async def _run_post_enrichment(
 
     if settings.require_floorplan:
         before_count = len(merged_to_notify)
+        pre_floorplan = list(merged_to_notify)
         merged_to_notify = filter_by_floorplan(
             merged_to_notify,
             min_gallery_for_photo_inference=settings.min_gallery_for_photo_inference,
@@ -508,6 +652,25 @@ async def _run_post_enrichment(
             photo_inference_eligible=photo_inference_eligible,
             by_source=_source_counts(merged_to_notify),
         )
+
+        # T4: record floorplan gate events
+        if recorder is not None:
+            passed_ids = {m.unique_id for m in merged_to_notify}
+            for m in pre_floorplan:
+                uid = m.canonical.unique_id
+                src = m.canonical.source.value
+                if uid in passed_ids:
+                    recorder.record(
+                        PropertyEvent(uid, src, "floorplan_passed", "floorplan")
+                    )
+                else:
+                    recorder.record(
+                        PropertyEvent(
+                            uid, src, "floorplan_dropped", "floorplan",
+                            {"reason": "no_floorplan"},
+                        )
+                    )
+            await recorder.flush()
 
         if not merged_to_notify:
             logger.info("no_properties_with_floorplans")
@@ -575,6 +738,7 @@ async def _run_pre_analysis_pipeline(
     max_per_scraper: int | None = None,
     only_scrapers: set[str] | None = None,
     full_scrape: bool = False,
+    recorder: EventRecorder | None = None,
 ) -> PreAnalysisResult | None:
     """Run the pre-analysis pipeline: scrape, filter, deduplicate, enrich.
 
@@ -602,11 +766,17 @@ async def _run_pre_analysis_pipeline(
     t0 = time.monotonic()
     criteria = settings.get_search_criteria()
     search_areas = settings.get_search_areas()
-    filter_result = _run_criteria_and_location_filters(all_properties, criteria, search_areas)
+    filter_result = _run_criteria_and_location_filters(
+        all_properties, criteria, search_areas, recorder=recorder
+    )
     if filter_result is None:
+        if recorder is not None:
+            await recorder.flush()
         timings["filtering_seconds"] = time.monotonic() - t0
         return None
     filtered, criteria_filtered_count, location_filtered_count = filter_result
+    if recorder is not None:
+        await recorder.flush()
 
     # Step 3: Wrap as single-source MergedProperties + filter to new only
     logger.info("pipeline_started", phase="wrap_merged")
@@ -632,6 +802,25 @@ async def _run_pre_analysis_pipeline(
         "new_property_summary", new_count=len(new_merged), by_source=_source_counts(new_merged)
     )
 
+    # T4: record new property filter events
+    if recorder is not None:
+        new_ids = {m.canonical.unique_id for m in new_merged}
+        for m in merged_properties:
+            uid = m.canonical.unique_id
+            src = m.canonical.source.value
+            if uid in new_ids:
+                recorder.record(
+                    PropertyEvent(uid, src, "new_property_passed", "new_property")
+                )
+            else:
+                recorder.record(
+                    PropertyEvent(
+                        uid, src, "duplicate_known", "new_property",
+                        {"reason": "already_seen"},
+                    )
+                )
+        await recorder.flush()
+
     # Step 4: Load unenriched retries
     unenriched, re_enrichment_ids = await _load_unenriched(storage, settings)
     timings["filtering_seconds"] = time.monotonic() - t0
@@ -642,14 +831,14 @@ async def _run_pre_analysis_pipeline(
     # Step 5: Enrichment
     t0 = time.monotonic()
     merged_to_enrich = list(new_merged) + list(unenriched)
-    enriched = await _run_enrichment(merged_to_enrich, settings, storage)
+    enriched = await _run_enrichment(merged_to_enrich, settings, storage, recorder=recorder)
     if enriched is None:
         timings["enrichment_seconds"] = time.monotonic() - t0
         return None
 
     # Step 6: Geocode + commute (after enrichment so all properties have full coords)
     geocoded, commute_lookup, commute_within_limit_count = await _geocode_and_compute_commute(
-        enriched, criteria, settings
+        enriched, criteria, settings, recorder=recorder
     )
     if not geocoded:
         logger.info("no_properties_within_commute_limit")
@@ -658,7 +847,9 @@ async def _run_pre_analysis_pipeline(
 
     # Step 7: Post-enrichment dedup + floorplan gate
     # Use geocoded list (not enriched) so coordinates from geocoding are preserved
-    post_result = await _run_post_enrichment(geocoded, storage, settings, re_enrichment_ids)
+    post_result = await _run_post_enrichment(
+        geocoded, storage, settings, re_enrichment_ids, recorder=recorder
+    )
     timings["enrichment_seconds"] = time.monotonic() - t0
     if post_result is None:
         return None
