@@ -1472,6 +1472,9 @@ nav.container-fluid li {
     position: relative;
     overflow: hidden;
     cursor: pointer;
+    background: none;
+    border: none;
+    padding: 0;
 }
 .hero-gallery .hero-main img {
     width: 100%;
@@ -1489,6 +1492,9 @@ nav.container-fluid li {
     position: relative;
     overflow: hidden;
     cursor: pointer;
+    background: none;
+    border: none;
+    padding: 0;
 }
 .hero-gallery .hero-thumb img {
     width: 100%;

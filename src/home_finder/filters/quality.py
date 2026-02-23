@@ -918,7 +918,7 @@ class PropertyQualityFilter:
                 gallery_cached_paths=gallery_cached[: self._max_images],
                 floorplan_cached_path=floorplan_cached,
                 data_dir=data_dir,
-                floor_area_sqft=merged.floor_area_sqft,
+                floor_area_sqm=merged.floor_area_sqm,
             )
         except APIUnavailableError:
             raise  # Propagate to caller for circuit breaker handling
@@ -1450,7 +1450,7 @@ class PropertyQualityFilter:
         gallery_cached_paths: list[Path | None] | None = None,
         floorplan_cached_path: Path | None = None,
         data_dir: str | None = None,
-        floor_area_sqft: int | None = None,
+        floor_area_sqm: float | None = None,
     ) -> PropertyQualityAnalysis | None:
         """Analyze a single property using two-phase chained Claude analysis.
 
@@ -1526,7 +1526,7 @@ class PropertyQualityFilter:
             energy_estimate=energy_estimate,
             hosting_tolerance=hosting_tolerance,
             has_labeled_floorplan=has_floorplan,
-            floor_area_sqft=floor_area_sqft,
+            floor_area_sqm=floor_area_sqm,
         )
         content.append(TextBlockParam(type="text", text=user_prompt))
 

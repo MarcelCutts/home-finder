@@ -192,36 +192,36 @@ def _score_hosting(analysis: dict[str, Any], bedrooms: int) -> _DimensionResult:
 
     living_sqm = space.get("living_room_sqm")
     if isinstance(living_sqm, (int, float)) and living_sqm > 0:
-        # 0 at <=10sqm, 30 at >=25sqm, graduated between
+        # 0 at <=10 m², 30 at >=25 m², graduated between
         sqm_score = max(0.0, min(30.0, (living_sqm - 10) * (30 / 15)))
         score += sqm_score
         signals += 1
         if sqm_score >= 20:
             factors.append(
-                {"label": f"Large living room (~{int(living_sqm)}sqm)", "state": "earned"}
+                {"label": f"Large living room (~{int(living_sqm)} m²)", "state": "earned"}
             )
         elif sqm_score > 0:
-            factors.append({"label": f"Living room ~{int(living_sqm)}sqm", "state": "earned"})
+            factors.append({"label": f"Living room ~{int(living_sqm)} m²", "state": "earned"})
         else:
             factors.append(
-                {"label": f"Small living room (~{int(living_sqm)}sqm)", "state": "missed"}
+                {"label": f"Small living room (~{int(living_sqm)} m²)", "state": "missed"}
             )
 
     total_area_sqm = space.get("total_area_sqm")
     if isinstance(total_area_sqm, (int, float)) and total_area_sqm > 0:
-        # 0 at <=30sqm, 15 at >=55sqm, graduated between
+        # 0 at <=30 m², 15 at >=55 m², graduated between
         area_score = max(0.0, min(15.0, (total_area_sqm - 30) * (15 / 25)))
         score += area_score
         signals += 1
         if area_score >= 10:
             factors.append(
-                {"label": f"Good total area (~{int(total_area_sqm)}sqm)", "state": "earned"}
+                {"label": f"Good total area (~{int(total_area_sqm)} m²)", "state": "earned"}
             )
         elif area_score > 0:
-            factors.append({"label": f"Total area ~{int(total_area_sqm)}sqm", "state": "earned"})
+            factors.append({"label": f"Total area ~{int(total_area_sqm)} m²", "state": "earned"})
         else:
             factors.append(
-                {"label": f"Small total area (~{int(total_area_sqm)}sqm)", "state": "missed"}
+                {"label": f"Small total area (~{int(total_area_sqm)} m²)", "state": "missed"}
             )
 
     light_space = analysis.get("light_space") or {}

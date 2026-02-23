@@ -71,7 +71,7 @@
         <div class="detail-header-row">
             <p class="detail-meta">
                 {{ prop.bedrooms }} bed
-                {%- if prop.floor_area_sqft %} &middot; {{ prop.floor_area_sqft }} ft² ({{ (prop.floor_area_sqft * SQM_PER_SQFT) | round(0) | int }} m²)
+                {%- if prop.floor_area_sqm %} &middot; {{ prop.floor_area_sqm | round(0) | int }} m²
                 {%- if prop.floor_area_source %} <span class="meta-dim">via {{ prop.floor_area_source | title }}</span>{% endif %}
                 {%- endif %} &middot; {{ prop.address }}{% if prop.postcode %}, {{ prop.postcode }}{% endif %}
                 {%- for source_key in prop.sources_list -%}

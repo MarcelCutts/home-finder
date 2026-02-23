@@ -409,10 +409,31 @@ async def migrate_001_initial_schema(conn: aiosqlite.Connection) -> None:
 
 # Ordered registry of migration functions.
 # To add a new migration: write an async function above and append it here.
+async def migrate_002_floor_area_sqm(conn: aiosqlite.Connection) -> None:
+    """Add floor_area_sqm column and migrate existing sqft data to sqm.
+
+    The old floor_area_sqft column becomes vestigial — no code reads it after
+    this migration. We don't DROP it (avoids table rewrite for zero benefit).
+    """
+    try:
+        await conn.execute("ALTER TABLE properties ADD COLUMN floor_area_sqm REAL")
+    except aiosqlite.OperationalError as e:
+        if "duplicate column" not in str(e).lower():
+            raise
+
+    await conn.execute(
+        """
+        UPDATE properties SET floor_area_sqm = ROUND(floor_area_sqft * 0.0929, 1)
+        WHERE floor_area_sqft IS NOT NULL AND floor_area_sqm IS NULL
+        """
+    )
+
+
 _MigrationFn = Callable[[aiosqlite.Connection], Coroutine[Any, Any, None]]
 
 MIGRATIONS: list[_MigrationFn] = [
     migrate_001_initial_schema,
+    migrate_002_floor_area_sqm,
 ]
 
 

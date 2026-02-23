@@ -70,7 +70,7 @@ def _mock_curl_response(html: str, status_code: int = 200) -> MagicMock:
 
 def _make_merged(
     prop: Property,
-    floor_area_sqft: int | None = None,
+    floor_area_sqm: float | None = None,
     floor_area_source: str | None = None,
 ) -> MergedProperty:
     return MergedProperty(
@@ -79,7 +79,7 @@ def _make_merged(
         source_urls={prop.source: prop.url},
         min_price=prop.price_pcm,
         max_price=prop.price_pcm,
-        floor_area_sqft=floor_area_sqft,
+        floor_area_sqm=floor_area_sqm,
         floor_area_source=floor_area_source,
     )
 
@@ -129,7 +129,7 @@ class TestRightmoveFloorArea:
         fetcher._httpx_get_with_retry = AsyncMock(return_value=_mock_httpx_response(html))
         result = await fetcher.fetch_detail_page(_make_property(PropertySource.RIGHTMOVE))
         assert result is not None
-        assert result.floor_area_sqft == 700
+        assert result.floor_area_sqm == 65.0  # 700 sqft * 0.0929
         assert result.floor_area_source == "rightmove"
 
     async def test_prefers_maximum_size(self, fetcher: DetailFetcher) -> None:
@@ -137,49 +137,49 @@ class TestRightmoveFloorArea:
         fetcher._httpx_get_with_retry = AsyncMock(return_value=_mock_httpx_response(html))
         result = await fetcher.fetch_detail_page(_make_property(PropertySource.RIGHTMOVE))
         assert result is not None
-        assert result.floor_area_sqft == 800
+        assert result.floor_area_sqm == 74.3  # 800 sqft * 0.0929
 
     async def test_falls_back_to_minimum_size(self, fetcher: DetailFetcher) -> None:
         html = self._rightmove_html([{"unit": "sqft", "minimumSize": 600}])
         fetcher._httpx_get_with_retry = AsyncMock(return_value=_mock_httpx_response(html))
         result = await fetcher.fetch_detail_page(_make_property(PropertySource.RIGHTMOVE))
         assert result is not None
-        assert result.floor_area_sqft == 600
+        assert result.floor_area_sqm == 55.7  # 600 sqft * 0.0929
 
     async def test_ignores_non_sqft_units(self, fetcher: DetailFetcher) -> None:
         html = self._rightmove_html([{"unit": "sqm", "minimumSize": 60}])
         fetcher._httpx_get_with_retry = AsyncMock(return_value=_mock_httpx_response(html))
         result = await fetcher.fetch_detail_page(_make_property(PropertySource.RIGHTMOVE))
         assert result is not None
-        assert result.floor_area_sqft is None
+        assert result.floor_area_sqm is None
 
     async def test_rejects_below_min_bound(self, fetcher: DetailFetcher) -> None:
         html = self._rightmove_html([{"unit": "sqft", "minimumSize": 99}])
         fetcher._httpx_get_with_retry = AsyncMock(return_value=_mock_httpx_response(html))
         result = await fetcher.fetch_detail_page(_make_property(PropertySource.RIGHTMOVE))
         assert result is not None
-        assert result.floor_area_sqft is None
+        assert result.floor_area_sqm is None
 
     async def test_rejects_above_max_bound(self, fetcher: DetailFetcher) -> None:
         html = self._rightmove_html([{"unit": "sqft", "minimumSize": 5001}])
         fetcher._httpx_get_with_retry = AsyncMock(return_value=_mock_httpx_response(html))
         result = await fetcher.fetch_detail_page(_make_property(PropertySource.RIGHTMOVE))
         assert result is not None
-        assert result.floor_area_sqft is None
+        assert result.floor_area_sqm is None
 
     async def test_accepts_boundary_values(self, fetcher: DetailFetcher) -> None:
         html = self._rightmove_html([{"unit": "sqft", "minimumSize": 100}])
         fetcher._httpx_get_with_retry = AsyncMock(return_value=_mock_httpx_response(html))
         result = await fetcher.fetch_detail_page(_make_property(PropertySource.RIGHTMOVE))
         assert result is not None
-        assert result.floor_area_sqft == 100
+        assert result.floor_area_sqm == 9.3  # 100 sqft * 0.0929
 
     async def test_no_sizings_returns_none(self, fetcher: DetailFetcher) -> None:
         html = self._rightmove_html([])
         fetcher._httpx_get_with_retry = AsyncMock(return_value=_mock_httpx_response(html))
         result = await fetcher.fetch_detail_page(_make_property(PropertySource.RIGHTMOVE))
         assert result is not None
-        assert result.floor_area_sqft is None
+        assert result.floor_area_sqm is None
         assert result.floor_area_source is None
 
 
@@ -256,7 +256,7 @@ class TestOnTheMarketFloorArea:
         fetcher._curl_get_with_retry = AsyncMock(return_value=_mock_curl_response(html))
         result = await fetcher.fetch_detail_page(_make_property(PropertySource.ONTHEMARKET))
         assert result is not None
-        assert result.floor_area_sqft == 850
+        assert result.floor_area_sqm == 79.0  # 850 sqft * 0.0929
         assert result.floor_area_source == "onthemarket"
 
     async def test_rejects_below_min(self, fetcher: DetailFetcher) -> None:
@@ -264,21 +264,21 @@ class TestOnTheMarketFloorArea:
         fetcher._curl_get_with_retry = AsyncMock(return_value=_mock_curl_response(html))
         result = await fetcher.fetch_detail_page(_make_property(PropertySource.ONTHEMARKET))
         assert result is not None
-        assert result.floor_area_sqft is None
+        assert result.floor_area_sqm is None
 
     async def test_rejects_above_max(self, fetcher: DetailFetcher) -> None:
         html = self._otm_html({"minimumAreaSqFt": 5001})
         fetcher._curl_get_with_retry = AsyncMock(return_value=_mock_curl_response(html))
         result = await fetcher.fetch_detail_page(_make_property(PropertySource.ONTHEMARKET))
         assert result is not None
-        assert result.floor_area_sqft is None
+        assert result.floor_area_sqm is None
 
     async def test_no_area_returns_none(self, fetcher: DetailFetcher) -> None:
         html = self._otm_html({})
         fetcher._curl_get_with_retry = AsyncMock(return_value=_mock_curl_response(html))
         result = await fetcher.fetch_detail_page(_make_property(PropertySource.ONTHEMARKET))
         assert result is not None
-        assert result.floor_area_sqft is None
+        assert result.floor_area_sqm is None
         assert result.floor_area_source is None
 
 
@@ -319,12 +319,12 @@ async def storage() -> AsyncGenerator[PropertyStorage, None]:
 
 
 class TestDBFloorAreaRoundTrip:
-    """Test that floor_area_sqft/floor_area_source survive save+load."""
+    """Test that floor_area_sqm/floor_area_source survive save+load."""
 
     def _make_merged_with_area(
         self,
         make_property: Callable[..., Property],
-        floor_area_sqft: int | None = None,
+        floor_area_sqm: float | None = None,
         floor_area_source: str | None = None,
     ) -> MergedProperty:
         prop = make_property()
@@ -334,7 +334,7 @@ class TestDBFloorAreaRoundTrip:
             source_urls={prop.source: prop.url},
             min_price=prop.price_pcm,
             max_price=prop.price_pcm,
-            floor_area_sqft=floor_area_sqft,
+            floor_area_sqm=floor_area_sqm,
             floor_area_source=floor_area_source,
         )
 
@@ -344,17 +344,17 @@ class TestDBFloorAreaRoundTrip:
         storage: PropertyStorage,
         make_property: Callable[..., Property],
     ) -> None:
-        merged = self._make_merged_with_area(make_property, 750, "zoopla")
+        merged = self._make_merged_with_area(make_property, 69.7, "zoopla")
         await storage.save_merged_property(merged)
 
         conn = await storage._get_connection()
         cursor = await conn.execute(
-            "SELECT floor_area_sqft, floor_area_source FROM properties WHERE unique_id = ?",
+            "SELECT floor_area_sqm, floor_area_source FROM properties WHERE unique_id = ?",
             (merged.unique_id,),
         )
         row = await cursor.fetchone()
         assert row is not None
-        assert row["floor_area_sqft"] == 750
+        assert row["floor_area_sqm"] == 69.7
         assert row["floor_area_source"] == "zoopla"
 
     @pytest.mark.asyncio
@@ -368,12 +368,12 @@ class TestDBFloorAreaRoundTrip:
 
         conn = await storage._get_connection()
         cursor = await conn.execute(
-            "SELECT floor_area_sqft, floor_area_source FROM properties WHERE unique_id = ?",
+            "SELECT floor_area_sqm, floor_area_source FROM properties WHERE unique_id = ?",
             (merged.unique_id,),
         )
         row = await cursor.fetchone()
         assert row is not None
-        assert row["floor_area_sqft"] is None
+        assert row["floor_area_sqm"] is None
         assert row["floor_area_source"] is None
 
     @pytest.mark.asyncio
@@ -390,7 +390,7 @@ class TestDBFloorAreaRoundTrip:
             source_urls={prop.source: prop.url},
             min_price=prop.price_pcm,
             max_price=prop.price_pcm,
-            floor_area_sqft=650,
+            floor_area_sqm=60.4,
             floor_area_source="rightmove",
         )
         await storage.save_merged_property(merged)
@@ -402,7 +402,7 @@ class TestDBFloorAreaRoundTrip:
         )
         assert total == 1
         result_prop = properties[0]
-        assert result_prop["floor_area_sqft"] == 650
+        assert result_prop["floor_area_sqm"] == 60.4
         assert result_prop["floor_area_source"] == "rightmove"
 
 
@@ -424,7 +424,7 @@ class TestDedupFloorAreaMerge:
             source_urls={PropertySource.RIGHTMOVE: rm_prop.url},
             min_price=1800,
             max_price=1800,
-            floor_area_sqft=680,
+            floor_area_sqm=63.2,
             floor_area_source="rightmove",
         )
         zp_merged = MergedProperty(
@@ -433,12 +433,12 @@ class TestDedupFloorAreaMerge:
             source_urls={PropertySource.ZOOPLA: zp_prop.url},
             min_price=1800,
             max_price=1800,
-            floor_area_sqft=700,
+            floor_area_sqm=65.0,
             floor_area_source="zoopla",
         )
 
         result = deduplicator._merge_merged_properties([rm_merged, zp_merged])
-        assert result.floor_area_sqft == 700
+        assert result.floor_area_sqm == 65.0
         assert result.floor_area_source == "zoopla"
 
     def test_otm_beats_rightmove(self) -> None:
@@ -446,11 +446,11 @@ class TestDedupFloorAreaMerge:
         rm_prop = _make_property(PropertySource.RIGHTMOVE, "rm-2")
         otm_prop = _make_property(PropertySource.ONTHEMARKET, "otm-2")
 
-        rm_merged = _make_merged(rm_prop, floor_area_sqft=680, floor_area_source="rightmove")
-        otm_merged = _make_merged(otm_prop, floor_area_sqft=690, floor_area_source="onthemarket")
+        rm_merged = _make_merged(rm_prop, floor_area_sqm=63.2, floor_area_source="rightmove")
+        otm_merged = _make_merged(otm_prop, floor_area_sqm=64.1, floor_area_source="onthemarket")
 
         result = deduplicator._merge_merged_properties([rm_merged, otm_merged])
-        assert result.floor_area_sqft == 690
+        assert result.floor_area_sqm == 64.1
         assert result.floor_area_source == "onthemarket"
 
     def test_keeps_only_value_when_one_has_area(self) -> None:
@@ -459,10 +459,10 @@ class TestDedupFloorAreaMerge:
         prop_b = _make_property(PropertySource.ZOOPLA, "zp-2")
 
         a_merged = _make_merged(prop_a)  # No floor area
-        b_merged = _make_merged(prop_b, floor_area_sqft=550, floor_area_source="zoopla")
+        b_merged = _make_merged(prop_b, floor_area_sqm=51.1, floor_area_source="zoopla")
 
         result = deduplicator._merge_merged_properties([a_merged, b_merged])
-        assert result.floor_area_sqft == 550
+        assert result.floor_area_sqm == 51.1
         assert result.floor_area_source == "zoopla"
 
     def test_no_floor_area_stays_none(self) -> None:
@@ -474,7 +474,7 @@ class TestDedupFloorAreaMerge:
         b_merged = _make_merged(prop_b)
 
         result = deduplicator._merge_merged_properties([a_merged, b_merged])
-        assert result.floor_area_sqft is None
+        assert result.floor_area_sqm is None
         assert result.floor_area_source is None
 
 
@@ -540,14 +540,13 @@ class TestTelegramFloorArea:
     """Test floor area in Telegram space info formatting."""
 
     def test_with_scraped_floor_area(self, sample_quality_analysis: Any) -> None:
-        result = _format_space_info(sample_quality_analysis, floor_area_sqft=700)
-        assert "700 ft²" in result
-        assert "65m²" in result  # 700 * 0.0929 ≈ 65
+        result = _format_space_info(sample_quality_analysis, floor_area_sqm=65.0)
+        assert "65 m²" in result
 
     def test_with_claude_estimate(self, make_quality_analysis: Callable) -> None:
         qa = make_quality_analysis(space=SpaceAnalysis(living_room_sqm=20.0, total_area_sqm=60.0))
         result = _format_space_info(qa)
-        assert "~645 ft²" in result or "~60m²" in result
+        assert "~60 m²" in result
 
     def test_without_any_area(self, make_quality_analysis: Callable) -> None:
         qa = make_quality_analysis(space=SpaceAnalysis(living_room_sqm=None))
@@ -557,10 +556,10 @@ class TestTelegramFloorArea:
     def test_scraped_preferred_over_estimate(self, make_quality_analysis: Callable) -> None:
         """When both scraped and estimated are available, scraped wins."""
         qa = make_quality_analysis(space=SpaceAnalysis(living_room_sqm=20.0, total_area_sqm=60.0))
-        result = _format_space_info(qa, floor_area_sqft=750)
-        assert "750 ft²" in result
-        # Should NOT show ~645 ft² (the estimate)
-        assert "~645" not in result
+        result = _format_space_info(qa, floor_area_sqm=70.0)
+        assert "70 m²" in result
+        # Should NOT show ~60 m² (the estimate)
+        assert "~60" not in result
 
 
 # ── Web Display ────────────────────────────────────────────────────────────
@@ -605,7 +604,7 @@ class TestWebFloorAreaDisplay:
     def _make_merged_with_area(
         self,
         make_property: Callable[..., Property],
-        floor_area_sqft: int | None = None,
+        floor_area_sqm: float | None = None,
         floor_area_source: str | None = None,
     ) -> MergedProperty:
         prop = make_property(
@@ -619,25 +618,25 @@ class TestWebFloorAreaDisplay:
             source_urls={prop.source: prop.url},
             min_price=prop.price_pcm,
             max_price=prop.price_pcm,
-            floor_area_sqft=floor_area_sqft,
+            floor_area_sqm=floor_area_sqm,
             floor_area_source=floor_area_source,
         )
 
     @pytest.mark.asyncio
-    async def test_card_shows_sqft_badge(
+    async def test_card_shows_sqm_badge(
         self,
         client: Any,
         web_storage: PropertyStorage,
         make_property: Callable[..., Property],
     ) -> None:
-        merged = self._make_merged_with_area(make_property, 650, "zoopla")
+        merged = self._make_merged_with_area(make_property, 60.0, "zoopla")
         await web_storage.save_merged_property(merged)
         resp = client.get("/")
         assert resp.status_code == 200
-        assert "650 ft²" in resp.text
+        assert "60 m²" in resp.text
 
     @pytest.mark.asyncio
-    async def test_card_hides_sqft_when_absent(
+    async def test_card_hides_area_when_absent(
         self,
         client: Any,
         web_storage: PropertyStorage,
@@ -647,4 +646,4 @@ class TestWebFloorAreaDisplay:
         await web_storage.save_merged_property(merged)
         resp = client.get("/")
         assert resp.status_code == 200
-        assert "ft²" not in resp.text
+        assert "card-area" not in resp.text

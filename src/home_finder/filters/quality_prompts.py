@@ -3,7 +3,7 @@
 import json
 from typing import Any, Final
 
-from home_finder.models.core import SQM_PER_SQFT
+
 
 # System prompt for Phase 1: Visual analysis - cached for cost savings
 VISUAL_ANALYSIS_SYSTEM_PROMPT: Final = """\
@@ -312,7 +312,7 @@ def build_user_prompt(
     energy_estimate: float | None = None,
     hosting_tolerance: str | None = None,
     has_labeled_floorplan: bool = True,
-    floor_area_sqft: int | None = None,
+    floor_area_sqm: float | None = None,
 ) -> str:
     """Build the user prompt with property-specific context.
 
@@ -339,11 +339,10 @@ def build_user_prompt(
         prompt += "\n".join(f"- {f}" for f in features[:15])
         prompt += "\n</listing_features>"
 
-    if floor_area_sqft:
-        sqm = round(floor_area_sqft * SQM_PER_SQFT, 1)
+    if floor_area_sqm:
         prompt += (
             f"\n\n<scraped_floor_area>\n"
-            f"Total floor area from listing: {floor_area_sqft} sq ft ({sqm} m²). "
+            f"Total floor area from listing: {floor_area_sqm} m². "
             f"Cross-reference this with your floorplan estimate if available.\n"
             f"</scraped_floor_area>"
         )

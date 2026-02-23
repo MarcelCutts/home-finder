@@ -997,17 +997,17 @@ class PropertyStorage:
         return PropertyQualityAnalysis.model_validate_json(row["analysis_json"])
 
     async def update_floor_area(
-        self, unique_id: str, floor_area_sqft: int, floor_area_source: str
+        self, unique_id: str, floor_area_sqm: float, floor_area_source: str
     ) -> None:
         """Update floor area for a property (only if not already set)."""
         conn = await self._get_connection()
         await conn.execute(
             """
             UPDATE properties
-            SET floor_area_sqft = ?, floor_area_source = ?
-            WHERE unique_id = ? AND floor_area_sqft IS NULL
+            SET floor_area_sqm = ?, floor_area_source = ?
+            WHERE unique_id = ? AND floor_area_sqm IS NULL
             """,
-            (floor_area_sqft, floor_area_source, unique_id),
+            (floor_area_sqm, floor_area_source, unique_id),
         )
         await conn.commit()
 

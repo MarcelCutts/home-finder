@@ -11,7 +11,6 @@ from home_finder.filters import PropertyQualityFilter
 from home_finder.filters.quality import APIUnavailableError, TokenUsage
 from home_finder.logging import get_logger
 from home_finder.models import (
-    SQM_PER_SQFT,
     MergedProperty,
     PropertyQualityAnalysis,
     TransportMode,
@@ -52,13 +51,13 @@ async def _persist_estimated_floor_area(
     storage: PropertyStorage,
 ) -> None:
     """Persist Claude's floor area estimate if no scraped value exists."""
-    if merged.floor_area_sqft is not None or quality_analysis is None:
+    if merged.floor_area_sqm is not None or quality_analysis is None:
         return
     space = quality_analysis.space
     if space and space.total_area_sqm and space.total_area_sqm > 0:
-        sqft = round(space.total_area_sqm / SQM_PER_SQFT)
-        if 100 <= sqft <= 5000:
-            await storage.update_floor_area(merged.unique_id, sqft, "estimated")
+        sqm = space.total_area_sqm
+        if 9.0 <= sqm <= 465.0:  # ~100-5000 sqft equivalent bounds
+            await storage.update_floor_area(merged.unique_id, sqm, "estimated")
 
 
 async def _save_one(

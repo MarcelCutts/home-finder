@@ -19,7 +19,6 @@ from tenacity import RetryCallState, retry, retry_if_exception_type, stop_after_
 from home_finder.logging import get_logger
 from home_finder.models import (
     SOURCE_NAMES,
-    SQM_PER_SQFT,
     MergedProperty,
     Property,
     PropertyQualityAnalysis,
@@ -128,22 +127,20 @@ def _format_light_space_info(analysis: PropertyQualityAnalysis) -> str:
 
 
 def _format_space_info(
-    analysis: PropertyQualityAnalysis, *, floor_area_sqft: int | None = None
+    analysis: PropertyQualityAnalysis, *, floor_area_sqm: float | None = None
 ) -> str:
     """Format space analysis for display."""
     space = analysis.space
     parts: list[str] = []
 
     # Total floor area (scraped or estimated)
-    if floor_area_sqft:
-        sqm = round(floor_area_sqft * SQM_PER_SQFT)
-        parts.append(f"{floor_area_sqft} ft² ({sqm}m²)")
+    if floor_area_sqm:
+        parts.append(f"{floor_area_sqm:.0f} m²")
     elif space.total_area_sqm:
-        sqft = round(space.total_area_sqm / SQM_PER_SQFT)
-        parts.append(f"~{sqft} ft² (~{space.total_area_sqm:.0f}m²)")
+        parts.append(f"~{space.total_area_sqm:.0f} m²")
 
     if space.living_room_sqm:
-        sqm_label = f"~{space.living_room_sqm:.0f}m² living"
+        sqm_label = f"~{space.living_room_sqm:.0f} m² living"
         if space.is_spacious_enough is True:
             parts.append(f"{sqm_label} (good for hosting)")
         elif space.is_spacious_enough is False:
@@ -349,7 +346,7 @@ def _format_viewing_notes(analysis: PropertyQualityAnalysis) -> list[str]:
 
 
 def _format_quality_block(
-    analysis: PropertyQualityAnalysis, *, floor_area_sqft: int | None = None
+    analysis: PropertyQualityAnalysis, *, floor_area_sqm: float | None = None
 ) -> list[str]:
     """Build full quality analysis lines for text messages.
 
@@ -380,7 +377,7 @@ def _format_quality_block(
         lines.append(f"Bathroom: {bathroom_info}")
 
     lines.append(f"Light: {_format_light_space_info(analysis)}")
-    lines.append(f"Space: {_format_space_info(analysis, floor_area_sqft=floor_area_sqft)}")
+    lines.append(f"Space: {_format_space_info(analysis, floor_area_sqm=floor_area_sqm)}")
     lines.append(f"Condition: {analysis.condition.overall_condition}")
 
     outdoor_info = _format_outdoor_info(analysis)
@@ -488,7 +485,7 @@ def format_merged_property_message(
 
     if quality_analysis:
         lines.extend(
-            _format_quality_block(quality_analysis, floor_area_sqft=merged.floor_area_sqft)
+            _format_quality_block(quality_analysis, floor_area_sqm=merged.floor_area_sqm)
         )
 
     # Image count and floorplan

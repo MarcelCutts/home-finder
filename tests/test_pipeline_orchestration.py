@@ -704,8 +704,8 @@ class TestPersistEstimatedFloorArea:
         make_merged_property: Callable[..., MergedProperty],
         sample_quality_analysis: PropertyQualityAnalysis,
     ) -> None:
-        """No DB update when merged.floor_area_sqft is already set."""
-        merged = make_merged_property(floor_area_sqft=500)
+        """No DB update when merged.floor_area_sqm is already set."""
+        merged = make_merged_property(floor_area_sqm=46.5)
         storage.update_floor_area = AsyncMock()  # type: ignore[method-assign]
 
         await _persist_estimated_floor_area(merged, sample_quality_analysis, storage)
@@ -738,12 +738,12 @@ class TestPersistEstimatedFloorArea:
 
         conn = await storage._get_connection()
         cursor = await conn.execute(
-            "SELECT floor_area_sqft, floor_area_source FROM properties WHERE unique_id = ?",
+            "SELECT floor_area_sqm, floor_area_source FROM properties WHERE unique_id = ?",
             (merged.unique_id,),
         )
         row = await cursor.fetchone()
         assert row is not None
-        assert row["floor_area_sqft"] == 538  # round(50 / 0.0929)
+        assert row["floor_area_sqm"] == 50.0  # stored directly in sqm
         assert row["floor_area_source"] == "estimated"
 
     async def test_rejects_out_of_range(
@@ -752,9 +752,9 @@ class TestPersistEstimatedFloorArea:
         make_merged_property: Callable[..., MergedProperty],
         make_quality_analysis: Callable[..., PropertyQualityAnalysis],
     ) -> None:
-        """Does not persist when estimate is below 100 sqft."""
+        """Does not persist when estimate is below 9 sqm."""
         merged = make_merged_property()
-        # 5 sqm ≈ 54 sqft — below the 100 floor
+        # 5 sqm — below the 9.0 sqm floor
         analysis = make_quality_analysis(space=SpaceAnalysis(total_area_sqm=5.0))
         storage.update_floor_area = AsyncMock()  # type: ignore[method-assign]
 

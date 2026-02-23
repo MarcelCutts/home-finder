@@ -110,24 +110,25 @@ class TestRunMigrations:
         assert MIGRATIONS[0].__name__ == "migrate_001_initial_schema"
 
     async def test_multi_migration_sequence(self, fresh_conn: aiosqlite.Connection):
-        """A DB at version 1 should skip migration 1 and run only migration 2."""
-        # Run real migrations first to get to version 1
+        """A DB at current version should skip existing and run only new migrations."""
+        # Run real migrations first to get to current version
         await run_migrations(fresh_conn)
-        assert await _get_user_version(fresh_conn) == 1
+        current_version = len(MIGRATIONS)
+        assert await _get_user_version(fresh_conn) == current_version
 
-        # Define a mock second migration that adds a new table
-        async def migrate_002_add_test_table(conn: aiosqlite.Connection) -> None:
+        # Define a mock next migration that adds a new table
+        async def migrate_next_add_test_table(conn: aiosqlite.Connection) -> None:
             await conn.execute(
                 "CREATE TABLE IF NOT EXISTS _test_table (id INTEGER PRIMARY KEY)"
             )
 
-        fake_migrations = [MIGRATIONS[0], migrate_002_add_test_table]
+        fake_migrations = [*MIGRATIONS, migrate_next_add_test_table]
         with patch("home_finder.db.migrations.MIGRATIONS", fake_migrations):
             version = await run_migrations(fresh_conn)
 
-        assert version == 2
-        assert await _get_user_version(fresh_conn) == 2
-        # Verify migration 2 actually ran
+        assert version == current_version + 1
+        assert await _get_user_version(fresh_conn) == current_version + 1
+        # Verify the new migration actually ran
         tables = await _table_names(fresh_conn)
         assert "_test_table" in tables
 
@@ -136,23 +137,24 @@ class TestRunMigrations:
     ):
         """A migration that raises should roll back, leaving user_version unchanged."""
         await run_migrations(fresh_conn)
-        assert await _get_user_version(fresh_conn) == 1
+        current_version = len(MIGRATIONS)
+        assert await _get_user_version(fresh_conn) == current_version
 
-        async def migrate_002_failing(conn: aiosqlite.Connection) -> None:
+        async def migrate_next_failing(conn: aiosqlite.Connection) -> None:
             await conn.execute(
                 "CREATE TABLE _should_not_persist (id INTEGER PRIMARY KEY)"
             )
             raise RuntimeError("simulated failure")
 
-        fake_migrations = [MIGRATIONS[0], migrate_002_failing]
+        fake_migrations = [*MIGRATIONS, migrate_next_failing]
         with (
             patch("home_finder.db.migrations.MIGRATIONS", fake_migrations),
             pytest.raises(RuntimeError, match="simulated failure"),
         ):
             await run_migrations(fresh_conn)
 
-        # Version must still be 1 — the failed migration was rolled back
-        assert await _get_user_version(fresh_conn) == 1
+        # Version must still be at current — the failed migration was rolled back
+        assert await _get_user_version(fresh_conn) == current_version
         # The table created inside the failed migration should not exist
         tables = await _table_names(fresh_conn)
         assert "_should_not_persist" not in tables

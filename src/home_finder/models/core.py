@@ -227,8 +227,8 @@ class MergedProperty(BaseModel):
     # Combined descriptions (keyed by source)
     descriptions: dict[PropertySource, str] = Field(default_factory=dict)
 
-    # Total floor area from structured listing data or Claude estimation
-    floor_area_sqft: int | None = None
+    # Total floor area in square metres (converted at scraper boundary or estimated by Claude)
+    floor_area_sqm: float | None = None
     floor_area_source: str | None = None  # "rightmove" | "zoopla" | "onthemarket" | "estimated"
 
     @property

@@ -372,14 +372,14 @@ class Deduplicator:
             "rightmove": 1,
             "estimated": 0,
         }
-        best_floor_area: int | None = None
+        best_floor_area: float | None = None
         best_floor_source: str | None = None
         best_priority = -1
         for mp in sorted_mps:
-            if mp.floor_area_sqft is not None:
+            if mp.floor_area_sqm is not None:
                 priority = _FLOOR_AREA_SOURCE_PRIORITY.get(mp.floor_area_source, 0)
                 if priority > best_priority:
-                    best_floor_area = mp.floor_area_sqft
+                    best_floor_area = mp.floor_area_sqm
                     best_floor_source = mp.floor_area_source
                     best_priority = priority
 
@@ -392,7 +392,7 @@ class Deduplicator:
             min_price=min(prices),
             max_price=max(prices),
             descriptions=all_descriptions,
-            floor_area_sqft=best_floor_area,
+            floor_area_sqm=best_floor_area,
             floor_area_source=best_floor_source,
         )
 

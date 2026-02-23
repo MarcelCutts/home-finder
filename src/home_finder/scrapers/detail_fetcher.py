@@ -19,7 +19,7 @@ from tenacity import (
 )
 
 from home_finder.logging import get_logger
-from home_finder.models import Property, PropertySource
+from home_finder.models import SQM_PER_SQFT, Property, PropertySource
 from home_finder.scrapers.constants import BROWSER_HEADERS
 from home_finder.scrapers.retry import RetryableHttpError
 from home_finder.utils.image_cache import is_valid_image_bytes
@@ -325,7 +325,7 @@ class DetailPageData:
     latitude: float | None = None
     longitude: float | None = None
     postcode: str | None = None
-    floor_area_sqft: int | None = None
+    floor_area_sqm: float | None = None
     floor_area_source: str | None = None  # "rightmove" | "zoopla" | "onthemarket"
 
 
@@ -557,8 +557,8 @@ class DetailFetcher:
             if outcode and incode:
                 postcode = f"{outcode} {incode}"
 
-            # Extract floor area from sizings
-            floor_area_sqft: int | None = None
+            # Extract floor area from sizings (validate in sqft, convert to sqm)
+            floor_area_sqm: float | None = None
             sizings = property_data.get("sizings", [])
             for sizing in sizings:
                 if sizing.get("unit") == "sqft":
@@ -567,7 +567,7 @@ class DetailFetcher:
                         isinstance(raw, (int, float))
                         and _FLOOR_AREA_MIN_SQFT <= raw <= _FLOOR_AREA_MAX_SQFT
                     ):
-                        floor_area_sqft = int(raw)
+                        floor_area_sqm = round(raw * SQM_PER_SQFT, 1)
                         break
 
             return DetailPageData(
@@ -578,8 +578,8 @@ class DetailFetcher:
                 latitude=latitude,
                 longitude=longitude,
                 postcode=postcode,
-                floor_area_sqft=floor_area_sqft,
-                floor_area_source="rightmove" if floor_area_sqft else None,
+                floor_area_sqm=floor_area_sqm,
+                floor_area_source="rightmove" if floor_area_sqm else None,
             )
 
         except Exception as e:
@@ -638,16 +638,17 @@ class DetailFetcher:
             if not floorplan_url:
                 floorplan_url = _zoopla_floorplan_from_html(html)
 
-            # Extract floor area from RSC payload
-            floor_area_sqft = _zoopla_size_from_rsc(html)
+            # Extract floor area from RSC payload (sqft), convert to sqm
+            raw_sqft = _zoopla_size_from_rsc(html)
+            floor_area_sqm = round(raw_sqft * SQM_PER_SQFT, 1) if raw_sqft else None
 
             return DetailPageData(
                 floorplan_url=floorplan_url,
                 gallery_urls=gallery_urls if gallery_urls else None,
                 description=description,
                 features=features if features else None,
-                floor_area_sqft=floor_area_sqft,
-                floor_area_source="zoopla" if floor_area_sqft else None,
+                floor_area_sqm=floor_area_sqm,
+                floor_area_source="zoopla" if floor_area_sqm else None,
             )
 
         except Exception as e:
@@ -838,22 +839,22 @@ class DetailFetcher:
                 if isinstance(feat, dict) and feat.get("feature"):
                     features.append(feat["feature"])
 
-            # Extract floor area
-            floor_area_sqft: int | None = None
+            # Extract floor area (validate in sqft, convert to sqm)
+            floor_area_sqm: float | None = None
             raw_sqft = property_data.get("minimumAreaSqFt")
             if (
                 isinstance(raw_sqft, (int, float))
                 and _FLOOR_AREA_MIN_SQFT <= raw_sqft <= _FLOOR_AREA_MAX_SQFT
             ):
-                floor_area_sqft = int(raw_sqft)
+                floor_area_sqm = round(raw_sqft * SQM_PER_SQFT, 1)
 
             return DetailPageData(
                 floorplan_url=floorplan_url,
                 gallery_urls=gallery_urls if gallery_urls else None,
                 description=description,
                 features=features if features else None,
-                floor_area_sqft=floor_area_sqft,
-                floor_area_source="onthemarket" if floor_area_sqft else None,
+                floor_area_sqm=floor_area_sqm,
+                floor_area_source="onthemarket" if floor_area_sqm else None,
             )
 
         except Exception as e:

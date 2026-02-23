@@ -269,6 +269,8 @@ def make_merged_property(
         descriptions: dict[PropertySource, str] | None = None,
         min_price: int | None = None,
         max_price: int | None = None,
+        floor_area_sqm: float | None = None,
+        floor_area_source: str | None = None,
         **property_overrides: Any,
     ) -> MergedProperty:
         canonical = make_property(source=sources[0], price_pcm=price_pcm, **property_overrides)
@@ -286,6 +288,8 @@ def make_merged_property(
             min_price=min_price if min_price is not None else price_pcm,
             max_price=max_price if max_price is not None else price_pcm,
             descriptions=descriptions or {},
+            floor_area_sqm=floor_area_sqm,
+            floor_area_source=floor_area_source,
         )
 
     return _make

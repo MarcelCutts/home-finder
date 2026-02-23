@@ -69,7 +69,7 @@ class PropertyListItem(TypedDict, total=False):
     is_off_market: bool
     off_market_since: str | None
     # Floor area
-    floor_area_sqft: int | None
+    floor_area_sqm: float | None
     floor_area_source: str | None
 
 
@@ -189,10 +189,10 @@ async def row_to_merged_property(
     max_price = row["max_price"] if row["max_price"] is not None else prop.price_pcm
 
     # Defensive access for pre-migration rows
-    floor_area_sqft: int | None = None
+    floor_area_sqm: float | None = None
     floor_area_source: str | None = None
     try:
-        floor_area_sqft = row["floor_area_sqft"]
+        floor_area_sqm = row["floor_area_sqm"]
         floor_area_source = row["floor_area_source"]
     except (IndexError, KeyError):
         pass
@@ -206,7 +206,7 @@ async def row_to_merged_property(
         min_price=min_price,
         max_price=max_price,
         descriptions=descriptions,
-        floor_area_sqft=floor_area_sqft,
+        floor_area_sqm=floor_area_sqm,
         floor_area_source=floor_area_source,
     )
 
@@ -299,7 +299,7 @@ def build_merged_insert_columns(
             "min_price",
             "max_price",
             "descriptions_json",
-            "floor_area_sqft",
+            "floor_area_sqm",
             "floor_area_source",
         ]
     )
@@ -310,7 +310,7 @@ def build_merged_insert_columns(
             merged.min_price,
             merged.max_price,
             descriptions_json,
-            merged.floor_area_sqft,
+            merged.floor_area_sqm,
             merged.floor_area_source,
         ]
     )
