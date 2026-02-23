@@ -97,10 +97,10 @@ class TestSaveOne:
     ) -> None:
         merged = make_merged_property()
         # Pre-save (as pipeline does before analysis)
-        await storage.save_pre_analysis_properties([merged], {})
+        await storage.pipeline.save_pre_analysis_properties([merged], {})
         await _save_one(merged, None, None, storage)
 
-        count = await storage.get_property_count()
+        count = await storage.web.get_property_count()
         assert count == 1
         # Should transition from pending_analysis to pending
         tracked = await storage.get_property(merged.unique_id)
@@ -115,7 +115,9 @@ class TestSaveOne:
         merged = make_merged_property()
         commute_info = (18, TransportMode.CYCLING)
         # Pre-save with commute data
-        await storage.save_pre_analysis_properties([merged], {merged.unique_id: commute_info})
+        await storage.pipeline.save_pre_analysis_properties(
+            [merged], {merged.unique_id: commute_info}
+        )
         await _save_one(merged, commute_info, None, storage)
 
         tracked = await storage.get_property(merged.unique_id)
@@ -130,11 +132,11 @@ class TestSaveOne:
         make_merged_property: Callable[..., MergedProperty],
     ) -> None:
         merged = make_merged_property()
-        await storage.save_pre_analysis_properties([merged], {})
+        await storage.pipeline.save_pre_analysis_properties([merged], {})
         await _save_one(merged, None, sample_quality_analysis, storage)
 
         # Verify quality analysis was stored
-        detail = await storage.get_property_detail(merged.unique_id)
+        detail = await storage.web.get_property_detail(merged.unique_id)
         assert detail is not None
         assert detail["quality_rating"] == 4
 
@@ -730,7 +732,7 @@ class TestPersistEstimatedFloorArea:
         """Persists estimate when space.total_area_sqm is within range."""
         merged = make_merged_property()
         analysis = make_quality_analysis(space=SpaceAnalysis(total_area_sqm=50.0))
-        await storage.save_pre_analysis_properties([merged], {})
+        await storage.pipeline.save_pre_analysis_properties([merged], {})
 
         await _persist_estimated_floor_area(merged, analysis, storage)
 

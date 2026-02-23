@@ -248,7 +248,7 @@ def _enrich_fit_scores(properties: list[Any]) -> None:
 @router.get("/count")
 async def filter_count(storage: StorageDep, filters: FilterDep) -> Response:
     """Lightweight count endpoint for live filter preview in modal."""
-    total = await storage.get_filter_count(filters)
+    total = await storage.web.get_filter_count(filters)
     return Response(str(total), media_type="text/plain")
 
 
@@ -256,7 +256,7 @@ async def filter_count(storage: StorageDep, filters: FilterDep) -> Response:
 async def health_check(request: Request) -> JSONResponse:
     """Health check endpoint for Fly.io with pipeline status."""
     storage: PropertyStorage = request.app.state.storage
-    last_run = await storage.get_last_pipeline_run()
+    last_run = await storage.pipeline.get_last_pipeline_run()
     pipeline_lock = getattr(request.app.state, "pipeline_lock", None)
     return JSONResponse(
         {
@@ -320,7 +320,7 @@ async def dashboard(
     per_page = 24
 
     try:
-        properties, total = await storage.get_properties_paginated(
+        properties, total = await storage.web.get_properties_paginated(
             filters, sort=sort, page=page_val, per_page=per_page
         )
         _enrich_fit_scores(properties)
@@ -347,7 +347,7 @@ async def dashboard(
     # Build properties JSON for map view — all matching properties with coords,
     # not just the current page.
     try:
-        map_markers = await storage.get_map_markers(filters)
+        map_markers = await storage.web.get_map_markers(filters)
     except Exception:
         logger.error("map_markers_query_failed", exc_info=True)
         map_markers = []
@@ -442,7 +442,7 @@ async def property_card(
 ) -> HTMLResponse:
     """Return a single property card partial for map marker click."""
     try:
-        prop = await storage.get_property_card(unique_id)
+        prop = await storage.web.get_property_card(unique_id)
     except Exception:
         logger.error("card_query_failed", unique_id=unique_id, exc_info=True)
         return HTMLResponse("", status_code=500)
@@ -476,7 +476,7 @@ async def property_detail(
 ) -> HTMLResponse:
     """Property detail page."""
     try:
-        prop = await storage.get_property_detail(unique_id)
+        prop = await storage.web.get_property_detail(unique_id)
     except Exception:
         logger.error("detail_query_failed", unique_id=unique_id, exc_info=True)
         return templates.TemplateResponse(
@@ -740,7 +740,7 @@ async def update_property_status(
 
     # Card-level swap: return full card partial (same as /property/{id}/card)
     if form.get("source") == "card":
-        prop = await storage.get_property_card(unique_id)
+        prop = await storage.web.get_property_card(unique_id)
         if prop:
             _enrich_fit_scores([prop])
             resolved = _resolve_cached_thumbnail(prop["unique_id"], prop.get("image_url"), data_dir)
@@ -774,7 +774,7 @@ async def request_reanalysis(unique_id: str, storage: StorageDep) -> JSONRespons
 
     The actual analysis runs on next `--reanalyze` CLI invocation.
     """
-    count = await storage.request_reanalysis([unique_id])
+    count = await storage.pipeline.request_reanalysis([unique_id])
     if count == 0:
         return JSONResponse(
             {"error": "not found or no existing analysis"},

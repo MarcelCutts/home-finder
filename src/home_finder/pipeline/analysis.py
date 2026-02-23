@@ -73,11 +73,11 @@ async def _save_one(
     by save_pre_analysis_properties() before analysis started.
     """
     # Save quality data and transition notification_status to 'pending'
-    await storage.complete_analysis(merged.unique_id, quality_analysis)
+    await storage.pipeline.complete_analysis(merged.unique_id, quality_analysis)
 
     # Transition re-enriched properties into normal notification flow.
     # No-op for genuinely new properties (already handled by complete_analysis).
-    await storage.mark_enriched(merged.unique_id)
+    await storage.pipeline.mark_enriched(merged.unique_id)
 
 
 async def _lookup_wards(storage: PropertyStorage) -> None:
@@ -221,20 +221,22 @@ async def _run_quality_and_save(
         Tuple of (number of properties processed, token usage or None).
     """
     # Save all properties to DB before analysis (crash recovery checkpoint)
-    await storage.save_pre_analysis_properties(pre.merged_to_process, pre.commute_lookup)
+    await storage.pipeline.save_pre_analysis_properties(pre.merged_to_process, pre.commute_lookup)
 
     # Ward lookup: populate ward column for properties with coordinates
     await _lookup_wards(storage)
 
     # Reset properties with fallback analysis (API failed previously)
     # so they get re-analyzed this run
-    reset_count = await storage.reset_failed_analyses()
+    reset_count = await storage.pipeline.reset_failed_analyses()
     if reset_count:
         logger.info("reset_failed_analyses_for_retry", count=reset_count)
 
     # Load any pending_analysis properties from previous crashed runs
     current_ids = {m.unique_id for m in pre.merged_to_process}
-    pending_from_prev = await storage.get_pending_analysis_properties(exclude_ids=current_ids)
+    pending_from_prev = await storage.pipeline.get_pending_analysis_properties(
+        exclude_ids=current_ids
+    )
     retried = list(pending_from_prev)
     if retried:
         logger.info("retrying_pending_analysis_from_previous_run", count=len(retried))
@@ -432,7 +434,7 @@ async def _drain_reanalysis_queue(
     if not settings.enable_quality_filter or not settings.anthropic_api_key.get_secret_value():
         return 0
 
-    queue = await storage.get_reanalysis_queue()
+    queue = await storage.pipeline.get_reanalysis_queue()
     if not queue:
         return 0
 
@@ -459,7 +461,7 @@ async def _drain_reanalysis_queue(
         ) -> None:
             nonlocal completed
             if quality_analysis:
-                await storage.complete_reanalysis(merged.unique_id, quality_analysis)
+                await storage.pipeline.complete_reanalysis(merged.unique_id, quality_analysis)
                 await _persist_estimated_floor_area(merged, quality_analysis, storage)
                 completed += 1
 
@@ -494,7 +496,7 @@ async def run_reanalysis(
     async with PropertyStorage(settings.database_path) as storage:
         # Step 1: Flag properties if outcodes or --all provided
         if outcodes or reanalyze_all:
-            flagged = await storage.request_reanalysis_by_filter(
+            flagged = await storage.pipeline.request_reanalysis_by_filter(
                 outcodes=outcodes, all_properties=reanalyze_all
             )
             target = "all properties" if reanalyze_all else f"outcodes {', '.join(outcodes or [])}"
@@ -504,7 +506,7 @@ async def run_reanalysis(
             return
 
         # Step 2: Load queue and re-enrich incomplete caches
-        queue = await storage.get_reanalysis_queue()
+        queue = await storage.pipeline.get_reanalysis_queue()
 
         if not queue:
             logger.info("reanalysis_queue_empty")
@@ -546,7 +548,7 @@ async def run_reanalysis(
             ) -> None:
                 nonlocal completed, failed
                 if quality_analysis:
-                    await storage.complete_reanalysis(merged.unique_id, quality_analysis)
+                    await storage.pipeline.complete_reanalysis(merged.unique_id, quality_analysis)
                     await _persist_estimated_floor_area(merged, quality_analysis, storage)
                     completed += 1
                 else:

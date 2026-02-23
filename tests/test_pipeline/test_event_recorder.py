@@ -18,7 +18,7 @@ async def storage() -> AsyncGenerator[PropertyStorage, None]:
 
 @pytest_asyncio.fixture
 async def run_id(storage: PropertyStorage) -> int:
-    return await storage.create_pipeline_run()
+    return await storage.pipeline.create_pipeline_run()
 
 
 class TestPropertyEvent:

@@ -9,7 +9,7 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Final
+from typing import Any, Final
 
 import aiosqlite
 
@@ -17,8 +17,6 @@ from home_finder.data.area_context import HOSTING_TOLERANCE
 from home_finder.db.migrations import run_migrations
 from home_finder.db.pipeline_repo import PipelineRepository
 from home_finder.db.row_mappers import (
-    PropertyDetailItem,
-    PropertyListItem,
     build_base_insert,
     build_merged_insert_columns,
     row_to_merged_property,
@@ -39,14 +37,11 @@ from home_finder.models import (
     UserStatus,
 )
 
-if TYPE_CHECKING:
-    from home_finder.web.filters import PropertyFilter
-
 # Default lookback window for cross-platform dedup anchors
 _DEDUP_LOOKBACK_DAYS: Final = 30
 
 # Re-export TypedDicts for backward compatibility
-__all__ = ["PropertyDetailItem", "PropertyListItem", "PropertyStorage"]
+__all__ = ["PropertyStorage"]
 
 logger = get_logger(__name__)
 
@@ -67,40 +62,11 @@ _CLOSE_PRAGMAS: Final[tuple[str, ...]] = (
 
 
 class PropertyStorage:
-    """SQLite-based storage for tracking properties.
+    """SQLite-based storage for tracked properties.
 
-    Method Index
-    ============
-    Infrastructure: __init__, _get_connection, _transaction, initialize, close
-    Property CRUD: save_property, is_seen, get_property, get_all_properties,
-        save_merged_property, filter_new, filter_new_merged, delete_property,
-        get_recent_properties_for_dedup, update_merged_sources,
-        get_all_known_source_ids
-    Notifications: get_pending_notifications, get_unsent_notifications,
-        mark_notified, mark_notification_failed
-    Quality Analysis: save_quality_analysis, get_quality_analysis
-    Images: save_property_images, get_property_images,
-        get_property_images_and_row
-    Commute & Ward: get_properties_needing_commute, update_commute_data,
-        get_properties_without_ward, update_wards, update_floor_area
-    User Interactions: update_user_status, get_status_history,
-        get_viewing_message, save_viewing_message, delete_viewing_message,
-        log_enquiry, get_enquiries_for_property, has_enquiry
-    Price & Off-Market: detect_and_record_price_change, get_price_history,
-        get_unsent_price_drops, mark_price_drop_notified, mark_off_market,
-        mark_returned_to_market, get_properties_for_off_market_check
-    Facade — PipelineRepository: create_pipeline_run, update_pipeline_run,
-        complete_pipeline_run, get_last_pipeline_run, save_scraper_runs,
-        insert_property_events, cleanup_old_events, save_dropped_properties,
-        save_pre_analysis_properties, get_pending_analysis_properties,
-        complete_analysis, reset_failed_analyses, request_reanalysis,
-        request_reanalysis_by_filter, get_reanalysis_queue,
-        complete_reanalysis, save_unenriched_property,
-        get_unenriched_properties, get_unenriched_retry_stats,
-        mark_enriched, expire_unenriched
-    Facade — WebQueryService: get_filter_count, get_map_markers,
-        get_properties_paginated, get_property_card, get_property_detail,
-        get_property_count
+    Core property CRUD and domain methods live directly on this class.
+    Pipeline operations: ``self.pipeline`` (PipelineRepository).
+    Web dashboard queries: ``self.web`` (WebQueryService).
     """
 
     # Interval between SELECT 1 health probes (seconds)
@@ -123,6 +89,16 @@ class PropertyStorage:
             self.save_quality_analysis,
             self._transaction,
         )
+
+    @property
+    def pipeline(self) -> PipelineRepository:
+        """Pipeline run tracking, analysis retry, and enrichment retry operations."""
+        return self._pipeline
+
+    @property
+    def web(self) -> WebQueryService:
+        """Read-only web dashboard query operations."""
+        return self._web
 
     def _ensure_directory(self) -> None:
         """Ensure the directory for the database exists."""
@@ -1020,84 +996,6 @@ class PropertyStorage:
             return None
         return PropertyQualityAnalysis.model_validate_json(row["analysis_json"])
 
-    # ------------------------------------------------------------------
-    # Facade: pipeline run tracking (delegates to PipelineRepository)
-    # ------------------------------------------------------------------
-
-    async def create_pipeline_run(self) -> int:
-        """Create a new pipeline run record."""
-        return await self._pipeline.create_pipeline_run()
-
-    async def update_pipeline_run(self, run_id: int, **counts: int | float) -> None:
-        """Update count columns on a pipeline run."""
-        await self._pipeline.update_pipeline_run(run_id, **counts)
-
-    async def complete_pipeline_run(
-        self,
-        run_id: int,
-        status: str,
-        *,
-        error_message: str | None = None,
-    ) -> None:
-        """Mark a pipeline run as completed or failed."""
-        await self._pipeline.complete_pipeline_run(run_id, status, error_message=error_message)
-
-    async def get_last_pipeline_run(self) -> dict[str, Any] | None:
-        """Get the most recent completed pipeline run."""
-        return await self._pipeline.get_last_pipeline_run()
-
-    async def save_scraper_runs(
-        self, pipeline_run_id: int | None, metrics_list: list[dict[str, Any]]
-    ) -> None:
-        """Persist per-scraper metrics for a pipeline run."""
-        await self._pipeline.save_scraper_runs(pipeline_run_id, metrics_list)
-
-    async def insert_property_events(
-        self, run_id: int, events: list[Any]
-    ) -> None:
-        """Insert property events for a pipeline run."""
-        await self._pipeline.insert_property_events(run_id, events)
-
-    async def cleanup_old_events(self, keep_runs: int = 30) -> int:
-        """Delete property events from runs older than the last N."""
-        return await self._pipeline.cleanup_old_events(keep_runs)
-
-    # ------------------------------------------------------------------
-    # Facade: quality analysis retry (delegates to PipelineRepository)
-    # ------------------------------------------------------------------
-
-    async def save_dropped_properties(
-        self,
-        dropped: list[MergedProperty],
-        commute_lookup: dict[str, tuple[int, TransportMode]],
-    ) -> None:
-        """Save floorplan-dropped properties so they're excluded from re-enrichment."""
-        await self._pipeline.save_dropped_properties(dropped, commute_lookup)
-
-    async def save_pre_analysis_properties(
-        self,
-        merged_list: list[MergedProperty],
-        commute_lookup: dict[str, tuple[int, TransportMode]],
-    ) -> None:
-        """Batch save properties before quality analysis."""
-        await self._pipeline.save_pre_analysis_properties(merged_list, commute_lookup)
-
-    async def get_pending_analysis_properties(
-        self,
-        *,
-        exclude_ids: set[str] | None = None,
-    ) -> list[MergedProperty]:
-        """Load properties needing quality analysis from previous crashed runs."""
-        return await self._pipeline.get_pending_analysis_properties(exclude_ids=exclude_ids)
-
-    async def complete_analysis(
-        self,
-        unique_id: str,
-        quality_analysis: PropertyQualityAnalysis | None,
-    ) -> None:
-        """Complete quality analysis for a property and transition to pending notification."""
-        await self._pipeline.complete_analysis(unique_id, quality_analysis)
-
     async def update_floor_area(
         self, unique_id: str, floor_area_sqft: int, floor_area_source: str
     ) -> None:
@@ -1112,110 +1010,6 @@ class PropertyStorage:
             (floor_area_sqft, floor_area_source, unique_id),
         )
         await conn.commit()
-
-    async def reset_failed_analyses(self) -> int:
-        """Reset properties with fallback analysis for re-analysis."""
-        return await self._pipeline.reset_failed_analyses()
-
-    # ------------------------------------------------------------------
-    # Facade: re-analysis support (delegates to PipelineRepository)
-    # ------------------------------------------------------------------
-
-    async def request_reanalysis(self, unique_ids: list[str]) -> int:
-        """Mark specific properties for re-analysis."""
-        return await self._pipeline.request_reanalysis(unique_ids)
-
-    async def request_reanalysis_by_filter(
-        self,
-        *,
-        outcodes: list[str] | None = None,
-        all_properties: bool = False,
-    ) -> int:
-        """Bulk-mark properties for re-analysis by outcode or all."""
-        return await self._pipeline.request_reanalysis_by_filter(
-            outcodes=outcodes, all_properties=all_properties
-        )
-
-    async def get_reanalysis_queue(self, *, outcode: str | None = None) -> list[MergedProperty]:
-        """Load properties flagged for re-analysis."""
-        return await self._pipeline.get_reanalysis_queue(outcode=outcode)
-
-    async def complete_reanalysis(
-        self,
-        unique_id: str,
-        analysis: PropertyQualityAnalysis,
-    ) -> None:
-        """Save updated quality analysis and clear the re-analysis flag."""
-        await self._pipeline.complete_reanalysis(unique_id, analysis)
-
-    # ------------------------------------------------------------------
-    # Facade: enrichment retry (delegates to PipelineRepository)
-    # ------------------------------------------------------------------
-
-    async def save_unenriched_property(
-        self,
-        merged: MergedProperty,
-        *,
-        commute_minutes: int | None = None,
-        transport_mode: TransportMode | None = None,
-    ) -> None:
-        """Save a property that failed enrichment for retry on next run."""
-        await self._pipeline.save_unenriched_property(
-            merged, commute_minutes=commute_minutes, transport_mode=transport_mode
-        )
-
-    async def get_unenriched_properties(self, max_attempts: int = 3) -> list[MergedProperty]:
-        """Load properties that failed enrichment for retry."""
-        return await self._pipeline.get_unenriched_properties(max_attempts)
-
-    async def get_unenriched_retry_stats(self, max_attempts: int = 3) -> dict[str, dict[str, int]]:
-        """Return retry backlog stats grouped by attempt count."""
-        return await self._pipeline.get_unenriched_retry_stats(max_attempts)
-
-    async def mark_enriched(self, unique_id: str) -> None:
-        """Transition a re-enriched property into the normal notification flow."""
-        await self._pipeline.mark_enriched(unique_id)
-
-    async def expire_unenriched(self, max_attempts: int = 3) -> int:
-        """Give up on properties that exceeded max enrichment retries."""
-        return await self._pipeline.expire_unenriched(max_attempts)
-
-    # ------------------------------------------------------------------
-    # Facade: web dashboard queries (delegates to WebQueryService)
-    # ------------------------------------------------------------------
-
-    async def get_filter_count(self, filters: PropertyFilter) -> int:
-        """Get count of properties matching filters (no data fetch)."""
-        return await self._web.get_filter_count(filters)
-
-    async def get_map_markers(self, filters: PropertyFilter) -> list[dict[str, Any]]:
-        """Get lightweight map marker data for all matching properties with coordinates."""
-        return await self._web.get_map_markers(filters)
-
-    async def get_properties_paginated(
-        self,
-        filters: PropertyFilter,
-        *,
-        sort: str = "newest",
-        page: int = 1,
-        per_page: int = 24,
-    ) -> tuple[list[PropertyListItem], int]:
-        """Get paginated properties with optional filters."""
-        return await self._web.get_properties_paginated(
-            filters, sort=sort, page=page, per_page=per_page
-        )
-
-    async def get_property_card(self, unique_id: str) -> PropertyListItem | None:
-        """Get a single property in card-list format."""
-        return await self._web.get_property_card(unique_id)
-
-    async def get_property_detail(self, unique_id: str) -> PropertyDetailItem | None:
-        """Get full property detail including quality analysis and images."""
-        return await self._web.get_property_detail(unique_id)
-
-    async def get_property_count(self) -> int:
-        """Get total number of tracked properties."""
-        return await self._web.get_property_count()
 
     # ------------------------------------------------------------------
     # User status tracking (Ticket 7)

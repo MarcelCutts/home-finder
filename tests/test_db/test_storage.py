@@ -234,13 +234,13 @@ class TestPropertyStorage:
         sample_property_2: Property,
     ) -> None:
         """Test getting total property count."""
-        assert await storage.get_property_count() == 0
+        assert await storage.web.get_property_count() == 0
 
         await storage.save_property(storage_sample_property)
-        assert await storage.get_property_count() == 1
+        assert await storage.web.get_property_count() == 1
 
         await storage.save_property(sample_property_2)
-        assert await storage.get_property_count() == 2
+        assert await storage.web.get_property_count() == 2
 
     @pytest.mark.asyncio
     async def test_get_unsent_notifications_returns_pending(
@@ -334,7 +334,7 @@ class TestGetMapMarkers:
             )
             await storage.save_property(prop)
 
-        markers = await storage.get_map_markers(PropertyFilter())
+        markers = await storage.web.get_map_markers(PropertyFilter())
         assert len(markers) == 5
         # Check marker structure
         m = markers[0]
@@ -374,7 +374,7 @@ class TestGetMapMarkers:
         await storage.save_property(with_coords)
         await storage.save_property(without_coords)
 
-        markers = await storage.get_map_markers(PropertyFilter())
+        markers = await storage.web.get_map_markers(PropertyFilter())
         assert len(markers) == 1
         assert markers[0]["id"] == with_coords.unique_id
 
@@ -410,7 +410,7 @@ class TestGetMapMarkers:
         await storage.save_property(one_bed)
         await storage.save_property(two_bed)
 
-        markers = await storage.get_map_markers(PropertyFilter(bedrooms=1))
+        markers = await storage.web.get_map_markers(PropertyFilter(bedrooms=1))
         assert len(markers) == 1
         assert markers[0]["id"] == one_bed.unique_id
 
@@ -797,7 +797,7 @@ class TestWardOperations:
         )
         await storage.save_merged_property(merged, ward="London Fields")
 
-        detail = await storage.get_property_detail(storage_sample_property.unique_id)
+        detail = await storage.web.get_property_detail(storage_sample_property.unique_id)
         assert detail is not None
         assert detail["ward"] == "London Fields"
 
@@ -816,7 +816,7 @@ class TestWardOperations:
         )
         await storage.save_merged_property(merged)
 
-        detail = await storage.get_property_detail(storage_sample_property.unique_id)
+        detail = await storage.web.get_property_detail(storage_sample_property.unique_id)
         assert detail is not None
         assert detail.get("ward") is None
 
@@ -880,8 +880,8 @@ class TestWardOperations:
         )
         assert updated == 2
 
-        d1 = await storage.get_property_detail(storage_sample_property.unique_id)
-        d2 = await storage.get_property_detail(sample_property_2.unique_id)
+        d1 = await storage.web.get_property_detail(storage_sample_property.unique_id)
+        d2 = await storage.web.get_property_detail(sample_property_2.unique_id)
         assert d1 is not None and d1["ward"] == "London Fields"
         assert d2 is not None and d2["ward"] == "Dalston"
 

@@ -524,7 +524,7 @@ class TestCoreReanalysisFlow:
                 await run_pipeline(settings, storage=shared_storage)
 
                 # Should have 1 property (merged) with 2 sources
-                count = await shared_storage.get_property_count()
+                count = await shared_storage.web.get_property_count()
                 assert count == 1
 
                 await _assert_db_sources(shared_storage, prop_rm.unique_id, {"rightmove", "zoopla"})
@@ -704,7 +704,7 @@ class TestDBStateEdgeCases:
         await _populate_run1(storage, anchor, quality_v1)
 
         # Pre-flag reanalysis (simulating a previous merge)
-        await storage.request_reanalysis([anchor.unique_id])
+        await storage.pipeline.request_reanalysis([anchor.unique_id])
         await _assert_reanalysis_state(storage, anchor.unique_id, requested=True)
 
         # New merge arrives — request_reanalysis called again (idempotent update)
@@ -851,7 +851,7 @@ class TestDrainReanalysisQueue:
         """Returns 0 when quality filter is disabled. Flag NOT cleared."""
         anchor = make_property(source=PropertySource.OPENRENT, postcode="E8 3RH", price_pcm=1800)
         await _populate_run1(storage, anchor, quality_v1)
-        await storage.request_reanalysis([anchor.unique_id])
+        await storage.pipeline.request_reanalysis([anchor.unique_id])
 
         count = await _drain_reanalysis_queue(settings_quality_off, storage)
 
@@ -876,7 +876,7 @@ class TestDrainReanalysisQueue:
                 price_pcm=1800 + i * 100,
             )
             await _populate_run1(storage, prop, quality_v1)
-            await storage.request_reanalysis([prop.unique_id])
+            await storage.pipeline.request_reanalysis([prop.unique_id])
             anchors.append(prop)
 
         with patch("home_finder.pipeline.analysis.PropertyQualityFilter") as mock_cls:
@@ -931,7 +931,7 @@ class TestDrainReanalysisQueue:
                 price_pcm=1800 + i * 100,
             )
             await _populate_run1(storage, prop, quality_v1)
-            await storage.request_reanalysis([prop.unique_id])
+            await storage.pipeline.request_reanalysis([prop.unique_id])
             anchors.append(prop)
 
         call_idx = 0
@@ -1242,7 +1242,7 @@ class TestDryRunPath:
         try:
             # Pre-seed: save anchor with quality analysis and pending reanalysis
             await _populate_run1(shared_storage, anchor, quality_v1)
-            await shared_storage.request_reanalysis([anchor.unique_id])
+            await shared_storage.pipeline.request_reanalysis([anchor.unique_id])
 
             with _pipeline_mocks(
                 scrape_return=[new_prop],

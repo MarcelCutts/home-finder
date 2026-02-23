@@ -273,7 +273,7 @@ class TestRunPipelineE2E:
             assert storage is not None
 
             # Pipeline run tracking
-            run = await storage.get_last_pipeline_run()
+            run = await storage.pipeline.get_last_pipeline_run()
             assert run is not None
             assert run["status"] == "completed"
             assert run["scraped_count"] == 2
@@ -284,7 +284,7 @@ class TestRunPipelineE2E:
             assert run["duration_seconds"] is not None
 
             # Properties saved
-            count = await storage.get_property_count()
+            count = await storage.web.get_property_count()
             assert count == 2
 
             # Quality filter constructed with correct API key
@@ -320,7 +320,7 @@ class TestRunPipelineE2E:
             storage = ctx.storage_capture.instance
             assert storage is not None
 
-            run = await storage.get_last_pipeline_run()
+            run = await storage.pipeline.get_last_pipeline_run()
             assert run is not None
             assert run["status"] == "completed"
 
@@ -432,7 +432,7 @@ class TestRunPipelineE2E:
             storage = ctx.storage_capture.instance
             assert storage is not None
 
-            run = await storage.get_last_pipeline_run()
+            run = await storage.pipeline.get_last_pipeline_run()
             assert run is not None
             assert run["status"] == "failed"
             assert error_msg in run["error_message"]
@@ -485,13 +485,13 @@ class TestRunPipelineE2E:
             ctx.quality_cls.assert_not_called()
 
             # Property still saved
-            count = await storage.get_property_count()
+            count = await storage.web.get_property_count()
             assert count == 1
 
             # Notification sent (with quality_analysis=None)
             assert ctx.notifier.send_merged_property_notification.call_count == 1
 
-            run = await storage.get_last_pipeline_run()
+            run = await storage.pipeline.get_last_pipeline_run()
             assert run is not None
             assert run["status"] == "completed"
 
@@ -518,7 +518,7 @@ class TestRunPipelineE2E:
             assert storage is not None
 
             # Pipeline still completes
-            run = await storage.get_last_pipeline_run()
+            run = await storage.pipeline.get_last_pipeline_run()
             assert run is not None
             assert run["status"] == "completed"
             assert run["notified_count"] == 0

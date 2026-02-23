@@ -63,7 +63,7 @@ class EventRecorder:
             return
         to_write = self._buffer
         self._buffer = []
-        await self._storage.insert_property_events(self._run_id, to_write)
+        await self._storage.pipeline.insert_property_events(self._run_id, to_write)
         logger.debug("property_events_flushed", count=len(to_write))
 
     async def __aenter__(self) -> EventRecorder:

@@ -209,7 +209,7 @@ async def _cross_run_deduplicate(
                             copy_cached_images(data_dir, new_source_id, matched_anchor_id)
 
                 # Flag for quality re-analysis — new source brings new images/descriptions
-                await storage.request_reanalysis([matched_anchor_id])
+                await storage.pipeline.request_reanalysis([matched_anchor_id])
                 logger.info(
                     "cross_run_reanalysis_flagged",
                     anchor_id=matched_anchor_id,
@@ -393,10 +393,10 @@ async def _load_unenriched(
 ) -> tuple[list[MergedProperty], set[str]]:
     """Load unenriched properties for retry, clearing stale image caches."""
     max_attempts = settings.max_enrichment_attempts
-    unenriched = await storage.get_unenriched_properties(max_attempts=max_attempts)
+    unenriched = await storage.pipeline.get_unenriched_properties(max_attempts=max_attempts)
     re_enrichment_ids: set[str] = set()
     if unenriched:
-        retry_stats = await storage.get_unenriched_retry_stats(max_attempts=max_attempts)
+        retry_stats = await storage.pipeline.get_unenriched_retry_stats(max_attempts=max_attempts)
         oldest_days = max(
             (_days_since(m.canonical.first_seen.isoformat()) for m in unenriched), default=0
         )
@@ -548,10 +548,10 @@ async def _run_enrichment(
     enriched = enrichment_result.enriched
 
     for failed in enrichment_result.failed:
-        await storage.save_unenriched_property(failed)
+        await storage.pipeline.save_unenriched_property(failed)
 
     max_attempts = settings.max_enrichment_attempts
-    expired = await storage.expire_unenriched(max_attempts=max_attempts)
+    expired = await storage.pipeline.expire_unenriched(max_attempts=max_attempts)
 
     logger.info(
         "enrichment_summary",
@@ -660,7 +660,7 @@ async def _run_post_enrichment(
 
         # Save floorplan-dropped properties so they don't get re-enriched
         if dropped and commute_lookup is not None:
-            await storage.save_dropped_properties(dropped, commute_lookup)
+            await storage.pipeline.save_dropped_properties(dropped, commute_lookup)
 
         # T4: record floorplan gate events
         if recorder is not None:

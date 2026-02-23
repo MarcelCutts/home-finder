@@ -30,7 +30,7 @@ class TestSaveDroppedProperties:
     ) -> None:
         """Dropped properties get notification_status='dropped', enrichment_status='enriched'."""
         merged = make_merged_property(source_id="drop-1")
-        await storage.save_dropped_properties([merged], {})
+        await storage.pipeline.save_dropped_properties([merged], {})
 
         conn = await storage._get_connection()
         cursor = await conn.execute(
@@ -50,7 +50,7 @@ class TestSaveDroppedProperties:
         """Commute lookup data is persisted alongside the dropped property."""
         merged = make_merged_property(source_id="drop-commute")
         commute_lookup = {merged.unique_id: (25, TransportMode.CYCLING)}
-        await storage.save_dropped_properties([merged], commute_lookup)
+        await storage.pipeline.save_dropped_properties([merged], commute_lookup)
 
         conn = await storage._get_connection()
         cursor = await conn.execute(
@@ -78,7 +78,7 @@ class TestSaveDroppedProperties:
             ),
         )
         merged = make_merged_property(source_id="drop-img", images=images)
-        await storage.save_dropped_properties([merged], {})
+        await storage.pipeline.save_dropped_properties([merged], {})
 
         db_images = await storage.get_property_images(merged.unique_id)
         assert len(db_images) == 1
@@ -91,7 +91,7 @@ class TestSaveDroppedProperties:
     ) -> None:
         """Dropped properties are 'seen' and excluded from filter_new_merged."""
         merged = make_merged_property(source_id="drop-seen")
-        await storage.save_dropped_properties([merged], {})
+        await storage.pipeline.save_dropped_properties([merged], {})
 
         # Same property should now be filtered out as "already seen"
         result = await storage.filter_new_merged([merged])
@@ -104,9 +104,9 @@ class TestSaveDroppedProperties:
     ) -> None:
         """Dropped properties don't appear in paginated dashboard results."""
         merged = make_merged_property(source_id="drop-dash")
-        await storage.save_dropped_properties([merged], {})
+        await storage.pipeline.save_dropped_properties([merged], {})
 
-        props, total = await storage.get_properties_paginated(PropertyFilter())
+        props, total = await storage.web.get_properties_paginated(PropertyFilter())
         assert total == 0
         assert len(props) == 0
 
@@ -117,7 +117,7 @@ class TestSaveDroppedProperties:
     ) -> None:
         """Dropped properties are excluded from off-market URL checks."""
         merged = make_merged_property(source_id="drop-offm")
-        await storage.save_dropped_properties([merged], {})
+        await storage.pipeline.save_dropped_properties([merged], {})
 
         results = await storage.get_properties_for_off_market_check()
         assert len(results) == 0
@@ -142,7 +142,7 @@ class TestSaveDroppedProperties:
         assert row["notification_status"] == "pending"
 
         # Now try to save as dropped — should be a no-op
-        await storage.save_dropped_properties([merged], {})
+        await storage.pipeline.save_dropped_properties([merged], {})
 
         cursor = await conn.execute(
             "SELECT notification_status FROM properties WHERE unique_id = ?",
@@ -156,7 +156,7 @@ class TestSaveDroppedProperties:
         storage: PropertyStorage,
     ) -> None:
         """Passing empty list doesn't error."""
-        await storage.save_dropped_properties([], {})
+        await storage.pipeline.save_dropped_properties([], {})
 
     async def test_multiple_properties(
         self,
@@ -166,14 +166,14 @@ class TestSaveDroppedProperties:
         """Multiple dropped properties are all saved correctly."""
         m1 = make_merged_property(source_id="drop-multi-1")
         m2 = make_merged_property(source_id="drop-multi-2")
-        await storage.save_dropped_properties([m1, m2], {})
+        await storage.pipeline.save_dropped_properties([m1, m2], {})
 
         # Both should be seen
         result = await storage.filter_new_merged([m1, m2])
         assert len(result) == 0
 
         # Neither should appear on dashboard
-        _props, total = await storage.get_properties_paginated(PropertyFilter())
+        _props, total = await storage.web.get_properties_paginated(PropertyFilter())
         assert total == 0
 
     async def test_unenriched_retry_transitions_to_dropped(
@@ -185,7 +185,7 @@ class TestSaveDroppedProperties:
         merged = make_merged_property(source_id="drop-unenriched")
 
         # Save as unenriched (simulates enrichment failure on a previous run)
-        await storage.save_unenriched_property(merged)
+        await storage.pipeline.save_unenriched_property(merged)
 
         conn = await storage._get_connection()
         cursor = await conn.execute(
@@ -197,11 +197,11 @@ class TestSaveDroppedProperties:
         assert row["enrichment_status"] == "pending"
 
         # Verify it appears in unenriched retry queue
-        unenriched = await storage.get_unenriched_properties()
+        unenriched = await storage.pipeline.get_unenriched_properties()
         assert any(m.unique_id == merged.unique_id for m in unenriched)
 
         # Now save as dropped (simulates: re-enriched successfully, then dropped at floorplan gate)
-        await storage.save_dropped_properties([merged], {})
+        await storage.pipeline.save_dropped_properties([merged], {})
 
         cursor = await conn.execute(
             "SELECT notification_status, enrichment_status FROM properties WHERE unique_id = ?",
@@ -212,5 +212,5 @@ class TestSaveDroppedProperties:
         assert row["enrichment_status"] == "enriched"
 
         # No longer in unenriched retry queue
-        unenriched = await storage.get_unenriched_properties()
+        unenriched = await storage.pipeline.get_unenriched_properties()
         assert not any(m.unique_id == merged.unique_id for m in unenriched)

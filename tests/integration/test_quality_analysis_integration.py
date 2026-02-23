@@ -292,7 +292,7 @@ class TestQualityAnalysisIntegration:
         await in_memory_storage.save_merged_property(merged)
         await in_memory_storage.save_quality_analysis(merged.unique_id, analysis)
 
-        detail = await in_memory_storage.get_property_detail(merged.unique_id)
+        detail = await in_memory_storage.web.get_property_detail(merged.unique_id)
         assert detail is not None
         assert detail["quality_rating"] == 4
         assert detail["quality_analysis"] is not None

@@ -79,10 +79,10 @@ async def _save_and_flag(
 ) -> MergedProperty:
     """Save an analyzed+notified property and flag it for reanalysis."""
     merged = make_merged_property(source_id=source_id, postcode=postcode)
-    await storage.save_pre_analysis_properties([merged], {})
-    await storage.complete_analysis(merged.unique_id, make_quality_analysis(rating=rating))
+    await storage.pipeline.save_pre_analysis_properties([merged], {})
+    await storage.pipeline.complete_analysis(merged.unique_id, make_quality_analysis(rating=rating))
     await storage.mark_notified(merged.unique_id)
-    await storage.request_reanalysis([merged.unique_id])
+    await storage.pipeline.request_reanalysis([merged.unique_id])
     return merged
 
 
@@ -103,8 +103,10 @@ class TestRunReanalysisRequestOnly:
         # Pre-populate 2 E8 properties
         for i in range(2):
             merged = make_merged_property(source_id=f"z-e8-{i}", postcode="E8 3RH")
-            await populated_storage.save_pre_analysis_properties([merged], {})
-            await populated_storage.complete_analysis(merged.unique_id, make_quality_analysis())
+            await populated_storage.pipeline.save_pre_analysis_properties([merged], {})
+            await populated_storage.pipeline.complete_analysis(
+                merged.unique_id, make_quality_analysis()
+            )
             await populated_storage.mark_notified(merged.unique_id)
 
         with patch("home_finder.pipeline.analysis.PropertyQualityFilter") as mock_qf_cls:
@@ -116,7 +118,7 @@ class TestRunReanalysisRequestOnly:
             mock_qf_cls.assert_not_called()
 
         # Verify flags were set
-        queue = await populated_storage.get_reanalysis_queue()
+        queue = await populated_storage.pipeline.get_reanalysis_queue()
         assert len(queue) == 2
 
     async def test_request_only_all(
@@ -129,8 +131,10 @@ class TestRunReanalysisRequestOnly:
         """reanalyze_all=True with request_only flags all properties."""
         for sid, pc in [("z-e8", "E8 3RH"), ("z-e2", "E2 7QA"), ("z-n1", "N1 5AA")]:
             merged = make_merged_property(source_id=sid, postcode=pc)
-            await populated_storage.save_pre_analysis_properties([merged], {})
-            await populated_storage.complete_analysis(merged.unique_id, make_quality_analysis())
+            await populated_storage.pipeline.save_pre_analysis_properties([merged], {})
+            await populated_storage.pipeline.complete_analysis(
+                merged.unique_id, make_quality_analysis()
+            )
             await populated_storage.mark_notified(merged.unique_id)
 
         with patch("home_finder.pipeline.analysis.PropertyQualityFilter") as mock_qf_cls:
@@ -141,7 +145,7 @@ class TestRunReanalysisRequestOnly:
             )
             mock_qf_cls.assert_not_called()
 
-        queue = await populated_storage.get_reanalysis_queue()
+        queue = await populated_storage.pipeline.get_reanalysis_queue()
         assert len(queue) == 3
 
 
@@ -228,7 +232,7 @@ class TestRunReanalysisSuccess:
         assert stored.overall_rating == 5
 
         # Verify flag cleared
-        queue = await populated_storage.get_reanalysis_queue()
+        queue = await populated_storage.pipeline.get_reanalysis_queue()
         assert len(queue) == 0
 
         # Verify close() called
@@ -270,7 +274,7 @@ class TestRunReanalysisSuccess:
             await run_reanalysis(reanalysis_settings)
 
         # All flags cleared
-        queue = await populated_storage.get_reanalysis_queue()
+        queue = await populated_storage.pipeline.get_reanalysis_queue()
         assert len(queue) == 0
 
         complete_events = [e for e in captured if e["event"] == "reanalysis_complete"]
@@ -345,7 +349,7 @@ class TestRunReanalysisErrorHandling:
             await run_reanalysis(reanalysis_settings)
 
         # At least 1 should have completed
-        queue = await populated_storage.get_reanalysis_queue()
+        queue = await populated_storage.pipeline.get_reanalysis_queue()
         completed_count = 3 - len(queue)
         assert completed_count >= 1
         # close() must still be called
@@ -432,7 +436,7 @@ class TestRunReanalysisErrorHandling:
         assert complete_events[0]["failed"] == 1
 
         # Flag should still be set
-        queue = await populated_storage.get_reanalysis_queue()
+        queue = await populated_storage.pipeline.get_reanalysis_queue()
         assert len(queue) == 1
 
     async def test_close_called_on_api_error(

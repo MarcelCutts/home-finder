@@ -37,7 +37,7 @@ class TestSaveUnenrichedProperty:
     ) -> None:
         """First save creates a pending row with attempts=1."""
         merged = make_merged_property()
-        await storage.save_unenriched_property(
+        await storage.pipeline.save_unenriched_property(
             merged, commute_minutes=15, transport_mode=TransportMode.CYCLING
         )
 
@@ -62,8 +62,8 @@ class TestSaveUnenrichedProperty:
     ) -> None:
         """Second save for same property just increments attempts."""
         merged = make_merged_property()
-        await storage.save_unenriched_property(merged)
-        await storage.save_unenriched_property(merged)
+        await storage.pipeline.save_unenriched_property(merged)
+        await storage.pipeline.save_unenriched_property(merged)
 
         conn = await storage._get_connection()
         cursor = await conn.execute(
@@ -82,12 +82,12 @@ class TestSaveUnenrichedProperty:
     ) -> None:
         """Conflict update does not overwrite commute data or other fields."""
         merged = make_merged_property()
-        await storage.save_unenriched_property(
+        await storage.pipeline.save_unenriched_property(
             merged, commute_minutes=20, transport_mode=TransportMode.CYCLING
         )
 
         # Second save with different commute data should NOT overwrite
-        await storage.save_unenriched_property(
+        await storage.pipeline.save_unenriched_property(
             merged, commute_minutes=99, transport_mode=TransportMode.PUBLIC_TRANSPORT
         )
 
@@ -114,9 +114,9 @@ class TestGetUnenrichedProperties:
     ) -> None:
         """Should return properties with enrichment_status='pending'."""
         merged = make_merged_property()
-        await storage.save_unenriched_property(merged)
+        await storage.pipeline.save_unenriched_property(merged)
 
-        result = await storage.get_unenriched_properties(max_attempts=3)
+        result = await storage.pipeline.get_unenriched_properties(max_attempts=3)
         assert len(result) == 1
         assert result[0].unique_id == merged.unique_id
 
@@ -131,7 +131,7 @@ class TestGetUnenrichedProperties:
         merged = make_merged_property()
         await storage.save_merged_property(merged)
 
-        result = await storage.get_unenriched_properties(max_attempts=3)
+        result = await storage.pipeline.get_unenriched_properties(max_attempts=3)
         assert len(result) == 0
 
     @pytest.mark.asyncio
@@ -142,11 +142,11 @@ class TestGetUnenrichedProperties:
     ) -> None:
         """Should exclude properties that hit the max attempts threshold."""
         merged = make_merged_property()
-        await storage.save_unenriched_property(merged)
-        await storage.save_unenriched_property(merged)  # attempts=2
-        await storage.save_unenriched_property(merged)  # attempts=3
+        await storage.pipeline.save_unenriched_property(merged)
+        await storage.pipeline.save_unenriched_property(merged)  # attempts=2
+        await storage.pipeline.save_unenriched_property(merged)  # attempts=3
 
-        result = await storage.get_unenriched_properties(max_attempts=3)
+        result = await storage.pipeline.get_unenriched_properties(max_attempts=3)
         assert len(result) == 0
 
     @pytest.mark.asyncio
@@ -170,9 +170,9 @@ class TestGetUnenrichedProperties:
             max_price=2100,
             descriptions={PropertySource.ZOOPLA: "Nice flat"},
         )
-        await storage.save_unenriched_property(merged)
+        await storage.pipeline.save_unenriched_property(merged)
 
-        result = await storage.get_unenriched_properties(max_attempts=3)
+        result = await storage.pipeline.get_unenriched_properties(max_attempts=3)
         assert len(result) == 1
         r = result[0]
         assert set(r.sources) == {PropertySource.ZOOPLA, PropertySource.OPENRENT}
@@ -195,9 +195,9 @@ class TestMarkEnriched:
     ) -> None:
         """Should set enrichment_status='enriched' and notification_status='pending'."""
         merged = make_merged_property()
-        await storage.save_unenriched_property(merged)
+        await storage.pipeline.save_unenriched_property(merged)
 
-        await storage.mark_enriched(merged.unique_id)
+        await storage.pipeline.mark_enriched(merged.unique_id)
 
         conn = await storage._get_connection()
         cursor = await conn.execute(
@@ -219,7 +219,7 @@ class TestMarkEnriched:
         merged = make_merged_property()
         await storage.save_merged_property(merged)  # saves with notification_status='pending'
 
-        await storage.mark_enriched(merged.unique_id)
+        await storage.pipeline.mark_enriched(merged.unique_id)
 
         tracked = await storage.get_property(merged.unique_id)
         assert tracked is not None
@@ -236,7 +236,7 @@ class TestMarkEnriched:
         await storage.save_merged_property(merged)
         await storage.mark_notified(merged.unique_id)
 
-        await storage.mark_enriched(merged.unique_id)
+        await storage.pipeline.mark_enriched(merged.unique_id)
 
         tracked = await storage.get_property(merged.unique_id)
         assert tracked is not None
@@ -254,11 +254,11 @@ class TestExpireUnenriched:
     ) -> None:
         """Should mark properties with >= max_attempts as 'failed'."""
         merged = make_merged_property()
-        await storage.save_unenriched_property(merged)
-        await storage.save_unenriched_property(merged)  # attempts=2
-        await storage.save_unenriched_property(merged)  # attempts=3
+        await storage.pipeline.save_unenriched_property(merged)
+        await storage.pipeline.save_unenriched_property(merged)  # attempts=2
+        await storage.pipeline.save_unenriched_property(merged)  # attempts=3
 
-        count = await storage.expire_unenriched(max_attempts=3)
+        count = await storage.pipeline.expire_unenriched(max_attempts=3)
         assert count == 1
 
         conn = await storage._get_connection()
@@ -278,9 +278,9 @@ class TestExpireUnenriched:
     ) -> None:
         """Should not expire properties with fewer attempts."""
         merged = make_merged_property()
-        await storage.save_unenriched_property(merged)  # attempts=1
+        await storage.pipeline.save_unenriched_property(merged)  # attempts=1
 
-        count = await storage.expire_unenriched(max_attempts=3)
+        count = await storage.pipeline.expire_unenriched(max_attempts=3)
         assert count == 0
 
     @pytest.mark.asyncio
@@ -291,13 +291,13 @@ class TestExpireUnenriched:
     ) -> None:
         """Expired properties should not be returned by get_unenriched_properties."""
         merged = make_merged_property()
-        await storage.save_unenriched_property(merged)
-        await storage.save_unenriched_property(merged)
-        await storage.save_unenriched_property(merged)
+        await storage.pipeline.save_unenriched_property(merged)
+        await storage.pipeline.save_unenriched_property(merged)
+        await storage.pipeline.save_unenriched_property(merged)
 
-        await storage.expire_unenriched(max_attempts=3)
+        await storage.pipeline.expire_unenriched(max_attempts=3)
 
-        result = await storage.get_unenriched_properties(max_attempts=10)
+        result = await storage.pipeline.get_unenriched_properties(max_attempts=10)
         assert len(result) == 0  # status is 'failed', not 'pending'
 
 
@@ -346,7 +346,7 @@ class TestDedupAnchorExclusion:
         """Pending enrichment properties should not appear as dedup anchors."""
         # Save an unenriched property
         unenriched = make_merged_property(source_id="unenriched-1")
-        await storage.save_unenriched_property(unenriched)
+        await storage.pipeline.save_unenriched_property(unenriched)
 
         # Save a normal enriched property
         enriched = make_merged_property(sources=(PropertySource.RIGHTMOVE,), source_id="enriched-1")
@@ -371,7 +371,7 @@ class TestDashboardExclusion:
         """Pending enrichment properties should not appear on the dashboard."""
         # Save unenriched
         unenriched = make_merged_property(source_id="unenriched-1")
-        await storage.save_unenriched_property(unenriched)
+        await storage.pipeline.save_unenriched_property(unenriched)
 
         # Save enriched (needs image_url to appear on dashboard)
         enriched = make_merged_property(
@@ -381,7 +381,7 @@ class TestDashboardExclusion:
         )
         await storage.save_merged_property(enriched)
 
-        results, total = await storage.get_properties_paginated(PropertyFilter())
+        results, total = await storage.web.get_properties_paginated(PropertyFilter())
         result_ids = {r["unique_id"] for r in results}
 
         assert total == 1

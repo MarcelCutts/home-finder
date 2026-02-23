@@ -1612,7 +1612,7 @@ class TestReanalysisEndpoint:
         await storage.save_quality_analysis(prop_a.unique_id, base_analysis)
 
         client.post(f"/property/{prop_a.unique_id}/reanalyze")
-        queue = await storage.get_reanalysis_queue()
+        queue = await storage.pipeline.get_reanalysis_queue()
         assert len(queue) == 1
         assert queue[0].unique_id == prop_a.unique_id
 
@@ -1633,7 +1633,7 @@ class TestReanalysisEndpoint:
         assert resp1.status_code == 200
         assert resp2.status_code == 200
 
-        queue = await storage.get_reanalysis_queue()
+        queue = await storage.pipeline.get_reanalysis_queue()
         assert len(queue) == 1
 
 

@@ -202,7 +202,7 @@ async def _run_pipeline_with_storage(
     # Pipeline run tracking — only in live mode
     run_id: int | None = None
     if not dry_run:
-        run_id = await storage.create_pipeline_run()
+        run_id = await storage.pipeline.create_pipeline_run()
         structlog.contextvars.bind_contextvars(run_id=run_id)
         logger.info("pipeline_run_created", run_id=run_id)
 
@@ -263,11 +263,11 @@ async def _run_pipeline_with_storage(
                 if dry_run:
                     logger.info("dry_run_no_new_properties")
                 elif run_id is not None:
-                    await storage.complete_pipeline_run(run_id, "completed")
+                    await storage.pipeline.complete_pipeline_run(run_id, "completed")
                 return
 
             if not dry_run and run_id is not None:
-                await storage.update_pipeline_run(
+                await storage.pipeline.update_pipeline_run(
                     run_id,
                     scraped_count=pre.scraped_count,
                     new_count=len(pre.merged_to_process),
@@ -282,7 +282,7 @@ async def _run_pipeline_with_storage(
                     **pre.stage_timings,
                 )
                 if pre.scraper_metrics:
-                    await storage.save_scraper_runs(
+                    await storage.pipeline.save_scraper_runs(
                         run_id, [asdict(m) for m in pre.scraper_metrics]
                     )
 
@@ -358,7 +358,7 @@ async def _run_pipeline_with_storage(
                         "total_cache_creation_tokens": token_usage.cache_creation_tokens,
                         "estimated_cost_usd": token_usage.estimated_cost_usd,
                     }
-                await storage.update_pipeline_run(
+                await storage.pipeline.update_pipeline_run(
                     run_id,
                     analyzed_count=analyzed_count,
                     notified_count=notified_count,
@@ -366,10 +366,10 @@ async def _run_pipeline_with_storage(
                     notification_seconds=notification_seconds,
                     **cost_kwargs,
                 )
-                await storage.complete_pipeline_run(run_id, "completed")
+                await storage.pipeline.complete_pipeline_run(run_id, "completed")
 
                 # T4: prune old property events
-                await storage.cleanup_old_events(settings.event_retention_runs)
+                await storage.pipeline.cleanup_old_events(settings.event_retention_runs)
 
                 logger.info(
                     "pipeline_complete",
@@ -381,11 +381,13 @@ async def _run_pipeline_with_storage(
         except asyncio.CancelledError:
             if run_id is not None:
                 logger.warning("pipeline_cancelled", run_id=run_id)
-                await storage.complete_pipeline_run(run_id, "cancelled")
+                await storage.pipeline.complete_pipeline_run(run_id, "cancelled")
             raise
         except Exception as exc:
             if run_id is not None:
-                await storage.complete_pipeline_run(run_id, "failed", error_message=str(exc))
+                await storage.pipeline.complete_pipeline_run(
+                    run_id, "failed", error_message=str(exc)
+                )
             raise
         finally:
             if not dry_run:

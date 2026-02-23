@@ -129,7 +129,7 @@ class TestFullPipeline:
             await storage.save_merged_property(m)
 
         # Verify saved
-        count = await storage.get_property_count()
+        count = await storage.web.get_property_count()
         assert count == 2
 
     @pytest.mark.asyncio
@@ -189,7 +189,7 @@ class TestFullPipeline:
         await storage.save_property(prop_v2)
 
         # Should still only have one property
-        count = await storage.get_property_count()
+        count = await storage.web.get_property_count()
         assert count == 1
 
         # Should have updated price
@@ -322,7 +322,7 @@ class TestFilterToStorage:
             )
             await storage.save_property(prop)
 
-        count = await storage.get_property_count()
+        count = await storage.web.get_property_count()
         assert count == 4
 
         # Verify each can be retrieved
@@ -366,7 +366,7 @@ class TestCrossPlatformPipeline:
             await storage.save_merged_property(m)
         await storage.mark_notified(openrent_prop.unique_id)
 
-        count_after_run1 = await storage.get_property_count()
+        count_after_run1 = await storage.web.get_property_count()
         assert count_after_run1 == 1
 
         # Run 2: Same flat appears on Zoopla (different unique_id)
@@ -421,7 +421,7 @@ class TestCrossPlatformPipeline:
         assert len(genuinely_new) == 0
 
         # DB still has only 1 record
-        count_after_run2 = await storage.get_property_count()
+        count_after_run2 = await storage.web.get_property_count()
         assert count_after_run2 == 1
 
         # But the record now has 2 sources

@@ -397,7 +397,7 @@ class TestDBFloorAreaRoundTrip:
 
         from home_finder.web.filters import PropertyFilter
 
-        properties, total = await storage.get_properties_paginated(
+        properties, total = await storage.web.get_properties_paginated(
             PropertyFilter(), sort="newest", page=1, per_page=10
         )
         assert total == 1

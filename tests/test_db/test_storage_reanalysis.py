@@ -44,8 +44,8 @@ async def _save_analyzed_property(
         postcode=postcode,
         image_url=HttpUrl("https://example.com/img.jpg"),
     )
-    await storage.save_pre_analysis_properties([merged], {})
-    await storage.complete_analysis(merged.unique_id, make_quality_analysis(rating=rating))
+    await storage.pipeline.save_pre_analysis_properties([merged], {})
+    await storage.pipeline.complete_analysis(merged.unique_id, make_quality_analysis(rating=rating))
     if notify:
         await storage.mark_notified(merged.unique_id)
     return merged
@@ -64,7 +64,7 @@ class TestRequestReanalysis:
             storage, make_property, make_merged_property, make_quality_analysis
         )
 
-        count = await storage.request_reanalysis([merged.unique_id])
+        count = await storage.pipeline.request_reanalysis([merged.unique_id])
         assert count == 1
 
         # Verify flag is set
@@ -79,7 +79,7 @@ class TestRequestReanalysis:
 
     @pytest.mark.asyncio
     async def test_returns_zero_for_unknown_id(self, storage: PropertyStorage) -> None:
-        count = await storage.request_reanalysis(["nonexistent-id"])
+        count = await storage.pipeline.request_reanalysis(["nonexistent-id"])
         assert count == 0
 
     @pytest.mark.asyncio
@@ -94,7 +94,7 @@ class TestRequestReanalysis:
             storage, make_property, make_merged_property, make_quality_analysis
         )
 
-        await storage.request_reanalysis([merged.unique_id])
+        await storage.pipeline.request_reanalysis([merged.unique_id])
         conn = await storage._get_connection()
         cursor = await conn.execute(
             "SELECT reanalysis_requested_at FROM quality_analyses WHERE property_unique_id = ?",
@@ -105,7 +105,7 @@ class TestRequestReanalysis:
         first_ts = first_row["reanalysis_requested_at"]
 
         # Re-request updates timestamp
-        await storage.request_reanalysis([merged.unique_id])
+        await storage.pipeline.request_reanalysis([merged.unique_id])
         cursor = await conn.execute(
             "SELECT reanalysis_requested_at FROM quality_analyses WHERE property_unique_id = ?",
             (merged.unique_id,),
@@ -132,12 +132,12 @@ class TestRequestReanalysis:
             storage, make_property, make_merged_property, make_quality_analysis, source_id="z-2"
         )
 
-        count = await storage.request_reanalysis([m1.unique_id, m2.unique_id])
+        count = await storage.pipeline.request_reanalysis([m1.unique_id, m2.unique_id])
         assert count == 2
 
     @pytest.mark.asyncio
     async def test_empty_list(self, storage: PropertyStorage) -> None:
-        count = await storage.request_reanalysis([])
+        count = await storage.pipeline.request_reanalysis([])
         assert count == 0
 
     @pytest.mark.asyncio
@@ -173,18 +173,18 @@ class TestRequestReanalysis:
             postcode="N1 5AA",
         )
 
-        count = await storage.request_reanalysis_by_filter(outcodes=["E8"])
+        count = await storage.pipeline.request_reanalysis_by_filter(outcodes=["E8"])
         assert count == 1
 
-        queue = await storage.get_reanalysis_queue()
+        queue = await storage.pipeline.get_reanalysis_queue()
         assert len(queue) == 1
         assert queue[0].unique_id == m1.unique_id
 
         # Flag E2 as well
-        count = await storage.request_reanalysis_by_filter(outcodes=["E2"])
+        count = await storage.pipeline.request_reanalysis_by_filter(outcodes=["E2"])
         assert count == 1
 
-        queue = await storage.get_reanalysis_queue()
+        queue = await storage.pipeline.get_reanalysis_queue()
         assert len(queue) == 2
         queue_ids = {m.unique_id for m in queue}
         assert m1.unique_id in queue_ids
@@ -208,7 +208,7 @@ class TestRequestReanalysis:
             storage, make_property, make_merged_property, make_quality_analysis, source_id="z-3"
         )
 
-        count = await storage.request_reanalysis_by_filter(all_properties=True)
+        count = await storage.pipeline.request_reanalysis_by_filter(all_properties=True)
         assert count == 3
 
     @pytest.mark.asyncio
@@ -238,7 +238,7 @@ class TestRequestReanalysis:
             source_id="z-with-qa",
         )
 
-        count = await storage.request_reanalysis_by_filter(all_properties=True)
+        count = await storage.pipeline.request_reanalysis_by_filter(all_properties=True)
         assert count == 1
 
     @pytest.mark.asyncio
@@ -275,10 +275,10 @@ class TestRequestReanalysis:
             postcode="N1 5AA",
         )
 
-        count = await storage.request_reanalysis_by_filter(outcodes=["E8", "E2"])
+        count = await storage.pipeline.request_reanalysis_by_filter(outcodes=["E8", "E2"])
         assert count == 2
 
-        queue = await storage.get_reanalysis_queue()
+        queue = await storage.pipeline.get_reanalysis_queue()
         queue_ids = {m.unique_id for m in queue}
         assert m_e8.unique_id in queue_ids
         assert m_e2.unique_id in queue_ids
@@ -302,7 +302,7 @@ class TestRequestReanalysis:
             postcode=None,
         )
 
-        count = await storage.request_reanalysis_by_filter(outcodes=["E8"])
+        count = await storage.pipeline.request_reanalysis_by_filter(outcodes=["E8"])
         assert count == 0
 
 
@@ -318,9 +318,9 @@ class TestGetReanalysisQueue:
         merged = await _save_analyzed_property(
             storage, make_property, make_merged_property, make_quality_analysis
         )
-        await storage.request_reanalysis([merged.unique_id])
+        await storage.pipeline.request_reanalysis([merged.unique_id])
 
-        queue = await storage.get_reanalysis_queue()
+        queue = await storage.pipeline.get_reanalysis_queue()
         assert len(queue) == 1
         assert queue[0].unique_id == merged.unique_id
 
@@ -335,7 +335,7 @@ class TestGetReanalysisQueue:
         await _save_analyzed_property(
             storage, make_property, make_merged_property, make_quality_analysis
         )
-        queue = await storage.get_reanalysis_queue()
+        queue = await storage.pipeline.get_reanalysis_queue()
         assert len(queue) == 0
 
     @pytest.mark.asyncio
@@ -365,12 +365,12 @@ class TestGetReanalysisQueue:
             images=images,
             floorplan=floorplan,
         )
-        await storage.save_pre_analysis_properties([merged], {})
-        await storage.complete_analysis(merged.unique_id, make_quality_analysis())
+        await storage.pipeline.save_pre_analysis_properties([merged], {})
+        await storage.pipeline.complete_analysis(merged.unique_id, make_quality_analysis())
         await storage.mark_notified(merged.unique_id)
 
-        await storage.request_reanalysis([merged.unique_id])
-        queue = await storage.get_reanalysis_queue()
+        await storage.pipeline.request_reanalysis([merged.unique_id])
+        queue = await storage.pipeline.get_reanalysis_queue()
 
         assert len(queue) == 1
         result = queue[0]
@@ -403,13 +403,13 @@ class TestGetReanalysisQueue:
             postcode="E2 7QA",
         )
 
-        await storage.request_reanalysis([m_e8.unique_id, m_e2.unique_id])
+        await storage.pipeline.request_reanalysis([m_e8.unique_id, m_e2.unique_id])
 
-        queue_e8 = await storage.get_reanalysis_queue(outcode="E8")
+        queue_e8 = await storage.pipeline.get_reanalysis_queue(outcode="E8")
         assert len(queue_e8) == 1
         assert queue_e8[0].unique_id == m_e8.unique_id
 
-        queue_all = await storage.get_reanalysis_queue()
+        queue_all = await storage.pipeline.get_reanalysis_queue()
         assert len(queue_all) == 2
 
     @pytest.mark.asyncio
@@ -440,12 +440,12 @@ class TestGetReanalysisQueue:
                 PropertySource.OPENRENT: "OpenRent desc",
             },
         )
-        await storage.save_pre_analysis_properties([merged], {})
-        await storage.complete_analysis(merged.unique_id, make_quality_analysis())
+        await storage.pipeline.save_pre_analysis_properties([merged], {})
+        await storage.pipeline.complete_analysis(merged.unique_id, make_quality_analysis())
         await storage.mark_notified(merged.unique_id)
-        await storage.request_reanalysis([merged.unique_id])
+        await storage.pipeline.request_reanalysis([merged.unique_id])
 
-        queue = await storage.get_reanalysis_queue()
+        queue = await storage.pipeline.get_reanalysis_queue()
         assert len(queue) == 1
         result = queue[0]
 
@@ -467,10 +467,10 @@ class TestCompleteReanalysis:
         merged = await _save_analyzed_property(
             storage, make_property, make_merged_property, make_quality_analysis, rating=3
         )
-        await storage.request_reanalysis([merged.unique_id])
+        await storage.pipeline.request_reanalysis([merged.unique_id])
 
         new_analysis = make_quality_analysis(rating=5)
-        await storage.complete_reanalysis(merged.unique_id, new_analysis)
+        await storage.pipeline.complete_reanalysis(merged.unique_id, new_analysis)
 
         stored = await storage.get_quality_analysis(merged.unique_id)
         assert stored is not None
@@ -487,12 +487,12 @@ class TestCompleteReanalysis:
         merged = await _save_analyzed_property(
             storage, make_property, make_merged_property, make_quality_analysis
         )
-        await storage.request_reanalysis([merged.unique_id])
+        await storage.pipeline.request_reanalysis([merged.unique_id])
 
-        await storage.complete_reanalysis(merged.unique_id, make_quality_analysis())
+        await storage.pipeline.complete_reanalysis(merged.unique_id, make_quality_analysis())
 
         # Flag should be cleared
-        queue = await storage.get_reanalysis_queue()
+        queue = await storage.pipeline.get_reanalysis_queue()
         assert len(queue) == 0
 
         conn = await storage._get_connection()
@@ -515,9 +515,11 @@ class TestCompleteReanalysis:
         merged = await _save_analyzed_property(
             storage, make_property, make_merged_property, make_quality_analysis, notify=True
         )
-        await storage.request_reanalysis([merged.unique_id])
+        await storage.pipeline.request_reanalysis([merged.unique_id])
 
-        await storage.complete_reanalysis(merged.unique_id, make_quality_analysis(rating=5))
+        await storage.pipeline.complete_reanalysis(
+            merged.unique_id, make_quality_analysis(rating=5)
+        )
 
         tracked = await storage.get_property(merged.unique_id)
         assert tracked is not None
@@ -537,7 +539,7 @@ class TestCompleteReanalysisAtomicity:
         merged = await _save_analyzed_property(
             storage, make_property, make_merged_property, make_quality_analysis, rating=3
         )
-        await storage.request_reanalysis([merged.unique_id])
+        await storage.pipeline.request_reanalysis([merged.unique_id])
 
         # Snapshot original quality data
         original = await storage.get_quality_analysis(merged.unique_id)
@@ -559,7 +561,9 @@ class TestCompleteReanalysisAtomicity:
         storage._pipeline._save_quality_analysis = _save_then_crash
 
         with pytest.raises(RuntimeError, match="simulated crash"):
-            await storage.complete_reanalysis(merged.unique_id, make_quality_analysis(rating=5))
+            await storage.pipeline.complete_reanalysis(
+                merged.unique_id, make_quality_analysis(rating=5)
+            )
 
         # Quality data should still be the original (rating=3), not the new (rating=5)
         stored = await storage.get_quality_analysis(merged.unique_id)
@@ -567,7 +571,7 @@ class TestCompleteReanalysisAtomicity:
         assert stored.overall_rating == 3
 
         # Reanalysis flag should still be set
-        queue = await storage.get_reanalysis_queue()
+        queue = await storage.pipeline.get_reanalysis_queue()
         assert len(queue) == 1
 
 
@@ -592,16 +596,16 @@ class TestReanalysisIntegration:
         assert initial.overall_rating == 3
 
         # 2. Request re-analysis
-        count = await storage.request_reanalysis([merged.unique_id])
+        count = await storage.pipeline.request_reanalysis([merged.unique_id])
         assert count == 1
 
         # 3. Load queue
-        queue = await storage.get_reanalysis_queue()
+        queue = await storage.pipeline.get_reanalysis_queue()
         assert len(queue) == 1
 
         # 4. Re-analyze with new result
         new_analysis = make_quality_analysis(rating=5)
-        await storage.complete_reanalysis(queue[0].unique_id, new_analysis)
+        await storage.pipeline.complete_reanalysis(queue[0].unique_id, new_analysis)
 
         # 5. Verify updated
         updated = await storage.get_quality_analysis(merged.unique_id)
@@ -609,7 +613,7 @@ class TestReanalysisIntegration:
         assert updated.overall_rating == 5
 
         # 6. Queue should be empty
-        queue = await storage.get_reanalysis_queue()
+        queue = await storage.pipeline.get_reanalysis_queue()
         assert len(queue) == 0
 
         # 7. Notification status unchanged
@@ -631,10 +635,12 @@ class TestReanalysisIntegration:
         )
 
         # Re-analyze with higher rating
-        await storage.request_reanalysis([merged.unique_id])
-        await storage.complete_reanalysis(merged.unique_id, make_quality_analysis(rating=5))
+        await storage.pipeline.request_reanalysis([merged.unique_id])
+        await storage.pipeline.complete_reanalysis(
+            merged.unique_id, make_quality_analysis(rating=5)
+        )
 
-        results, total = await storage.get_properties_paginated(PropertyFilter(min_rating=4))
+        results, total = await storage.web.get_properties_paginated(PropertyFilter(min_rating=4))
         assert total == 1
         assert results[0]["quality_rating"] == 5
 
@@ -654,11 +660,11 @@ class TestReanalysisFeatureInteractions:
         merged = await _save_analyzed_property(
             storage, make_property, make_merged_property, make_quality_analysis
         )
-        await storage.request_reanalysis([merged.unique_id])
+        await storage.pipeline.request_reanalysis([merged.unique_id])
 
         # get_pending_analysis_properties queries notification_status='pending_analysis'
         # which is a different mechanism from reanalysis flags
-        pending = await storage.get_pending_analysis_properties()
+        pending = await storage.pipeline.get_pending_analysis_properties()
         assert len(pending) == 0
 
     @pytest.mark.asyncio
@@ -674,12 +680,12 @@ class TestReanalysisFeatureInteractions:
         merged = await _save_analyzed_property(
             storage, make_property, make_merged_property, make_quality_analysis, rating=4
         )
-        await storage.request_reanalysis([merged.unique_id])
+        await storage.pipeline.request_reanalysis([merged.unique_id])
 
         # reset_failed_analyses only targets rows with NULL overall_rating
-        reset_count = await storage.reset_failed_analyses()
+        reset_count = await storage.pipeline.reset_failed_analyses()
         assert reset_count == 0
 
         # Flag should still be set
-        queue = await storage.get_reanalysis_queue()
+        queue = await storage.pipeline.get_reanalysis_queue()
         assert len(queue) == 1
