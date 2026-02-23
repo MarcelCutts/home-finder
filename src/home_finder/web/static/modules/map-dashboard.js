@@ -22,14 +22,25 @@ if (mapEl && resultsEl) {
     const s = document.createElement("div");
     s.className = "pinned-skeleton";
     s.setAttribute("aria-hidden", "true");
-    s.innerHTML =
-      '<div class="skel-image"></div>' +
-      '<div class="skel-body">' +
-        '<div class="skel-line skel-line-short"></div>' +
-        '<div class="skel-line skel-line-long"></div>' +
-        '<div class="skel-line skel-line-med"></div>' +
-      '</div>' +
-      '<div class="skel-footer"><div class="skel-pill"></div><div class="skel-pill"></div></div>';
+    const skelImage = document.createElement("div");
+    skelImage.className = "skel-image";
+    s.appendChild(skelImage);
+    const skelBody = document.createElement("div");
+    skelBody.className = "skel-body";
+    ["skel-line-short", "skel-line-long", "skel-line-med"].forEach(function (cls) {
+      const line = document.createElement("div");
+      line.className = "skel-line " + cls;
+      skelBody.appendChild(line);
+    });
+    s.appendChild(skelBody);
+    const skelFooter = document.createElement("div");
+    skelFooter.className = "skel-footer";
+    for (let i = 0; i < 2; i++) {
+      const pill = document.createElement("div");
+      pill.className = "skel-pill";
+      skelFooter.appendChild(pill);
+    }
+    s.appendChild(skelFooter);
     return s;
   }
 

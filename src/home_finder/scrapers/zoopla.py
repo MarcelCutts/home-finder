@@ -13,6 +13,7 @@ from typing import Any
 from bs4 import BeautifulSoup, Tag
 from curl_cffi.requests import AsyncSession
 from pydantic import BaseModel, ConfigDict, Field, HttpUrl, TypeAdapter, ValidationError
+from tenacity import retry, retry_if_exception_type, stop_after_attempt
 
 from home_finder.data.location_mappings import BOROUGH_AREAS
 from home_finder.logging import get_logger
@@ -20,6 +21,7 @@ from home_finder.models import FurnishType, Property, PropertySource
 from home_finder.scrapers.base import BaseScraper, ScrapeResult
 from home_finder.scrapers.constants import BROWSER_HEADERS
 from home_finder.scrapers.parsing import extract_bedrooms, extract_postcode, extract_price
+from home_finder.scrapers.retry import SCRAPER_WAIT, RetryableHttpError
 from home_finder.utils.address import is_outcode
 
 logger = get_logger(__name__)
@@ -312,7 +314,10 @@ class ZooplaScraper(BaseScraper):
         # Pick one browser profile per area (switching mid-session is suspicious)
         impersonate_target = self._pick_impersonate_target()
 
+        parse_errors = 0
+
         async def fetch_page(page_idx: int) -> list[Property] | None:
+            nonlocal parse_errors
             page = page_idx + 1  # Zoopla uses 1-based pages
             url = self._build_search_url(
                 area=area,
@@ -331,14 +336,29 @@ class ZooplaScraper(BaseScraper):
                 return None  # Signals fetch failure to _paginate
 
             # Try RSC extraction first (primary method)
-            properties = self._parse_rsc_properties(html)
-            method = "rsc"
+            rsc_result = self._parse_rsc_properties(html)
+            rsc_failed = rsc_result is None
 
-            if not properties:
-                # Fallback to HTML parsing
+            if rsc_result:
+                properties = rsc_result
+                method = "rsc"
+            else:
+                # RSC returned [] (no listings) or None (parse failure) — try HTML
                 soup = BeautifulSoup(html, "html.parser")
-                properties = self._parse_search_results(soup, url)
-                method = "html"
+                html_result = self._parse_search_results(soup, url)
+                html_failed = html_result is None
+
+                if html_result:
+                    properties = html_result
+                    method = "html"
+                elif rsc_failed and html_failed:
+                    # Both methods had structural markers but couldn't parse
+                    parse_errors += 1
+                    properties = []
+                    method = "failed"
+                else:
+                    properties = []
+                    method = "html"
 
             logger.info(
                 "scraped_zoopla_page",
@@ -356,6 +376,7 @@ class ZooplaScraper(BaseScraper):
             max_results=max_results,
             page_delay=self._page_delay,
         )
+        result.parse_errors = parse_errors
 
         logger.info(
             "scraped_zoopla_complete",
@@ -363,6 +384,7 @@ class ZooplaScraper(BaseScraper):
             total_properties=len(result.properties),
             pages_fetched=result.pages_fetched,
             pages_failed=result.pages_failed,
+            parse_errors=parse_errors,
         )
 
         return result
@@ -378,61 +400,51 @@ class ZooplaScraper(BaseScraper):
         if self._proxy_url:
             kwargs["proxy"] = self._proxy_url
 
-        for attempt in range(4):
-            try:
-                response = await session.get(url, **kwargs)  # type: ignore[arg-type]
-
-                if response.status_code == 200:
-                    if not self._is_cloudflare_challenge(response):
-                        self._consecutive_blocks = 0
-                        text: str = response.text
-                        return text
-                    # Soft challenge (200 with challenge HTML) — treat as challenge
-                    logger.warning("zoopla_soft_challenge", url=url, attempt=attempt + 1)
-
-                if response.status_code == 429 or self._is_cloudflare_challenge(response):
-                    delay = 2.0 * (2**attempt) + random.uniform(0, 2.0)
-                    logger.info(
-                        "zoopla_cf_backoff",
-                        url=url,
-                        status=response.status_code,
-                        attempt=attempt + 1,
-                        delay=f"{delay:.1f}s",
-                    )
-                    await asyncio.sleep(delay)
-                    continue
-
-                # Hard HTTP error (404, 500, etc.) — don't retry
-                logger.warning("zoopla_http_error", status=response.status_code, url=url)
-                return None
-
-            except Exception as e:
-                if attempt < 3:
-                    delay = 2.0 * (2**attempt) + random.uniform(0, 1.0)
-                    logger.warning(
-                        "zoopla_fetch_exception_retrying",
-                        error=str(e),
-                        attempt=attempt + 1,
-                        delay=f"{delay:.1f}s",
-                    )
-                    await asyncio.sleep(delay)
-                else:
-                    logger.error("zoopla_fetch_exception", error=str(e), url=url, exc_info=True)
-                    return None
-
-        # All retries exhausted — this area was blocked
-        self._consecutive_blocks += 1
-        logger.warning(
-            "zoopla_fetch_exhausted",
-            url=url,
-            consecutive_blocks=self._consecutive_blocks,
+        @retry(
+            stop=stop_after_attempt(4),
+            wait=SCRAPER_WAIT,
+            retry=retry_if_exception_type((RetryableHttpError, Exception)),
+            reraise=True,
         )
+        async def _do_fetch() -> str:
+            response = await session.get(url, **kwargs)  # type: ignore[arg-type]
 
-        # Reset session after 2 consecutive blocks to get a fresh TLS fingerprint
-        if self._consecutive_blocks == 2:
-            await self._reset_session()
+            if response.status_code == 200:
+                if not self._is_cloudflare_challenge(response):
+                    self._consecutive_blocks = 0
+                    text: str = response.text
+                    return text
+                # Soft challenge (200 with challenge HTML) — treat as retryable
+                logger.warning("zoopla_soft_challenge", url=url)
+                raise RetryableHttpError(response.status_code, url)
 
-        return None
+            if response.status_code == 429 or self._is_cloudflare_challenge(response):
+                raise RetryableHttpError(response.status_code, url)
+
+            # Hard HTTP error (404, 500, etc.) — don't retry
+            logger.warning("zoopla_http_error", status=response.status_code, url=url)
+            return ""  # empty string signals non-retryable failure
+
+        try:
+            result = await _do_fetch()
+            return result if result else None
+        except (RetryableHttpError, Exception) as e:
+            if not isinstance(e, RetryableHttpError):
+                logger.error("zoopla_fetch_exception", error=str(e), url=url, exc_info=True)
+
+            # All retries exhausted — this area was blocked
+            self._consecutive_blocks += 1
+            logger.warning(
+                "zoopla_fetch_exhausted",
+                url=url,
+                consecutive_blocks=self._consecutive_blocks,
+            )
+
+            # Reset session after 2 consecutive blocks to get a fresh TLS fingerprint
+            if self._consecutive_blocks == 2:
+                await self._reset_session()
+
+            return None
 
     def _extract_rsc_listings(self, html: str) -> list[ZooplaListing]:
         """Extract listing data from React Server Components payload.
@@ -522,9 +534,19 @@ class ZooplaScraper(BaseScraper):
 
         return listings
 
-    def _parse_rsc_properties(self, html: str) -> list[Property]:
-        """Parse properties from RSC payload in HTML."""
+    def _parse_rsc_properties(self, html: str) -> list[Property] | None:
+        """Parse properties from RSC payload in HTML.
+
+        Returns None when RSC data markers are present but no listings could
+        be extracted, indicating a possible RSC format change.
+        """
         listings = self._extract_rsc_listings(html)
+        if not listings:
+            if "regularListingsFormatted" in html:
+                logger.warning("zoopla_rsc_extraction_failed")
+                return None
+            return []
+
         properties: list[Property] = []
         for listing in listings:
             prop = self._listing_to_property(listing)
@@ -642,20 +664,37 @@ class ZooplaScraper(BaseScraper):
 
         return f"{self.BASE_URL}/to-rent/property/{path_seg}/?{urllib.parse.urlencode(params)}"
 
-    def _parse_search_results(self, soup: BeautifulSoup, _base_url: str) -> list[Property]:
-        """Parse property listings from search results page (HTML fallback)."""
+    def _parse_search_results(self, soup: BeautifulSoup, _base_url: str) -> list[Property] | None:
+        """Parse property listings from search results page (HTML fallback).
+
+        Returns None when result cards are found but all fail to parse,
+        indicating a possible site layout change.
+        """
         properties: list[Property] = []
 
         # Find all search result cards
         result_cards = soup.find_all("div", {"data-testid": "search-result"})
 
+        if not result_cards:
+            return []
+
+        card_errors = 0
         for card in result_cards:
             try:
                 prop = self._parse_property_card(card)
                 if prop:
                     properties.append(prop)
             except Exception as e:
+                card_errors += 1
                 logger.warning("failed_to_parse_zoopla_card", error=str(e))
+
+        if not properties and card_errors > 0:
+            logger.warning(
+                "zoopla_all_html_cards_unparseable",
+                card_count=len(result_cards),
+                card_errors=card_errors,
+            )
+            return None
 
         return properties
 

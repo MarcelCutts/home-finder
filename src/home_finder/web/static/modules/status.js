@@ -16,20 +16,34 @@ document.addEventListener("click", function (e) {
   const color = option.style.getPropertyValue("--option-color") || "#888";
   trigger.style.setProperty("--status-color", color);
 
+  function buildChevronSvg() {
+    var svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    svg.setAttribute("class", "status-filter-chevron");
+    svg.setAttribute("width", "12");
+    svg.setAttribute("height", "12");
+    svg.setAttribute("viewBox", "0 0 12 12");
+    svg.setAttribute("fill", "none");
+    var path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+    path.setAttribute("d", "M3 4.5L6 7.5L9 4.5");
+    path.setAttribute("stroke", "currentColor");
+    path.setAttribute("stroke-width", "1.5");
+    path.setAttribute("stroke-linecap", "round");
+    path.setAttribute("stroke-linejoin", "round");
+    svg.appendChild(path);
+    return svg;
+  }
+
   if (value) {
-    trigger.innerHTML =
-      '<span class="status-filter-dot"></span>' +
-      option.textContent.trim() +
-      ' <svg class="status-filter-chevron" width="12" height="12" viewBox="0 0 12 12" fill="none">' +
-      '<path d="M3 4.5L6 7.5L9 4.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>' +
-      "</svg>";
+    trigger.textContent = "";
+    var dot = document.createElement("span");
+    dot.className = "status-filter-dot";
+    trigger.appendChild(dot);
+    trigger.appendChild(document.createTextNode(option.textContent.trim() + " "));
+    trigger.appendChild(buildChevronSvg());
   } else {
     trigger.style.setProperty("--status-color", "#888");
-    trigger.innerHTML =
-      "Status" +
-      ' <svg class="status-filter-chevron" width="12" height="12" viewBox="0 0 12 12" fill="none">' +
-      '<path d="M3 4.5L6 7.5L9 4.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>' +
-      "</svg>";
+    trigger.textContent = "Status ";
+    trigger.appendChild(buildChevronSvg());
   }
 
   // Update active state on all options

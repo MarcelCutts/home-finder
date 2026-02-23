@@ -30,12 +30,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap">
-    <style>@import url("https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css") layer(framework);</style>
-    <style>
-    @import url("https://unpkg.com/leaflet@1.9.4/dist/leaflet.css") layer(framework);
-    @import url("https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css") layer(framework);
-    @import url("https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css") layer(framework);
-    </style>
+    <link rel="stylesheet" href="/static/framework-imports.css?v={{ static_version }}">
     <link rel="stylesheet" href="/static/style.css?v={{ static_version }}">
 </head>
 <body hx-ext="response-targets,idiomorph">
@@ -66,8 +61,8 @@
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha384-cxOPjt7s7Iz04uaHJceBmS+qpjv2JkIHNVcuOrM+YHwZOmJGBXI00mdUXEq65HTH" crossorigin="anonymous"></script>
     <script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js" integrity="sha384-eXVCORTRlv4FUUgS/xmOyr66XBVraen8ATNLMESp92FKXLAMiKkerixTiBvXriZr" crossorigin="anonymous"></script>
     <script src="https://unpkg.com/htmx.org@2.0.4/dist/htmx.min.js" integrity="sha384-HGfztofotfshcF7+8n44JQL2oJmowVChPTg48S+jvZoztPfvwD79OC/LTtG6dMp+" crossorigin="anonymous"></script>
-    <script src="https://unpkg.com/htmx-ext-response-targets@2.0.2/response-targets.js" crossorigin="anonymous"></script>
-    <script src="https://unpkg.com/htmx-ext-idiomorph@2.0.0/dist/idiomorph-ext.min.js" crossorigin="anonymous"></script>
+    <script src="https://unpkg.com/htmx-ext-response-targets@2.0.2/response-targets.js" integrity="sha384-NtTh9TBZ2X/pFpfsVvQOjSsYWmjmqG6h5ioQWVAe2/j3AuTHRmfqvoqp+iOed+I0" crossorigin="anonymous"></script>
+    <script src="https://unpkg.com/htmx-ext-idiomorph@2.0.0/dist/idiomorph-ext.min.js" integrity="sha384-j4ouXqSu4bLh9kJORsl8l8tgMZMuF6fwpxnh0OCJX2+kjrTIzDT9uJ4+EYSxmDYk" crossorigin="anonymous"></script>
     <div id="error-toast" class="error-toast" role="alert" aria-live="assertive"></div>
     <div id="sr-announcer" class="sr-only" aria-live="polite" aria-atomic="true"></div>
     <script type="module" src="/static/modules/leaflet-patch.js?v={{ static_version }}"></script>

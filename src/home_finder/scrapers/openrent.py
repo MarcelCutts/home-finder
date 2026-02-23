@@ -7,11 +7,13 @@ from urllib.parse import urljoin
 from bs4 import BeautifulSoup, Tag
 from curl_cffi.requests import AsyncSession
 from pydantic import HttpUrl
+from tenacity import retry, retry_if_exception_type, stop_after_attempt
 
 from home_finder.logging import get_logger
 from home_finder.models import FurnishType, Property, PropertySource
 from home_finder.scrapers.base import BaseScraper, ScrapeResult
 from home_finder.scrapers.constants import BROWSER_HEADERS
+from home_finder.scrapers.retry import SCRAPER_WAIT, RetryableHttpError
 
 logger = get_logger(__name__)
 
@@ -64,52 +66,50 @@ class OpenRentScraper(BaseScraper):
     async def _fetch_page(self, url: str) -> str | None:
         """Fetch page using curl_cffi with Chrome impersonation and 429 retry."""
         session = await self._get_session()
-        backoff = self.INITIAL_BACKOFF_SECONDS
 
-        for attempt in range(1, self.MAX_RETRIES + 1):
-            try:
-                kwargs: dict[str, object] = {
-                    "impersonate": "chrome",
-                    "headers": BROWSER_HEADERS,
-                    "timeout": 30,
-                }
-                if self._proxy_url:
-                    kwargs["proxy"] = self._proxy_url
-                response = await session.get(url, **kwargs)  # type: ignore[arg-type]
+        @retry(
+            stop=stop_after_attempt(self.MAX_RETRIES),
+            wait=SCRAPER_WAIT,
+            retry=retry_if_exception_type(RetryableHttpError),
+            reraise=True,
+        )
+        async def _do_fetch() -> str:
+            kwargs: dict[str, object] = {
+                "impersonate": "chrome",
+                "headers": BROWSER_HEADERS,
+                "timeout": 30,
+            }
+            if self._proxy_url:
+                kwargs["proxy"] = self._proxy_url
+            response = await session.get(url, **kwargs)  # type: ignore[arg-type]
 
-                if response.status_code == 200:
-                    text: str = response.text
-                    return text
+            if response.status_code == 200:
+                text: str = response.text
+                return text
 
-                if response.status_code == 429:
-                    if attempt < self.MAX_RETRIES:
-                        logger.warning(
-                            "openrent_429_retry",
-                            url=url,
-                            attempt=attempt,
-                            backoff=round(backoff, 1),
-                        )
-                        await asyncio.sleep(backoff)
-                        backoff = min(backoff * 2, self.MAX_BACKOFF_SECONDS)
-                        continue
-                    logger.warning(
-                        "openrent_429_exhausted",
-                        url=url,
-                        attempts=self.MAX_RETRIES,
-                    )
-                    return None
+            if response.status_code == 429:
+                raise RetryableHttpError(response.status_code, url)
 
-                logger.warning(
-                    "openrent_http_error",
-                    status=response.status_code,
-                    url=url,
-                )
-                return None
-            except Exception as e:
-                logger.error("openrent_fetch_exception", error=str(e), url=url, exc_info=True)
-                return None
+            logger.warning(
+                "openrent_http_error",
+                status=response.status_code,
+                url=url,
+            )
+            return ""  # empty string signals non-retryable failure
 
-        return None
+        try:
+            result = await _do_fetch()
+            return result if result else None
+        except RetryableHttpError:
+            logger.warning(
+                "openrent_429_exhausted",
+                url=url,
+                attempts=self.MAX_RETRIES,
+            )
+            return None
+        except Exception as e:
+            logger.error("openrent_fetch_exception", error=str(e), url=url, exc_info=True)
+            return None
 
     async def scrape(
         self,
@@ -137,7 +137,10 @@ class OpenRentScraper(BaseScraper):
             include_let_agreed=include_let_agreed,
         )
 
+        parse_errors = 0
+
         async def fetch_page(page_idx: int) -> list[Property] | None:
+            nonlocal parse_errors
             skip = page_idx * self.RESULTS_PER_PAGE
             url = f"{base_url}&skip={skip}" if page_idx > 0 else base_url
 
@@ -147,6 +150,9 @@ class OpenRentScraper(BaseScraper):
 
             soup = BeautifulSoup(html, "html.parser")
             page_properties = self._parse_search_results(soup, url)
+            if page_properties is None:
+                parse_errors += 1
+                return []
 
             logger.info(
                 "scraped_openrent_page",
@@ -170,6 +176,7 @@ class OpenRentScraper(BaseScraper):
             max_results=max_results,
             page_delay=delay,
         )
+        result.parse_errors = parse_errors
 
         logger.info(
             "scraped_openrent_complete",
@@ -177,6 +184,7 @@ class OpenRentScraper(BaseScraper):
             total_properties=len(result.properties),
             pages_fetched=result.pages_fetched,
             pages_failed=result.pages_failed,
+            parse_errors=parse_errors,
         )
 
         return result
@@ -229,11 +237,14 @@ class OpenRentScraper(BaseScraper):
 
         return f"{self.BASE_URL}/properties-to-rent/{area_slug}?{'&'.join(params)}"
 
-    def _parse_search_results(self, soup: BeautifulSoup, base_url: str) -> list[Property]:
+    def _parse_search_results(self, soup: BeautifulSoup, base_url: str) -> list[Property] | None:
         """Parse property listings from search results page.
 
         OpenRent embeds property data in JavaScript arrays on the page.
         We extract these arrays and correlate them with the listing links.
+
+        Returns None when property links are found but all fail to produce
+        properties, indicating a possible site layout change.
         """
         properties: list[Property] = []
 
@@ -252,6 +263,7 @@ class OpenRentScraper(BaseScraper):
 
         # Track seen IDs to avoid duplicates from multiple links to same property
         seen_ids: set[str] = set()
+        card_errors = 0
 
         for link in property_links:
             href = str(link.get("href", ""))
@@ -333,11 +345,20 @@ class OpenRentScraper(BaseScraper):
                 )
                 properties.append(prop)
             except Exception as e:
+                card_errors += 1
                 logger.warning(
                     "failed_to_create_property",
                     property_id=property_id,
                     error=str(e),
                 )
+
+        if not properties and seen_ids and card_errors > 0:
+            logger.warning(
+                "openrent_all_listings_unparseable",
+                links_found=len(seen_ids),
+                card_errors=card_errors,
+            )
+            return None
 
         return properties
 

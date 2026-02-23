@@ -1,0 +1,5 @@
+/* External CSS @imports — moved from inline <style> blocks to enable tighter CSP. */
+@import url("https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css") layer(framework);
+@import url("https://unpkg.com/leaflet@1.9.4/dist/leaflet.css") layer(framework);
+@import url("https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css") layer(framework);
+@import url("https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css") layer(framework);

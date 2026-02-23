@@ -14,6 +14,7 @@ from aiogram.exceptions import (
     TelegramServerError,
     TelegramUnauthorizedError,
 )
+from tenacity import RetryCallState, retry, retry_if_exception_type, stop_after_attempt
 
 from home_finder.logging import get_logger
 from home_finder.models import (
@@ -30,6 +31,45 @@ if TYPE_CHECKING:
     from aiogram.types import FSInputFile, InlineKeyboardMarkup
 
 logger = get_logger(__name__)
+
+
+def _telegram_retry_wait(retry_state: RetryCallState) -> float:
+    """Wait for the duration specified by Telegram's flood control."""
+    exc = retry_state.outcome.exception() if retry_state.outcome else None
+    if isinstance(exc, TelegramRetryAfter):
+        return exc.retry_after * random.uniform(1.0, 1.5)
+    return 1.0
+
+
+def _telegram_retry_log(retry_state: RetryCallState) -> None:
+    """Log flood control retry before sleeping."""
+    exc = retry_state.outcome.exception() if retry_state.outcome else None
+    logger.info(
+        "flood_control_retry",
+        retry_after=getattr(exc, "retry_after", None),
+        attempt=retry_state.attempt_number,
+    )
+
+
+def _telegram_retry_exhausted(retry_state: RetryCallState) -> bool:
+    """Return False when all Telegram retries are exhausted."""
+    exc = retry_state.outcome.exception() if retry_state.outcome else None
+    logger.error(
+        "notification_failed_after_retries",
+        error=str(exc),
+        attempts=retry_state.attempt_number,
+        exc_info=True,
+    )
+    return False
+
+
+_telegram_retry = retry(
+    stop=stop_after_attempt(3),
+    wait=_telegram_retry_wait,
+    retry=retry_if_exception_type(TelegramRetryAfter),
+    retry_error_callback=_telegram_retry_exhausted,
+    before_sleep=_telegram_retry_log,
+)
 
 TRANSPORT_MODE_EMOJI: Final[dict[TransportMode, str]] = {
     TransportMode.CYCLING: "🚴",
@@ -758,6 +798,7 @@ class TelegramNotifier:
             )
         return self._bot
 
+    @_telegram_retry
     async def send_property_notification(
         self,
         prop: Property,
@@ -811,7 +852,7 @@ class TelegramNotifier:
             )
             return True
         except TelegramRetryAfter:
-            raise  # Already handled by outer retry logic (or re-raise for caller)
+            raise  # Propagate to tenacity @_telegram_retry decorator
         except (
             TelegramBadRequest, TelegramForbiddenError, TelegramNotFound, TelegramUnauthorizedError
         ) as e:
@@ -842,6 +883,7 @@ class TelegramNotifier:
             )
             return False
 
+    @_telegram_retry
     async def send_merged_property_notification(
         self,
         merged: MergedProperty,
@@ -849,7 +891,6 @@ class TelegramNotifier:
         commute_minutes: int | None = None,
         transport_mode: TransportMode | None = None,
         quality_analysis: PropertyQualityAnalysis | None = None,
-        _retry_count: int = 0,
     ) -> bool:
         """Send a merged property notification with photo, inline keyboard, and venue.
 
@@ -857,8 +898,8 @@ class TelegramNotifier:
         - Rating >= 4: album (if 3+ images) + venue pin (message sprawl justified)
         - Rating < 4 or unknown: single photo + no venue pin (compact triage)
 
-        Automatically retries on Telegram flood control (429) up to 2 times,
-        sleeping for the duration Telegram specifies.
+        Retries on Telegram flood control (429) via @_telegram_retry decorator
+        (up to 3 attempts, sleeping for Telegram-specified duration with jitter).
 
         Args:
             merged: Merged property to notify about.
@@ -961,30 +1002,8 @@ class TelegramNotifier:
             )
             return True
 
-        except TelegramRetryAfter as e:
-            if _retry_count >= 2:
-                logger.error(
-                    "notification_failed_after_retries",
-                    property_id=merged.unique_id,
-                    retries=_retry_count,
-                    error=str(e),
-                    exc_info=True,
-                )
-                return False
-            logger.info(
-                "flood_control_retry",
-                property_id=merged.unique_id,
-                retry_after=e.retry_after,
-                attempt=_retry_count + 1,
-            )
-            await asyncio.sleep(e.retry_after * random.uniform(1.0, 1.5))
-            return await self.send_merged_property_notification(
-                merged,
-                commute_minutes=commute_minutes,
-                transport_mode=transport_mode,
-                quality_analysis=quality_analysis,
-                _retry_count=_retry_count + 1,
-            )
+        except TelegramRetryAfter:
+            raise  # Propagate to tenacity @_telegram_retry decorator
 
         except (
             TelegramBadRequest, TelegramForbiddenError, TelegramNotFound, TelegramUnauthorizedError
@@ -1084,6 +1103,7 @@ class TelegramNotifier:
             results.append(result)
         return results
 
+    @_telegram_retry
     async def send_status_message(self, message: str) -> bool:
         """Send a status message.
 
@@ -1102,7 +1122,7 @@ class TelegramNotifier:
             )
             return True
         except TelegramRetryAfter:
-            raise  # Already handled by outer retry logic (or re-raise for caller)
+            raise  # Propagate to tenacity @_telegram_retry decorator
         except (
             TelegramBadRequest, TelegramForbiddenError, TelegramNotFound, TelegramUnauthorizedError
         ) as e:
@@ -1130,6 +1150,7 @@ class TelegramNotifier:
             )
             return False
 
+    @_telegram_retry
     async def send_price_drop_notification(
         self,
         *,
@@ -1174,7 +1195,7 @@ class TelegramNotifier:
             logger.info("price_drop_notification_sent", unique_id=unique_id, drop=drop)
             return True
         except TelegramRetryAfter:
-            raise  # Already handled by outer retry logic (or re-raise for caller)
+            raise  # Propagate to tenacity @_telegram_retry decorator
         except (
             TelegramBadRequest, TelegramForbiddenError, TelegramNotFound, TelegramUnauthorizedError
         ) as e:

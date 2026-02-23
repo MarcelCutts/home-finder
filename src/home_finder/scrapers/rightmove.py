@@ -113,12 +113,16 @@ class RightmoveScraper(BaseScraper):
         if not search_url:
             return ScrapeResult()
 
+        parse_errors = 0
+
         async def fetch_page(page_idx: int) -> list[Property] | None:
+            nonlocal parse_errors
             index = page_idx * self.RESULTS_PER_PAGE
             url = f"{search_url}&index={index}" if page_idx > 0 else search_url
 
             page_properties: list[Property] = []
             crawl_failed = False
+            page_parse_failed = [False]  # mutable container for nested closure
 
             async def handle_page(
                 context: BeautifulSoupCrawlingContext,
@@ -126,7 +130,10 @@ class RightmoveScraper(BaseScraper):
             ) -> None:
                 soup = context.soup
                 parsed = self._parse_search_results(soup, str(context.request.url))
-                _props.extend(parsed)
+                if parsed is None:
+                    page_parse_failed[0] = True
+                else:
+                    _props.extend(parsed)
 
             crawler = BeautifulSoupCrawler(
                 max_requests_per_crawl=1,
@@ -140,6 +147,10 @@ class RightmoveScraper(BaseScraper):
                     "rightmove_crawl_failed", url=url, error=str(e), exc_info=True
                 )
                 crawl_failed = True
+
+            if page_parse_failed[0]:
+                parse_errors += 1
+                return []
 
             if crawl_failed and not page_properties:
                 return None  # Signals fetch failure to _paginate
@@ -162,6 +173,7 @@ class RightmoveScraper(BaseScraper):
             max_results=max_results,
             page_delay=delay,
         )
+        result.parse_errors = parse_errors
 
         logger.info(
             "scraped_rightmove_complete",
@@ -169,6 +181,7 @@ class RightmoveScraper(BaseScraper):
             total_properties=len(result.properties),
             pages_fetched=result.pages_fetched,
             pages_failed=result.pages_failed,
+            parse_errors=parse_errors,
         )
 
         return result
@@ -243,8 +256,12 @@ class RightmoveScraper(BaseScraper):
 
         return f"{self.BASE_URL}/property-to-rent/find.html?{'&'.join(params)}"
 
-    def _parse_search_results(self, soup: BeautifulSoup, base_url: str) -> list[Property]:
-        """Parse property listings from search results page."""
+    def _parse_search_results(self, soup: BeautifulSoup, base_url: str) -> list[Property] | None:
+        """Parse property listings from search results page.
+
+        Returns None when property cards are found but all fail to parse,
+        indicating a possible site layout change.
+        """
         properties: list[Property] = []
 
         # Find all property cards - try new data-testid format first, then old format
@@ -254,13 +271,26 @@ class RightmoveScraper(BaseScraper):
             # Fallback to old data-test format
             property_cards = soup.find_all("div", {"data-test": "propertyCard"})
 
+        if not property_cards:
+            return []  # No cards — end of results
+
+        card_errors = 0
         for card in property_cards:
             try:
                 prop = self._parse_property_card(card)
                 if prop:
                     properties.append(prop)
             except Exception as e:
+                card_errors += 1
                 logger.warning("failed_to_parse_property_card", error=str(e))
+
+        if not properties and card_errors > 0:
+            logger.warning(
+                "rightmove_all_cards_unparseable",
+                card_count=len(property_cards),
+                card_errors=card_errors,
+            )
+            return None
 
         return properties
 

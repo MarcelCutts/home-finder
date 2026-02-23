@@ -57,6 +57,8 @@ _SOURCE_DELAYS: Final[dict[str, float]] = {
 # Circuit breaker: abort source after this many consecutive UNKNOWN results
 _CIRCUIT_BREAKER_THRESHOLD: Final = 5
 
+from home_finder.utils.circuit_breaker import ConsecutiveFailureBreaker  # noqa: E402
+
 # Cloudflare challenge indicators
 _CLOUDFLARE_PATTERNS: Final = (
     "checking your browser",
@@ -307,11 +309,13 @@ class OffMarketChecker:
             source: str, items: list[tuple[str, str]]
         ) -> list[CheckResult]:
             source_results: list[CheckResult] = []
-            consecutive_unknown = 0
+            breaker = ConsecutiveFailureBreaker(
+                threshold=_CIRCUIT_BREAKER_THRESHOLD, name=source
+            )
             delay = _SOURCE_DELAYS.get(source, 1.0)
 
             for i, (prop_id, url) in enumerate(items):
-                if consecutive_unknown >= _CIRCUIT_BREAKER_THRESHOLD:
+                if breaker.is_tripped:
                     logger.warning(
                         "off_market_circuit_breaker",
                         source=source,
@@ -340,9 +344,9 @@ class OffMarketChecker:
                 )
 
                 if status == ListingStatus.UNKNOWN:
-                    consecutive_unknown += 1
+                    breaker.record_failure()
                 else:
-                    consecutive_unknown = 0
+                    breaker.record_success()
 
                 if i < len(items) - 1:
                     await asyncio.sleep(delay)

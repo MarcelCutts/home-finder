@@ -62,9 +62,9 @@ REQUEST_TIMEOUT: Final = 180.0  # 3 minutes for vision requests
 _CIRCUIT_BREAKER_THRESHOLD: Final = 3
 _CIRCUIT_BREAKER_COOLDOWN: Final = 300  # seconds (5 min)
 
-
-class APIUnavailableError(Exception):
-    """Raised when the Anthropic API circuit breaker is open."""
+from home_finder.utils.circuit_breaker import (  # noqa: E402
+    APIUnavailableError as APIUnavailableError,
+)
 
 
 def assess_value(price_pcm: int, postcode: str | None, bedrooms: int) -> ValueAnalysis:
@@ -649,10 +649,14 @@ class PropertyQualityFilter:
         self._max_images = max_images
         self._enable_extended_thinking = enable_extended_thinking
         self._client: anthropic.AsyncAnthropic | None = None
-        # Circuit breaker state (asyncio is single-threaded, no lock needed)
-        self._consecutive_api_failures = 0
-        self._circuit_open = False
-        self._circuit_opened_at: float | None = None
+        # Circuit breaker (asyncio is single-threaded, no lock needed)
+        from home_finder.utils.circuit_breaker import CircuitBreaker
+
+        self._breaker = CircuitBreaker(
+            threshold=_CIRCUIT_BREAKER_THRESHOLD,
+            cooldown=_CIRCUIT_BREAKER_COOLDOWN,
+            name="anthropic_api",
+        )
 
     def _get_client(self) -> "anthropic.AsyncAnthropic":
         """Get or create the Anthropic client with optimized settings."""
@@ -666,43 +670,6 @@ class PropertyQualityFilter:
                 timeout=httpx.Timeout(REQUEST_TIMEOUT),  # 3 min for vision requests
             )
         return self._client
-
-    def _record_api_failure(self) -> None:
-        """Record a consecutive API failure and open circuit if threshold reached."""
-        import time
-
-        self._consecutive_api_failures += 1
-        if self._consecutive_api_failures >= _CIRCUIT_BREAKER_THRESHOLD:
-            self._circuit_open = True
-            self._circuit_opened_at = time.monotonic()
-            logger.warning(
-                "api_circuit_breaker_open",
-                consecutive_failures=self._consecutive_api_failures,
-            )
-
-    def _record_api_success(self) -> None:
-        """Reset failure counter and close circuit if it was open (half-open recovery)."""
-        if self._circuit_open:
-            logger.info("api_circuit_breaker_closed")
-        self._consecutive_api_failures = 0
-        self._circuit_open = False
-        self._circuit_opened_at = None
-
-    def _is_circuit_open(self) -> bool:
-        """Check if circuit breaker is open, with half-open recovery after cooldown."""
-        if not self._circuit_open:
-            return False
-        import time
-
-        elapsed = time.monotonic() - self._circuit_opened_at  # type: ignore[operator]
-        if elapsed >= _CIRCUIT_BREAKER_COOLDOWN:
-            logger.info(
-                "circuit_breaker_half_open",
-                cooldown_seconds=_CIRCUIT_BREAKER_COOLDOWN,
-                elapsed_seconds=round(elapsed, 1),
-            )
-            return False  # Allow one retry attempt
-        return True
 
     @staticmethod
     def _get_media_type(url: str) -> ImageMediaType:
@@ -1079,7 +1046,7 @@ class PropertyQualityFilter:
                 )
                 return None
 
-            self._record_api_success()
+            self._breaker.record_success()
             return tool_use_block.input
 
         except BadRequestError as e:
@@ -1104,7 +1071,7 @@ class PropertyQualityFilter:
             return None
 
         except AuthenticationError as e:
-            self._record_api_failure()
+            self._breaker.record_failure()
             logger.critical(
                 "authentication_error",
                 property_id=property_id,
@@ -1114,7 +1081,7 @@ class PropertyQualityFilter:
             raise APIUnavailableError(f"Authentication failed: {e}") from e
 
         except (RateLimitError, InternalServerError, APIConnectionError) as e:
-            self._record_api_failure()
+            self._breaker.record_failure()
             if isinstance(e, RateLimitError):
                 log_event = "rate_limit_exhausted"
             elif isinstance(e, InternalServerError):
@@ -1200,7 +1167,7 @@ class PropertyQualityFilter:
             APIUnavailableError: On authentication, rate-limit, server, or
                 connection errors (mirrors Phase 1 contract).
         """
-        if self._is_circuit_open():
+        if self._breaker.is_open():
             logger.info("circuit_breaker_open_skipping_evaluation", property_id=property_id)
             return {}
 
@@ -1266,7 +1233,7 @@ class PropertyQualityFilter:
 
             if eval_response.parsed_output:
                 eval_data = eval_response.parsed_output.model_dump()
-                self._record_api_success()
+                self._breaker.record_success()
             else:
                 logger.warning(
                     "no_parsed_output_in_response",
@@ -1276,7 +1243,7 @@ class PropertyQualityFilter:
                 )
 
         except AuthenticationError as e:
-            self._record_api_failure()
+            self._breaker.record_failure()
             logger.critical(
                 "authentication_error",
                 property_id=property_id,
@@ -1286,7 +1253,7 @@ class PropertyQualityFilter:
             raise APIUnavailableError(f"Authentication failed: {e}") from e
 
         except (RateLimitError, InternalServerError, APIConnectionError) as e:
-            self._record_api_failure()
+            self._breaker.record_failure()
             logger.warning(
                 "evaluation_phase_api_unavailable",
                 property_id=property_id,
@@ -1427,7 +1394,7 @@ class PropertyQualityFilter:
         from anthropic.types import ImageBlockParam, TextBlockParam
 
         # Fast-fail if circuit breaker is open (with half-open recovery after cooldown)
-        if self._is_circuit_open():
+        if self._breaker.is_open():
             raise APIUnavailableError("Circuit breaker is open — API unavailable")
 
         # Build image content blocks

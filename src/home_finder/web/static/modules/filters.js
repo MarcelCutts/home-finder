@@ -172,16 +172,20 @@ if (dialog && openBtn) {
   function showToast(msg) {
     const toast = document.getElementById("error-toast");
     if (!toast) return;
-    toast.innerHTML = '<p class="toast-message">' + msg + "</p>";
+    toast.textContent = "";
+    const p = document.createElement("p");
+    p.className = "toast-message";
+    p.textContent = msg;
+    toast.appendChild(p);
     clearTimeout(toast._timer);
-    toast._timer = setTimeout(function () { toast.innerHTML = ""; }, 5000);
+    toast._timer = setTimeout(function () { toast.textContent = ""; }, 5000);
   }
 
   // Auto-dismiss response-targets content too
   document.addEventListener("htmx:beforeSwap", function (e) {
     if (e.detail.target && e.detail.target.id === "error-toast" && e.detail.xhr && e.detail.xhr.status >= 400) {
       clearTimeout(e.detail.target._timer);
-      e.detail.target._timer = setTimeout(function () { e.detail.target.innerHTML = ""; }, 5000);
+      e.detail.target._timer = setTimeout(function () { e.detail.target.textContent = ""; }, 5000);
     }
   });
 

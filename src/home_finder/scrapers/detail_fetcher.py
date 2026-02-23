@@ -2,17 +2,24 @@
 
 import asyncio
 import json
-import random
 import re
 from dataclasses import dataclass
 from typing import Any, NamedTuple, assert_never
 
 import httpx
 from curl_cffi.requests import AsyncSession
+from tenacity import (
+    retry,
+    retry_if_exception_type,
+    stop_after_attempt,
+    wait_exponential,
+    wait_random,
+)
 
 from home_finder.logging import get_logger
 from home_finder.models import Property, PropertySource
 from home_finder.scrapers.constants import BROWSER_HEADERS
+from home_finder.scrapers.retry import RetryableHttpError
 from home_finder.utils.image_cache import is_valid_image_bytes
 
 _MAX_RETRIES = 2  # cross-run retry handles persistent failures
@@ -367,16 +374,27 @@ class DetailFetcher:
     async def _httpx_get_with_retry(self, url: str) -> httpx.Response:
         """GET with retry on 429 Too Many Requests."""
         client = await self._get_client()
-        for attempt in range(_MAX_RETRIES):
+
+        @retry(
+            stop=stop_after_attempt(_MAX_RETRIES),
+            wait=wait_exponential(multiplier=2, min=2, max=8),
+            retry=retry_if_exception_type(RetryableHttpError),
+            reraise=True,
+        )
+        async def _do_get() -> httpx.Response:
             response = await client.get(url)
-            if response.status_code != 429:
-                response.raise_for_status()
-                return response
-            delay = _RETRY_BASE_DELAY * (2**attempt)
-            logger.debug("rate_limited_retrying", url=url, attempt=attempt + 1, delay=delay)
-            await asyncio.sleep(delay)
-        response.raise_for_status()  # raise the 429 on final failure
-        return response  # unreachable but satisfies type checker
+            if response.status_code == 429:
+                raise RetryableHttpError(response.status_code, url)
+            response.raise_for_status()
+            return response
+
+        try:
+            return await _do_get()
+        except RetryableHttpError:
+            # Final 429 after exhaustion — raise as httpx error for caller
+            response = await client.get(url)
+            response.raise_for_status()
+            return response  # unreachable but satisfies type checker
 
     async def _throttle(self, lock: asyncio.Lock, attr: str, interval: float) -> None:
         """Ensure minimum interval between requests for a specific throttle."""
@@ -413,22 +431,28 @@ class DetailFetcher:
         }
         if self._proxy_url:
             kwargs["proxy"] = self._proxy_url
-        for attempt in range(_MAX_RETRIES):
+
+        last_response: Any = None
+
+        @retry(
+            stop=stop_after_attempt(_MAX_RETRIES),
+            wait=wait_exponential(multiplier=2, min=2, max=8) + wait_random(0, 1),
+            retry=retry_if_exception_type(RetryableHttpError),
+            reraise=True,
+        )
+        async def _do_get() -> Any:
+            nonlocal last_response
             await self._throttle(lock, attr, min_interval)
-            response = await session.get(url, **kwargs)  # type: ignore[arg-type]
-            if response.status_code != 429:
-                return response
-            delay = _RETRY_BASE_DELAY * (2**attempt) + random.uniform(0, 1)
-            logger.warning(
-                "rate_limited_retrying",
-                url=url,
-                attempt=attempt + 1,
-                max_retries=_MAX_RETRIES,
-                delay=round(delay, 1),
-            )
-            await asyncio.sleep(delay)
-        logger.warning("rate_limit_retries_exhausted", url=url, attempts=_MAX_RETRIES)
-        return response
+            last_response = await session.get(url, **kwargs)  # type: ignore[arg-type]
+            if last_response.status_code == 429:
+                raise RetryableHttpError(last_response.status_code, url)
+            return last_response
+
+        try:
+            return await _do_get()
+        except RetryableHttpError:
+            logger.warning("rate_limit_retries_exhausted", url=url, attempts=_MAX_RETRIES)
+            return last_response
 
     async def fetch_floorplan_url(self, prop: Property) -> str | None:
         """Fetch detail page and extract floorplan URL.

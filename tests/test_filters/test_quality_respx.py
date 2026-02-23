@@ -494,7 +494,7 @@ class TestHTTPErrorHandling:
                 await quality_filter.analyze_single_merged(test_merged_property)
 
             # Circuit breaker should have recorded the failure
-            assert quality_filter._consecutive_api_failures >= 1
+            assert quality_filter._breaker.failure_count >= 1
         finally:
             await quality_filter.close()
 

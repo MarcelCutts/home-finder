@@ -1982,14 +1982,14 @@ class TestCircuitBreaker:
             side_effect=APIConnectionError(request=MagicMock())
         )
 
-        assert not quality_filter._circuit_open
+        assert not quality_filter._breaker.is_open()
 
         for _ in range(_CIRCUIT_BREAKER_THRESHOLD):
             with pytest.raises(APIUnavailableError):
                 await quality_filter.analyze_single_merged(sample_merged_property)
 
-        assert quality_filter._circuit_open
-        assert quality_filter._consecutive_api_failures == _CIRCUIT_BREAKER_THRESHOLD
+        assert quality_filter._breaker.is_open()
+        assert quality_filter._breaker.failure_count == _CIRCUIT_BREAKER_THRESHOLD
 
     async def test_circuit_open_raises_immediately(
         self,
@@ -1999,8 +1999,8 @@ class TestCircuitBreaker:
         import time
 
         quality_filter = PropertyQualityFilter(api_key="test-key")
-        quality_filter._circuit_open = True
-        quality_filter._circuit_opened_at = time.monotonic()  # just opened
+        quality_filter._breaker._open = True
+        quality_filter._breaker._opened_at = time.monotonic()  # just opened
         quality_filter._client = MagicMock()
         quality_filter._client.messages.create = AsyncMock()
 
@@ -2030,8 +2030,8 @@ class TestCircuitBreaker:
             with pytest.raises(APIUnavailableError):
                 await quality_filter.analyze_single_merged(sample_merged_property)
 
-        assert quality_filter._consecutive_api_failures == _CIRCUIT_BREAKER_THRESHOLD - 1
-        assert not quality_filter._circuit_open
+        assert quality_filter._breaker.failure_count == _CIRCUIT_BREAKER_THRESHOLD - 1
+        assert not quality_filter._breaker.is_open()
 
         # Then: succeed — counter should reset
         _setup_two_phase_mocks(quality_filter._client,
@@ -2039,8 +2039,8 @@ class TestCircuitBreaker:
         )
         await quality_filter.analyze_single_merged(sample_merged_property)
 
-        assert quality_filter._consecutive_api_failures == 0
-        assert not quality_filter._circuit_open
+        assert quality_filter._breaker.failure_count == 0
+        assert not quality_filter._breaker.is_open()
 
     async def test_rate_limit_error_trips_circuit(
         self,
@@ -2066,7 +2066,7 @@ class TestCircuitBreaker:
             with pytest.raises(APIUnavailableError):
                 await quality_filter.analyze_single_merged(sample_merged_property)
 
-        assert quality_filter._circuit_open
+        assert quality_filter._breaker.is_open()
 
     async def test_internal_server_error_trips_circuit(
         self,
@@ -2092,7 +2092,7 @@ class TestCircuitBreaker:
             with pytest.raises(APIUnavailableError):
                 await quality_filter.analyze_single_merged(sample_merged_property)
 
-        assert quality_filter._circuit_open
+        assert quality_filter._breaker.is_open()
 
     async def test_api_timeout_error_trips_circuit(
         self,
@@ -2111,7 +2111,7 @@ class TestCircuitBreaker:
             with pytest.raises(APIUnavailableError):
                 await quality_filter.analyze_single_merged(sample_merged_property)
 
-        assert quality_filter._circuit_open
+        assert quality_filter._breaker.is_open()
 
     async def test_bad_request_does_not_trip_circuit(
         self,
@@ -2138,8 +2138,8 @@ class TestCircuitBreaker:
             _merged, analysis = await quality_filter.analyze_single_merged(sample_merged_property)
             assert "No images available" in analysis.summary
 
-        assert not quality_filter._circuit_open
-        assert quality_filter._consecutive_api_failures == 0
+        assert not quality_filter._breaker.is_open()
+        assert quality_filter._breaker.failure_count == 0
 
     async def test_generic_exception_does_not_trip_circuit(
         self,
@@ -2156,7 +2156,7 @@ class TestCircuitBreaker:
             _merged, analysis = await quality_filter.analyze_single_merged(sample_merged_property)
             assert "No images available" in analysis.summary
 
-        assert not quality_filter._circuit_open
+        assert not quality_filter._breaker.is_open()
 
     async def test_circuit_stays_open_during_cooldown(
         self,
@@ -2166,8 +2166,8 @@ class TestCircuitBreaker:
         import time
 
         quality_filter = PropertyQualityFilter(api_key="test-key")
-        quality_filter._circuit_open = True
-        quality_filter._circuit_opened_at = time.monotonic()  # just opened
+        quality_filter._breaker._open = True
+        quality_filter._breaker._opened_at = time.monotonic()  # just opened
         quality_filter._client = MagicMock()
         quality_filter._client.messages.create = AsyncMock()
 
@@ -2185,8 +2185,8 @@ class TestCircuitBreaker:
         import time
 
         quality_filter = PropertyQualityFilter(api_key="test-key")
-        quality_filter._circuit_open = True
-        quality_filter._circuit_opened_at = time.monotonic() - (_CIRCUIT_BREAKER_COOLDOWN + 1)
+        quality_filter._breaker._open = True
+        quality_filter._breaker._opened_at = time.monotonic() - (_CIRCUIT_BREAKER_COOLDOWN + 1)
         quality_filter._client = MagicMock()
         _setup_two_phase_mocks(quality_filter._client,
             sample_visual_response, sample_evaluation_response
@@ -2206,17 +2206,17 @@ class TestCircuitBreaker:
         import time
 
         quality_filter = PropertyQualityFilter(api_key="test-key")
-        quality_filter._circuit_open = True
-        quality_filter._circuit_opened_at = time.monotonic() - (_CIRCUIT_BREAKER_COOLDOWN + 1)
+        quality_filter._breaker._open = True
+        quality_filter._breaker._opened_at = time.monotonic() - (_CIRCUIT_BREAKER_COOLDOWN + 1)
         quality_filter._client = MagicMock()
         _setup_two_phase_mocks(quality_filter._client,
             sample_visual_response, sample_evaluation_response
         )
 
         await quality_filter.analyze_single_merged(sample_merged_property)
-        assert not quality_filter._circuit_open
-        assert quality_filter._circuit_opened_at is None
-        assert quality_filter._consecutive_api_failures == 0
+        assert not quality_filter._breaker.is_open()
+        assert quality_filter._breaker._opened_at is None
+        assert quality_filter._breaker.failure_count == 0
 
     async def test_circuit_reopens_on_failure_after_halfopen(
         self,
@@ -2228,10 +2228,10 @@ class TestCircuitBreaker:
         from anthropic import APIConnectionError
 
         quality_filter = PropertyQualityFilter(api_key="test-key")
-        quality_filter._circuit_open = True
-        quality_filter._consecutive_api_failures = _CIRCUIT_BREAKER_THRESHOLD
+        quality_filter._breaker._open = True
+        quality_filter._breaker._consecutive_failures = _CIRCUIT_BREAKER_THRESHOLD
         old_time = time.monotonic() - (_CIRCUIT_BREAKER_COOLDOWN + 1)
-        quality_filter._circuit_opened_at = old_time
+        quality_filter._breaker._opened_at = old_time
         quality_filter._client = MagicMock()
         quality_filter._client.messages.create = AsyncMock(
             side_effect=APIConnectionError(request=MagicMock())
@@ -2239,8 +2239,8 @@ class TestCircuitBreaker:
 
         with pytest.raises(APIUnavailableError):
             await quality_filter.analyze_single_merged(sample_merged_property)
-        assert quality_filter._circuit_open
-        assert quality_filter._circuit_opened_at > old_time  # fresh timestamp
+        assert quality_filter._breaker.is_open()
+        assert quality_filter._breaker._opened_at > old_time  # fresh timestamp
 
 
 class TestBuildImageBlockCacheOnly:

@@ -2,18 +2,19 @@
 
 import asyncio
 import json
-import random
 import re
 from typing import Any
 
 from curl_cffi.requests import AsyncSession
 from pydantic import HttpUrl
+from tenacity import retry, retry_if_exception_type, stop_after_attempt
 
 from home_finder.logging import get_logger
 from home_finder.models import FurnishType, Property, PropertySource
 from home_finder.scrapers.base import BaseScraper, ScrapeResult
 from home_finder.scrapers.constants import BROWSER_HEADERS
 from home_finder.scrapers.parsing import extract_bedrooms, extract_postcode, extract_price
+from home_finder.scrapers.retry import SCRAPER_WAIT, RetryableHttpError
 
 logger = get_logger(__name__)
 
@@ -126,69 +127,53 @@ class OnTheMarketScraper(BaseScraper):
     async def _fetch_page(self, url: str) -> str | None:
         """Fetch page using curl_cffi with Chrome impersonation and retry on 429/5xx."""
         session = await self._get_session()
-        backoff = self.INITIAL_BACKOFF_SECONDS
 
-        for attempt in range(1, self.MAX_RETRIES + 1):
-            try:
-                kwargs: dict[str, object] = {
-                    "impersonate": "chrome",
-                    "headers": BROWSER_HEADERS,
-                    "timeout": 30,
-                }
-                if self._proxy_url:
-                    kwargs["proxy"] = self._proxy_url
-                response = await session.get(url, **kwargs)  # type: ignore[arg-type]
+        @retry(
+            stop=stop_after_attempt(self.MAX_RETRIES),
+            wait=SCRAPER_WAIT,
+            retry=retry_if_exception_type((RetryableHttpError, Exception)),
+            reraise=True,
+        )
+        async def _do_fetch() -> str:
+            kwargs: dict[str, object] = {
+                "impersonate": "chrome",
+                "headers": BROWSER_HEADERS,
+                "timeout": 30,
+            }
+            if self._proxy_url:
+                kwargs["proxy"] = self._proxy_url
+            response = await session.get(url, **kwargs)  # type: ignore[arg-type]
 
-                if response.status_code == 200:
-                    text: str = response.text
-                    return text
+            if response.status_code == 200:
+                text: str = response.text
+                return text
 
-                if response.status_code == 429 or response.status_code >= 500:
-                    if attempt < self.MAX_RETRIES:
-                        jitter = random.uniform(0, 1.0)
-                        logger.warning(
-                            "onthemarket_retry",
-                            url=url,
-                            status=response.status_code,
-                            attempt=attempt,
-                            backoff=round(backoff + jitter, 1),
-                        )
-                        await asyncio.sleep(backoff + jitter)
-                        backoff = min(backoff * 2, self.MAX_BACKOFF_SECONDS)
-                        continue
-                    logger.warning(
-                        "onthemarket_retries_exhausted",
-                        url=url,
-                        status=response.status_code,
-                        attempts=self.MAX_RETRIES,
-                    )
-                    return None
+            if response.status_code == 429 or response.status_code >= 500:
+                raise RetryableHttpError(response.status_code, url)
 
-                logger.warning(
-                    "onthemarket_http_error",
-                    status=response.status_code,
-                    url=url,
-                )
-                return None
-            except Exception as e:
-                if attempt < self.MAX_RETRIES:
-                    jitter = random.uniform(0, 1.0)
-                    logger.warning(
-                        "onthemarket_fetch_exception_retrying",
-                        error=str(e),
-                        url=url,
-                        attempt=attempt,
-                        backoff=round(backoff + jitter, 1),
-                    )
-                    await asyncio.sleep(backoff + jitter)
-                    backoff = min(backoff * 2, self.MAX_BACKOFF_SECONDS)
-                else:
-                    logger.error(
-                        "onthemarket_fetch_exception", error=str(e), url=url, exc_info=True
-                    )
-                    return None
+            logger.warning(
+                "onthemarket_http_error",
+                status=response.status_code,
+                url=url,
+            )
+            return ""  # empty string signals non-retryable failure
 
-        return None
+        try:
+            result = await _do_fetch()
+            return result if result else None
+        except RetryableHttpError as e:
+            logger.warning(
+                "onthemarket_retries_exhausted",
+                url=url,
+                status=e.status_code,
+                attempts=self.MAX_RETRIES,
+            )
+            return None
+        except Exception as e:
+            logger.error(
+                "onthemarket_fetch_exception", error=str(e), url=url, exc_info=True
+            )
+            return None
 
     def _parse_next_data(self, html: str) -> list[Property] | None:
         """Parse properties from __NEXT_DATA__ JSON.
