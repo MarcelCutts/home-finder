@@ -817,7 +817,7 @@ class PipelineRepository:
             params: list[str] = [now]
             for outcode in outcodes or []:
                 conditions.append("UPPER(p.postcode) LIKE ?")
-                params.append(f"{outcode.upper()}%")
+                params.append(f"{outcode.upper()} %")
             or_clause = " OR ".join(conditions)
             cursor = await conn.execute(
                 f"""
@@ -863,7 +863,7 @@ class PipelineRepository:
                   AND UPPER(p.postcode) LIKE ?
                 ORDER BY p.first_seen ASC
             """
-            params: list[str] = [f"{outcode.upper()}%"]
+            params: list[str] = [f"{outcode.upper()} %"]
             cursor = await conn.execute(query, params)
         else:
             cursor = await conn.execute("""

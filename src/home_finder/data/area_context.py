@@ -320,6 +320,7 @@ WARD_TO_MICRO_AREA: Final[dict[tuple[str, str], str]] = {
     ("N5", "Arsenal"): "Arsenal / Drayton Park",
     ("N5", "Laycock"): "Highbury Fields / Highbury Corner",
     ("N5", "Mildmay"): "Highbury Barn / Highbury Grove",
+    ("N5", "Brownswood"): "Highbury New Park / Highbury East",
 }
 
 

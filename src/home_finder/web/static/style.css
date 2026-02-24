@@ -3083,6 +3083,8 @@ nav.container-fluid li {
     .filter-chips-row::-webkit-scrollbar { display: none; }
     .card-grid {
         grid-template-columns: 1fr;
+        overflow: hidden;
+        max-width: 100%;
     }
     .filter-modal {
         max-width: 100vw;
@@ -3103,7 +3105,7 @@ nav.container-fluid li {
     .filter-row select,
     .filter-row input[type="number"] {
         min-width: 0;
-        flex: 1 1 4rem;
+        flex: 1 1 6.5rem;
         height: 2rem;
         font-size: 0.8rem;
         padding: 0.15rem 0.5rem;

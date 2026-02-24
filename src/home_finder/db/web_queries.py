@@ -154,7 +154,7 @@ def build_filter_clauses(
         params.append(filters.min_fit_score)
     if filters.area:
         where_clauses.append("UPPER(p.postcode) LIKE ?")
-        params.append(f"{filters.area.upper()}%")
+        params.append(f"{filters.area.upper()} %")
     if filters.added:
         days_map = {v: d for v, _, d in ADDED_OPTIONS}
         days = days_map.get(filters.added)
