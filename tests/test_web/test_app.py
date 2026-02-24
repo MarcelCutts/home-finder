@@ -29,7 +29,7 @@ class TestCreateApp:
     def test_returns_fastapi_instance(self, settings: Settings) -> None:
         app = create_app(settings)
         assert isinstance(app, FastAPI)
-        assert app.title == "Home Finder"
+        assert app.title == "I Hate Moving"
 
     def test_has_routes(self, settings: Settings) -> None:
         app = create_app(settings)

@@ -491,7 +491,7 @@ class TestPropertyCardEndpoint:
         assert resp.status_code == 200
         # Should NOT contain full page scaffolding
         assert "<nav" not in resp.text
-        assert "Home Finder" not in resp.text
+        assert "I Hate Moving" not in resp.text
         # Should contain the card article
         assert "<article" in resp.text
 

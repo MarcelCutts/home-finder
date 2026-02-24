@@ -1,13 +1,13 @@
 {% extends "base.html" %}
 {% from "_macros.html" import commute_pill, fit_badge %}
 
-{% block title %}{{ prop.title }} — Home Finder{% endblock %}
+{% block title %}{{ prop.title }} — I Hate Moving{% endblock %}
 
 {% block meta_description %}<meta name="description" content="{{ prop.bedrooms }} bed · {{ prop.address }}{% if prop.postcode %}, {{ prop.postcode }}{% endif %}">{% endblock %}
 
 {% block og_meta %}
 <meta property="og:type" content="article">
-<meta property="og:site_name" content="Home Finder">
+<meta property="og:site_name" content="I Hate Moving">
 <meta property="og:title" content="{{ prop.title }} — £{{ '{:,}'.format(prop.price_pcm) }}/mo">
 <meta property="og:description" content="{{ prop.bedrooms }} bed · {{ prop.address }}{% if prop.postcode %}, {{ prop.postcode }}{% endif %}">
 {% if og_image_url %}<meta property="og:image" content="{{ og_image_url }}">{% endif %}

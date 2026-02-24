@@ -188,7 +188,7 @@ def create_app(settings: Settings | None = None, *, run_pipeline: bool = True) -
         await storage.close()
         logger.info("web_server_stopped")
 
-    app = FastAPI(title="Home Finder", lifespan=lifespan)
+    app = FastAPI(title="I Hate Moving", lifespan=lifespan)
 
     # Security headers
     app.add_middleware(SecurityHeadersMiddleware)

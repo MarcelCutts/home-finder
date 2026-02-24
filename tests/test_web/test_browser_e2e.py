@@ -313,7 +313,7 @@ class TestDashboardBrowser:
 
         # Page title should still be present (HTMX only replaces #results)
         title = page.title()
-        assert "Home Finder" in title
+        assert "I Hate Moving" in title
 
 
 @pytest.mark.browser
