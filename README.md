@@ -145,7 +145,7 @@ Create a `.env` file with these settings (all use `HOME_FINDER_` prefix):
 - `HOME_FINDER_ENABLE_QUALITY_FILTER`: Enable Claude vision property analysis (default: true)
 - `HOME_FINDER_REQUIRE_FLOORPLAN`: Drop properties without floorplans (default: true)
 - `HOME_FINDER_QUALITY_FILTER_MAX_IMAGES`: Max gallery images to analyze per property (default: 20, max: 20)
-- `HOME_FINDER_MIN_GALLERY_FOR_PHOTO_INFERENCE`: Minimum gallery images to bypass floorplan gate via photo inference; 0 disables (default: 8)
+- `HOME_FINDER_MIN_GALLERY_FOR_PHOTO_INFERENCE`: Minimum gallery images to bypass floorplan gate via photo inference; 0 disables (default: 5)
 - `HOME_FINDER_ENABLE_EXTENDED_THINKING`: Enable extended thinking for deeper quality analysis (default: true)
 - `HOME_FINDER_ENABLE_IMAGE_HASH_MATCHING`: Enable perceptual image hashing for deduplication (default: true)
 - `HOME_FINDER_MAX_ENRICHMENT_ATTEMPTS`: Max enrichment retry attempts before giving up on a property, 1-10 (default: 3)
@@ -315,9 +315,17 @@ tests/
 
 ## Deployment
 
-### Fly.io (recommended)
+### Architecture
 
-Deploys to London (`lhr`) for UK IP. The `--serve` flag runs the web dashboard with a background pipeline scheduler:
+The deployment is split into two parts:
+
+- **Fly.io** hosts the **web dashboard only** (`--serve --no-pipeline`). It serves the property database and cached images but does not run scrapers.
+- **Pipeline runs locally** on your machine (cron, systemd timer, or manual `uv run home-finder`). It scrapes, filters, enriches, analyzes, and writes to the local SQLite DB + image cache.
+- **`scripts/sync-to-fly.sh`** pushes the local DB and image cache to Fly.io after each pipeline run.
+
+### Fly.io setup
+
+Deploys to London (`lhr`) for UK IP:
 
 ```bash
 fly apps create home-finder
@@ -327,10 +335,27 @@ fly secrets set \
   HOME_FINDER_TELEGRAM_CHAT_ID=xxx \
   HOME_FINDER_ANTHROPIC_API_KEY=xxx \
   HOME_FINDER_TELEGRAM_WEBHOOK_SECRET=xxx
+# Optional:
+# fly secrets set HOME_FINDER_TRAVELTIME_APP_ID=xxx HOME_FINDER_TRAVELTIME_API_KEY=xxx
+# fly secrets set HOME_FINDER_PROXY_URL=socks5://user:pass@host:port
 fly deploy
 ```
 
-The `fly.toml` includes a health check on `/health` with a 30-second grace period (matching the pipeline initial delay).
+The `fly.toml` includes a health check on `/health` with a 30-second grace period. The `Dockerfile.fly` runs `home-finder --serve --no-pipeline` — dashboard only, no scraping.
+
+### Syncing data to Fly.io
+
+After running the pipeline locally, push data to the dashboard:
+
+```bash
+# Incremental sync (new property image dirs only)
+./scripts/sync-to-fly.sh
+
+# Full sync (replaces all images — use after re-enrichment or cache changes)
+./scripts/sync-to-fly.sh --full
+```
+
+The sync script: checkpoints the local WAL, replaces the DB on the remote (rm + sftp put to work around flyctl's no-overwrite policy), syncs images as tarballs, restarts the machine, and runs a health check.
 
 ### Docker (local)
 
@@ -339,9 +364,9 @@ docker build -f Dockerfile.fly -t home-finder .
 docker run --env-file .env -p 8000:8000 -v ./data:/app/data home-finder
 ```
 
-### One-shot mode (cron/systemd)
+### Local pipeline (cron/systemd)
 
-For running the pipeline without the web server:
+Run the pipeline on a schedule to keep the database fresh:
 
 **systemd timer:**
 

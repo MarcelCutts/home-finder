@@ -5,6 +5,10 @@ APP="home-finder"
 DATA_DIR="$(cd "$(dirname "$0")/.." && pwd)/data"
 FULL_SYNC=false
 
+# Clean up local temp files on exit
+cleanup() { rm -f /tmp/hf_db.tar.gz /tmp/hf_all_images.tar.gz /tmp/hf_new_images.tar.gz; }
+trap cleanup EXIT
+
 # Parse flags
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -26,20 +30,33 @@ c.close()
 print('    WAL flushed to main DB')
 "
 
-echo "==> Stopping app to release DB locks..."
-fly machine stop "$MACHINE_ID" --app "$APP" 2>/dev/null || true
-sleep 2
+# Machine should already be running (it's the web dashboard).
+# Verify SSH is reachable before transferring.
+echo "==> Checking SSH readiness..."
+for i in {1..10}; do
+  if fly ssh console --app "$APP" -C "echo ok" >/dev/null 2>&1; then
+    echo "    SSH ready"
+    break
+  fi
+  if [ "$i" -eq 10 ]; then
+    echo "    SSH not reachable after 20s — is the machine running?"
+    exit 1
+  fi
+  sleep 2
+done
 
-echo "==> Starting app for file transfer..."
-fly machine start "$MACHINE_ID" --app "$APP"
-sleep 3
-
+# --- Database sync ---
+# fly sftp put refuses to overwrite existing files (flyctl v0.3.177+, no --force flag).
+# Workaround: rm the remote file first, then upload.
 echo "==> Replacing database..."
-fly ssh console -C "sh -c 'rm -f /app/data/properties.db /app/data/properties.db-shm /app/data/properties.db-wal'" \
-  --app "$APP" 2>/dev/null || true
+echo "    Removing old DB on remote..."
+fly ssh console --app "$APP" -C "rm -f /app/data/properties.db /app/data/properties.db-shm /app/data/properties.db-wal"
+echo "    Uploading..."
 fly sftp put "$DATA_DIR/properties.db" /app/data/properties.db --app "$APP" -q
-fly ssh console --app "$APP" -C "sh -c 'chown -R appuser:appuser /app/data/'" 2>/dev/null || true
+echo "    Setting ownership..."
+fly ssh console --app "$APP" -C "chown appuser:appuser /app/data/properties.db"
 
+# --- Image sync (tar pattern — needed for directories) ---
 if [ "$FULL_SYNC" = true ]; then
   echo "==> Syncing image cache (full replacement)..."
   cd "$DATA_DIR/image_cache"
@@ -47,10 +64,13 @@ if [ "$FULL_SYNC" = true ]; then
   SIZE=$(du -h /tmp/hf_all_images.tar.gz | cut -f1)
   echo "    Compressed size: $SIZE"
 
-  fly ssh console --app "$APP" -C "sh -c 'mkdir -p /app/data/image_cache'" 2>/dev/null || true
+  fly ssh console --app "$APP" -C "mkdir -p /app/data/image_cache"
+  echo "    Uploading tarball via sftp..."
+  fly ssh console --app "$APP" -C "rm -f /app/data/hf_all_images.tar.gz" 2>/dev/null || true
   fly sftp put /tmp/hf_all_images.tar.gz /app/data/hf_all_images.tar.gz --app "$APP" -q
+
+  echo "    Extracting on remote..."
   fly ssh console --app "$APP" -C "sh -c 'cd /app/data/image_cache && tar xzf /app/data/hf_all_images.tar.gz && rm /app/data/hf_all_images.tar.gz'"
-  rm /tmp/hf_all_images.tar.gz
 else
   echo "==> Syncing image cache (incremental — use --full to sync updates to existing properties)..."
   REMOTE_DIRS=$(fly ssh console --app "$APP" -C "ls /app/data/image_cache/ 2>/dev/null" 2>/dev/null | tr -d '\r' || echo "")
@@ -69,14 +89,17 @@ else
     SIZE=$(du -h /tmp/hf_new_images.tar.gz | cut -f1)
     echo "    Compressed size: $SIZE"
 
+    echo "    Uploading tarball via sftp..."
+    fly ssh console --app "$APP" -C "rm -f /app/data/hf_new_images.tar.gz" 2>/dev/null || true
     fly sftp put /tmp/hf_new_images.tar.gz /app/data/hf_new_images.tar.gz --app "$APP" -q
+
+    echo "    Extracting on remote..."
     fly ssh console --app "$APP" -C "sh -c 'mkdir -p /app/data/image_cache && cd /app/data/image_cache && tar xzf /app/data/hf_new_images.tar.gz && rm /app/data/hf_new_images.tar.gz'"
-    rm /tmp/hf_new_images.tar.gz
   fi
 fi
 
-echo "==> Restarting app..."
-fly apps restart "$APP"
+echo "==> Restarting app to pick up new data..."
+fly machine restart "$MACHINE_ID" --app "$APP"
 
 echo "==> Waiting for health check..."
 for i in {1..15}; do

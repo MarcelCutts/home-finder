@@ -27,6 +27,8 @@ FROM python:3.11-slim-bookworm
 
 RUN useradd --create-home --shell /bin/bash appuser
 
+WORKDIR /app
+
 COPY --from=builder --chown=appuser:appuser /app/.venv /app/.venv
 
 ENV PATH="/app/.venv/bin:$PATH"
