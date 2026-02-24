@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import Any
 
+import pytest
+
 from home_finder.filters.fit_score import (
     WEIGHTS,
     _score_hosting,
@@ -13,6 +15,7 @@ from home_finder.filters.fit_score import (
     compute_fit_breakdown,
     compute_fit_score,
     compute_lifestyle_icons,
+    fit_tier_label,
 )
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
@@ -1168,3 +1171,23 @@ class TestVibeScorer:
         )
         result = _score_vibe(analysis, 2)
         assert result.score == 100
+
+
+class TestFitTierLabel:
+    """Tests for fit_tier_label."""
+
+    @pytest.mark.parametrize(
+        ("score", "expected"),
+        [
+            (90, "Great Fit"),
+            (80, "Great Fit"),
+            (70, "Good Fit"),
+            (60, "Good Fit"),
+            (50, "Okay"),
+            (40, "Okay"),
+            (30, "Poor Fit"),
+            (10, "Poor Fit"),
+        ],
+    )
+    def test_fit_tier_label(self, score: int, expected: str) -> None:
+        assert fit_tier_label(score) == expected

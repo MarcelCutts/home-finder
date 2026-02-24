@@ -1,8 +1,9 @@
 """Off-market property detection via URL spot-checking.
 
 Visits each active property's listing URL and checks for definitive removal
-signals (404, "no longer available" text, redirect to search). Only flags
-on positive confirmation — never on 429s, timeouts, or Cloudflare challenges.
+signals (404, "no longer available" text, redirect to search) and "let agreed"
+badges (200 OK with status indicator). Only flags on positive confirmation —
+never on 429s, timeouts, or Cloudflare challenges.
 """
 
 from __future__ import annotations
@@ -43,6 +44,7 @@ class ListingStatus(Enum):
 
     ACTIVE = "active"
     REMOVED = "removed"
+    LET_AGREED = "let_agreed"
     UNKNOWN = "unknown"
 
 
@@ -89,11 +91,40 @@ _REMOVAL_PATTERNS: Final[dict[str, list[re.Pattern[str]]]] = {
     ],
 }
 
+# Let-agreed text patterns per source.
+# Patterns use lookaround to avoid false positives from URL query strings
+# (e.g. ?includeLetAgreed=true, ?let-agreed=true).
+_LET_AGREED_PATTERNS: Final[dict[str, list[re.Pattern[str]]]] = {
+    "rightmove": [
+        # High-confidence: PAGE_MODEL JSON tags array
+        re.compile(r'"tags"\s*:\s*\[.*?"LET_AGREED"', re.IGNORECASE),
+        # Body text: "LET AGREED" or "LET_AGREED" but not includeLetAgreed=true
+        re.compile(r'(?<![?&=a-zA-Z])let[\s_]agreed(?![a-zA-Z=&])', re.IGNORECASE),
+    ],
+    "zoopla": [
+        re.compile(r'(?<![?&=a-zA-Z])let(?:ting)?\s+agreed(?![a-zA-Z=&])', re.IGNORECASE),
+    ],
+    # OpenRent: no let-agreed state — removed listings 404/redirect
+    "onthemarket": [
+        # Body text but not ?let-agreed=true in URLs
+        re.compile(r'(?<![?&=a-zA-Z/-])let[\s-]agreed(?![a-zA-Z=&])', re.IGNORECASE),
+        re.compile(r'(?<![?&=a-zA-Z])under\s+offer(?![a-zA-Z=&])', re.IGNORECASE),
+    ],
+}
+
 
 def _is_cloudflare_challenge(html: str) -> bool:
     """Detect Cloudflare challenge pages (should be treated as UNKNOWN, not REMOVED)."""
     lower = html.lower()[:3000]
     return any(p in lower for p in _CLOUDFLARE_PATTERNS)
+
+
+def _check_let_agreed(source: str, html: str) -> bool:
+    """Check if the page body contains let-agreed signals for the given source."""
+    patterns = _LET_AGREED_PATTERNS.get(source)
+    if not patterns:
+        return False
+    return any(pattern.search(html) for pattern in patterns)
 
 
 def _check_rightmove(response: CheckableResponse) -> ListingStatus:
@@ -112,6 +143,8 @@ def _check_rightmove(response: CheckableResponse) -> ListingStatus:
         for pattern in _REMOVAL_PATTERNS["rightmove"]:
             if pattern.search(html[:5000]):
                 return ListingStatus.REMOVED
+        if _check_let_agreed("rightmove", html):
+            return ListingStatus.LET_AGREED
         return ListingStatus.ACTIVE
 
     if response.status_code == 429 or response.status_code >= 500:
@@ -132,6 +165,8 @@ def _check_zoopla(response: CheckableResponse) -> ListingStatus:
         for pattern in _REMOVAL_PATTERNS["zoopla"]:
             if pattern.search(html[:5000]):
                 return ListingStatus.REMOVED
+        if _check_let_agreed("zoopla", html):
+            return ListingStatus.LET_AGREED
         return ListingStatus.ACTIVE
 
     if response.status_code == 429 or response.status_code >= 500:
@@ -141,7 +176,10 @@ def _check_zoopla(response: CheckableResponse) -> ListingStatus:
 
 
 def _check_openrent(response: CheckableResponse) -> ListingStatus:
-    """Check OpenRent listing status."""
+    """Check OpenRent listing status.
+
+    OpenRent has no let-agreed state — removed listings 404 or redirect.
+    """
     if response.status_code in (404, 410):
         return ListingStatus.REMOVED
 
@@ -180,6 +218,8 @@ def _check_onthemarket(response: CheckableResponse) -> ListingStatus:
         for pattern in _REMOVAL_PATTERNS["onthemarket"]:
             if pattern.search(html[:5000]):
                 return ListingStatus.REMOVED
+        if _check_let_agreed("onthemarket", html):
+            return ListingStatus.LET_AGREED
         return ListingStatus.ACTIVE
 
     if response.status_code == 429 or response.status_code >= 500:
@@ -261,25 +301,19 @@ class OffMarketChecker:
             logger.debug("httpx_fetch_failed", url=url, error=str(e))
             return None
 
+    async def _fetch(self, source: str, url: str) -> CheckableResponse | None:
+        """Route to the correct HTTP client for the source."""
+        if source in _CURL_SOURCES:
+            return await self._fetch_with_curl(url)
+        return await self._fetch_with_httpx(url)
+
     async def check_url(self, source: str, url: str) -> ListingStatus:
-        """Check a single listing URL for removal signals.
-
-        Args:
-            source: Platform name (e.g. "rightmove", "zoopla").
-            url: The listing URL to check.
-
-        Returns:
-            ListingStatus indicating whether the listing is active, removed, or unknown.
-        """
+        """Check a single listing URL for removal/let-agreed signals."""
         checker = _SOURCE_CHECKERS.get(source)
         if checker is None:
             return ListingStatus.UNKNOWN
 
-        if source in _CURL_SOURCES:
-            response = await self._fetch_with_curl(url)
-        else:
-            response = await self._fetch_with_httpx(url)
-
+        response = await self._fetch(source, url)
         if response is None:
             return ListingStatus.UNKNOWN
 

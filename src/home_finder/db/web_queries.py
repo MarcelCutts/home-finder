@@ -149,9 +149,9 @@ def build_filter_clauses(
     if filters.bedrooms is not None:
         where_clauses.append("p.bedrooms = ?")
         params.append(filters.bedrooms)
-    if filters.min_rating is not None:
-        where_clauses.append("q.overall_rating >= ?")
-        params.append(filters.min_rating)
+    if filters.min_fit_score is not None:
+        where_clauses.append("q.fit_score >= ?")
+        params.append(filters.min_fit_score)
     if filters.area:
         where_clauses.append("UPPER(p.postcode) LIKE ?")
         params.append(f"{filters.area.upper()}%")
@@ -307,6 +307,7 @@ class WebQueryService:
                    p.commute_minutes, p.image_url,
                    p.is_off_market,
                    q.overall_rating as quality_rating,
+                   q.fit_score,
                    json_extract(q.analysis_json, '$.value.quality_adjusted_rating') as value_rating,
                    json_extract(q.analysis_json, '$.one_line') as one_line
             FROM properties p
@@ -325,6 +326,7 @@ class WebQueryService:
                 "price": row["price_pcm"],
                 "bedrooms": row["bedrooms"],
                 "rating": row["quality_rating"],
+                "fit_score": row["fit_score"],
                 "title": row["title"],
                 "url": f"/property/{row['unique_id']}",
                 "image_url": row["image_url"],
@@ -364,7 +366,6 @@ class WebQueryService:
             "newest": "p.first_seen DESC",
             "price_asc": "p.price_pcm ASC",
             "price_desc": "p.price_pcm DESC",
-            "rating_desc": "COALESCE(q.overall_rating, 0) DESC, p.first_seen DESC",
             "fit_desc": "COALESCE(q.fit_score, -1) DESC, p.first_seen DESC",
             "longest_listed": "p.first_seen ASC",
         }

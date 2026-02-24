@@ -11,7 +11,7 @@ class TestPropertyFilterValidation:
         assert f.min_price is None
         assert f.max_price is None
         assert f.bedrooms is None
-        assert f.min_rating is None
+        assert f.min_fit_score is None
         assert f.area is None
         assert f.tags == []
 
@@ -39,14 +39,14 @@ class TestPropertyFilterValidation:
     def test_bedrooms_invalid_becomes_none(self) -> None:
         assert PropertyFilter(bedrooms="abc").bedrooms is None  # type: ignore[arg-type]
 
-    def test_min_rating_clamped(self) -> None:
-        assert PropertyFilter(min_rating="1").min_rating == 1  # type: ignore[arg-type]
-        assert PropertyFilter(min_rating="0").min_rating == 1  # type: ignore[arg-type]
-        assert PropertyFilter(min_rating="5").min_rating == 5  # type: ignore[arg-type]
-        assert PropertyFilter(min_rating="10").min_rating == 5  # type: ignore[arg-type]
+    def test_min_fit_score_clamped(self) -> None:
+        assert PropertyFilter(min_fit_score="0").min_fit_score == 0  # type: ignore[arg-type]
+        assert PropertyFilter(min_fit_score="-5").min_fit_score == 0  # type: ignore[arg-type]
+        assert PropertyFilter(min_fit_score="100").min_fit_score == 100  # type: ignore[arg-type]
+        assert PropertyFilter(min_fit_score="150").min_fit_score == 100  # type: ignore[arg-type]
 
-    def test_min_rating_invalid_becomes_none(self) -> None:
-        assert PropertyFilter(min_rating="abc").min_rating is None  # type: ignore[arg-type]
+    def test_min_fit_score_invalid_becomes_none(self) -> None:
+        assert PropertyFilter(min_fit_score="abc").min_fit_score is None  # type: ignore[arg-type]
 
     def test_area_stripped(self) -> None:
         assert PropertyFilter(area="  E8  ").area == "E8"
@@ -144,9 +144,9 @@ class TestActiveFilterChips:
         assert "Min \u00a31,500" in labels
         assert "Max \u00a32,500" in labels
 
-    def test_rating_chip(self) -> None:
-        chips = PropertyFilter(min_rating=4).active_filter_chips()
-        assert chips[0] == {"key": "min_rating", "label": "4+ stars"}
+    def test_fit_score_chip(self) -> None:
+        chips = PropertyFilter(min_fit_score=60).active_filter_chips()
+        assert chips[0] == {"key": "min_fit_score", "label": "Fit 60+"}
 
     def test_area_chip(self) -> None:
         chips = PropertyFilter(area="E8").active_filter_chips()
@@ -212,12 +212,12 @@ class TestSecondaryFilterCount:
         assert f.secondary_filter_count == 2
 
     def test_does_not_count_primary_filters(self) -> None:
-        """min_price, max_price, bedrooms, min_rating, area, added are not secondary."""
+        """min_price, max_price, bedrooms, min_fit_score, area, added are not secondary."""
         f = PropertyFilter(
             min_price=1500,
             max_price=2500,
             bedrooms=2,
-            min_rating=3,
+            min_fit_score=60,
             area="E8",
             added="3d",
         )
@@ -287,7 +287,6 @@ class TestSortOptions:
             "newest",
             "price_asc",
             "price_desc",
-            "rating_desc",
             "fit_desc",
             "longest_listed",
         }

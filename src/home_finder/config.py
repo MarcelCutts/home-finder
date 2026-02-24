@@ -81,6 +81,13 @@ class Settings(BaseSettings):
         le=50,
         description="Maximum concurrent quality analysis API calls",
     )
+    property_analysis_timeout: float = Field(
+        default=600.0,
+        ge=30.0,
+        le=900.0,
+        description="Max wall-clock seconds per property for quality analysis"
+        " (including SDK retries)",
+    )
 
     # Enrichment retry
     max_enrichment_attempts: int = Field(
@@ -128,7 +135,7 @@ class Settings(BaseSettings):
 
     # Search areas (boroughs or outcodes)
     search_areas: str = Field(
-        default="e2,e3,e5,e9,e10,e15,e17,n15,n16,n17",
+        default="e2,e3,e5,e8,e9,e10,e15,e17,n1,n5,n15,n16,n17",
         description="Comma-separated list of boroughs or outcodes to search",
     )
 

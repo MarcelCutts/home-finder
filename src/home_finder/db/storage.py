@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import time
 from collections.abc import AsyncIterator
@@ -1491,40 +1492,79 @@ class PropertyStorage:
     # Off-market detection
     # ------------------------------------------------------------------
 
-    async def mark_off_market(self, unique_id: str) -> bool:
+    async def mark_off_market(
+        self, unique_id: str, *, reason: str | None = None
+    ) -> bool:
         """Mark a property as off-market. Preserves original off_market_since date.
 
         Returns True if the row was updated, False if property not found.
         """
         conn = await self._get_connection()
+        now = datetime.now(UTC).isoformat()
         cursor = await conn.execute(
             """
             UPDATE properties
             SET is_off_market = 1,
-                off_market_since = COALESCE(off_market_since, ?)
+                off_market_since = COALESCE(off_market_since, ?),
+                off_market_reason = COALESCE(off_market_reason, ?)
             WHERE unique_id = ?
             """,
-            (datetime.now(UTC).isoformat(), unique_id),
+            (now, reason, unique_id),
         )
         await conn.commit()
         updated = cursor.rowcount > 0
         if updated:
-            logger.info("property_marked_off_market", unique_id=unique_id)
+            logger.info(
+                "property_marked_off_market",
+                unique_id=unique_id,
+                reason=reason,
+            )
         return updated
 
     async def mark_returned_to_market(self, unique_id: str) -> bool:
-        """Clear off-market flag for a property that is back on the market.
+        """Clear off-market flag and append to history.
+
+        Before clearing, reads current off_market_since/reason and appends
+        a ``{"off": ..., "back": ..., "reason": ...}`` entry to
+        ``off_market_history``.
 
         Returns True if the row was updated, False if property not found.
         """
         conn = await self._get_connection()
+        now = datetime.now(UTC).isoformat()
+
+        # Read current off-market state for history
+        cursor = await conn.execute(
+            "SELECT off_market_since, off_market_reason, off_market_history "
+            "FROM properties WHERE unique_id = ?",
+            (unique_id,),
+        )
+        row = await cursor.fetchone()
+        if row is None:
+            return False
+
+        # Build history entry
+        history: list[dict[str, str | None]] = []
+        if row["off_market_history"]:
+            with contextlib.suppress(json.JSONDecodeError, TypeError):
+                history = json.loads(row["off_market_history"])
+        if row["off_market_since"]:
+            history.append({
+                "off": row["off_market_since"],
+                "back": now,
+                "reason": row["off_market_reason"],
+            })
+
         cursor = await conn.execute(
             """
             UPDATE properties
-            SET is_off_market = 0, off_market_since = NULL
+            SET is_off_market = 0,
+                off_market_since = NULL,
+                off_market_reason = NULL,
+                off_market_history = ?
             WHERE unique_id = ?
             """,
-            (unique_id,),
+            (json.dumps(history) if history else None, unique_id),
         )
         await conn.commit()
         updated = cursor.rowcount > 0
@@ -1535,20 +1575,20 @@ class PropertyStorage:
     async def get_properties_for_off_market_check(
         self, *, sources: set[str] | None = None
     ) -> list[dict[str, Any]]:
-        """Get properties for off-market URL spot-checking.
+        """Get golden records with per-source URLs for off-market checking.
 
-        Returns properties with their URLs and source info. Excludes
-        properties still pending enrichment or analysis. Includes
-        already-off-market properties so the caller can detect
-        return-to-market transitions.
+        For each golden record, prefers source_listings (authoritative) when
+        linked rows exist, falling back to properties.source_urls JSON for
+        legacy records without linkage.
 
-        Args:
-            sources: If set, only return properties with at least one of these sources.
-
-        Returns:
-            List of dicts with unique_id, url, source, source_urls, is_off_market.
+        Returns list of dicts with keys:
+            unique_id, url, source, source_urls, is_off_market,
+            source_listings (list of dicts with unique_id, source, url,
+            is_off_market, last_checked_at — or empty list for legacy).
         """
         conn = await self._get_connection()
+
+        # Step 1: Get eligible golden records
         cursor = await conn.execute(
             """
             SELECT unique_id, url, source, source_urls, is_off_market
@@ -1559,16 +1599,52 @@ class PropertyStorage:
             """
         )
         rows = await cursor.fetchall()
-        results = [dict(row) for row in rows]
+        golden_records = [dict(row) for row in rows]
 
+        if not golden_records:
+            return []
+
+        # Step 2: Batch-fetch all linked source_listings
+        all_ids = [r["unique_id"] for r in golden_records]
+        placeholders = ",".join("?" * len(all_ids))
+        cursor = await conn.execute(
+            f"""
+            SELECT unique_id, source, url, merged_id, is_off_market, last_checked_at
+            FROM source_listings
+            WHERE merged_id IN ({placeholders})
+            """,
+            all_ids,
+        )
+        sl_rows = await cursor.fetchall()
+
+        # Group source_listings by merged_id
+        sl_by_merged: dict[str, list[dict[str, Any]]] = {}
+        for sl_row in sl_rows:
+            sl = dict(sl_row)
+            sl_by_merged.setdefault(sl["merged_id"], []).append(sl)
+
+        # Step 3: Attach source_listings to golden records
+        results: list[dict[str, Any]] = []
+        for gr in golden_records:
+            linked_sls = sl_by_merged.get(gr["unique_id"], [])
+            gr["source_listings"] = linked_sls
+            results.append(gr)
+
+        # Step 4: Filter by source if requested
         if sources:
             filtered = []
             for r in results:
-                # Check primary source
+                # Check source_listings first
+                if r["source_listings"] and any(
+                    sl["source"] in sources for sl in r["source_listings"]
+                ):
+                    filtered.append(r)
+                    continue
+                # Also check primary source and source_urls JSON
+                # (covers partial linkage and legacy records)
                 if r["source"] in sources:
                     filtered.append(r)
                     continue
-                # Check multi-source URLs
                 if r.get("source_urls"):
                     try:
                         urls_dict = json.loads(r["source_urls"])
@@ -1579,6 +1655,77 @@ class PropertyStorage:
             results = filtered
 
         return results
+
+    # ------------------------------------------------------------------
+    # Per-source off-market tracking (source_listings)
+    # ------------------------------------------------------------------
+
+    async def mark_source_listing_off_market(
+        self, unique_id: str, reason: str
+    ) -> bool:
+        """Mark a source_listing as off-market. Preserves original timestamp.
+
+        Returns True if the row was updated, False if not found.
+        """
+        conn = await self._get_connection()
+        now = datetime.now(UTC).isoformat()
+        cursor = await conn.execute(
+            """
+            UPDATE source_listings
+            SET is_off_market = 1,
+                off_market_since = COALESCE(off_market_since, ?),
+                off_market_reason = ?
+            WHERE unique_id = ?
+            """,
+            (now, reason, unique_id),
+        )
+        await conn.commit()
+        return cursor.rowcount > 0
+
+    async def mark_source_listing_active(self, unique_id: str) -> bool:
+        """Clear off-market flags on a source_listing (return-to-market).
+
+        Returns True if the row was updated, False if not found.
+        """
+        conn = await self._get_connection()
+        cursor = await conn.execute(
+            """
+            UPDATE source_listings
+            SET is_off_market = 0, off_market_since = NULL, off_market_reason = NULL
+            WHERE unique_id = ?
+            """,
+            (unique_id,),
+        )
+        await conn.commit()
+        return cursor.rowcount > 0
+
+    async def update_source_listing_last_checked(self, unique_id: str) -> bool:
+        """Stamp last_checked_at on a source_listing.
+
+        Returns True if the row was updated, False if not found.
+        """
+        conn = await self._get_connection()
+        now = datetime.now(UTC).isoformat()
+        cursor = await conn.execute(
+            "UPDATE source_listings SET last_checked_at = ? WHERE unique_id = ?",
+            (now, unique_id),
+        )
+        await conn.commit()
+        return cursor.rowcount > 0
+
+    async def update_property_last_checked(self, unique_id: str) -> bool:
+        """Stamp last_checked_at on a golden record.
+
+        Returns True if the row was updated, False if not found.
+        """
+        conn = await self._get_connection()
+        now = datetime.now(UTC).isoformat()
+        cursor = await conn.execute(
+            "UPDATE properties SET last_checked_at = ? WHERE unique_id = ?",
+            (now, unique_id),
+        )
+        await conn.commit()
+        return cursor.rowcount > 0
 
     # ------------------------------------------------------------------
     # Internal helpers

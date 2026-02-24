@@ -29,6 +29,18 @@ from home_finder.utils.image_cache import (
 logger = get_logger(__name__)
 
 
+class _PropertyTimeoutError(Exception):
+    """Raised when a single property's analysis exceeds its wall-clock timeout.
+
+    Distinct from APIUnavailableError so it does NOT trigger the circuit breaker
+    or cancel the batch — only the slow property is skipped.
+    """
+
+    def __init__(self, property_id: str) -> None:
+        self.property_id = property_id
+        super().__init__(f"Wall-clock timeout for property {property_id}")
+
+
 # Type aliases for quality analysis callbacks
 _CommInfo = tuple[int, TransportMode] | None
 _OnResult = Callable[
@@ -131,6 +143,7 @@ async def _run_concurrent_analysis(
     on_result: _OnAnalysisResult,
     *,
     concurrency: int = 15,
+    per_property_timeout: float | None = None,
     on_error: Callable[[], None] | None = None,
     breaker_log_event: str = "api_circuit_breaker_activated",
     error_log_event: str = "analysis_failed",
@@ -144,6 +157,8 @@ async def _run_concurrent_analysis(
         items: Properties to analyze.
         analyze_fn: Async function that analyzes a single property.
         on_result: Async callback invoked with (merged, analysis) for each success.
+        per_property_timeout: Max wall-clock seconds per property (including SDK
+            retries). None disables the timeout.
         on_error: Optional sync callback invoked on per-property errors.
         breaker_log_event: Log event name for circuit breaker activation.
         error_log_event: Log event name for per-property errors.
@@ -158,7 +173,30 @@ async def _run_concurrent_analysis(
         merged: MergedProperty,
     ) -> tuple[MergedProperty, PropertyQualityAnalysis | None]:
         async with semaphore:
-            return await analyze_fn(merged)
+            t0 = asyncio.get_event_loop().time()
+            try:
+                if per_property_timeout is not None:
+                    result = await asyncio.wait_for(
+                        analyze_fn(merged), timeout=per_property_timeout
+                    )
+                else:
+                    result = await analyze_fn(merged)
+                elapsed = asyncio.get_event_loop().time() - t0
+                logger.info(
+                    "property_analysis_duration",
+                    property_id=merged.unique_id,
+                    duration_s=round(elapsed, 1),
+                )
+                return result
+            except TimeoutError:
+                elapsed = asyncio.get_event_loop().time() - t0
+                logger.warning(
+                    "property_analysis_wall_clock_timeout",
+                    property_id=merged.unique_id,
+                    timeout_s=per_property_timeout,
+                    duration_s=round(elapsed, 1),
+                )
+                raise _PropertyTimeoutError(merged.unique_id) from None
 
     tasks = [asyncio.create_task(_bounded(m)) for m in items]
 
@@ -166,6 +204,14 @@ async def _run_concurrent_analysis(
         for coro in asyncio.as_completed(tasks):
             try:
                 merged, quality_analysis = await coro
+            except _PropertyTimeoutError as e:
+                logger.warning(
+                    "property_skipped_wall_clock_timeout",
+                    property_id=e.property_id,
+                )
+                if on_error:
+                    on_error()
+                continue
             except APIUnavailableError:
                 remaining = [t for t in tasks if not t.done()]
                 for t in remaining:
@@ -294,6 +340,7 @@ async def _run_quality_and_save(
             _analyze,
             _handle_result,
             concurrency=settings.quality_concurrency,
+            per_property_timeout=settings.property_analysis_timeout,
             breaker_log_event="api_circuit_breaker_activated",
             error_log_event="property_processing_failed",
         )
@@ -469,6 +516,7 @@ async def _drain_reanalysis_queue(
             _analyze,
             _handle_result,
             concurrency=settings.quality_concurrency,
+            per_property_timeout=settings.property_analysis_timeout,
             breaker_log_event="reanalysis_api_circuit_breaker",
             error_log_event="reanalysis_failed",
         )
@@ -562,6 +610,7 @@ async def run_reanalysis(
                 _analyze,
                 _handle_result,
                 concurrency=settings.quality_concurrency,
+                per_property_timeout=settings.property_analysis_timeout,
                 on_error=_count_error,
                 breaker_log_event="reanalysis_api_circuit_breaker",
                 error_log_event="reanalysis_failed",

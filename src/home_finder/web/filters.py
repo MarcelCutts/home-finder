@@ -17,7 +17,6 @@ VALID_SORT_OPTIONS: Final = {
     "newest",
     "price_asc",
     "price_desc",
-    "rating_desc",
     "fit_desc",
     "longest_listed",
 }
@@ -90,7 +89,7 @@ class PropertyFilter(BaseModel):
     min_price: int | None = None
     max_price: int | None = None
     bedrooms: int | None = None
-    min_rating: int | None = None
+    min_fit_score: int | None = None
     area: str | None = None
     property_type: str | None = None
     outdoor_space: str | None = None
@@ -132,15 +131,15 @@ class PropertyFilter(BaseModel):
             return None
         return max(0, min(10, parsed))
 
-    @field_validator("min_rating", mode="before")
+    @field_validator("min_fit_score", mode="before")
     @classmethod
-    def coerce_min_rating(cls, v: object) -> int | None:
+    def coerce_min_fit_score(cls, v: object) -> int | None:
         if v is None:
             return None
         parsed = v if isinstance(v, int) else _parse_optional_int(str(v))
         if parsed is None:
             return None
-        return max(1, min(5, parsed))
+        return max(0, min(100, parsed))
 
     @field_validator("area", mode="before")
     @classmethod
@@ -272,8 +271,8 @@ class PropertyFilter(BaseModel):
             chips.append({"key": "min_price", "label": f"Min \u00a3{self.min_price:,}"})
         if self.max_price is not None:
             chips.append({"key": "max_price", "label": f"Max \u00a3{self.max_price:,}"})
-        if self.min_rating is not None:
-            chips.append({"key": "min_rating", "label": f"{self.min_rating}+ stars"})
+        if self.min_fit_score is not None:
+            chips.append({"key": "min_fit_score", "label": f"Fit {self.min_fit_score}+"})
         if self.area:
             chips.append({"key": "area", "label": self.area})
         if self.added:
@@ -433,7 +432,7 @@ def parse_filters(
     min_price: str | None = None,
     max_price: str | None = None,
     bedrooms: str | None = None,
-    min_rating: str | None = None,
+    min_fit_score: str | None = None,
     area: str | None = None,
     property_type: str | None = None,
     outdoor_space: str | None = None,
@@ -460,7 +459,7 @@ def parse_filters(
             "min_price": min_price,
             "max_price": max_price,
             "bedrooms": bedrooms,
-            "min_rating": min_rating,
+            "min_fit_score": min_fit_score,
             "area": area,
             "property_type": property_type,
             "outdoor_space": outdoor_space,

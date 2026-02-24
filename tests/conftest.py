@@ -15,7 +15,9 @@ from pydantic import HttpUrl
 
 from home_finder.config import Settings
 from home_finder.models import (
+    BedroomAnalysis,
     ConditionAnalysis,
+    FlooringNoiseAnalysis,
     KitchenAnalysis,
     LightSpaceAnalysis,
     MergedProperty,
@@ -347,6 +349,16 @@ def sample_quality_analysis() -> PropertyQualityAnalysis:
         space=SpaceAnalysis(
             living_room_sqm=22.0,
             is_spacious_enough=True,
+            hosting_layout="good",
+        ),
+        bedroom=BedroomAnalysis(
+            primary_is_double="yes",
+            office_separation="dedicated_room",
+            can_fit_desk="yes",
+        ),
+        flooring_noise=FlooringNoiseAnalysis(
+            hosting_noise_risk="low",
+            has_double_glazing="yes",
         ),
         condition_concerns=False,
         value=ValueAnalysis(

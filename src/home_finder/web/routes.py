@@ -25,8 +25,12 @@ from home_finder.data.area_context import (
 )
 from home_finder.db import PropertyStorage
 from home_finder.filters.fit_score import (
+    FIT_TIERS,
     compute_fit_score_and_breakdown,
     compute_lifestyle_icons,
+    fit_color_class,
+    fit_tier_class,
+    fit_tier_label,
 )
 from home_finder.logging import get_logger
 from home_finder.models import (
@@ -165,6 +169,10 @@ templates.env.filters["listing_age"] = listing_age_filter
 templates.env.filters["json_script_safe"] = lambda s: s.replace("</", r"<\/")
 
 templates.env.globals["static_version"] = _compute_static_version()
+templates.env.globals["fit_tier_label"] = fit_tier_label
+templates.env.globals["fit_tier_class"] = fit_tier_class
+templates.env.globals["fit_color_class"] = fit_color_class
+templates.env.globals["FIT_TIERS"] = FIT_TIERS
 
 
 def days_since_filter(iso_str: str | None) -> int:

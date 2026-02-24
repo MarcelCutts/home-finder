@@ -347,7 +347,7 @@ class TestGetPropertiesPaginated:
         assert "E3" in props[0]["postcode"]
 
     @pytest.mark.asyncio
-    async def test_filter_by_min_rating(
+    async def test_filter_by_min_fit_score(
         self,
         storage: PropertyStorage,
         prop_a: Property,
@@ -359,10 +359,11 @@ class TestGetPropertiesPaginated:
         await storage.save_merged_property(merged_b)
         await storage.save_quality_analysis(prop_a.unique_id, sample_analysis)
 
-        props, total = await storage.web.get_properties_paginated(PropertyFilter(min_rating=4))
+        props, total = await storage.web.get_properties_paginated(
+            PropertyFilter(min_fit_score=50)
+        )
         assert total == 1
         assert props[0]["quality_rating"] is not None
-        assert props[0]["quality_rating"] >= 4
 
     @pytest.mark.asyncio
     async def test_pagination(self, storage: PropertyStorage) -> None:

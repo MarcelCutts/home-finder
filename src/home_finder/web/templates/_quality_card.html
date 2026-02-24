@@ -1,15 +1,7 @@
 {% from "_macros.html" import quality_badge, quality_item_class %}
 {% if qa %}
 <section id="section-quality" class="detail-section quality-section">
-    <h3>Quality Analysis
-        {% if qa.overall_rating %}
-        <span class="star-rating">
-            {% for i in range(1, 6) %}
-                {% if i <= qa.overall_rating %}<span class="star filled">&#9733;</span>{% else %}<span class="star empty">&#9734;</span>{% endif %}
-            {% endfor %}
-        </span>
-        {% endif %}
-    </h3>
+    <h3>Quality Analysis</h3>
 
     {# Room-by-room grid #}
     <div class="quality-grid">

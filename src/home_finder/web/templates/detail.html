@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "_macros.html" import commute_pill, fit_badge, fit_tier_label, fit_tier_class %}
+{% from "_macros.html" import commute_pill, fit_badge %}
 
 {% block title %}{{ prop.title }} — Home Finder{% endblock %}
 
@@ -23,11 +23,32 @@
 <article>
     {% if prop.is_off_market %}
     <div class="off-market-banner">
+        {% if prop.off_market_reason == 'let_agreed' %}
+        This property has been marked as <strong>let agreed</strong>.
+        {% else %}
         This property has been removed from the listing platform.
+        {% endif %}
         {% if prop.off_market_since %}
         Detected {{ prop.off_market_since | days_since }} day{{ 's' if prop.off_market_since | days_since != 1 else '' }} ago.
         {% endif %}
+        {% if prop.last_checked_at %}
+        <span class="off-market-checked">Last checked {{ prop.last_checked_at | days_since }} day{{ 's' if prop.last_checked_at | days_since != 1 else '' }} ago.</span>
+        {% endif %}
     </div>
+    {% endif %}
+    {% if prop.off_market_history %}
+    <details class="off-market-history">
+        <summary>Off-market history ({{ prop.off_market_history | length }} previous)</summary>
+        <ul>
+        {% for entry in prop.off_market_history %}
+            <li>
+                Off {{ entry.off[:10] }}
+                &rarr; back {{ entry.back[:10] }}
+                {% if entry.reason %}({{ entry.reason | replace("_", " ") }}){% endif %}
+            </li>
+        {% endfor %}
+        </ul>
+    </details>
     {% endif %}
 
     {# Hero Gallery — visual anchor, full-bleed #}
@@ -92,17 +113,6 @@
                 <div class="status-selector-wrap">
                     {% include "_status_controls.html" %}
                 </div>
-                {% if prop.quality_rating %}
-                <span class="star-rating" role="img" aria-label="Rating: {{ prop.quality_rating }} out of 5 stars">
-                    {% for i in range(1, 6) %}
-                        {% if i <= prop.quality_rating %}
-                            <span class="star filled" aria-hidden="true">&#9733;</span>
-                        {% else %}
-                            <span class="star empty" aria-hidden="true">&#9734;</span>
-                        {% endif %}
-                    {% endfor %}
-                </span>
-                {% endif %}
                 {{ commute_pill(prop.commute_minutes, prop.transport_mode) }}
                 {% if prop.first_seen %}
                 {% set dom = prop.first_seen | days_since %}
@@ -336,7 +346,7 @@
             <h4>
                 Marcel Fit
                 <span class="fit-breakdown-donut-wrap">
-                    <span class="fit-breakdown-donut {% if fit_score >= 80 %}fit-green{% elif fit_score >= 60 %}fit-accent{% elif fit_score >= 40 %}fit-amber{% else %}fit-dim{% endif %}" style="--score-pct: {{ fit_score }}"></span>
+                    <span class="fit-breakdown-donut {{ fit_color_class(fit_score) }}" style="--score-pct: {{ fit_score }}"></span>
                     <span class="fit-breakdown-donut-value">{{ fit_score }}</span>
                 </span>
                 <span class="fit-breakdown-tier {{ fit_tier_class(fit_score) }}">{{ fit_tier_label(fit_score) }}</span>

@@ -685,6 +685,49 @@ async def migrate_005_fix_source_listings_linkage(conn: aiosqlite.Connection) ->
     """)
 
 
+async def migrate_006_off_market_enhancements(conn: aiosqlite.Connection) -> None:
+    """Add per-source off-market tracking columns and golden record history.
+
+    Enables persisting check results on individual source_listings rather than
+    only the aggregate golden record flag.  Also adds return-to-market history.
+    """
+    # --- source_listings columns ---
+    for column, col_type, default in [
+        ("is_off_market", "INTEGER", "0"),
+        ("off_market_since", "TEXT", None),
+        ("off_market_reason", "TEXT", None),
+        ("last_checked_at", "TEXT", None),
+    ]:
+        try:
+            default_clause = f" DEFAULT {default}" if default is not None else ""
+            await conn.execute(
+                f"ALTER TABLE source_listings ADD COLUMN {column} {col_type}{default_clause}"
+            )
+        except aiosqlite.OperationalError as e:
+            if "duplicate column" not in str(e).lower():
+                raise
+
+    await conn.execute("""
+        CREATE INDEX IF NOT EXISTS idx_source_listings_off_market
+        ON source_listings(is_off_market) WHERE merged_id IS NOT NULL
+    """)
+
+    # --- properties columns ---
+    for column, col_type, default in [
+        ("last_checked_at", "TEXT", None),
+        ("off_market_reason", "TEXT", None),
+        ("off_market_history", "TEXT", None),
+    ]:
+        try:
+            default_clause = f" DEFAULT {default}" if default is not None else ""
+            await conn.execute(
+                f"ALTER TABLE properties ADD COLUMN {column} {col_type}{default_clause}"
+            )
+        except aiosqlite.OperationalError as e:
+            if "duplicate column" not in str(e).lower():
+                raise
+
+
 _MigrationFn = Callable[[aiosqlite.Connection], Coroutine[Any, Any, None]]
 
 MIGRATIONS: list[_MigrationFn] = [
@@ -693,6 +736,7 @@ MIGRATIONS: list[_MigrationFn] = [
     migrate_003_source_aliases,
     migrate_004_source_listings,
     migrate_005_fix_source_listings_linkage,
+    migrate_006_off_market_enhancements,
 ]
 
 

@@ -55,7 +55,7 @@ class TestTelegramNotificationE2E:
         assert len(media) == 3
         # Caption on first photo
         caption = media[0].caption
-        assert "⭐⭐⭐⭐☆" in caption  # 4-star rating
+        assert "Fit " in caption  # fit score
         assert "£" in caption
         assert "E8 3RH" in caption
         assert "15 min" in caption

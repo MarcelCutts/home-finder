@@ -394,9 +394,9 @@ class TestPropertyDetailBrowser:
     def test_quality_analysis_section(self, page):
         # Property 1003 has quality analysis
         page.goto("/property/openrent:1003")
-        # Star rating should be visible
-        stars = page.locator(".star-rating, .star")
-        expect(stars.first).to_be_visible()
+        # Quality analysis card should be visible
+        quality_section = page.locator(".quality-section")
+        expect(quality_section.first).to_be_visible()
 
     def test_map_rendered(self, page):
         # Property 1003 has coordinates

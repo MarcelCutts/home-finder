@@ -103,6 +103,14 @@ def parse_json_fields(prop_dict: dict[str, Any]) -> None:
     else:
         prop_dict["descriptions_dict"] = {}
 
+    if prop_dict.get("off_market_history"):
+        try:
+            prop_dict["off_market_history"] = json.loads(prop_dict["off_market_history"])
+        except (json.JSONDecodeError, TypeError):
+            prop_dict["off_market_history"] = []
+    else:
+        prop_dict["off_market_history"] = []
+
 
 def row_to_property(row: aiosqlite.Row) -> Property:
     """Convert a database row to a Property.

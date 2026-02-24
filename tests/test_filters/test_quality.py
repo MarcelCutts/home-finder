@@ -2131,6 +2131,40 @@ class TestCircuitBreaker:
         assert not quality_filter._breaker.is_open()
         assert quality_filter._breaker.failure_count == 0
 
+    async def test_bad_request_media_type_clears_cache(
+        self,
+        sample_merged_property: MergedProperty,
+        tmp_path: Any,
+    ) -> None:
+        """BadRequestError with 'media_type' in message should clear image cache."""
+        from unittest.mock import patch as _patch
+
+        from anthropic import BadRequestError
+
+        # Populate image cache so analyze_single_merged reaches the API call
+        _populate_image_cache(str(tmp_path), sample_merged_property)
+
+        mock_response = MagicMock()
+        mock_response.status_code = 400
+        mock_response.headers = {}
+        quality_filter = PropertyQualityFilter(api_key="test-key")
+        quality_filter._client = MagicMock()
+        quality_filter._client.messages.create = AsyncMock(
+            side_effect=BadRequestError(
+                message="image specified using image/png media_type, but appears to be image/jpeg",
+                response=mock_response,
+                body=None,
+            )
+        )
+
+        with _patch("home_finder.utils.image_cache.clear_image_cache") as mock_clear:
+            await quality_filter.analyze_single_merged(
+                sample_merged_property, data_dir=str(tmp_path)
+            )
+            mock_clear.assert_called_once_with(
+                str(tmp_path), sample_merged_property.unique_id
+            )
+
     async def test_generic_exception_does_not_trip_circuit(
         self,
         sample_merged_property: MergedProperty,
@@ -2279,6 +2313,21 @@ class TestBuildImageBlockCacheOnly:
             "https://youtube.com/watch?v=abc", cached_path=None
         )
         assert result is None
+
+    async def test_jpeg_bytes_with_png_url_produces_jpeg_media_type(self, tmp_path: Any) -> None:
+        """JPEG bytes served from a .png URL should be detected as image/jpeg."""
+        from PIL import Image as _Image
+
+        img_path = tmp_path / "misleading.png"
+        _img = _Image.new("RGB", (10, 10), color="blue")
+        _img.save(img_path, format="JPEG")  # Save JPEG bytes to a .png filename
+
+        quality_filter = PropertyQualityFilter(api_key="test-key")
+        result = await quality_filter._build_image_block(
+            "https://example.com/photo.png", cached_path=img_path
+        )
+        assert result is not None
+        assert result["source"]["media_type"] == "image/jpeg"
 
     async def test_close_only_closes_anthropic_client(self) -> None:
         """close() should only close the Anthropic client."""

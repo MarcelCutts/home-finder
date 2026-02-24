@@ -906,28 +906,16 @@ nav.container-fluid li {
     white-space: nowrap;
 }
 
-/* Compact dot rating */
-.quality-dots {
-    font-size: 0.72rem;
+/* Fit tier pill on card meta row */
+.fit-tier-pill {
+    font-size: 0.68rem;
     font-weight: 600;
-    color: var(--text-muted);
     font-family: var(--font-heading);
-    display: inline-flex;
-    align-items: center;
-    gap: 0.15rem;
+    padding: 0.08rem 0.4rem;
+    border-radius: 4px;
     white-space: nowrap;
+    background: var(--bg-elevated);
 }
-.quality-dots .dot {
-    font-size: 0.55rem;
-    line-height: 1;
-}
-.quality-dots .dot.filled { color: var(--star, #f5a623); }
-.quality-dots .dot.empty { color: var(--text-dim, #76767f); }
-.quality-dots-5 .dot.filled { color: #34d399; }
-.quality-dots-4 .dot.filled { color: var(--star, #f5a623); }
-.quality-dots-3 .dot.filled { color: var(--star, #f5a623); }
-.quality-dots-2 .dot.filled { color: #fbbf24; }
-.quality-dots-1 .dot.filled { color: #fca5a5; }
 
 /* AI summary text on card */
 .card-summary {
@@ -1422,10 +1410,6 @@ nav.container-fluid li {
     flex-shrink: 0;
 }
 
-/* ===== Star rating (detail page) ===== */
-.star-rating .star { font-size: 1.1rem; }
-.star-rating .star.filled { color: var(--star, #f5a623); }
-.star-rating .star.empty { color: var(--text-dim, #76767f); }
 
 /* ===== Badges (dark mode adapted) ===== */
 .badge {
@@ -2859,11 +2843,6 @@ nav.container-fluid li {
     margin-bottom: 0.75rem;
 }
 
-/* ===== Quality section heading with inline stars ===== */
-.quality-section h3 .star-rating {
-    margin-left: 0.25rem;
-    vertical-align: baseline;
-}
 
 /* ===== Listing details as inline key-value grid ===== */
 .listing-kv-grid {

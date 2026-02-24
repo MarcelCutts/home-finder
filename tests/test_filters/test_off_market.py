@@ -7,8 +7,10 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import httpx
 
 from home_finder.filters.off_market import (
+    _LET_AGREED_PATTERNS,
     ListingStatus,
     OffMarketChecker,
+    _check_let_agreed,
     _check_onthemarket,
     _check_openrent,
     _check_rightmove,
@@ -81,6 +83,22 @@ class TestCheckRightmove:
         resp = _make_response(text=html)
         assert _check_rightmove(resp) == ListingStatus.UNKNOWN
 
+    def test_let_agreed_json_tag(self):
+        html = '<script>window.PAGE_MODEL = {"tags":["LET_AGREED"]}</script>'
+        resp = _make_response(text=html)
+        assert _check_rightmove(resp) == ListingStatus.LET_AGREED
+
+    def test_let_agreed_heading_text(self):
+        html = "<html><h1>LET AGREED</h1><p>Nice flat</p></html>"
+        resp = _make_response(text=html)
+        assert _check_rightmove(resp) == ListingStatus.LET_AGREED
+
+    def test_let_agreed_false_positive_url_param(self):
+        """includeLetAgreed=true in agent URLs should NOT match."""
+        html = '<a href="/agent?includeLetAgreed=true">Agent link</a><p>Nice active flat</p>'
+        resp = _make_response(text=html)
+        assert _check_rightmove(resp) == ListingStatus.ACTIVE
+
 
 # ---------------------------------------------------------------------------
 # Zoopla checker
@@ -108,6 +126,16 @@ class TestCheckZoopla:
     def test_429_is_unknown(self):
         resp = _make_response(status_code=429)
         assert _check_zoopla(resp) == ListingStatus.UNKNOWN
+
+    def test_let_agreed_text(self):
+        html = "<html><div class='status'>Let agreed</div><p>Nice flat</p></html>"
+        resp = _make_response(text=html)
+        assert _check_zoopla(resp) == ListingStatus.LET_AGREED
+
+    def test_letting_agreed_text(self):
+        html = "<html><span>Letting agreed</span></html>"
+        resp = _make_response(text=html)
+        assert _check_zoopla(resp) == ListingStatus.LET_AGREED
 
 
 # ---------------------------------------------------------------------------
@@ -146,6 +174,10 @@ class TestCheckOpenrent:
         resp = _make_response(status_code=429)
         assert _check_openrent(resp) == ListingStatus.UNKNOWN
 
+    def test_no_let_agreed_patterns(self):
+        """OpenRent has no let-agreed state — always ACTIVE or REMOVED."""
+        assert "openrent" not in _LET_AGREED_PATTERNS
+
 
 # ---------------------------------------------------------------------------
 # OnTheMarket checker
@@ -181,6 +213,67 @@ class TestCheckOnthemarket:
         )
         assert _check_onthemarket(resp) == ListingStatus.UNKNOWN
 
+    def test_let_agreed_text(self):
+        html = '<html><div class="badge">Let agreed</div></html>'
+        resp = _make_response(
+            url="https://www.onthemarket.com/details/12345/",
+            text=html,
+        )
+        assert _check_onthemarket(resp) == ListingStatus.LET_AGREED
+
+    def test_under_offer_text(self):
+        html = '<html><div class="badge">Under offer</div></html>'
+        resp = _make_response(
+            url="https://www.onthemarket.com/details/12345/",
+            text=html,
+        )
+        assert _check_onthemarket(resp) == ListingStatus.LET_AGREED
+
+    def test_let_agreed_false_positive_url_param(self):
+        """?let-agreed=true in agent filter URLs should NOT match."""
+        html = '<a href="/search?let-agreed=true">Filter</a><p>Active listing</p>'
+        resp = _make_response(
+            url="https://www.onthemarket.com/details/12345/",
+            text=html,
+        )
+        assert _check_onthemarket(resp) == ListingStatus.ACTIVE
+
+
+# ---------------------------------------------------------------------------
+# Let-agreed pattern tests
+# ---------------------------------------------------------------------------
+
+
+class TestLetAgreedPatterns:
+    def test_rightmove_json_tags(self):
+        assert _check_let_agreed("rightmove", '"tags": ["LET_AGREED"]')
+        assert _check_let_agreed("rightmove", '"tags":["LET_AGREED","FEATURED"]')
+
+    def test_rightmove_heading(self):
+        assert _check_let_agreed("rightmove", "<h1>LET AGREED</h1>")
+        assert _check_let_agreed("rightmove", "<h1>LET_AGREED</h1>")
+
+    def test_rightmove_no_false_positive_url(self):
+        assert not _check_let_agreed("rightmove", "?includeLetAgreed=true")
+        assert not _check_let_agreed("rightmove", "&includeLetAgreed=true")
+
+    def test_zoopla_let_agreed(self):
+        assert _check_let_agreed("zoopla", "Let agreed")
+        assert _check_let_agreed("zoopla", "Letting agreed")
+
+    def test_onthemarket_let_agreed(self):
+        assert _check_let_agreed("onthemarket", "Let agreed")
+        assert _check_let_agreed("onthemarket", "Let-agreed")
+
+    def test_onthemarket_under_offer(self):
+        assert _check_let_agreed("onthemarket", "Under offer")
+
+    def test_onthemarket_no_false_positive_url(self):
+        assert not _check_let_agreed("onthemarket", "?let-agreed=true")
+
+    def test_openrent_no_patterns(self):
+        assert not _check_let_agreed("openrent", "Let agreed")
+
 
 # ---------------------------------------------------------------------------
 # CurlResponseAdapter
@@ -197,6 +290,51 @@ class TestCurlResponseAdapter:
         assert adapter.status_code == 200
         assert adapter.text == "<html>OK</html>"
         assert str(adapter.url) == "https://example.com/prop/1"
+
+
+# ---------------------------------------------------------------------------
+# check_url (GET-only)
+# ---------------------------------------------------------------------------
+
+
+class TestCheckUrl:
+    async def test_get_404_is_removed(self):
+        checker = OffMarketChecker()
+
+        with patch.object(checker, "_fetch", new_callable=AsyncMock) as mock_fetch:
+            mock_fetch.return_value = _make_response(status_code=404)
+            status = await checker.check_url("rightmove", "https://rightmove.co.uk/1")
+
+        assert status == ListingStatus.REMOVED
+        mock_fetch.assert_called_once_with("rightmove", "https://rightmove.co.uk/1")
+        await checker.close()
+
+    async def test_get_200_active(self):
+        checker = OffMarketChecker()
+
+        with patch.object(checker, "_fetch", new_callable=AsyncMock) as mock_fetch:
+            mock_fetch.return_value = _make_response(text="<html>Nice flat</html>")
+            status = await checker.check_url("rightmove", "https://rightmove.co.uk/1")
+
+        assert status == ListingStatus.ACTIVE
+        mock_fetch.assert_called_once()
+        await checker.close()
+
+    async def test_fetch_failure_returns_unknown(self):
+        checker = OffMarketChecker()
+
+        with patch.object(checker, "_fetch", new_callable=AsyncMock) as mock_fetch:
+            mock_fetch.return_value = None
+            status = await checker.check_url("rightmove", "https://rightmove.co.uk/1")
+
+        assert status == ListingStatus.UNKNOWN
+        await checker.close()
+
+    async def test_unknown_source_returns_unknown(self):
+        checker = OffMarketChecker()
+        status = await checker.check_url("fakesource", "https://example.com/1")
+        assert status == ListingStatus.UNKNOWN
+        await checker.close()
 
 
 # ---------------------------------------------------------------------------
@@ -291,5 +429,20 @@ class TestCheckBatchBasic:
 
         assert len(results) == 3
         assert mock_check.call_count == 3
+
+        await checker.close()
+
+    async def test_let_agreed_in_batch(self):
+        """LET_AGREED status propagates through batch results."""
+        checker = OffMarketChecker()
+
+        with patch.object(checker, "check_url", new_callable=AsyncMock) as mock_check:
+            mock_check.return_value = ListingStatus.LET_AGREED
+
+            checks = [("p1", "rightmove", "https://rightmove.co.uk/1")]
+            results = await checker.check_batch(checks)
+
+        assert len(results) == 1
+        assert results[0].status == ListingStatus.LET_AGREED
 
         await checker.close()

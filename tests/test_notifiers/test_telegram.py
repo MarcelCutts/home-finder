@@ -7,7 +7,9 @@ import pytest
 from pydantic import HttpUrl
 
 from home_finder.models import (
+    BedroomAnalysis,
     ConditionAnalysis,
+    FlooringNoiseAnalysis,
     KitchenAnalysis,
     LightSpaceAnalysis,
     ListingExtraction,
@@ -26,7 +28,6 @@ from home_finder.notifiers.telegram import (
     TelegramNotifier,
     _format_followup_detail,
     _format_quality_block,
-    _format_star_rating,
     _format_value_info,
     _format_viewing_notes,
     _get_best_image_url,
@@ -37,23 +38,6 @@ from home_finder.notifiers.telegram import (
     format_merged_property_message,
     format_property_message,
 )
-
-
-class TestFormatStarRating:
-    """Tests for _format_star_rating."""
-
-    @pytest.mark.parametrize(
-        ("rating", "expected"),
-        [
-            (1, "⭐☆☆☆☆"),
-            (2, "⭐⭐☆☆☆"),
-            (3, "⭐⭐⭐☆☆"),
-            (4, "⭐⭐⭐⭐☆"),
-            (5, "⭐⭐⭐⭐⭐"),
-        ],
-    )
-    def test_star_rating(self, rating: int, expected: str) -> None:
-        assert _format_star_rating(rating) == expected
 
 
 class TestFormatPropertyMessage:
@@ -108,19 +92,20 @@ class TestFormatPropertyMessage:
         ).replace("</b>", "").replace("</a>", "")
         assert "&amp;" in message or "& " not in message
 
-    def test_format_property_with_star_rating(
+    def test_format_property_with_fit_score(
         self,
         sample_property: Property,
         sample_quality_analysis: PropertyQualityAnalysis,
     ) -> None:
-        """Test that star rating appears merged with price on same line."""
+        """Test that fit score appears merged with price on same line."""
         message = format_property_message(sample_property, quality_analysis=sample_quality_analysis)
-        assert "⭐⭐⭐⭐☆" in message
-        # Stars should be on the same line as price (merged format)
+        # Fit score should appear on the same line as price (merged format)
+        found = False
         for line in message.split("\n"):
-            if "⭐⭐⭐⭐☆" in line:
-                assert "£" in line
+            if "Fit " in line and "£" in line:
+                found = True
                 break
+        assert found, "Expected fit score on same line as price"
 
     def test_format_property_no_decorative_emoji_in_header(
         self,
@@ -215,7 +200,7 @@ class TestFormatMergedPropertyCaption:
             quality_analysis=sample_quality_analysis,
         )
         assert "1 Bed Flat" in caption
-        assert "⭐⭐⭐⭐☆" in caption
+        assert "Fit " in caption
         assert "£" in caption
         assert "1 bed" in caption.lower()
         assert "14 min" in caption
@@ -542,12 +527,25 @@ class TestTelegramNotifier:
         mock_bot.send_photo.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_send_merged_venue_for_high_rated(
+    async def test_send_merged_venue_for_high_fit(
         self,
         sample_merged_property: MergedProperty,
-        sample_quality_analysis: PropertyQualityAnalysis,
     ) -> None:
-        """Test that venue is sent for high-rated properties (rating >= 4)."""
+        """Test that venue is sent for high-fit properties (fit_score >= 70)."""
+        high_fit = PropertyQualityAnalysis(
+            kitchen=KitchenAnalysis(overall_quality="modern", hob_type="gas", has_dishwasher="yes"),
+            condition=ConditionAnalysis(overall_condition="good", confidence="high"),
+            light_space=LightSpaceAnalysis(natural_light="good", feels_spacious=True),
+            space=SpaceAnalysis(living_room_sqm=20.0, is_spacious_enough=True, hosting_layout="good"),
+            bedroom=BedroomAnalysis(
+                primary_is_double="yes", office_separation="dedicated_room", can_fit_desk="yes"
+            ),
+            flooring_noise=FlooringNoiseAnalysis(
+                hosting_noise_risk="low", has_double_glazing="yes"
+            ),
+            overall_rating=4,
+            summary="Great flat.",
+        )
         notifier = TelegramNotifier(bot_token="123456:ABC-DEF", chat_id=12345678)
         mock_bot = AsyncMock()
         mock_bot.send_photo = AsyncMock(return_value=MagicMock(message_id=1))
@@ -556,7 +554,7 @@ class TestTelegramNotifier:
         with patch.object(notifier, "_get_bot", return_value=mock_bot):
             await notifier.send_merged_property_notification(
                 sample_merged_property,
-                quality_analysis=sample_quality_analysis,  # rating=4
+                quality_analysis=high_fit,
             )
 
         mock_bot.send_venue.assert_called_once()
@@ -565,12 +563,12 @@ class TestTelegramNotifier:
         assert venue_kwargs["longitude"] == -0.0553
 
     @pytest.mark.asyncio
-    async def test_send_merged_no_venue_for_low_rated(
+    async def test_send_merged_no_venue_for_low_fit(
         self,
         sample_merged_property: MergedProperty,
     ) -> None:
-        """Test that venue is NOT sent for low-rated properties."""
-        low_rated = PropertyQualityAnalysis(
+        """Test that venue is NOT sent for low-fit properties (fit_score < 70)."""
+        low_fit = PropertyQualityAnalysis(
             kitchen=KitchenAnalysis(),
             condition=ConditionAnalysis(),
             light_space=LightSpaceAnalysis(),
@@ -585,7 +583,7 @@ class TestTelegramNotifier:
 
         with patch.object(notifier, "_get_bot", return_value=mock_bot):
             await notifier.send_merged_property_notification(
-                sample_merged_property, quality_analysis=low_rated
+                sample_merged_property, quality_analysis=low_fit
             )
 
         mock_bot.send_venue.assert_not_called()
@@ -630,12 +628,11 @@ class TestTelegramNotifier:
         mock_bot.send_venue.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_send_merged_album_for_high_rated_many_images(
+    async def test_send_merged_album_for_high_fit_many_images(
         self,
         sample_property: Property,
-        sample_quality_analysis: PropertyQualityAnalysis,
     ) -> None:
-        """Test that album is used for high-rated (>=4) properties with 3+ images."""
+        """Test that album is used for high-fit (>=70) properties with 3+ images."""
         images = tuple(
             PropertyImage(
                 url=HttpUrl(f"https://example.com/img{i}.jpg"),
@@ -652,6 +649,20 @@ class TestTelegramNotifier:
             min_price=1900,
             max_price=1900,
         )
+        high_fit = PropertyQualityAnalysis(
+            kitchen=KitchenAnalysis(overall_quality="modern", hob_type="gas", has_dishwasher="yes"),
+            condition=ConditionAnalysis(overall_condition="good", confidence="high"),
+            light_space=LightSpaceAnalysis(natural_light="good", feels_spacious=True),
+            space=SpaceAnalysis(living_room_sqm=20.0, is_spacious_enough=True, hosting_layout="good"),
+            bedroom=BedroomAnalysis(
+                primary_is_double="yes", office_separation="dedicated_room", can_fit_desk="yes"
+            ),
+            flooring_noise=FlooringNoiseAnalysis(
+                hosting_noise_risk="low", has_double_glazing="yes"
+            ),
+            overall_rating=4,
+            summary="Great flat.",
+        )
         notifier = TelegramNotifier(bot_token="123456:ABC-DEF", chat_id=12345678)
         mock_bot = AsyncMock()
         mock_bot.send_media_group = AsyncMock(return_value=[MagicMock(message_id=1)])
@@ -661,7 +672,7 @@ class TestTelegramNotifier:
         with patch.object(notifier, "_get_bot", return_value=mock_bot):
             result = await notifier.send_merged_property_notification(
                 merged,
-                quality_analysis=sample_quality_analysis,  # rating=4
+                quality_analysis=high_fit,
             )
 
         assert result is True
@@ -722,7 +733,6 @@ class TestTelegramNotifier:
     async def test_send_merged_album_followup_has_viewing_notes(
         self,
         sample_property: Property,
-        sample_quality_analysis: PropertyQualityAnalysis,
     ) -> None:
         """Test that album follow-up contains viewing notes, not detail breakdown."""
         images = tuple(
@@ -741,6 +751,25 @@ class TestTelegramNotifier:
             min_price=1900,
             max_price=1900,
         )
+        high_fit_with_notes = PropertyQualityAnalysis(
+            kitchen=KitchenAnalysis(overall_quality="modern", hob_type="gas", has_dishwasher="yes"),
+            condition=ConditionAnalysis(overall_condition="good", confidence="high"),
+            light_space=LightSpaceAnalysis(natural_light="good", feels_spacious=True),
+            space=SpaceAnalysis(living_room_sqm=20.0, is_spacious_enough=True, hosting_layout="good"),
+            bedroom=BedroomAnalysis(
+                primary_is_double="yes", office_separation="dedicated_room", can_fit_desk="yes"
+            ),
+            flooring_noise=FlooringNoiseAnalysis(
+                hosting_noise_risk="low", has_double_glazing="yes"
+            ),
+            overall_rating=4,
+            summary="Bright flat with modern kitchen.",
+            viewing_notes=ViewingNotes(
+                check_items=["Check water pressure", "Inspect window seals"],
+                questions_for_agent=["Ask about sound insulation"],
+                deal_breaker_tests=["Test internet speed"],
+            ),
+        )
         notifier = TelegramNotifier(bot_token="123456:ABC-DEF", chat_id=12345678)
         mock_bot = AsyncMock()
         mock_bot.send_media_group = AsyncMock(return_value=[MagicMock(message_id=1)])
@@ -749,7 +778,7 @@ class TestTelegramNotifier:
 
         with patch.object(notifier, "_get_bot", return_value=mock_bot):
             await notifier.send_merged_property_notification(
-                merged, quality_analysis=sample_quality_analysis
+                merged, quality_analysis=high_fit_with_notes
             )
 
         followup_text = mock_bot.send_message.call_args[1]["text"]
@@ -783,14 +812,20 @@ class TestTelegramNotifier:
             min_price=1900,
             max_price=1900,
         )
-        # High-rated but no viewing notes
+        # High-fit but no viewing notes
         analysis = PropertyQualityAnalysis(
-            kitchen=KitchenAnalysis(),
-            condition=ConditionAnalysis(),
-            light_space=LightSpaceAnalysis(),
-            space=SpaceAnalysis(),
-            summary="Nice flat.",
+            kitchen=KitchenAnalysis(overall_quality="modern", hob_type="gas", has_dishwasher="yes"),
+            condition=ConditionAnalysis(overall_condition="good", confidence="high"),
+            light_space=LightSpaceAnalysis(natural_light="good", feels_spacious=True),
+            space=SpaceAnalysis(living_room_sqm=20.0, is_spacious_enough=True, hosting_layout="good"),
+            bedroom=BedroomAnalysis(
+                primary_is_double="yes", office_separation="dedicated_room", can_fit_desk="yes"
+            ),
+            flooring_noise=FlooringNoiseAnalysis(
+                hosting_noise_risk="low", has_double_glazing="yes"
+            ),
             overall_rating=4,
+            summary="Nice flat.",
         )
         notifier = TelegramNotifier(bot_token="123456:ABC-DEF", chat_id=12345678)
         mock_bot = AsyncMock()
@@ -1012,25 +1047,25 @@ class TestFormatViewingNotes:
 
 
 class TestMergedHeaderFormat:
-    """Tests for the merged star rating + price header line format."""
+    """Tests for the merged fit score + price header line format."""
 
-    def test_rating_and_price_on_same_line(
+    def test_fit_score_and_price_on_same_line(
         self,
         sample_merged_property: MergedProperty,
         sample_quality_analysis: PropertyQualityAnalysis,
     ) -> None:
-        """Stars, price, and beds should all be on the same line."""
+        """Fit score, price, and beds should all be on the same line."""
         message = format_merged_property_message(
             sample_merged_property,
             quality_analysis=sample_quality_analysis,
         )
+        found = False
         for line in message.split("\n"):
-            if "⭐" in line:
-                assert "£" in line
+            if "Fit " in line and "£" in line:
                 assert "bed" in line.lower()
+                found = True
                 break
-        else:
-            pytest.fail("No line found with star rating")
+        assert found, "Expected fit score on same line as price"
 
     def test_no_rating_still_shows_price(self, sample_merged_property: MergedProperty) -> None:
         """Without quality analysis, price line should still work."""
@@ -1458,13 +1493,19 @@ class TestNotificationWithFSInputFile:
             thumb = cache_dir / f"{THUMBNAIL_PREFIX}{original.stem}.jpg"
             thumb.write_bytes(b"\xff\xd8\xff" + b"\x00" * 50)
 
-        high_rated = PropertyQualityAnalysis(
-            kitchen=KitchenAnalysis(),
-            condition=ConditionAnalysis(),
-            light_space=LightSpaceAnalysis(),
-            space=SpaceAnalysis(),
-            summary="Great flat.",
+        high_fit = PropertyQualityAnalysis(
+            kitchen=KitchenAnalysis(overall_quality="modern", hob_type="gas", has_dishwasher="yes"),
+            condition=ConditionAnalysis(overall_condition="good", confidence="high"),
+            light_space=LightSpaceAnalysis(natural_light="good", feels_spacious=True),
+            space=SpaceAnalysis(living_room_sqm=20.0, is_spacious_enough=True, hosting_layout="good"),
+            bedroom=BedroomAnalysis(
+                primary_is_double="yes", office_separation="dedicated_room", can_fit_desk="yes"
+            ),
+            flooring_noise=FlooringNoiseAnalysis(
+                hosting_noise_risk="low", has_double_glazing="yes"
+            ),
             overall_rating=4,
+            summary="Great flat.",
         )
 
         notifier = TelegramNotifier(
@@ -1479,7 +1520,7 @@ class TestNotificationWithFSInputFile:
 
         with patch.object(notifier, "_get_bot", return_value=mock_bot):
             result = await notifier.send_merged_property_notification(
-                merged, quality_analysis=high_rated
+                merged, quality_analysis=high_fit
             )
 
         assert result is True

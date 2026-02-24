@@ -71,10 +71,13 @@ async def run_check_off_market(
     *,
     only_scrapers: set[str] | None = None,
 ) -> None:
-    """Check active properties for off-market removal signals.
+    """Check active properties for off-market removal/let-agreed signals.
 
-    Visits each property's listing URL(s) and checks for definitive removal
-    signals. Only flags as off-market when ALL sources return REMOVED.
+    Persists per-source check results on source_listings when available,
+    then derives the golden record status using "any-active-means-active".
+
+    For legacy golden records without source_listings linkage, falls back to
+    aggregating check results directly (the previous behaviour).
 
     Args:
         settings: Application settings.
@@ -92,9 +95,33 @@ async def run_check_off_market(
 
         logger.info("off_market_check_started", count=len(db_props))
 
-        # Expand multi-source properties into individual URL checks
-        checks: list[tuple[str, str, str]] = []  # (property_id, source, url)
+        # Build check list — prefer source_listings, fall back to source_urls JSON
+        # Each check: (property_id, source, url)
+        # Also track which checks map to a source_listing unique_id
+        checks: list[tuple[str, str, str]] = []
+        # Map (property_id, source, url) -> source_listing unique_id (if linked)
+        sl_lookup: dict[tuple[str, str, str], str] = {}
+
         for prop in db_props:
+            linked_sls: list[dict[str, object]] = prop.get("source_listings", [])
+            covered_urls: set[str] = set()
+
+            if linked_sls:
+                # Source_listings-first path
+                for sl in linked_sls:
+                    source = str(sl["source"])
+                    url = str(sl["url"])
+                    sl_uid = str(sl["unique_id"])
+                    covered_urls.add(url)
+                    if only_scrapers and source not in only_scrapers:
+                        continue
+                    key = (prop["unique_id"], source, url)
+                    checks.append(key)
+                    sl_lookup[key] = sl_uid
+
+            # Also check source_urls JSON for any URLs not covered by linked rows.
+            # This handles partial linkage — e.g. property merged from OpenRent +
+            # Zoopla where only OpenRent has a source_listings row.
             source_urls: dict[str, str] = {}
             if prop.get("source_urls"):
                 with contextlib.suppress(json.JSONDecodeError, TypeError):
@@ -102,11 +129,13 @@ async def run_check_off_market(
 
             if source_urls:
                 for source, url in source_urls.items():
+                    if url in covered_urls:
+                        continue
                     if only_scrapers and source not in only_scrapers:
                         continue
                     checks.append((prop["unique_id"], source, url))
-            else:
-                # Single-source property
+            elif not linked_sls:
+                # No source_listings and no source_urls — use primary source/url
                 source = prop["source"]
                 if only_scrapers and source not in only_scrapers:
                     continue
@@ -121,8 +150,27 @@ async def run_check_off_market(
         async with OffMarketChecker(proxy_url=settings.proxy_url) as checker:
             results = await checker.check_batch(checks)
 
-        # Aggregate per-property: only flag off-market if ALL sources are REMOVED
-        # (no source returned ACTIVE)
+        # --- Persist per-source results on source_listings ---
+        for r in results:
+            key = (r.property_id, r.source, r.url)
+            checked_sl_uid = sl_lookup.get(key)
+            if checked_sl_uid:
+                # Stamp last_checked_at regardless of result
+                await storage.update_source_listing_last_checked(checked_sl_uid)
+
+                if r.status == ListingStatus.REMOVED:
+                    await storage.mark_source_listing_off_market(checked_sl_uid, "removed")
+                elif r.status == ListingStatus.LET_AGREED:
+                    await storage.mark_source_listing_off_market(checked_sl_uid, "let_agreed")
+                elif r.status == ListingStatus.ACTIVE:
+                    await storage.mark_source_listing_active(checked_sl_uid)
+                # UNKNOWN: no change to off-market flags
+
+        # --- Derive golden record status ---
+        # "Not active" means REMOVED or LET_AGREED
+        def _is_inactive(s: ListingStatus) -> bool:
+            return s in (ListingStatus.REMOVED, ListingStatus.LET_AGREED)
+
         per_property: dict[str, dict[str, ListingStatus]] = {}
         for r in results:
             per_property.setdefault(r.property_id, {})[r.source] = r.status
@@ -136,16 +184,28 @@ async def run_check_off_market(
                 continue
 
             has_active = any(s == ListingStatus.ACTIVE for s in source_statuses.values())
-            all_removed = all(s == ListingStatus.REMOVED for s in source_statuses.values())
+            all_inactive = all(_is_inactive(s) for s in source_statuses.values())
             was_off_market = bool(prop.get("is_off_market"))
 
-            if all_removed and not has_active:
+            # Determine reason from the first inactive source
+            reason: str | None = None
+            if all_inactive:
+                for _s, st in source_statuses.items():
+                    if st == ListingStatus.LET_AGREED:
+                        reason = "let_agreed"
+                        break
+                    if st == ListingStatus.REMOVED:
+                        reason = "removed"
+                        break
+
+            if all_inactive:
                 if not was_off_market:
-                    await storage.mark_off_market(uid)
+                    await storage.mark_off_market(uid, reason=reason)
                     marked_off += 1
                     logger.info(
                         "property_confirmed_off_market",
                         unique_id=uid,
+                        reason=reason,
                         sources=list(source_statuses.keys()),
                     )
             elif has_active and was_off_market:
@@ -158,6 +218,9 @@ async def run_check_off_market(
                         s for s, st in source_statuses.items() if st == ListingStatus.ACTIVE
                     ],
                 )
+
+            # Stamp last_checked_at on golden record
+            await storage.update_property_last_checked(uid)
 
         # Summary
         status_counts = {s.value: 0 for s in ListingStatus}

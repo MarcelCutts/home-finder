@@ -34,11 +34,9 @@
             {# Meta row: rating | postcode | commute pill #}
             <div class="card-meta">
                 <div class="card-meta-left">
-                    {% set rating = prop.quality_rating or 0 %}
-                    <span class="quality-dots quality-dots-{{ rating }}" role="img" aria-label="Rating: {{ rating }} out of 5">
-                        <span aria-hidden="true">{{ rating }}/5</span>
-                        {% for i in range(1, 6) %}{% if i <= rating %}<span class="dot filled" aria-hidden="true">&#9679;</span>{% else %}<span class="dot empty" aria-hidden="true">&#9679;</span>{% endif %}{% endfor %}
-                    </span>
+                    {% if prop.fit_score is not none %}
+                    <span class="fit-tier-pill {{ fit_tier_class(prop.fit_score) }}">{{ fit_tier_label(prop.fit_score) }}</span>
+                    {% endif %}
                     {% if prop.postcode %}
                     <span class="card-postcode">{{ prop.postcode }}</span>
                     {% endif %}
@@ -123,6 +121,9 @@
             {% endif %}
             {% if prop.first_seen %}
             <span class="card-age">{{ prop.first_seen | listing_age }}</span>
+            {% endif %}
+            {% if prop.last_checked_at %}
+            <span class="card-checked" title="Last checked {{ prop.last_checked_at[:10] }}">&#10003;</span>
             {% endif %}
         </div>
     </a>

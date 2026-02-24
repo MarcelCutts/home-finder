@@ -27,10 +27,10 @@
                     <input type="number" name="min_price" placeholder="Min price" value="{{ min_price or '' }}" aria-label="Min price" step="50">
                     <input type="number" name="max_price" placeholder="Max price" value="{{ max_price or '' }}" aria-label="Max price" step="50">
 
-                    <select name="min_rating" aria-label="Min rating">
-                        <option value="">Any rating</option>
-                        {% for r in [3, 4, 5] %}
-                        <option value="{{ r }}" {% if min_rating == r %}selected{% endif %}>{{ r }}+ stars</option>
+                    <select name="min_fit_score" aria-label="Min fit score">
+                        <option value="">Any fit</option>
+                        {% for tier in FIT_TIERS | reverse if tier.min >= 40 %}
+                        <option value="{{ tier.min }}" {% if min_fit_score == tier.min %}selected{% endif %}>{{ tier.min }}+ {{ tier.label }}</option>
                         {% endfor %}
                     </select>
                 </div>
@@ -95,7 +95,6 @@
                     <option value="newest" {% if sort == "newest" %}selected{% endif %}>Newest</option>
                     <option value="price_asc" {% if sort == "price_asc" %}selected{% endif %}>Price: Low</option>
                     <option value="price_desc" {% if sort == "price_desc" %}selected{% endif %}>Price: High</option>
-                    <option value="rating_desc" {% if sort == "rating_desc" %}selected{% endif %}>Rating</option>
                     <option value="fit_desc" {% if sort == "fit_desc" %}selected{% endif %}>Best Fit</option>
                     <option value="longest_listed" {% if sort == "longest_listed" %}selected{% endif %}>Longest Listed</option>
                 </select>
@@ -276,6 +275,7 @@
 {% endblock %}
 
 {% block page_scripts %}
+<script type="application/json" id="fit-tiers-data">{{ FIT_TIERS | tojson | json_script_safe | safe }}</script>
 <script type="module" src="/static/modules/filters.js?v={{ static_version }}"></script>
 <script type="module" src="/static/modules/map-dashboard.js?v={{ static_version }}"></script>
 <script type="module" src="/static/modules/status.js?v={{ static_version }}"></script>

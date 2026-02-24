@@ -95,8 +95,8 @@ if (dialog && openBtn) {
       if (minP) minP.value = "";
       const maxP = primaryFilters.querySelector('input[name="max_price"]');
       if (maxP) maxP.value = "";
-      const rating = primaryFilters.querySelector('select[name="min_rating"]');
-      if (rating) rating.value = "";
+      const fitScore = primaryFilters.querySelector('select[name="min_fit_score"]');
+      if (fitScore) fitScore.value = "";
     }
     if (form) {
       const deskArea = form.querySelector('select[name="area"]');

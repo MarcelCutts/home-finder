@@ -8,18 +8,12 @@
 quality-item quality-item{% if value in excellent_values %}-excellent{% elif value in fair_values %}-fair{% elif value in poor_values %}-poor{% else %}-neutral{% endif %}
 {%- endmacro -%}
 
-{%- macro fit_tier_label(score) -%}
-{% if score >= 80 %}Great Fit{% elif score >= 60 %}Good Fit{% elif score >= 40 %}Okay{% else %}Poor Fit{% endif %}
-{%- endmacro -%}
-
-{%- macro fit_tier_class(score) -%}
-{% if score >= 80 %}fit-tier-great{% elif score >= 60 %}fit-tier-good{% elif score >= 40 %}fit-tier-okay{% else %}fit-tier-poor{% endif %}
-{%- endmacro -%}
+{# fit_tier_label(score) and fit_tier_class(score) are Python globals — see routes.py #}
 
 {%- macro fit_badge(score, breakdown=None, unique_id='') -%}
 {% if score is not none %}
 <div class="fit-popover-wrap">
-    <button class="fit-badge {% if score >= 80 %}fit-green{% elif score >= 60 %}fit-accent{% elif score >= 40 %}fit-amber{% else %}fit-dim{% endif %}" type="button" title="Marcel Fit Score: {{ score }}" popovertarget="fit-popover-{{ unique_id }}" style="anchor-name: --fit-{{ unique_id | replace(':', '-') }}">{{ score }}</button>
+    <button class="fit-badge {{ fit_color_class(score) }}" type="button" title="Marcel Fit Score: {{ score }}" popovertarget="fit-popover-{{ unique_id }}" style="anchor-name: --fit-{{ unique_id | replace(':', '-') }}">{{ score }}</button>
     <div class="fit-popover" id="fit-popover-{{ unique_id }}" popover style="position-anchor: --fit-{{ unique_id | replace(':', '-') }}">
         <div class="fit-popover-title">Marcel Fit <span class="fit-popover-score">{{ score }}</span></div>
         <div class="fit-popover-tier {{ fit_tier_class(score) }}">{{ fit_tier_label(score) }}</div>

@@ -242,7 +242,7 @@ class TestDashboard:
         assert "No properties found" in resp.text
 
     def test_sort_options(self, client: TestClient) -> None:
-        for sort in ("newest", "price_asc", "price_desc", "rating_desc"):
+        for sort in ("newest", "price_asc", "price_desc", "fit_desc"):
             resp = client.get(f"/?sort={sort}")
             assert resp.status_code == 200
 
@@ -258,8 +258,8 @@ class TestDashboard:
         resp = client.get("/?page=9999")
         assert resp.status_code == 200
 
-    def test_min_rating_clamped(self, client: TestClient) -> None:
-        resp = client.get("/?min_rating=99")
+    def test_min_fit_score_clamped(self, client: TestClient) -> None:
+        resp = client.get("/?min_fit_score=150")
         assert resp.status_code == 200
 
     def test_bedrooms_clamped(self, client: TestClient) -> None:
@@ -479,7 +479,7 @@ class TestPropertyCardEndpoint:
         await storage.save_quality_analysis(prop_a.unique_id, base_analysis)
         resp = client.get(f"/property/{merged_a.unique_id}/card")
         assert resp.status_code == 200
-        assert "4/5" in resp.text
+        assert "fit-tier-pill" in resp.text
 
     @pytest.mark.asyncio
     async def test_card_is_partial_not_full_page(
@@ -528,7 +528,7 @@ class TestDetailQualityCards:
         assert "Living Room" in resp.text
 
     @pytest.mark.asyncio
-    async def test_star_rating_rendered(
+    async def test_quality_section_rendered(
         self,
         client: TestClient,
         storage: PropertyStorage,
@@ -541,7 +541,6 @@ class TestDetailQualityCards:
         resp = client.get(f"/property/{merged_a.unique_id}")
         assert resp.status_code == 200
         assert "Quality Analysis" in resp.text
-        assert "star-rating" in resp.text
 
     @pytest.mark.asyncio
     async def test_estimated_badge_absent_with_floorplan(
@@ -760,7 +759,7 @@ class TestCardRendering:
         assert "25 min" in resp.text
 
     @pytest.mark.asyncio
-    async def test_quality_dots_rendered(
+    async def test_fit_tier_pill_rendered(
         self,
         client: TestClient,
         storage: PropertyStorage,
@@ -772,7 +771,7 @@ class TestCardRendering:
         await storage.save_quality_analysis(prop_a.unique_id, base_analysis)
         resp = client.get("/")
         assert resp.status_code == 200
-        assert "4/5" in resp.text
+        assert "fit-tier-pill" in resp.text
 
     @pytest.mark.asyncio
     async def test_value_badge_rendered(
@@ -850,8 +849,8 @@ class TestEmptyStringParams:
         resp = client.get("/?max_price=")
         assert resp.status_code == 200
 
-    def test_empty_min_rating(self, client: TestClient) -> None:
-        resp = client.get("/?min_rating=")
+    def test_empty_min_fit_score(self, client: TestClient) -> None:
+        resp = client.get("/?min_fit_score=")
         assert resp.status_code == 200
 
     def test_empty_page(self, client: TestClient) -> None:
@@ -863,7 +862,7 @@ class TestEmptyStringParams:
         assert resp.status_code == 200
 
     def test_all_empty(self, client: TestClient) -> None:
-        resp = client.get("/?bedrooms=&min_price=&max_price=&min_rating=&area=&page=")
+        resp = client.get("/?bedrooms=&min_price=&max_price=&min_fit_score=&area=&page=")
         assert resp.status_code == 200
 
     def test_non_numeric_bedrooms(self, client: TestClient) -> None:
@@ -2540,23 +2539,6 @@ class TestResponseTargetsAndARIA:
         assert resp.status_code == 200
         assert 'id="sr-announcer"' in resp.text
         assert 'aria-live="polite"' in resp.text
-
-    @pytest.mark.asyncio
-    async def test_star_rating_aria(
-        self,
-        client: TestClient,
-        storage: PropertyStorage,
-        prop_a: Property,
-        merged_a: MergedProperty,
-        base_analysis: PropertyQualityAnalysis,
-    ) -> None:
-        await storage.save_merged_property(merged_a)
-        await storage.save_quality_analysis(prop_a.unique_id, base_analysis)
-        resp = client.get(f"/property/{merged_a.unique_id}")
-        assert resp.status_code == 200
-        assert 'role="img"' in resp.text
-        assert 'aria-label="Rating: 4 out of 5 stars"' in resp.text
-        assert 'aria-hidden="true"' in resp.text
 
     def test_description_toggle_aria_expanded(self, client: TestClient) -> None:
         resp = client.get("/")

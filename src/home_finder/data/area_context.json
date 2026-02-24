@@ -514,6 +514,106 @@
           "value": "Cheshire Street 1-bed: \u00a31,800\u20132,200 \u2014 the sweet spot for character within budget. Columbia Road pushes 1-beds to \u00a32,400+, above budget. 2-bed: \u00a32,500\u20133,250, mostly above budget. Sunday market chaos disrupts ground-floor WFH 8am\u20133pm Sundays. Target Cheshire Street for best character-per-pound."
         }
       }
+    },
+    "N1": {
+      "overview": "N1 covers London's most diverse inner-city rental landscape — from Angel's buzzing Upper Street (Zone 1 Northern line, 2 min to King's Cross) through Georgian Barnsbury to the regenerated King's Cross mega-development. Rental spread is enormous: ex-council 2-beds on Caledonian Road from £1,850/month versus Angel period conversions at £3,500+. Average Islington rent is £2,713/month (ONS, Jan 2026), up just 1.1% YoY after 13.1% growth the prior year — the market is stabilising. Marcel's £2,000–2,500 budget sits below the N1 2-bed average (£2,950–3,200) but is achievable in King's Cross/Caledonian Road, De Beauvoir Town, east Canonbury, and Pentonville. Six tube/rail stations serve N1: Angel (Northern, Bank branch), King's Cross St Pancras (6 Underground lines), Highbury & Islington (Victoria line, Overground), Caledonian Road (Piccadilly), Essex Road (Great Northern), and Canonbury (Overground). Critical: Night Tube runs at King's Cross and Highbury & Islington but NOT Angel (Bank branch only). Broadband is strong: ~97.7% gigabit coverage via Virgin Media cable, ~70% FTTP from Community Fibre, Hyperoptic, and G.Network — but check address-level availability as Georgian terraces may lack FTTP. Creative scene is consumption-oriented: excellent bars and venues (Spiritland listening bar at Coal Drops Yard, Electrowerkz behind Angel, The Lexington on Pentonville Road) but limited production infrastructure versus E8/E2. Crime rate is 183/1,000 residents — driven by Upper Street theft-from-person; residential wards like Canonbury (107/1,000) are far safer. Compared to neighbours: pricier than N7 and E8, cheaper than EC1, more polished than E2. Key warning: Islington's Noise Patrol operates Fri–Sat 10pm–4am — exactly when DJ events happen.",
+      "micro_areas": {
+        "Angel / Upper Street": {
+          "character": "The commercial heart of N1, centred on the Angel junction where Islington High Street meets Pentonville Road. Upper Street ('Supper Street') is a 1-mile strip of restaurants, bars, and boutiques running north toward Highbury. Camden Passage offers antique-market charm. Building stock mixes Georgian/Victorian terraces (many converted to flats), post-war council estates (St John's Estate), and modern developments (N1 Centre, Islington Square). Warning: Upper Street is noisy — heavy bus traffic, late-night revellers from O2 Academy and bars, poor air quality on Pentonville Road. Target streets: Liverpool Road (quieter, one block west), Colebrooke Row (Georgian elegance), Cloudesley Square (conservation area). Avoid: Islington High Street frontage (too commercial), Chapel Market edges (scrappier).",
+          "transport": "PTAL 6a–6b (Excellent). Angel station (Northern line, Bank branch) — Zone 1. King's Cross 2 min by tube. Liverpool Street ~12 min via Northern to Moorgate. Night Tube: NOT at Angel (Bank branch). Nearest Night Tube: King's Cross (15 min walk). Exceptional bus connectivity: routes 4, 19, 30, 38, 73, 205, 214, 341.",
+          "creative_scene": "N1's densest cultural zone but skews consumption over production. Electrowerkz (Torrens Street) hosts underground techno/goth/industrial including Slimelight, licensed until 6am. The Lexington (Pentonville Road) — eclectic live music + DJ bar, until 4am Fri/Sat. O2 Academy Islington — 800-cap live venue. Flashback Records (Essex Road) — essential vinyl shop, two floors. Cubitt Artists (Angel Mews) — gallery + 32 studios (lease expires April 2026). The Old Queens Head — pub with DJ nights.",
+          "broadband": "Gigabit coverage ~97%. Community Fibre, Hyperoptic, Virgin Media, and G.Network all likely available. Georgian terraces may be on Openreach FTTC only (40–80 Mbps) — always check address. Virgin Media cable (1,130 Mbps down) available as fallback almost everywhere.",
+          "hosting_tolerance": "moderate",
+          "wfh_suitability": "moderate",
+          "value": "1-bed: £2,100–2,500/month. 2-bed: £2,800–3,800/month for period conversions; modern new-builds £3,000–4,500+. Marcel's budget: spacious 1-bed achievable; 2-bed requires ex-council stock or less renovated property. Best-value streets: Liverpool Road, Duncan Street, Penton Street."
+        },
+        "Barnsbury / Thornhill Square": {
+          "character": "A remarkably tranquil Georgian/early-Victorian enclave west of Upper Street. Thornhill Square and Lonsdale Square (Gothic Revival, 1838–1845) are among London's finest garden squares with listed terraces surrounding communal gardens. Warning: the western edge bordering Caledonian Road is noticeably grittier — Pentonville Prison sits within Barnsbury's boundaries. Target streets: Thornhill Square, Thornhill Crescent, Lonsdale Square, Richmond Avenue, Hemingford Road. Avoid: streets directly on Caledonian Road. Residents: professionals, established families, writers/designers.",
+          "transport": "PTAL 3–4 (Moderate) — furthest from any tube in N1. Caledonian Road & Barnsbury (Overground) 5–8 min walk. Caledonian Road (Piccadilly) ~10 min walk. Highbury & Islington (Victoria/Overground) ~12–15 min walk. Night Tube: Caledonian Road (Piccadilly) ~10 min walk; Highbury & Islington (Victoria) ~12–15 min walk.",
+          "creative_scene": "Predominantly residential with very limited creative infrastructure. The Estorick Collection of Modern Italian Art on the Canonbury border. No rehearsal spaces, record shops, or creative coworking within Barnsbury. Angel's venues 10 min walk.",
+          "broadband": "Good coverage. Hyperoptic strong in council housing blocks. Community Fibre expanding. Georgian/Victorian terraces: same FTTP caveats as Angel. Virgin Media cable widely available as gigabit fallback.",
+          "hosting_tolerance": "low",
+          "wfh_suitability": "good",
+          "value": "1-bed: £1,800–2,200/month. 2-bed: £2,200–3,000/month. 10–15% cheaper than Angel core. Best value: streets between Barnsbury Square and Caledonian Road. Richmond Crescent area 2-beds around £2,300–2,500. Marcel's budget: 2-bed achievable at top of range."
+        },
+        "King's Cross / Caledonian Road": {
+          "character": "Transformed by one of Europe's largest regeneration projects — 67-acre King's Cross Central (N1C) with 1,900 new homes, Coal Drops Yard, Granary Square, and offices for Google/YouTube/Universal Music. Caledonian Road itself remains a mixed, somewhat gritty high street. Building stock ranges from glossy Build-to-Rent towers (Author Kings Cross, Cadence, Gasholders) to Victorian terraces and ex-council flats. Warning: Caledonian Road north of station is busy/noisy, King's Cross area has higher street crime. Target streets for value: Gifford Street, Northdown Street, Wheelwright Street. Premium: Lewis Cubitt Walk, Handyside Street.",
+          "transport": "PTAL 6b (Excellent) — London's largest interchange. King's Cross St Pancras (Northern, Victoria, Piccadilly, Circle, H&C, Metropolitan + mainline). Caledonian Road (Piccadilly). Liverpool Street 8 min direct. Night Tube: Excellent — King's Cross serves Northern (Charing Cross), Victoria, Piccadilly. Regent's Canal towpath provides traffic-free cycling east to Islington/Hackney.",
+          "creative_scene": "The most DJ-relevant micro-area in N1. Spiritland (Coal Drops Yard) — audiophile listening bar with bespoke Living Voice sound system, NYT called it 'the best sound system in the world.' SUPERMAX Bar — hidden basement with Technics/Alpha Recording System. EGG London (Vale Royal, technically N7) — 1,000-cap electronic club, 24-hour weekend licence. The Scala (Pentonville Road) — 1,000-cap venue. Impact Hub King's Cross — creative coworking.",
+          "broadband": "Excellent. New-build developments (N1C) have FTTP as standard. Older Caledonian Road housing: Virgin Media widely available; Community Fibre and Hyperoptic rolling out. Council estates well-served by Hyperoptic.",
+          "hosting_tolerance": "moderate",
+          "wfh_suitability": "moderate",
+          "value": "New-build 1-bed (N1C): £2,250–2,800/month. New-build 2-bed (N1C): £3,000–4,500/month. Older stock Caledonian Road 1-bed: £1,600–2,000. Older stock 2-bed: £1,850–2,500. Best value in all of N1 — Victorian terraces and ex-council on Caledonian Road offer lowest rents. Marcel's budget: comfortably achievable for 2-bed on Caledonian Road."
+        },
+        "Canonbury": {
+          "character": "A serene, leafy residential pocket between Upper Street (west), Essex Road (south), and St Paul's Road (north) with genuine village feel. Literary connections — George Orwell wrote part of 1984 at 27b Canonbury Square. Estorick Collection of Modern Italian Art. Building stock primarily Georgian/Victorian terraces converted into flats. The Marquess Estate (east Canonbury) extensively redeveloped. New River Walk — exquisite narrow park along 17th-century waterway. Warning: northeast corner toward Essex Road/Balls Pond Road junction is rougher. Target streets: Canonbury Square, Canonbury Grove, Alwyne Villas, Compton Avenue.",
+          "transport": "PTAL 4–5 (Good). Canonbury (Overground). Highbury & Islington (Victoria, Overground, Great Northern) ~8 min walk. Essex Road (Great Northern) ~10 min walk. King's Cross 8–10 min. Night Tube: Highbury & Islington (Victoria) ~8 min walk.",
+          "creative_scene": "Quiet residential — limited public creative infrastructure. Estorick Collection (Canonbury Square) — specialist Italian Futurist art gallery. REX Studio (near H&I) — boutique recording studio. Compton Arms and Canonbury Tavern for relaxed pub atmosphere. No DJ venues or record shops within Canonbury.",
+          "broadband": "Mixed but improving. Community Fibre and Hyperoptic expanding — Switchity confirms 'comprehensive full-fibre coverage.' Some streets with older exchange-only copper may still lack FTTP. Virgin Media cable provides gigabit fallback.",
+          "hosting_tolerance": "moderate",
+          "wfh_suitability": "good",
+          "value": "1-bed: £1,800–2,300/month. 2-bed: £2,100–3,000/month. East Canonbury/closer to Essex Road: 2-beds from £2,100–2,500. 10–20% cheaper than Angel. Georgian conversions with generous room sizes offer good value. Marcel's budget: very achievable for 2-bed, especially east Canonbury."
+        },
+        "De Beauvoir Town": {
+          "character": "A compact, village-like neighbourhood straddling the Islington/Hackney border (N1 4/5 sectors fall in Hackney), centred on De Beauvoir Square with Jacobean-style houses (c.1839). Pronounced 'dee BEE-ver.' Quiet, tree-lined streets with strong community spirit. Building stock: Victorian/Regency villas (conservation area), warehouse conversions along Kingsland Basin and Regent's Canal, council estates (De Beauvoir Estate), and canal-side developments. Warning: above-average property crime. Kingsland Road is busy/noisy. Target streets: De Beauvoir Road, Northchurch Road, Englefield Road, Culford Road. Downham Road for canal-side character.",
+          "transport": "PTAL 3–4 (Moderate) — quietest transport zone in N1. Canonbury (Overground) ~10 min walk. Haggerston (Overground, E8) ~10 min walk. Dalston Junction ~10–12 min walk. Night Tube: nearest at Highbury & Islington ~15–20 min walk — relatively poor Night Tube access. Excellent cycling — Regent's Canal towpath, CS1 passes through, LTN-protected streets.",
+          "creative_scene": "Quietly creative, bordering Dalston's scene. Goodbye Horses — listening bar by Brilliant Corners founder. Pirate Studios Dalston (N1 4BZ) — 15+ DJ studios, 24/7, from £8.90/hr, hosts free open-decks nights. De Beauvoir Block — creative coworking/studios. Hertford Road Studios — working artist studios. Victoria Miro Gallery (Wharf Road). Towpath Café — canal-side, creative crowd. Bleeds into Dalston (E8) where the electronic scene lives.",
+          "broadband": "On the Hackney/Islington border — some addresses served by different exchanges. Community Fibre active. Warehouse conversions along Regent's Canal typically well-served. Virgin Media widely available. Blackspot risk low for warehouse conversions, moderate for small Victorian terrace conversions.",
+          "hosting_tolerance": "high",
+          "wfh_suitability": "good",
+          "value": "1-bed: £1,700–2,200/month. 2-bed: £2,000–2,800/month. Ex-council 2-bed: from £1,700–2,000. Warehouse conversions along Kingsland Basin/Canal: 1-bed live-work from £2,000–2,500; 2-bed from £2,500–3,500. 10–15% more expensive than Dalston (E8) but cheaper than Angel. Marcel's budget: strong option. 2-bed period conversions at £2,200–2,500. Warehouse/live-work near canal ideal for DJ but at top of budget."
+        },
+        "Pentonville / Claremont": {
+          "character": "The most urban, least village-like part of N1, straddling Pentonville Road (A501) — the busy arterial connecting Angel to King's Cross. Building stock: post-war council estates, modern purpose-built blocks (Claremont Heights), and some surviving Georgian terraces. Claremont Square is a handsome Georgian garden square providing a pocket of elegance. Warning: Pentonville Road is very noisy — constant heavy traffic, buses, sirens. Higher crime than quieter N1 zones. Target streets: Claremont Square (Georgian oasis), Myddelton Square, Percy Circus. Avoid: anything directly on Pentonville Road.",
+          "transport": "PTAL 5–6a (Very Good) — between two major stations. Angel ~5–8 min walk. King's Cross ~8–10 min walk. Liverpool Street ~12–15 min. Night Tube: King's Cross (Northern Charing Cross, Victoria, Piccadilly) ~8–10 min walk. Pentonville Road is a major bus corridor.",
+          "creative_scene": "Transitional zone between Angel and King's Cross. The Lexington (Pentonville Road) — anchor venue, eclectic live music + DJs, 200-cap, until 4am Fri/Sat. The Scala (Pentonville Road) — 1,000-cap former cinema, DJ nights Thu–Sun. Otherwise mostly residential. Angel's venues 5–10 min walk.",
+          "broadband": "Good coverage. Close to Angel and King's Cross, well within multiple provider footprints. Community Fibre, Hyperoptic, Virgin Media all likely available. Council housing blocks are Hyperoptic priority.",
+          "hosting_tolerance": "high",
+          "wfh_suitability": "poor",
+          "value": "1-bed: £1,500–2,000/month (among the lowest in N1). 2-bed: £1,800–2,700/month. Ex-council 2-bed from £1,800–2,200. 20–30% cheaper than Angel core. Marcel's budget: comfortably achievable. Best option for maximising space within budget, but with quality-of-life trade-offs (noise, grittier environment)."
+        }
+      }
+    },
+    "N5": {
+      "overview": "N5 is one of London's most compact and desirable postcodes — essentially 'Highbury' in its entirety, with ~24,700 residents across just two postcode sectors. It sits as a quiet residential buffer between Angel/Upper Street (N1) to the south, Finsbury Park (N4) to the north, and Stoke Newington (N16) to the east. Dominated by Highbury Fields — 29 acres of green space with tennis courts, a lido, and Parkrun. Transport is excellent: Highbury & Islington station (Victoria line, Overground, Great Northern) provides Zone 2 access with King's Cross in 5 min and Liverpool Street in 15 min. Arsenal (Piccadilly) and Drayton Park (Great Northern) add coverage. Night Tube runs on both Victoria and Piccadilly lines. Rental market sits above N16 and N7 but below prime N1: average 2-bed £2,400–3,250/month. Marcel's budget is tight but achievable for period conversions away from the Fields, especially toward the Hackney border or ex-council stock. Key warning: N5 is overwhelmingly residential with almost zero creative/music infrastructure — no DJ venues, record shops, or rehearsal spaces within N5 proper. Emirates Stadium (60,700 capacity) creates significant match-day disruption ~25–30 times per season.",
+      "micro_areas": {
+        "Highbury Fields / Highbury Corner": {
+          "character": "The heart of N5 and its most prestigious address. Highbury Fields is framed by grand Georgian and early-Victorian townhouses — Highbury Place and Highbury Terrace feature some of London's finest period architecture. Highbury Corner (southern tip) is the commercial/transport hub where Upper Street meets Holloway Road — noisy but functional. Union Chapel (Grade I listed, technically N1) is the cultural anchor. Highbury Barn provides village-centre amenities: organic butcher, fishmonger, wine shops, bakeries, gastropubs. Warning: Highbury Corner is noisy (major junction). Target streets: Highbury Place, Highbury Terrace, Highbury Crescent, Calabria Road, Aubert Park.",
+          "transport": "PTAL 5–6a (Very Good to Excellent). Highbury & Islington — Victoria line (Night Tube), Overground, Great Northern. King's Cross 5 min (2 stops). Liverpool Street 15 min. Night Tube: Victoria line + Overground Windrush night service. Arsenal (Piccadilly, Night Tube) 8 min walk. Major bus routes along Holloway Road.",
+          "creative_scene": "Union Chapel (Compton Terrace) — 900-cap Grade I listed Gothic church, voted London's Best Live Music Venue by Time Out three times. Acoustic focus, not DJ/electronic oriented. Hen & Chickens Theatre — fringe theatre. The Compton Arms (Orwell's favourite pub). No record shops, DJ venues, or rehearsal spaces within the micro-area. Angel's venues 15–20 min walk south.",
+          "broadband": "Good coverage. Community Fibre FTTP widely deployed across Islington. Hyperoptic present in larger blocks. Virgin Media cable available as gigabit fallback. Georgian/Victorian terraces: address-level check recommended.",
+          "hosting_tolerance": "low",
+          "wfh_suitability": "good",
+          "value": "1-bed: £1,800–2,200/month. 2-bed: £2,500–3,500 overlooking Fields; £2,200–2,800 on less premium streets (Calabria Road, Corsica Street). N5's most expensive micro-area. Marcel's budget: spacious 1-bed achievable; 2-bed very tight unless ex-council or a street back from the Fields."
+        },
+        "Highbury New Park / Highbury East": {
+          "character": "N5's quietest and most architecturally impressive residential zone, centred on Highbury New Park — a wide, tree-lined avenue of substantial Victorian mansions (many converted into flats). The Highbury New Park Conservation Area protects this exceptional streetscape. Aberdeen Park — detached Victorian villas with almost rural feel. Highbury Quadrant — large circular council estate providing social housing diversity. Eastern edge (Mountgrove Road, Blackstock Road) bleeds into Hackney with grittier character. Warning: Blackstock Road can be noisy with through-traffic. Target streets: Highbury New Park, Aberdeen Park, Sotheby Road, Ormonde Place. For value: Highbury Quadrant, Riversdale Road.",
+          "transport": "PTAL 3–4 (Moderate) — between stations, N5's quietest transport zone. Arsenal (Piccadilly, Night Tube) ~8–10 min walk. Highbury & Islington ~10–15 min walk. Drayton Park (Great Northern) ~10 min walk. Clissold Park and Stoke Newington (N16) walkable in 10 min from northern end. Good cycling — quiet residential streets, LTN-protected.",
+          "creative_scene": "Almost entirely residential — no venues, studios, or creative infrastructure. Nearest creative assets: Union Chapel (15 min walk), Pirate Studios Dalston (15–20 min walk), N16's Church Street scene (10–15 min walk from northern end). Appeal is as a quiet, beautiful home base, not a creative neighbourhood.",
+          "broadband": "Good. Community Fibre FTTP coverage strong. Hyperoptic present in Highbury Quadrant and larger blocks. Victorian mansions split into flats: check at address level. Virgin Media cable widely available.",
+          "hosting_tolerance": "low",
+          "wfh_suitability": "good",
+          "value": "1-bed: £1,600–2,100/month. 2-bed: £2,000–2,800/month. Victorian mansion conversion on Highbury New Park: £2,500–3,000. Ex-council (Highbury Quadrant): £1,600–2,000. Period conversion on Sotheby/Riversdale Road: £2,100–2,500. Marcel's budget: achievable for good 2-bed on eastern side. Best value-for-quality in N5."
+        },
+        "Arsenal / Drayton Park": {
+          "character": "Defined by Emirates Stadium (60,704 capacity) and the former Highbury Stadium (now Highbury Square — luxury flats). Building stock mixed: Highbury Square/Stadium Mews (premium), Victorian terraces on Avenell Road and Gillespie Road, post-war council housing. Match-day impact is the defining characteristic: ~25–30 home games per season create road closures, extended CPZ hours, crowds of 60,000+ through residential streets, littering, and occasional antisocial behaviour. Warning: avoid streets within 300m of Emirates if noise/disruption bothers you: Avenell Road, Queensland Road, Hornsey Road. Target streets: Drayton Park (period terraces), Aubert Park, Kelvin Road.",
+          "transport": "PTAL 4–5 (Good). Arsenal station (Piccadilly, Night Tube) on Gillespie Road. Drayton Park (Great Northern — 15 min to Liverpool Street). Highbury & Islington ~10 min walk south. Night Tube: Arsenal (Piccadilly) directly. Warning: on match days, Arsenal station operates exit-only for ~45 min post-match.",
+          "creative_scene": "No creative infrastructure. Emirates hosts occasional concerts (major pop/rock, summer only). Nearest venues: The Lexington and The Scala on Pentonville Road (15–20 min). Islington Arts Factory (N7, 15 min walk) for community rehearsal space.",
+          "broadband": "Good to excellent. New-builds (Highbury Square, Stadium Mews) have FTTP as standard. Community Fibre and Hyperoptic active. Older terraces: check at address level. Virgin Media cable widely available.",
+          "hosting_tolerance": "moderate",
+          "wfh_suitability": "moderate",
+          "value": "1-bed: £1,700–2,200/month. 2-bed: £2,100–3,250/month. Highbury Stadium Square 2-bed: £2,700–3,250 (premium). Stadium Mews 2-bed: £2,400–2,700. Victorian conversion 2-bed: £2,000–2,400. Match-day disruption depresses rents ~5–10% vs equivalent quiet N5 streets. Marcel's budget: good fit. Victorian 2-bed at £2,000–2,400 realistic."
+        },
+        "Highbury Barn / Highbury Grove": {
+          "character": "The northern tip of N5, centred on the small commercial cluster at Highbury Barn (junction of Highbury Park and Highbury Grove). A charming mini-village: organic butcher, wine shop, bakeries, gastropubs. Highbury Grove runs south with a mix of Victorian terraces and council housing. Strong school catchment appeal making it very family-oriented. Warning: Highbury Grove can be busy with school-run traffic. Northern boundary transition to N4/Finsbury Park brings notable quality drop. Target streets: Highbury Park (the road), Lucerne Road, Hamilton Park, Calabria Road.",
+          "transport": "PTAL 3–4 (Moderate). Arsenal (Piccadilly, Night Tube) ~8 min walk. Finsbury Park (Victoria, Piccadilly, Great Northern) ~10 min walk north. Highbury & Islington ~12 min walk. Night Tube: Arsenal ~8 min walk; Finsbury Park ~10 min walk. Bus routes along Highbury Grove and Blackstock Road.",
+          "creative_scene": "The Snooty Fox (Grosvenor Avenue) — pub with occasional live music and comedy nights. No record shops, studios, or creative spaces. Union Chapel ~12 min walk south. Minimal direct relevance for Marcel but pleasant neighbourhood amenities.",
+          "broadband": "Good. Same Islington-wide Community Fibre/Hyperoptic/Virgin Media coverage. Modern builds have FTTP. Victorian terraces: address-level check needed.",
+          "hosting_tolerance": "low",
+          "wfh_suitability": "good",
+          "value": "1-bed: £1,650–2,000/month. 2-bed: £2,000–2,600/month. Modern development 2-bed: £2,200–2,500. Victorian conversion 2-bed: £2,000–2,400. More affordable than Highbury Fields frontage. Marcel's budget: comfortable fit for a 2-bed. Good value-for-money zone."
+        }
+      }
     }
   },
   "outcode_borough": {
@@ -527,14 +627,17 @@
     "N16": "Hackney",
     "N17": "Haringey",
     "E2": "Tower Hamlets",
-    "E8": "Hackney"
+    "E8": "Hackney",
+    "N1": "Islington",
+    "N5": "Islington"
   },
   "council_tax_monthly": {
     "Tower Hamlets": {"A": 97, "B": 114, "C": 130, "D": 146},
     "Hackney": {"A": 109, "B": 127, "C": 146, "D": 164},
     "Waltham Forest": {"A": 127, "B": 148, "C": 169, "D": 190},
     "Newham": {"A": 96, "B": 112, "C": 128, "D": 144},
-    "Haringey": {"A": 123, "B": 143, "C": 164, "D": 184}
+    "Haringey": {"A": 123, "B": 143, "C": 164, "D": 184},
+    "Islington": {"A": 112, "B": 130, "C": 149, "D": 168}
   },
   "crime_rates": {
     "E3": {"rate": 125, "vs_london": "+47%", "risk": "medium"},
@@ -547,14 +650,17 @@
     "N16": {"rate": 125, "vs_london": "+47%", "risk": "medium", "note": "Church St area higher (170) vs quieter High St side (82)"},
     "N17": {"rate": 143, "vs_london": "+68%", "risk": "medium-high"},
     "E2": {"rate": 138, "vs_london": "+62%", "risk": "medium-high", "note": "Shoreditch nightlife (300+ bars) significantly inflates anti-social behaviour and theft-from-person stats across southern E2. Bethnal Green residential streets are materially safer than the borough average."},
-    "E8": {"rate": 149, "vs_london": "+75%", "risk": "medium-high", "note": "Dalston's bar/restaurant concentration on Kingsland Road inflates stats. Theft from person double the Tower Hamlets rate (nightlife pickpocketing). Hackney Downs residential areas are calmer. Trend improving: -2.7% YoY."}
+    "E8": {"rate": 149, "vs_london": "+75%", "risk": "medium-high", "note": "Dalston's bar/restaurant concentration on Kingsland Road inflates stats. Theft from person double the Tower Hamlets rate (nightlife pickpocketing). Hackney Downs residential areas are calmer. Trend improving: -2.7% YoY."},
+    "N1": {"rate": 183, "vs_london": "+115%", "risk": "medium-high", "note": "Upper Street theft-from-person inflates the borough rate. Residential wards are materially safer: Canonbury 107/1,000, Mildmay 82/1,000 vs Angel/Upper Street ward 212/1,000. Trend modestly improving: -4.4% YoY."},
+    "N5": {"rate": 136, "vs_london": "+60%", "risk": "low-medium", "note": "Predominantly residential with limited commercial activity. Highbury ward records well below Islington's borough average. Match-day spikes near Emirates Stadium concentrated within 300m. Burglary above average due to converted Victorian houses with shared entrances."}
   },
   "rent_trends": {
     "Tower Hamlets": {"yoy_pct": 2.6, "direction": "rising"},
     "Hackney": {"yoy_pct": 4.3, "direction": "rising"},
     "Waltham Forest": {"yoy_pct": 2.8, "direction": "rising"},
     "Newham": {"yoy_pct": 8.9, "direction": "rising strongly"},
-    "Haringey": {"yoy_pct": 4.7, "direction": "rising"}
+    "Haringey": {"yoy_pct": 4.7, "direction": "rising"},
+    "Islington": {"yoy_pct": 1.1, "direction": "rising"}
   },
   "acoustic_profiles": {
     "victorian": {
@@ -716,6 +822,11 @@
       "process": "Most aggressive enforcer. Out-of-hours officers until 4am, seven days a week. 1,486 Community Protection Notices issued. Mandatory property licensing gives additional leverage — landlord licences can be revoked for persistent noise.",
       "threshold_info": "Fixed penalty: £100 residential, £400 commercial. Same statutory dB thresholds. Mandatory licensing means landlord is also incentivised to act.",
       "response_time": "Most extensive coverage (4am, 7 days/week). Fastest to escalate."
+    },
+    "Islington": {
+      "process": "Report via islington.gov.uk or 020 7527 7272. Initial response within 2 working days. Dedicated Noise Patrol: Sun–Thu 8pm–2am, Fri–Sat 10pm–4am. Escalation: informal advice → diary sheets → recording equipment → Abatement Notice (EPA 1990 s.80) → equipment seizure → prosecution (up to £5,000).",
+      "threshold_info": "No fixed dB threshold — statutory nuisance assessed subjectively by officers based on duration, frequency, time of day, and character of noise.",
+      "response_time": "Initial contact 2 working days. Noise Patrol aims for same-night response. Building enforcement cases takes weeks to months. Moderately active vs other inner London boroughs."
     }
   },
   "hosting_tolerance": {
@@ -784,6 +895,18 @@
       "notes": "Tottenham Hale creative corridor continues from N15. Haringey's lenient enforcement. Sarabande Foundation, Ten87 Studios, Five Miles. Earlier in gentrification cycle.",
       "known_friendly_areas": ["Markfield Road (N17 side)", "Ten87 Studios", "Tottenham Hale creative zone", "Five Miles"],
       "known_sensitive_areas": ["Northumberland Park residential"]
+    },
+    "N1": {
+      "rating": "moderate",
+      "notes": "Islington operates a Noise Patrol (Fri–Sat 10pm–4am). Victorian/Edwardian terrace conversions have very poor sound insulation. Warehouse conversions along Regent's Canal offer the best insulation. ~50% of borough is conservation areas with older, complaint-prone residents.",
+      "known_friendly_areas": ["De Beauvoir Town warehouse conversions along Kingsland Basin / Regent's Canal", "Hoxton / Shoreditch border (N1 5/6) warehouse conversions", "Upper Street / Angel fringe (existing nightlife tolerance)", "Pentonville / Caledonian Road (already noisy, transient population)"],
+      "known_sensitive_areas": ["Barnsbury / Thornhill Square (family-oriented Georgian conservation area)", "Canonbury west (Canonbury Square, Alwyne Villas)", "Duncan Terrace / Colebrooke Row (prime Georgian terraces)", "Council estate flats (very poor sound insulation between units)", "New-build apartment blocks (high quiet-living expectations)"]
+    },
+    "N5": {
+      "rating": "low",
+      "notes": "Overwhelmingly family-oriented residential. Victorian/Edwardian terraces with thin-floor/party-wall issues. No warehouse conversions or live-work spaces. Active residents' associations in conservation areas.",
+      "known_friendly_areas": ["Arsenal / Drayton Park new-build blocks (better insulation, younger demographic)", "Eastern edge toward Hackney border (Mountgrove Road, Riversdale Road)", "Ground-floor garden flats in detached Victorian houses"],
+      "known_sensitive_areas": ["Highbury Fields frontage (premium conservation area, wealthy families)", "Highbury New Park Conservation Area", "Highbury Barn / Highbury Grove (school-age family demographic)", "Aberdeen Park (secluded cul-de-sac, extremely quiet)", "Any upper-floor Victorian conversion (bass transmits through timber floors)"]
     }
   },
   "creative_scene": {
@@ -852,6 +975,18 @@
       "venues": ["Five Miles (café/bar/brewery/event space)", "Beavertown Brewery Taproom"],
       "creative_hubs": ["Sarabande Foundation (subsidised studios ~£1/sqft)", "Paxton17 creative quarter"],
       "summary": "Ten87 Studios is Tottenham's strongest creative asset — 30+ studios with dedicated soundproofing and listening bar. Sarabande Foundation (McQueen legacy) offers heavily subsidised creative space. Earlier in gentrification cycle than Hackney."
+    },
+    "N1": {
+      "rehearsal_spaces": ["Pirate Studios Dalston (42–56 Tottenham Road, N1 4BZ, 15+ DJ studios, 24/7, from £8.90/hr)", "REX Studio (near Highbury & Islington, boutique recording studio)", "John Henry's (16–24 Brewery Road, N7 9NH, 6 professional studios)", "London Sound Academy (Camden Town, DJ studios with turntable setups)"],
+      "venues": ["Spiritland (Coal Drops Yard, N1C 4AB — audiophile listening bar, bespoke Living Voice sound system)", "EGG London (Vale Royal, N7 9AP — 1,000-cap electronic club, 24hr weekend licence)", "Electrowerkz (7 Torrens Street, EC1V 1NQ — underground techno/goth/industrial, until 6am)", "The Lexington (Pentonville Road, N1 9JB — eclectic live music + DJs, until 4am)", "The Scala (275 Pentonville Road, N1 9NL — 1,000-cap, DJ nights)", "SUPERMAX Bar (King's Cross, N1C 4DN — hidden basement, Alpha Recording System)", "Goodbye Horses (De Beauvoir area — listening bar, Brilliant Corners founder)", "Ladybird Bar (Upper Street — basement DJ club, until 4am weekends)"],
+      "creative_hubs": ["Flashback Records (50 Essex Road, N1 8LR — two-floor vinyl shop, strong jazz/soul/hip hop)", "De Beauvoir Block (De Beauvoir Road, N1 4EN — creative coworking/studios)", "Cubitt Artists (8 Angel Mews, N1 9HH — gallery + 32 studios, closing April 2026)", "Victoria Miro Gallery (16 Wharf Road, N1 7RW)", "Impact Hub King's Cross (N1C 4AX — floating desk £150/month)", "Rose Lipman Building (De Beauvoir Town — creative hub in former library)"],
+      "summary": "Consumption-oriented creative zone — rich in venues, bars, and going-out culture but lighter on production infrastructure vs E8/E2. Standout assets: Spiritland (world-class sound system), Pirate Studios (24/7 DJ practice), Flashback Records (crate-digging), Electrowerkz and EGG London for clubbing. De Beauvoir Town bridges to Dalston's underground scene. No dedicated electronic music record shops within N1."
+    },
+    "N5": {
+      "rehearsal_spaces": ["None within N5. Nearest: Pirate Studios Dalston (N1 4BZ, 15–20 min walk), Islington Arts Factory (N7, 15 min walk)"],
+      "venues": ["Union Chapel (N1 2UN, 3 min walk — 900-cap Gothic church, acoustic/folk/world focus)", "The Snooty Fox (N5 2NN — pub with occasional live music)"],
+      "creative_hubs": ["None within N5. Nearest: De Beauvoir Block (N1, 20 min), Flashback Records (N1, 12 min walk)"],
+      "summary": "N5 has zero DJ venues, record shops, rehearsal spaces, or creative coworking. Its appeal is as a high-quality, well-connected home base with quick access to Pirate Studios (20 min walk), Dalston (15–20 min), Angel/KX venues (10–15 min tube), and N16 (10 min walk from eastern N5)."
     }
   }
 }

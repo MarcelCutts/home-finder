@@ -22,6 +22,21 @@ VALID_MEDIA_TYPES: Final[tuple[str, ...]] = get_args(ImageMediaType)
 MAX_IMAGE_DIMENSION: Final = 1568
 
 
+def detect_media_type_from_bytes(data: bytes) -> ImageMediaType | None:
+    """Detect image media type from magic bytes (first 12 bytes)."""
+    if len(data) < 12:
+        return None
+    if data[:3] == b"\xff\xd8\xff":
+        return "image/jpeg"
+    if data[:4] == b"\x89PNG":
+        return "image/png"
+    if data[:4] == b"GIF8":
+        return "image/gif"
+    if data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+        return "image/webp"
+    return None
+
+
 def is_valid_media_type(value: str) -> TypeGuard[ImageMediaType]:
     """Check if a string is a valid image media type for Claude vision API."""
     return value in VALID_MEDIA_TYPES

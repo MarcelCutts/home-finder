@@ -16,6 +16,7 @@ from aiogram.exceptions import (
 )
 from tenacity import RetryCallState, retry, retry_if_exception_type, stop_after_attempt
 
+from home_finder.filters.fit_score import compute_fit_score, fit_tier_label
 from home_finder.logging import get_logger
 from home_finder.models import (
     SOURCE_NAMES,
@@ -82,11 +83,6 @@ def _html_link(url: str, text: str) -> str:
     """Build an HTML <a> tag with properly escaped URL and text."""
     return f'<a href="{html.escape(str(url), quote=True)}">{html.escape(text)}</a>'
 
-
-def _format_star_rating(rating: int) -> str:
-    """Return filled + empty stars for a 1-5 rating."""
-    filled = min(max(rating, 1), 5)
-    return "⭐" * filled + "☆" * (5 - filled)
 
 
 def _format_kitchen_info(analysis: PropertyQualityAnalysis) -> str:
@@ -220,7 +216,7 @@ def _format_header_lines(
     postcode: str,
     commute_minutes: int | None = None,
     transport_mode: TransportMode | None = None,
-    overall_rating: int | None = None,
+    fit_score: int | None = None,
     price_varies: bool = False,
     min_price: int = 0,
     max_price: int = 0,
@@ -234,10 +230,10 @@ def _format_header_lines(
     """
     lines = [f"<b>{html.escape(title)}</b>", ""]
 
-    # Merge star rating with price/beds on one line for density
+    # Merge fit score with price/beds on one line for density
     info_parts: list[str] = []
-    if overall_rating is not None:
-        info_parts.append(_format_star_rating(overall_rating))
+    if fit_score is not None:
+        info_parts.append(f"Fit {fit_score} ({fit_tier_label(fit_score)})")
     if price_varies:
         info_parts.append(f"£{min_price:,}-£{max_price:,}/mo")
     else:
@@ -428,6 +424,11 @@ def format_property_message(
     Returns:
         Formatted message string with HTML markup.
     """
+    fs = (
+        compute_fit_score(quality_analysis.model_dump(), prop.bedrooms)
+        if quality_analysis
+        else None
+    )
     lines = _format_header_lines(
         title=prop.title,
         price_pcm=prop.price_pcm,
@@ -436,7 +437,7 @@ def format_property_message(
         postcode=prop.postcode or "",
         commute_minutes=commute_minutes,
         transport_mode=transport_mode,
-        overall_rating=quality_analysis.overall_rating if quality_analysis else None,
+        fit_score=fs,
     )
 
     if quality_analysis:
@@ -469,6 +470,11 @@ def format_merged_property_message(
         Formatted message string with HTML markup.
     """
     prop = merged.canonical
+    fs = (
+        compute_fit_score(quality_analysis.model_dump(), prop.bedrooms)
+        if quality_analysis
+        else None
+    )
     lines = _format_header_lines(
         title=prop.title,
         price_pcm=prop.price_pcm,
@@ -477,7 +483,7 @@ def format_merged_property_message(
         postcode=prop.postcode or "",
         commute_minutes=commute_minutes,
         transport_mode=transport_mode,
-        overall_rating=quality_analysis.overall_rating if quality_analysis else None,
+        fit_score=fs,
         price_varies=merged.price_varies,
         min_price=merged.min_price,
         max_price=merged.max_price,
@@ -535,6 +541,11 @@ def format_merged_property_caption(
     4. Value note (lowest priority)
     """
     prop = merged.canonical
+    fs = (
+        compute_fit_score(quality_analysis.model_dump(), prop.bedrooms)
+        if quality_analysis
+        else None
+    )
     header_lines = _format_header_lines(
         title=prop.title,
         price_pcm=prop.price_pcm,
@@ -543,7 +554,7 @@ def format_merged_property_caption(
         postcode=prop.postcode or "",
         commute_minutes=commute_minutes,
         transport_mode=transport_mode,
-        overall_rating=quality_analysis.overall_rating if quality_analysis else None,
+        fit_score=fs,
         price_varies=merged.price_varies,
         min_price=merged.min_price,
         max_price=merged.max_price,
@@ -911,11 +922,12 @@ class TelegramNotifier:
         Returns:
             True if notification was sent successfully.
         """
-        is_high_rated = (
-            quality_analysis is not None
-            and quality_analysis.overall_rating is not None
-            and quality_analysis.overall_rating >= 4
+        _fs = (
+            compute_fit_score(quality_analysis.model_dump(), merged.canonical.bedrooms)
+            if quality_analysis
+            else None
         )
+        is_high_rated = _fs is not None and _fs >= 70
 
         try:
             bot = self._get_bot()

@@ -307,6 +307,19 @@ WARD_TO_MICRO_AREA: Final[dict[tuple[str, str], str]] = {
     ("N17", "Tottenham Hale"): "Tottenham Hale",
     ("N17", "Bruce Castle"): "Bruce Grove / High Road N17",
     ("N17", "West Green"): "Bruce Grove / High Road N17",
+    # N1 — Islington (+ Hackney for De Beauvoir, Camden for King's Cross)
+    ("N1", "Caledonian"): "King's Cross / Caledonian Road",
+    ("N1", "St Peter's & Canalside"): "Angel / Upper Street",
+    ("N1", "St Mary's & St James'"): "Angel / Upper Street",
+    ("N1", "Barnsbury"): "Barnsbury / Thornhill Square",
+    ("N1", "Laycock"): "Canonbury",
+    ("N1", "De Beauvoir"): "De Beauvoir Town",
+    ("N1", "King's Cross"): "Pentonville / Claremont",
+    # N5 — Islington
+    ("N5", "Highbury"): "Highbury Fields / Highbury Corner",
+    ("N5", "Arsenal"): "Arsenal / Drayton Park",
+    ("N5", "Laycock"): "Highbury Fields / Highbury Corner",
+    ("N5", "Mildmay"): "Highbury Barn / Highbury Grove",
 }
 
 

@@ -41,6 +41,7 @@ from home_finder.models.quality import _QUALITY_SUB_MODEL_FIELDS
 from home_finder.utils.image_cache import find_cached_file, is_valid_image_url, read_image_bytes
 from home_finder.utils.image_processing import (
     ImageMediaType,
+    detect_media_type_from_bytes,
 )
 from home_finder.utils.image_processing import (
     resize_image_bytes as _resize_image_bytes,
@@ -57,8 +58,9 @@ logger = get_logger(__name__)
 DELAY_BETWEEN_CALLS: Final = 0.2  # seconds (1000 RPM = 0.06s minimum, add buffer)
 
 # SDK retry configuration
-MAX_RETRIES: Final = 3
-REQUEST_TIMEOUT: Final = 180.0  # 3 minutes for vision requests
+MAX_RETRIES: Final = 1  # 2 total attempts (down from 3)
+PHASE1_REQUEST_TIMEOUT: Final = 240.0  # 4 min: vision + thinking can take 120-260s
+PHASE2_REQUEST_TIMEOUT: Final = 60.0  # 1 min: text-only evaluation
 
 # Circuit breaker: stop hammering the API after consecutive outage-indicating errors
 _CIRCUIT_BREAKER_THRESHOLD: Final = 3
@@ -730,7 +732,7 @@ class PropertyQualityFilter:
             self._client = _anthropic.AsyncAnthropic(
                 api_key=self._api_key,
                 max_retries=MAX_RETRIES,  # SDK handles retry with exponential backoff
-                timeout=httpx.Timeout(REQUEST_TIMEOUT),  # 3 min for vision requests
+                timeout=httpx.Timeout(PHASE1_REQUEST_TIMEOUT, connect=5.0),  # Default to Phase 1 timeout
             )
         return self._client
 
@@ -786,7 +788,16 @@ class PropertyQualityFilter:
             logger.warning("cached_image_unreadable", url=url, cached_path=str(cached_path))
             return None
 
-        media_type = self._get_media_type(url)
+        url_type = self._get_media_type(url)
+        detected = detect_media_type_from_bytes(data)
+        media_type = detected if detected is not None else url_type
+        if detected is not None and detected != url_type:
+            logger.info(
+                "mime_type_corrected",
+                url=url,
+                url_type=url_type,
+                detected_type=detected,
+            )
         logger.debug(
             "image_block_from_cache",
             url=url,
@@ -1081,7 +1092,12 @@ class PropertyQualityFilter:
                     "name": "property_visual_analysis",
                 }
 
-            response = await client.messages.create(**create_kwargs)
+            import httpx as _httpx
+
+            response = await client.messages.create(
+                **create_kwargs,
+                timeout=_httpx.Timeout(PHASE1_REQUEST_TIMEOUT, connect=5.0),
+            )
 
             if hasattr(response, "usage"):
                 usage = response.usage
@@ -1121,9 +1137,13 @@ class PropertyQualityFilter:
                 request_id=getattr(e, "_request_id", None),
             )
             err_msg = str(e)
-            if (
-                "Could not process image" in err_msg or "file format is invalid" in err_msg
-            ) and data_dir:
+            _image_error_patterns = (
+                "Could not process image",
+                "file format is invalid",
+                "media_type",
+                "does not match",
+            )
+            if any(p in err_msg for p in _image_error_patterns) and data_dir:
                 from home_finder.utils.image_cache import clear_image_cache
 
                 clear_image_cache(data_dir, property_id)
@@ -1282,6 +1302,8 @@ class PropertyQualityFilter:
                 acoustic_context=acoustic_context,
             )
 
+            import httpx as _httpx
+
             eval_response = await client.messages.create(
                 model="claude-sonnet-4-6",
                 max_tokens=4096,
@@ -1299,6 +1321,7 @@ class PropertyQualityFilter:
                         "schema": _eval_json_schema(),
                     }
                 },
+                timeout=_httpx.Timeout(PHASE2_REQUEST_TIMEOUT, connect=5.0),
             )
 
             if hasattr(eval_response, "usage"):

@@ -17,6 +17,50 @@ from typing import Any, Final, TypedDict
 # Triggers automatic recomputation via _backfill_fit_scores().
 FIT_SCORE_VERSION: Final = 1
 
+
+# ── Fit tiers (single source of truth) ────────────────────────────────────────
+# Ordered high→low.  Every consumer (Python, Jinja2, JS) should derive labels,
+# CSS classes, and filter options from this tuple — never hard-code thresholds.
+
+
+class FitTier(TypedDict):
+    min: int  # inclusive lower bound
+    label: str  # "Great Fit", "Good Fit", …
+    tier_class: str  # CSS class for tier pill (e.g. "fit-tier-great")
+    color_class: str  # CSS class for badge/donut   (e.g. "fit-green")
+
+
+FIT_TIERS: Final[tuple[FitTier, ...]] = (
+    {"min": 80, "label": "Great Fit", "tier_class": "fit-tier-great", "color_class": "fit-green"},
+    {"min": 60, "label": "Good Fit", "tier_class": "fit-tier-good", "color_class": "fit-accent"},
+    {"min": 40, "label": "Okay", "tier_class": "fit-tier-okay", "color_class": "fit-amber"},
+    {"min": 0, "label": "Poor Fit", "tier_class": "fit-tier-poor", "color_class": "fit-dim"},
+)
+
+
+def fit_tier_label(score: int) -> str:
+    """Return tier label for a 0-100 fit score."""
+    for tier in FIT_TIERS:
+        if score >= tier["min"]:
+            return tier["label"]
+    return FIT_TIERS[-1]["label"]
+
+
+def fit_tier_class(score: int) -> str:
+    """Return CSS tier class for a 0-100 fit score."""
+    for tier in FIT_TIERS:
+        if score >= tier["min"]:
+            return tier["tier_class"]
+    return FIT_TIERS[-1]["tier_class"]
+
+
+def fit_color_class(score: int) -> str:
+    """Return CSS color class for a 0-100 fit score."""
+    for tier in FIT_TIERS:
+        if score >= tier["min"]:
+            return tier["color_class"]
+    return FIT_TIERS[-1]["color_class"]
+
 # ── Highlight/Lowlight signal scoring (used by _score_vibe cluster 6) ────────
 
 _HIGHLIGHT_SCORES: Final[dict[str, float]] = {
@@ -608,10 +652,11 @@ def _score_condition(analysis: dict[str, Any], _bedrooms: int) -> _DimensionResu
         # Map 1→0, 5→100
         score = (overall - 1) * 25
         signals += 1
+        condition_word = {5: "Excellent", 4: "Good", 3: "Fair", 2: "Poor", 1: "Very poor"}
         if overall >= 3:
-            factors.append({"label": f"Rated {overall}/5", "state": "earned"})
+            factors.append({"label": f"{condition_word.get(int(overall), 'Fair')} overall", "state": "earned"})
         else:
-            factors.append({"label": f"Rated {overall}/5", "state": "missed"})
+            factors.append({"label": f"{condition_word.get(int(overall), 'Poor')} overall", "state": "missed"})
     else:
         score = 50.0  # neutral default, but no signal
 

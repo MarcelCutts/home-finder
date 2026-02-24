@@ -11,6 +11,13 @@ if (mapEl && resultsEl) {
   let markersByPropertyId = {};
   let pinnedCardRequestId = 0;
 
+  // Fit tier thresholds (single source of truth in Python, injected via dashboard template)
+  var fitTiers = (function () {
+    var el = document.getElementById("fit-tiers-data");
+    if (!el) return [{ min: 80, label: "Great Fit", tier_class: "fit-tier-great" }, { min: 60, label: "Good Fit", tier_class: "fit-tier-good" }, { min: 40, label: "Okay", tier_class: "fit-tier-okay" }, { min: 0, label: "Poor Fit", tier_class: "fit-tier-poor" }];
+    try { return JSON.parse(el.textContent); } catch { return []; }
+  })();
+
   function readMapData() {
     const el = document.getElementById("properties-map-data");
     if (!el) return [];
@@ -83,20 +90,15 @@ if (mapEl && resultsEl) {
     meta.appendChild(document.createTextNode(" pcm"));
     container.appendChild(meta);
 
-    // Dot rating
-    if (p.rating && typeof p.rating === "number" && p.rating >= 1 && p.rating <= 5) {
-      const dots = document.createElement("span");
-      dots.className = "quality-dots quality-dots-" + p.rating;
-      dots.style.marginTop = "4px";
-      dots.style.display = "inline-block";
-      dots.appendChild(document.createTextNode(p.rating + "/5 "));
-      for (let d = 1; d <= 5; d++) {
-        var dot = document.createElement("span");
-        dot.className = "dot " + (d <= p.rating ? "filled" : "empty");
-        dot.textContent = "\u25CF";
-        dots.appendChild(dot);
-      }
-      container.appendChild(dots);
+    // Fit score pill
+    if (p.fit_score != null && typeof p.fit_score === "number") {
+      const pill = document.createElement("span");
+      var tier = fitTiers.find(function(t) { return p.fit_score >= t.min; }) || fitTiers[fitTiers.length - 1];
+      pill.className = "fit-tier-pill " + tier.tier_class;
+      pill.textContent = tier.label;
+      pill.style.marginTop = "4px";
+      pill.style.display = "inline-block";
+      container.appendChild(pill);
     }
 
     // One-line tagline
