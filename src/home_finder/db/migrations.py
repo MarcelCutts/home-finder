@@ -620,6 +620,71 @@ async def migrate_004_source_listings(conn: aiosqlite.Connection) -> None:
             )
 
 
+async def migrate_005_fix_source_listings_linkage(conn: aiosqlite.Connection) -> None:
+    """Link orphaned source_listings and deduplicate sources JSON.
+
+    Fixes two issues from the in-run dedup path:
+    1. Non-canonical source_listings with ``merged_id=NULL`` despite their
+       URL appearing in a golden record's ``source_urls`` JSON.
+    2. Duplicate entries in the ``sources`` JSON column (e.g.
+       ``['rightmove', 'zoopla', 'zoopla']``).
+    """
+    # --- Phase 1: Link orphaned source_listings by URL ---
+    # For each golden record, find source_listings whose URL appears
+    # in the property's source_urls JSON but have no merged_id.
+    cursor = await conn.execute(
+        "SELECT unique_id, source_urls FROM properties WHERE source_urls IS NOT NULL"
+    )
+    linked = 0
+    for row in await cursor.fetchall():
+        try:
+            urls_dict = json.loads(row["source_urls"])
+        except (json.JSONDecodeError, TypeError):
+            continue
+        urls = list(urls_dict.values())
+        if not urls:
+            continue
+        placeholders = ",".join("?" * len(urls))
+        result = await conn.execute(
+            f"UPDATE source_listings SET merged_id = ? "
+            f"WHERE url IN ({placeholders}) AND merged_id IS NULL",
+            [row["unique_id"], *urls],
+        )
+        linked += result.rowcount
+
+    if linked:
+        logger.info("migration_005_linked_orphaned_source_listings", count=linked)
+
+    # --- Phase 2: Deduplicate sources JSON ---
+    cursor = await conn.execute(
+        "SELECT unique_id, sources FROM properties WHERE sources IS NOT NULL"
+    )
+    deduped = 0
+    for row in await cursor.fetchall():
+        try:
+            sources = json.loads(row["sources"])
+        except (json.JSONDecodeError, TypeError):
+            continue
+        unique_sources = list(dict.fromkeys(sources))
+        if len(unique_sources) < len(sources):
+            await conn.execute(
+                "UPDATE properties SET sources = ? WHERE unique_id = ?",
+                (json.dumps(unique_sources), row["unique_id"]),
+            )
+            deduped += 1
+
+    if deduped:
+        logger.info("migration_005_deduplicated_sources_json", count=deduped)
+
+    # --- Phase 3: Add partial index for URL-based linking ---
+    # _link_source_listings_by_url queries WHERE url IN (...) AND merged_id IS NULL
+    # on every property save. This partial index covers that exact pattern.
+    await conn.execute("""
+        CREATE INDEX IF NOT EXISTS idx_source_listings_url_unlinked
+        ON source_listings(url) WHERE merged_id IS NULL
+    """)
+
+
 _MigrationFn = Callable[[aiosqlite.Connection], Coroutine[Any, Any, None]]
 
 MIGRATIONS: list[_MigrationFn] = [
@@ -627,6 +692,7 @@ MIGRATIONS: list[_MigrationFn] = [
     migrate_002_floor_area_sqm,
     migrate_003_source_aliases,
     migrate_004_source_listings,
+    migrate_005_fix_source_listings_linkage,
 ]
 
 

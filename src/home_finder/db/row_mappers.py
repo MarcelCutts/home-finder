@@ -181,10 +181,13 @@ async def row_to_merged_property(
     descriptions: dict[PropertySource, str] = {}
 
     if source_listings:
-        # Build from normalised source_listings rows
+        # Build from normalised source_listings rows (deduplicate by source)
+        seen_sources: set[PropertySource] = set()
         for sl in source_listings:
             src = PropertySource(sl["source"])
-            sources_list.append(src)
+            if src not in seen_sources:
+                sources_list.append(src)
+                seen_sources.add(src)
             source_urls[src] = HttpUrl(sl["url"])
             if sl["description"]:
                 descriptions[src] = sl["description"]
@@ -192,9 +195,9 @@ async def row_to_merged_property(
         min_price = min(prices) if prices else prop.price_pcm
         max_price = max(prices) if prices else prop.price_pcm
     else:
-        # Fall back to JSON parsing (backward compat)
+        # Fall back to JSON parsing (backward compat, deduplicate)
         if row["sources"]:
-            for s in json.loads(row["sources"]):
+            for s in dict.fromkeys(json.loads(row["sources"])):
                 sources_list.append(PropertySource(s))
         else:
             sources_list.append(prop.source)

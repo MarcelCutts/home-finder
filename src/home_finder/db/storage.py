@@ -22,6 +22,7 @@ from home_finder.db.row_mappers import (
     row_to_merged_property,
     row_to_property,
 )
+from home_finder.db.source_listing_ops import link_source_listings_by_url
 from home_finder.db.web_queries import WebQueryService
 from home_finder.filters.fit_score import compute_fit_score
 from home_finder.logging import get_logger
@@ -584,7 +585,8 @@ class PropertyStorage:
             # Rebuild denormalized caches from source_listings
             cursor = await conn.execute(
                 """SELECT source, url, description, price_pcm
-                   FROM source_listings WHERE merged_id = ?""",
+                   FROM source_listings WHERE merged_id = ?
+                   ORDER BY last_seen ASC""",
                 (existing_unique_id,),
             )
             rows = await cursor.fetchall()
@@ -592,7 +594,9 @@ class PropertyStorage:
                 logger.warning("update_merged_sources_no_listings", unique_id=existing_unique_id)
                 return
 
-            sources = [r["source"] for r in rows]
+            # Deduplicate sources (same platform may appear via multiple listings)
+            # ORDER BY last_seen ASC ensures last-write-wins for URLs/descriptions
+            sources = list(dict.fromkeys(r["source"] for r in rows))
             source_urls = {r["source"]: r["url"] for r in rows}
             descriptions = {
                 r["source"]: r["description"]
@@ -688,6 +692,10 @@ class PropertyStorage:
         # Keep source_listings in sync — write canonical source
         await self._upsert_source_listing(
             conn, merged.canonical, merged_id=merged.canonical.unique_id
+        )
+        # Link non-canonical source_listings by URL (in-run dedup absorbed sources)
+        await link_source_listings_by_url(
+            conn, merged.canonical.unique_id, merged.source_urls
         )
         await conn.commit()
 

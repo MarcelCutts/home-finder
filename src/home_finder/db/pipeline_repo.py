@@ -14,6 +14,7 @@ if TYPE_CHECKING:
 import aiosqlite
 
 from home_finder.db.row_mappers import build_merged_insert_columns, row_to_merged_property
+from home_finder.db.source_listing_ops import link_source_listings_by_url
 from home_finder.logging import get_logger
 from home_finder.models import (
     MergedProperty,
@@ -265,6 +266,9 @@ class PipelineRepository:
                 ),
             )
 
+            # Link non-canonical source_listings by URL (in-run dedup absorbed sources)
+            await link_source_listings_by_url(conn, prop.unique_id, merged.source_urls)
+
             # Save images (important for cross-run dedup image matching)
             images = list(merged.images)
             if merged.floorplan:
@@ -357,6 +361,8 @@ class PipelineRepository:
                 prop.unique_id,
             ),
         )
+        # Link non-canonical source_listings by URL (in-run dedup absorbed sources)
+        await link_source_listings_by_url(conn, prop.unique_id, merged.source_urls)
         await conn.commit()
         logger.debug("unenriched_property_saved", unique_id=merged.canonical.unique_id)
 
@@ -551,6 +557,9 @@ class PipelineRepository:
                     prop.unique_id,
                 ),
             )
+
+            # Link non-canonical source_listings by URL (in-run dedup absorbed sources)
+            await link_source_listings_by_url(conn, prop.unique_id, merged.source_urls)
 
             # Save images
             images = list(merged.images)
