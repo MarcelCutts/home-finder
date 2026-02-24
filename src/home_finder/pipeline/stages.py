@@ -90,6 +90,11 @@ async def _cross_run_deduplicate(
     Returns:
         CrossRunDedupResult with genuinely new properties and update count.
     """
+    # Ensure source_listings exist for new properties (may already exist
+    # from Step 1b; upsert is idempotent).  This is needed so that
+    # update_merged_sources can rebuild from source_listings.
+    await storage.upsert_source_listings([mp.canonical for mp in merged_to_notify])
+
     db_anchors = await storage.get_recent_properties_for_dedup(days=30)
     logger.info("loaded_dedup_anchors", anchor_count=len(db_anchors))
 
@@ -144,10 +149,6 @@ async def _cross_run_deduplicate(
 
             original_anchor = anchor_by_id[matched_anchor_id]
 
-            # Always update metadata (URLs, descriptions, prices)
-            await storage.update_merged_sources(matched_anchor_id, merged)
-            anchors_updated += 1
-
             # Track which new IDs were absorbed into this anchor
             absorbed_ids = [
                 new_url_to_unique_id[str(url)]
@@ -156,6 +157,12 @@ async def _cross_run_deduplicate(
             ]
             for aid in absorbed_ids:
                 absorbed_to_anchor[aid] = matched_anchor_id
+
+            # Link absorbed source_listings and rebuild denormalized caches
+            await storage.update_merged_sources(
+                matched_anchor_id, merged, absorbed_ids=absorbed_ids
+            )
+            anchors_updated += 1
 
             new_sources_added = [
                 s.value for s in set(merged.sources) - set(original_anchor.sources)
@@ -231,17 +238,20 @@ async def _cross_run_deduplicate(
             clear_image_cache(data_dir, uid)
         logger.debug("consumed_retry_cleaned", unique_id=uid)
 
-    # Record source aliases for absorbed properties so they're filtered as
-    # "already seen" on future runs (prevents redundant re-enrichment).
-    alias_tuples: list[tuple[str, str, str, str]] = []
+    # Safety net: re-link absorbed source_listings after the loop.
+    # update_merged_sources() already links inside the loop, but this
+    # second pass covers any edge case where an absorbed ID wasn't
+    # included in an update_merged_sources() call (e.g. if absorbed_ids
+    # calculation diverges from absorbed_to_anchor tracking).  Both calls
+    # are idempotent UPDATEs so the duplicate is harmless.
+    link_tuples: list[tuple[str, str]] = []
     for new_uid, anchor_id in absorbed_to_anchor.items():
         if new_uid in consumed_retries:
             continue
-        source, source_id = new_uid.split(":", 1)
-        alias_tuples.append((new_uid, source, source_id, anchor_id))
-    if alias_tuples:
-        await storage.record_source_aliases(alias_tuples)
-        logger.info("source_aliases_recorded", count=len(alias_tuples))
+        link_tuples.append((new_uid, anchor_id))
+    if link_tuples:
+        await storage.link_source_listings(link_tuples)
+        logger.info("source_listings_linked", count=len(link_tuples))
 
     # Build per-property fates for observability
     fates: list[dict[str, str | int]] = []
@@ -781,6 +791,10 @@ async def _run_pre_analysis_pipeline(
     if scrape_result is None:
         return None
     all_properties, scraper_metrics = scrape_result
+
+    # Step 1b: Record all scraped listings in source_listings
+    sl_count = await storage.upsert_source_listings(all_properties)
+    logger.info("source_listings_upserted", count=sl_count)
 
     # Step 2: Criteria + location filters
     t0 = time.monotonic()

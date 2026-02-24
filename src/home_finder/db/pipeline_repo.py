@@ -230,6 +230,41 @@ class PipelineRepository:
                 values,
             )
 
+            # Keep source_listings in sync
+            now = datetime.now(UTC).isoformat()
+            await conn.execute(
+                """
+                INSERT INTO source_listings (
+                    unique_id, source, source_id, url, title, price_pcm,
+                    bedrooms, address, postcode, latitude, longitude,
+                    description, image_url, available_from, first_seen,
+                    last_seen, merged_id
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(unique_id) DO UPDATE SET
+                    last_seen = excluded.last_seen,
+                    merged_id = COALESCE(excluded.merged_id, merged_id)
+                """,
+                (
+                    prop.unique_id,
+                    prop.source.value,
+                    prop.source_id,
+                    str(prop.url),
+                    prop.title,
+                    prop.price_pcm,
+                    prop.bedrooms,
+                    prop.address,
+                    prop.postcode,
+                    prop.latitude,
+                    prop.longitude,
+                    prop.description,
+                    str(prop.image_url) if prop.image_url else None,
+                    prop.available_from.isoformat() if prop.available_from else None,
+                    prop.first_seen.isoformat(),
+                    now,
+                    prop.unique_id,
+                ),
+            )
+
             # Save images (important for cross-run dedup image matching)
             images = list(merged.images)
             if merged.floorplan:
@@ -286,6 +321,41 @@ class PipelineRepository:
                 enrichment_attempts = enrichment_attempts + 1
         """,
             values,
+        )
+        # Keep source_listings in sync
+        prop = merged.canonical
+        now = datetime.now(UTC).isoformat()
+        await conn.execute(
+            """
+            INSERT INTO source_listings (
+                unique_id, source, source_id, url, title, price_pcm,
+                bedrooms, address, postcode, latitude, longitude,
+                description, image_url, available_from, first_seen,
+                last_seen, merged_id
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(unique_id) DO UPDATE SET
+                last_seen = excluded.last_seen,
+                merged_id = COALESCE(excluded.merged_id, merged_id)
+            """,
+            (
+                prop.unique_id,
+                prop.source.value,
+                prop.source_id,
+                str(prop.url),
+                prop.title,
+                prop.price_pcm,
+                prop.bedrooms,
+                prop.address,
+                prop.postcode,
+                prop.latitude,
+                prop.longitude,
+                prop.description,
+                str(prop.image_url) if prop.image_url else None,
+                prop.available_from.isoformat() if prop.available_from else None,
+                prop.first_seen.isoformat(),
+                now,
+                prop.unique_id,
+            ),
         )
         await conn.commit()
         logger.debug("unenriched_property_saved", unique_id=merged.canonical.unique_id)
@@ -440,6 +510,46 @@ class PipelineRepository:
                     descriptions_json = COALESCE(excluded.descriptions_json, descriptions_json)
                 """,
                 values,
+            )
+
+            # Keep source_listings in sync
+            now = datetime.now(UTC).isoformat()
+            await conn.execute(
+                """
+                INSERT INTO source_listings (
+                    unique_id, source, source_id, url, title, price_pcm,
+                    bedrooms, address, postcode, latitude, longitude,
+                    description, image_url, available_from, first_seen,
+                    last_seen, merged_id
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(unique_id) DO UPDATE SET
+                    price_pcm = excluded.price_pcm,
+                    title = excluded.title,
+                    last_seen = excluded.last_seen,
+                    latitude = COALESCE(excluded.latitude, latitude),
+                    longitude = COALESCE(excluded.longitude, longitude),
+                    postcode = COALESCE(excluded.postcode, postcode),
+                    merged_id = COALESCE(excluded.merged_id, merged_id)
+                """,
+                (
+                    prop.unique_id,
+                    prop.source.value,
+                    prop.source_id,
+                    str(prop.url),
+                    prop.title,
+                    prop.price_pcm,
+                    prop.bedrooms,
+                    prop.address,
+                    prop.postcode,
+                    prop.latitude,
+                    prop.longitude,
+                    prop.description,
+                    str(prop.image_url) if prop.image_url else None,
+                    prop.available_from.isoformat() if prop.available_from else None,
+                    prop.first_seen.isoformat(),
+                    now,
+                    prop.unique_id,
+                ),
             )
 
             # Save images

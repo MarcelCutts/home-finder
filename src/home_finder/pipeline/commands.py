@@ -226,7 +226,9 @@ async def run_dedup_existing(settings: Settings) -> None:
 
             anchor_id = merged.canonical.unique_id
             # Update DB anchor with merged sources
-            await storage.update_merged_sources(anchor_id, merged)
+            await storage.update_merged_sources(
+                anchor_id, merged, absorbed_ids=absorbed_into_this
+            )
 
             # Copy cached images and delete absorbed properties
             for absorbed_id in absorbed_into_this:

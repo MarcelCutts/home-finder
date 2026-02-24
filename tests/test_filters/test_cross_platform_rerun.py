@@ -207,6 +207,8 @@ class TestCrossPlatformRerun:
         await storage.mark_notified(OPENRENT_FLAT.unique_id)
 
         # Run 2: Zoopla listing appears as "new" (different unique_id)
+        # Simulate scrape-time write of Zoopla source_listing
+        await storage.upsert_source_listings([ZOOPLA_SAME_FLAT])
         merged_zp = _make_merged(ZOOPLA_SAME_FLAT)
 
         # Load DB anchors and combine with new properties for dedup
@@ -218,9 +220,11 @@ class TestCrossPlatformRerun:
         assert len(genuinely_new) == 0, "Zoopla listing should not be genuinely new"
         assert len(anchors_updated) == 1, "Anchor should have gained a source"
 
-        # Update the DB
+        # Update the DB — link absorbed source_listing and rebuild caches
         anchor_id, updated = anchors_updated[0]
-        await storage.update_merged_sources(anchor_id, updated)
+        await storage.update_merged_sources(
+            anchor_id, updated, absorbed_ids=[ZOOPLA_SAME_FLAT.unique_id]
+        )
 
         # Verify DB state
         tracked = await storage.get_property(OPENRENT_FLAT.unique_id)
@@ -265,6 +269,9 @@ class TestCrossPlatformRerun:
         merged_or = _make_merged(OPENRENT_FLAT)
         await storage.save_merged_property(merged_or)
 
+        # Simulate scrape-time write of Zoopla source_listing
+        await storage.upsert_source_listings([ZOOPLA_SAME_FLAT])
+
         # Load anchors and simulate dedup
         db_anchors = await storage.get_recent_properties_for_dedup(days=30)
         merged_zp = _make_merged(ZOOPLA_SAME_FLAT)
@@ -273,10 +280,11 @@ class TestCrossPlatformRerun:
         assert len(anchors_updated) == 1
 
         anchor_id, updated = anchors_updated[0]
-        await storage.update_merged_sources(anchor_id, updated)
+        await storage.update_merged_sources(
+            anchor_id, updated, absorbed_ids=[ZOOPLA_SAME_FLAT.unique_id]
+        )
 
         # Check price range in DB
-
         conn = await storage._get_connection()
         cursor = await conn.execute(
             "SELECT min_price, max_price FROM properties WHERE unique_id = ?",
@@ -341,13 +349,16 @@ class TestCrossPlatformRerun:
         assert tracked is not None
         assert tracked.notification_status == NotificationStatus.SENT
 
-        # Simulate cross-run dedup → update sources
+        # Simulate scrape-time write + cross-run dedup
+        await storage.upsert_source_listings([ZOOPLA_SAME_FLAT])
         db_anchors = await storage.get_recent_properties_for_dedup(days=30)
         merged_zp = _make_merged(ZOOPLA_SAME_FLAT)
 
         _, anchors_updated = await _split_dedup_results([merged_zp], db_anchors)
         for anchor_id, merged in anchors_updated:
-            await storage.update_merged_sources(anchor_id, merged)
+            await storage.update_merged_sources(
+                anchor_id, merged, absorbed_ids=[ZOOPLA_SAME_FLAT.unique_id]
+            )
 
         # notification_status must remain "sent"
         tracked = await storage.get_property(OPENRENT_FLAT.unique_id)
@@ -380,13 +391,16 @@ class TestCrossPlatformRerun:
         )
         await storage.save_quality_analysis(OPENRENT_FLAT.unique_id, analysis)
 
-        # Update sources
+        # Simulate scrape-time write + cross-run dedup
+        await storage.upsert_source_listings([ZOOPLA_SAME_FLAT])
         db_anchors = await storage.get_recent_properties_for_dedup(days=30)
         merged_zp = _make_merged(ZOOPLA_SAME_FLAT)
 
         _, anchors_updated = await _split_dedup_results([merged_zp], db_anchors)
         for anchor_id, merged in anchors_updated:
-            await storage.update_merged_sources(anchor_id, merged)
+            await storage.update_merged_sources(
+                anchor_id, merged, absorbed_ids=[ZOOPLA_SAME_FLAT.unique_id]
+            )
 
         # Quality analysis must still exist
         qa = await storage.get_quality_analysis(OPENRENT_FLAT.unique_id)
@@ -404,11 +418,15 @@ class TestCrossPlatformRerun:
         merged_or = _make_merged(OPENRENT_FLAT)
         await storage.save_merged_property(merged_or)
 
+        await storage.upsert_source_listings([ZOOPLA_SAME_FLAT])
         db_anchors = await storage.get_recent_properties_for_dedup(days=30)
         merged_zp = _make_merged(ZOOPLA_SAME_FLAT)
         _, first_update = await _split_dedup_results([merged_zp], db_anchors)
         assert len(first_update) == 1
-        await storage.update_merged_sources(first_update[0][0], first_update[0][1])
+        await storage.update_merged_sources(
+            first_update[0][0], first_update[0][1],
+            absorbed_ids=[ZOOPLA_SAME_FLAT.unique_id],
+        )
 
         # Now re-scrape just OpenRent (subset of anchor's known sources)
         db_anchors = await storage.get_recent_properties_for_dedup(days=30)
@@ -430,11 +448,15 @@ class TestCrossPlatformRerun:
         merged_or = _make_merged(OPENRENT_FLAT)
         await storage.save_merged_property(merged_or)
 
+        await storage.upsert_source_listings([ZOOPLA_SAME_FLAT])
         db_anchors = await storage.get_recent_properties_for_dedup(days=30)
         merged_zp = _make_merged(ZOOPLA_SAME_FLAT)
         _, first_update = await _split_dedup_results([merged_zp], db_anchors)
         assert len(first_update) == 1
-        await storage.update_merged_sources(first_update[0][0], first_update[0][1])
+        await storage.update_merged_sources(
+            first_update[0][0], first_update[0][1],
+            absorbed_ids=[ZOOPLA_SAME_FLAT.unique_id],
+        )
 
         # Re-scrape both platforms (typical production scenario)
         db_anchors = await storage.get_recent_properties_for_dedup(days=30)

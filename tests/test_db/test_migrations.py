@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from unittest.mock import patch
 
 import aiosqlite
@@ -58,6 +59,7 @@ class TestRunMigrations:
             "scraper_runs",
             "property_events",
             "source_aliases",
+            "source_listings",
         }
         assert expected.issubset(tables), f"Missing tables: {expected - tables}"
 
@@ -197,5 +199,154 @@ class TestRunMigrations:
             "idx_enquiry_log_property",
             "idx_source_aliases_anchor",
             "idx_source_aliases_source",
+            "idx_source_listings_source",
+            "idx_source_listings_merged",
+            "idx_source_listings_unmatched",
         }
         assert expected_indexes.issubset(indexes), f"Missing indexes: {expected_indexes - indexes}"
+
+
+class TestBackfillSourceListings:
+    """Tests for the source_listings backfill in migrate_004."""
+
+    async def test_backfill_creates_canonical_source_listings(
+        self, fresh_conn: aiosqlite.Connection
+    ):
+        """Pre-populated properties produce one source_listing each with merged_id set."""
+        # Run all migrations except 004
+        from home_finder.db.migrations import (
+            migrate_001_initial_schema,
+            migrate_002_floor_area_sqm,
+            migrate_003_source_aliases,
+        )
+
+        await fresh_conn.execute("BEGIN IMMEDIATE")
+        await migrate_001_initial_schema(fresh_conn)
+        await fresh_conn.execute("PRAGMA user_version = 1")
+        await fresh_conn.commit()
+        await fresh_conn.execute("BEGIN IMMEDIATE")
+        await migrate_002_floor_area_sqm(fresh_conn)
+        await fresh_conn.execute("PRAGMA user_version = 2")
+        await fresh_conn.commit()
+        await fresh_conn.execute("BEGIN IMMEDIATE")
+        await migrate_003_source_aliases(fresh_conn)
+        await fresh_conn.execute("PRAGMA user_version = 3")
+        await fresh_conn.commit()
+
+        # Insert a property
+        await fresh_conn.execute(
+            """INSERT INTO properties (
+                unique_id, source, source_id, url, title, price_pcm,
+                bedrooms, address, postcode, first_seen, notification_status
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                "openrent:123",
+                "openrent",
+                "123",
+                "https://openrent.com/123",
+                "Nice flat",
+                2000,
+                2,
+                "123 Mare Street",
+                "E8 3RH",
+                "2025-01-15T10:00:00",
+                "sent",
+            ),
+        )
+        await fresh_conn.commit()
+
+        # Now run migration 004
+        await run_migrations(fresh_conn)
+
+        cursor = await fresh_conn.execute(
+            "SELECT * FROM source_listings WHERE unique_id = ?", ("openrent:123",)
+        )
+        row = await cursor.fetchone()
+        assert row is not None
+        assert row["source"] == "openrent"
+        assert row["source_id"] == "123"
+        assert row["merged_id"] == "openrent:123"
+        assert row["is_backfilled"] == 0
+        assert row["price_pcm"] == 2000
+
+    async def test_backfill_creates_secondary_from_aliases(
+        self, fresh_conn: aiosqlite.Connection
+    ):
+        """Source aliases produce source_listings with is_backfilled=1 and correct merged_id."""
+        from home_finder.db.migrations import (
+            migrate_001_initial_schema,
+            migrate_002_floor_area_sqm,
+            migrate_003_source_aliases,
+        )
+
+        await fresh_conn.execute("BEGIN IMMEDIATE")
+        await migrate_001_initial_schema(fresh_conn)
+        await fresh_conn.execute("PRAGMA user_version = 1")
+        await fresh_conn.commit()
+        await fresh_conn.execute("BEGIN IMMEDIATE")
+        await migrate_002_floor_area_sqm(fresh_conn)
+        await fresh_conn.execute("PRAGMA user_version = 2")
+        await fresh_conn.commit()
+        await fresh_conn.execute("BEGIN IMMEDIATE")
+        await migrate_003_source_aliases(fresh_conn)
+        await fresh_conn.execute("PRAGMA user_version = 3")
+        await fresh_conn.commit()
+
+        # Insert an anchor property with source_urls JSON
+        source_urls = json.dumps({
+            "openrent": "https://openrent.com/123",
+            "zoopla": "https://zoopla.co.uk/456",
+        })
+        await fresh_conn.execute(
+            """INSERT INTO properties (
+                unique_id, source, source_id, url, title, price_pcm,
+                bedrooms, address, postcode, first_seen, notification_status,
+                sources, source_urls
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                "openrent:123",
+                "openrent",
+                "123",
+                "https://openrent.com/123",
+                "Nice flat",
+                2000,
+                2,
+                "123 Mare Street",
+                "E8 3RH",
+                "2025-01-15T10:00:00",
+                "sent",
+                json.dumps(["openrent", "zoopla"]),
+                source_urls,
+            ),
+        )
+        # Insert alias
+        await fresh_conn.execute(
+            """INSERT INTO source_aliases (unique_id, source, source_id, anchor_id)
+               VALUES (?, ?, ?, ?)""",
+            ("zoopla:456", "zoopla", "456", "openrent:123"),
+        )
+        await fresh_conn.commit()
+
+        # Run migration 004
+        await run_migrations(fresh_conn)
+
+        # Check canonical source listing
+        cursor = await fresh_conn.execute(
+            "SELECT * FROM source_listings WHERE unique_id = ?", ("openrent:123",)
+        )
+        canonical = await cursor.fetchone()
+        assert canonical is not None
+        assert canonical["is_backfilled"] == 0
+
+        # Check secondary source listing from alias
+        cursor = await fresh_conn.execute(
+            "SELECT * FROM source_listings WHERE unique_id = ?", ("zoopla:456",)
+        )
+        secondary = await cursor.fetchone()
+        assert secondary is not None
+        assert secondary["source"] == "zoopla"
+        assert secondary["source_id"] == "456"
+        assert secondary["merged_id"] == "openrent:123"
+        assert secondary["is_backfilled"] == 1
+        # URL should come from source_urls JSON
+        assert secondary["url"] == "https://zoopla.co.uk/456"

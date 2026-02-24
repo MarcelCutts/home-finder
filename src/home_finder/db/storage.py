@@ -265,6 +265,8 @@ class PropertyStorage:
         """,
             values,
         )
+        # Keep source_listings in sync
+        await self._upsert_source_listing(conn, prop, merged_id=prop.unique_id)
         await conn.commit()
 
         logger.debug("property_saved", unique_id=prop.unique_id)
@@ -272,21 +274,21 @@ class PropertyStorage:
     async def is_seen(self, unique_id: str) -> bool:
         """Check if a property has been seen before.
 
-        Checks both canonical properties and absorbed aliases.
+        A property is "seen" if it has been promoted to a golden record
+        (``merged_id IS NOT NULL`` in ``source_listings``).  Unlinked
+        scrape-time entries are not considered "seen" — they haven't
+        passed through the pipeline yet.
 
         Args:
             unique_id: Unique property identifier.
 
         Returns:
-            True if property exists in database or source_aliases.
+            True if property exists in source_listings with a merged_id.
         """
         conn = await self._get_connection()
         cursor = await conn.execute(
-            "SELECT 1 FROM properties WHERE unique_id = ?"
-            " UNION ALL"
-            " SELECT 1 FROM source_aliases WHERE unique_id = ?"
-            " LIMIT 1",
-            (unique_id, unique_id),
+            "SELECT 1 FROM source_listings WHERE unique_id = ? AND merged_id IS NOT NULL LIMIT 1",
+            (unique_id,),
         )
         row = await cursor.fetchone()
         return row is not None
@@ -394,17 +396,17 @@ class PropertyStorage:
         logger.debug("property_notification_failed", unique_id=unique_id)
 
     async def _get_seen_ids(self, unique_ids: list[str]) -> set[str]:
-        """Batch-check which unique IDs already exist in the database.
+        """Batch-check which unique IDs have been promoted to golden records.
 
-        Checks both the ``properties`` table (canonical IDs) and the
-        ``source_aliases`` table (IDs absorbed into existing anchors during
-        cross-run dedup).
+        Only source_listings with ``merged_id IS NOT NULL`` are considered
+        "seen" — unlinked scrape-time entries haven't passed through the
+        pipeline yet and should not block processing.
 
         Args:
             unique_ids: List of unique IDs to check.
 
         Returns:
-            Set of IDs that exist in the database.
+            Set of IDs that have been promoted in source_listings.
         """
         if not unique_ids:
             return set()
@@ -415,10 +417,9 @@ class PropertyStorage:
             chunk = unique_ids[i : i + chunk_size]
             placeholders = ",".join("?" * len(chunk))
             cursor = await conn.execute(
-                f"SELECT unique_id FROM properties WHERE unique_id IN ({placeholders})"
-                f" UNION ALL"
-                f" SELECT unique_id FROM source_aliases WHERE unique_id IN ({placeholders})",
-                chunk + chunk,
+                f"SELECT unique_id FROM source_listings"
+                f" WHERE unique_id IN ({placeholders}) AND merged_id IS NOT NULL",
+                chunk,
             )
             rows = await cursor.fetchall()
             seen.update(row[0] for row in rows)
@@ -437,16 +438,19 @@ class PropertyStorage:
         return [p for p in properties if p.unique_id not in seen]
 
     async def filter_new_merged(self, properties: list[MergedProperty]) -> list[MergedProperty]:
-        """Filter to only merged properties not yet seen.
+        """Filter to only merged properties not yet promoted to golden records.
 
-        A merged property is considered "seen" if its canonical unique_id exists
-        in the database.
+        A merged property is considered "seen" if its canonical unique_id has
+        ``merged_id IS NOT NULL`` in ``source_listings`` — i.e. it was promoted
+        to a golden record in a prior run.  Listings that were only scraped but
+        never saved (filtered out, failed enrichment) are *not* considered seen
+        and will be re-processed.
 
         Args:
             properties: List of merged properties to filter.
 
         Returns:
-            List of merged properties not in the database.
+            List of merged properties not yet promoted.
         """
         seen = await self._get_seen_ids([m.canonical.unique_id for m in properties])
         return [m for m in properties if m.canonical.unique_id not in seen]
@@ -455,8 +459,8 @@ class PropertyStorage:
         """Delete a property and all related rows from the database.
 
         Used to clean up unenriched rows consumed by cross-platform anchor merges.
-        When an anchor is deleted, its source_aliases are also removed so the
-        secondary properties can re-enter the pipeline on a future run.
+        Linked source_listings have their ``merged_id`` set to NULL automatically
+        via the FK ``ON DELETE SET NULL``, so they can re-enter the pipeline.
         """
         async with self._transaction() as conn:
             for table in (
@@ -471,10 +475,6 @@ class PropertyStorage:
                     f"DELETE FROM {table} WHERE property_unique_id = ?",
                     (unique_id,),
                 )
-            await conn.execute(
-                "DELETE FROM source_aliases WHERE anchor_id = ?",
-                (unique_id,),
-            )
             await conn.execute(
                 "DELETE FROM properties WHERE unique_id = ?",
                 (unique_id,),
@@ -519,9 +519,30 @@ class PropertyStorage:
             )
 
         rows = await cursor.fetchall()
+        if not rows:
+            logger.debug("loaded_dedup_anchors", count=0, days=days)
+            return []
+
+        # Batch-load source_listings for all properties
+        unique_ids = [row["unique_id"] for row in rows]
+        sl_by_merged: dict[str, list[aiosqlite.Row]] = {}
+        chunk_size = 500
+        for i in range(0, len(unique_ids), chunk_size):
+            chunk = unique_ids[i : i + chunk_size]
+            placeholders = ",".join("?" * len(chunk))
+            sl_cursor = await conn.execute(
+                f"SELECT * FROM source_listings WHERE merged_id IN ({placeholders})",
+                chunk,
+            )
+            for sl in await sl_cursor.fetchall():
+                sl_by_merged.setdefault(sl["merged_id"], []).append(sl)
 
         results = [
-            await row_to_merged_property(row, get_property_images=self.get_property_images)
+            await row_to_merged_property(
+                row,
+                source_listings=sl_by_merged.get(row["unique_id"]),
+                get_property_images=self.get_property_images,
+            )
             for row in rows
         ]
 
@@ -536,55 +557,49 @@ class PropertyStorage:
         self,
         existing_unique_id: str,
         merged: MergedProperty,
+        *,
+        absorbed_ids: list[str] | None = None,
     ) -> None:
-        """Update an existing DB property with additional sources.
+        """Update golden record's denormalized caches from source_listings.
 
-        Merges sources, source_urls, descriptions, and price range from a
-        newly-matched MergedProperty into the existing record. Does NOT
-        touch first_seen, notification_status, quality analysis, or commute data.
+        Called after cross-run dedup links new source listings to an anchor.
+        Rebuilds JSON columns and price range from source_listings rows.
 
         Args:
             existing_unique_id: The unique_id of the existing DB record.
-            merged: The MergedProperty containing combined source data.
+            merged: The MergedProperty containing combined source data
+                (used only for saving new images).
+            absorbed_ids: unique_ids of source_listings to link to this
+                golden record before rebuilding.  When provided, sets
+                ``merged_id`` on matching source_listings rows.
         """
         async with self._transaction() as conn:
-            # Read current DB state
+            # Link absorbed source listings to this golden record
+            if absorbed_ids:
+                await conn.executemany(
+                    "UPDATE source_listings SET merged_id = ? WHERE unique_id = ?",
+                    [(existing_unique_id, uid) for uid in absorbed_ids],
+                )
+
+            # Rebuild denormalized caches from source_listings
             cursor = await conn.execute(
-                "SELECT sources, source_urls, descriptions_json, min_price, max_price, price_pcm "
-                "FROM properties WHERE unique_id = ?",
+                """SELECT source, url, description, price_pcm
+                   FROM source_listings WHERE merged_id = ?""",
                 (existing_unique_id,),
             )
-            row = await cursor.fetchone()
-            if row is None:
-                logger.warning("update_merged_sources_not_found", unique_id=existing_unique_id)
+            rows = await cursor.fetchall()
+            if not rows:
+                logger.warning("update_merged_sources_no_listings", unique_id=existing_unique_id)
                 return
 
-            # Merge sources
-            existing_sources: list[str] = json.loads(row["sources"]) if row["sources"] else []
-            existing_source_urls: dict[str, str] = (
-                json.loads(row["source_urls"]) if row["source_urls"] else {}
-            )
-            existing_descriptions: dict[str, str] = (
-                json.loads(row["descriptions_json"]) if row["descriptions_json"] else {}
-            )
-
-            for src in merged.sources:
-                if src.value not in existing_sources:
-                    existing_sources.append(src.value)
-                if src in merged.source_urls:
-                    existing_source_urls[src.value] = str(merged.source_urls[src])
-                if src in merged.descriptions:
-                    existing_descriptions[src.value] = merged.descriptions[src]
-
-            # Expand price range
-            db_min = row["min_price"] if row["min_price"] is not None else row["price_pcm"]
-            db_max = row["max_price"] if row["max_price"] is not None else row["price_pcm"]
-            new_min = min(db_min, merged.min_price)
-            new_max = max(db_max, merged.max_price)
-
-            sources_json = json.dumps(existing_sources)
-            source_urls_json = json.dumps(existing_source_urls)
-            descriptions_json = json.dumps(existing_descriptions) if existing_descriptions else None
+            sources = [r["source"] for r in rows]
+            source_urls = {r["source"]: r["url"] for r in rows}
+            descriptions = {
+                r["source"]: r["description"]
+                for r in rows
+                if r["description"]
+            }
+            prices = [r["price_pcm"] for r in rows]
 
             await conn.execute(
                 """
@@ -598,11 +613,11 @@ class PropertyStorage:
                 WHERE unique_id = ?
                 """,
                 (
-                    sources_json,
-                    source_urls_json,
-                    descriptions_json,
-                    new_min,
-                    new_max,
+                    json.dumps(sources),
+                    json.dumps(source_urls),
+                    json.dumps(descriptions) if descriptions else None,
+                    min(prices),
+                    max(prices),
                     datetime.now(UTC).isoformat(),
                     existing_unique_id,
                 ),
@@ -618,9 +633,9 @@ class PropertyStorage:
         logger.info(
             "merged_sources_updated",
             unique_id=existing_unique_id,
-            sources=existing_sources,
-            min_price=new_min,
-            max_price=new_max,
+            sources=sources,
+            min_price=min(prices),
+            max_price=max(prices),
         )
 
     async def save_merged_property(
@@ -669,6 +684,10 @@ class PropertyStorage:
                 ward = COALESCE(excluded.ward, ward)
         """,
             values,
+        )
+        # Keep source_listings in sync — write canonical source
+        await self._upsert_source_listing(
+            conn, merged.canonical, merged_id=merged.canonical.unique_id
         )
         await conn.commit()
 
@@ -876,45 +895,152 @@ class PropertyStorage:
         await conn.commit()
         return len(commute_lookup)
 
-    async def record_source_aliases(
-        self, aliases: list[tuple[str, str, str, str]]
-    ) -> None:
-        """Record absorbed property IDs so they are recognised as "seen".
+    # ------------------------------------------------------------------
+    # Source listings (Layer 1 of golden record pattern)
+    # ------------------------------------------------------------------
 
-        Each tuple is (unique_id, source, source_id, anchor_id).
-        Uses INSERT OR REPLACE so re-runs are idempotent.
+    async def _upsert_source_listing(
+        self,
+        conn: aiosqlite.Connection,
+        prop: Property,
+        *,
+        merged_id: str | None = None,
+    ) -> None:
+        """Upsert a single property into source_listings (no commit).
+
+        Silently skips if the source_listings table doesn't exist yet
+        (pre-migration 004 DBs that save properties before migrations run).
         """
-        if not aliases:
+        now = datetime.now(UTC).isoformat()
+        try:
+            await conn.execute(
+            """
+            INSERT INTO source_listings (
+                unique_id, source, source_id, url, title, price_pcm,
+                bedrooms, address, postcode, latitude, longitude,
+                description, image_url, available_from, first_seen, last_seen,
+                merged_id
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(unique_id) DO UPDATE SET
+                price_pcm = excluded.price_pcm,
+                title = excluded.title,
+                description = excluded.description,
+                image_url = excluded.image_url,
+                last_seen = excluded.last_seen,
+                latitude = COALESCE(excluded.latitude, latitude),
+                longitude = COALESCE(excluded.longitude, longitude),
+                postcode = COALESCE(excluded.postcode, postcode),
+                merged_id = COALESCE(excluded.merged_id, merged_id)
+            """,
+            (
+                prop.unique_id,
+                prop.source.value,
+                prop.source_id,
+                str(prop.url),
+                prop.title,
+                prop.price_pcm,
+                prop.bedrooms,
+                prop.address,
+                prop.postcode,
+                prop.latitude,
+                prop.longitude,
+                prop.description,
+                str(prop.image_url) if prop.image_url else None,
+                prop.available_from.isoformat() if prop.available_from else None,
+                prop.first_seen.isoformat(),
+                now,
+                merged_id,
+            ),
+        )
+        except aiosqlite.OperationalError as e:
+            if "no such table" in str(e).lower():
+                return
+            raise
+
+    async def upsert_source_listings(self, properties: list[Property]) -> int:
+        """Record scraped properties in source_listings (Layer 1).
+
+        Called at scrape time, before any filtering. Updates last_seen
+        and mutable fields for existing listings.
+
+        Returns number of rows upserted.
+        """
+        if not properties:
+            return 0
+        conn = await self._get_connection()
+        now = datetime.now(UTC).isoformat()
+        rows = [
+            (
+                p.unique_id,
+                p.source.value,
+                p.source_id,
+                str(p.url),
+                p.title,
+                p.price_pcm,
+                p.bedrooms,
+                p.address,
+                p.postcode,
+                p.latitude,
+                p.longitude,
+                p.description,
+                str(p.image_url) if p.image_url else None,
+                p.available_from.isoformat() if p.available_from else None,
+                p.first_seen.isoformat(),
+                now,
+            )
+            for p in properties
+        ]
+        await conn.executemany(
+            """
+            INSERT INTO source_listings (
+                unique_id, source, source_id, url, title, price_pcm,
+                bedrooms, address, postcode, latitude, longitude,
+                description, image_url, available_from, first_seen, last_seen
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(unique_id) DO UPDATE SET
+                price_pcm = excluded.price_pcm,
+                title = excluded.title,
+                description = excluded.description,
+                image_url = excluded.image_url,
+                last_seen = excluded.last_seen,
+                latitude = COALESCE(excluded.latitude, latitude),
+                longitude = COALESCE(excluded.longitude, longitude),
+                postcode = COALESCE(excluded.postcode, postcode)
+            """,
+            rows,
+        )
+        await conn.commit()
+        return len(rows)
+
+    async def link_source_listings(
+        self, links: list[tuple[str, str]]
+    ) -> None:
+        """Link source listings to their golden record.
+
+        Each tuple is (source_listing_unique_id, merged_property_unique_id).
+        """
+        if not links:
             return
         conn = await self._get_connection()
         await conn.executemany(
-            """
-            INSERT INTO source_aliases (unique_id, source, source_id, anchor_id)
-            VALUES (?, ?, ?, ?)
-            ON CONFLICT(unique_id) DO UPDATE SET
-                anchor_id = excluded.anchor_id,
-                source = excluded.source,
-                source_id = excluded.source_id
-            """,
-            aliases,
+            "UPDATE source_listings SET merged_id = ? WHERE unique_id = ?",
+            [(merged_id, uid) for uid, merged_id in links],
         )
         await conn.commit()
-        logger.debug("source_aliases_recorded", count=len(aliases))
 
     async def get_all_known_source_ids(self) -> dict[str, set[str]]:
         """Get all source_ids grouped by property source.
 
-        Includes both canonical properties and absorbed aliases so that
-        scraper early-stop correctly skips previously-seen listings.
+        Queries ``source_listings`` — the single authority for every
+        source ID ever seen — so scraper early-stop correctly skips
+        previously-seen listings.
 
         Returns:
             Dict mapping source name to set of source_ids.
         """
         conn = await self._get_connection()
         cursor = await conn.execute(
-            "SELECT source, source_id FROM properties"
-            " UNION"
-            " SELECT source, source_id FROM source_aliases"
+            "SELECT source, source_id FROM source_listings"
         )
         rows = await cursor.fetchall()
         result: dict[str, set[str]] = {}

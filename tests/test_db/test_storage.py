@@ -514,6 +514,18 @@ class TestGetRecentPropertiesForDedup:
             bedrooms=2,
             address="123 Mare Street",
             postcode="E8 3RH",
+            description="OR desc",
+        )
+        zoopla_prop = Property(
+            source=PropertySource.ZOOPLA,
+            source_id="z-1",
+            url=HttpUrl("https://zoopla.co.uk/z-1"),
+            title="Multi-source flat",
+            price_pcm=1950,
+            bedrooms=2,
+            address="123 Mare Street",
+            postcode="E8 3RH",
+            description="ZP desc",
         )
         merged = MergedProperty(
             canonical=prop,
@@ -532,6 +544,9 @@ class TestGetRecentPropertiesForDedup:
             },
         )
         await storage.save_merged_property(merged)
+        # Write + link secondary source_listing (simulates scrape-time + cross-run dedup)
+        await storage.upsert_source_listings([zoopla_prop])
+        await storage.link_source_listings([("zoopla:z-1", prop.unique_id)])
 
         results = await storage.get_recent_properties_for_dedup(days=7)
         assert len(results) == 1
@@ -546,7 +561,13 @@ class TestGetRecentPropertiesForDedup:
 
 
 class TestUpdateMergedSources:
-    """Tests for update_merged_sources."""
+    """Tests for update_merged_sources.
+
+    update_merged_sources rebuilds the golden record's denormalized JSON
+    caches from source_listings.  Each test therefore writes secondary
+    source_listings (simulating scrape-time writes) and passes
+    ``absorbed_ids`` so the method links and rebuilds correctly.
+    """
 
     @pytest.mark.asyncio
     async def test_preserves_notification_status(self, storage: PropertyStorage) -> None:
@@ -574,7 +595,21 @@ class TestUpdateMergedSources:
         await storage.save_merged_property(merged)
         await storage.mark_notified(prop.unique_id)
 
-        # Update with new source
+        # Simulate scrape-time write for secondary source
+        zoopla_prop = Property(
+            source=PropertySource.ZOOPLA,
+            source_id="z-1",
+            url=HttpUrl("https://zoopla.co.uk/z-1"),
+            title="Notified flat",
+            price_pcm=1950,
+            bedrooms=2,
+            address="123 Mare Street",
+            postcode="E8 3RH",
+            description="ZP desc",
+        )
+        await storage.upsert_source_listings([zoopla_prop])
+
+        # Update with new source — links and rebuilds from source_listings
         updated = MergedProperty(
             canonical=prop,
             sources=(PropertySource.OPENRENT, PropertySource.ZOOPLA),
@@ -588,7 +623,9 @@ class TestUpdateMergedSources:
             max_price=2000,
             descriptions={PropertySource.ZOOPLA: "ZP desc"},
         )
-        await storage.update_merged_sources(prop.unique_id, updated)
+        await storage.update_merged_sources(
+            prop.unique_id, updated, absorbed_ids=["zoopla:z-1"]
+        )
 
         tracked = await storage.get_property(prop.unique_id)
         assert tracked is not None
@@ -619,6 +656,19 @@ class TestUpdateMergedSources:
         )
         await storage.save_merged_property(merged)
 
+        # Simulate scrape-time write for secondary source with different price
+        zoopla_prop = Property(
+            source=PropertySource.ZOOPLA,
+            source_id="z-1",
+            url=HttpUrl("https://zoopla.co.uk/z-1"),
+            title="Price test flat",
+            price_pcm=1950,
+            bedrooms=2,
+            address="123 Mare Street",
+            postcode="E8 3RH",
+        )
+        await storage.upsert_source_listings([zoopla_prop])
+
         updated = MergedProperty(
             canonical=prop,
             sources=(PropertySource.OPENRENT, PropertySource.ZOOPLA),
@@ -632,7 +682,9 @@ class TestUpdateMergedSources:
             max_price=2000,
             descriptions={},
         )
-        await storage.update_merged_sources(prop.unique_id, updated)
+        await storage.update_merged_sources(
+            prop.unique_id, updated, absorbed_ids=["zoopla:z-1"]
+        )
 
         conn = await storage._get_connection()
         cursor = await conn.execute(
@@ -646,7 +698,7 @@ class TestUpdateMergedSources:
 
     @pytest.mark.asyncio
     async def test_adds_new_sources_and_urls(self, storage: PropertyStorage) -> None:
-        """Sources and source_urls are merged correctly."""
+        """Sources and source_urls are rebuilt from source_listings correctly."""
         prop = Property(
             source=PropertySource.OPENRENT,
             source_id="src-1",
@@ -656,6 +708,7 @@ class TestUpdateMergedSources:
             bedrooms=2,
             address="123 Mare Street",
             postcode="E8 3RH",
+            description="OR desc",
         )
         merged = MergedProperty(
             canonical=prop,
@@ -668,6 +721,20 @@ class TestUpdateMergedSources:
             descriptions={PropertySource.OPENRENT: "OR desc"},
         )
         await storage.save_merged_property(merged)
+
+        # Simulate scrape-time write for secondary source
+        zoopla_prop = Property(
+            source=PropertySource.ZOOPLA,
+            source_id="z-1",
+            url=HttpUrl("https://zoopla.co.uk/z-1"),
+            title="Source test flat",
+            price_pcm=2000,
+            bedrooms=2,
+            address="123 Mare Street",
+            postcode="E8 3RH",
+            description="ZP desc",
+        )
+        await storage.upsert_source_listings([zoopla_prop])
 
         updated = MergedProperty(
             canonical=prop,
@@ -685,7 +752,9 @@ class TestUpdateMergedSources:
                 PropertySource.ZOOPLA: "ZP desc",
             },
         )
-        await storage.update_merged_sources(prop.unique_id, updated)
+        await storage.update_merged_sources(
+            prop.unique_id, updated, absorbed_ids=["zoopla:z-1"]
+        )
 
         conn = await storage._get_connection()
         cursor = await conn.execute(
@@ -730,6 +799,19 @@ class TestUpdateMergedSources:
         )
         await storage.save_merged_property(merged)
 
+        # Simulate scrape-time write for secondary source
+        zoopla_prop = Property(
+            source=PropertySource.ZOOPLA,
+            source_id="z-1",
+            url=HttpUrl("https://zoopla.co.uk/z-1"),
+            title="Image test flat",
+            price_pcm=2000,
+            bedrooms=2,
+            address="123 Mare Street",
+            postcode="E8 3RH",
+        )
+        await storage.upsert_source_listings([zoopla_prop])
+
         # Update with new source that has images
         new_img = PropertyImage(
             url=HttpUrl("https://zoopla.co.uk/img-new.jpg"),
@@ -749,7 +831,9 @@ class TestUpdateMergedSources:
             max_price=2000,
             descriptions={},
         )
-        await storage.update_merged_sources(prop.unique_id, updated)
+        await storage.update_merged_sources(
+            prop.unique_id, updated, absorbed_ids=["zoopla:z-1"]
+        )
 
         images = await storage.get_property_images(prop.unique_id)
         assert len(images) == 1
@@ -777,7 +861,7 @@ class TestUpdateMergedSources:
             max_price=2000,
             descriptions={},
         )
-        # Should not raise
+        # Should not raise — no source_listings exist, returns early
         await storage.update_merged_sources("nonexistent:999", merged)
 
 
@@ -1024,105 +1108,176 @@ class TestGetPropertyImagesAndRow:
         assert result_prop is None
 
 
-class TestSourceAliases:
-    """Tests for source alias recording and filtering."""
+class TestSourceListingsReadPath:
+    """Tests for the source_listings read path (Ticket 13)."""
 
     @pytest.mark.asyncio
-    async def test_record_source_aliases_and_filter_new_excludes_them(
-        self, storage: PropertyStorage, storage_sample_property: Property
+    async def test_filter_new_merged_excludes_known_source_listing(
+        self, storage: PropertyStorage
     ) -> None:
-        """Aliased IDs should be treated as 'seen' by filter_new_merged."""
-        # Save an anchor property
-        await storage.save_property(storage_sample_property)
-
-        # Record an alias pointing to the anchor
-        alias_uid = "zoopla:99999"
-        await storage.record_source_aliases(
-            [(alias_uid, "zoopla", "99999", storage_sample_property.unique_id)]
-        )
-
-        # Build a MergedProperty with the alias unique_id
-        alias_prop = Property(
+        """A property saved via save_property is 'seen' via source_listings."""
+        # save_property writes to both properties and source_listings
+        prop = Property(
             source=PropertySource.ZOOPLA,
-            source_id="99999",
-            url=HttpUrl("https://zoopla.co.uk/99999"),
-            title="Alias flat",
-            price_pcm=1900,
-            bedrooms=1,
-            address="123 Mare Street",
+            source_id="77777",
+            url=HttpUrl("https://zoopla.co.uk/77777"),
+            title="Listed flat",
+            price_pcm=2100,
+            bedrooms=2,
+            address="10 Test Street",
         )
+        await storage.save_property(prop)
+
         merged = MergedProperty(
-            canonical=alias_prop,
+            canonical=prop,
             sources=(PropertySource.ZOOPLA,),
-            source_urls={PropertySource.ZOOPLA: alias_prop.url},
-            min_price=1900,
-            max_price=1900,
+            source_urls={PropertySource.ZOOPLA: prop.url},
+            min_price=2100,
+            max_price=2100,
         )
 
-        # filter_new_merged should exclude it
         new = await storage.filter_new_merged([merged])
         assert len(new) == 0
 
     @pytest.mark.asyncio
-    async def test_get_all_known_source_ids_includes_aliases(
-        self, storage: PropertyStorage, storage_sample_property: Property
+    async def test_is_seen_true_for_linked_source_listing(
+        self, storage: PropertyStorage
     ) -> None:
-        """get_all_known_source_ids should return alias source_ids too."""
-        await storage.save_property(storage_sample_property)
-        await storage.record_source_aliases(
-            [("zoopla:99999", "zoopla", "99999", storage_sample_property.unique_id)]
+        """source_listing with merged_id set -> is_seen returns True."""
+        prop = Property(
+            source=PropertySource.ZOOPLA,
+            source_id="88888",
+            url=HttpUrl("https://zoopla.co.uk/88888"),
+            title="Test flat",
+            price_pcm=1800,
+            bedrooms=1,
+            address="20 Test Street",
         )
+        await storage.save_property(prop)
+        assert await storage.is_seen("zoopla:88888") is True
+
+    @pytest.mark.asyncio
+    async def test_is_seen_false_for_unlinked_source_listing(
+        self, storage: PropertyStorage
+    ) -> None:
+        """source_listing without merged_id (scrape-time only) -> is_seen returns False."""
+        # upsert_source_listings does NOT set merged_id
+        prop = Property(
+            source=PropertySource.ZOOPLA,
+            source_id="99000",
+            url=HttpUrl("https://zoopla.co.uk/99000"),
+            title="Unlinked flat",
+            price_pcm=1800,
+            bedrooms=1,
+            address="30 Test Street",
+        )
+        await storage.upsert_source_listings([prop])
+        assert await storage.is_seen("zoopla:99000") is False
+
+    @pytest.mark.asyncio
+    async def test_is_seen_false_for_unknown(self, storage: PropertyStorage) -> None:
+        """Neither table has this ID -> returns False."""
+        assert await storage.is_seen("nonexistent:999") is False
+
+    @pytest.mark.asyncio
+    async def test_filter_new_merged_allows_genuinely_new(
+        self, storage: PropertyStorage
+    ) -> None:
+        """unique_id not in source_listings -> passes through."""
+        prop = Property(
+            source=PropertySource.OPENRENT,
+            source_id="brand-new",
+            url=HttpUrl("https://openrent.com/brand-new"),
+            title="Brand new flat",
+            price_pcm=2000,
+            bedrooms=2,
+            address="New Street",
+        )
+        merged = MergedProperty(
+            canonical=prop,
+            sources=(PropertySource.OPENRENT,),
+            source_urls={PropertySource.OPENRENT: prop.url},
+            min_price=2000,
+            max_price=2000,
+        )
+
+        new = await storage.filter_new_merged([merged])
+        assert len(new) == 1
+
+    @pytest.mark.asyncio
+    async def test_get_all_known_source_ids_includes_source_listings(
+        self, storage: PropertyStorage
+    ) -> None:
+        """get_all_known_source_ids returns source_ids from source_listings."""
+        prop = Property(
+            source=PropertySource.RIGHTMOVE,
+            source_id="55555",
+            url=HttpUrl("https://rightmove.co.uk/55555"),
+            title="RM flat",
+            price_pcm=1700,
+            bedrooms=1,
+            address="55 Test Street",
+        )
+        await storage.upsert_source_listings([prop])
 
         known = await storage.get_all_known_source_ids()
-        assert "zoopla" in known
-        assert "99999" in known["zoopla"]
-        # The anchor's own source_id should also be present
-        assert "openrent" in known
-        assert "12345" in known["openrent"]
+        assert "rightmove" in known
+        assert "55555" in known["rightmove"]
 
     @pytest.mark.asyncio
-    async def test_delete_property_cleans_up_aliases(
-        self, storage: PropertyStorage, storage_sample_property: Property
+    async def test_get_all_known_source_ids_empty_table(
+        self, storage: PropertyStorage
     ) -> None:
-        """Deleting an anchor should remove its source_aliases."""
-        await storage.save_property(storage_sample_property)
-        anchor_id = storage_sample_property.unique_id
-        await storage.record_source_aliases(
-            [("zoopla:99999", "zoopla", "99999", anchor_id)]
-        )
-
-        # Verify alias exists
-        conn = await storage._get_connection()
-        cursor = await conn.execute(
-            "SELECT COUNT(*) FROM source_aliases WHERE anchor_id = ?", (anchor_id,)
-        )
-        assert (await cursor.fetchone())[0] == 1
-
-        # Delete the anchor
-        await storage.delete_property(anchor_id)
-
-        # Alias should be gone
-        cursor = await conn.execute(
-            "SELECT COUNT(*) FROM source_aliases WHERE anchor_id = ?", (anchor_id,)
-        )
-        assert (await cursor.fetchone())[0] == 0
+        """Empty source_listings returns empty dict, not error."""
+        known = await storage.get_all_known_source_ids()
+        assert known == {}
 
     @pytest.mark.asyncio
-    async def test_record_source_aliases_idempotent(
-        self, storage: PropertyStorage, storage_sample_property: Property
+    async def test_get_seen_ids_large_batch(self, storage: PropertyStorage) -> None:
+        """600+ IDs tests chunking at 500."""
+        ids = [f"openrent:{i}" for i in range(600)]
+        # Insert 100 of them via save_property (sets merged_id)
+        for uid in ids[:100]:
+            source_id = uid.split(":")[1]
+            prop = Property(
+                source=PropertySource.OPENRENT,
+                source_id=source_id,
+                url=HttpUrl(f"https://openrent.com/{source_id}"),
+                title="Flat",
+                price_pcm=2000,
+                bedrooms=1,
+                address="Street",
+            )
+            await storage.save_property(prop)
+
+        seen = await storage._get_seen_ids(ids)
+        assert len(seen) == 100
+        assert all(f"openrent:{i}" in seen for i in range(100))
+
+    @pytest.mark.asyncio
+    async def test_link_source_listings_makes_seen(
+        self, storage: PropertyStorage
     ) -> None:
-        """INSERT OR REPLACE should handle re-recording the same alias."""
-        await storage.save_property(storage_sample_property)
-        alias = ("zoopla:99999", "zoopla", "99999", storage_sample_property.unique_id)
-
-        await storage.record_source_aliases([alias])
-        await storage.record_source_aliases([alias])  # second call
-
-        conn = await storage._get_connection()
-        cursor = await conn.execute(
-            "SELECT COUNT(*) FROM source_aliases WHERE unique_id = ?", ("zoopla:99999",)
+        """Linking a source listing to a golden record makes it 'seen'."""
+        # First upsert (no merged_id)
+        prop = Property(
+            source=PropertySource.ZOOPLA,
+            source_id="link-test",
+            url=HttpUrl("https://zoopla.co.uk/link-test"),
+            title="Link test flat",
+            price_pcm=2000,
+            bedrooms=2,
+            address="Link Street",
         )
-        assert (await cursor.fetchone())[0] == 1
+        await storage.upsert_source_listings([prop])
+        assert await storage.is_seen("zoopla:link-test") is False
+
+        # Save the golden record
+        await storage.save_property(prop)
+
+        # Now link
+        await storage.link_source_listings([("zoopla:link-test", "zoopla:link-test")])
+        assert await storage.is_seen("zoopla:link-test") is True
 
 
 class TestOnDeleteCascade:

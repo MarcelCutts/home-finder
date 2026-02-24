@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import contextlib
+import json
 from collections.abc import Callable, Coroutine
 from typing import Any
 
@@ -430,11 +432,11 @@ async def migrate_002_floor_area_sqm(conn: aiosqlite.Connection) -> None:
 
 
 async def migrate_003_source_aliases(conn: aiosqlite.Connection) -> None:
-    """Add source_aliases table for tracking absorbed cross-platform duplicates.
+    """Vestigial: superseded by source_listings (migration 004).
 
-    When a new property is absorbed into an existing DB anchor during
-    cross-run dedup, its unique_id is recorded here so subsequent runs
-    recognise it as "already seen" without re-enriching.
+    Table retained for schema compatibility. No code reads or writes it
+    after Ticket 15. The source_listings table with ``merged_id`` FK
+    provides the same functionality with richer data.
     """
     await conn.execute("""
         CREATE TABLE IF NOT EXISTS source_aliases (
@@ -456,12 +458,175 @@ async def migrate_003_source_aliases(conn: aiosqlite.Connection) -> None:
     """)
 
 
+async def migrate_004_source_listings(conn: aiosqlite.Connection) -> None:
+    """Add source_listings table — Layer 1 of the golden record pattern.
+
+    Every scraped property from every platform gets its own row, linked to the
+    canonical merged entity in ``properties`` via ``merged_id``.  Backfills
+    from existing data so the table is immediately usable.
+    """
+    # --- DDL ---
+    await conn.execute("""
+        CREATE TABLE IF NOT EXISTS source_listings (
+            unique_id TEXT PRIMARY KEY,
+            source TEXT NOT NULL,
+            source_id TEXT NOT NULL,
+            url TEXT NOT NULL,
+            title TEXT NOT NULL,
+            price_pcm INTEGER NOT NULL,
+            bedrooms INTEGER NOT NULL,
+            address TEXT NOT NULL,
+            postcode TEXT,
+            latitude REAL,
+            longitude REAL,
+            description TEXT,
+            image_url TEXT,
+            available_from TEXT,
+            first_seen TEXT NOT NULL,
+            last_seen TEXT NOT NULL,
+            merged_id TEXT,
+            is_backfilled INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (merged_id) REFERENCES properties(unique_id) ON DELETE SET NULL
+        )
+    """)
+    await conn.execute("""
+        CREATE INDEX IF NOT EXISTS idx_source_listings_source
+        ON source_listings(source, source_id)
+    """)
+    await conn.execute("""
+        CREATE INDEX IF NOT EXISTS idx_source_listings_merged
+        ON source_listings(merged_id)
+    """)
+    await conn.execute("""
+        CREATE INDEX IF NOT EXISTS idx_source_listings_unmatched
+        ON source_listings(unique_id) WHERE merged_id IS NULL
+    """)
+
+    # --- Phase 1: Canonical source from properties ---
+    # Each golden record's own source/source_id becomes a source_listing.
+    await conn.execute("""
+        INSERT OR IGNORE INTO source_listings (
+            unique_id, source, source_id, url, title, price_pcm,
+            bedrooms, address, postcode, latitude, longitude,
+            description, image_url, available_from,
+            first_seen, last_seen, merged_id, is_backfilled
+        )
+        SELECT
+            unique_id, source, source_id, url, title, price_pcm,
+            bedrooms, address, postcode, latitude, longitude,
+            description, image_url, available_from,
+            first_seen, COALESCE(sources_updated_at, first_seen),
+            unique_id, 0
+        FROM properties
+    """)
+
+    # --- Phase 2: Secondary sources from source_aliases ---
+    cursor = await conn.execute("""
+        SELECT sa.unique_id, sa.source, sa.source_id, sa.anchor_id,
+               p.title, p.price_pcm, p.bedrooms, p.address, p.postcode,
+               p.latitude, p.longitude, p.image_url, p.first_seen,
+               p.source_urls, p.url
+        FROM source_aliases sa
+        JOIN properties p ON p.unique_id = sa.anchor_id
+    """)
+    for row in await cursor.fetchall():
+        # Try to extract the source-specific URL from source_urls JSON
+        url = row["url"]  # fallback to anchor's URL
+        if row["source_urls"]:
+            try:
+                urls_dict = json.loads(row["source_urls"])
+                if row["source"] in urls_dict:
+                    url = urls_dict[row["source"]]
+            except (json.JSONDecodeError, TypeError):
+                pass
+        await conn.execute(
+            """
+            INSERT OR IGNORE INTO source_listings (
+                unique_id, source, source_id, url, title, price_pcm,
+                bedrooms, address, postcode, latitude, longitude,
+                image_url, first_seen, last_seen, merged_id, is_backfilled
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
+            """,
+            (
+                row["unique_id"],
+                row["source"],
+                row["source_id"],
+                url,
+                row["title"],
+                row["price_pcm"],
+                row["bedrooms"],
+                row["address"],
+                row["postcode"],
+                row["latitude"],
+                row["longitude"],
+                row["image_url"],
+                row["first_seen"],
+                row["first_seen"],  # last_seen = first_seen for backfill
+                row["anchor_id"],
+            ),
+        )
+
+    # --- Phase 3: Secondary sources from JSON columns (no alias record) ---
+    # Properties with multi-source `sources` JSON but no corresponding
+    # source_aliases row (absorbed before source_aliases existed).
+    cursor = await conn.execute("""
+        SELECT unique_id, source, sources, source_urls,
+               title, price_pcm, bedrooms, address, postcode,
+               latitude, longitude, image_url, first_seen
+        FROM properties
+        WHERE sources IS NOT NULL AND json_array_length(sources) > 1
+    """)
+    for row in await cursor.fetchall():
+        sources = json.loads(row["sources"])
+        source_urls: dict[str, str] = {}
+        if row["source_urls"]:
+            with contextlib.suppress(json.JSONDecodeError, TypeError):
+                source_urls = json.loads(row["source_urls"])
+        for src_name in sources:
+            if src_name == row["source"]:
+                continue  # Phase 1 handled the canonical source
+            src_url = source_urls.get(src_name)
+            if not src_url:
+                continue  # Can't reconstruct without a URL
+            # Derive source_id from the URL-based unique_id format
+            secondary_uid = f"{src_name}:{src_url}"
+            # Check if already inserted by Phase 1 or 2
+            await conn.execute(
+                """
+                INSERT OR IGNORE INTO source_listings (
+                    unique_id, source, source_id, url, title, price_pcm,
+                    bedrooms, address, postcode, latitude, longitude,
+                    image_url, first_seen, last_seen, merged_id, is_backfilled
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
+                """,
+                (
+                    secondary_uid,
+                    src_name,
+                    src_url,  # best-effort source_id
+                    src_url,
+                    row["title"],
+                    row["price_pcm"],
+                    row["bedrooms"],
+                    row["address"],
+                    row["postcode"],
+                    row["latitude"],
+                    row["longitude"],
+                    row["image_url"],
+                    row["first_seen"],
+                    row["first_seen"],
+                    row["unique_id"],
+                ),
+            )
+
+
 _MigrationFn = Callable[[aiosqlite.Connection], Coroutine[Any, Any, None]]
 
 MIGRATIONS: list[_MigrationFn] = [
     migrate_001_initial_schema,
     migrate_002_floor_area_sqm,
     migrate_003_source_aliases,
+    migrate_004_source_listings,
 ]
 
 

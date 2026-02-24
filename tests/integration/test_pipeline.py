@@ -388,6 +388,9 @@ class TestCrossPlatformPipeline:
         # Zoopla listing passes filter_new_merged (different unique_id)
         assert len(new_run2) == 1
 
+        # Simulate scrape-time write of Zoopla source_listing
+        await storage.upsert_source_listings([zoopla_prop])
+
         # Cross-run dedup: load anchors and combine
         db_anchors = await storage.get_recent_properties_for_dedup(days=30)
 
@@ -398,6 +401,12 @@ class TestCrossPlatformPipeline:
             anchor_by_id[anchor.canonical.unique_id] = anchor
             for url in anchor.source_urls.values():
                 anchor_url_to_id[str(url)] = anchor.canonical.unique_id
+
+        # Map new URLs to unique_ids for absorbed_ids tracking
+        new_url_to_unique_id: dict[str, str] = {}
+        for mp in new_run2:
+            for url in mp.source_urls.values():
+                new_url_to_unique_id[str(url)] = mp.canonical.unique_id
 
         combined = new_run2 + db_anchors
         dedup_results = await deduplicator.deduplicate_merged_async(combined)
@@ -413,7 +422,14 @@ class TestCrossPlatformPipeline:
             if matched_anchor_id is not None:
                 original = anchor_by_id[matched_anchor_id]
                 if set(merged.sources) - set(original.sources):
-                    await storage.update_merged_sources(matched_anchor_id, merged)
+                    absorbed_ids = [
+                        new_url_to_unique_id[str(url)]
+                        for url in merged.source_urls.values()
+                        if str(url) in new_url_to_unique_id
+                    ]
+                    await storage.update_merged_sources(
+                        matched_anchor_id, merged, absorbed_ids=absorbed_ids
+                    )
             else:
                 genuinely_new.append(merged)
 

@@ -138,15 +138,36 @@ def row_to_property(row: aiosqlite.Row) -> Property:
 async def row_to_merged_property(
     row: aiosqlite.Row,
     *,
+    source_listings: list[Any] | None = None,
     load_images: bool = True,
     get_property_images: (Callable[[str], Coroutine[Any, Any, list[PropertyImage]]] | None) = None,
 ) -> MergedProperty:
     """Convert a database row to a MergedProperty.
 
-    Parses multi-source JSON fields and optionally loads images.
+    When *source_listings* rows are provided, multi-source data (sources,
+    URLs, descriptions, price range) is built from the normalised
+    source_listings table instead of parsing JSON columns.  Falls back to
+    JSON when *source_listings* is ``None`` or empty (backward compat).
+
+    Callers that pass *source_listings* (preferred, normalised path):
+      - ``PropertyStorage.get_recent_properties_for_dedup()`` — batch-loads
+        source_listings and passes them per-property.
+
+    Callers that rely on JSON fallback (backward compat):
+      - ``PipelineRepo.get_unenriched_properties()``
+      - ``PipelineRepo.get_pending_analysis_retries()``
+      - ``PipelineRepo.get_reanalysis_queue()``
+      - ``WebQueryRepo.get_property_detail()`` (via web queries)
+
+    The JSON fallback is kept for callers where source_listings aren't
+    batch-loaded.  Both paths produce equivalent results as long as
+    ``update_merged_sources()`` keeps the JSON caches in sync.
 
     Args:
         row: Database row from the properties table.
+        source_listings: Optional list of source_listings rows for this
+            property (keyed by ``merged_id``).  When provided, overrides
+            the JSON-based reconstruction.
         load_images: Whether to load images from property_images table.
         get_property_images: Async callable to fetch images; required when load_images=True.
 
@@ -159,21 +180,37 @@ async def row_to_merged_property(
     source_urls: dict[PropertySource, HttpUrl] = {}
     descriptions: dict[PropertySource, str] = {}
 
-    if row["sources"]:
-        for s in json.loads(row["sources"]):
-            sources_list.append(PropertySource(s))
+    if source_listings:
+        # Build from normalised source_listings rows
+        for sl in source_listings:
+            src = PropertySource(sl["source"])
+            sources_list.append(src)
+            source_urls[src] = HttpUrl(sl["url"])
+            if sl["description"]:
+                descriptions[src] = sl["description"]
+        prices = [sl["price_pcm"] for sl in source_listings]
+        min_price = min(prices) if prices else prop.price_pcm
+        max_price = max(prices) if prices else prop.price_pcm
     else:
-        sources_list.append(prop.source)
+        # Fall back to JSON parsing (backward compat)
+        if row["sources"]:
+            for s in json.loads(row["sources"]):
+                sources_list.append(PropertySource(s))
+        else:
+            sources_list.append(prop.source)
 
-    if row["source_urls"]:
-        for s, url in json.loads(row["source_urls"]).items():
-            source_urls[PropertySource(s)] = HttpUrl(url)
-    else:
-        source_urls[prop.source] = prop.url
+        if row["source_urls"]:
+            for s, url in json.loads(row["source_urls"]).items():
+                source_urls[PropertySource(s)] = HttpUrl(url)
+        else:
+            source_urls[prop.source] = prop.url
 
-    if row["descriptions_json"]:
-        for s, desc in json.loads(row["descriptions_json"]).items():
-            descriptions[PropertySource(s)] = desc
+        if row["descriptions_json"]:
+            for s, desc in json.loads(row["descriptions_json"]).items():
+                descriptions[PropertySource(s)] = desc
+
+        min_price = row["min_price"] if row["min_price"] is not None else prop.price_pcm
+        max_price = row["max_price"] if row["max_price"] is not None else prop.price_pcm
 
     gallery: tuple[PropertyImage, ...] = ()
     floorplan_img: PropertyImage | None = None
@@ -184,9 +221,6 @@ async def row_to_merged_property(
         images = await get_property_images(prop.unique_id)
         gallery = tuple(img for img in images if img.image_type == "gallery")
         floorplan_img = next((img for img in images if img.image_type == "floorplan"), None)
-
-    min_price = row["min_price"] if row["min_price"] is not None else prop.price_pcm
-    max_price = row["max_price"] if row["max_price"] is not None else prop.price_pcm
 
     # Defensive access for pre-migration rows
     floor_area_sqm: float | None = None

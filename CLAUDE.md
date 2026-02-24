@@ -63,7 +63,7 @@ See README.md for full configuration reference. All settings use `HOME_FINDER_` 
 3. **Criteria Filter** — Price/bedroom filters from `SearchCriteria`
 4. **Location Filter** — Validate postcodes match search areas (catches scraper leakage)
 5. **Wrap as MergedProperty** — `Deduplicator.properties_to_merged()` wraps each Property as single-source
-6. **New Property Filter** — Check SQLite DB to only process unseen properties
+6. **New Property Filter** — Check `source_listings` table to only process unseen properties. "Seen" means the listing has a `merged_id` (was promoted to a golden record in a previous run), not merely that it was scraped. This avoids re-processing listings that were previously filtered out or failed enrichment.
 7. **Commute Filter** — TravelTime API (if configured); geocodes missing coordinates
 8. **Detail Enrichment** — Fetch gallery, floorplans, descriptions; cache images to disk; detect/remove EPC charts; detect floorplans in gallery via PIL heuristics; generate thumbnails for surviving gallery images
 9. **Post-Enrichment Dedup** — `deduplicate_merged_async()` merges cross-platform duplicates using enriched data
