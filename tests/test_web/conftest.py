@@ -22,7 +22,7 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
     if browser_items:
         # xdist workers can't share session-scoped server fixtures properly
         num_workers = config.getoption("numprocesses", default=0)
-        if num_workers and str(num_workers) != "0":
+        if num_workers and num_workers > 0:
             for item in browser_items:
                 item.add_marker(pytest.mark.skip(
                     reason="Browser tests require -n0 "

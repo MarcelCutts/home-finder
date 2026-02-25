@@ -30,6 +30,7 @@ _FLOOR_AREA_MAX_SQFT = 5000
 _RETRY_BASE_DELAY = 2.0  # seconds, doubled each retry (2, 4)
 _ZOOPLA_MIN_INTERVAL = 3.0  # seconds between Zoopla detail page requests
 _OTM_MIN_INTERVAL = 0.3  # seconds between OnTheMarket requests (less aggressive)
+_OPENRENT_MIN_INTERVAL = 0.3  # seconds between OpenRent detail requests
 _IMAGE_MIN_INTERVAL = 0.1  # seconds between CDN image downloads (rarely rate limited)
 
 logger = get_logger(__name__)
@@ -349,6 +350,8 @@ class DetailFetcher:
         self._zoopla_next_time: float = 0.0
         self._otm_lock = asyncio.Lock()
         self._otm_next_time: float = 0.0
+        self._openrent_lock = asyncio.Lock()
+        self._openrent_next_time: float = 0.0
         self._image_lock = asyncio.Lock()
         self._image_next_time: float = 0.0
 
@@ -407,16 +410,23 @@ class DetailFetcher:
             setattr(self, attr, asyncio.get_event_loop().time() + interval)
 
     async def _curl_get_with_retry(
-        self, url: str, *, min_interval: float = _ZOOPLA_MIN_INTERVAL
+        self,
+        url: str,
+        *,
+        min_interval: float = _ZOOPLA_MIN_INTERVAL,
+        throttle_name: str | None = None,
     ) -> Any:
         """GET with retry on 429 for curl_cffi session.
 
         Args:
             url: URL to fetch.
             min_interval: Minimum seconds between requests for this throttle.
+            throttle_name: Explicit throttle bucket name. When provided, selects
+                the lock directly instead of inferring from min_interval.
         """
-        # Pick the right throttle based on interval (avoids adding more params)
-        if min_interval >= _ZOOPLA_MIN_INTERVAL:
+        if throttle_name == "openrent":
+            lock, attr = self._openrent_lock, "_openrent_next_time"
+        elif min_interval >= _ZOOPLA_MIN_INTERVAL:
             lock, attr = self._zoopla_lock, "_zoopla_next_time"
         elif min_interval >= _OTM_MIN_INTERVAL:
             lock, attr = self._otm_lock, "_otm_next_time"
@@ -659,7 +669,9 @@ class DetailFetcher:
         """Extract floorplan and gallery URLs from OpenRent detail page."""
         try:
             response = await self._curl_get_with_retry(
-                str(prop.url), min_interval=_OTM_MIN_INTERVAL
+                str(prop.url),
+                min_interval=_OPENRENT_MIN_INTERVAL,
+                throttle_name="openrent",
             )
             if response.status_code != 200:
                 logger.warning(
