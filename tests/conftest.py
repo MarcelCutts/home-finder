@@ -4,7 +4,7 @@ import gc
 import os
 import sys
 import threading
-from collections.abc import Callable
+from collections.abc import Callable, Generator
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -40,6 +40,13 @@ def pytest_configure(config: pytest.Config) -> None:
         sys.stderr.reconfigure(line_buffering=True)
 
 
+def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
+    """Apply timeout exemptions for slow-marked tests."""
+    for item in items:
+        if item.get_closest_marker("slow"):
+            item.add_marker(pytest.mark.timeout(120))
+
+
 # Hypothesis settings profiles for different environments
 settings.register_profile("fast", max_examples=10)
 settings.register_profile(
@@ -66,7 +73,7 @@ def _isolate_settings_from_dotenv(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.fixture(autouse=True)
-def _cleanup_aiosqlite_threads():
+def _cleanup_aiosqlite_threads(request: pytest.FixtureRequest):
     """Safety net: detect and stop leaked aiosqlite worker threads.
 
     aiosqlite v0.22+ creates a non-daemon worker thread per connection that
@@ -74,6 +81,11 @@ def _cleanup_aiosqlite_threads():
     (doesn't call ``await conn.close()``), the thread prevents clean process exit.
     """
     yield
+
+    # Browser tests run a uvicorn server in a daemon thread that holds its own
+    # aiosqlite connection.  Killing it mid-session breaks all subsequent tests.
+    if request.node.get_closest_marker("browser"):
+        return
 
     from aiosqlite.core import _STOP_RUNNING_SENTINEL, Connection
 
@@ -374,3 +386,80 @@ def sample_quality_analysis() -> PropertyQualityAnalysis:
             "Bright, well-maintained flat with modern kitchen. Good for home office and hosting."
         ),
     )
+
+
+# ---------------------------------------------------------------------------
+# Crawlee state isolation (used by integration + scraper location leakage tests)
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def reset_crawlee_state() -> Generator[None, None, None]:
+    """Reset Crawlee's global state between tests.
+
+    Crawlee caches service locators and storage clients that are bound to
+    specific event loops. Without resetting this state, tests running with
+    different event loops will fail with "attached to a different event loop".
+
+    Not autouse — only tests that exercise real Crawlee scrapers need this.
+    Use via @pytest.mark.usefixtures("reset_crawlee_state").
+    """
+    _clear_crawlee_caches()
+    yield
+    _clear_crawlee_caches()
+
+
+def _clear_crawlee_caches() -> None:
+    """Clear Crawlee's internal caches and state."""
+    try:
+        from crawlee._service_locator import service_locator
+
+        service_locator._configuration = None
+        service_locator._event_manager = None
+        service_locator._storage_client = None
+    except (ImportError, AttributeError):
+        pass
+
+    try:
+        from crawlee.storages import KeyValueStore
+
+        if hasattr(KeyValueStore, "_cache"):
+            KeyValueStore._cache.clear()
+        if hasattr(KeyValueStore, "_cache_by_id"):
+            KeyValueStore._cache_by_id.clear()
+        if hasattr(KeyValueStore, "_cache_by_name"):
+            KeyValueStore._cache_by_name.clear()
+    except (ImportError, AttributeError):
+        pass
+
+    try:
+        from crawlee.statistics import Statistics
+
+        if hasattr(Statistics, "_instance"):
+            Statistics._instance = None
+    except (ImportError, AttributeError):
+        pass
+
+    try:
+        from crawlee.crawlers import BasicCrawler
+
+        if hasattr(BasicCrawler, "_running_crawlers"):
+            BasicCrawler._running_crawlers.clear()
+    except (ImportError, AttributeError):
+        pass
+
+
+@pytest.fixture
+def set_crawlee_storage_dir(tmp_path: Path) -> Generator[None, None, None]:
+    """Use a temporary directory for Crawlee storage during tests.
+
+    Not autouse — only tests that exercise real Crawlee scrapers need this.
+    Use via @pytest.mark.usefixtures("set_crawlee_storage_dir").
+    """
+    old_value = os.environ.get("CRAWLEE_STORAGE_DIR")
+    os.environ["CRAWLEE_STORAGE_DIR"] = str(tmp_path / "crawlee_storage")
+    yield
+    if old_value is not None:
+        os.environ["CRAWLEE_STORAGE_DIR"] = old_value
+    else:
+        os.environ.pop("CRAWLEE_STORAGE_DIR", None)

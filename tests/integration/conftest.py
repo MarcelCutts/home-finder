@@ -1,11 +1,6 @@
-"""Pytest fixtures for integration tests.
+"""Pytest fixtures for integration tests."""
 
-Handles Crawlee state isolation between tests to prevent event loop conflicts.
-"""
-
-import os
-from collections.abc import AsyncGenerator, Generator
-from pathlib import Path
+from collections.abc import AsyncGenerator
 
 import pytest
 import pytest_asyncio
@@ -14,91 +9,8 @@ from pydantic import SecretStr
 from home_finder.config import Settings
 from home_finder.db import PropertyStorage
 
-
-@pytest.fixture
-def reset_crawlee_state() -> Generator[None, None, None]:
-    """Reset Crawlee's global state between tests.
-
-    Crawlee caches service locators and storage clients that are bound to
-    specific event loops. Without resetting this state, tests running with
-    different event loops will fail with "attached to a different event loop".
-
-    This follows the pattern used in Crawlee's own test suite.
-
-    Not autouse — only tests that exercise real Crawlee scrapers need this.
-    Use via @pytest.mark.usefixtures("reset_crawlee_state").
-    """
-    # Reset before test
-    _clear_crawlee_caches()
-
-    yield
-
-    # Reset after test
-    _clear_crawlee_caches()
-
-
-def _clear_crawlee_caches() -> None:
-    """Clear Crawlee's internal caches and state."""
-    try:
-        from crawlee._service_locator import service_locator
-
-        # Reset the service locator to clear cached clients bound to old event loops
-        service_locator._configuration = None
-        service_locator._event_manager = None
-        service_locator._storage_client = None
-    except (ImportError, AttributeError):
-        pass
-
-    try:
-        from crawlee.storages import KeyValueStore
-
-        # Clear KeyValueStore cache
-        if hasattr(KeyValueStore, "_cache"):
-            KeyValueStore._cache.clear()
-        if hasattr(KeyValueStore, "_cache_by_id"):
-            KeyValueStore._cache_by_id.clear()
-        if hasattr(KeyValueStore, "_cache_by_name"):
-            KeyValueStore._cache_by_name.clear()
-    except (ImportError, AttributeError):
-        pass
-
-    try:
-        from crawlee.statistics import Statistics
-
-        # Clear Statistics instance cache
-        if hasattr(Statistics, "_instance"):
-            Statistics._instance = None
-    except (ImportError, AttributeError):
-        pass
-
-    try:
-        from crawlee.crawlers import BasicCrawler
-
-        # Clear BasicCrawler class-level cache
-        if hasattr(BasicCrawler, "_running_crawlers"):
-            BasicCrawler._running_crawlers.clear()
-    except (ImportError, AttributeError):
-        pass
-
-
-@pytest.fixture
-def set_crawlee_storage_dir(tmp_path: Path) -> Generator[None, None, None]:
-    """Use a temporary directory for Crawlee storage during tests.
-
-    This prevents tests from interfering with each other through shared storage.
-
-    Not autouse — only tests that exercise real Crawlee scrapers need this.
-    Use via @pytest.mark.usefixtures("set_crawlee_storage_dir").
-    """
-    old_value = os.environ.get("CRAWLEE_STORAGE_DIR")
-    os.environ["CRAWLEE_STORAGE_DIR"] = str(tmp_path / "crawlee_storage")
-
-    yield
-
-    if old_value is not None:
-        os.environ["CRAWLEE_STORAGE_DIR"] = old_value
-    else:
-        os.environ.pop("CRAWLEE_STORAGE_DIR", None)
+# Crawlee state isolation fixtures (reset_crawlee_state, set_crawlee_storage_dir)
+# live in the root tests/conftest.py so they're available project-wide.
 
 
 @pytest_asyncio.fixture

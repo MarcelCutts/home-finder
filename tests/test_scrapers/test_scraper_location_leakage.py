@@ -272,6 +272,7 @@ class TestScraperUrlConstruction:
 
 @pytest.mark.integration
 @pytest.mark.slow
+@pytest.mark.usefixtures("reset_crawlee_state", "set_crawlee_storage_dir")
 class TestLiveScraperLocationLeakage:
     """Live integration tests to detect location leakage.
 

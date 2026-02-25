@@ -7,7 +7,7 @@ import pytest
 from playwright.sync_api import Page, expect
 
 
-def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
+def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
     """Auto-enable socket and disable pytest-timeout for browser-marked tests.
 
     The global ``addopts`` includes ``--disable-socket`` to keep unit tests
@@ -18,6 +18,18 @@ def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
     connection state, causing deadlocks on fixture teardown.  We disable it
     for browser tests and rely on Playwright's built-in timeouts instead.
     """
+    browser_items = [item for item in items if item.get_closest_marker("browser")]
+    if browser_items:
+        # xdist workers can't share session-scoped server fixtures properly
+        num_workers = config.getoption("numprocesses", default=0)
+        if num_workers and str(num_workers) != "0":
+            for item in browser_items:
+                item.add_marker(pytest.mark.skip(
+                    reason="Browser tests require -n0 "
+                    "(session-scoped server incompatible with xdist)"
+                ))
+            return
+
     for item in items:
         if item.get_closest_marker("browser"):
             item.add_marker(pytest.mark.enable_socket)

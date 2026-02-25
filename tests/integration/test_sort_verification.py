@@ -95,6 +95,7 @@ class TestOpenRentSortVerification:
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.xfail(strict=False, reason="OnTheMarket may change sort UI structure")
 class TestOnTheMarketSortVerification:
     """Verify OnTheMarket sort-field=update_date selects 'Recent'."""
 

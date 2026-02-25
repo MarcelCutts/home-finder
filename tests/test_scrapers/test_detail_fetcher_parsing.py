@@ -539,8 +539,8 @@ class TestOpenRentParsing:
         return (fixtures_path / "openrent_detail_no_floorplan.html").read_text()
 
     async def test_extracts_floorplan(self, fetcher: DetailFetcher, with_floorplan: str) -> None:
-        fetcher._httpx_get_with_retry = AsyncMock(  # type: ignore[method-assign]
-            return_value=_mock_httpx_response(with_floorplan)
+        fetcher._curl_get_with_retry = AsyncMock(  # type: ignore[method-assign]
+            return_value=_mock_curl_response(with_floorplan)
         )
         prop = _make_property(PropertySource.OPENRENT)
         result = await fetcher.fetch_detail_page(prop)
@@ -551,8 +551,8 @@ class TestOpenRentParsing:
     async def test_gallery_excludes_floorplan(
         self, fetcher: DetailFetcher, with_floorplan: str
     ) -> None:
-        fetcher._httpx_get_with_retry = AsyncMock(  # type: ignore[method-assign]
-            return_value=_mock_httpx_response(with_floorplan)
+        fetcher._curl_get_with_retry = AsyncMock(  # type: ignore[method-assign]
+            return_value=_mock_curl_response(with_floorplan)
         )
         prop = _make_property(PropertySource.OPENRENT)
         result = await fetcher.fetch_detail_page(prop)
@@ -563,8 +563,8 @@ class TestOpenRentParsing:
             assert "floorplan" not in url.lower()
 
     async def test_gallery_has_full_urls(self, fetcher: DetailFetcher, with_floorplan: str) -> None:
-        fetcher._httpx_get_with_retry = AsyncMock(  # type: ignore[method-assign]
-            return_value=_mock_httpx_response(with_floorplan)
+        fetcher._curl_get_with_retry = AsyncMock(  # type: ignore[method-assign]
+            return_value=_mock_curl_response(with_floorplan)
         )
         prop = _make_property(PropertySource.OPENRENT)
         result = await fetcher.fetch_detail_page(prop)
@@ -574,8 +574,8 @@ class TestOpenRentParsing:
             assert url.startswith("https://")
 
     async def test_no_floorplan(self, fetcher: DetailFetcher, no_floorplan: str) -> None:
-        fetcher._httpx_get_with_retry = AsyncMock(  # type: ignore[method-assign]
-            return_value=_mock_httpx_response(no_floorplan)
+        fetcher._curl_get_with_retry = AsyncMock(  # type: ignore[method-assign]
+            return_value=_mock_curl_response(no_floorplan)
         )
         prop = _make_property(PropertySource.OPENRENT)
         result = await fetcher.fetch_detail_page(prop)
@@ -585,15 +585,15 @@ class TestOpenRentParsing:
         assert len(result.gallery_urls) == 2
 
     async def test_redirect_to_homepage_returns_none(self, fetcher: DetailFetcher) -> None:
-        resp = _mock_httpx_response("<html>Homepage</html>")
+        resp = _mock_curl_response("<html>Homepage</html>")
         resp.url = "https://www.openrent.com/properties-to-rent/london"
-        fetcher._httpx_get_with_retry = AsyncMock(return_value=resp)  # type: ignore[method-assign]
+        fetcher._curl_get_with_retry = AsyncMock(return_value=resp)  # type: ignore[method-assign]
         prop = _make_property(PropertySource.OPENRENT)
         result = await fetcher.fetch_detail_page(prop)
         assert result is None
 
     async def test_exception_returns_none(self, fetcher: DetailFetcher) -> None:
-        fetcher._httpx_get_with_retry = AsyncMock(  # type: ignore[method-assign]
+        fetcher._curl_get_with_retry = AsyncMock(  # type: ignore[method-assign]
             side_effect=Exception("Timeout")
         )
         prop = _make_property(PropertySource.OPENRENT)
@@ -610,8 +610,8 @@ class TestOpenRentParsing:
         <a href="//imagescdn.openrent.co.uk/listings/999/o_photo2.JPG"
            class="lightbox_item"></a>
         </body></html>"""
-        fetcher._httpx_get_with_retry = AsyncMock(  # type: ignore[method-assign]
-            return_value=_mock_httpx_response(html)
+        fetcher._curl_get_with_retry = AsyncMock(  # type: ignore[method-assign]
+            return_value=_mock_curl_response(html)
         )
         prop = _make_property(PropertySource.OPENRENT)
         result = await fetcher.fetch_detail_page(prop)
@@ -629,8 +629,8 @@ class TestOpenRentParsing:
         <a href="//imagescdn.openrent.co.uk/listings/999/o_epc_graph.JPG"
            data-lightbox="gallery"></a>
         </body></html>"""
-        fetcher._httpx_get_with_retry = AsyncMock(  # type: ignore[method-assign]
-            return_value=_mock_httpx_response(html)
+        fetcher._curl_get_with_retry = AsyncMock(  # type: ignore[method-assign]
+            return_value=_mock_curl_response(html)
         )
         prop = _make_property(PropertySource.OPENRENT)
         result = await fetcher.fetch_detail_page(prop)
@@ -645,8 +645,8 @@ class TestOpenRentParsing:
         <img src="//imagescdn.openrent.co.uk/listings/999/o_bedroom.jpg" />
         <img src="//imagescdn.openrent.co.uk/listings/999/o_epc_rating.jpg" />
         </body></html>"""
-        fetcher._httpx_get_with_retry = AsyncMock(  # type: ignore[method-assign]
-            return_value=_mock_httpx_response(html)
+        fetcher._curl_get_with_retry = AsyncMock(  # type: ignore[method-assign]
+            return_value=_mock_curl_response(html)
         )
         prop = _make_property(PropertySource.OPENRENT)
         result = await fetcher.fetch_detail_page(prop)

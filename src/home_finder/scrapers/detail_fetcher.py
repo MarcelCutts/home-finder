@@ -658,8 +658,17 @@ class DetailFetcher:
     async def _fetch_openrent(self, prop: Property) -> DetailPageData | None:
         """Extract floorplan and gallery URLs from OpenRent detail page."""
         try:
-            response = await self._httpx_get_with_retry(str(prop.url))
-            html = response.text
+            response = await self._curl_get_with_retry(
+                str(prop.url), min_interval=_OTM_MIN_INTERVAL
+            )
+            if response.status_code != 200:
+                logger.warning(
+                    "openrent_http_error",
+                    property_id=prop.unique_id,
+                    status=response.status_code,
+                )
+                return None
+            html: str = response.text
 
             # Check if we got redirected to homepage (property no longer available)
             if "/properties-to-rent" in str(response.url) or "homepage" in html.lower()[:1000]:
