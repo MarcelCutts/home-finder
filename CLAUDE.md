@@ -41,9 +41,9 @@ PYTHONUNBUFFERED=1 uv run pytest --cov=src               # Run with coverage
 PYTHONUNBUFFERED=1 uv run pytest -m slow                 # Run slow tests (real network scraping)
 
 # Browser E2E tests (excluded from normal test runs, requires Chromium)
-PYTHONUNBUFFERED=1 uv run pytest -m browser tests/test_web/test_browser_e2e.py -v
-PYTHONUNBUFFERED=1 uv run pytest -m browser tests/test_web/test_browser_e2e.py -v --headed  # See the browser
-PYTHONUNBUFFERED=1 uv run pytest -m browser tests/test_web/test_browser_e2e.py -v --tracing=retain-on-failure  # Save traces on failure
+PYTHONUNBUFFERED=1 uv run pytest -m browser tests/test_web/test_browser_e2e.py -v -n0
+PYTHONUNBUFFERED=1 uv run pytest -m browser tests/test_web/test_browser_e2e.py -v --headed -n0  # See the browser
+PYTHONUNBUFFERED=1 uv run pytest -m browser tests/test_web/test_browser_e2e.py -v --tracing=retain-on-failure -n0  # Save traces on failure
 
 # Linting and type checking
 uv run ruff check src tests           # Check for issues
@@ -83,8 +83,8 @@ See README.md for full configuration reference. All settings use `HOME_FINDER_` 
 | OnTheMarket scraper | `curl_cffi` with `impersonate="chrome"` | TLS fingerprinting detection |
 | Rightmove scraper | `crawlee.BeautifulSoupCrawler` | Standard requests work |
 | OpenRent scraper | `curl_cffi` with `impersonate="chrome"` | TLS fingerprinting detection |
-| DetailFetcher (Zoopla/OTM) | `curl_cffi` with `impersonate="chrome"` | TLS fingerprinting on detail pages |
-| DetailFetcher (others) | `httpx.AsyncClient` | Standard requests work |
+| DetailFetcher (Zoopla/OTM/OpenRent) | `curl_cffi` with `impersonate="chrome"` | TLS fingerprinting on detail pages |
+| DetailFetcher (Rightmove) | `httpx.AsyncClient` | Standard requests work |
 
 ```python
 # Example: curl_cffi usage for anti-bot sites

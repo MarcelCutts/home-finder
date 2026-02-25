@@ -9,10 +9,13 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from curl_cffi import CurlError
 from pydantic import HttpUrl
 
 from home_finder.models import Property, PropertySource
 from home_finder.scrapers.detail_fetcher import (
+    _CDN_THROTTLE_CONFIG,
+    _IMAGE_TIMEOUT,
     DetailFetcher,
     DetailPageData,
     _find_dict_with_key,
@@ -984,3 +987,180 @@ class TestDownloadImageBytes:
 
         result = await fetcher.download_image_bytes("https://example.com/photo.jpg")
         assert result is None
+
+
+# ---------------------------------------------------------------------------
+# Image circuit breaker
+# ---------------------------------------------------------------------------
+
+
+class TestImageCircuitBreaker:
+    """Circuit breaker trips after consecutive timeout/connection failures."""
+
+    async def test_trips_after_threshold(self) -> None:
+        """Three consecutive CurlError(28) should trip the breaker."""
+        fetcher = DetailFetcher()
+        fetcher._curl_get_with_retry = AsyncMock(  # type: ignore[method-assign]
+            side_effect=CurlError("Operation timed out", code=28),
+        )
+
+        url = "https://lid.zoocdn.com/u/1024/768/abc.jpg"
+        for _ in range(3):
+            result = await fetcher.download_image_bytes(url)
+            assert result is None
+
+        # Fourth call should be skipped entirely (circuit open)
+        fetcher._curl_get_with_retry.reset_mock()
+        result = await fetcher.download_image_bytes(url)
+        assert result is None
+        fetcher._curl_get_with_retry.assert_not_awaited()
+
+    async def test_success_resets_breaker(self) -> None:
+        """A successful download resets the failure counter."""
+        fetcher = DetailFetcher()
+
+        # Two failures (just under threshold)
+        fetcher._curl_get_with_retry = AsyncMock(  # type: ignore[method-assign]
+            side_effect=CurlError("Operation timed out", code=28),
+        )
+        for _ in range(2):
+            await fetcher.download_image_bytes("https://lid.zoocdn.com/a.jpg")
+
+        # Then a success
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.content = _VALID_JPEG
+        fetcher._curl_get_with_retry = AsyncMock(return_value=mock_resp)  # type: ignore[method-assign]
+        result = await fetcher.download_image_bytes("https://lid.zoocdn.com/b.jpg")
+        assert result == _VALID_JPEG
+
+        # Counter is reset — need 3 more failures to trip
+        fetcher._curl_get_with_retry = AsyncMock(  # type: ignore[method-assign]
+            side_effect=CurlError("Operation timed out", code=28),
+        )
+        for _ in range(2):
+            await fetcher.download_image_bytes("https://lid.zoocdn.com/c.jpg")
+
+        # Still not tripped (only 2 failures after reset)
+        breaker = fetcher._image_breakers["zoocdn.com"]
+        assert not breaker.is_tripped
+
+    async def test_per_cdn_isolation(self) -> None:
+        """Failures on zoocdn should not trip the OTM breaker."""
+        fetcher = DetailFetcher()
+        fetcher._curl_get_with_retry = AsyncMock(  # type: ignore[method-assign]
+            side_effect=CurlError("Operation timed out", code=28),
+        )
+
+        # Trip zoocdn breaker
+        for _ in range(3):
+            await fetcher.download_image_bytes("https://lid.zoocdn.com/a.jpg")
+
+        assert fetcher._image_breakers["zoocdn.com"].is_tripped
+
+        # OTM breaker should not exist yet (no OTM requests made)
+        assert "onthemarket.com" not in fetcher._image_breakers
+
+        # OTM requests should still go through (will fail, but not circuit-skipped)
+        fetcher._curl_get_with_retry.reset_mock()
+        await fetcher.download_image_bytes("https://media.onthemarket.com/img.jpg")
+        fetcher._curl_get_with_retry.assert_awaited_once()
+
+    async def test_non_timeout_errors_dont_trip(self) -> None:
+        """HTTP 404 should not increment the circuit breaker."""
+        fetcher = DetailFetcher()
+        mock_resp = MagicMock()
+        mock_resp.status_code = 404
+        fetcher._curl_get_with_retry = AsyncMock(return_value=mock_resp)  # type: ignore[method-assign]
+
+        for _ in range(5):
+            await fetcher.download_image_bytes("https://lid.zoocdn.com/a.jpg")
+
+        breaker = fetcher._image_breakers["zoocdn.com"]
+        assert not breaker.is_tripped
+
+    async def test_connection_refused_trips(self) -> None:
+        """CurlError code 7 (connection refused) should trip the breaker."""
+        fetcher = DetailFetcher()
+        fetcher._curl_get_with_retry = AsyncMock(  # type: ignore[method-assign]
+            side_effect=CurlError("Connection refused", code=7),
+        )
+
+        for _ in range(3):
+            await fetcher.download_image_bytes("https://lid.zoocdn.com/a.jpg")
+
+        assert fetcher._image_breakers["zoocdn.com"].is_tripped
+
+    async def test_httpx_unaffected_by_breaker(self) -> None:
+        """Non-CDN URLs (httpx path) should not use circuit breaker."""
+        fetcher = DetailFetcher()
+
+        # Trip zoocdn breaker (shouldn't matter for httpx URLs)
+        fetcher._curl_get_with_retry = AsyncMock(  # type: ignore[method-assign]
+            side_effect=CurlError("Operation timed out", code=28),
+        )
+        for _ in range(3):
+            await fetcher.download_image_bytes("https://lid.zoocdn.com/a.jpg")
+
+        # httpx path should still work
+        mock_resp = MagicMock()
+        mock_resp.content = _VALID_JPEG
+        fetcher._httpx_get_with_retry = AsyncMock(return_value=mock_resp)  # type: ignore[method-assign]
+
+        result = await fetcher.download_image_bytes("https://example.com/photo.jpg")
+        assert result == _VALID_JPEG
+
+
+# ---------------------------------------------------------------------------
+# Per-CDN throttling
+# ---------------------------------------------------------------------------
+
+
+class TestPerCdnThrottling:
+    """Each CDN routes to its own throttle bucket with correct settings."""
+
+    async def test_zoocdn_uses_dedicated_throttle(self) -> None:
+        fetcher = DetailFetcher()
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.content = _VALID_JPEG
+        fetcher._curl_get_with_retry = AsyncMock(return_value=mock_resp)  # type: ignore[method-assign]
+
+        await fetcher.download_image_bytes("https://lid.zoocdn.com/u/1024/768/abc.jpg")
+
+        call_kwargs = fetcher._curl_get_with_retry.call_args
+        assert call_kwargs.kwargs["throttle_name"] == "img_zoocdn"
+        assert call_kwargs.kwargs["timeout"] == _IMAGE_TIMEOUT
+
+    async def test_otm_uses_dedicated_throttle(self) -> None:
+        fetcher = DetailFetcher()
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.content = _VALID_JPEG
+        fetcher._curl_get_with_retry = AsyncMock(return_value=mock_resp)  # type: ignore[method-assign]
+
+        await fetcher.download_image_bytes("https://media.onthemarket.com/properties/img.jpg")
+
+        call_kwargs = fetcher._curl_get_with_retry.call_args
+        assert call_kwargs.kwargs["throttle_name"] == "img_otm"
+        assert call_kwargs.kwargs["timeout"] == _IMAGE_TIMEOUT
+
+    async def test_openrent_uses_dedicated_throttle(self) -> None:
+        fetcher = DetailFetcher()
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.content = _VALID_JPEG
+        fetcher._curl_get_with_retry = AsyncMock(return_value=mock_resp)  # type: ignore[method-assign]
+
+        await fetcher.download_image_bytes(
+            "https://imagescdn.openrent.co.uk/listings/123/photo.jpg"
+        )
+
+        call_kwargs = fetcher._curl_get_with_retry.call_args
+        assert call_kwargs.kwargs["throttle_name"] == "img_openrent"
+        assert call_kwargs.kwargs["timeout"] == _IMAGE_TIMEOUT
+
+    async def test_each_cdn_has_unique_throttle_config(self) -> None:
+        """All CDN throttle names are distinct."""
+        names = [name for name, _ in _CDN_THROTTLE_CONFIG.values()]
+        assert len(names) == len(set(names))

@@ -81,7 +81,7 @@ def _make_test_property(
         source_urls={PropertySource.OPENRENT: prop.url},
         images=(
             PropertyImage(
-                url=HttpUrl("https://example.com/img1.jpg"),
+                url=HttpUrl("https://lid.zoocdn.com/u/1024/768/test1.jpg"),
                 source=PropertySource.OPENRENT,
                 image_type="gallery",
             ),

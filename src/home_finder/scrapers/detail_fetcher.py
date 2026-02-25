@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from typing import Any, NamedTuple, assert_never
 
 import httpx
+from curl_cffi import CurlError
 from curl_cffi.requests import AsyncSession
 from PIL import Image
 from tenacity import (
@@ -22,6 +23,7 @@ from home_finder.logging import get_logger
 from home_finder.models import SQM_PER_SQFT, Property, PropertySource
 from home_finder.scrapers.constants import BROWSER_HEADERS
 from home_finder.scrapers.retry import RetryableHttpError
+from home_finder.utils.circuit_breaker import ConsecutiveFailureBreaker
 from home_finder.utils.image_cache import is_valid_image_bytes
 
 _MAX_RETRIES = 2  # cross-run retry handles persistent failures
@@ -31,7 +33,29 @@ _RETRY_BASE_DELAY = 2.0  # seconds, doubled each retry (2, 4)
 _ZOOPLA_MIN_INTERVAL = 3.0  # seconds between Zoopla detail page requests
 _OTM_MIN_INTERVAL = 0.3  # seconds between OnTheMarket requests (less aggressive)
 _OPENRENT_MIN_INTERVAL = 0.3  # seconds between OpenRent detail requests
-_IMAGE_MIN_INTERVAL = 0.1  # seconds between CDN image downloads (rarely rate limited)
+
+# Per-CDN image throttle intervals (seconds).
+# zoocdn is the most aggressive at IP-blocking; OTM and OpenRent less so.
+_ZOOCDN_IMAGE_MIN_INTERVAL = 0.5
+_OTM_IMAGE_MIN_INTERVAL = 0.3
+_OPENRENT_IMAGE_MIN_INTERVAL = 0.3
+
+# Image download timeout (seconds).  CDN images respond in <1s when healthy;
+# a 15s cap avoids grinding through 30s timeouts when the CDN is blocking.
+_IMAGE_TIMEOUT = 15
+
+# Circuit-breaker: trip after this many consecutive timeout/connection failures.
+_IMAGE_CB_THRESHOLD = 3
+
+# Map CDN domain fragments → (throttle_name, interval) for image downloads.
+_CDN_THROTTLE_CONFIG: dict[str, tuple[str, float]] = {
+    "zoocdn.com": ("img_zoocdn", _ZOOCDN_IMAGE_MIN_INTERVAL),
+    "onthemarket.com": ("img_otm", _OTM_IMAGE_MIN_INTERVAL),
+    "imagescdn.openrent.co.uk": ("img_openrent", _OPENRENT_IMAGE_MIN_INTERVAL),
+}
+
+# curl error codes that indicate CDN-level blocking (timeouts / connection drops).
+_BREAKER_CURL_CODES = frozenset({7, 28, 55, 56})
 
 logger = get_logger(__name__)
 
@@ -345,15 +369,22 @@ class DetailFetcher:
         self._max_gallery_images = max_gallery_images
         self._proxy_url = proxy_url
         # Per-purpose throttles: Zoopla detail pages are heavily rate-limited,
-        # OTM less so, and CDN image downloads rarely trigger 429s.
+        # OTM less so.  Image CDNs get their own per-CDN throttles.
         self._zoopla_lock = asyncio.Lock()
         self._zoopla_next_time: float = 0.0
         self._otm_lock = asyncio.Lock()
         self._otm_next_time: float = 0.0
         self._openrent_lock = asyncio.Lock()
         self._openrent_next_time: float = 0.0
-        self._image_lock = asyncio.Lock()
-        self._image_next_time: float = 0.0
+        # Per-CDN image throttles
+        self._img_zoocdn_lock = asyncio.Lock()
+        self._img_zoocdn_next_time: float = 0.0
+        self._img_otm_lock = asyncio.Lock()
+        self._img_otm_next_time: float = 0.0
+        self._img_openrent_lock = asyncio.Lock()
+        self._img_openrent_next_time: float = 0.0
+        # Per-CDN circuit breakers (created lazily via _get_image_breaker)
+        self._image_breakers: dict[str, ConsecutiveFailureBreaker] = {}
 
     async def _get_client(self) -> httpx.AsyncClient:
         """Get or create HTTP client."""
@@ -415,6 +446,7 @@ class DetailFetcher:
         *,
         min_interval: float = _ZOOPLA_MIN_INTERVAL,
         throttle_name: str | None = None,
+        timeout: int = 30,
     ) -> Any:
         """GET with retry on 429 for curl_cffi session.
 
@@ -423,21 +455,28 @@ class DetailFetcher:
             min_interval: Minimum seconds between requests for this throttle.
             throttle_name: Explicit throttle bucket name. When provided, selects
                 the lock directly instead of inferring from min_interval.
+            timeout: Request timeout in seconds (default 30).
         """
-        if throttle_name == "openrent":
+        if throttle_name == "img_zoocdn":
+            lock, attr = self._img_zoocdn_lock, "_img_zoocdn_next_time"
+        elif throttle_name == "img_otm":
+            lock, attr = self._img_otm_lock, "_img_otm_next_time"
+        elif throttle_name == "img_openrent":
+            lock, attr = self._img_openrent_lock, "_img_openrent_next_time"
+        elif throttle_name == "openrent":
             lock, attr = self._openrent_lock, "_openrent_next_time"
         elif min_interval >= _ZOOPLA_MIN_INTERVAL:
             lock, attr = self._zoopla_lock, "_zoopla_next_time"
         elif min_interval >= _OTM_MIN_INTERVAL:
             lock, attr = self._otm_lock, "_otm_next_time"
         else:
-            lock, attr = self._image_lock, "_image_next_time"
+            lock, attr = self._zoopla_lock, "_zoopla_next_time"
 
         session = await self._get_curl_session()
         kwargs: dict[str, object] = {
             "impersonate": "chrome",
             "headers": BROWSER_HEADERS,
-            "timeout": 30,
+            "timeout": timeout,
         }
         if self._proxy_url:
             kwargs["proxy"] = self._proxy_url
@@ -882,11 +921,31 @@ class DetailFetcher:
             logger.warning("onthemarket_fetch_failed", property_id=prop.unique_id, error=str(e))
             return None
 
+    @staticmethod
+    def _get_cdn_key(url: str) -> str | None:
+        """Return the CDN throttle key for *url*, or None for non-CDN URLs."""
+        for domain_fragment in _CDN_THROTTLE_CONFIG:
+            if domain_fragment in url:
+                return domain_fragment
+        return None
+
+    def _get_image_breaker(self, cdn_key: str) -> ConsecutiveFailureBreaker:
+        """Return (or lazily create) a circuit breaker for *cdn_key*."""
+        breaker = self._image_breakers.get(cdn_key)
+        if breaker is None:
+            breaker = ConsecutiveFailureBreaker(
+                threshold=_IMAGE_CB_THRESHOLD,
+                name=f"image_cdn_{cdn_key}",
+            )
+            self._image_breakers[cdn_key] = breaker
+        return breaker
+
     async def download_image_bytes(self, url: str) -> bytes | None:
         """Download image bytes from a URL.
 
-        Uses curl_cffi for anti-bot CDNs (zoocdn.com, onthemarket.com,
-        imagescdn.openrent.co.uk), httpx for everything else.
+        Uses curl_cffi with per-CDN throttling and circuit breakers for
+        anti-bot CDNs (zoocdn.com, onthemarket.com, imagescdn.openrent.co.uk).
+        Uses httpx for everything else.
 
         Args:
             url: Image URL to download.
@@ -894,29 +953,63 @@ class DetailFetcher:
         Returns:
             Raw image bytes, or None if download failed.
         """
-        try:
-            if "zoocdn.com" in url or "onthemarket.com" in url or "imagescdn.openrent.co.uk" in url:
-                response = await self._curl_get_with_retry(url, min_interval=_IMAGE_MIN_INTERVAL)
+        cdn_key = self._get_cdn_key(url)
+
+        if cdn_key is not None:
+            # curl_cffi path with per-CDN throttle + circuit breaker
+            breaker = self._get_image_breaker(cdn_key)
+            if breaker.is_tripped:
+                logger.debug("image_download_circuit_open", url=url, cdn=cdn_key)
+                return None
+
+            throttle_name, interval = _CDN_THROTTLE_CONFIG[cdn_key]
+            try:
+                response = await self._curl_get_with_retry(
+                    url,
+                    min_interval=interval,
+                    throttle_name=throttle_name,
+                    timeout=_IMAGE_TIMEOUT,
+                )
                 if response.status_code != 200:
-                    logger.debug("image_download_failed", url=url, status=response.status_code)
+                    logger.debug(
+                        "image_download_failed", url=url, status=response.status_code
+                    )
                     return None
+                breaker.record_success()
                 data: bytes = response.content
-            else:
+            except CurlError as exc:
+                if exc.code in _BREAKER_CURL_CODES:
+                    breaker.record_failure()
+                    if breaker.is_tripped:
+                        logger.warning(
+                            "image_cdn_circuit_opened",
+                            cdn=cdn_key,
+                            failures=breaker.failure_count,
+                        )
+                logger.debug("image_download_error", url=url, error=str(exc))
+                return None
+            except Exception as exc:
+                logger.debug("image_download_error", url=url, error=str(exc))
+                return None
+        else:
+            # httpx path — no throttle, no breaker
+            try:
                 response = await self._httpx_get_with_retry(url)
                 data = response.content
-            if not is_valid_image_bytes(data):
-                logger.warning("image_download_not_image", url=url, prefix=data[:16])
+            except Exception as exc:
+                logger.debug("image_download_error", url=url, error=str(exc))
                 return None
-            # Validate PIL can fully decode it (catches truncated/corrupt downloads)
-            try:
-                Image.open(io.BytesIO(data)).load()
-            except Exception:
-                logger.warning("image_download_corrupt", url=url)
-                return None
-            return data
-        except Exception as e:
-            logger.debug("image_download_error", url=url, error=str(e))
+
+        if not is_valid_image_bytes(data):
+            logger.warning("image_download_not_image", url=url, prefix=data[:16])
             return None
+        # Validate PIL can fully decode it (catches truncated/corrupt downloads)
+        try:
+            Image.open(io.BytesIO(data)).load()
+        except Exception:
+            logger.warning("image_download_corrupt", url=url)
+            return None
+        return data
 
     async def __aenter__(self) -> "DetailFetcher":
         return self
