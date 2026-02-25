@@ -42,15 +42,15 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
         response.headers["Content-Security-Policy"] = (
             "default-src 'self'; "
-            f"script-src 'self' 'nonce-{nonce}' https://unpkg.com https://cdn.jsdelivr.net; "
+            f"script-src 'self' 'nonce-{nonce}' https://cdn.jsdelivr.net; "
             "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net "
-            "https://unpkg.com https://fonts.googleapis.com; "
+            "https://fonts.googleapis.com; "
             "font-src https://fonts.gstatic.com; "
             "img-src 'self' https://*.zoocdn.com https://*.zoopla.com "
             "https://*.rmimg.com https://*.rightmove.co.uk "
             "https://*.onthemarket.com "
             "https://*.openrent.com https://*.openrent.co.uk "
-            "https://*.basemaps.cartocdn.com https://unpkg.com data:; "
+            "https://*.basemaps.cartocdn.com https://cdn.jsdelivr.net data:; "
             "connect-src 'self'; "
             "frame-ancestors 'none'"
         )

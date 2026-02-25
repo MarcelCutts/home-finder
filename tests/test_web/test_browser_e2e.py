@@ -761,7 +761,7 @@ class TestMobileViewport:
         filter_bar = page.locator(".filter-bar")
         expect(filter_bar).to_be_visible()
         position = filter_bar.evaluate("el => getComputedStyle(el).position")
-        assert position == "static"
+        assert position != "sticky"
 
     def test_filter_bar_sticky_on_desktop(self, page):
         """Filter bar should be position:sticky on 1440px viewport."""

@@ -9,12 +9,14 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+import structlog.testing
 from curl_cffi import CurlError
 from pydantic import HttpUrl
 
 from home_finder.models import Property, PropertySource
 from home_finder.scrapers.detail_fetcher import (
     _CDN_THROTTLE_CONFIG,
+    _IMAGE_CB_THRESHOLD,
     _IMAGE_TIMEOUT,
     DetailFetcher,
     DetailPageData,
@@ -887,6 +889,26 @@ class TestDetailFetcherLifecycle:
         prop = _make_property(PropertySource.RIGHTMOVE)
         result = await fetcher.fetch_floorplan_url(prop)
         assert result is None
+
+    async def test_close_logs_skip_summary(self) -> None:
+        fetcher = DetailFetcher()
+        fetcher._image_skip_counts = {"zoocdn.com": 5, "onthemarket.com": 2}
+
+        with structlog.testing.capture_logs() as captured:
+            await fetcher.close()
+
+        summaries = [
+            log
+            for log in captured
+            if log.get("event") == "image_cdn_circuit_summary"
+        ]
+        assert len(summaries) == 2
+        by_cdn = {log["cdn"]: log for log in summaries}
+        assert by_cdn["zoocdn.com"]["skipped"] == 5
+        assert by_cdn["zoocdn.com"]["threshold"] == _IMAGE_CB_THRESHOLD
+        assert by_cdn["onthemarket.com"]["skipped"] == 2
+        for log in summaries:
+            assert log["log_level"] == "warning"
 
 
 # ---------------------------------------------------------------------------

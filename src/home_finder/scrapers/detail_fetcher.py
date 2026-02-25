@@ -385,6 +385,7 @@ class DetailFetcher:
         self._img_openrent_next_time: float = 0.0
         # Per-CDN circuit breakers (created lazily via _get_image_breaker)
         self._image_breakers: dict[str, ConsecutiveFailureBreaker] = {}
+        self._image_skip_counts: dict[str, int] = {}
 
     async def _get_client(self) -> httpx.AsyncClient:
         """Get or create HTTP client."""
@@ -470,7 +471,10 @@ class DetailFetcher:
         elif min_interval >= _OTM_MIN_INTERVAL:
             lock, attr = self._otm_lock, "_otm_next_time"
         else:
-            lock, attr = self._zoopla_lock, "_zoopla_next_time"
+            raise ValueError(
+                f"No throttle bucket for throttle_name={throttle_name!r}, "
+                f"min_interval={min_interval}"
+            )
 
         session = await self._get_curl_session()
         kwargs: dict[str, object] = {
@@ -959,6 +963,7 @@ class DetailFetcher:
             # curl_cffi path with per-CDN throttle + circuit breaker
             breaker = self._get_image_breaker(cdn_key)
             if breaker.is_tripped:
+                self._image_skip_counts[cdn_key] = self._image_skip_counts.get(cdn_key, 0) + 1
                 logger.debug("image_download_circuit_open", url=url, cdn=cdn_key)
                 return None
 
@@ -1019,6 +1024,13 @@ class DetailFetcher:
 
     async def close(self) -> None:
         """Close the HTTP clients."""
+        for cdn, count in self._image_skip_counts.items():
+            logger.warning(
+                "image_cdn_circuit_summary",
+                cdn=cdn,
+                skipped=count,
+                threshold=_IMAGE_CB_THRESHOLD,
+            )
         if self._client:
             await self._client.aclose()
             self._client = None
