@@ -173,7 +173,7 @@ async def _run_concurrent_analysis(
         merged: MergedProperty,
     ) -> tuple[MergedProperty, PropertyQualityAnalysis | None]:
         async with semaphore:
-            t0 = asyncio.get_event_loop().time()
+            t0 = asyncio.get_running_loop().time()
             try:
                 if per_property_timeout is not None:
                     result = await asyncio.wait_for(
@@ -181,7 +181,7 @@ async def _run_concurrent_analysis(
                     )
                 else:
                     result = await analyze_fn(merged)
-                elapsed = asyncio.get_event_loop().time() - t0
+                elapsed = asyncio.get_running_loop().time() - t0
                 logger.info(
                     "property_analysis_duration",
                     property_id=merged.unique_id,
@@ -189,7 +189,7 @@ async def _run_concurrent_analysis(
                 )
                 return result
             except TimeoutError:
-                elapsed = asyncio.get_event_loop().time() - t0
+                elapsed = asyncio.get_running_loop().time() - t0
                 logger.warning(
                     "property_analysis_wall_clock_timeout",
                     property_id=merged.unique_id,
