@@ -28,7 +28,6 @@
                 {% endif %}
                 <span class="badge badge-neutral">{% if prop.bedrooms == 0 %}Studio{% else %}{{ prop.bedrooms }} bed{% endif %}</span>
             </div>
-            {{ fit_badge(prop.fit_score, prop.fit_breakdown, prop.unique_id) }}
         </div>
         <div class="card-body">
             {# Meta row: rating | postcode | commute pill #}
@@ -127,6 +126,7 @@
             {% endif %}
         </div>
     </a>
+    {{ fit_badge(prop.fit_score, prop.fit_breakdown, prop.unique_id) }}
     {% if not prop.user_status or prop.user_status == 'new' %}
     <div class="card-quick-actions">
         <button class="card-action-btn card-action-interested"

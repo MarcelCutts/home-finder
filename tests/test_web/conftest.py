@@ -1,10 +1,21 @@
 """Shared Playwright fixtures and helpers for browser E2E tests."""
 
+import os
 import re
 from collections.abc import Generator
 
 import pytest
 from playwright.sync_api import Page, expect
+
+
+def _is_xdist_active(config: pytest.Config) -> bool:
+    """Detect whether xdist is distributing tests (controller or worker)."""
+    # Worker processes have this env var set by xdist
+    if os.environ.get("PYTEST_XDIST_WORKER"):
+        return True
+    # Controller process: numprocesses is set to a positive int
+    num_workers = config.getoption("numprocesses", default=0)
+    return bool(num_workers) and str(num_workers) != "0"
 
 
 def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
@@ -19,16 +30,14 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
     for browser tests and rely on Playwright's built-in timeouts instead.
     """
     browser_items = [item for item in items if item.get_closest_marker("browser")]
-    if browser_items:
+    if browser_items and _is_xdist_active(config):
         # xdist workers can't share session-scoped server fixtures properly
-        num_workers = config.getoption("numprocesses", default=0)
-        if num_workers and str(num_workers) != "0":
-            for item in browser_items:
-                item.add_marker(pytest.mark.skip(
-                    reason="Browser tests require -n0 "
-                    "(session-scoped server incompatible with xdist)"
-                ))
-            return
+        for item in browser_items:
+            item.add_marker(pytest.mark.skip(
+                reason="Browser tests require -n0 "
+                "(session-scoped server incompatible with xdist)"
+            ))
+        return
 
     for item in items:
         if item.get_closest_marker("browser"):
