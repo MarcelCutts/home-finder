@@ -3,8 +3,6 @@
 import json
 from typing import Any, Final
 
-
-
 # System prompt for Phase 1: Visual analysis - cached for cost savings
 VISUAL_ANALYSIS_SYSTEM_PROMPT: Final = """\
 You are an expert London rental property analyst with perfect vision \
@@ -97,11 +95,24 @@ issues. Cross-reference listing mentions of "refurbished", "newly decorated".
 3. Natural Light & Space: Window sizes, brightness, spacious vs cramped feel, \
 ceiling heights if visible.
 
-4. Living Room Size & Hosting Layout: From floorplan if included, estimate sqm. \
-Target: fits a home office AND hosts 8+ people (~20-25 sqm minimum). \
-Also estimate total_area_sqm — sum all rooms from the floorplan (bedrooms, living, \
-kitchen, bathroom, hallway, storage). Only provide this if a dimensioned floorplan \
-is available; use null otherwise. \
+4. Living Room Size & Floor Area:
+If a floorplan with dimensions is included:
+a) Read dimension labels for each room. UK floorplans use metric ("3.5m x 4.2m"), \
+imperial ("11'6" x 13'8""), or both. Convert imperial to metres (1 ft = 0.3048m).
+b) For each room, record the name, dimensions, and area in sqm (length x width). \
+Populate room_areas with one entry per labelled room.
+c) Double-check: re-examine each dimension you extracted against the floorplan image. \
+Flag uncertain readings by omitting length_m/width_m (set to null).
+d) Sum all room areas for total_area_sqm. Include: bedrooms, living room, kitchen \
+(or kitchen-diner), bathroom(s), hallway, storage/utility. Exclude: external \
+balcony, garden, communal areas.
+e) Set area_estimation_method: "measured_from_floorplan" if all rooms have dimensions, \
+"partial_dimensions" if some rooms lack them (estimate unlabelled rooms reasonably), \
+"estimated_from_scale" if using a scale bar, null if no dimensioned floorplan.
+f) For living_room_sqm: target is a space that fits a home office AND hosts 8+ people \
+(~20-25 sqm minimum).
+If no dimensioned floorplan: leave room_areas empty, total_area_sqm null, \
+area_estimation_method null.
 Assess hosting_layout: how well does the layout flow for hosting 8+ guests? \
 Consider kitchen-to-living connection (open-plan is ideal), bathroom accessibility \
 without crossing bedrooms, practical entrance flow. Rate excellent/good/awkward/poor.

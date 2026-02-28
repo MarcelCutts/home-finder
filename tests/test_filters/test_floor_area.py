@@ -307,6 +307,78 @@ class TestSpaceAnalysisTotalArea:
         assert d["total_area_sqm"] is None
 
 
+class TestSpaceAnalysisRoomAreas:
+    """Test room_areas and area_estimation_method fields on SpaceAnalysis."""
+
+    def test_room_areas_default_empty(self) -> None:
+        space = SpaceAnalysis(living_room_sqm=20.0)
+        assert space.room_areas == []
+
+    def test_room_areas_accepts_entries(self) -> None:
+        from home_finder.models.quality import RoomArea
+
+        rooms = [
+            RoomArea(name="Living Room", length_m=5.0, width_m=4.0, area_sqm=20.0),
+            RoomArea(name="Bedroom 1", length_m=3.5, width_m=3.0, area_sqm=10.5),
+        ]
+        space = SpaceAnalysis(living_room_sqm=20.0, room_areas=rooms, total_area_sqm=30.5)
+        assert len(space.room_areas) == 2
+        assert space.room_areas[0].name == "Living Room"
+        assert space.room_areas[1].area_sqm == 10.5
+
+    def test_room_area_with_null_dimensions(self) -> None:
+        from home_finder.models.quality import RoomArea
+
+        room = RoomArea(name="Hallway")
+        assert room.length_m is None
+        assert room.width_m is None
+        assert room.area_sqm is None
+
+    def test_area_estimation_method_default_none(self) -> None:
+        space = SpaceAnalysis(living_room_sqm=20.0)
+        assert space.area_estimation_method is None
+
+    def test_area_estimation_method_accepts_string(self) -> None:
+        space = SpaceAnalysis(
+            living_room_sqm=20.0,
+            area_estimation_method="measured_from_floorplan",
+        )
+        assert space.area_estimation_method == "measured_from_floorplan"
+
+    def test_area_estimation_method_coerces_invalid(self) -> None:
+        """Unknown enum values are coerced to None (field default) by _LenientLiteralModel."""
+        space = SpaceAnalysis(
+            living_room_sqm=20.0,
+            area_estimation_method="some_future_method",
+        )
+        assert space.area_estimation_method is None
+
+    def test_room_areas_serializes_roundtrip(self) -> None:
+        from home_finder.models.quality import RoomArea
+
+        rooms = [
+            RoomArea(name="Kitchen", length_m=3.0, width_m=2.5, area_sqm=7.5),
+        ]
+        space = SpaceAnalysis(
+            living_room_sqm=20.0,
+            total_area_sqm=27.5,
+            room_areas=rooms,
+            area_estimation_method="measured_from_floorplan",
+        )
+        d = space.model_dump()
+        assert d["room_areas"] == [
+            {"name": "Kitchen", "length_m": 3.0, "width_m": 2.5, "area_sqm": 7.5}
+        ]
+        assert d["area_estimation_method"] == "measured_from_floorplan"
+
+    def test_backward_compat_no_room_areas_key(self) -> None:
+        """Old stored JSON without room_areas/area_estimation_method still loads."""
+        data = {"living_room_sqm": 20.0, "total_area_sqm": 55.0}
+        space = SpaceAnalysis.model_validate(data)
+        assert space.room_areas == []
+        assert space.area_estimation_method is None
+
+
 # ── DB Round-Trip ──────────────────────────────────────────────────────────
 
 

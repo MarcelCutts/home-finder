@@ -272,6 +272,7 @@ class TestScraperUrlConstruction:
 
 @pytest.mark.integration
 @pytest.mark.slow
+@pytest.mark.timeout(300)
 @pytest.mark.usefixtures("reset_crawlee_state", "set_crawlee_storage_dir")
 class TestLiveScraperLocationLeakage:
     """Live integration tests to detect location leakage.
@@ -348,6 +349,7 @@ class TestLiveScraperLocationLeakage:
             min_bedrooms=1,
             max_bedrooms=2,
             area="hackney",
+            max_results=60,
         )
 
         self._analyze_location_leakage(result.properties, "hackney", "openrent")
@@ -362,6 +364,7 @@ class TestLiveScraperLocationLeakage:
             min_bedrooms=1,
             max_bedrooms=2,
             area="e8",
+            max_results=60,
         )
 
         self._analyze_location_leakage(result.properties, "e8", "openrent")

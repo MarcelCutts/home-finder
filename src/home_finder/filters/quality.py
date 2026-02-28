@@ -32,6 +32,7 @@ from home_finder.models import (
     PropertyHighlight,
     PropertyLowlight,
     PropertyQualityAnalysis,
+    RoomArea,
     SpaceAnalysis,
     StorageAnalysis,
     ValueAnalysis,
@@ -243,6 +244,20 @@ class _VisualAnalysisResponse(BaseModel):
         )
         notes: str
 
+    class RoomArea(BaseModel):
+        model_config = _Forbid
+        name: str = Field(description="Room name as labelled on floorplan")
+        length_m: float | None = Field(
+            default=None, description="Length in metres. null if not readable."
+        )
+        width_m: float | None = Field(
+            default=None, description="Width in metres. null if not readable."
+        )
+        area_sqm: float | None = Field(
+            default=None,
+            description="Computed length x width. null if either dimension unavailable.",
+        )
+
     class Space(BaseModel):
         model_config = _Forbid
         living_room_sqm: float | None = Field(
@@ -251,10 +266,25 @@ class _VisualAnalysisResponse(BaseModel):
         total_area_sqm: float | None = Field(
             default=None,
             description=(
-                "Estimated total floor area in sqm by summing all rooms from the floorplan. "
+                "Total floor area in sqm by summing all rooms from the floorplan. "
                 "Include all rooms: bedrooms, living room, kitchen, bathroom, hallway, storage. "
-                "Only estimate if a floorplan with dimensions is available. null if no floorplan."
+                "Only provide if a dimensioned floorplan is available. null if no floorplan."
             ),
+        )
+        room_areas: list["_VisualAnalysisResponse.RoomArea"] = Field(
+            default_factory=list,
+            description=(
+                "Per-room breakdown from floorplan. Empty list if no dimensioned floorplan."
+            ),
+        )
+        area_estimation_method: Literal[
+            "measured_from_floorplan",
+            "partial_dimensions",
+            "estimated_from_scale",
+            "estimated_from_photos",  # Reserved — not prompted yet
+        ] | None = Field(
+            default=None,
+            description="How total_area_sqm was determined. null if total_area_sqm is null.",
         )
         is_spacious_enough: bool = Field(description="True if can fit office AND host 8+ people")
         hosting_layout: Literal["excellent", "good", "awkward", "poor", "unknown"] = Field(
@@ -514,6 +544,7 @@ _MODEL_PAIRS: Final[list[tuple[type[BaseModel], type[BaseModel]]]] = [
     (_VisualAnalysisResponse.Condition, ConditionAnalysis),
     (_VisualAnalysisResponse.LightSpace, LightSpaceAnalysis),
     (_VisualAnalysisResponse.Space, SpaceAnalysis),
+    (_VisualAnalysisResponse.RoomArea, RoomArea),
     (_VisualAnalysisResponse.Bathroom, BathroomAnalysis),
     (_VisualAnalysisResponse.Bedroom, BedroomAnalysis),
     (_VisualAnalysisResponse.OutdoorSpace, OutdoorSpaceAnalysis),
@@ -1529,7 +1560,13 @@ class PropertyQualityFilter:
                 floorplan_url, cached_path=floorplan_cached_path
             )
             if floorplan_block:
-                content.append(TextBlockParam(type="text", text="Floorplan:"))
+                content.append(
+                    TextBlockParam(
+                        type="text",
+                        text="Floorplan \u2014 read all dimension labels carefully"
+                        " (UK formats: metres or feet/inches):",
+                    )
+                )
                 content.append(floorplan_block)
         elif floorplan_url:
             logger.debug("skipping_pdf_floorplan", url=floorplan_url)

@@ -57,6 +57,14 @@ _OnAnalysisResult = Callable[
 ]
 
 
+_BEDROOM_SQM_RANGES: dict[int, tuple[float, float]] = {
+    0: (12, 50),
+    1: (20, 75),
+    2: (35, 110),
+    3: (50, 150),
+}
+
+
 async def _persist_estimated_floor_area(
     merged: MergedProperty,
     quality_analysis: PropertyQualityAnalysis | None,
@@ -69,6 +77,29 @@ async def _persist_estimated_floor_area(
     if space and space.total_area_sqm and space.total_area_sqm > 0:
         sqm = space.total_area_sqm
         if 9.0 <= sqm <= 465.0:  # ~100-5000 sqft equivalent bounds
+            # Bedroom plausibility check (warning only)
+            bedrooms = merged.canonical.bedrooms
+            expected = _BEDROOM_SQM_RANGES.get(min(bedrooms, 3), (35, 150))
+            if not (expected[0] <= sqm <= expected[1]):
+                logger.warning(
+                    "floor_area_bedroom_mismatch",
+                    sqm=sqm,
+                    bedrooms=bedrooms,
+                    expected_range=expected,
+                    unique_id=merged.unique_id,
+                )
+
+            # Room sum cross-check (warning only)
+            if space.room_areas:
+                room_sum = sum(r.area_sqm for r in space.room_areas if r.area_sqm)
+                if room_sum > 0 and abs(room_sum - sqm) > max(5.0, sqm * 0.15):
+                    logger.warning(
+                        "floor_area_sum_mismatch",
+                        total=sqm,
+                        room_sum=room_sum,
+                        unique_id=merged.unique_id,
+                    )
+
             await storage.update_floor_area(merged.unique_id, sqm, "estimated")
 
 

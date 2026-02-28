@@ -28,21 +28,19 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
     pytest-timeout's signal method (SIGALRM) corrupts Playwright's internal
     connection state, causing deadlocks on fixture teardown.  We disable it
     for browser tests and rely on Playwright's built-in timeouts instead.
-    """
-    browser_items = [item for item in items if item.get_closest_marker("browser")]
-    if browser_items and _is_xdist_active(config):
-        # xdist workers can't share session-scoped server fixtures properly
-        for item in browser_items:
-            item.add_marker(pytest.mark.skip(
-                reason="Browser tests require -n0 "
-                "(session-scoped server incompatible with xdist)"
-            ))
-        return
 
+    Under xdist, all browser tests are grouped onto a single worker via
+    ``xdist_group("browser")`` so the session-scoped server fixture is shared.
+    """
+    xdist_active = _is_xdist_active(config)
     for item in items:
         if item.get_closest_marker("browser"):
             item.add_marker(pytest.mark.enable_socket)
             item.add_marker(pytest.mark.timeout(0))
+            # Group all browser tests onto a single xdist worker so the
+            # session-scoped server fixture is shared correctly.
+            if xdist_active:
+                item.add_marker(pytest.mark.xdist_group(name="browser"))
 
 
 @pytest.fixture(scope="session")

@@ -23,6 +23,7 @@ from home_finder.models import (
     SpaceAnalysis,
     TransportMode,
 )
+from home_finder.models.quality import RoomArea
 from home_finder.pipeline.analysis import (
     _persist_estimated_floor_area,
     _run_quality_and_save,
@@ -760,3 +761,108 @@ class TestPersistEstimatedFloorArea:
 
         await _persist_estimated_floor_area(merged, analysis, storage)
         storage.update_floor_area.assert_not_called()
+
+    async def test_logs_bedroom_mismatch_warning(
+        self,
+        storage: PropertyStorage,
+        make_merged_property: Callable[..., MergedProperty],
+        make_quality_analysis: Callable[..., PropertyQualityAnalysis],
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """Warns when floor area is outside expected range for bedroom count."""
+        # 2-bed property with 200 sqm — way above expected (35-110)
+        merged = make_merged_property(bedrooms=2)
+        analysis = make_quality_analysis(space=SpaceAnalysis(total_area_sqm=200.0))
+        await storage.pipeline.save_pre_analysis_properties([merged], {})
+
+        await _persist_estimated_floor_area(merged, analysis, storage)
+
+        captured = capsys.readouterr()
+        assert "floor_area_bedroom_mismatch" in (captured.out + captured.err)
+        # Still persists (warning only)
+        conn = await storage._get_connection()
+        cursor = await conn.execute(
+            "SELECT floor_area_sqm FROM properties WHERE unique_id = ?",
+            (merged.unique_id,),
+        )
+        row = await cursor.fetchone()
+        assert row is not None
+        assert row["floor_area_sqm"] == 200.0
+
+    async def test_no_bedroom_mismatch_warning_when_in_range(
+        self,
+        storage: PropertyStorage,
+        make_merged_property: Callable[..., MergedProperty],
+        make_quality_analysis: Callable[..., PropertyQualityAnalysis],
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """No warning when floor area is within expected range."""
+        # 2-bed property with 60 sqm — within expected (35-110)
+        merged = make_merged_property(bedrooms=2)
+        analysis = make_quality_analysis(space=SpaceAnalysis(total_area_sqm=60.0))
+        await storage.pipeline.save_pre_analysis_properties([merged], {})
+
+        await _persist_estimated_floor_area(merged, analysis, storage)
+
+        captured = capsys.readouterr()
+        assert "floor_area_bedroom_mismatch" not in (captured.out + captured.err)
+
+    async def test_logs_room_sum_mismatch_warning(
+        self,
+        storage: PropertyStorage,
+        make_merged_property: Callable[..., MergedProperty],
+        make_quality_analysis: Callable[..., PropertyQualityAnalysis],
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """Warns when room area sum diverges significantly from total."""
+        rooms = [
+            RoomArea(name="Living Room", area_sqm=20.0),
+            RoomArea(name="Bedroom", area_sqm=12.0),
+        ]
+        # room_sum=32, total=60 — diff of 28, exceeds max(5, 60*0.15)=9
+        merged = make_merged_property(bedrooms=1)
+        analysis = make_quality_analysis(
+            space=SpaceAnalysis(total_area_sqm=60.0, room_areas=rooms)
+        )
+        await storage.pipeline.save_pre_analysis_properties([merged], {})
+
+        await _persist_estimated_floor_area(merged, analysis, storage)
+
+        captured = capsys.readouterr()
+        assert "floor_area_sum_mismatch" in (captured.out + captured.err)
+        # Still persists
+        conn = await storage._get_connection()
+        cursor = await conn.execute(
+            "SELECT floor_area_sqm FROM properties WHERE unique_id = ?",
+            (merged.unique_id,),
+        )
+        row = await cursor.fetchone()
+        assert row is not None
+        assert row["floor_area_sqm"] == 60.0
+
+    async def test_no_room_sum_mismatch_when_close(
+        self,
+        storage: PropertyStorage,
+        make_merged_property: Callable[..., MergedProperty],
+        make_quality_analysis: Callable[..., PropertyQualityAnalysis],
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        """No warning when room sum is close to total."""
+        rooms = [
+            RoomArea(name="Living Room", area_sqm=20.0),
+            RoomArea(name="Bedroom", area_sqm=12.0),
+            RoomArea(name="Kitchen", area_sqm=8.0),
+            RoomArea(name="Bathroom", area_sqm=5.0),
+            RoomArea(name="Hallway", area_sqm=4.0),
+        ]
+        # room_sum=49, total=50 — diff of 1, within max(5, 50*0.15)=7.5
+        merged = make_merged_property(bedrooms=1)
+        analysis = make_quality_analysis(
+            space=SpaceAnalysis(total_area_sqm=50.0, room_areas=rooms)
+        )
+        await storage.pipeline.save_pre_analysis_properties([merged], {})
+
+        await _persist_estimated_floor_area(merged, analysis, storage)
+
+        captured = capsys.readouterr()
+        assert "floor_area_sum_mismatch" not in (captured.out + captured.err)

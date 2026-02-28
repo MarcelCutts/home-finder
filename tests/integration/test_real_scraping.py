@@ -271,6 +271,7 @@ class TestRealOnTheMarketScraping:
 
 
 @pytest.mark.slow
+@pytest.mark.timeout(300)
 @pytest.mark.asyncio
 class TestRealFullPipeline:
     """Real end-to-end pipeline test."""
@@ -296,6 +297,7 @@ class TestRealFullPipeline:
                     min_bedrooms=1,
                     max_bedrooms=2,
                     area="hackney",
+                    max_results=60,
                 )
                 properties = scrape_result.properties
                 all_properties.extend(properties)
