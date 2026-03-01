@@ -51,7 +51,7 @@ home-finder = "home_finder.main:main"
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 testpaths = ["tests"]
-addopts = "--tb=short -p no:cacheprovider -m 'not slow and not browser' --disable-socket --allow-unix-socket --timeout=30 -n auto"
+addopts = "--tb=short -p no:cacheprovider -m 'not slow and not browser' --disable-socket --allow-unix-socket --timeout=30 -n auto --dist=loadgroup"
 timeout_func_only = true
 markers = [
     "unit: Unit tests (fast, no I/O)",

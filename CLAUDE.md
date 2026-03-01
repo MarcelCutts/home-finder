@@ -41,9 +41,10 @@ PYTHONUNBUFFERED=1 uv run pytest --cov=src               # Run with coverage
 PYTHONUNBUFFERED=1 uv run pytest -m slow                 # Run slow tests (real network scraping)
 
 # Browser E2E tests (excluded from normal test runs, requires Chromium)
-PYTHONUNBUFFERED=1 uv run pytest -m browser tests/test_web/test_browser_e2e.py -v -n0
-PYTHONUNBUFFERED=1 uv run pytest -m browser tests/test_web/test_browser_e2e.py -v --headed -n0  # See the browser
-PYTHONUNBUFFERED=1 uv run pytest -m browser tests/test_web/test_browser_e2e.py -v --tracing=retain-on-failure -n0  # Save traces on failure
+# xdist loadgroup scheduling keeps all browser tests on one worker automatically
+PYTHONUNBUFFERED=1 uv run pytest -m browser tests/test_web/test_browser_e2e.py -v
+PYTHONUNBUFFERED=1 uv run pytest -m browser tests/test_web/test_browser_e2e.py -v --headed  # See the browser
+PYTHONUNBUFFERED=1 uv run pytest -m browser tests/test_web/test_browser_e2e.py -v --tracing=retain-on-failure  # Save traces on failure
 
 # Linting and type checking
 uv run ruff check src tests           # Check for issues
