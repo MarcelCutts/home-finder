@@ -2,6 +2,7 @@
 
 import contextlib
 import json
+import time
 
 from home_finder.config import Settings
 from home_finder.db import PropertyStorage
@@ -147,8 +148,12 @@ async def run_check_off_market(
 
         logger.info("off_market_checking_urls", urls=len(checks), properties=len(db_props))
 
+        check_t0 = time.monotonic()
         async with OffMarketChecker(proxy_url=settings.proxy_url) as checker:
-            results = await checker.check_batch(checks)
+            batch = await checker.check_batch(checks)
+        check_elapsed = round(time.monotonic() - check_t0, 1)
+
+        results = batch.results
 
         # --- Persist per-source results on source_listings ---
         for r in results:
@@ -232,6 +237,9 @@ async def run_check_off_market(
             status_counts=status_counts,
             marked_off=marked_off,
             marked_returned=marked_returned,
+            by_source=batch.by_source,
+            elapsed_s=check_elapsed,
+            circuit_breakers_tripped=batch.circuit_breakers_tripped,
         )
 
 

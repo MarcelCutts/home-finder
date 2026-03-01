@@ -10,7 +10,8 @@ from __future__ import annotations
 
 import asyncio
 import re
-from collections.abc import Callable
+import time
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Final, Protocol
@@ -37,6 +38,9 @@ class CheckableResponse(Protocol):
 
     @property
     def url(self) -> object: ...
+
+    @property
+    def headers(self) -> Mapping[str, str]: ...
 
 
 class ListingStatus(Enum):
@@ -113,8 +117,16 @@ _LET_AGREED_PATTERNS: Final[dict[str, list[re.Pattern[str]]]] = {
 }
 
 
-def _is_cloudflare_challenge(html: str) -> bool:
-    """Detect Cloudflare challenge pages (should be treated as UNKNOWN, not REMOVED)."""
+def _is_cloudflare_challenge(html: str, headers: Mapping[str, str] | None = None) -> bool:
+    """Detect Cloudflare challenge pages (should be treated as UNKNOWN, not REMOVED).
+
+    Checks both the ``cf-mitigated`` response header (the officially documented
+    way to detect Cloudflare challenges) and body text patterns as a fallback.
+    """
+    if headers:
+        cf_mitigated = headers.get("cf-mitigated", "").lower()
+        if cf_mitigated in ("challenge", "captcha"):
+            return True
     lower = html.lower()[:3000]
     return any(p in lower for p in _CLOUDFLARE_PATTERNS)
 
@@ -134,7 +146,7 @@ def _check_rightmove(response: CheckableResponse) -> ListingStatus:
 
     if response.status_code == 200:
         html = response.text
-        if _is_cloudflare_challenge(html):
+        if _is_cloudflare_challenge(html, response.headers):
             return ListingStatus.UNKNOWN
         # Redirect to search results page
         url_str = str(response.url)
@@ -160,7 +172,7 @@ def _check_zoopla(response: CheckableResponse) -> ListingStatus:
 
     if response.status_code == 200:
         html = response.text
-        if _is_cloudflare_challenge(html):
+        if _is_cloudflare_challenge(html, response.headers):
             return ListingStatus.UNKNOWN
         for pattern in _REMOVAL_PATTERNS["zoopla"]:
             if pattern.search(html[:5000]):
@@ -189,7 +201,7 @@ def _check_openrent(response: CheckableResponse) -> ListingStatus:
         url_str = str(response.url)
         if "/properties-to-rent" in url_str or "homepage" in html.lower()[:1000]:
             return ListingStatus.REMOVED
-        if _is_cloudflare_challenge(html):
+        if _is_cloudflare_challenge(html, response.headers):
             return ListingStatus.UNKNOWN
         for pattern in _REMOVAL_PATTERNS["openrent"]:
             if pattern.search(html[:5000]):
@@ -209,7 +221,7 @@ def _check_onthemarket(response: CheckableResponse) -> ListingStatus:
 
     if response.status_code == 200:
         html = response.text
-        if _is_cloudflare_challenge(html):
+        if _is_cloudflare_challenge(html, response.headers):
             return ListingStatus.UNKNOWN
         # Redirect to search (no /details/ in URL)
         url_str = str(response.url)
@@ -240,7 +252,7 @@ _SOURCE_CHECKERS: Final[dict[str, _CheckerFn]] = {
 }
 
 # Sources that need curl_cffi for TLS fingerprinting
-_CURL_SOURCES: Final = {"zoopla", "onthemarket", "openrent"}
+_CURL_SOURCES: Final = {"zoopla", "onthemarket", "openrent", "rightmove"}
 
 
 @dataclass
@@ -251,6 +263,15 @@ class CheckResult:
     url: str
     status: ListingStatus
     property_id: str
+
+
+@dataclass
+class BatchResult:
+    """Aggregated result of check_batch() with per-source metadata."""
+
+    results: list[CheckResult]
+    by_source: dict[str, dict[str, int]]
+    circuit_breakers_tripped: list[str]
 
 
 @dataclass
@@ -313,16 +334,51 @@ class OffMarketChecker:
         if checker is None:
             return ListingStatus.UNKNOWN
 
+        t0 = time.monotonic()
         response = await self._fetch(source, url)
+        elapsed_ms = round((time.monotonic() - t0) * 1000, 1)
+
         if response is None:
+            logger.warning(
+                "off_market_unknown_response",
+                source=source,
+                url=url,
+                reason="fetch_failed",
+                response_time_ms=elapsed_ms,
+            )
             return ListingStatus.UNKNOWN
 
-        return checker(response)
+        status = checker(response)
+
+        log_kwargs: dict[str, object] = {
+            "source": source,
+            "url": url,
+            "status": status.value,
+            "status_code": response.status_code,
+            "response_time_ms": elapsed_ms,
+            "final_url": str(response.url),
+        }
+        logger.debug("off_market_check_result", **log_kwargs)
+
+        if status == ListingStatus.UNKNOWN:
+            headers = dict(response.headers)
+            logger.warning(
+                "off_market_unknown_response",
+                source=source,
+                url=url,
+                status_code=response.status_code,
+                cf_mitigated=headers.get("cf-mitigated", ""),
+                server=headers.get("server", ""),
+                body_preview=response.text[:300],
+                response_time_ms=elapsed_ms,
+            )
+
+        return status
 
     async def check_batch(
         self,
         checks: list[tuple[str, str, str]],
-    ) -> list[CheckResult]:
+    ) -> BatchResult:
         """Check multiple listing URLs with rate limiting and circuit breaker.
 
         Different sources run concurrently; within each source, requests are
@@ -332,20 +388,32 @@ class OffMarketChecker:
             checks: List of (property_id, source, url) tuples.
 
         Returns:
-            List of CheckResult for each check.
+            BatchResult containing all CheckResults and per-source metadata.
         """
         # Group by source for rate limiting and circuit breaker
         by_source: dict[str, list[tuple[str, str]]] = {}
         for prop_id, source, url in checks:
             by_source.setdefault(source, []).append((prop_id, url))
 
+        tripped_breakers: list[str] = []
+
         async def _check_source(source: str, items: list[tuple[str, str]]) -> list[CheckResult]:
             source_results: list[CheckResult] = []
             breaker = ConsecutiveFailureBreaker(threshold=_CIRCUIT_BREAKER_THRESHOLD, name=source)
             delay = _SOURCE_DELAYS.get(source, 1.0)
+            counts: dict[str, int] = {s.value: 0 for s in ListingStatus}
+            source_t0 = time.monotonic()
+
+            logger.info(
+                "off_market_source_started",
+                source=source,
+                urls=len(items),
+                delay_s=delay,
+            )
 
             for i, (prop_id, url) in enumerate(items):
                 if breaker.is_tripped:
+                    tripped_breakers.append(source)
                     logger.warning(
                         "off_market_circuit_breaker",
                         source=source,
@@ -361,6 +429,7 @@ class OffMarketChecker:
                                 property_id=remaining_id,
                             )
                         )
+                        counts["unknown"] += 1
                     break
 
                 status = await self.check_url(source, url)
@@ -372,14 +441,43 @@ class OffMarketChecker:
                         property_id=prop_id,
                     )
                 )
+                counts[status.value] += 1
 
                 if status == ListingStatus.UNKNOWN:
                     breaker.record_failure()
                 else:
                     breaker.record_success()
 
+                # Progress log every 50 items
+                checked = i + 1
+                if checked % 50 == 0:
+                    elapsed = time.monotonic() - source_t0
+                    logger.info(
+                        "off_market_progress",
+                        source=source,
+                        checked=f"{checked}/{len(items)}",
+                        active=counts["active"],
+                        removed=counts["removed"],
+                        let_agreed=counts["let_agreed"],
+                        unknown=counts["unknown"],
+                        elapsed_s=round(elapsed, 1),
+                        rate=round(checked / elapsed, 1) if elapsed > 0 else 0,
+                    )
+
                 if i < len(items) - 1:
                     await asyncio.sleep(delay)
+
+            source_elapsed = round(time.monotonic() - source_t0, 1)
+            logger.info(
+                "off_market_source_complete",
+                source=source,
+                checked=len(source_results),
+                active=counts["active"],
+                removed=counts["removed"],
+                let_agreed=counts["let_agreed"],
+                unknown=counts["unknown"],
+                elapsed_s=source_elapsed,
+            )
 
             return source_results
 
@@ -390,7 +488,18 @@ class OffMarketChecker:
         results: list[CheckResult] = []
         for source_results in all_source_results:
             results.extend(source_results)
-        return results
+
+        # Build per-source breakdown
+        source_breakdown: dict[str, dict[str, int]] = {}
+        for r in results:
+            counts = source_breakdown.setdefault(r.source, {s.value: 0 for s in ListingStatus})
+            counts[r.status.value] += 1
+
+        return BatchResult(
+            results=results,
+            by_source=source_breakdown,
+            circuit_breakers_tripped=tripped_breakers,
+        )
 
     async def __aenter__(self) -> OffMarketChecker:
         return self
@@ -422,3 +531,8 @@ class _CurlResponseAdapter:
     @property
     def url(self) -> object:
         return self._response.url  # type: ignore[attr-defined]
+
+    @property
+    def headers(self) -> Mapping[str, str]:
+        raw = self._response.headers  # type: ignore[attr-defined]
+        return dict(raw) if raw else {}

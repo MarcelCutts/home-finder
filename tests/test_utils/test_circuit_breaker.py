@@ -5,6 +5,7 @@ from __future__ import annotations
 import time
 
 import pytest
+import structlog.testing
 
 from home_finder.utils.circuit_breaker import (
     APIUnavailableError,
@@ -127,6 +128,27 @@ class TestConsecutiveFailureBreaker:
         breaker.record_failure()
         breaker.record_failure()
         assert breaker.is_tripped
+
+    def test_pre_trip_warning_at_threshold_minus_one(self):
+        breaker = ConsecutiveFailureBreaker(threshold=5, name="test-source")
+        with structlog.testing.capture_logs() as captured:
+            for _ in range(3):
+                breaker.record_failure()
+            # First 3 failures — no warning yet
+            assert not any(e.get("event") == "circuit_breaker_approaching" for e in captured)
+            # 4th failure (threshold-1) — should warn
+            breaker.record_failure()
+            approaching = [e for e in captured if e.get("event") == "circuit_breaker_approaching"]
+            assert len(approaching) == 1
+            assert approaching[0]["name"] == "test-source"
+            assert approaching[0]["next_failure_trips"] is True
+
+    def test_no_pre_trip_warning_with_threshold_1(self):
+        """With threshold=1, there's no threshold-1 to warn at."""
+        breaker = ConsecutiveFailureBreaker(threshold=1, name="test")
+        with structlog.testing.capture_logs() as captured:
+            breaker.record_failure()
+            assert not any(e.get("event") == "circuit_breaker_approaching" for e in captured)
 
 
 # ---------------------------------------------------------------------------

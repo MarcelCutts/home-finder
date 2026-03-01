@@ -17,8 +17,17 @@ import pytest_asyncio
 from pydantic import HttpUrl
 
 from home_finder.db.storage import PropertyStorage
-from home_finder.filters.off_market import CheckResult, ListingStatus
+from home_finder.filters.off_market import BatchResult, CheckResult, ListingStatus
 from home_finder.models import MergedProperty, Property, PropertySource
+
+
+def _make_batch_result(results: list[CheckResult]) -> BatchResult:
+    """Build a BatchResult from a flat list of CheckResults."""
+    by_source: dict[str, dict[str, int]] = {}
+    for r in results:
+        counts = by_source.setdefault(r.source, {s.value: 0 for s in ListingStatus})
+        counts[r.status.value] += 1
+    return BatchResult(results=results, by_source=by_source, circuit_breakers_tripped=[])
 
 
 @pytest_asyncio.fixture
@@ -100,7 +109,7 @@ class TestRunCheckOffMarketIntegration:
             patch(
                 "home_finder.filters.off_market.OffMarketChecker.check_batch",
                 new_callable=AsyncMock,
-                return_value=mock_results,
+                return_value=_make_batch_result(mock_results),
             ),
             patch(
                 "home_finder.filters.off_market.OffMarketChecker.close",
@@ -310,9 +319,9 @@ class TestRunCheckOffMarketIntegration:
         # Mock check_batch to capture what checks were requested
         captured_checks: list[tuple[str, str, str]] = []
 
-        async def _capture_batch(checks: list[tuple[str, str, str]]) -> list[CheckResult]:
+        async def _capture_batch(checks: list[tuple[str, str, str]]) -> BatchResult:
             captured_checks.extend(checks)
-            return [
+            results = [
                 CheckResult(
                     source=source,
                     url=url,
@@ -321,6 +330,7 @@ class TestRunCheckOffMarketIntegration:
                 )
                 for prop_id, source, url in checks
             ]
+            return _make_batch_result(results)
 
         from home_finder.pipeline.commands import run_check_off_market
 

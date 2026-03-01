@@ -28,6 +28,8 @@ uv run home-finder --max-per-scraper 5  # Limit results per scraper (for testing
 uv run home-finder --serve              # Web dashboard + recurring pipeline scheduler
 uv run home-finder --debug              # Enable debug-level logging
 uv run home-finder --generate-thumbnails   # Generate missing thumbnails for cached images
+uv run home-finder --check-off-market                     # Spot-check URLs for removed/let-agreed signals
+uv run home-finder --check-off-market --scrapers zoopla   # Check specific platforms only
 
 # Testing — runs in parallel by default via pytest-xdist (-n auto in addopts).
 # Timeout is already configured in pyproject.toml addopts (30s default).

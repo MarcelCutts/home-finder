@@ -142,6 +142,13 @@ class ConsecutiveFailureBreaker:
 
     def record_failure(self) -> None:
         self._consecutive_failures += 1
+        if self._consecutive_failures == self._threshold - 1 and self._threshold > 1:
+            logger.warning(
+                "circuit_breaker_approaching",
+                name=self._name,
+                failures=f"{self._consecutive_failures}/{self._threshold}",
+                next_failure_trips=True,
+            )
 
     def record_success(self) -> None:
         self._consecutive_failures = 0

@@ -5,6 +5,7 @@ from __future__ import annotations
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
+import structlog.testing
 
 from home_finder.filters.off_market import (
     _LET_AGREED_PATTERNS,
@@ -16,6 +17,7 @@ from home_finder.filters.off_market import (
     _check_rightmove,
     _check_zoopla,
     _CurlResponseAdapter,
+    _is_cloudflare_challenge,
 )
 
 # ---------------------------------------------------------------------------
@@ -27,12 +29,14 @@ def _make_response(
     status_code: int = 200,
     text: str = "",
     url: str = "https://example.com/property/123",
+    headers: dict[str, str] | None = None,
 ) -> httpx.Response:
     """Build a minimal httpx.Response for checker tests."""
     resp = httpx.Response(
         status_code=status_code,
         text=text,
         request=httpx.Request("GET", url),
+        headers=headers or {},
     )
     # httpx.Response tracks the final URL via the request
     return resp
@@ -286,10 +290,65 @@ class TestCurlResponseAdapter:
         mock.status_code = 200
         mock.text = "<html>OK</html>"
         mock.url = "https://example.com/prop/1"
+        mock.headers = {"server": "cloudflare", "cf-mitigated": "challenge"}
         adapter = _CurlResponseAdapter(mock)
         assert adapter.status_code == 200
         assert adapter.text == "<html>OK</html>"
         assert str(adapter.url) == "https://example.com/prop/1"
+        assert adapter.headers["cf-mitigated"] == "challenge"
+        assert adapter.headers["server"] == "cloudflare"
+
+    def test_headers_empty_when_none(self):
+        mock = MagicMock()
+        mock.status_code = 200
+        mock.text = ""
+        mock.url = "https://example.com"
+        mock.headers = None
+        adapter = _CurlResponseAdapter(mock)
+        assert adapter.headers == {}
+
+
+# ---------------------------------------------------------------------------
+# Cloudflare cf-mitigated header detection
+# ---------------------------------------------------------------------------
+
+
+class TestCloudflareHeaderDetection:
+    def test_cf_mitigated_challenge_header_detected(self):
+        assert _is_cloudflare_challenge("", headers={"cf-mitigated": "challenge"})
+
+    def test_cf_mitigated_captcha_header_detected(self):
+        assert _is_cloudflare_challenge("", headers={"cf-mitigated": "captcha"})
+
+    def test_cf_mitigated_case_insensitive(self):
+        assert _is_cloudflare_challenge("", headers={"cf-mitigated": "Challenge"})
+
+    def test_cf_mitigated_unrelated_value_not_detected(self):
+        assert not _is_cloudflare_challenge("normal html", headers={"cf-mitigated": "skipped"})
+
+    def test_body_pattern_still_works_without_header(self):
+        assert _is_cloudflare_challenge("Just a moment... Cloudflare Ray ID: abc")
+
+    def test_header_takes_precedence_over_clean_body(self):
+        """cf-mitigated header should trigger even with clean body text."""
+        assert _is_cloudflare_challenge(
+            "<html>Normal page</html>", headers={"cf-mitigated": "challenge"}
+        )
+
+    def test_checker_returns_unknown_on_cf_mitigated_header(self):
+        """Rightmove checker should return UNKNOWN when cf-mitigated header is present."""
+        resp = _make_response(
+            text="<html>Normal looking page</html>",
+            headers={"cf-mitigated": "challenge"},
+        )
+        assert _check_rightmove(resp) == ListingStatus.UNKNOWN
+
+    def test_zoopla_cf_mitigated_header(self):
+        resp = _make_response(
+            text="<html>Normal page</html>",
+            headers={"cf-mitigated": "challenge"},
+        )
+        assert _check_zoopla(resp) == ListingStatus.UNKNOWN
 
 
 # ---------------------------------------------------------------------------
@@ -352,13 +411,15 @@ class TestCircuitBreaker:
             mock_check.return_value = ListingStatus.UNKNOWN
 
             checks = [(f"prop-{i}", "zoopla", f"https://zoopla.co.uk/{i}") for i in range(10)]
-            results = await checker.check_batch(checks)
+            batch = await checker.check_batch(checks)
 
-        assert len(results) == 10
+        assert len(batch.results) == 10
         # Circuit breaker triggers after 5 — check_url should only be called 5 times
         assert mock_check.call_count == 5
         # All results are UNKNOWN
-        assert all(r.status == ListingStatus.UNKNOWN for r in results)
+        assert all(r.status == ListingStatus.UNKNOWN for r in batch.results)
+        # Breaker should be reported as tripped
+        assert "zoopla" in batch.circuit_breakers_tripped
 
         await checker.close()
 
@@ -381,11 +442,11 @@ class TestCircuitBreaker:
             mock_check.side_effect = statuses
 
             checks = [(f"prop-{i}", "zoopla", f"https://zoopla.co.uk/{i}") for i in range(10)]
-            results = await checker.check_batch(checks)
+            batch = await checker.check_batch(checks)
 
         # 8 actual calls before circuit breaker, remaining 2 marked UNKNOWN
         assert mock_check.call_count == 8
-        assert len(results) == 10
+        assert len(batch.results) == 10
 
         await checker.close()
 
@@ -406,10 +467,10 @@ class TestCheckBatchBasic:
                 ("prop-1", "rightmove", "https://rightmove.co.uk/1"),
                 ("prop-2", "openrent", "https://openrent.com/2"),
             ]
-            results = await checker.check_batch(checks)
+            batch = await checker.check_batch(checks)
 
-        assert len(results) == 2
-        assert all(r.status == ListingStatus.ACTIVE for r in results)
+        assert len(batch.results) == 2
+        assert all(r.status == ListingStatus.ACTIVE for r in batch.results)
 
         await checker.close()
 
@@ -425,9 +486,9 @@ class TestCheckBatchBasic:
                 ("p2", "rightmove", "https://rightmove.co.uk/2"),
                 ("p3", "zoopla", "https://zoopla.co.uk/1"),
             ]
-            results = await checker.check_batch(checks)
+            batch = await checker.check_batch(checks)
 
-        assert len(results) == 3
+        assert len(batch.results) == 3
         assert mock_check.call_count == 3
 
         await checker.close()
@@ -440,9 +501,86 @@ class TestCheckBatchBasic:
             mock_check.return_value = ListingStatus.LET_AGREED
 
             checks = [("p1", "rightmove", "https://rightmove.co.uk/1")]
-            results = await checker.check_batch(checks)
+            batch = await checker.check_batch(checks)
 
-        assert len(results) == 1
-        assert results[0].status == ListingStatus.LET_AGREED
+        assert len(batch.results) == 1
+        assert batch.results[0].status == ListingStatus.LET_AGREED
 
+        await checker.close()
+
+    async def test_batch_by_source_breakdown(self):
+        """BatchResult includes per-source status breakdown."""
+        checker = OffMarketChecker()
+
+        with patch.object(checker, "check_url", new_callable=AsyncMock) as mock_check:
+            mock_check.side_effect = [ListingStatus.ACTIVE, ListingStatus.REMOVED]
+
+            checks = [
+                ("p1", "rightmove", "https://rightmove.co.uk/1"),
+                ("p2", "rightmove", "https://rightmove.co.uk/2"),
+            ]
+            batch = await checker.check_batch(checks)
+
+        assert batch.by_source["rightmove"]["active"] == 1
+        assert batch.by_source["rightmove"]["removed"] == 1
+        assert batch.circuit_breakers_tripped == []
+
+        await checker.close()
+
+
+# ---------------------------------------------------------------------------
+# Logging assertions
+# ---------------------------------------------------------------------------
+
+
+class TestCheckUrlLogging:
+    async def test_debug_log_emitted_on_check(self):
+        """check_url emits a DEBUG log with response diagnostics."""
+        checker = OffMarketChecker()
+
+        with patch.object(checker, "_fetch", new_callable=AsyncMock) as mock_fetch:
+            mock_fetch.return_value = _make_response(text="<html>Nice flat</html>")
+            with structlog.testing.capture_logs() as captured:
+                await checker.check_url("rightmove", "https://rightmove.co.uk/1")
+
+        debug_logs = [e for e in captured if e.get("event") == "off_market_check_result"]
+        assert len(debug_logs) == 1
+        log = debug_logs[0]
+        assert log["source"] == "rightmove"
+        assert log["status"] == "active"
+        assert log["status_code"] == 200
+        assert "response_time_ms" in log
+        assert "final_url" in log
+        await checker.close()
+
+    async def test_warning_log_on_unknown(self):
+        """check_url emits a WARNING when status is UNKNOWN."""
+        checker = OffMarketChecker()
+
+        with patch.object(checker, "_fetch", new_callable=AsyncMock) as mock_fetch:
+            mock_fetch.return_value = _make_response(status_code=429, text="Rate limited")
+            with structlog.testing.capture_logs() as captured:
+                status = await checker.check_url("rightmove", "https://rightmove.co.uk/1")
+
+        assert status == ListingStatus.UNKNOWN
+        unknown_logs = [e for e in captured if e.get("event") == "off_market_unknown_response"]
+        assert len(unknown_logs) == 1
+        log = unknown_logs[0]
+        assert log["status_code"] == 429
+        assert "body_preview" in log
+        await checker.close()
+
+    async def test_warning_log_on_fetch_failure(self):
+        """check_url emits a WARNING when fetch returns None."""
+        checker = OffMarketChecker()
+
+        with patch.object(checker, "_fetch", new_callable=AsyncMock) as mock_fetch:
+            mock_fetch.return_value = None
+            with structlog.testing.capture_logs() as captured:
+                status = await checker.check_url("rightmove", "https://rightmove.co.uk/1")
+
+        assert status == ListingStatus.UNKNOWN
+        unknown_logs = [e for e in captured if e.get("event") == "off_market_unknown_response"]
+        assert len(unknown_logs) == 1
+        assert unknown_logs[0]["reason"] == "fetch_failed"
         await checker.close()
