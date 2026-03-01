@@ -125,7 +125,7 @@ def _is_cloudflare_challenge(html: str, headers: Mapping[str, str] | None = None
     """
     if headers:
         cf_mitigated = headers.get("cf-mitigated", "").lower()
-        if cf_mitigated in ("challenge", "captcha"):
+        if cf_mitigated == "challenge":
             return True
     lower = html.lower()[:3000]
     return any(p in lower for p in _CLOUDFLARE_PATTERNS)
@@ -397,7 +397,9 @@ class OffMarketChecker:
 
         tripped_breakers: list[str] = []
 
-        async def _check_source(source: str, items: list[tuple[str, str]]) -> list[CheckResult]:
+        async def _check_source(
+            source: str, items: list[tuple[str, str]]
+        ) -> tuple[list[CheckResult], dict[str, int]]:
             source_results: list[CheckResult] = []
             breaker = ConsecutiveFailureBreaker(threshold=_CIRCUIT_BREAKER_THRESHOLD, name=source)
             delay = _SOURCE_DELAYS.get(source, 1.0)
@@ -455,7 +457,8 @@ class OffMarketChecker:
                     logger.info(
                         "off_market_progress",
                         source=source,
-                        checked=f"{checked}/{len(items)}",
+                        checked=checked,
+                        total=len(items),
                         active=counts["active"],
                         removed=counts["removed"],
                         let_agreed=counts["let_agreed"],
@@ -479,21 +482,20 @@ class OffMarketChecker:
                 elapsed_s=source_elapsed,
             )
 
-            return source_results
+            return source_results, counts
 
         # Run all sources concurrently (rate limiting is per-source)
+        source_names = list(by_source.keys())
         source_tasks = [_check_source(source, items) for source, items in by_source.items()]
-        all_source_results = await asyncio.gather(*source_tasks)
+        all_source_outputs = await asyncio.gather(*source_tasks)
 
         results: list[CheckResult] = []
-        for source_results in all_source_results:
-            results.extend(source_results)
-
-        # Build per-source breakdown
         source_breakdown: dict[str, dict[str, int]] = {}
-        for r in results:
-            counts = source_breakdown.setdefault(r.source, {s.value: 0 for s in ListingStatus})
-            counts[r.status.value] += 1
+        for source, (source_results, source_counts) in zip(
+            source_names, all_source_outputs, strict=True
+        ):
+            results.extend(source_results)
+            source_breakdown[source] = source_counts
 
         return BatchResult(
             results=results,

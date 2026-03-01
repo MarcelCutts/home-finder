@@ -317,8 +317,9 @@ class TestCloudflareHeaderDetection:
     def test_cf_mitigated_challenge_header_detected(self):
         assert _is_cloudflare_challenge("", headers={"cf-mitigated": "challenge"})
 
-    def test_cf_mitigated_captcha_header_detected(self):
-        assert _is_cloudflare_challenge("", headers={"cf-mitigated": "captcha"})
+    def test_cf_mitigated_captcha_not_detected(self):
+        """Only 'challenge' is a documented cf-mitigated value; other values are ignored."""
+        assert not _is_cloudflare_challenge("", headers={"cf-mitigated": "captcha"})
 
     def test_cf_mitigated_case_insensitive(self):
         assert _is_cloudflare_challenge("", headers={"cf-mitigated": "Challenge"})
