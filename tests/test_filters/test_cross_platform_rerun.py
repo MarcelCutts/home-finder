@@ -6,7 +6,7 @@ and NOT re-notified or re-analyzed.
 """
 
 from collections.abc import AsyncGenerator
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 
 import pytest
 import pytest_asyncio
@@ -58,7 +58,7 @@ def _make_property(
         latitude=latitude,
         longitude=longitude,
         description=description,
-        first_seen=first_seen or datetime(2026, 2, 1, 10, 0),
+        first_seen=first_seen or (datetime.now(UTC) - timedelta(days=7)),
     )
 
 
@@ -146,6 +146,11 @@ async def storage() -> AsyncGenerator[PropertyStorage, None]:
     await s.close()
 
 
+# Relative dates ensure properties stay within the 30-day dedup lookback window.
+# Run 1 = 14 days ago, Run 2 = 7 days ago (preserves the one-week gap).
+_RUN1_DATE = datetime.now(UTC) - timedelta(days=14)
+_RUN2_DATE = datetime.now(UTC) - timedelta(days=7)
+
 # Properties representing the same physical flat on different platforms
 OPENRENT_FLAT = _make_property(
     source=PropertySource.OPENRENT,
@@ -157,7 +162,7 @@ OPENRENT_FLAT = _make_property(
     latitude=51.5465,
     longitude=-0.0553,
     description="Lovely 2-bed flat near the park.",
-    first_seen=datetime(2026, 2, 1, 10, 0),
+    first_seen=_RUN1_DATE,
 )
 
 ZOOPLA_SAME_FLAT = _make_property(
@@ -170,7 +175,7 @@ ZOOPLA_SAME_FLAT = _make_property(
     latitude=51.54652,
     longitude=-0.05528,
     description="Spacious two bed near Mare Street.",
-    first_seen=datetime(2026, 2, 8, 14, 0),
+    first_seen=_RUN2_DATE,
 )
 
 # A genuinely different property
@@ -184,7 +189,7 @@ DIFFERENT_FLAT = _make_property(
     latitude=51.5491,
     longitude=-0.0764,
     description="1-bed in Dalston.",
-    first_seen=datetime(2026, 2, 8, 15, 0),
+    first_seen=_RUN2_DATE,
 )
 
 
@@ -311,7 +316,7 @@ class TestCrossPlatformRerun:
             postcode="E8",
             latitude=None,
             longitude=None,
-            first_seen=datetime(2026, 2, 1),
+            first_seen=_RUN1_DATE,
         )
         merged_rm = _make_merged(rm)
         await storage.save_merged_property(merged_rm)

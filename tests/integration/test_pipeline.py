@@ -1,7 +1,7 @@
 """Integration tests for the full pipeline (excluding notifications)."""
 
 from collections.abc import AsyncGenerator
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 
 import pytest
 import pytest_asyncio
@@ -356,7 +356,7 @@ class TestCrossPlatformPipeline:
             postcode="E8 3RH",
             latitude=51.5465,
             longitude=-0.0553,
-            first_seen=datetime(2026, 2, 1, 10, 0),
+            first_seen=datetime.now(UTC) - timedelta(days=14),
         )
         wrapped_run1 = deduplicator.properties_to_merged([openrent_prop])
         new_run1 = await storage.filter_new_merged(wrapped_run1)
@@ -381,7 +381,7 @@ class TestCrossPlatformPipeline:
             postcode="E8 3RH",
             latitude=51.54652,
             longitude=-0.05528,
-            first_seen=datetime(2026, 2, 8, 14, 0),
+            first_seen=datetime.now(UTC) - timedelta(days=7),
         )
         wrapped_run2 = deduplicator.properties_to_merged([zoopla_prop])
         new_run2 = await storage.filter_new_merged(wrapped_run2)
