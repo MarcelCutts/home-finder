@@ -97,6 +97,7 @@ ignore_missing_imports = true
 [tool.coverage.run]
 source = ["src/home_finder"]
 branch = true
+relative_files = true
 omit = [
     "src/home_finder/logging.py",
     "src/home_finder/data/*",
