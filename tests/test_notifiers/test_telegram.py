@@ -536,7 +536,9 @@ class TestTelegramNotifier:
             kitchen=KitchenAnalysis(overall_quality="modern", hob_type="gas", has_dishwasher="yes"),
             condition=ConditionAnalysis(overall_condition="good", confidence="high"),
             light_space=LightSpaceAnalysis(natural_light="good", feels_spacious=True),
-            space=SpaceAnalysis(living_room_sqm=20.0, is_spacious_enough=True, hosting_layout="good"),
+            space=SpaceAnalysis(
+                living_room_sqm=20.0, is_spacious_enough=True, hosting_layout="good"
+            ),
             bedroom=BedroomAnalysis(
                 primary_is_double="yes", office_separation="dedicated_room", can_fit_desk="yes"
             ),
@@ -653,7 +655,9 @@ class TestTelegramNotifier:
             kitchen=KitchenAnalysis(overall_quality="modern", hob_type="gas", has_dishwasher="yes"),
             condition=ConditionAnalysis(overall_condition="good", confidence="high"),
             light_space=LightSpaceAnalysis(natural_light="good", feels_spacious=True),
-            space=SpaceAnalysis(living_room_sqm=20.0, is_spacious_enough=True, hosting_layout="good"),
+            space=SpaceAnalysis(
+                living_room_sqm=20.0, is_spacious_enough=True, hosting_layout="good"
+            ),
             bedroom=BedroomAnalysis(
                 primary_is_double="yes", office_separation="dedicated_room", can_fit_desk="yes"
             ),
@@ -755,7 +759,9 @@ class TestTelegramNotifier:
             kitchen=KitchenAnalysis(overall_quality="modern", hob_type="gas", has_dishwasher="yes"),
             condition=ConditionAnalysis(overall_condition="good", confidence="high"),
             light_space=LightSpaceAnalysis(natural_light="good", feels_spacious=True),
-            space=SpaceAnalysis(living_room_sqm=20.0, is_spacious_enough=True, hosting_layout="good"),
+            space=SpaceAnalysis(
+                living_room_sqm=20.0, is_spacious_enough=True, hosting_layout="good"
+            ),
             bedroom=BedroomAnalysis(
                 primary_is_double="yes", office_separation="dedicated_room", can_fit_desk="yes"
             ),
@@ -817,7 +823,9 @@ class TestTelegramNotifier:
             kitchen=KitchenAnalysis(overall_quality="modern", hob_type="gas", has_dishwasher="yes"),
             condition=ConditionAnalysis(overall_condition="good", confidence="high"),
             light_space=LightSpaceAnalysis(natural_light="good", feels_spacious=True),
-            space=SpaceAnalysis(living_room_sqm=20.0, is_spacious_enough=True, hosting_layout="good"),
+            space=SpaceAnalysis(
+                living_room_sqm=20.0, is_spacious_enough=True, hosting_layout="good"
+            ),
             bedroom=BedroomAnalysis(
                 primary_is_double="yes", office_separation="dedicated_room", can_fit_desk="yes"
             ),
@@ -1497,7 +1505,9 @@ class TestNotificationWithFSInputFile:
             kitchen=KitchenAnalysis(overall_quality="modern", hob_type="gas", has_dishwasher="yes"),
             condition=ConditionAnalysis(overall_condition="good", confidence="high"),
             light_space=LightSpaceAnalysis(natural_light="good", feels_spacious=True),
-            space=SpaceAnalysis(living_room_sqm=20.0, is_spacious_enough=True, hosting_layout="good"),
+            space=SpaceAnalysis(
+                living_room_sqm=20.0, is_spacious_enough=True, hosting_layout="good"
+            ),
             bedroom=BedroomAnalysis(
                 primary_is_double="yes", office_separation="dedicated_room", can_fit_desk="yes"
             ),

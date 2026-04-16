@@ -101,9 +101,7 @@ class TestMarkOffMarket:
         assert row["is_off_market"] == 1
         assert row["off_market_since"] is not None
 
-    async def test_marks_with_reason(
-        self, storage: PropertyStorage, merged_a: MergedProperty
-    ):
+    async def test_marks_with_reason(self, storage: PropertyStorage, merged_a: MergedProperty):
         await storage.save_merged_property(merged_a)
         await storage.mark_off_market(merged_a.unique_id, reason="let_agreed")
 
@@ -159,7 +157,8 @@ class TestMarkReturnedToMarket:
 
         conn = await storage._get_connection()
         cursor = await conn.execute(
-            "SELECT is_off_market, off_market_since, off_market_reason FROM properties WHERE unique_id = ?",
+            "SELECT is_off_market, off_market_since, off_market_reason"
+            " FROM properties WHERE unique_id = ?",
             (merged_a.unique_id,),
         )
         row = await cursor.fetchone()
@@ -318,7 +317,8 @@ class TestPerSourceOffMarket:
         assert result is True
 
         cursor = await conn.execute(
-            "SELECT is_off_market, off_market_reason, off_market_since FROM source_listings WHERE unique_id = ?",
+            "SELECT is_off_market, off_market_reason, off_market_since"
+            " FROM source_listings WHERE unique_id = ?",
             (sl_uid,),
         )
         row = await cursor.fetchone()
@@ -346,7 +346,8 @@ class TestPerSourceOffMarket:
         assert result is True
 
         cursor = await conn.execute(
-            "SELECT is_off_market, off_market_reason, off_market_since FROM source_listings WHERE unique_id = ?",
+            "SELECT is_off_market, off_market_reason, off_market_since"
+            " FROM source_listings WHERE unique_id = ?",
             (sl_uid,),
         )
         row = await cursor.fetchone()
@@ -419,7 +420,7 @@ class TestMigration006:
         assert "last_checked_at" in columns
 
     async def test_properties_has_new_columns(self, storage: PropertyStorage):
-        """Migration 006 adds last_checked_at, off_market_reason, off_market_history to properties."""
+        """Migration 006 adds last_checked_at, off_market_reason, off_market_history."""
         conn = await storage._get_connection()
         cursor = await conn.execute("PRAGMA table_info(properties)")
         columns = {row["name"] for row in await cursor.fetchall()}

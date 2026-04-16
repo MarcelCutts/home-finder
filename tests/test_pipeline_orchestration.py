@@ -821,9 +821,7 @@ class TestPersistEstimatedFloorArea:
         ]
         # room_sum=32, total=60 — diff of 28, exceeds max(5, 60*0.15)=9
         merged = make_merged_property(bedrooms=1)
-        analysis = make_quality_analysis(
-            space=SpaceAnalysis(total_area_sqm=60.0, room_areas=rooms)
-        )
+        analysis = make_quality_analysis(space=SpaceAnalysis(total_area_sqm=60.0, room_areas=rooms))
         await storage.pipeline.save_pre_analysis_properties([merged], {})
 
         await _persist_estimated_floor_area(merged, analysis, storage)
@@ -857,9 +855,7 @@ class TestPersistEstimatedFloorArea:
         ]
         # room_sum=49, total=50 — diff of 1, within max(5, 50*0.15)=7.5
         merged = make_merged_property(bedrooms=1)
-        analysis = make_quality_analysis(
-            space=SpaceAnalysis(total_area_sqm=50.0, room_areas=rooms)
-        )
+        analysis = make_quality_analysis(space=SpaceAnalysis(total_area_sqm=50.0, room_areas=rooms))
         await storage.pipeline.save_pre_analysis_properties([merged], {})
 
         await _persist_estimated_floor_area(merged, analysis, storage)

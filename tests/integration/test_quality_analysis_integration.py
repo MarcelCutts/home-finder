@@ -320,9 +320,7 @@ class TestQualityAnalysisIntegration:
         quality_filter = PropertyQualityFilter(api_key="test-key")
         quality_filter._client = MagicMock()
         mock_eval = _create_mock_eval_response(_sample_evaluation_response())
-        quality_filter._client.messages.create = AsyncMock(
-            side_effect=[mock_visual, mock_eval]
-        )
+        quality_filter._client.messages.create = AsyncMock(side_effect=[mock_visual, mock_eval])
 
         results = await quality_filter.analyze_merged_properties([merged])
         _, analysis = results[0]

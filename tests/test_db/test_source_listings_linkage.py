@@ -239,9 +239,7 @@ class TestRowToMergedPropertyDeduplicates:
     """row_to_merged_property deduplicates sources from both paths."""
 
     @pytest.mark.asyncio
-    async def test_source_listings_path_deduplicates(
-        self, storage: PropertyStorage
-    ) -> None:
+    async def test_source_listings_path_deduplicates(self, storage: PropertyStorage) -> None:
         """Duplicate sources in source_listings rows produce deduplicated MergedProperty."""
         canonical = _openrent_prop()
         zoopla1 = _zoopla_prop("z-1", 1950)
@@ -279,9 +277,7 @@ class TestRowToMergedPropertyDeduplicates:
         assert result.max_price == 2000
 
     @pytest.mark.asyncio
-    async def test_json_fallback_path_deduplicates(
-        self, storage: PropertyStorage
-    ) -> None:
+    async def test_json_fallback_path_deduplicates(self, storage: PropertyStorage) -> None:
         """Duplicate sources in JSON columns produce deduplicated MergedProperty."""
         canonical = _openrent_prop()
 
@@ -321,9 +317,7 @@ class TestInRunDedupIntegration:
     """Integration: in-run dedup → save → next run correctly skips absorbed property."""
 
     @pytest.mark.asyncio
-    async def test_absorbed_property_skipped_on_next_run(
-        self, storage: PropertyStorage
-    ) -> None:
+    async def test_absorbed_property_skipped_on_next_run(self, storage: PropertyStorage) -> None:
         """After in-run dedup merges two properties and saves, the absorbed
         property's source_listing has merged_id set, so filter_new_merged
         skips it on the next run."""
@@ -399,8 +393,12 @@ class TestMigration005:
         )
 
         for i, mig in enumerate(
-            [migrate_001_initial_schema, migrate_002_floor_area_sqm,
-             migrate_003_source_aliases, migrate_004_source_listings],
+            [
+                migrate_001_initial_schema,
+                migrate_002_floor_area_sqm,
+                migrate_003_source_aliases,
+                migrate_004_source_listings,
+            ],
             1,
         ):
             await conn.execute("BEGIN IMMEDIATE")
@@ -409,10 +407,12 @@ class TestMigration005:
             await conn.commit()
 
         # Insert a golden record with source_urls JSON referencing a zoopla URL
-        source_urls = json.dumps({
-            "openrent": "https://openrent.com/123",
-            "zoopla": "https://zoopla.co.uk/456",
-        })
+        source_urls = json.dumps(
+            {
+                "openrent": "https://openrent.com/123",
+                "zoopla": "https://zoopla.co.uk/456",
+            }
+        )
         await conn.execute(
             """INSERT INTO properties (
                 unique_id, source, source_id, url, title, price_pcm,
@@ -420,9 +420,16 @@ class TestMigration005:
                 sources, source_urls
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
-                "openrent:123", "openrent", "123",
-                "https://openrent.com/123", "Flat", 2000, 2,
-                "123 Mare Street", "2025-01-15T10:00:00", "sent",
+                "openrent:123",
+                "openrent",
+                "123",
+                "https://openrent.com/123",
+                "Flat",
+                2000,
+                2,
+                "123 Mare Street",
+                "2025-01-15T10:00:00",
+                "sent",
                 json.dumps(["openrent", "zoopla"]),
                 source_urls,
             ),
@@ -434,9 +441,16 @@ class TestMigration005:
                 bedrooms, address, first_seen, last_seen, merged_id
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
-                "openrent:123", "openrent", "123",
-                "https://openrent.com/123", "Flat", 2000, 2,
-                "123 Mare Street", "2025-01-15T10:00:00", "2025-01-15T10:00:00",
+                "openrent:123",
+                "openrent",
+                "123",
+                "https://openrent.com/123",
+                "Flat",
+                2000,
+                2,
+                "123 Mare Street",
+                "2025-01-15T10:00:00",
+                "2025-01-15T10:00:00",
                 "openrent:123",
             ),
         )
@@ -447,9 +461,16 @@ class TestMigration005:
                 bedrooms, address, first_seen, last_seen, merged_id
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
-                "zoopla:456", "zoopla", "456",
-                "https://zoopla.co.uk/456", "Flat", 1950, 2,
-                "123 Mare Street", "2025-01-15T10:00:00", "2025-01-15T10:00:00",
+                "zoopla:456",
+                "zoopla",
+                "456",
+                "https://zoopla.co.uk/456",
+                "Flat",
+                1950,
+                2,
+                "123 Mare Street",
+                "2025-01-15T10:00:00",
+                "2025-01-15T10:00:00",
                 None,  # orphaned!
             ),
         )
@@ -477,8 +498,12 @@ class TestMigration005:
         )
 
         for i, mig in enumerate(
-            [migrate_001_initial_schema, migrate_002_floor_area_sqm,
-             migrate_003_source_aliases, migrate_004_source_listings],
+            [
+                migrate_001_initial_schema,
+                migrate_002_floor_area_sqm,
+                migrate_003_source_aliases,
+                migrate_004_source_listings,
+            ],
             1,
         ):
             await conn.execute("BEGIN IMMEDIATE")
@@ -493,9 +518,16 @@ class TestMigration005:
                 bedrooms, address, first_seen, notification_status, sources
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
-                "rightmove:789", "rightmove", "789",
-                "https://rightmove.co.uk/789", "Flat", 2100, 2,
-                "45 Dalston Lane", "2025-01-16T14:00:00", "sent",
+                "rightmove:789",
+                "rightmove",
+                "789",
+                "https://rightmove.co.uk/789",
+                "Flat",
+                2100,
+                2,
+                "45 Dalston Lane",
+                "2025-01-16T14:00:00",
+                "sent",
                 json.dumps(["rightmove", "zoopla", "zoopla"]),
             ),
         )

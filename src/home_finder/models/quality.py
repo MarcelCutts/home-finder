@@ -281,12 +281,15 @@ class SpaceAnalysis(_LenientLiteralModel):
     living_room_sqm: float | None = None
     total_area_sqm: float | None = None  # Claude's estimate from floorplan
     room_areas: list[RoomArea] = []
-    area_estimation_method: Literal[
-        "measured_from_floorplan",
-        "partial_dimensions",
-        "estimated_from_scale",
-        "estimated_from_photos",  # Reserved — not prompted yet
-    ] | None = None
+    area_estimation_method: (
+        Literal[
+            "measured_from_floorplan",
+            "partial_dimensions",
+            "estimated_from_scale",
+            "estimated_from_photos",  # Reserved — not prompted yet
+        ]
+        | None
+    ) = None
     is_spacious_enough: bool | None = None  # None = unknown
     hosting_layout: Literal["excellent", "good", "awkward", "poor", "unknown"] = "unknown"
 

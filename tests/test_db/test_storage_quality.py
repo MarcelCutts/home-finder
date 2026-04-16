@@ -359,9 +359,7 @@ class TestGetPropertiesPaginated:
         await storage.save_merged_property(merged_b)
         await storage.save_quality_analysis(prop_a.unique_id, sample_analysis)
 
-        props, total = await storage.web.get_properties_paginated(
-            PropertyFilter(min_fit_score=50)
-        )
+        props, total = await storage.web.get_properties_paginated(PropertyFilter(min_fit_score=50))
         assert total == 1
         assert props[0]["quality_rating"] is not None
 

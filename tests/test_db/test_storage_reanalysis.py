@@ -640,7 +640,9 @@ class TestReanalysisIntegration:
             merged.unique_id, make_quality_analysis(rating=5)
         )
 
-        results, total = await storage.web.get_properties_paginated(PropertyFilter(min_fit_score=30))
+        results, total = await storage.web.get_properties_paginated(
+            PropertyFilter(min_fit_score=30)
+        )
         assert total == 1
         assert results[0]["quality_rating"] == 5
 

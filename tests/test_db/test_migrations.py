@@ -121,9 +121,7 @@ class TestRunMigrations:
 
         # Define a mock next migration that adds a new table
         async def migrate_next_add_test_table(conn: aiosqlite.Connection) -> None:
-            await conn.execute(
-                "CREATE TABLE IF NOT EXISTS _test_table (id INTEGER PRIMARY KEY)"
-            )
+            await conn.execute("CREATE TABLE IF NOT EXISTS _test_table (id INTEGER PRIMARY KEY)")
 
         fake_migrations = [*MIGRATIONS, migrate_next_add_test_table]
         with patch("home_finder.db.migrations.MIGRATIONS", fake_migrations):
@@ -144,9 +142,7 @@ class TestRunMigrations:
         assert await _get_user_version(fresh_conn) == current_version
 
         async def migrate_next_failing(conn: aiosqlite.Connection) -> None:
-            await conn.execute(
-                "CREATE TABLE _should_not_persist (id INTEGER PRIMARY KEY)"
-            )
+            await conn.execute("CREATE TABLE _should_not_persist (id INTEGER PRIMARY KEY)")
             raise RuntimeError("simulated failure")
 
         fake_migrations = [*MIGRATIONS, migrate_next_failing]
@@ -269,9 +265,7 @@ class TestBackfillSourceListings:
         assert row["is_backfilled"] == 0
         assert row["price_pcm"] == 2000
 
-    async def test_backfill_creates_secondary_from_aliases(
-        self, fresh_conn: aiosqlite.Connection
-    ):
+    async def test_backfill_creates_secondary_from_aliases(self, fresh_conn: aiosqlite.Connection):
         """Source aliases produce source_listings with is_backfilled=1 and correct merged_id."""
         from home_finder.db.migrations import (
             migrate_001_initial_schema,
@@ -293,10 +287,12 @@ class TestBackfillSourceListings:
         await fresh_conn.commit()
 
         # Insert an anchor property with source_urls JSON
-        source_urls = json.dumps({
-            "openrent": "https://openrent.com/123",
-            "zoopla": "https://zoopla.co.uk/456",
-        })
+        source_urls = json.dumps(
+            {
+                "openrent": "https://openrent.com/123",
+                "zoopla": "https://zoopla.co.uk/456",
+            }
+        )
         await fresh_conn.execute(
             """INSERT INTO properties (
                 unique_id, source, source_id, url, title, price_pcm,

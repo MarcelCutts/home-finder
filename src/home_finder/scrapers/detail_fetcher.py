@@ -976,9 +976,7 @@ class DetailFetcher:
                     timeout=_IMAGE_TIMEOUT,
                 )
                 if response.status_code != 200:
-                    logger.debug(
-                        "image_download_failed", url=url, status=response.status_code
-                    )
+                    logger.debug("image_download_failed", url=url, status=response.status_code)
                     return None
                 breaker.record_success()
                 data: bytes = response.content

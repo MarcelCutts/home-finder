@@ -61,6 +61,7 @@ def fit_color_class(score: int) -> str:
             return tier["color_class"]
     return FIT_TIERS[-1]["color_class"]
 
+
 # ── Highlight/Lowlight signal scoring (used by _score_vibe cluster 6) ────────
 
 _HIGHLIGHT_SCORES: Final[dict[str, float]] = {
@@ -654,9 +655,13 @@ def _score_condition(analysis: dict[str, Any], _bedrooms: int) -> _DimensionResu
         signals += 1
         condition_word = {5: "Excellent", 4: "Good", 3: "Fair", 2: "Poor", 1: "Very poor"}
         if overall >= 3:
-            factors.append({"label": f"{condition_word.get(int(overall), 'Fair')} overall", "state": "earned"})
+            factors.append(
+                {"label": f"{condition_word.get(int(overall), 'Fair')} overall", "state": "earned"}
+            )
         else:
-            factors.append({"label": f"{condition_word.get(int(overall), 'Poor')} overall", "state": "missed"})
+            factors.append(
+                {"label": f"{condition_word.get(int(overall), 'Poor')} overall", "state": "missed"}
+            )
     else:
         score = 50.0  # neutral default, but no signal
 

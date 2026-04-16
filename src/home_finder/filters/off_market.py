@@ -103,16 +103,16 @@ _LET_AGREED_PATTERNS: Final[dict[str, list[re.Pattern[str]]]] = {
         # High-confidence: PAGE_MODEL JSON tags array
         re.compile(r'"tags"\s*:\s*\[.*?"LET_AGREED"', re.IGNORECASE),
         # Body text: "LET AGREED" or "LET_AGREED" but not includeLetAgreed=true
-        re.compile(r'(?<![?&=a-zA-Z])let[\s_]agreed(?![a-zA-Z=&])', re.IGNORECASE),
+        re.compile(r"(?<![?&=a-zA-Z])let[\s_]agreed(?![a-zA-Z=&])", re.IGNORECASE),
     ],
     "zoopla": [
-        re.compile(r'(?<![?&=a-zA-Z])let(?:ting)?\s+agreed(?![a-zA-Z=&])', re.IGNORECASE),
+        re.compile(r"(?<![?&=a-zA-Z])let(?:ting)?\s+agreed(?![a-zA-Z=&])", re.IGNORECASE),
     ],
     # OpenRent: no let-agreed state — removed listings 404/redirect
     "onthemarket": [
         # Body text but not ?let-agreed=true in URLs
-        re.compile(r'(?<![?&=a-zA-Z/-])let[\s-]agreed(?![a-zA-Z=&])', re.IGNORECASE),
-        re.compile(r'(?<![?&=a-zA-Z])under\s+offer(?![a-zA-Z=&])', re.IGNORECASE),
+        re.compile(r"(?<![?&=a-zA-Z/-])let[\s-]agreed(?![a-zA-Z=&])", re.IGNORECASE),
+        re.compile(r"(?<![?&=a-zA-Z])under\s+offer(?![a-zA-Z=&])", re.IGNORECASE),
     ],
 }
 

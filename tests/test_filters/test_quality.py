@@ -1129,9 +1129,7 @@ class TestPropertyQualityFilter:
 
         quality_filter = PropertyQualityFilter(api_key="test-key")
         quality_filter._client = MagicMock()
-        quality_filter._client.messages.create = AsyncMock(
-            side_effect=[mock_visual, mock_eval]
-        )
+        quality_filter._client.messages.create = AsyncMock(side_effect=[mock_visual, mock_eval])
 
         results = await quality_filter.analyze_merged_properties([sample_merged_property])
 
@@ -2161,9 +2159,7 @@ class TestCircuitBreaker:
             await quality_filter.analyze_single_merged(
                 sample_merged_property, data_dir=str(tmp_path)
             )
-            mock_clear.assert_called_once_with(
-                str(tmp_path), sample_merged_property.unique_id
-            )
+            mock_clear.assert_called_once_with(str(tmp_path), sample_merged_property.unique_id)
 
     async def test_generic_exception_does_not_trip_circuit(
         self,

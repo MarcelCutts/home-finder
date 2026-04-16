@@ -189,9 +189,7 @@ class TestScraperRuns:
         assert zoopla["areas_completed"] == 2
         assert zoopla["is_healthy"] == 0
 
-    async def test_save_scraper_runs_empty_list_is_noop(
-        self, storage: PropertyStorage
-    ) -> None:
+    async def test_save_scraper_runs_empty_list_is_noop(self, storage: PropertyStorage) -> None:
         run_id = await storage.pipeline.create_pipeline_run()
         await storage.pipeline.save_scraper_runs(run_id, [])
 
@@ -203,9 +201,7 @@ class TestScraperRuns:
         row = await cursor.fetchone()
         assert row["cnt"] == 0
 
-    async def test_save_scraper_runs_null_pipeline_run_id(
-        self, storage: PropertyStorage
-    ) -> None:
+    async def test_save_scraper_runs_null_pipeline_run_id(self, storage: PropertyStorage) -> None:
         """Scraper runs can be saved without a pipeline run (e.g. dry-run)."""
         metrics = [
             {
@@ -217,9 +213,7 @@ class TestScraperRuns:
         await storage.pipeline.save_scraper_runs(None, metrics)
 
         conn = await storage._get_connection()
-        cursor = await conn.execute(
-            "SELECT * FROM scraper_runs WHERE pipeline_run_id IS NULL"
-        )
+        cursor = await conn.execute("SELECT * FROM scraper_runs WHERE pipeline_run_id IS NULL")
         rows = await cursor.fetchall()
         assert len(rows) == 1
         assert rows[0]["scraper_name"] == "rightmove"
@@ -251,7 +245,10 @@ class TestPropertyEvents:
         events = [
             PropertyEvent("openrent:1", "openrent", "criteria_passed", "criteria"),
             PropertyEvent(
-                "zoopla:2", "zoopla", "criteria_dropped", "criteria",
+                "zoopla:2",
+                "zoopla",
+                "criteria_dropped",
+                "criteria",
                 {"price": 3000, "bedrooms": 3},
             ),
         ]
@@ -289,9 +286,7 @@ class TestPropertyEvents:
         row = await cursor.fetchone()
         assert row["cnt"] == 0
 
-    async def test_cleanup_old_events_respects_keep_runs(
-        self, storage: PropertyStorage
-    ) -> None:
+    async def test_cleanup_old_events_respects_keep_runs(self, storage: PropertyStorage) -> None:
         # Create 3 pipeline runs and add events to each
         run_ids = []
         for _ in range(3):
@@ -307,9 +302,7 @@ class TestPropertyEvents:
         assert deleted == 1
 
         conn = await storage._get_connection()
-        cursor = await conn.execute(
-            "SELECT DISTINCT run_id FROM property_events ORDER BY run_id"
-        )
+        cursor = await conn.execute("SELECT DISTINCT run_id FROM property_events ORDER BY run_id")
         remaining = [row["run_id"] for row in await cursor.fetchall()]
         assert run_ids[0] not in remaining
         assert run_ids[1] in remaining

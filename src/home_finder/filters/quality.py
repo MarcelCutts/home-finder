@@ -277,12 +277,15 @@ class _VisualAnalysisResponse(BaseModel):
                 "Per-room breakdown from floorplan. Empty list if no dimensioned floorplan."
             ),
         )
-        area_estimation_method: Literal[
-            "measured_from_floorplan",
-            "partial_dimensions",
-            "estimated_from_scale",
-            "estimated_from_photos",  # Reserved — not prompted yet
-        ] | None = Field(
+        area_estimation_method: (
+            Literal[
+                "measured_from_floorplan",
+                "partial_dimensions",
+                "estimated_from_scale",
+                "estimated_from_photos",  # Reserved — not prompted yet
+            ]
+            | None
+        ) = Field(
             default=None,
             description="How total_area_sqm was determined. null if total_area_sqm is null.",
         )
@@ -763,7 +766,9 @@ class PropertyQualityFilter:
             self._client = _anthropic.AsyncAnthropic(
                 api_key=self._api_key,
                 max_retries=MAX_RETRIES,  # SDK handles retry with exponential backoff
-                timeout=httpx.Timeout(PHASE1_REQUEST_TIMEOUT, connect=5.0),  # Default to Phase 1 timeout
+                timeout=httpx.Timeout(
+                    PHASE1_REQUEST_TIMEOUT, connect=5.0
+                ),  # Default to Phase 1 timeout
             )
         return self._client
 

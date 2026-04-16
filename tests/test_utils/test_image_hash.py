@@ -421,9 +421,7 @@ class TestFetchAndHashImageSVG:
             url="https://example.com/floorplan-white.97dae32e.svg",
             content=svg_bytes,
         )
-        result = await fetch_and_hash_image(
-            "https://example.com/floorplan-white.97dae32e.svg"
-        )
+        result = await fetch_and_hash_image("https://example.com/floorplan-white.97dae32e.svg")
         assert result is None
 
     @pytest.mark.asyncio

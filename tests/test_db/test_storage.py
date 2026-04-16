@@ -623,9 +623,7 @@ class TestUpdateMergedSources:
             max_price=2000,
             descriptions={PropertySource.ZOOPLA: "ZP desc"},
         )
-        await storage.update_merged_sources(
-            prop.unique_id, updated, absorbed_ids=["zoopla:z-1"]
-        )
+        await storage.update_merged_sources(prop.unique_id, updated, absorbed_ids=["zoopla:z-1"])
 
         tracked = await storage.get_property(prop.unique_id)
         assert tracked is not None
@@ -682,9 +680,7 @@ class TestUpdateMergedSources:
             max_price=2000,
             descriptions={},
         )
-        await storage.update_merged_sources(
-            prop.unique_id, updated, absorbed_ids=["zoopla:z-1"]
-        )
+        await storage.update_merged_sources(prop.unique_id, updated, absorbed_ids=["zoopla:z-1"])
 
         conn = await storage._get_connection()
         cursor = await conn.execute(
@@ -752,9 +748,7 @@ class TestUpdateMergedSources:
                 PropertySource.ZOOPLA: "ZP desc",
             },
         )
-        await storage.update_merged_sources(
-            prop.unique_id, updated, absorbed_ids=["zoopla:z-1"]
-        )
+        await storage.update_merged_sources(prop.unique_id, updated, absorbed_ids=["zoopla:z-1"])
 
         conn = await storage._get_connection()
         cursor = await conn.execute(
@@ -831,9 +825,7 @@ class TestUpdateMergedSources:
             max_price=2000,
             descriptions={},
         )
-        await storage.update_merged_sources(
-            prop.unique_id, updated, absorbed_ids=["zoopla:z-1"]
-        )
+        await storage.update_merged_sources(prop.unique_id, updated, absorbed_ids=["zoopla:z-1"])
 
         images = await storage.get_property_images(prop.unique_id)
         assert len(images) == 1
@@ -1140,9 +1132,7 @@ class TestSourceListingsReadPath:
         assert len(new) == 0
 
     @pytest.mark.asyncio
-    async def test_is_seen_true_for_linked_source_listing(
-        self, storage: PropertyStorage
-    ) -> None:
+    async def test_is_seen_true_for_linked_source_listing(self, storage: PropertyStorage) -> None:
         """source_listing with merged_id set -> is_seen returns True."""
         prop = Property(
             source=PropertySource.ZOOPLA,
@@ -1180,9 +1170,7 @@ class TestSourceListingsReadPath:
         assert await storage.is_seen("nonexistent:999") is False
 
     @pytest.mark.asyncio
-    async def test_filter_new_merged_allows_genuinely_new(
-        self, storage: PropertyStorage
-    ) -> None:
+    async def test_filter_new_merged_allows_genuinely_new(self, storage: PropertyStorage) -> None:
         """unique_id not in source_listings -> passes through."""
         prop = Property(
             source=PropertySource.OPENRENT,
@@ -1225,9 +1213,7 @@ class TestSourceListingsReadPath:
         assert "55555" in known["rightmove"]
 
     @pytest.mark.asyncio
-    async def test_get_all_known_source_ids_empty_table(
-        self, storage: PropertyStorage
-    ) -> None:
+    async def test_get_all_known_source_ids_empty_table(self, storage: PropertyStorage) -> None:
         """Empty source_listings returns empty dict, not error."""
         known = await storage.get_all_known_source_ids()
         assert known == {}
@@ -1255,9 +1241,7 @@ class TestSourceListingsReadPath:
         assert all(f"openrent:{i}" in seen for i in range(100))
 
     @pytest.mark.asyncio
-    async def test_link_source_listings_makes_seen(
-        self, storage: PropertyStorage
-    ) -> None:
+    async def test_link_source_listings_makes_seen(self, storage: PropertyStorage) -> None:
         """Linking a source listing to a golden record makes it 'seen'."""
         # First upsert (no merged_id)
         prop = Property(

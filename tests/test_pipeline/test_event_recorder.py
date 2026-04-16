@@ -112,13 +112,14 @@ class TestEventRecorder:
         row = await cursor.fetchone()
         assert row["cnt"] == 3
 
-    async def test_metadata_persisted_as_json(
-        self, storage: PropertyStorage, run_id: int
-    ) -> None:
+    async def test_metadata_persisted_as_json(self, storage: PropertyStorage, run_id: int) -> None:
         async with EventRecorder(storage, run_id) as recorder:
             recorder.record(
                 PropertyEvent(
-                    "z:99", "zoopla", "criteria_dropped", "criteria",
+                    "z:99",
+                    "zoopla",
+                    "criteria_dropped",
+                    "criteria",
                     {"price": 3500, "bedrooms": 4},
                 )
             )
@@ -135,9 +136,7 @@ class TestEventRecorder:
         assert meta["price"] == 3500
         assert meta["bedrooms"] == 4
 
-    async def test_null_metadata_persisted(
-        self, storage: PropertyStorage, run_id: int
-    ) -> None:
+    async def test_null_metadata_persisted(self, storage: PropertyStorage, run_id: int) -> None:
         async with EventRecorder(storage, run_id) as recorder:
             recorder.record(PropertyEvent("a:1", "a", "dedup_passed", "dedup"))
 

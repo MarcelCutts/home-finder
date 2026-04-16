@@ -164,9 +164,7 @@ async def migrate_001_initial_schema(conn: aiosqlite.Connection) -> None:
         ("reanalysis_requested_at", "TEXT"),
     ]:
         try:
-            await conn.execute(
-                f"ALTER TABLE quality_analyses ADD COLUMN {column} {col_type}"
-            )
+            await conn.execute(f"ALTER TABLE quality_analyses ADD COLUMN {column} {col_type}")
         except aiosqlite.OperationalError as e:
             if "duplicate column" not in str(e).lower():
                 raise
@@ -192,9 +190,7 @@ async def migrate_001_initial_schema(conn: aiosqlite.Connection) -> None:
 
     # --- Migrate: add fit_score columns to quality_analyses ---
     try:
-        await conn.execute(
-            "ALTER TABLE quality_analyses ADD COLUMN fit_score INTEGER"
-        )
+        await conn.execute("ALTER TABLE quality_analyses ADD COLUMN fit_score INTEGER")
     except aiosqlite.OperationalError as e:
         if "duplicate column" not in str(e).lower():
             raise
@@ -203,9 +199,7 @@ async def migrate_001_initial_schema(conn: aiosqlite.Connection) -> None:
     )
 
     try:
-        await conn.execute(
-            "ALTER TABLE quality_analyses ADD COLUMN fit_score_version INTEGER"
-        )
+        await conn.execute("ALTER TABLE quality_analyses ADD COLUMN fit_score_version INTEGER")
     except aiosqlite.OperationalError as e:
         if "duplicate column" not in str(e).lower():
             raise
@@ -314,9 +308,7 @@ async def migrate_001_initial_schema(conn: aiosqlite.Connection) -> None:
             if "duplicate column" not in str(e).lower():
                 raise
 
-    await conn.execute(
-        "CREATE INDEX IF NOT EXISTS idx_off_market ON properties(is_off_market)"
-    )
+    await conn.execute("CREATE INDEX IF NOT EXISTS idx_off_market ON properties(is_off_market)")
 
     # --- Migrate: add per-stage timing columns to pipeline_runs ---
     for column in [
@@ -346,16 +338,12 @@ async def migrate_001_initial_schema(conn: aiosqlite.Connection) -> None:
         "total_cache_creation_tokens",
     ]:
         try:
-            await conn.execute(
-                f"ALTER TABLE pipeline_runs ADD COLUMN {column} INTEGER"
-            )
+            await conn.execute(f"ALTER TABLE pipeline_runs ADD COLUMN {column} INTEGER")
         except aiosqlite.OperationalError as e:
             if "duplicate column" not in str(e).lower():
                 raise
     try:
-        await conn.execute(
-            "ALTER TABLE pipeline_runs ADD COLUMN estimated_cost_usd REAL"
-        )
+        await conn.execute("ALTER TABLE pipeline_runs ADD COLUMN estimated_cost_usd REAL")
     except aiosqlite.OperationalError as e:
         if "duplicate column" not in str(e).lower():
             raise

@@ -424,7 +424,8 @@ class TestCrossPlatformRerun:
         _, first_update = await _split_dedup_results([merged_zp], db_anchors)
         assert len(first_update) == 1
         await storage.update_merged_sources(
-            first_update[0][0], first_update[0][1],
+            first_update[0][0],
+            first_update[0][1],
             absorbed_ids=[ZOOPLA_SAME_FLAT.unique_id],
         )
 
@@ -454,7 +455,8 @@ class TestCrossPlatformRerun:
         _, first_update = await _split_dedup_results([merged_zp], db_anchors)
         assert len(first_update) == 1
         await storage.update_merged_sources(
-            first_update[0][0], first_update[0][1],
+            first_update[0][0],
+            first_update[0][1],
             absorbed_ids=[ZOOPLA_SAME_FLAT.unique_id],
         )
 

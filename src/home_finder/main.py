@@ -82,9 +82,7 @@ def _make_notify_callback(
         else:
             await storage.mark_notification_failed(uid)
             if recorder is not None:
-                recorder.record(
-                    PropertyEvent(uid, src, "notification_failed", "notification")
-                )
+                recorder.record(PropertyEvent(uid, src, "notification_failed", "notification"))
 
         await asyncio.sleep(1)  # Telegram rate limit
 

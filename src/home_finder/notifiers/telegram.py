@@ -84,7 +84,6 @@ def _html_link(url: str, text: str) -> str:
     return f'<a href="{html.escape(str(url), quote=True)}">{html.escape(text)}</a>'
 
 
-
 def _format_kitchen_info(analysis: PropertyQualityAnalysis) -> str:
     """Format kitchen analysis for display."""
     kitchen = analysis.kitchen
@@ -490,9 +489,7 @@ def format_merged_property_message(
     )
 
     if quality_analysis:
-        lines.extend(
-            _format_quality_block(quality_analysis, floor_area_sqm=merged.floor_area_sqm)
-        )
+        lines.extend(_format_quality_block(quality_analysis, floor_area_sqm=merged.floor_area_sqm))
 
     # Image count and floorplan
     if merged.images or merged.floorplan:

@@ -201,7 +201,8 @@ class TestRunCheckOffMarketIntegration:
 
         conn = await storage._get_connection()
         cursor = await conn.execute(
-            "SELECT is_off_market, off_market_since, off_market_history FROM properties WHERE unique_id = ?",
+            "SELECT is_off_market, off_market_since, off_market_history"
+            " FROM properties WHERE unique_id = ?",
             (merged.unique_id,),
         )
         row = await cursor.fetchone()

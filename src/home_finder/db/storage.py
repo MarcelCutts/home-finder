@@ -118,9 +118,7 @@ class PropertyStorage:
             # Throttled SELECT 1 probe
             if (time.monotonic() - self._last_health_check) > self._HEALTH_CHECK_INTERVAL:
                 try:
-                    await asyncio.wait_for(
-                        self._conn.execute("SELECT 1"), timeout=5.0
-                    )
+                    await asyncio.wait_for(self._conn.execute("SELECT 1"), timeout=5.0)
                     self._last_health_check = time.monotonic()
                 except Exception:
                     logger.warning("db_connection_dead", db_path=self.db_path)
@@ -599,11 +597,7 @@ class PropertyStorage:
             # ORDER BY last_seen ASC ensures last-write-wins for URLs/descriptions
             sources = list(dict.fromkeys(r["source"] for r in rows))
             source_urls = {r["source"]: r["url"] for r in rows}
-            descriptions = {
-                r["source"]: r["description"]
-                for r in rows
-                if r["description"]
-            }
+            descriptions = {r["source"]: r["description"] for r in rows if r["description"]}
             prices = [r["price_pcm"] for r in rows]
 
             await conn.execute(
@@ -695,9 +689,7 @@ class PropertyStorage:
             conn, merged.canonical, merged_id=merged.canonical.unique_id
         )
         # Link non-canonical source_listings by URL (in-run dedup absorbed sources)
-        await link_source_listings_by_url(
-            conn, merged.canonical.unique_id, merged.source_urls
-        )
+        await link_source_listings_by_url(conn, merged.canonical.unique_id, merged.source_urls)
         await conn.commit()
 
         logger.debug(
@@ -923,7 +915,7 @@ class PropertyStorage:
         now = datetime.now(UTC).isoformat()
         try:
             await conn.execute(
-            """
+                """
             INSERT INTO source_listings (
                 unique_id, source, source_id, url, title, price_pcm,
                 bedrooms, address, postcode, latitude, longitude,
@@ -941,26 +933,26 @@ class PropertyStorage:
                 postcode = COALESCE(excluded.postcode, postcode),
                 merged_id = COALESCE(excluded.merged_id, merged_id)
             """,
-            (
-                prop.unique_id,
-                prop.source.value,
-                prop.source_id,
-                str(prop.url),
-                prop.title,
-                prop.price_pcm,
-                prop.bedrooms,
-                prop.address,
-                prop.postcode,
-                prop.latitude,
-                prop.longitude,
-                prop.description,
-                str(prop.image_url) if prop.image_url else None,
-                prop.available_from.isoformat() if prop.available_from else None,
-                prop.first_seen.isoformat(),
-                now,
-                merged_id,
-            ),
-        )
+                (
+                    prop.unique_id,
+                    prop.source.value,
+                    prop.source_id,
+                    str(prop.url),
+                    prop.title,
+                    prop.price_pcm,
+                    prop.bedrooms,
+                    prop.address,
+                    prop.postcode,
+                    prop.latitude,
+                    prop.longitude,
+                    prop.description,
+                    str(prop.image_url) if prop.image_url else None,
+                    prop.available_from.isoformat() if prop.available_from else None,
+                    prop.first_seen.isoformat(),
+                    now,
+                    merged_id,
+                ),
+            )
         except aiosqlite.OperationalError as e:
             if "no such table" in str(e).lower():
                 return
@@ -1021,9 +1013,7 @@ class PropertyStorage:
         await conn.commit()
         return len(rows)
 
-    async def link_source_listings(
-        self, links: list[tuple[str, str]]
-    ) -> None:
+    async def link_source_listings(self, links: list[tuple[str, str]]) -> None:
         """Link source listings to their golden record.
 
         Each tuple is (source_listing_unique_id, merged_property_unique_id).
@@ -1048,9 +1038,7 @@ class PropertyStorage:
             Dict mapping source name to set of source_ids.
         """
         conn = await self._get_connection()
-        cursor = await conn.execute(
-            "SELECT source, source_id FROM source_listings"
-        )
+        cursor = await conn.execute("SELECT source, source_id FROM source_listings")
         rows = await cursor.fetchall()
         result: dict[str, set[str]] = {}
         for source, source_id in rows:
@@ -1492,9 +1480,7 @@ class PropertyStorage:
     # Off-market detection
     # ------------------------------------------------------------------
 
-    async def mark_off_market(
-        self, unique_id: str, *, reason: str | None = None
-    ) -> bool:
+    async def mark_off_market(self, unique_id: str, *, reason: str | None = None) -> bool:
         """Mark a property as off-market. Preserves original off_market_since date.
 
         Returns True if the row was updated, False if property not found.
@@ -1549,11 +1535,13 @@ class PropertyStorage:
             with contextlib.suppress(json.JSONDecodeError, TypeError):
                 history = json.loads(row["off_market_history"])
         if row["off_market_since"]:
-            history.append({
-                "off": row["off_market_since"],
-                "back": now,
-                "reason": row["off_market_reason"],
-            })
+            history.append(
+                {
+                    "off": row["off_market_since"],
+                    "back": now,
+                    "reason": row["off_market_reason"],
+                }
+            )
 
         cursor = await conn.execute(
             """
@@ -1660,9 +1648,7 @@ class PropertyStorage:
     # Per-source off-market tracking (source_listings)
     # ------------------------------------------------------------------
 
-    async def mark_source_listing_off_market(
-        self, unique_id: str, reason: str
-    ) -> bool:
+    async def mark_source_listing_off_market(self, unique_id: str, reason: str) -> bool:
         """Mark a source_listing as off-market. Preserves original timestamp.
 
         Returns True if the row was updated, False if not found.

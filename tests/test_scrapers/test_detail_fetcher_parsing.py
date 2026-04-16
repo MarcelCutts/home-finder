@@ -897,11 +897,7 @@ class TestDetailFetcherLifecycle:
         with structlog.testing.capture_logs() as captured:
             await fetcher.close()
 
-        summaries = [
-            log
-            for log in captured
-            if log.get("event") == "image_cdn_circuit_summary"
-        ]
+        summaries = [log for log in captured if log.get("event") == "image_cdn_circuit_summary"]
         assert len(summaries) == 2
         by_cdn = {log["cdn"]: log for log in summaries}
         assert by_cdn["zoocdn.com"]["skipped"] == 5

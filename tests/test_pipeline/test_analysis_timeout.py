@@ -46,9 +46,7 @@ async def test_wall_clock_timeout_skips_property(
     items = make_items(1)
     results: list[tuple[MergedProperty, PropertyQualityAnalysis | None]] = []
 
-    async def _on_result(
-        merged: MergedProperty, qa: PropertyQualityAnalysis | None
-    ) -> None:
+    async def _on_result(merged: MergedProperty, qa: PropertyQualityAnalysis | None) -> None:
         results.append((merged, qa))
 
     count = await _run_concurrent_analysis(
@@ -78,9 +76,7 @@ async def test_timeout_does_not_cancel_batch(
 
     results: list[str] = []
 
-    async def _on_result(
-        merged: MergedProperty, qa: PropertyQualityAnalysis | None
-    ) -> None:
+    async def _on_result(merged: MergedProperty, qa: PropertyQualityAnalysis | None) -> None:
         results.append(merged.unique_id)
 
     count = await _run_concurrent_analysis(
@@ -101,9 +97,7 @@ async def test_duration_logging_on_success(
     """property_analysis_duration log emitted on successful analysis."""
     items = make_items(1)
 
-    async def _on_result(
-        merged: MergedProperty, qa: PropertyQualityAnalysis | None
-    ) -> None:
+    async def _on_result(merged: MergedProperty, qa: PropertyQualityAnalysis | None) -> None:
         pass
 
     count = await _run_concurrent_analysis(
@@ -125,9 +119,7 @@ async def test_on_error_called_for_timeout(
     items = make_items(1)
     error_cb = MagicMock()
 
-    async def _on_result(
-        merged: MergedProperty, qa: PropertyQualityAnalysis | None
-    ) -> None:
+    async def _on_result(merged: MergedProperty, qa: PropertyQualityAnalysis | None) -> None:
         pass  # pragma: no cover
 
     count = await _run_concurrent_analysis(
@@ -148,9 +140,7 @@ async def test_no_timeout_when_none(
     items = make_items(2)
     results: list[str] = []
 
-    async def _on_result(
-        merged: MergedProperty, qa: PropertyQualityAnalysis | None
-    ) -> None:
+    async def _on_result(merged: MergedProperty, qa: PropertyQualityAnalysis | None) -> None:
         results.append(merged.unique_id)
 
     count = await _run_concurrent_analysis(

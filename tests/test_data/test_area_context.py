@@ -185,8 +185,12 @@ class TestNoiseEnforcement:
     def test_noise_enforcement_loaded(self) -> None:
         assert isinstance(NOISE_ENFORCEMENT, dict)
         expected_boroughs = {
-            "Hackney", "Haringey", "Islington", "Newham",
-            "Tower Hamlets", "Waltham Forest",
+            "Hackney",
+            "Haringey",
+            "Islington",
+            "Newham",
+            "Tower Hamlets",
+            "Waltham Forest",
         }
         assert set(NOISE_ENFORCEMENT.keys()) == expected_boroughs
 
@@ -318,8 +322,19 @@ class TestHostingTolerance:
 
     def test_expected_outcodes_present(self) -> None:
         expected = {
-            "E2", "E3", "E5", "E8", "E9", "E10", "E15", "E17",
-            "N1", "N5", "N15", "N16", "N17",
+            "E2",
+            "E3",
+            "E5",
+            "E8",
+            "E9",
+            "E10",
+            "E15",
+            "E17",
+            "N1",
+            "N5",
+            "N15",
+            "N16",
+            "N17",
         }
         assert set(HOSTING_TOLERANCE.keys()) == expected
 
@@ -370,8 +385,19 @@ class TestCreativeScene:
 
     def test_expected_outcodes_present(self) -> None:
         expected = {
-            "E2", "E3", "E5", "E8", "E9", "E10", "E15", "E17",
-            "N1", "N5", "N15", "N16", "N17",
+            "E2",
+            "E3",
+            "E5",
+            "E8",
+            "E9",
+            "E10",
+            "E15",
+            "E17",
+            "N1",
+            "N5",
+            "N15",
+            "N16",
+            "N17",
         }
         assert set(CREATIVE_SCENE.keys()) == expected
 

@@ -515,14 +515,20 @@ async def _geocode_and_compute_commute(
                     mins, mode = commute_lookup[uid]
                     recorder.record(
                         PropertyEvent(
-                            uid, src, "commute_passed", "commute",
+                            uid,
+                            src,
+                            "commute_passed",
+                            "commute",
                             {"minutes": mins, "mode": mode.value},
                         )
                     )
                 else:
                     recorder.record(
                         PropertyEvent(
-                            uid, src, "commute_dropped", "commute",
+                            uid,
+                            src,
+                            "commute_dropped",
+                            "commute",
                             {"reason": "beyond_limit"},
                         )
                     )
@@ -690,13 +696,14 @@ async def _run_post_enrichment(
                 uid = m.canonical.unique_id
                 src = m.canonical.source.value
                 if uid in passed_ids:
-                    recorder.record(
-                        PropertyEvent(uid, src, "floorplan_passed", "floorplan")
-                    )
+                    recorder.record(PropertyEvent(uid, src, "floorplan_passed", "floorplan"))
                 else:
                     recorder.record(
                         PropertyEvent(
-                            uid, src, "floorplan_dropped", "floorplan",
+                            uid,
+                            src,
+                            "floorplan_dropped",
+                            "floorplan",
                             {"reason": "no_floorplan"},
                         )
                     )
@@ -843,13 +850,14 @@ async def _run_pre_analysis_pipeline(
             uid = m.canonical.unique_id
             src = m.canonical.source.value
             if uid in new_ids:
-                recorder.record(
-                    PropertyEvent(uid, src, "new_property_passed", "new_property")
-                )
+                recorder.record(PropertyEvent(uid, src, "new_property_passed", "new_property"))
             else:
                 recorder.record(
                     PropertyEvent(
-                        uid, src, "duplicate_known", "new_property",
+                        uid,
+                        src,
+                        "duplicate_known",
+                        "new_property",
                         {"reason": "already_seen"},
                     )
                 )
@@ -882,8 +890,12 @@ async def _run_pre_analysis_pipeline(
     # Step 7: Post-enrichment dedup + floorplan gate
     # Use geocoded list (not enriched) so coordinates from geocoding are preserved
     post_result = await _run_post_enrichment(
-        geocoded, storage, settings, re_enrichment_ids,
-        recorder=recorder, commute_lookup=commute_lookup,
+        geocoded,
+        storage,
+        settings,
+        re_enrichment_ids,
+        recorder=recorder,
+        commute_lookup=commute_lookup,
     )
     timings["enrichment_seconds"] = time.monotonic() - t0
     if post_result is None:
