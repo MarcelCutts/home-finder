@@ -81,9 +81,6 @@ class OwnerAccessMiddleware:
         self.settings = settings
         self._failed_auth = _WindowLimit(10)
         self._mutations = _WindowLimit(30)
-        # Serialize HTTP mutations, including callbacks. PR04 still owns the
-        # complete DB boundary covering pipeline/CLI writers and unrelated reads.
-        self._mutation_lock = asyncio.Lock()
 
     async def _owner_authorized(self, request: Request) -> bool:
         if len(request.headers.get("authorization", "")) > 4096:
@@ -212,5 +209,4 @@ class OwnerAccessMiddleware:
                 return {"type": "http.request", "body": bytes(body), "more_body": False}
             return await receive()
 
-        async with self._mutation_lock:
-            await self.app(scope, buffered_receive, private_send)
+        await self.app(scope, buffered_receive, private_send)

@@ -1,6 +1,6 @@
 # PR03: Patched runtime, compatible dependencies and map configuration
 
-**Date:** 28 September 2026. **State:** implemented and verified for local commit, with explicit residual findings and activation checks; not deployed.
+**Date:** 28 September 2026. **State:** committed as `8bb73cc`, with explicit residual findings and activation checks; not deployed.
 **Parent:** [delivery plan, PR03](2026-09-28-research-synthesis-and-delivery-plan.md#pr03--patch-the-supported-runtime-and-web-dependencies-fix-the-map-contract-m).
 **Predecessor:** PR02, commit `84fb43b`. No deployment, source collection, paid API calls or notifications.
 

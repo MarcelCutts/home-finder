@@ -159,12 +159,8 @@ class TestHealthCheckReconnectsOnFailure:
         await storage.close()
 
     @pytest.mark.asyncio
-    async def test_dead_conn_set_to_none_not_closed(self) -> None:
-        """Verify the error path sets _conn = None without awaiting close().
-
-        If the worker thread is hung, close() would also hang because it
-        queues through the same SimpleQueue. We just abandon the reference.
-        """
+    async def test_dead_connection_closed_before_replacement(self) -> None:
+        """Never abandon a worker which could still own a transaction."""
         storage = PropertyStorage(":memory:")
         await storage.initialize()
 
@@ -173,12 +169,11 @@ class TestHealthCheckReconnectsOnFailure:
         old_conn = storage._conn
         assert old_conn is not None
         old_conn.execute = AsyncMock(side_effect=OSError("hung"))  # type: ignore[method-assign]
-        old_conn.close = AsyncMock()  # type: ignore[method-assign]
+        old_conn.close = AsyncMock(wraps=old_conn.close)  # type: ignore[method-assign]
 
         await storage._get_connection()
 
-        # close() should NOT have been called on the dead connection
-        old_conn.close.assert_not_awaited()
+        old_conn.close.assert_awaited_once()
 
         await storage.close()
 

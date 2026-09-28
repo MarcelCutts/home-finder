@@ -6,6 +6,7 @@ import json
 from collections.abc import Callable, Coroutine
 from contextlib import AbstractAsyncContextManager
 from datetime import UTC, datetime
+from functools import partial
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -13,13 +14,16 @@ if TYPE_CHECKING:
 
 import aiosqlite
 
-from home_finder.db.row_mappers import build_merged_insert_columns, row_to_merged_property
+from home_finder.db.row_mappers import (
+    ImageReader,
+    build_merged_insert_columns,
+    row_to_merged_property,
+)
 from home_finder.db.source_listing_ops import link_source_listings_by_url
 from home_finder.logging import get_logger
 from home_finder.models import (
     MergedProperty,
     NotificationStatus,
-    PropertyImage,
     PropertyQualityAnalysis,
     TransportMode,
 )
@@ -32,12 +36,12 @@ class PipelineRepository:
 
     def __init__(
         self,
-        get_connection: Callable[[], Coroutine[Any, Any, aiosqlite.Connection]],
-        get_property_images: Callable[[str], Coroutine[Any, Any, list[PropertyImage]]],
+        read_connection: Callable[[], AbstractAsyncContextManager[aiosqlite.Connection]],
+        get_property_images: ImageReader,
         save_quality_analysis: Callable[..., Coroutine[Any, Any, None]],
         transaction: Callable[[], AbstractAsyncContextManager[aiosqlite.Connection]],
     ) -> None:
-        self._get_connection = get_connection
+        self._read_connection = read_connection
         self._get_property_images = get_property_images
         self._save_quality_analysis = save_quality_analysis
         self._transaction = transaction
@@ -52,12 +56,11 @@ class PipelineRepository:
         Returns:
             The ID of the new run.
         """
-        conn = await self._get_connection()
-        cursor = await conn.execute(
-            "INSERT INTO pipeline_runs (started_at, status) VALUES (?, 'running')",
-            (datetime.now(UTC).isoformat(),),
-        )
-        await conn.commit()
+        async with self._transaction() as conn:
+            cursor = await conn.execute(
+                "INSERT INTO pipeline_runs (started_at, status) VALUES (?, 'running')",
+                (datetime.now(UTC).isoformat(),),
+            )
         return cursor.lastrowid  # type: ignore[return-value]
 
     async def update_pipeline_run(self, run_id: int, **counts: int | float) -> None:
@@ -70,15 +73,14 @@ class PipelineRepository:
         """
         if not counts:
             return
-        conn = await self._get_connection()
-        set_clauses = ", ".join(f"{k} = ?" for k in counts)
-        values = list(counts.values())
-        values.append(run_id)
-        await conn.execute(
-            f"UPDATE pipeline_runs SET {set_clauses} WHERE id = ?",
-            values,
-        )
-        await conn.commit()
+        async with self._transaction() as conn:
+            set_clauses = ", ".join(f"{k} = ?" for k in counts)
+            values = list(counts.values())
+            values.append(run_id)
+            await conn.execute(
+                f"UPDATE pipeline_runs SET {set_clauses} WHERE id = ?",
+                values,
+            )
 
     async def complete_pipeline_run(
         self,
@@ -94,25 +96,26 @@ class PipelineRepository:
             status: Final status ('completed' or 'failed').
             error_message: Error message if status is 'failed'.
         """
-        conn = await self._get_connection()
-        now = datetime.now(UTC).isoformat()
-        # Calculate duration from started_at
-        cursor = await conn.execute("SELECT started_at FROM pipeline_runs WHERE id = ?", (run_id,))
-        row = await cursor.fetchone()
-        duration = None
-        if row:
-            started = datetime.fromisoformat(row["started_at"])
-            duration = (datetime.fromisoformat(now) - started).total_seconds()
+        async with self._transaction() as conn:
+            now = datetime.now(UTC).isoformat()
+            # Calculate duration from started_at
+            cursor = await conn.execute(
+                "SELECT started_at FROM pipeline_runs WHERE id = ?", (run_id,)
+            )
+            row = await cursor.fetchone()
+            duration = None
+            if row:
+                started = datetime.fromisoformat(row["started_at"])
+                duration = (datetime.fromisoformat(now) - started).total_seconds()
 
-        await conn.execute(
-            """
-            UPDATE pipeline_runs
-            SET completed_at = ?, status = ?, error_message = ?, duration_seconds = ?
-            WHERE id = ?
-            """,
-            (now, status, error_message, duration, run_id),
-        )
-        await conn.commit()
+            await conn.execute(
+                """
+                UPDATE pipeline_runs
+                SET completed_at = ?, status = ?, error_message = ?, duration_seconds = ?
+                WHERE id = ?
+                """,
+                (now, status, error_message, duration, run_id),
+            )
 
     async def get_last_pipeline_run(self) -> dict[str, Any] | None:
         """Get the most recent completed pipeline run.
@@ -120,18 +123,18 @@ class PipelineRepository:
         Returns:
             Dict with run data, or None if no runs exist.
         """
-        conn = await self._get_connection()
-        cursor = await conn.execute(
-            """
-            SELECT * FROM pipeline_runs
-            WHERE status IN ('completed', 'failed')
-            ORDER BY id DESC LIMIT 1
-            """
-        )
-        row = await cursor.fetchone()
-        if row is None:
-            return None
-        return dict(row)
+        async with self._read_connection() as conn:
+            cursor = await conn.execute(
+                """
+                SELECT * FROM pipeline_runs
+                WHERE status IN ('completed', 'failed')
+                ORDER BY id DESC LIMIT 1
+                """
+            )
+            row = await cursor.fetchone()
+            if row is None:
+                return None
+            return dict(row)
 
     async def save_scraper_runs(
         self, pipeline_run_id: int | None, metrics_list: list[dict[str, Any]]
@@ -144,34 +147,33 @@ class PipelineRepository:
         """
         if not metrics_list:
             return
-        conn = await self._get_connection()
-        for m in metrics_list:
-            await conn.execute(
-                """
-                INSERT INTO scraper_runs (
-                    pipeline_run_id, scraper_name, started_at, completed_at,
-                    duration_seconds, areas_attempted, areas_completed,
-                    properties_found, pages_fetched, pages_failed,
-                    parse_errors, is_healthy, error_message
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    pipeline_run_id,
-                    m["scraper_name"],
-                    m["started_at"],
-                    m.get("completed_at"),
-                    m.get("duration_seconds"),
-                    m.get("areas_attempted", 0),
-                    m.get("areas_completed", 0),
-                    m.get("properties_found", 0),
-                    m.get("pages_fetched", 0),
-                    m.get("pages_failed", 0),
-                    m.get("parse_errors", 0),
-                    m.get("is_healthy", True),
-                    m.get("error_message"),
-                ),
-            )
-        await conn.commit()
+        async with self._transaction() as conn:
+            for m in metrics_list:
+                await conn.execute(
+                    """
+                    INSERT INTO scraper_runs (
+                        pipeline_run_id, scraper_name, started_at, completed_at,
+                        duration_seconds, areas_attempted, areas_completed,
+                        properties_found, pages_fetched, pages_failed,
+                        parse_errors, is_healthy, error_message
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        pipeline_run_id,
+                        m["scraper_name"],
+                        m["started_at"],
+                        m.get("completed_at"),
+                        m.get("duration_seconds"),
+                        m.get("areas_attempted", 0),
+                        m.get("areas_completed", 0),
+                        m.get("properties_found", 0),
+                        m.get("pages_fetched", 0),
+                        m.get("pages_failed", 0),
+                        m.get("parse_errors", 0),
+                        m.get("is_healthy", True),
+                        m.get("error_message"),
+                    ),
+                )
         logger.debug("scraper_runs_saved", count=len(metrics_list))
 
     # ------------------------------------------------------------------
@@ -202,36 +204,131 @@ class PipelineRepository:
         if not dropped:
             return
 
-        conn = await self._get_connection()
-        for merged in dropped:
-            prop = merged.canonical
-            commute_info = commute_lookup.get(prop.unique_id)
-            commute_minutes = commute_info[0] if commute_info else None
-            transport_mode = commute_info[1] if commute_info else None
+        async with self._transaction() as conn:
+            for merged in dropped:
+                prop = merged.canonical
+                commute_info = commute_lookup.get(prop.unique_id)
+                commute_minutes = commute_info[0] if commute_info else None
+                transport_mode = commute_info[1] if commute_info else None
 
+                columns, values = build_merged_insert_columns(
+                    merged,
+                    commute_minutes=commute_minutes,
+                    transport_mode=transport_mode,
+                    notification_status=NotificationStatus.DROPPED,
+                )
+                col_list = ", ".join(columns)
+                placeholders = ", ".join("?" for _ in columns)
+
+                await conn.execute(
+                    f"""
+                    INSERT INTO properties ({col_list}, enrichment_status)
+                    VALUES ({placeholders}, 'enriched')
+                    ON CONFLICT(unique_id) DO UPDATE SET
+                        notification_status = 'dropped',
+                        enrichment_status = 'enriched'
+                    WHERE properties.notification_status = 'pending_enrichment'
+                      AND properties.enrichment_status = 'pending'
+                    """,
+                    values,
+                )
+
+                # Keep source_listings in sync
+                now = datetime.now(UTC).isoformat()
+                await conn.execute(
+                    """
+                    INSERT INTO source_listings (
+                        unique_id, source, source_id, url, title, price_pcm,
+                        bedrooms, address, postcode, latitude, longitude,
+                        description, image_url, available_from, first_seen,
+                        last_seen, merged_id
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(unique_id) DO UPDATE SET
+                        last_seen = excluded.last_seen,
+                        merged_id = COALESCE(excluded.merged_id, merged_id)
+                    """,
+                    (
+                        prop.unique_id,
+                        prop.source.value,
+                        prop.source_id,
+                        str(prop.url),
+                        prop.title,
+                        prop.price_pcm,
+                        prop.bedrooms,
+                        prop.address,
+                        prop.postcode,
+                        prop.latitude,
+                        prop.longitude,
+                        prop.description,
+                        str(prop.image_url) if prop.image_url else None,
+                        prop.available_from.isoformat() if prop.available_from else None,
+                        prop.first_seen.isoformat(),
+                        now,
+                        prop.unique_id,
+                    ),
+                )
+
+                # Link non-canonical source_listings by URL (in-run dedup absorbed sources)
+                await link_source_listings_by_url(conn, prop.unique_id, merged.source_urls)
+
+                # Save images (important for cross-run dedup image matching)
+                images = list(merged.images)
+                if merged.floorplan:
+                    images.append(merged.floorplan)
+                if images:
+                    img_rows = [
+                        (prop.unique_id, img.source.value, str(img.url), img.image_type)
+                        for img in images
+                    ]
+                    await conn.executemany(
+                        """
+                        INSERT OR IGNORE INTO property_images
+                        (property_unique_id, source, url, image_type)
+                        VALUES (?, ?, ?, ?)
+                        """,
+                        img_rows,
+                    )
+
+        logger.info("dropped_properties_saved", count=len(dropped))
+
+    # ------------------------------------------------------------------
+    # Enrichment retry
+    # ------------------------------------------------------------------
+
+    async def save_unenriched_property(
+        self,
+        merged: MergedProperty,
+        *,
+        commute_minutes: int | None = None,
+        transport_mode: TransportMode | None = None,
+    ) -> None:
+        """Save a property that failed enrichment for retry on next run.
+
+        On INSERT: saves with enrichment_status='pending', enrichment_attempts=1,
+        notification_status='pending_enrichment'.
+        On CONFLICT: just increments enrichment_attempts (preserves other fields).
+        """
+        async with self._transaction() as conn:
             columns, values = build_merged_insert_columns(
                 merged,
                 commute_minutes=commute_minutes,
                 transport_mode=transport_mode,
-                notification_status=NotificationStatus.DROPPED,
+                notification_status=NotificationStatus.PENDING_ENRICHMENT,
             )
             col_list = ", ".join(columns)
             placeholders = ", ".join("?" for _ in columns)
 
             await conn.execute(
                 f"""
-                INSERT INTO properties ({col_list}, enrichment_status)
-                VALUES ({placeholders}, 'enriched')
+                INSERT INTO properties ({col_list}, enrichment_status, enrichment_attempts)
+                VALUES ({placeholders}, 'pending', 1)
                 ON CONFLICT(unique_id) DO UPDATE SET
-                    notification_status = 'dropped',
-                    enrichment_status = 'enriched'
-                WHERE properties.notification_status = 'pending_enrichment'
-                  AND properties.enrichment_status = 'pending'
-                """,
+                    enrichment_attempts = enrichment_attempts + 1
+            """,
                 values,
             )
-
             # Keep source_listings in sync
+            prop = merged.canonical
             now = datetime.now(UTC).isoformat()
             await conn.execute(
                 """
@@ -265,105 +362,8 @@ class PipelineRepository:
                     prop.unique_id,
                 ),
             )
-
             # Link non-canonical source_listings by URL (in-run dedup absorbed sources)
             await link_source_listings_by_url(conn, prop.unique_id, merged.source_urls)
-
-            # Save images (important for cross-run dedup image matching)
-            images = list(merged.images)
-            if merged.floorplan:
-                images.append(merged.floorplan)
-            if images:
-                img_rows = [
-                    (prop.unique_id, img.source.value, str(img.url), img.image_type)
-                    for img in images
-                ]
-                await conn.executemany(
-                    """
-                    INSERT OR IGNORE INTO property_images
-                    (property_unique_id, source, url, image_type)
-                    VALUES (?, ?, ?, ?)
-                    """,
-                    img_rows,
-                )
-
-        await conn.commit()
-        logger.info("dropped_properties_saved", count=len(dropped))
-
-    # ------------------------------------------------------------------
-    # Enrichment retry
-    # ------------------------------------------------------------------
-
-    async def save_unenriched_property(
-        self,
-        merged: MergedProperty,
-        *,
-        commute_minutes: int | None = None,
-        transport_mode: TransportMode | None = None,
-    ) -> None:
-        """Save a property that failed enrichment for retry on next run.
-
-        On INSERT: saves with enrichment_status='pending', enrichment_attempts=1,
-        notification_status='pending_enrichment'.
-        On CONFLICT: just increments enrichment_attempts (preserves other fields).
-        """
-        conn = await self._get_connection()
-        columns, values = build_merged_insert_columns(
-            merged,
-            commute_minutes=commute_minutes,
-            transport_mode=transport_mode,
-            notification_status=NotificationStatus.PENDING_ENRICHMENT,
-        )
-        col_list = ", ".join(columns)
-        placeholders = ", ".join("?" for _ in columns)
-
-        await conn.execute(
-            f"""
-            INSERT INTO properties ({col_list}, enrichment_status, enrichment_attempts)
-            VALUES ({placeholders}, 'pending', 1)
-            ON CONFLICT(unique_id) DO UPDATE SET
-                enrichment_attempts = enrichment_attempts + 1
-        """,
-            values,
-        )
-        # Keep source_listings in sync
-        prop = merged.canonical
-        now = datetime.now(UTC).isoformat()
-        await conn.execute(
-            """
-            INSERT INTO source_listings (
-                unique_id, source, source_id, url, title, price_pcm,
-                bedrooms, address, postcode, latitude, longitude,
-                description, image_url, available_from, first_seen,
-                last_seen, merged_id
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(unique_id) DO UPDATE SET
-                last_seen = excluded.last_seen,
-                merged_id = COALESCE(excluded.merged_id, merged_id)
-            """,
-            (
-                prop.unique_id,
-                prop.source.value,
-                prop.source_id,
-                str(prop.url),
-                prop.title,
-                prop.price_pcm,
-                prop.bedrooms,
-                prop.address,
-                prop.postcode,
-                prop.latitude,
-                prop.longitude,
-                prop.description,
-                str(prop.image_url) if prop.image_url else None,
-                prop.available_from.isoformat() if prop.available_from else None,
-                prop.first_seen.isoformat(),
-                now,
-                prop.unique_id,
-            ),
-        )
-        # Link non-canonical source_listings by URL (in-run dedup absorbed sources)
-        await link_source_listings_by_url(conn, prop.unique_id, merged.source_urls)
-        await conn.commit()
         logger.debug("unenriched_property_saved", unique_id=merged.canonical.unique_id)
 
     async def get_unenriched_properties(self, max_attempts: int = 3) -> list[MergedProperty]:
@@ -375,22 +375,22 @@ class PipelineRepository:
         Returns:
             List of MergedProperty objects needing enrichment.
         """
-        conn = await self._get_connection()
-        cursor = await conn.execute(
-            """
-            SELECT * FROM properties
-            WHERE enrichment_status = 'pending'
-              AND enrichment_attempts < ?
-            ORDER BY first_seen ASC
-            """,
-            (max_attempts,),
-        )
-        rows = await cursor.fetchall()
+        async with self._read_connection() as conn:
+            cursor = await conn.execute(
+                """
+                SELECT * FROM properties
+                WHERE enrichment_status = 'pending'
+                  AND enrichment_attempts < ?
+                ORDER BY first_seen ASC
+                """,
+                (max_attempts,),
+            )
+            rows = await cursor.fetchall()
 
-        results = [await row_to_merged_property(row, load_images=False) for row in rows]
+            results = [await row_to_merged_property(row, load_images=False) for row in rows]
 
-        logger.info("loaded_unenriched_properties", count=len(results))
-        return results
+            logger.info("loaded_unenriched_properties", count=len(results))
+            return results
 
     async def get_unenriched_retry_stats(self, max_attempts: int = 3) -> dict[str, dict[str, int]]:
         """Return retry backlog stats grouped by source and attempt count.
@@ -398,20 +398,20 @@ class PipelineRepository:
         Returns:
             Dict with 'by_attempts' mapping attempt count to property count.
         """
-        conn = await self._get_connection()
-        cursor = await conn.execute(
-            """
-            SELECT enrichment_attempts, COUNT(*) as cnt
-            FROM properties
-            WHERE enrichment_status = 'pending'
-              AND enrichment_attempts < ?
-            GROUP BY enrichment_attempts
-            """,
-            (max_attempts,),
-        )
-        rows = await cursor.fetchall()
-        by_attempts = {str(row["enrichment_attempts"]): row["cnt"] for row in rows}
-        return {"by_attempts": by_attempts}
+        async with self._read_connection() as conn:
+            cursor = await conn.execute(
+                """
+                SELECT enrichment_attempts, COUNT(*) as cnt
+                FROM properties
+                WHERE enrichment_status = 'pending'
+                  AND enrichment_attempts < ?
+                GROUP BY enrichment_attempts
+                """,
+                (max_attempts,),
+            )
+            rows = await cursor.fetchall()
+            by_attempts = {str(row["enrichment_attempts"]): row["cnt"] for row in rows}
+            return {"by_attempts": by_attempts}
 
     async def mark_enriched(self, unique_id: str) -> None:
         """Transition a re-enriched property into the normal notification flow.
@@ -420,22 +420,21 @@ class PipelineRepository:
         only for rows that still have notification_status='pending_enrichment'.
         No-op for genuinely new properties (already 'pending').
         """
-        conn = await self._get_connection()
-        await conn.execute(
-            """
-            UPDATE properties
-            SET enrichment_status = 'enriched',
-                notification_status = ?
-            WHERE unique_id = ?
-              AND notification_status = ?
-            """,
-            (
-                NotificationStatus.PENDING.value,
-                unique_id,
-                NotificationStatus.PENDING_ENRICHMENT.value,
-            ),
-        )
-        await conn.commit()
+        async with self._transaction() as conn:
+            await conn.execute(
+                """
+                UPDATE properties
+                SET enrichment_status = 'enriched',
+                    notification_status = ?
+                WHERE unique_id = ?
+                  AND notification_status = ?
+                """,
+                (
+                    NotificationStatus.PENDING.value,
+                    unique_id,
+                    NotificationStatus.PENDING_ENRICHMENT.value,
+                ),
+            )
 
     async def expire_unenriched(self, max_attempts: int = 3) -> int:
         """Give up on properties that exceeded max enrichment retries.
@@ -446,17 +445,16 @@ class PipelineRepository:
         Returns:
             Number of properties expired.
         """
-        conn = await self._get_connection()
-        cursor = await conn.execute(
-            """
-            UPDATE properties
-            SET enrichment_status = 'failed'
-            WHERE enrichment_status = 'pending'
-              AND enrichment_attempts >= ?
-            """,
-            (max_attempts,),
-        )
-        await conn.commit()
+        async with self._transaction() as conn:
+            cursor = await conn.execute(
+                """
+                UPDATE properties
+                SET enrichment_status = 'failed'
+                WHERE enrichment_status = 'pending'
+                  AND enrichment_attempts >= ?
+                """,
+                (max_attempts,),
+            )
         count = cursor.rowcount
         if count:
             logger.info("expired_unenriched_properties", count=count)
@@ -481,105 +479,104 @@ class PipelineRepository:
             merged_list: Properties to save.
             commute_lookup: Commute data keyed by unique_id.
         """
-        conn = await self._get_connection()
-        for merged in merged_list:
-            prop = merged.canonical
-            commute_info = commute_lookup.get(prop.unique_id)
-            commute_minutes = commute_info[0] if commute_info else None
-            transport_mode = commute_info[1] if commute_info else None
+        async with self._transaction() as conn:
+            for merged in merged_list:
+                prop = merged.canonical
+                commute_info = commute_lookup.get(prop.unique_id)
+                commute_minutes = commute_info[0] if commute_info else None
+                transport_mode = commute_info[1] if commute_info else None
 
-            columns, values = build_merged_insert_columns(
-                merged,
-                commute_minutes=commute_minutes,
-                transport_mode=transport_mode,
-                notification_status=NotificationStatus.PENDING_ANALYSIS,
-            )
-            col_list = ", ".join(columns)
-            placeholders = ", ".join("?" for _ in columns)
+                columns, values = build_merged_insert_columns(
+                    merged,
+                    commute_minutes=commute_minutes,
+                    transport_mode=transport_mode,
+                    notification_status=NotificationStatus.PENDING_ANALYSIS,
+                )
+                col_list = ", ".join(columns)
+                placeholders = ", ".join("?" for _ in columns)
 
-            await conn.execute(
-                f"""
-                INSERT INTO properties ({col_list}, enrichment_status)
-                VALUES ({placeholders}, 'enriched')
-                ON CONFLICT(unique_id) DO UPDATE SET
-                    notification_status = excluded.notification_status,
-                    enrichment_status = 'enriched',
-                    commute_minutes = COALESCE(excluded.commute_minutes, commute_minutes),
-                    transport_mode = COALESCE(excluded.transport_mode, transport_mode),
-                    latitude = COALESCE(excluded.latitude, latitude),
-                    longitude = COALESCE(excluded.longitude, longitude),
-                    postcode = COALESCE(excluded.postcode, postcode),
-                    sources = excluded.sources,
-                    source_urls = excluded.source_urls,
-                    min_price = excluded.min_price,
-                    max_price = excluded.max_price,
-                    descriptions_json = COALESCE(excluded.descriptions_json, descriptions_json)
-                """,
-                values,
-            )
-
-            # Keep source_listings in sync
-            now = datetime.now(UTC).isoformat()
-            await conn.execute(
-                """
-                INSERT INTO source_listings (
-                    unique_id, source, source_id, url, title, price_pcm,
-                    bedrooms, address, postcode, latitude, longitude,
-                    description, image_url, available_from, first_seen,
-                    last_seen, merged_id
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT(unique_id) DO UPDATE SET
-                    price_pcm = excluded.price_pcm,
-                    title = excluded.title,
-                    last_seen = excluded.last_seen,
-                    latitude = COALESCE(excluded.latitude, latitude),
-                    longitude = COALESCE(excluded.longitude, longitude),
-                    postcode = COALESCE(excluded.postcode, postcode),
-                    merged_id = COALESCE(excluded.merged_id, merged_id)
-                """,
-                (
-                    prop.unique_id,
-                    prop.source.value,
-                    prop.source_id,
-                    str(prop.url),
-                    prop.title,
-                    prop.price_pcm,
-                    prop.bedrooms,
-                    prop.address,
-                    prop.postcode,
-                    prop.latitude,
-                    prop.longitude,
-                    prop.description,
-                    str(prop.image_url) if prop.image_url else None,
-                    prop.available_from.isoformat() if prop.available_from else None,
-                    prop.first_seen.isoformat(),
-                    now,
-                    prop.unique_id,
-                ),
-            )
-
-            # Link non-canonical source_listings by URL (in-run dedup absorbed sources)
-            await link_source_listings_by_url(conn, prop.unique_id, merged.source_urls)
-
-            # Save images
-            images = list(merged.images)
-            if merged.floorplan:
-                images.append(merged.floorplan)
-            if images:
-                img_rows = [
-                    (prop.unique_id, img.source.value, str(img.url), img.image_type)
-                    for img in images
-                ]
-                await conn.executemany(
-                    """
-                    INSERT OR IGNORE INTO property_images
-                    (property_unique_id, source, url, image_type)
-                    VALUES (?, ?, ?, ?)
+                await conn.execute(
+                    f"""
+                    INSERT INTO properties ({col_list}, enrichment_status)
+                    VALUES ({placeholders}, 'enriched')
+                    ON CONFLICT(unique_id) DO UPDATE SET
+                        notification_status = excluded.notification_status,
+                        enrichment_status = 'enriched',
+                        commute_minutes = COALESCE(excluded.commute_minutes, commute_minutes),
+                        transport_mode = COALESCE(excluded.transport_mode, transport_mode),
+                        latitude = COALESCE(excluded.latitude, latitude),
+                        longitude = COALESCE(excluded.longitude, longitude),
+                        postcode = COALESCE(excluded.postcode, postcode),
+                        sources = excluded.sources,
+                        source_urls = excluded.source_urls,
+                        min_price = excluded.min_price,
+                        max_price = excluded.max_price,
+                        descriptions_json = COALESCE(excluded.descriptions_json, descriptions_json)
                     """,
-                    img_rows,
+                    values,
                 )
 
-        await conn.commit()
+                # Keep source_listings in sync
+                now = datetime.now(UTC).isoformat()
+                await conn.execute(
+                    """
+                    INSERT INTO source_listings (
+                        unique_id, source, source_id, url, title, price_pcm,
+                        bedrooms, address, postcode, latitude, longitude,
+                        description, image_url, available_from, first_seen,
+                        last_seen, merged_id
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(unique_id) DO UPDATE SET
+                        price_pcm = excluded.price_pcm,
+                        title = excluded.title,
+                        last_seen = excluded.last_seen,
+                        latitude = COALESCE(excluded.latitude, latitude),
+                        longitude = COALESCE(excluded.longitude, longitude),
+                        postcode = COALESCE(excluded.postcode, postcode),
+                        merged_id = COALESCE(excluded.merged_id, merged_id)
+                    """,
+                    (
+                        prop.unique_id,
+                        prop.source.value,
+                        prop.source_id,
+                        str(prop.url),
+                        prop.title,
+                        prop.price_pcm,
+                        prop.bedrooms,
+                        prop.address,
+                        prop.postcode,
+                        prop.latitude,
+                        prop.longitude,
+                        prop.description,
+                        str(prop.image_url) if prop.image_url else None,
+                        prop.available_from.isoformat() if prop.available_from else None,
+                        prop.first_seen.isoformat(),
+                        now,
+                        prop.unique_id,
+                    ),
+                )
+
+                # Link non-canonical source_listings by URL (in-run dedup absorbed sources)
+                await link_source_listings_by_url(conn, prop.unique_id, merged.source_urls)
+
+                # Save images
+                images = list(merged.images)
+                if merged.floorplan:
+                    images.append(merged.floorplan)
+                if images:
+                    img_rows = [
+                        (prop.unique_id, img.source.value, str(img.url), img.image_type)
+                        for img in images
+                    ]
+                    await conn.executemany(
+                        """
+                        INSERT OR IGNORE INTO property_images
+                        (property_unique_id, source, url, image_type)
+                        VALUES (?, ?, ?, ?)
+                        """,
+                        img_rows,
+                    )
+
         logger.info("pre_analysis_properties_saved", count=len(merged_list))
 
     async def get_pending_analysis_properties(
@@ -595,38 +592,40 @@ class PipelineRepository:
         Returns:
             List of MergedProperty objects with notification_status='pending_analysis'.
         """
-        conn = await self._get_connection()
-        query = """
-            SELECT * FROM properties
-            WHERE notification_status = ?
-            ORDER BY first_seen ASC
-        """
-        params: list[Any] = [NotificationStatus.PENDING_ANALYSIS.value]
-
-        if exclude_ids:
-            placeholders = ",".join("?" * len(exclude_ids))
-            query = f"""
+        async with self._read_connection() as conn:
+            query = """
                 SELECT * FROM properties
                 WHERE notification_status = ?
-                  AND unique_id NOT IN ({placeholders})
                 ORDER BY first_seen ASC
             """
-            params.extend(exclude_ids)
+            params: list[Any] = [NotificationStatus.PENDING_ANALYSIS.value]
 
-        cursor = await conn.execute(query, params)
-        rows = await cursor.fetchall()
+            if exclude_ids:
+                placeholders = ",".join("?" * len(exclude_ids))
+                query = f"""
+                    SELECT * FROM properties
+                    WHERE notification_status = ?
+                      AND unique_id NOT IN ({placeholders})
+                    ORDER BY first_seen ASC
+                """
+                params.extend(exclude_ids)
 
-        results = [
-            await row_to_merged_property(row, get_property_images=self._get_property_images)
-            for row in rows
-        ]
+            cursor = await conn.execute(query, params)
+            rows = await cursor.fetchall()
 
-        if results:
-            logger.info(
-                "loaded_pending_analysis_retries_from_db",
-                count=len(results),
-            )
-        return results
+            results = [
+                await row_to_merged_property(
+                    row, get_property_images=partial(self._get_property_images, _conn=conn)
+                )
+                for row in rows
+            ]
+
+            if results:
+                logger.info(
+                    "loaded_pending_analysis_retries_from_db",
+                    count=len(results),
+                )
+            return results
 
     async def complete_analysis(
         self,
@@ -648,7 +647,7 @@ class PipelineRepository:
         """
         async with self._transaction() as conn:
             if quality_analysis:
-                await self._save_quality_analysis(unique_id, quality_analysis, _commit=False)
+                await self._save_quality_analysis(unique_id, quality_analysis, _conn=conn)
 
             await conn.execute(
                 """
@@ -684,58 +683,56 @@ class PipelineRepository:
         Returns:
             Number of properties reset.
         """
-        conn = await self._get_connection()
-
-        cursor = await conn.execute(
-            """
-            SELECT p.unique_id, p.analysis_attempts FROM properties p
-            JOIN quality_analyses q ON p.unique_id = q.property_unique_id
-            WHERE q.overall_rating IS NULL
-              AND p.notification_status != ?
-            """,
-            (NotificationStatus.PENDING_ANALYSIS.value,),
-        )
-        rows = await cursor.fetchall()
-        if not rows:
-            return 0
-
-        retryable = [
-            row["unique_id"]
-            for row in rows
-            if (row["analysis_attempts"] or 0) < max_analysis_attempts
-        ]
-        exhausted = [
-            row["unique_id"]
-            for row in rows
-            if (row["analysis_attempts"] or 0) >= max_analysis_attempts
-        ]
-
-        if exhausted:
-            logger.warning(
-                "analysis_retries_exhausted",
-                count=len(exhausted),
-                unique_ids=exhausted,
-                max_attempts=max_analysis_attempts,
+        async with self._transaction() as conn:
+            cursor = await conn.execute(
+                """
+                SELECT p.unique_id, p.analysis_attempts FROM properties p
+                JOIN quality_analyses q ON p.unique_id = q.property_unique_id
+                WHERE q.overall_rating IS NULL
+                  AND p.notification_status != ?
+                """,
+                (NotificationStatus.PENDING_ANALYSIS.value,),
             )
+            rows = await cursor.fetchall()
+            if not rows:
+                return 0
 
-        if not retryable:
-            return 0
+            retryable = [
+                row["unique_id"]
+                for row in rows
+                if (row["analysis_attempts"] or 0) < max_analysis_attempts
+            ]
+            exhausted = [
+                row["unique_id"]
+                for row in rows
+                if (row["analysis_attempts"] or 0) >= max_analysis_attempts
+            ]
 
-        ids = retryable
-        placeholders = ",".join("?" * len(ids))
+            if exhausted:
+                logger.warning(
+                    "analysis_retries_exhausted",
+                    count=len(exhausted),
+                    unique_ids=exhausted,
+                    max_attempts=max_analysis_attempts,
+                )
 
-        await conn.execute(
-            f"DELETE FROM quality_analyses WHERE property_unique_id IN ({placeholders})",
-            ids,
-        )
-        await conn.execute(
-            f"""
-            UPDATE properties SET notification_status = ?
-            WHERE unique_id IN ({placeholders})
-            """,
-            [NotificationStatus.PENDING_ANALYSIS.value, *ids],
-        )
-        await conn.commit()
+            if not retryable:
+                return 0
+
+            ids = retryable
+            placeholders = ",".join("?" * len(ids))
+
+            await conn.execute(
+                f"DELETE FROM quality_analyses WHERE property_unique_id IN ({placeholders})",
+                ids,
+            )
+            await conn.execute(
+                f"""
+                UPDATE properties SET notification_status = ?
+                WHERE unique_id IN ({placeholders})
+                """,
+                [NotificationStatus.PENDING_ANALYSIS.value, *ids],
+            )
 
         logger.info("reset_failed_analyses", count=len(ids), unique_ids=ids)
         return len(ids)
@@ -758,23 +755,22 @@ class PipelineRepository:
         """
         if not unique_ids:
             return 0
-        conn = await self._get_connection()
-        now = datetime.now(UTC).isoformat()
-        total = 0
-        chunk_size = 500
-        for i in range(0, len(unique_ids), chunk_size):
-            chunk = unique_ids[i : i + chunk_size]
-            placeholders = ",".join("?" * len(chunk))
-            cursor = await conn.execute(
-                f"""
-                UPDATE quality_analyses
-                SET reanalysis_requested_at = COALESCE(reanalysis_requested_at, ?)
-                WHERE property_unique_id IN ({placeholders})
-                """,
-                [now, *chunk],
-            )
-            total += cursor.rowcount
-        await conn.commit()
+        async with self._transaction() as conn:
+            now = datetime.now(UTC).isoformat()
+            total = 0
+            chunk_size = 500
+            for i in range(0, len(unique_ids), chunk_size):
+                chunk = unique_ids[i : i + chunk_size]
+                placeholders = ",".join("?" * len(chunk))
+                cursor = await conn.execute(
+                    f"""
+                    UPDATE quality_analyses
+                    SET reanalysis_requested_at = COALESCE(reanalysis_requested_at, ?)
+                    WHERE property_unique_id IN ({placeholders})
+                    """,
+                    [now, *chunk],
+                )
+                total += cursor.rowcount
         logger.info("reanalysis_requested", count=total, ids=unique_ids)
         return total
 
@@ -797,41 +793,40 @@ class PipelineRepository:
         """
         if not outcodes and not all_properties:
             return 0
-        conn = await self._get_connection()
-        now = datetime.now(UTC).isoformat()
+        async with self._transaction() as conn:
+            now = datetime.now(UTC).isoformat()
 
-        if all_properties:
-            cursor = await conn.execute(
-                """
-                UPDATE quality_analyses
-                SET reanalysis_requested_at = COALESCE(reanalysis_requested_at, ?)
-                WHERE property_unique_id IN (
-                    SELECT unique_id FROM properties
+            if all_properties:
+                cursor = await conn.execute(
+                    """
+                    UPDATE quality_analyses
+                    SET reanalysis_requested_at = COALESCE(reanalysis_requested_at, ?)
+                    WHERE property_unique_id IN (
+                        SELECT unique_id FROM properties
+                    )
+                    """,
+                    (now,),
                 )
-                """,
-                (now,),
-            )
-        else:
-            # Build OR conditions for outcode prefix matching
-            conditions = []
-            params: list[str] = [now]
-            for outcode in outcodes or []:
-                conditions.append("UPPER(p.postcode) LIKE ?")
-                params.append(f"{outcode.upper()} %")
-            or_clause = " OR ".join(conditions)
-            cursor = await conn.execute(
-                f"""
-                UPDATE quality_analyses
-                SET reanalysis_requested_at = COALESCE(reanalysis_requested_at, ?)
-                WHERE property_unique_id IN (
-                    SELECT p.unique_id FROM properties p
-                    WHERE {or_clause}
+            else:
+                # Build OR conditions for outcode prefix matching
+                conditions = []
+                params: list[str] = [now]
+                for outcode in outcodes or []:
+                    conditions.append("UPPER(p.postcode) LIKE ?")
+                    params.append(f"{outcode.upper()} %")
+                or_clause = " OR ".join(conditions)
+                cursor = await conn.execute(
+                    f"""
+                    UPDATE quality_analyses
+                    SET reanalysis_requested_at = COALESCE(reanalysis_requested_at, ?)
+                    WHERE property_unique_id IN (
+                        SELECT p.unique_id FROM properties p
+                        WHERE {or_clause}
+                    )
+                    """,
+                    params,
                 )
-                """,
-                params,
-            )
 
-        await conn.commit()
         count = cursor.rowcount
         logger.info(
             "reanalysis_requested_by_filter",
@@ -853,35 +848,36 @@ class PipelineRepository:
         Returns:
             List of MergedProperty objects needing re-analysis.
         """
-        conn = await self._get_connection()
+        async with self._read_connection() as conn:
+            if outcode:
+                query = """
+                    SELECT p.* FROM properties p
+                    JOIN quality_analyses q ON p.unique_id = q.property_unique_id
+                    WHERE q.reanalysis_requested_at IS NOT NULL
+                      AND UPPER(p.postcode) LIKE ?
+                    ORDER BY p.first_seen ASC
+                """
+                params: list[str] = [f"{outcode.upper()} %"]
+                cursor = await conn.execute(query, params)
+            else:
+                cursor = await conn.execute("""
+                    SELECT p.* FROM properties p
+                    JOIN quality_analyses q ON p.unique_id = q.property_unique_id
+                    WHERE q.reanalysis_requested_at IS NOT NULL
+                    ORDER BY p.first_seen ASC
+                """)
 
-        if outcode:
-            query = """
-                SELECT p.* FROM properties p
-                JOIN quality_analyses q ON p.unique_id = q.property_unique_id
-                WHERE q.reanalysis_requested_at IS NOT NULL
-                  AND UPPER(p.postcode) LIKE ?
-                ORDER BY p.first_seen ASC
-            """
-            params: list[str] = [f"{outcode.upper()} %"]
-            cursor = await conn.execute(query, params)
-        else:
-            cursor = await conn.execute("""
-                SELECT p.* FROM properties p
-                JOIN quality_analyses q ON p.unique_id = q.property_unique_id
-                WHERE q.reanalysis_requested_at IS NOT NULL
-                ORDER BY p.first_seen ASC
-            """)
+            rows = await cursor.fetchall()
 
-        rows = await cursor.fetchall()
+            results = [
+                await row_to_merged_property(
+                    row, get_property_images=partial(self._get_property_images, _conn=conn)
+                )
+                for row in rows
+            ]
 
-        results = [
-            await row_to_merged_property(row, get_property_images=self._get_property_images)
-            for row in rows
-        ]
-
-        logger.info("loaded_reanalysis_queue", count=len(results))
-        return results
+            logger.info("loaded_reanalysis_queue", count=len(results))
+            return results
 
     # ------------------------------------------------------------------
     # Property events (T4: audit trail)
@@ -896,27 +892,26 @@ class PipelineRepository:
         """
         if not events:
             return
-        conn = await self._get_connection()
-        rows = [
-            (
-                run_id,
-                e.property_id,
-                e.source,
-                e.event_type,
-                e.stage,
-                json.dumps(e.metadata) if e.metadata else None,
+        async with self._transaction() as conn:
+            rows = [
+                (
+                    run_id,
+                    e.property_id,
+                    e.source,
+                    e.event_type,
+                    e.stage,
+                    json.dumps(e.metadata) if e.metadata else None,
+                )
+                for e in events
+            ]
+            await conn.executemany(
+                """
+                INSERT INTO property_events
+                    (run_id, property_id, source, event_type, stage, metadata_json)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                rows,
             )
-            for e in events
-        ]
-        await conn.executemany(
-            """
-            INSERT INTO property_events
-                (run_id, property_id, source, event_type, stage, metadata_json)
-            VALUES (?, ?, ?, ?, ?, ?)
-            """,
-            rows,
-        )
-        await conn.commit()
         logger.debug("property_events_inserted", count=len(events), run_id=run_id)
 
     async def cleanup_old_events(self, keep_runs: int = 30) -> int:
@@ -928,17 +923,16 @@ class PipelineRepository:
         Returns:
             Number of rows deleted.
         """
-        conn = await self._get_connection()
-        cursor = await conn.execute(
-            """
-            DELETE FROM property_events
-            WHERE run_id NOT IN (
-                SELECT id FROM pipeline_runs ORDER BY id DESC LIMIT ?
+        async with self._transaction() as conn:
+            cursor = await conn.execute(
+                """
+                DELETE FROM property_events
+                WHERE run_id NOT IN (
+                    SELECT id FROM pipeline_runs ORDER BY id DESC LIMIT ?
+                )
+                """,
+                (keep_runs,),
             )
-            """,
-            (keep_runs,),
-        )
-        await conn.commit()
         deleted = cursor.rowcount
         if deleted:
             logger.info("old_property_events_cleaned", deleted=deleted, keep_runs=keep_runs)
@@ -964,7 +958,7 @@ class PipelineRepository:
             analysis: New quality analysis result.
         """
         async with self._transaction() as conn:
-            await self._save_quality_analysis(unique_id, analysis, _commit=False)
+            await self._save_quality_analysis(unique_id, analysis, _conn=conn)
 
             await conn.execute(
                 """

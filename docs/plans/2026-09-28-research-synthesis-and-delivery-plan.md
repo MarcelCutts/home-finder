@@ -1,7 +1,7 @@
 # Home Finder: research synthesis and sequential delivery plan
 
 **Reviewed:** 28 September 2026. **Code baseline:** `a86e51e`.
-**Status:** PR01 committed as `1dfdcb4`, PR02 as `84fb43b`; PR03 implemented and verified on `codex/pr01-ci-baseline`, with PR04 next. See the [PR01 handoff](2026-09-28-pr01-ci-baseline.md), [PR02 record](2026-09-28-pr02-owner-access.md) and [PR03 record](2026-09-28-pr03-runtime-and-maps.md), including its residual audit findings and map activation checks. Local commits do not imply merge or deployment. Continue sequential verified commits under the owner's latest instruction; per-segment pauses are superseded.
+**Status:** PR01 committed as `1dfdcb4`, PR02 as `84fb43b`, PR03 as `8bb73cc`; PR04 implemented and verified on `codex/pr01-ci-baseline`, with PR06a next. See the [PR01 handoff](2026-09-28-pr01-ci-baseline.md), [PR02 record](2026-09-28-pr02-owner-access.md), [PR03 record](2026-09-28-pr03-runtime-and-maps.md) and [PR04 record](2026-09-28-pr04-database-ownership.md). Runtime audit findings and map activation checks remain explicit. Local commits do not imply merge or deployment. Continue sequential verified commits under the owner's latest instruction; per-segment pauses are superseded.
 **Audience:** the owner, reviewers, and agents implementing one PR at a time.
 **Revision:** incorporates the verified findings from [Fable's final review](2026-09-28-research-synthesis-and-delivery-plan-review.md); see §11 for accepted corrections, qualifications and fresh checks.
 
@@ -422,6 +422,8 @@ Configure a suitable map provider/key in both map modules, with CSP, attribution
 **Rollout/rollback:** release pinned compatible groups; retain the previous image and compatible database. No model/prompt changes or wholesale frontend migration.
 
 ### PR04 — Give every database write an explicit unit of work [M]
+
+**Implementation record:** [complete operation ownership, failure tests and reference-data verification](2026-09-28-pr04-database-ownership.md).
 
 **Depends on:** PR01; execute at queue order 3 after initial access/runtime protection. **Outcome:** one task cannot commit or roll back another task's writes, including with `--no-pipeline`.
 
