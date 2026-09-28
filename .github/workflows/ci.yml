@@ -37,9 +37,8 @@ permissions:
   contents: read
 
 env:
-  PYTHON_VERSION: "3.14"
-  # Match the existing Docker build tool; runtime/security upgrades are PR03.
-  UV_VERSION: "0.9.29"
+  PYTHON_VERSION: "3.14.7"
+  UV_VERSION: "0.12.19"
 
 jobs:
   lint:
@@ -76,6 +75,12 @@ jobs:
   test:
     runs-on: ubuntu-24.04
     timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11.16", "3.14.7"]
+    env:
+      UV_PYTHON: ${{ matrix.python-version }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -83,7 +88,7 @@ jobs:
       - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
         with:
           version: ${{ env.UV_VERSION }}
-          python-version: ${{ env.PYTHON_VERSION }}
+          python-version: ${{ matrix.python-version }}
           enable-cache: true
       - run: uv sync --locked --all-extras
       - run: uv run pytest --cov --cov-report=xml --cov-report=term
@@ -93,13 +98,13 @@ jobs:
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: ${{ !cancelled() }}
         with:
-          name: coverage
+          name: coverage-${{ matrix.python-version }}
           path: coverage.xml
           retention-days: 7
 
   build:
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -112,12 +117,30 @@ jobs:
       # A warm cache must not conceal a missing locked artifact.
       - run: uv sync --locked --all-extras --no-cache
       - run: uv build --no-cache
+      - run: docker build --target dashboard --tag home-finder:ci .
+      - run: docker build --target collector --tag home-finder-collector:ci .
+      - run: docker run --rm --network=none home-finder:ci home-finder --help
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: distributions
           path: dist/
           if-no-files-found: error
           retention-days: 7
+
+  audit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          version: ${{ env.UV_VERSION }}
+          python-version: ${{ env.PYTHON_VERSION }}
+          enable-cache: true
+      - run: uv sync --locked --all-extras
+      - run: uv tool run pip-audit==2.10.1 --path .venv/lib/python3.14/site-packages
 
   slow-tests:
     if: inputs.run_live_tests

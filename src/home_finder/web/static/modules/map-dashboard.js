@@ -1,4 +1,6 @@
 // Dashboard map with MarkerCluster + grid/split/map toggle + hover sync
+// Carry the asset version onto the shared module's immutable cache entry.
+const { addBasemap } = await import("./map-basemap.js" + new URL(import.meta.url).search);
 
 const mapEl = document.getElementById("dashboard-map");
 const resultsEl = document.getElementById("results");
@@ -10,6 +12,21 @@ if (mapEl && resultsEl) {
   let mapInitialized = false;
   let markersByPropertyId = {};
   let pinnedCardRequestId = 0;
+
+  function mapUnavailable() {
+    if (dashMap) dashMap.remove();
+    dashMap = null;
+    if (splitContainer) splitContainer.classList.remove("split-active");
+    resultsEl.hidden = false;
+    mapEl.hidden = true;
+    document.getElementById("map-status").hidden = false;
+    toggleBtns.forEach(function (button) {
+      const grid = button.dataset.view === "grid";
+      button.classList.toggle("active", grid);
+      button.setAttribute("aria-pressed", String(grid));
+      button.disabled = !grid;
+    });
+  }
 
   // Fit tier thresholds (single source of truth in Python, injected via dashboard template)
   var fitTiers = (function () {
@@ -247,17 +264,20 @@ if (mapEl && resultsEl) {
 
   function initMap() {
     if (mapInitialized) return;
+    if (!mapEl.dataset.mapKey || typeof L === "undefined") {
+      mapUnavailable();
+      return;
+    }
     mapInitialized = true;
 
     const data = readMapData();
-    if (data.length === 0) return;
+    if (data.length === 0) {
+      mapUnavailable();
+      return;
+    }
 
     dashMap = L.map("dashboard-map").setView([51.545, -0.055], 13);
-    L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png", {
-      attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/">CARTO</a>',
-      subdomains: "abcd",
-      maxZoom: 20,
-    }).addTo(dashMap);
+    addBasemap(dashMap, mapEl, mapUnavailable);
 
     buildMarkers(data);
   }

@@ -1,51 +1,10 @@
-# Virtual environments
-.venv/
-venv/
-__pycache__/
-*.pyc
-
-# Git
-.git/
-.gitignore
-
-# IDE
-.vscode/
-.idea/
-
-# Tests
-tests/
-pytest.ini
-.pytest_cache/
-.coverage
-htmlcov/
-
-# Dev files
-.env
-*.md
+# Send only build inputs to local or remote builders.
+**
+!Dockerfile
+!pyproject.toml
+!uv.lock
 !README.md
-CLAUDE.md
-
-# Mutation testing
-mutants/
-mutmut_config.py
-
-# Build artifacts
-dist/
-*.egg-info/
-
-# Local database
-*.db
-data/
-
-# Directories not needed in production
-docs/
-experiments/
-scripts/
-research/
-
-# Screenshots and binaries in root
-*.png
-*.dmg
-
-# Nested virtual environments (safety net)
-**/.venv/
+!src/
+!src/**
+**/__pycache__/
+**/*.py[cod]

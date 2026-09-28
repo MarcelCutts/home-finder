@@ -296,3 +296,24 @@ def test_canonical_origin_works_behind_https_proxy(client, property_id):
         data={"status": "interested"},
     )
     assert response.status_code == 200
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "status=interested&a=1&b=2&c=3&d=4",
+        "status=interested&note=" + "x" * 1025,
+    ],
+)
+def test_urlencoded_parser_limits_preserve_status(client, property_id, body):
+    response = client.patch(
+        f"/property/{property_id}/status",
+        auth=("owner", PASSWORD),
+        content=body,
+        headers={
+            "Origin": "http://testserver",
+            "Content-Type": "application/x-www-form-urlencoded",
+        },
+    )
+    assert response.status_code == 400
+    assert client.portal.call(client.app.state.storage.get_status_history, property_id) == []

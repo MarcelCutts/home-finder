@@ -1087,7 +1087,9 @@ class TelegramNotifier:
                 builder.add_photo(media=item)
 
         bot = self._get_bot()
-        await bot.send_media_group(chat_id=self.chat_id, media=builder.build())
+        # The Bot also accepts live photos; widen the builder's narrower list
+        # through a fresh list rather than passing an invariant mutable list.
+        await bot.send_media_group(chat_id=self.chat_id, media=list(builder.build()))
 
         # Media groups don't support inline keyboards, so send a follow-up
         # message with full analysis + buttons

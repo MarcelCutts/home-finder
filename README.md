@@ -1,6 +1,6 @@
 # Home Finder
 
-![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)
+![Python 3.11–3.14](https://img.shields.io/badge/python-3.11–3.14-blue.svg)
 ![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)
 ![Code style: ruff](https://img.shields.io/badge/code%20style-ruff-000000.svg)
 
@@ -104,7 +104,10 @@ The `--serve` flag starts a FastAPI web server on port 8000. Unless `--no-pipeli
 | `HOME_FINDER_WEB_OWNER_PASSWORD` | `""` | Required for dashboard access; random password of at least 24 characters |
 | `HOME_FINDER_WEB_PORT` | `8000` | Web server port |
 | `HOME_FINDER_WEB_HOST` | `0.0.0.0` | Web server bind address |
+| `HOME_FINDER_CARTO_BASEMAP_API_KEY` | `""` | Browser tile key for both maps; absent/failed maps fall back to listings or a location link |
 | `HOME_FINDER_PIPELINE_INTERVAL_MINUTES` | `55` | Delay after a serve-mode pipeline run, with ±5 minutes of jitter |
+
+Maps use a shared CARTO raster configuration with visible OpenStreetMap/CARTO attribution. Request a key from [CARTO](https://www.carto.com/basemaps/apikey/), check the [current terms](https://www.carto.com/legal/basemap-terms/), and restrict the key to the dashboard's actual origins in the provider console. This key is intentionally visible in the browser; it must be a dedicated basemap key, not a private backend credential. Keep other keys private. Monitor usage across all project keys; the September 25, 2026 terms allow 5 million monthly requests for non-commercial use or 1 million for commercial use. A business-operated service can count as commercial even without a user subscription. Do not enable a paid plan automatically. The tested application falls back cleanly without a key or when tiles fail; an actual provisioned key and origin restrictions still need verification before production map activation.
 
 ### Security
 
@@ -234,7 +237,9 @@ Tests have a 30-second default timeout; slow-marked tests receive 120 seconds. T
 
 CI retains separate Ruff/format, strict mypy and default test jobs. A separate build job installs `uv.lock` with no package cache and builds the wheel and source distribution. The source archive explicitly includes application code, tests, README, licence and dependency files, keeping unrelated local logs and research out. Coverage XML and distributions are downloadable workflow artifacts; CI no longer needs permission to post pull-request comments. Pull requests, pushes and scheduled CI have no deployment job.
 
-The workflow uses Python 3.14 and uv 0.9.29 (the existing Docker build tool). Package metadata still advertises Python 3.11+, and the generic `Dockerfile` uses 3.11, while `Dockerfile.fly` and CI use 3.14. That is a declared/tested-runtime mismatch, not proof that all versions work. PR03 will align the supported versions and patch the runtime; until then, use Python 3.14 for the measured baseline.
+The supported interpreter range is Python 3.11–3.14 (`>=3.11,<3.15`); CI tests 3.11.16 and 3.14.7. Local development and both container targets select 3.14.7 with uv 0.12.19. The shared Dockerfile uses uv's checksum-verified managed Python build because the official Python/bookworm image still links SQLite 3.40.1 without the WAL reset fix. The selected build reports SQLite 3.53.1 and OpenSSL 3.5.8; the container build rejects SQLite below 3.51.3. New runtime patches still require test/audit review; a Python version alone does not establish its linked SQLite version.
+
+CI also builds the dashboard and collector container targets and runs a dependency advisory audit with pip-audit 2.10.1. Security floors cover current affected dependencies. Crawlee's existing 1.3.2b4 wheel is temporarily pinned by its original URL/hash because that prerelease disappeared from the index; transport qualification/replacement remains PR11. Its known sitemap SSRF advisory is deferred because this application does not invoke sitemap loading, and collection remains gated. Container scanning also identifies residual Debian advisories; see the [PR03 audit record](docs/plans/2026-09-28-pr03-runtime-and-maps.md). Anthropic stays on the tested 0.x SDK pending PR20. Do not infer live source compatibility or complete vulnerability coverage from one scanner.
 
 Weekly CI includes dashboard browser tests, excluding tests marked `slow`. Manual CI has separate `run_browser_tests` and `run_live_tests` switches, both off by default. Live portal tests require explicit opt-in and qualified source access. The remote CI workflow was `disabled_inactivity` when inspected on September 28, 2026; changing local YAML does not re-enable it. Re-enable CI after the release split is reviewed and merged, then confirm a hosted run.
 
@@ -357,7 +362,7 @@ Production deployment is a separate **Release dashboard** workflow (`.github/wor
 
 Before activating the revised workflows, configure a GitHub environment named `production` with deployment branches restricted to `main` and an app-scoped `FLY_PRODUCTION_API_TOKEN` secret. Retire the old repository-wide `FLY_API_TOKEN`; a repository secret can be referenced by edited workflows in same-repository PRs even if the current CI file never uses it. On September 28 the old repository secret existed and the required environment was not configured. PR01 makes the workflow changes locally; it does not claim that this credential migration or branch policy is already in place. The new release deliberately has no fallback to the old secret.
 
-After the access/release prerequisites are met, select **Actions → Release dashboard → Run workflow → main**. This releases the dashboard configured in `Dockerfile.fly`; it does not enable pipeline collection. Ordinary CI, Dependabot updates and merging repair PRs have no automatic deployment step. Keep a previously verified Fly image/release for operational rollback; do not restore automatic push deployment as a rollback shortcut.
+After the access/release prerequisites are met, select **Actions → Release dashboard → Run workflow → main**. This releases the `dashboard` target of the shared `Dockerfile`; it does not enable pipeline collection. Ordinary CI, Dependabot updates and merging repair PRs have no automatic deployment step. Keep a previously verified Fly image/release with a compatible database for operational rollback; do not restore automatic push deployment as a rollback shortcut.
 
 ### Fly.io setup
 
@@ -369,6 +374,7 @@ fly volumes create home_finder_data --region lhr --size 1
 fly secrets set \
   HOME_FINDER_TELEGRAM_BOT_TOKEN=xxx \
   HOME_FINDER_TELEGRAM_CHAT_ID=xxx \
+  HOME_FINDER_WEB_OWNER_PASSWORD=your-random-24-or-more-character-password \
   HOME_FINDER_ANTHROPIC_API_KEY=xxx \
   HOME_FINDER_TELEGRAM_WEBHOOK_SECRET=xxx
 # Optional:
@@ -377,7 +383,7 @@ fly secrets set \
 # Use the manual Release dashboard workflow after validation and access setup.
 ```
 
-The `fly.toml` includes a health check on `/health` with a 30-second grace period. The `Dockerfile.fly` runs `home-finder --serve --no-pipeline` — dashboard only, no scraping.
+The `fly.toml` includes a health check on `/health` with a 30-second grace period. It explicitly builds the `dashboard` target, which runs `home-finder --serve --no-pipeline`.
 
 ### Syncing data to Fly.io
 
@@ -386,9 +392,11 @@ The legacy sync script checkpoints the local WAL, removes the remote DB/WAL/SHM 
 ### Docker (local)
 
 ```bash
-docker build -f Dockerfile.fly -t home-finder .
-docker run --env-file .env -p 8000:8000 -v ./data:/app/data home-finder
+docker build --target dashboard -t home-finder .
+docker run --env-file .env -p 127.0.0.1:8000:8000 -v ./data:/app/data home-finder
 ```
+
+The `collector` target uses the same runtime and locked packages, with the CLI as its command. It does not install a browser or qualify live scraping; retain the collection gates below. Both targets run as UID 1000, so the mounted data directory must be writable by that user. The default target is the dashboard.
 
 ### Local pipeline (cron/systemd)
 

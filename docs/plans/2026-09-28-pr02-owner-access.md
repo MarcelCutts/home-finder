@@ -1,6 +1,6 @@
 # PR02: Owner access and callback integrity
 
-**Date:** 28 September 2026. **State:** implemented and verified for local commit; not deployed.
+**Date:** 28 September 2026. **State:** committed as `84fb43b`; not deployed.
 **Parent:** [delivery plan, PR02](2026-09-28-research-synthesis-and-delivery-plan.md#pr02--protect-the-private-dashboard-mutations-and-telegram-callbacks-m).
 **Predecessor:** PR01, commit `1dfdcb4`. No production configuration or deployment has been changed.
 

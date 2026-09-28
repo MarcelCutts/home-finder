@@ -1,7 +1,7 @@
 # Home Finder: research synthesis and sequential delivery plan
 
 **Reviewed:** 28 September 2026. **Code baseline:** `a86e51e`.
-**Status:** PR01 committed as `1dfdcb4`; PR02 implemented and verified on `codex/pr01-ci-baseline`, with PR03 next. See the [PR01 handoff](2026-09-28-pr01-ci-baseline.md) and [PR02 record](2026-09-28-pr02-owner-access.md). Local commits do not imply merge or deployment. Continue sequential verified commits under the owner's latest instruction; per-segment pauses are superseded.
+**Status:** PR01 committed as `1dfdcb4`, PR02 as `84fb43b`; PR03 implemented and verified on `codex/pr01-ci-baseline`, with PR04 next. See the [PR01 handoff](2026-09-28-pr01-ci-baseline.md), [PR02 record](2026-09-28-pr02-owner-access.md) and [PR03 record](2026-09-28-pr03-runtime-and-maps.md), including its residual audit findings and map activation checks. Local commits do not imply merge or deployment. Continue sequential verified commits under the owner's latest instruction; per-segment pauses are superseded.
 **Audience:** the owner, reviewers, and agents implementing one PR at a time.
 **Revision:** incorporates the verified findings from [Fable's final review](2026-09-28-research-synthesis-and-delivery-plan-review.md); see §11 for accepted corrections, qualifications and fresh checks.
 

@@ -12,6 +12,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
 from starlette.responses import Response
 
+from home_finder.config import Settings
 from home_finder.data.area_context import (
     ACOUSTIC_PROFILES,
     AREA_CONTEXT,
@@ -61,7 +62,16 @@ from home_finder.web.filters import (
 logger = get_logger(__name__)
 
 router = APIRouter()
-templates = Jinja2Templates(directory=Path(__file__).parent / "templates")
+
+
+def _map_context(request: Request) -> dict[str, str]:
+    settings: Settings = request.app.state.settings
+    return {"map_api_key": settings.carto_basemap_api_key.get_secret_value()}
+
+
+templates = Jinja2Templates(
+    directory=Path(__file__).parent / "templates", context_processors=[_map_context]
+)
 
 TAG_CATEGORIES: Final[dict[str, list[str]]] = {
     "Workspace": [
@@ -348,6 +358,7 @@ async def dashboard(
     except Exception:
         logger.error("dashboard_query_failed", exc_info=True)
         return templates.TemplateResponse(
+            request,
             "error.html",
             {"request": request, "message": "Failed to load properties. Please try again."},
             status_code=500,
@@ -399,11 +410,11 @@ async def dashboard(
 
     # HTMX partial rendering
     if request.headers.get("HX-Request"):
-        response = templates.TemplateResponse("_results.html", context)
+        response = templates.TemplateResponse(request, "_results.html", context)
         response.headers["Vary"] = "HX-Request"
         return response
 
-    response = templates.TemplateResponse("dashboard.html", context)
+    response = templates.TemplateResponse(request, "dashboard.html", context)
     response.headers["Vary"] = "HX-Request"
     return response
 
@@ -468,6 +479,7 @@ async def property_card(
         prop["image_url"] = resolved
 
     return templates.TemplateResponse(
+        request,
         "_property_card.html",
         {
             "request": request,
@@ -492,6 +504,7 @@ async def property_detail(
     except Exception:
         logger.error("detail_query_failed", unique_id=unique_id, exc_info=True)
         return templates.TemplateResponse(
+            request,
             "error.html",
             {"request": request, "message": "Failed to load property details. Please try again."},
             status_code=500,
@@ -499,6 +512,7 @@ async def property_detail(
 
     if prop is None:
         return templates.TemplateResponse(
+            request,
             "error.html",
             {"request": request, "message": "Property not found."},
             status_code=404,
@@ -508,6 +522,7 @@ async def property_detail(
     has_images = prop.get("image_url") or prop.get("gallery_images") or prop.get("floorplan_images")
     if not has_images:
         return templates.TemplateResponse(
+            request,
             "error.html",
             {"request": request, "message": "Property not found."},
             status_code=404,
@@ -653,6 +668,7 @@ async def property_detail(
                 break
 
     return templates.TemplateResponse(
+        request,
         "detail.html",
         {
             "request": request,
@@ -690,6 +706,7 @@ async def area_detail(
 
     if outcode not in AREA_CONTEXT:
         return templates.TemplateResponse(
+            request,
             "error.html",
             {"request": request, "message": f"No area data for {outcode}."},
             status_code=404,
@@ -704,6 +721,7 @@ async def area_detail(
             area_context["noise_enforcement"] = enforcement
 
     return templates.TemplateResponse(
+        request,
         "area.html",
         {
             "request": request,
@@ -728,7 +746,7 @@ async def update_property_status(
     (quick-action buttons on dashboard), or a status badge partial for
     detail-page swaps.
     """
-    form = await request.form()
+    form = await request.form(max_fields=4, max_files=0, max_part_size=1024)
     status_value = str(form.get("status", "")).strip().lower()
 
     try:
@@ -759,6 +777,7 @@ async def update_property_status(
             if resolved:
                 prop["image_url"] = resolved
             return templates.TemplateResponse(
+                request,
                 "_property_card.html",
                 {
                     "request": request,
@@ -770,6 +789,7 @@ async def update_property_status(
 
     # Detail page: return full status selector so active state updates
     return templates.TemplateResponse(
+        request,
         "_status_controls.html",
         {
             "request": request,

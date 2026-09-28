@@ -492,7 +492,10 @@
     {% if prop.latitude and prop.longitude %}
     <section id="section-location" class="detail-section">
         <h3>Location</h3>
-        <div id="map" data-lat="{{ prop.latitude }}" data-lon="{{ prop.longitude }}" data-title="{{ prop.address }}" role="application" aria-label="Map showing property location at {{ prop.address }}"></div>
+        <p id="map-status" role="status" {% if map_api_key %}hidden{% endif %}>Map unavailable. <a href="https://www.google.com/maps?q={{ prop.latitude }},{{ prop.longitude }}" target="_blank" rel="noopener noreferrer">View this location in Maps</a>.</p>
+        {% if map_api_key %}
+        <div id="map" data-map-key="{{ map_api_key }}" data-lat="{{ prop.latitude }}" data-lon="{{ prop.longitude }}" data-title="{{ prop.address }}" role="application" aria-label="Map showing property location at {{ prop.address }}"></div>
+        {% endif %}
     </section>
     {% endif %}
 

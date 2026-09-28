@@ -1,0 +1,1325 @@
+{
+  "date": "2026-09-28",
+  "scanner": "Trivy 0.74.0",
+  "image_id": "sha256:79ec4c1a0e16570aac290b2fb9bb3b499602c6312e066d81cab40529eec01398",
+  "os": {
+    "Family": "debian",
+    "Name": "13.7"
+  },
+  "python": "3.14.7",
+  "sqlite": "3.53.1",
+  "openssl": "3.5.8",
+  "notes": "Point-in-time inventory, not a count of demonstrated exploits. See the PR03 handoff for reachability, deferrals and activation gates. Bundled base pip and ensurepip were removed before this scan.",
+  "findings": [
+    {
+      "type": "debian",
+      "id": "CVE-2005-2541",
+      "severity": "LOW",
+      "status": "affected",
+      "packages": [
+        {
+          "name": "tar",
+          "version": "1.35+dfsg-3.1"
+        }
+      ],
+      "fixed_version": null,
+      "title": "tar: does not properly warn the user when extracting setuid or setgid files"
+    },
+    {
+      "type": "debian",
+      "id": "CVE-2007-5686",
+      "severity": "LOW",
+      "status": "affected",
+      "packages": [
+        {
+          "name": "login.defs",
+          "version": "1:4.17.4-2"
+        },
+        {
+          "name": "passwd",
+          "version": "1:4.17.4-2"
+        }
+      ],
+      "fixed_version": null,
+      "title": "initscripts in rPath Linux 1 sets insecure permissions for the /var/lo ..."
+    },
+    {
+      "type": "debian",
+      "id": "CVE-2010-4756",
+      "severity": "LOW",
+      "status": "affected",
+      "packages": [
+        {
+          "name": "libc-bin",
+          "version": "2.41-12+deb13u4"
+        },
+        {
+          "name": "libc6",
+          "version": "2.41-12+deb13u4"
+        }
+      ],
+      "fixed_version": null,
+      "title": "glibc: glob implementation can cause excessive CPU and memory consumption due to crafted glob expressions"
+    },
+    {
+      "type": "debian",
+      "id": "CVE-2011-3374",
+      "severity": "LOW",
+      "status": "affected",
+      "packages": [
+        {
+          "name": "apt",
+          "version": "3.0.3"
+        },
+        {
+          "name": "libapt-pkg7.0",
+          "version": "3.0.3"
+        }
+      ],
+      "fixed_version": null,
+      "title": "It was found that apt-key in apt, all versions, do not correctly valid ..."
+    },
+    {
+      "type": "debian",
+      "id": "CVE-2011-4116",
+      "severity": "LOW",
+      "status": "affected",
+      "packages": [
+        {
+          "name": "perl-base",
+          "version": "5.40.1-6+deb13u1"
+        }
+      ],
+      "fixed_version": null,
+      "title": "perl: File:: Temp insecure temporary file handling"
+    },
+    {
+      "type": "debian",
+      "id": "CVE-2013-4392",
+      "severity": "LOW",
+      "status": "affected",
+      "packages": [
+        {
+          "name": "libsystemd0",
+          "version": "257.13-1~deb13u1"
+        },
+        {
+          "name": "libudev1",
+          "version": "257.13-1~deb13u1"
+        }
+      ],
+      "fixed_version": null,
+      "title": "systemd: TOCTOU race condition when updating file permissions and SELinux security contexts"
+    },
+    {
+      "type": "debian",
+      "id": "CVE-2017-18018",
+      "severity": "LOW",
+      "status": "affected",
+      "packages": [
+        {
+          "name": "coreutils",
+          "version": "9.7-3"
+        }
+      ],
+      "fixed_version": null,
+      "title": "coreutils: race condition vulnerability in chown and chgrp"
+    },
+    {
+      "type": "debian",
+      "id": "CVE-2018-20796",
+      "severity": "LOW",
+      "status": "affected",
+      "packages": [
+        {
+          "name": "libc-bin",
+          "version": "2.41-12+deb13u4"
+        },
+        {
+          "name": "libc6",
+          "version": "2.41-12+deb13u4"
+        }
+      ],
+      "fixed_version": null,
+      "title": "glibc: uncontrolled recursion in function check_dst_limits_calc_pos_1 in posix/regexec.c"
+    },
+    {
+      "type": "debian",
+      "id": "CVE-2019-1010022",
+      "severity": "LOW",
+      "status": "affected",
+      "packages": [
+        {
+          "name": "libc-bin",
+          "version": "2.41-12+deb13u4"
+        },
+        {
+          "name": "libc6",
+          "version": "2.41-12+deb13u4"
+        }
+      ],
+      "fixed_version": null,
+      "title": "glibc: stack guard protection bypass"
+    },
+    {
+      "type": "debian",
+      "id": "CVE-2019-1010023",
+      "severity": "LOW",
+      "status": "affected",
+      "packages": [
+        {
+          "name": "libc-bin",
+          "version": "2.41-12+deb13u4"
+        },
+        {
+          "name": "libc6",
+          "version": "2.41-12+deb13u4"
+        }
+      ],
+      "fixed_version": null,
+      "title": "glibc: running ldd on malicious ELF leads to code execution because of wrong size computation"
+    },
+    {
+      "type": "debian",
+      "id": "CVE-2019-1010024",
+      "severity": "LOW",
+      "status": "affected",
+      "packages": [
+        {
+          "name": "libc-bin",
+          "version": "2.41-12+deb13u4"
+        },
+        {
+          "name": "libc6",
+          "version": "2.41-12+deb13u4"
+        }
+      ],
+      "fixed_version": null,
+      "title": "glibc: ASLR bypass using cache of thread stack and heap"
+    },
+    {
+      "type": "debian",
+      "id": "CVE-2019-1010025",
+      "severity": "LOW",
+      "status": "affected",
+      "packages": [
+        {
+          "name": "libc-bin",
+          "version": "2.41-12+deb13u4"
+        },
+        {
+          "name": "libc6",
+          "version": "2.41-12+deb13u4"
+        }
+      ],
+      "fixed_version": null,
+      "title": "glibc: information disclosure of heap addresses of pthread_created thread"
+    },
+    {
+      "type": "debian",
+      "id": "CVE-2019-9192",
+      "severity": "LOW",
+      "status": "affected",
+      "packages": [
+        {
+          "name": "libc-bin",
+          "version": "2.41-12+deb13u4"
+        },
+        {
+          "name": "libc6",
+          "version": "2.41-12+deb13u4"
+        }
+      ],
+      "fixed_version": null,
+      "title": "glibc: uncontrolled recursion in function check_dst_limits_calc_pos_1 in posix/regexec.c"
+    },
+    {
+      "type": "debian",
+      "id": "CVE-2021-45346",
+      "severity": "LOW",
+      "status": "affected",
+      "packages": [
+        {
+          "name": "libsqlite3-0",
+          "version": "3.46.1-7+deb13u2"
+        }
+      ],
+      "fixed_version": null,
+      "title": "sqlite: crafted SQL query allows a malicious user to obtain sensitive information"
+    },
+    {
+      "type": "debian",
+      "id": "CVE-2022-0563",
+      "severity": "LOW",
+      "status": "affected",
+      "packages": [
+        {
+          "name": "bsdutils",
+          "version": "1:2.41.5-0+deb13u1"
+        },
+        {
+          "name": "libblkid1",
+          "version": "2.41.5-0+deb13u1"
+        },
+        {
+          "name": "liblastlog2-2",
+          "version": "2.41.5-0+deb13u1"
+        },
+        {
+          "name": "libmount1",
+          "version": "2.41.5-0+deb13u1"
+        },
+        {
+          "name": "libsmartcols1",
+          "version": "2.41.5-0+deb13u1"
+        },
+        {
+          "name": "libuuid1",
+          "version": "2.41.5-0+deb13u1"
+        },
+        {
+          "name": "login",
+          "version": "1:4.16.0-2+really2.41.5-0+deb13u1"
+        },
+        {
+          "name": "mount",
+          "version": "2.41.5-0+deb13u1"
+        },
+        {
+          "name": "util-linux",
+          "version": "2.41.5-0+deb13u1"
+        }
+      ],
+      "fixed_version": null,
+      "title": "util-linux: partial disclosure of arbitrary files in chfn and chsh when compiled with libreadline"
+    },
+    {
+      "type": "debian",
+      "id": "CVE-2023-31437",
+      "severity": "LOW",
+      "status": "affected",
+      "packages": [
+        {
+          "name": "libsystemd0",
+          "version": "257.13-1~deb13u1"
+        },
+        {
+          "name": "libudev1",
+          "version": "257.13-1~deb13u1"
+        }
+      ],
+      "fixed_version": null,
+      "title": "An issue was discovered in systemd 253. An attacker can modify a seale ..."
+    },
+    {
+      "type": "debian",
+      "id": "CVE-2023-31438",
+      "severity": "LOW",
+      "status": "affected",
+      "packages": [
+        {
+          "name": "libsystemd0",
+          "version": "257.13-1~deb13u1"
+        },
+        {
+          "name": "libudev1",
+          "version": "257.13-1~deb13u1"
+        }
+      ],
+      "fixed_version": null,
+      "title": "An issue was discovered in systemd 253. An attacker can truncate a sea ..."
+    },
+    {
+      "type": "debian",
+      "id": "CVE-2023-31439",
+      "severity": "LOW",
+      "status": "affected",
+      "packages": [
+        {
+          "name": "libsystemd0",
+          "version": "257.13-1~deb13u1"
+        },
+        {
+          "name": "libudev1",
+          "version": "257.13-1~deb13u1"
+        }
+      ],
+      "fixed_version": null,
+      "title": "An issue was discovered in systemd 253. An attacker can modify the con ..."
+    },
+    {
+      "type": "debian",
+      "id": "CVE-2024-56433",
+      "severity": "LOW",
+      "status": "affected",
+      "packages": [
+        {
+          "name": "login.defs",
+          "version": "1:4.17.4-2"
+        },
+        {
+          "name": "passwd",
+          "version": "1:4.17.4-2"
+        }
+      ],
+      "fixed_version": null,
+      "title": "shadow-utils: Default subordinate ID configuration in /etc/login.defs could lead to compromise"
+    },
+    {
+      "type": "debian",
+      "id": "CVE-2025-5278",
+      "severity": "LOW",
+      "status": "affected",
+      "packages": [
+        {
+          "name": "coreutils",
+          "version": "9.7-3"
+        }
+      ],
+      "fixed_version": null,
+      "title": "coreutils: Heap Buffer Under-Read in GNU Coreutils sort via Key Specification"
+    },
+    {
+      "type": "debian",
+      "id": "CVE-2025-6141",
+      "severity": "LOW",
+      "status": "affected",
+      "packages": [
+        {
+          "name": "libtinfo6",
+          "version": "6.5+20250216-2"
+        },
+        {
+          "name": "ncurses-base",
+          "version": "6.5+20250216-2"
+        },
+        {
+          "name": "ncurses-bin",
+          "version": "6.5+20250216-2"
+        }
+      ],
+      "fixed_version": null,
+      "title": "gnu-ncurses: ncurses Stack Buffer Overflow"
+    },
+    {
+      "type": "debian",
+      "id": "CVE-2025-69720",
+      "severity": "HIGH",
+      "status": "affected",
+      "packages": [
+        {
+          "name": "libtinfo6",
+          "version": "6.5+20250216-2"
+        },
+        {
+          "name": "ncurses-base",
+          "version": "6.5+20250216-2"
+        },
+        {
+          "name": "ncurses-bin",
+          "version": "6.5+20250216-2"
+        }
+      ],
+      "fixed_version": null,
+      "title": "ncurses: ncurses: Buffer overflow vulnerability may lead to arbitrary code execution."
+    },
+    {
+      "type": "debian",
+      "id": "CVE-2025-70873",
+      "severity": "LOW",
+      "status": "affected",
+      "packages": [
+        {
+          "name": "libsqlite3-0",
+          "version": "3.46.1-7+deb13u2"
+        }
+      ],
+      "fixed_version": null,
+      "title": "sqlite: SQLite: Information Disclosure via Crafted ZIP File"
+    },
+    {
+      "type": "debian",
+      "id": "CVE-2026-15059",
+      "severity": "MEDIUM",
+      "status": "affected",
+      "packages": [
+        {
+          "name": "libsystemd0",
+          "version": "257.13-1~deb13u1"
+        },
+        {
+          "name": "libudev1",
+          "version": "257.13-1~deb13u1"
+        }
+      ],
+      "fixed_version": null,
+      "title": "systemd: systemd-oomd: Unprivileged users can terminate arbitrary processes via IPC API"
+    },
+    {
+      "type": "debian",
+      "id": "CVE-2026-15534",
+      "severity": "MEDIUM",
+      "status": "fix_deferred",
+      "packages": [
+        {
+          "name": "perl-base",
+          "version": "5.40.1-6+deb13u1"
+        }
+      ],
+      "fixed_version": null,
+      "title": "perl: Perl: Arbitrary code execution via out-of-bounds memory access in regular expression engine."
+    },
+    {
+      "type": "debian",
+      "id": "CVE-2026-16742",
+      "severity": "HIGH",
+      "status": "affected",
+      "packages": [
+        {
+          "name": "libsystemd0",
+          "version": "257.13-1~deb13u1"
+        },
+        {
+          "name": "libudev1",
+          "version": "257.13-1~deb13u1"
+        }
+      ],
+      "fixed_version": null,
+      "title": "systemd: systemd-homed: Local privilege escalation via missing home-record signature verification"
+    },
+    {
+      "type": "debian",
+      "id": "CVE-2026-18374",
+      "severity": "MEDIUM",
+      "status": "affected",
+      "packages": [
+        {
+          "name": "libc-bin",
+          "version": "2.41-12+deb13u4"
+        },
+        {
+          "name": "libc6",
+          "version": "2.41-12+deb13u4"
+        }
+      ],
+      "fixed_version": null,
+      "title": "glibc: glibc: Heap buffer overflow via attacker-controlled fopen mode string"
+    },
+    {
+      "type": "debian",
+      "id": "CVE-2026-18477",
+      "severity": "MEDIUM",
+      "status": "affected",
+      "packages": [
+        {
+          "name": "tar",
+          "version": "1.35+dfsg-3.1"
+        }
+      ],
+      "fixed_version": null,
+      "title": "tar: tar: TOCTOU in incremental dumpdir 'X' rename handling allows restore path escape"
+    },
+    {
+      "type": "debian",
+      "id": "CVE-2026-18508",
+      "severity": "MEDIUM",
+      "status": "affected",
+      "packages": [
+        {
+          "name": "tar",
+          "version": "1.35+dfsg-3.1"
+        }
+      ],
+      "fixed_version": null,
+      "title": "tar: tar: --one-top-level hardlink targets not confined to top-level directory enabling arbitrary file overwrite"
+    },
+    {
+      "type": "debian",
+      "id": "CVE-2026-19487",
+      "severity": "MEDIUM",
+      "status": "affected",
+      "packages": [
+        {
+          "name": "perl-base",
+          "version": "5.40.1-6+deb13u1"
+        }
+      ],
+      "fixed_version": null,
+      "title": "perl: Perl: Incorrect regular expression matching can lead to wrong access or filtering decisions."
+    },
+    {
+      "type": "debian",
+      "id": "CVE-2026-19499",
+      "severity": "MEDIUM",
+      "status": "affected",
+      "packages": [
+        {
+          "name": "libc-bin",
+          "version": "2.41-12+deb13u4"
+        },
+        {
+          "name": "libc6",
+          "version": "2.41-12+deb13u4"
+        }
+      ],
+      "fixed_version": null,
+      "title": "glibc: Buffer Overflow in strfmon right-justification padding"
+    },
+    {
+      "type": "debian",
+      "id": "CVE-2026-19542",
+      "severity": "MEDIUM",
+      "status": "affected",
+      "packages": [
+        {
+          "name": "libc-bin",
+          "version": "2.41-12+deb13u4"
+        },
+        {
+          "name": "libc6",
+          "version": "2.41-12+deb13u4"
+        }
+      ],
+      "fixed_version": null,
+      "title": "glibc: Fix out-of-bounds array write in tdelete"
+    },
+    {
+      "type": "debian",
+      "id": "CVE-2026-27171",
+      "severity": "MEDIUM",
+      "status": "affected",
+      "packages": [
+        {
+          "name": "zlib1g",
+          "version": "1:1.3.dfsg+really1.3.1-1+b1"
+        }
+      ],
+      "fixed_version": null,
+      "title": "zlib: zlib: Denial of Service via infinite loop in CRC32 combine functions"
+    },
+    {
+      "type": "debian",
+      "id": "CVE-2026-3184",
+      "severity": "MEDIUM",
+      "status": "affected",
+      "packages": [
+        {
+          "name": "bsdutils",
+          "version": "1:2.41.5-0+deb13u1"
+        },
+        {
+          "name": "libblkid1",
+          "version": "2.41.5-0+deb13u1"
+        },
+        {
+          "name": "liblastlog2-2",
+          "version": "2.41.5-0+deb13u1"
+        },
+        {
+          "name": "libmount1",
+          "version": "2.41.5-0+deb13u1"
+        },
+        {
+          "name": "libsmartcols1",
+          "version": "2.41.5-0+deb13u1"
+        },
+        {
+          "name": "libuuid1",
+          "version": "2.41.5-0+deb13u1"
+        },
+        {
+          "name": "login",
+          "version": "1:4.16.0-2+really2.41.5-0+deb13u1"
+        },
+        {
+          "name": "mount",
+          "version": "2.41.5-0+deb13u1"
+        },
+        {
+          "name": "util-linux",
+          "version": "2.41.5-0+deb13u1"
+        }
+      ],
+      "fixed_version": null,
+      "title": "util-linux: util-linux: Access control bypass due to improper hostname canonicalization"
+    },
+    {
+      "type": "debian",
+      "id": "CVE-2026-40228",
+      "severity": "LOW",
+      "status": "affected",
+      "packages": [
+        {
+          "name": "libsystemd0",
+          "version": "257.13-1~deb13u1"
+        },
+        {
+          "name": "libudev1",
+          "version": "257.13-1~deb13u1"
+        }
+      ],
+      "fixed_version": null,
+      "title": "systemd: systemd-journald: Unintended output to user terminals via logger command"
+    },
+    {
+      "type": "debian",
+      "id": "CVE-2026-42250",
+      "severity": "MEDIUM",
+      "status": "affected",
+      "packages": [
+        {
+          "name": "libbz2-1.0",
+          "version": "1.0.8-6"
+        }
+      ],
+      "fixed_version": null,
+      "title": "bzip2: bzip2: Denial of Service in bzip2recover via a specially crafted file"
+    },
+    {
+      "type": "debian",
+      "id": "CVE-2026-50812",
+      "severity": "MEDIUM",
+      "status": "affected",
+      "packages": [
+        {
+          "name": "libsqlite3-0",
+          "version": "3.46.1-7+deb13u2"
+        }
+      ],
+      "fixed_version": null,
+      "title": "sqlite: SQLite: Denial of Service via malformed changeset in Session Extension"
+    },
+    {
+      "type": "debian",
+      "id": "CVE-2026-50813",
+      "severity": "MEDIUM",
+      "status": "affected",
+      "packages": [
+        {
+          "name": "libsqlite3-0",
+          "version": "3.46.1-7+deb13u2"
+        }
+      ],
+      "fixed_version": null,
+      "title": "sqlite: SQLite: Information disclosure via Session Extension changeset merge path"
+    },
+    {
+      "type": "debian",
+      "id": "CVE-2026-53910",
+      "severity": "LOW",
+      "status": "affected",
+      "packages": [
+        {
+          "name": "diffutils",
+          "version": "1:3.10-4"
+        }
+      ],
+      "fixed_version": null,
+      "title": "diffutils: heap\u2011based buffer overflow due to multiple signed integer overflows in line\u2011mapping calculations"
+    },
+    {
+      "type": "debian",
+      "id": "CVE-2026-5435",
+      "severity": "MEDIUM",
+      "status": "affected",
+      "packages": [
+        {
+          "name": "libc-bin",
+          "version": "2.41-12+deb13u4"
+        },
+        {
+          "name": "libc6",
+          "version": "2.41-12+deb13u4"
+        }
+      ],
+      "fixed_version": null,
+      "title": "glibc: glibc: Out-of-bounds write via TSIG record processing"
+    },
+    {
+      "type": "debian",
+      "id": "CVE-2026-54369",
+      "severity": "HIGH",
+      "status": "affected",
+      "packages": [
+        {
+          "name": "libacl1",
+          "version": "2.3.2-2+b1"
+        }
+      ],
+      "fixed_version": null,
+      "title": "acl: Symlink traversal privilege escalation via libacl functions"
+    },
+    {
+      "type": "debian",
+      "id": "CVE-2026-54370",
+      "severity": "MEDIUM",
+      "status": "affected",
+      "packages": [
+        {
+          "name": "libacl1",
+          "version": "2.3.2-2+b1"
+        }
+      ],
+      "fixed_version": null,
+      "title": "acl: TOCTOU Symlink Traversal via getfacl/setfacl"
+    },
+    {
+      "type": "debian",
+      "id": "CVE-2026-54371",
+      "severity": "MEDIUM",
+      "status": "affected",
+      "packages": [
+        {
+          "name": "libattr1",
+          "version": "1:2.5.2-3"
+        }
+      ],
+      "fixed_version": null,
+      "title": "attr: attr: Symlink Traversal Privilege Escalation via getfattr and setfattr"
+    },
+    {
+      "type": "debian",
+      "id": "CVE-2026-54411",
+      "severity": "MEDIUM",
+      "status": "affected",
+      "packages": [
+        {
+          "name": "libpam-modules",
+          "version": "1.7.0-5"
+        },
+        {
+          "name": "libpam-modules-bin",
+          "version": "1.7.0-5"
+        },
+        {
+          "name": "libpam-runtime",
+          "version": "1.7.0-5"
+        },
+        {
+          "name": "libpam0g",
+          "version": "1.7.0-5"
+        }
+      ],
+      "fixed_version": null,
+      "title": "linux-pam: Plaintext password recovery via timing discrepancy in pam_userdb module"
+    },
+    {
+      "type": "debian",
+      "id": "CVE-2026-56391",
+      "severity": "LOW",
+      "status": "affected",
+      "packages": [
+        {
+          "name": "coreutils",
+          "version": "9.7-3"
+        }
+      ],
+      "fixed_version": null,
+      "title": "coreutils: GNU coreutils uniq: Denial of Service and information disclosure via out-of-bounds read with multibyte input"
+    },
+    {
+      "type": "debian",
+      "id": "CVE-2026-56392",
+      "severity": "LOW",
+      "status": "affected",
+      "packages": [
+        {
+          "name": "coreutils",
+          "version": "9.7-3"
+        }
+      ],
+      "fixed_version": null,
+      "title": "coreutils: GNU coreutils unexpand: Denial of Service via crafted tab stop values"
+    },
+    {
+      "type": "debian",
+      "id": "CVE-2026-5704",
+      "severity": "MEDIUM",
+      "status": "affected",
+      "packages": [
+        {
+          "name": "tar",
+          "version": "1.35+dfsg-3.1"
+        }
+      ],
+      "fixed_version": null,
+      "title": "tar: tar: Hidden file injection via crafted archives"
+    },
+    {
+      "type": "debian",
+      "id": "CVE-2026-6238",
+      "severity": "MEDIUM",
+      "status": "affected",
+      "packages": [
+        {
+          "name": "libc-bin",
+          "version": "2.41-12+deb13u4"
+        },
+        {
+          "name": "libc6",
+          "version": "2.41-12+deb13u4"
+        }
+      ],
+      "fixed_version": null,
+      "title": "glibc: glibc: Application crash or uninitialized memory read via crafted DNS response"
+    },
+    {
+      "type": "debian",
+      "id": "CVE-2026-6368",
+      "severity": "MEDIUM",
+      "status": "affected",
+      "packages": [
+        {
+          "name": "libc-bin",
+          "version": "2.41-12+deb13u4"
+        },
+        {
+          "name": "libc6",
+          "version": "2.41-12+deb13u4"
+        }
+      ],
+      "fixed_version": null,
+      "title": "glibc: glibc: Process abort due to invalid memory in wordexp"
+    },
+    {
+      "type": "debian",
+      "id": "CVE-2026-6791",
+      "severity": "MEDIUM",
+      "status": "affected",
+      "packages": [
+        {
+          "name": "libc-bin",
+          "version": "2.41-12+deb13u4"
+        },
+        {
+          "name": "libc6",
+          "version": "2.41-12+deb13u4"
+        }
+      ],
+      "fixed_version": null,
+      "title": "glibc: Glibc: Denial of Service via stack exhaustion during tilde expansion"
+    },
+    {
+      "type": "debian",
+      "id": "CVE-2026-76642",
+      "severity": "HIGH",
+      "status": "affected",
+      "packages": [
+        {
+          "name": "bsdutils",
+          "version": "1:2.41.5-0+deb13u1"
+        },
+        {
+          "name": "libblkid1",
+          "version": "2.41.5-0+deb13u1"
+        },
+        {
+          "name": "liblastlog2-2",
+          "version": "2.41.5-0+deb13u1"
+        },
+        {
+          "name": "libmount1",
+          "version": "2.41.5-0+deb13u1"
+        },
+        {
+          "name": "libsmartcols1",
+          "version": "2.41.5-0+deb13u1"
+        },
+        {
+          "name": "libuuid1",
+          "version": "2.41.5-0+deb13u1"
+        },
+        {
+          "name": "login",
+          "version": "1:4.16.0-2+really2.41.5-0+deb13u1"
+        },
+        {
+          "name": "mount",
+          "version": "2.41.5-0+deb13u1"
+        },
+        {
+          "name": "util-linux",
+          "version": "2.41.5-0+deb13u1"
+        }
+      ],
+      "fixed_version": null,
+      "title": "util-linux: util-linux: failed external mount helper still runs privileged X-mount post-hooks"
+    },
+    {
+      "type": "debian",
+      "id": "CVE-2026-77117",
+      "severity": "MEDIUM",
+      "status": "affected",
+      "packages": [
+        {
+          "name": "libc-bin",
+          "version": "2.41-12+deb13u4"
+        },
+        {
+          "name": "libc6",
+          "version": "2.41-12+deb13u4"
+        }
+      ],
+      "fixed_version": null,
+      "title": "glibc: Non-progress DoS in SHIFT_JISX0213 -&gt"
+    },
+    {
+      "type": "debian",
+      "id": "CVE-2026-78408",
+      "severity": "HIGH",
+      "status": "affected",
+      "packages": [
+        {
+          "name": "bsdutils",
+          "version": "1:2.41.5-0+deb13u1"
+        },
+        {
+          "name": "libblkid1",
+          "version": "2.41.5-0+deb13u1"
+        },
+        {
+          "name": "liblastlog2-2",
+          "version": "2.41.5-0+deb13u1"
+        },
+        {
+          "name": "libmount1",
+          "version": "2.41.5-0+deb13u1"
+        },
+        {
+          "name": "libsmartcols1",
+          "version": "2.41.5-0+deb13u1"
+        },
+        {
+          "name": "libuuid1",
+          "version": "2.41.5-0+deb13u1"
+        },
+        {
+          "name": "login",
+          "version": "1:4.16.0-2+really2.41.5-0+deb13u1"
+        },
+        {
+          "name": "mount",
+          "version": "2.41.5-0+deb13u1"
+        },
+        {
+          "name": "util-linux",
+          "version": "2.41.5-0+deb13u1"
+        }
+      ],
+      "fixed_version": null,
+      "title": "util-linux: util-linux: nsenter --join-cgroup leaks root cgroup migration authority"
+    },
+    {
+      "type": "debian",
+      "id": "CVE-2026-78409",
+      "severity": "HIGH",
+      "status": "affected",
+      "packages": [
+        {
+          "name": "bsdutils",
+          "version": "1:2.41.5-0+deb13u1"
+        },
+        {
+          "name": "libblkid1",
+          "version": "2.41.5-0+deb13u1"
+        },
+        {
+          "name": "liblastlog2-2",
+          "version": "2.41.5-0+deb13u1"
+        },
+        {
+          "name": "libmount1",
+          "version": "2.41.5-0+deb13u1"
+        },
+        {
+          "name": "libsmartcols1",
+          "version": "2.41.5-0+deb13u1"
+        },
+        {
+          "name": "libuuid1",
+          "version": "2.41.5-0+deb13u1"
+        },
+        {
+          "name": "login",
+          "version": "1:4.16.0-2+really2.41.5-0+deb13u1"
+        },
+        {
+          "name": "mount",
+          "version": "2.41.5-0+deb13u1"
+        },
+        {
+          "name": "util-linux",
+          "version": "2.41.5-0+deb13u1"
+        }
+      ],
+      "fixed_version": null,
+      "title": "util-linux: util-linux: X-mount.subdir detached-tree resolution can escape via intermediate symlinks"
+    },
+    {
+      "type": "debian",
+      "id": "CVE-2026-78410",
+      "severity": "HIGH",
+      "status": "affected",
+      "packages": [
+        {
+          "name": "bsdutils",
+          "version": "1:2.41.5-0+deb13u1"
+        },
+        {
+          "name": "libblkid1",
+          "version": "2.41.5-0+deb13u1"
+        },
+        {
+          "name": "liblastlog2-2",
+          "version": "2.41.5-0+deb13u1"
+        },
+        {
+          "name": "libmount1",
+          "version": "2.41.5-0+deb13u1"
+        },
+        {
+          "name": "libsmartcols1",
+          "version": "2.41.5-0+deb13u1"
+        },
+        {
+          "name": "libuuid1",
+          "version": "2.41.5-0+deb13u1"
+        },
+        {
+          "name": "login",
+          "version": "1:4.16.0-2+really2.41.5-0+deb13u1"
+        },
+        {
+          "name": "mount",
+          "version": "2.41.5-0+deb13u1"
+        },
+        {
+          "name": "util-linux",
+          "version": "2.41.5-0+deb13u1"
+        }
+      ],
+      "fixed_version": null,
+      "title": "util-linux: util-linux: restricted bind mounts do not pin the source, allowing X-mount.owner/group/mode redirection"
+    },
+    {
+      "type": "debian",
+      "id": "CVE-2026-80489",
+      "severity": "MEDIUM",
+      "status": "affected",
+      "packages": [
+        {
+          "name": "libc-bin",
+          "version": "2.41-12+deb13u4"
+        },
+        {
+          "name": "libc6",
+          "version": "2.41-12+deb13u4"
+        }
+      ],
+      "fixed_version": null,
+      "title": "glibc: Non-progress DoS in EUC_JISX0213 -> UCS-4 conversion state"
+    },
+    {
+      "type": "debian",
+      "id": "CVE-2026-82560",
+      "severity": "UNKNOWN",
+      "status": "affected",
+      "packages": [
+        {
+          "name": "perl-base",
+          "version": "5.40.1-6+deb13u1"
+        }
+      ],
+      "fixed_version": null,
+      "title": "Pod::Text versions before 6.1.1 for Perl allow CPU and memory exhausti ..."
+    },
+    {
+      "type": "debian",
+      "id": "CVE-2026-85091",
+      "severity": "MEDIUM",
+      "status": "affected",
+      "packages": [
+        {
+          "name": "zlib1g",
+          "version": "1:1.3.dfsg+really1.3.1-1+b1"
+        }
+      ],
+      "fixed_version": null,
+      "title": "zlib versions 1.3.1.2 through 1.3.2 contain a heap buffer overflow vul ..."
+    },
+    {
+      "type": "debian",
+      "id": "CVE-2026-8674",
+      "severity": "MEDIUM",
+      "status": "affected",
+      "packages": [
+        {
+          "name": "libc-bin",
+          "version": "2.41-12+deb13u4"
+        },
+        {
+          "name": "libc6",
+          "version": "2.41-12+deb13u4"
+        }
+      ],
+      "fixed_version": null,
+      "title": "glibc: glibc DNS stub resolver: Denial of Service via long search domain in configuration"
+    },
+    {
+      "type": "debian",
+      "id": "CVE-2026-86805",
+      "severity": "MEDIUM",
+      "status": "affected",
+      "packages": [
+        {
+          "name": "libc-bin",
+          "version": "2.41-12+deb13u4"
+        },
+        {
+          "name": "libc6",
+          "version": "2.41-12+deb13u4"
+        }
+      ],
+      "fixed_version": null,
+      "title": "glibc: glibc: Privilege escalation and arbitrary code execution via TOCTOU race condition in dynamic loader"
+    },
+    {
+      "type": "debian",
+      "id": "CVE-2026-89092",
+      "severity": "MEDIUM",
+      "status": "affected",
+      "packages": [
+        {
+          "name": "libc-bin",
+          "version": "2.41-12+deb13u4"
+        },
+        {
+          "name": "libc6",
+          "version": "2.41-12+deb13u4"
+        }
+      ],
+      "fixed_version": null,
+      "title": "glibc: nscd stack overflow leads to degraded DNS resolution"
+    },
+    {
+      "type": "debian",
+      "id": "CVE-2026-9538",
+      "severity": "HIGH",
+      "status": "fix_deferred",
+      "packages": [
+        {
+          "name": "perl-base",
+          "version": "5.40.1-6+deb13u1"
+        }
+      ],
+      "fixed_version": null,
+      "title": "perl-Archive-Tar: perl-Archive-Tar: Denial of Service via crafted tar header with large entry size"
+    },
+    {
+      "type": "debian",
+      "id": "CVE-2026-95818",
+      "severity": "MEDIUM",
+      "status": "affected",
+      "packages": [
+        {
+          "name": "libc-bin",
+          "version": "2.41-12+deb13u4"
+        },
+        {
+          "name": "libc6",
+          "version": "2.41-12+deb13u4"
+        }
+      ],
+      "fixed_version": null,
+      "title": "glibc: glibc: Local attacker can cause denial of service and information disclosure via stack-based buffer overflow."
+    },
+    {
+      "type": "debian",
+      "id": "TEMP-0290435-0B57B5",
+      "severity": "LOW",
+      "status": "affected",
+      "packages": [
+        {
+          "name": "tar",
+          "version": "1.35+dfsg-3.1"
+        }
+      ],
+      "fixed_version": null,
+      "title": "[tar's rmt command may have undesired side effects]"
+    },
+    {
+      "type": "debian",
+      "id": "TEMP-0517018-A83CE6",
+      "severity": "LOW",
+      "status": "affected",
+      "packages": [
+        {
+          "name": "sysvinit-utils",
+          "version": "3.14-4"
+        }
+      ],
+      "fixed_version": null,
+      "title": "[sysvinit: no-root option in expert installer exposes locally exploitable security flaw]"
+    },
+    {
+      "type": "debian",
+      "id": "TEMP-0628843-DBAD28",
+      "severity": "LOW",
+      "status": "affected",
+      "packages": [
+        {
+          "name": "login.defs",
+          "version": "1:4.17.4-2"
+        },
+        {
+          "name": "passwd",
+          "version": "1:4.17.4-2"
+        }
+      ],
+      "fixed_version": null,
+      "title": "[more related to CVE-2005-4890]"
+    },
+    {
+      "type": "debian",
+      "id": "TEMP-0841856-B18BAF",
+      "severity": "LOW",
+      "status": "affected",
+      "packages": [
+        {
+          "name": "bash",
+          "version": "5.2.37-2+b10"
+        }
+      ],
+      "fixed_version": null,
+      "title": "[Privilege escalation possible to other user than root]"
+    },
+    {
+      "type": "debian",
+      "id": "TEMP-1147318-639065",
+      "severity": "UNKNOWN",
+      "status": "affected",
+      "packages": [
+        {
+          "name": "liblzma5",
+          "version": "5.8.1-1+deb13u1"
+        }
+      ],
+      "fixed_version": null,
+      "title": "[GHSA-5qpq-xqfv-j9pg: Invalid write if a decoder is reinitialized after allocation failure]"
+    },
+    {
+      "type": "python-pkg",
+      "id": "CVE-2026-46497",
+      "severity": "LOW",
+      "status": "fixed",
+      "packages": [
+        {
+          "name": "crawlee",
+          "version": "1.3.2b4"
+        }
+      ],
+      "fixed_version": "1.7.0",
+      "title": "Crawlee for Python: SSRF via sitemap-derived URLs"
+    }
+  ]
+}

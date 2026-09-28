@@ -175,6 +175,10 @@ class Settings(BaseSettings):
         description="Base URL for web dashboard (e.g. https://home-finder.fly.dev)",
     )
     web_port: int = Field(default=8000, description="Web server port")
+    carto_basemap_api_key: SecretStr = Field(
+        default=SecretStr(""),
+        description="CARTO browser tile key; restrict allowed origins at the provider",
+    )
     web_host: str = Field(default="0.0.0.0", description="Web server host")
     pipeline_interval_minutes: int = Field(
         default=55,

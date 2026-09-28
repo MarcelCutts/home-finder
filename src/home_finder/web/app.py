@@ -51,7 +51,7 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
             "https://*.rmimg.com https://*.rightmove.co.uk "
             "https://*.onthemarket.com "
             "https://*.openrent.com https://*.openrent.co.uk "
-            "https://*.basemaps.cartocdn.com https://cdn.jsdelivr.net data:; "
+            "https://basemaps.cartocdn.com https://cdn.jsdelivr.net data:; "
             "connect-src 'self'; "
             "frame-ancestors 'none'; form-action 'self'; base-uri 'self'"
         )

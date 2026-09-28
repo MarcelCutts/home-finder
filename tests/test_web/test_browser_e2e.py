@@ -198,12 +198,8 @@ async def _populate_db(db_path: str):
 
 
 @pytest.fixture(scope="session")
-def server_url(tmp_path_factory):
-    """Start a test server with pre-populated data (session-scoped)."""
-    import uvicorn
-
-    from home_finder.web.app import create_app
-
+def server_settings(tmp_path_factory):
+    """Isolated data and settings for the browser fixture server."""
     # Create temp DB and populate it
     tmp_dir = tmp_path_factory.mktemp("browser_e2e")
     db_path = str(tmp_dir / "test.db")
@@ -229,6 +225,7 @@ def server_url(tmp_path_factory):
         telegram_chat_id=0,
         database_path=db_path,
         web_owner_password=SecretStr(_OWNER_PASSWORD),
+        carto_basemap_api_key=SecretStr("browser-fixture-key"),
         search_areas="e5,e8,e9,n16",
         min_price=1500,
         max_price=2500,
@@ -239,7 +236,17 @@ def server_url(tmp_path_factory):
         pipeline_interval_minutes=9999,  # Don't run pipeline during tests
     )
 
-    app = create_app(settings, run_pipeline=False)
+    return settings
+
+
+@pytest.fixture(scope="session")
+def server_url(server_settings):
+    """Start a test server with pre-populated data (session-scoped)."""
+    import uvicorn
+
+    from home_finder.web.app import create_app
+
+    app = create_app(server_settings, run_pipeline=False)
 
     port = _find_free_port()
     base = f"http://127.0.0.1:{port}"
@@ -291,6 +298,88 @@ def browser_context_args(browser_context_args, server_url):
             "origin": server_url,
         },
     }
+
+
+@pytest.fixture(autouse=True)
+def fixture_tiles(page):
+    """Exercise the tile contract without sending fake keys or traffic to CARTO."""
+    requests = []
+
+    def serve(route):
+        requests.append(route.request.url)
+        route.fulfill(
+            content_type="image/svg+xml",
+            body=(
+                '<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256">'
+                '<rect width="256" height="256" fill="#1c2230"/>'
+                '<path d="M0 128H256M128 0V256" stroke="#353f50"/>'
+                '<text x="12" y="24" fill="#bcc4d0">Fixture tile</text></svg>'
+            ),
+        )
+
+    page.route("https://basemaps.cartocdn.com/**", serve)
+    return requests
+
+
+@pytest.mark.browser
+class TestMapProvider:
+    def test_both_maps_use_key_and_attribution(self, page, fixture_tiles):
+        from urllib.parse import parse_qs, urlsplit
+
+        page.goto("/")
+        page.get_by_role("button", name="Map view", exact=True).click()
+        expect(page.locator("#dashboard-map .leaflet-tile-loaded").first).to_be_visible()
+        expect(page.locator("#dashboard-map").get_by_role("link", name="CARTO")).to_be_visible()
+        expect(
+            page.locator("#dashboard-map").get_by_role(
+                "link",
+                name="OpenStreetMap contributors",
+            )
+        ).to_be_visible()
+        dashboard_count = len(fixture_tiles)
+        assert dashboard_count > 0
+
+        page.goto("/property/openrent:1001")
+        page.locator("#map").scroll_into_view_if_needed()
+        expect(page.locator("#map .leaflet-tile-loaded").first).to_be_visible()
+        assert len(fixture_tiles) > dashboard_count
+        assert all(
+            parse_qs(urlsplit(url).query)["key"] == ["browser-fixture-key"] for url in fixture_tiles
+        )
+
+    def test_missing_key_preserves_grid_and_location_link(
+        self,
+        page,
+        server_settings,
+        fixture_tiles,
+    ):
+        configured = server_settings.carto_basemap_api_key
+        server_settings.carto_basemap_api_key = SecretStr("")
+        try:
+            page.goto("/")
+            expect(page.get_by_role("button", name="Map view", exact=True)).to_be_disabled()
+            expect(page.locator("article.property-card").first).to_be_visible()
+            expect(page.locator("#map-status")).to_be_visible()
+            page.goto("/property/openrent:1001")
+            expect(page.locator("#map")).to_have_count(0)
+            expect(page.get_by_role("link", name="View this location in Maps")).to_be_visible()
+            assert fixture_tiles == []
+        finally:
+            server_settings.carto_basemap_api_key = configured
+
+    def test_provider_rejection_falls_back_to_listings(self, page):
+        page.route("https://basemaps.cartocdn.com/**", lambda route: route.fulfill(status=403))
+        page.goto("/")
+        page.get_by_role("button", name="Map view", exact=True).click()
+        expect(page.locator("#map-status")).to_be_visible()
+        expect(page.get_by_role("button", name="Grid view", exact=True)).to_have_attribute(
+            "aria-pressed",
+            "true",
+        )
+        expect(page.locator("article.property-card").first).to_be_visible()
+        page.goto("/property/openrent:1001")
+        expect(page.locator("#map-status")).to_be_visible()
+        expect(page.get_by_role("link", name="View this location in Maps")).to_be_visible()
 
 
 @pytest.mark.browser
