@@ -1,6 +1,6 @@
 # PR10 follow-up: Decode the retained Rightmove detail response
 
-**Date:** 28 September 2026. **State:** implemented and verified.
+**Date:** 28 September 2026. **State:** committed as `9aba945`.
 **Predecessor:** search and legacy-detail repairs, `11d08d7`.
 **Parent:** [PR10 specification](2026-09-28-research-synthesis-and-delivery-plan.md#pr10--repair-and-fixture-the-rightmove-parsing-contract-m).
 

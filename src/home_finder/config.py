@@ -6,6 +6,7 @@ from pydantic import Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from home_finder.models import FurnishType, SearchCriteria, TransportMode
+from home_finder.models.analysis import AnalysisConfig
 
 
 class Settings(BaseSettings):
@@ -72,6 +73,10 @@ class Settings(BaseSettings):
     enable_extended_thinking: bool = Field(
         default=True,
         description="Enable extended thinking for deeper quality analysis",
+    )
+    analysis_config: AnalysisConfig | None = Field(
+        default=None,
+        description="Versioned per-phase analysis JSON; when set, overrides legacy thinking flag",
     )
     # AI analysis budget
     max_analysis_per_run: int = Field(

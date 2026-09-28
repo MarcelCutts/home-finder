@@ -1,6 +1,6 @@
 # PR20a: Native Anthropic SDK transport with the same analysis requests
 
-**Date:** 28 September 2026. **State:** implemented and verified.
+**Date:** 28 September 2026. **State:** committed as `03e3e4c`.
 **Predecessor:** Rightmove captured-detail repair, `9aba945`.
 **Parent:** [PR20 specification](2026-09-28-research-synthesis-and-delivery-plan.md#pr20--isolate-sdk-transport-phase-configuration-and-output-contracts-m).
 
@@ -42,4 +42,4 @@ The focused quality/recovery suite passes **307 tests**. The additional native t
 
 This is the transport slice. **PR20 remains open** for explicit per-phase model/provider/reasoning/effort/limit/timeout/output-contract configuration, recorded provenance, and typed refusal/truncation/malformed-output outcomes. In particular, current evaluation code can fall back from invalid structured output; this commit preserves that baseline so its correction is reviewable separately. PR13/14 must later persist per-call accounting and extraction/attempt keys. No live model quality comparison, new human label or production model promotion is implied.
 
-Next: implement and verify phase configuration/provenance, then explicit output-failure handling; continue to PR13 spend admission. Roll back this segment by reverting the dependency lock/requirements and native transport/tests together; it introduces no schema migration.
+Follow-up: [PR20b phase configuration/provenance](2026-09-28-pr20b-analysis-configuration.md), then explicit output-failure handling and PR13 spend admission. Roll back this segment by reverting the dependency lock/requirements and native transport/tests together; it introduces no schema migration.

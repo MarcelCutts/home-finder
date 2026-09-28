@@ -446,6 +446,7 @@ async def _run_quality_and_save(
             api_key=settings.anthropic_api_key.get_secret_value(),
             max_images=settings.quality_filter_max_images,
             enable_extended_thinking=settings.enable_extended_thinking,
+            analysis_config=settings.analysis_config,
         ) as quality_filter:
             count = await _do_analysis(quality_filter)
             token_usage = quality_filter.token_usage
@@ -589,6 +590,7 @@ async def _drain_reanalysis_queue(
         api_key=settings.anthropic_api_key.get_secret_value(),
         max_images=settings.quality_filter_max_images,
         enable_extended_thinking=settings.enable_extended_thinking,
+        analysis_config=settings.analysis_config,
     ) as quality_filter:
 
         async def _analyze(
@@ -687,6 +689,7 @@ async def run_reanalysis(
             api_key=settings.anthropic_api_key.get_secret_value(),
             max_images=settings.quality_filter_max_images,
             enable_extended_thinking=settings.enable_extended_thinking,
+            analysis_config=settings.analysis_config,
         ) as quality_filter:
 
             async def _analyze(

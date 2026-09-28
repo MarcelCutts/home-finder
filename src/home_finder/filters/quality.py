@@ -3,6 +3,7 @@
 import asyncio
 import base64
 import functools
+import hashlib
 import json as _json
 import re as _re
 from dataclasses import dataclass
@@ -39,6 +40,12 @@ from home_finder.models import (
     ValueAnalysis,
     ViewingNotes,
 )
+from home_finder.models.analysis import (
+    AnalysisConfig,
+    AnalysisProvenance,
+    PhaseConfig,
+    VisualPhaseConfig,
+)
 from home_finder.models.quality import _QUALITY_SUB_MODEL_FIELDS
 from home_finder.utils.image_cache import find_cached_file, is_valid_image_url, read_image_bytes
 from home_finder.utils.image_processing import (
@@ -60,11 +67,6 @@ logger = get_logger(__name__)
 # Rate limit settings for Tier 2 (1,000 RPM)
 # SDK handles retry automatically, we just need a small delay to avoid bursts
 DELAY_BETWEEN_CALLS: Final = 0.2  # seconds (1000 RPM = 0.06s minimum, add buffer)
-
-# SDK retry configuration
-MAX_RETRIES: Final = 1  # 2 total attempts (down from 3)
-PHASE1_REQUEST_TIMEOUT: Final = 240.0  # 4 min: vision + thinking can take 120-260s
-PHASE2_REQUEST_TIMEOUT: Final = 60.0  # 1 min: text-only evaluation
 
 # Circuit breaker: stop hammering the API after consecutive outage-indicating errors
 _CIRCUIT_BREAKER_THRESHOLD: Final = 3
@@ -737,6 +739,7 @@ class PropertyQualityFilter:
         *,
         enable_extended_thinking: bool = True,
         http_client: "httpx2.AsyncClient | None" = None,
+        analysis_config: AnalysisConfig | None = None,
     ) -> None:
         """Initialize the quality filter.
 
@@ -745,10 +748,15 @@ class PropertyQualityFilter:
             max_images: Maximum number of gallery images to analyze.
             enable_extended_thinking: Enable extended thinking for deeper analysis.
             http_client: Optional native SDK transport client, closed with this filter.
+            analysis_config: Explicit phase settings; overrides the legacy thinking flag.
         """
         self._api_key = api_key
         self._max_images = max_images
-        self._enable_extended_thinking = enable_extended_thinking
+        self._analysis_config = analysis_config or AnalysisConfig(
+            visual=VisualPhaseConfig(
+                reasoning="adaptive" if enable_extended_thinking else "disabled"
+            )
+        )
         self._client: anthropic.AsyncAnthropic | None = None
         self._http_client = http_client
         self.token_usage = TokenUsage()
@@ -761,6 +769,11 @@ class PropertyQualityFilter:
             name="anthropic_api",
         )
 
+    @property
+    def analysis_config(self) -> AnalysisConfig:
+        """One immutable effective configuration for this filter's lifetime."""
+        return self._analysis_config
+
     def _get_client(self) -> "anthropic.AsyncAnthropic":
         """Get or create the Anthropic client with optimized settings."""
         if self._client is None:
@@ -768,13 +781,39 @@ class PropertyQualityFilter:
 
             self._client = _anthropic.AsyncAnthropic(
                 api_key=self._api_key,
-                max_retries=MAX_RETRIES,  # SDK handles retry with exponential backoff
+                max_retries=self.analysis_config.visual.sdk_retries,
                 http_client=self._http_client,
                 timeout=_anthropic.Timeout(
-                    PHASE1_REQUEST_TIMEOUT, connect=5.0
-                ),  # Default to Phase 1 timeout
+                    self.analysis_config.visual.request_timeout_seconds,
+                    connect=self.analysis_config.visual.connect_timeout_seconds,
+                ),
             )
         return self._client
+
+    def _phase_client(self, phase: PhaseConfig) -> "anthropic.AsyncAnthropic":
+        client = self._get_client()
+        if phase.sdk_retries != self.analysis_config.visual.sdk_retries:
+            # SDK options copies share the base client's owned HTTP connection
+            # pool. Closing the filter still closes that single transport.
+            return client.with_options(max_retries=phase.sdk_retries)
+        return client
+
+    def _analysis_provenance(self) -> AnalysisProvenance:
+        from anthropic import __version__ as sdk_version
+
+        def digest(value: Any) -> str:
+            text = value if isinstance(value, str) else _json.dumps(value, sort_keys=True)
+            return hashlib.sha256(text.encode()).hexdigest()
+
+        return AnalysisProvenance(
+            configuration=self.analysis_config,
+            sdk_version=sdk_version,
+            max_images=self._max_images,
+            visual_system_sha256=digest(VISUAL_ANALYSIS_SYSTEM_PROMPT),
+            evaluation_system_sha256=digest(EVALUATION_SYSTEM_PROMPT),
+            visual_output_sha256=digest(VISUAL_ANALYSIS_TOOL),
+            evaluation_output_sha256=digest(_eval_json_schema()),
+        )
 
     @staticmethod
     def _get_media_type(url: str) -> ImageMediaType:
@@ -992,6 +1031,7 @@ class PropertyQualityFilter:
             )
             analysis = PropertyQualityAnalysis(
                 listing_text_inputs=text_inputs,
+                analysis_provenance=self._analysis_provenance(),
                 kitchen=analysis.kitchen,
                 condition=analysis.condition,
                 light_space=analysis.light_space,
@@ -1097,16 +1137,17 @@ class PropertyQualityFilter:
         )
         from anthropic.types import ToolParam, ToolUseBlock
 
-        client = self._get_client()
+        phase = self.analysis_config.visual
+        client = self._phase_client(phase)
 
         try:
             visual_tool: ToolParam = VISUAL_ANALYSIS_TOOL  # type: ignore[assignment]
 
             create_kwargs: dict[str, Any] = {
-                "model": "claude-sonnet-4-6",
+                "model": phase.model,
                 # SDK enforces non-streaming cap of ~21333 tokens (10-min timeout estimate).
                 # Streaming would allow 32768+ but requires a larger refactor.
-                "max_tokens": 21000,
+                "max_tokens": phase.max_output_tokens,
                 "system": [
                     {
                         "type": "text",
@@ -1118,7 +1159,7 @@ class PropertyQualityFilter:
                 "tools": [{**visual_tool, "cache_control": {"type": "ephemeral"}}],
             }
 
-            if self._enable_extended_thinking:
+            if phase.reasoning == "adaptive":
                 create_kwargs["thinking"] = {
                     "type": "adaptive",
                 }
@@ -1129,11 +1170,16 @@ class PropertyQualityFilter:
                     "name": "property_visual_analysis",
                 }
 
+            if phase.effort is not None:
+                create_kwargs["output_config"] = {"effort": phase.effort}
+
             from anthropic import Timeout
 
             response = await client.messages.create(
                 **create_kwargs,
-                timeout=Timeout(PHASE1_REQUEST_TIMEOUT, connect=5.0),
+                timeout=Timeout(
+                    phase.request_timeout_seconds, connect=phase.connect_timeout_seconds
+                ),
             )
 
             if hasattr(response, "usage"):
@@ -1294,7 +1340,8 @@ class PropertyQualityFilter:
             logger.info("circuit_breaker_open_skipping_evaluation", property_id=property_id)
             return {}
 
-        client = self._get_client()
+        phase = self.analysis_config.evaluation
+        client = self._phase_client(phase)
 
         # Map building_construction from Phase 1 to acoustic profile for Phase 2
         acoustic_context: str | None = None
@@ -1343,24 +1390,31 @@ class PropertyQualityFilter:
 
             from anthropic import Timeout
 
-            eval_response = await client.messages.create(
-                model="claude-sonnet-4-6",
-                max_tokens=4096,
-                system=[
+            output_config: dict[str, Any] = {
+                "format": {"type": "json_schema", "schema": _eval_json_schema()}
+            }
+            if phase.effort is not None:
+                output_config["effort"] = phase.effort
+            create_kwargs: dict[str, Any] = {
+                "model": phase.model,
+                "max_tokens": phase.max_output_tokens,
+                "system": [
                     {
                         "type": "text",
                         "text": EVALUATION_SYSTEM_PROMPT,
                         "cache_control": {"type": "ephemeral"},
                     }
                 ],
-                messages=[{"role": "user", "content": eval_prompt}],
-                output_config={
-                    "format": {
-                        "type": "json_schema",
-                        "schema": _eval_json_schema(),
-                    }
-                },
-                timeout=Timeout(PHASE2_REQUEST_TIMEOUT, connect=5.0),
+                "messages": [{"role": "user", "content": eval_prompt}],
+                "output_config": output_config,
+            }
+            if phase.reasoning == "adaptive":
+                create_kwargs["thinking"] = {"type": "adaptive"}
+            eval_response = await client.messages.create(
+                **create_kwargs,
+                timeout=Timeout(
+                    phase.request_timeout_seconds, connect=phase.connect_timeout_seconds
+                ),
             )
 
             if hasattr(eval_response, "usage"):
@@ -1466,6 +1520,10 @@ class PropertyQualityFilter:
 
         try:
             merged_data = {**visual_data, **eval_data, "value": value}
+            # These fields describe the application's actual execution. Ignore
+            # any model-supplied attempt to supply or invalidate that provenance.
+            merged_data.pop("analysis_provenance", None)
+            merged_data.pop("listing_text_inputs", None)
             merged_data.setdefault("summary", "Analysis completed")
 
             # Warn if _clean_dict failed to parse any sub-model JSON strings.

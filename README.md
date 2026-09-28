@@ -224,6 +224,8 @@ The retained February 13–28, 2026 snapshot contains 15 metered runs with 200 c
 
 The SDK is locked to Anthropic 1.8.0 with its native `httpx2` transport. The migration preserves the Claude Sonnet 4.6 model, prompts and request JSON for both analysis phases; native transport tests cover retries, timeouts, cancellation and cache accounting. See the [PR20a compatibility record](docs/plans/2026-09-28-pr20a-sdk-transport.md). This does not change API pricing or establish a new model-quality result.
 
+`HOME_FINDER_ANALYSIS_CONFIG` optionally supplies versioned JSON settings for each analysis phase. Omitted fields retain the baseline defaults; supplying this setting takes precedence over `HOME_FINDER_ENABLE_EXTENDED_THINKING`. New assessments record their effective settings, SDK and contract hashes. Only the currently priced Sonnet 4.6 model is admitted until the spend ledger and model evaluation qualify alternatives. See the [settings, defaults and provenance contract](docs/plans/2026-09-28-pr20b-analysis-configuration.md).
+
 ## Running Tests
 
 ```bash
