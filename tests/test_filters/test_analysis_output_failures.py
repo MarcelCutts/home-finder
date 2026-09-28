@@ -16,33 +16,15 @@ from home_finder.filters.analysis_contracts import (
     validate_output,
 )
 from home_finder.filters.quality import PropertyQualityFilter, _VisualAnalysisResponse
-from home_finder.models import PropertyImage
 from home_finder.pipeline.analysis import _run_quality_and_save
 from home_finder.pipeline.event_recorder import EventRecorder
 from home_finder.pipeline.stages import PreAnalysisResult
-from tests.test_filters.test_quality import _populate_image_cache
 from tests.test_filters.test_quality_respx import (
     PHASE1_VISUAL_RESPONSE,
     PHASE2_EVALUATION_RESPONSE,
 )
 
-
-@pytest.fixture
-def cached_property(make_merged_property, tmp_path):
-    merged = make_merged_property()
-    merged = merged.model_copy(
-        update={
-            "images": (
-                PropertyImage(
-                    url="https://example.com/fixture.jpg",
-                    source=merged.canonical.source,
-                    image_type="gallery",
-                ),
-            )
-        }
-    )
-    _populate_image_cache(str(tmp_path), merged)
-    return merged, str(tmp_path)
+pytestmark = pytest.mark.usefixtures("native_analysis_spending")
 
 
 def failed_message(phase, scenario):
@@ -119,7 +101,7 @@ def failed_message(phase, scenario):
     ],
 )
 async def test_failed_required_phase_retains_usage_but_never_completed_facts(
-    cached_property, phase, scenario, kind
+    cached_analysis_property, phase, scenario, kind
 ):
     bodies = ([] if phase == "visual" else [copy.deepcopy(PHASE1_VISUAL_RESPONSE)]) + [
         failed_message(phase, scenario)
@@ -132,13 +114,13 @@ async def test_failed_required_phase_retains_usage_but_never_completed_facts(
         return httpx2.Response(200, json=next(pending), headers={"request-id": "fixture-request"})
 
     native = httpx2.AsyncClient(transport=httpx2.MockTransport(respond))
-    merged, data_dir = cached_property
+    merged, data_dir = cached_analysis_property
     async with PropertyQualityFilter("fixture", http_client=native) as q:
         _, result = await q.analyze_single_merged(merged, data_dir=data_dir)
     assert result is not None and result.overall_rating is None
     assert result.analysis_failure.phase == phase and result.analysis_failure.kind == kind
     assert result.analysis_failure.request_id == "fixture-request"
-    assert result.analysis_provenance.version == 2
+    assert result.analysis_provenance.version == 3
     assert result.kitchen.overall_quality == "unknown" and result.listing_extraction is None
     assert result.value.quality_adjusted_rating is None
     assert "No images" not in result.summary
@@ -153,7 +135,9 @@ async def test_failed_required_phase_retains_usage_but_never_completed_facts(
 
 @pytest.mark.parametrize("phase", ["visual", "evaluation"])
 @pytest.mark.parametrize("schema_error", [True, False])
-async def test_bad_requests_are_typed_without_inventing_usage(cached_property, phase, schema_error):
+async def test_bad_requests_are_typed_without_inventing_usage(
+    cached_analysis_property, phase, schema_error
+):
     calls = []
 
     def respond(request):
@@ -175,7 +159,7 @@ async def test_bad_requests_are_typed_without_inventing_usage(cached_property, p
         )
 
     native = httpx2.AsyncClient(transport=httpx2.MockTransport(respond))
-    merged, data_dir = cached_property
+    merged, data_dir = cached_analysis_property
     async with PropertyQualityFilter("fixture", http_client=native) as q:
         _, result = await q.analyze_single_merged(merged, data_dir=data_dir)
     assert result.overall_rating is None and result.analysis_failure.phase == phase
@@ -190,7 +174,7 @@ async def test_bad_requests_are_typed_without_inventing_usage(cached_property, p
     assert q._breaker.failure_count == 0
 
 
-async def test_lossless_enum_casing_and_supported_nullable_fields(cached_property):
+async def test_lossless_enum_casing_and_supported_nullable_fields(cached_analysis_property):
     visual = copy.deepcopy(PHASE1_VISUAL_RESPONSE)
     visual["content"][0]["input"]["kitchen"]["overall_quality"] = "MODERN"
     visual["content"][0]["input"]["space"]["living_room_sqm"] = None
@@ -204,7 +188,7 @@ async def test_lossless_enum_casing_and_supported_nullable_fields(cached_propert
     native = httpx2.AsyncClient(
         transport=httpx2.MockTransport(lambda _: httpx2.Response(200, json=next(bodies)))
     )
-    merged, data_dir = cached_property
+    merged, data_dir = cached_analysis_property
     async with PropertyQualityFilter("fixture", http_client=native) as q:
         _, result = await q.analyze_single_merged(merged, data_dir=data_dir)
     assert result.overall_rating == 4 and result.analysis_failure is None
@@ -214,7 +198,7 @@ async def test_lossless_enum_casing_and_supported_nullable_fields(cached_propert
 
 
 @pytest.mark.parametrize("phase", ["visual", "evaluation"])
-async def test_permission_error_is_a_request_rejection(cached_property, phase):
+async def test_permission_error_is_a_request_rejection(cached_analysis_property, phase):
     calls = 0
 
     def respond(request):
@@ -228,7 +212,7 @@ async def test_permission_error_is_a_request_rejection(cached_property, phase):
         )
 
     native = httpx2.AsyncClient(transport=httpx2.MockTransport(respond))
-    merged, data_dir = cached_property
+    merged, data_dir = cached_analysis_property
     async with PropertyQualityFilter("fixture", http_client=native) as q:
         _, result = await q.analyze_single_merged(merged, data_dir=data_dir)
     assert result.overall_rating is None
@@ -248,9 +232,9 @@ def test_nonfinite_output_cannot_enter_domain_models(number):
 
 @pytest.mark.parametrize("scenario", ["refusal", "max_tokens", "missing_eval_field"])
 async def test_rejected_evaluation_stays_pending_without_notifying(
-    cached_property, tmp_path, monkeypatch, scenario
+    cached_analysis_property, tmp_path, monkeypatch, scenario, native_analysis_spending
 ):
-    merged, _ = cached_property
+    merged, _ = cached_analysis_property
     bodies = [copy.deepcopy(PHASE1_VISUAL_RESPONSE), failed_message("evaluation", scenario)]
     pending = iter(bodies)
     native = httpx2.AsyncClient(
@@ -272,6 +256,7 @@ async def test_rejected_evaluation_stays_pending_without_notifying(
         database_path=str(tmp_path / "properties.db"),
         anthropic_api_key=SecretStr("fixture"),
         enable_quality_filter=True,
+        analysis_spend_policy=native_analysis_spending[1],
     )
     on_result = AsyncMock()
     async with PropertyStorage(":memory:") as storage:

@@ -8,7 +8,7 @@ import json as _json
 import re as _re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Final, Literal
+from typing import TYPE_CHECKING, Any, Final, Literal, NoReturn
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -28,6 +28,7 @@ from home_finder.filters.analysis_contracts import (
 from home_finder.filters.analysis_contracts import (
     failure as output_failure,
 )
+from home_finder.filters.analysis_spend import AnalysisSpendMeter
 from home_finder.filters.listing_text import select_listing_text, supported_council_tax_band
 from home_finder.logging import get_logger
 from home_finder.models import (
@@ -57,6 +58,7 @@ from home_finder.models.analysis import (
     VisualPhaseConfig,
 )
 from home_finder.models.quality import _QUALITY_SUB_MODEL_FIELDS
+from home_finder.models.spend import SpendDeferred, SpendPolicy
 from home_finder.utils.image_cache import find_cached_file, is_valid_image_url, read_image_bytes
 from home_finder.utils.image_processing import (
     ImageMediaType,
@@ -71,6 +73,8 @@ if TYPE_CHECKING:
     import anthropic
     import httpx2
     from anthropic.types import ImageBlockParam
+
+    from home_finder.db.spend import SpendRepository
 
 logger = get_logger(__name__)
 
@@ -739,6 +743,21 @@ def _sanitize_eval_enums(raw: dict[str, Any]) -> None:
         raw["lowlights"] = [lo for lo in raw["lowlights"] if lo in valid_lowlights]
 
 
+def _visual_output(response: Any) -> dict[str, Any]:
+    from anthropic.types import ToolUseBlock
+
+    check_stop_reason(response, "visual")
+    tools = [block for block in response.content if isinstance(block, ToolUseBlock)]
+    if len(tools) != 1 or tools[0].name != "property_visual_analysis":
+        raise output_failure("visual", "malformed_output", response)
+    return validate_output(tools[0].input, _VisualAnalysisResponse, "visual", response)
+
+
+def _evaluation_output(response: Any) -> dict[str, Any]:
+    check_stop_reason(response, "evaluation")
+    return validate_output(evaluation_json(response), _EvaluationResponse, "evaluation", response)
+
+
 class PropertyQualityFilter:
     """Analyze property quality using Claude vision API."""
 
@@ -750,6 +769,8 @@ class PropertyQualityFilter:
         enable_extended_thinking: bool = True,
         http_client: "httpx2.AsyncClient | None" = None,
         analysis_config: AnalysisConfig | None = None,
+        spend_repository: "SpendRepository | None" = None,
+        spend_policy: SpendPolicy | None = None,
     ) -> None:
         """Initialize the quality filter.
 
@@ -759,6 +780,8 @@ class PropertyQualityFilter:
             enable_extended_thinking: Enable extended thinking for deeper analysis.
             http_client: Optional native SDK transport client, closed with this filter.
             analysis_config: Explicit phase settings; overrides the legacy thinking flag.
+            spend_repository: Authoritative durable ledger; required for real SDK requests.
+            spend_policy: Explicit caps; absent caps defer every real SDK request.
         """
         self._api_key = api_key
         self._max_images = max_images
@@ -770,6 +793,7 @@ class PropertyQualityFilter:
         self._client: anthropic.AsyncAnthropic | None = None
         self._http_client = http_client
         self.token_usage = TokenUsage()
+        self._spend_meter = AnalysisSpendMeter(spend_repository, spend_policy)
         # Circuit breaker (asyncio is single-threaded, no lock needed)
         from home_finder.utils.circuit_breaker import CircuitBreaker
 
@@ -789,8 +813,16 @@ class PropertyQualityFilter:
         if self._client is None:
             import anthropic as _anthropic
 
+            if self._http_client is None:
+                self._http_client = _anthropic.DefaultAsyncHttpxClient(follow_redirects=False)
+            else:
+                # A redirected POST must not create an unmetered second send
+                # inside the HTTP client beneath the SDK middleware.
+                self._http_client.follow_redirects = False
             self._client = _anthropic.AsyncAnthropic(
                 api_key=self._api_key,
+                base_url="https://api.anthropic.com",
+                middleware=[self._spend_meter],
                 max_retries=self.analysis_config.visual.sdk_retries,
                 http_client=self._http_client,
                 timeout=_anthropic.Timeout(
@@ -816,7 +848,7 @@ class PropertyQualityFilter:
             return hashlib.sha256(text.encode()).hexdigest()
 
         return AnalysisProvenance(
-            version=2,
+            version=3,
             configuration=self.analysis_config,
             sdk_version=sdk_version,
             max_images=self._max_images,
@@ -825,6 +857,19 @@ class PropertyQualityFilter:
             visual_output_sha256=digest(VISUAL_ANALYSIS_TOOL),
             evaluation_output_sha256=digest(_eval_json_schema()),
         )
+
+    def _raise_spend_deferral(self, error: SpendDeferred) -> NoReturn:
+        if error.reason in {
+            "uncertain_provider_outcome",
+            "unpriced_provider_response",
+            "ledger_unavailable",
+        }:
+            self._breaker.record_failure()
+            # Stop the current batch on provider/accounting uncertainty. The
+            # middleware has already kept the durable reservation and stopped
+            # the SDK's own retry loop.
+            raise APIUnavailableError(error.reason) from None
+        raise error
 
     @staticmethod
     def _get_media_type(url: str) -> ImageMediaType:
@@ -1018,6 +1063,9 @@ class PropertyQualityFilter:
                 data_dir=data_dir,
                 floor_area_sqm=merged.floor_area_sqm,
             )
+        except SpendDeferred as exc:
+            logger.info("analysis_spend_deferred", property_id=merged.unique_id, reason=exc.reason)
+            raise
         except APIUnavailableError:
             raise  # Propagate to caller for circuit breaker handling
         except AnalysisOutputError as exc:
@@ -1173,7 +1221,7 @@ class PropertyQualityFilter:
             InternalServerError,
             RateLimitError,
         )
-        from anthropic.types import ToolParam, ToolUseBlock
+        from anthropic.types import ToolParam
 
         phase = self.analysis_config.visual
         client = self._phase_client(phase)
@@ -1213,12 +1261,15 @@ class PropertyQualityFilter:
 
             from anthropic import Timeout
 
-            response = await client.messages.create(
-                **create_kwargs,
-                timeout=Timeout(
-                    phase.request_timeout_seconds, connect=phase.connect_timeout_seconds
-                ),
-            )
+            with self._spend_meter.bind(
+                property_id, "visual", self._analysis_provenance(), _visual_output
+            ):
+                response = await client.messages.create(
+                    **create_kwargs,
+                    timeout=Timeout(
+                        phase.request_timeout_seconds, connect=phase.connect_timeout_seconds
+                    ),
+                )
 
             if hasattr(response, "usage"):
                 usage = response.usage
@@ -1234,16 +1285,12 @@ class PropertyQualityFilter:
                         cache_creation_tokens=cache_creation,
                     )
 
-            check_stop_reason(response, "visual")
-            tools = [block for block in response.content if isinstance(block, ToolUseBlock)]
-            if len(tools) != 1 or tools[0].name != "property_visual_analysis":
-                raise output_failure("visual", "malformed_output", response)
-            visual_data = validate_output(
-                tools[0].input, _VisualAnalysisResponse, "visual", response
-            )
+            visual_data = _visual_output(response)
             self._breaker.record_success()
             return visual_data
 
+        except SpendDeferred as exc:
+            self._raise_spend_deferral(exc)
         except AnalysisOutputError:
             raise
 
@@ -1448,21 +1495,24 @@ class PropertyQualityFilter:
             }
             if phase.reasoning == "adaptive":
                 create_kwargs["thinking"] = {"type": "adaptive"}
-            eval_response = await client.messages.create(
-                **create_kwargs,
-                timeout=Timeout(
-                    phase.request_timeout_seconds, connect=phase.connect_timeout_seconds
-                ),
-            )
+            with self._spend_meter.bind(
+                property_id, "evaluation", self._analysis_provenance(), _evaluation_output
+            ):
+                eval_response = await client.messages.create(
+                    **create_kwargs,
+                    timeout=Timeout(
+                        phase.request_timeout_seconds, connect=phase.connect_timeout_seconds
+                    ),
+                )
 
             if hasattr(eval_response, "usage"):
                 self.token_usage.add_from_response(eval_response.usage)
 
-            check_stop_reason(eval_response, "evaluation")
-            raw_json = evaluation_json(eval_response)
-            eval_data = validate_output(raw_json, _EvaluationResponse, "evaluation", eval_response)
+            eval_data = _evaluation_output(eval_response)
             self._breaker.record_success()
 
+        except SpendDeferred as exc:
+            self._raise_spend_deferral(exc)
         except AnalysisOutputError:
             raise
         except BadRequestError as e:

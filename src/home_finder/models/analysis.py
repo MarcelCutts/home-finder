@@ -56,9 +56,10 @@ class AnalysisProvenance(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    # v1 precedes required live-output validation; v2 records that contract.
+    # v1 precedes required live-output validation; v2 records that contract;
+    # v3 additionally requires per-attempt spend admission and billing scope.
     # Keep the v1 default when reading an older record without a version field.
-    version: Literal[1, 2] = 1
+    version: Literal[1, 2, 3] = 1
     configuration: AnalysisConfig
     sdk_version: str
     max_images: int = Field(ge=1, le=20)

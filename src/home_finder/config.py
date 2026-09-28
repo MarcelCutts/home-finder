@@ -7,6 +7,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from home_finder.models import FurnishType, SearchCriteria, TransportMode
 from home_finder.models.analysis import AnalysisConfig
+from home_finder.models.spend import SpendPolicy
 
 
 class Settings(BaseSettings):
@@ -79,6 +80,10 @@ class Settings(BaseSettings):
         description="Versioned per-phase analysis JSON; when set, overrides legacy thinking flag",
     )
     # AI analysis budget
+    analysis_spend_policy: SpendPolicy | None = Field(
+        default=None,
+        description="Exact USD caps as JSON; absent policy defers every paid analysis attempt",
+    )
     max_analysis_per_run: int = Field(
         default=75,
         ge=1,

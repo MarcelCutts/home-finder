@@ -13,10 +13,12 @@ from tests.test_filters.test_quality_respx import (
     PHASE2_EVALUATION_RESPONSE,
 )
 
+pytestmark = pytest.mark.usefixtures("native_analysis_spending")
+
 CONTENT = [{"type": "text", "text": "Transport compatibility fixture"}]
 
 
-async def test_native_requests_match_captured_sdk_081_baseline():
+async def test_metered_requests_preserve_baseline_except_explicit_billing_scope():
     requests = []
     responses = [PHASE1_VISUAL_RESPONSE, PHASE2_EVALUATION_RESPONSE]
 
@@ -47,9 +49,12 @@ async def test_native_requests_match_captured_sdk_081_baseline():
     # Recorded with SDK 0.81.0's real serializer and native mocked HTTP client.
     # Change deliberately alongside an approved prompt/contract change, never
     # merely to accommodate a transport upgrade.
+    payloads = [json.loads(r.content) for r in requests]
+    for payload in payloads:
+        assert payload.pop("service_tier") == "standard_only"
+        assert payload.pop("inference_geo") == "global"
     assert [
-        hashlib.sha256(json.dumps(json.loads(r.content), sort_keys=True).encode()).hexdigest()
-        for r in requests
+        hashlib.sha256(json.dumps(body, sort_keys=True).encode()).hexdigest() for body in payloads
     ] == [
         "05007bbf2d261d843c31919c2a52daba72e6f3fb6ec202379413aca80323788b",
         "1be5ce938e29adea05be23dc2e1609b528301e535ef2b267af7e91709fc37511",
@@ -91,7 +96,7 @@ async def test_actual_sdk_retry_preserves_request_and_counts_success_usage(statu
     assert native.is_closed
 
 
-async def test_native_timeout_exhausts_existing_single_retry_without_success_usage():
+async def test_native_timeout_keeps_reservation_without_retry(native_analysis_spending):
     requests = []
 
     def respond(request):
@@ -102,13 +107,18 @@ async def test_native_timeout_exhausts_existing_single_retry_without_success_usa
     async with PropertyQualityFilter("fixture", http_client=native) as quality:
         with pytest.raises(APIUnavailableError):
             await quality._run_visual_analysis(CONTENT, "fixture:timeout")
-        assert len(requests) == 2
+        assert len(requests) == 1
         assert quality.token_usage.input_tokens == quality.token_usage.output_tokens == 0
         assert quality._breaker.failure_count == 1
     assert native.is_closed
+    report = await native_analysis_spending[0].spend.report()
+    assert report["held_nanousd"] == 6_315_000_000
+    assert report["unresolved"][0]["state"] == "unknown"
 
 
-async def test_cancellation_reaches_native_request_without_retry_or_circuit_failure():
+async def test_cancellation_reaches_native_request_without_retry_or_circuit_failure(
+    native_analysis_spending,
+):
     entered = asyncio.Event()
     never = asyncio.Event()
     calls = 0
@@ -132,6 +142,9 @@ async def test_cancellation_reaches_native_request_without_retry_or_circuit_fail
         assert calls == 1 and quality._breaker.failure_count == 0
         assert quality.token_usage.input_tokens == quality.token_usage.output_tokens == 0
     assert native.is_closed
+    report = await native_analysis_spending[0].spend.report()
+    assert report["held_nanousd"] == 6_315_000_000
+    assert report["unresolved"][0]["result"] == "cancelled"
 
 
 async def test_unused_injected_client_is_closed_without_constructing_sdk():

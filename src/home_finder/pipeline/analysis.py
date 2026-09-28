@@ -17,6 +17,7 @@ from home_finder.models import (
     PropertyQualityAnalysis,
     TransportMode,
 )
+from home_finder.models.spend import SpendDeferred
 from home_finder.pipeline.event_recorder import EventRecorder, PropertyEvent
 from home_finder.pipeline.runner import exclusive_runner
 from home_finder.pipeline.stages import PreAnalysisResult
@@ -187,6 +188,7 @@ async def _run_concurrent_analysis(
     concurrency: int = 15,
     per_property_timeout: float | None = None,
     on_error: Callable[[], None] | None = None,
+    on_deferred: Callable[[], None] | None = None,
     on_timeout: Callable[[str], Awaitable[None]] | None = None,
     breaker_log_event: str = "api_circuit_breaker_activated",
     error_log_event: str = "analysis_failed",
@@ -256,6 +258,11 @@ async def _run_concurrent_analysis(
                 )
                 if on_error:
                     on_error()
+                continue
+            except SpendDeferred as exc:
+                logger.info("analysis_admission_deferred", reason=exc.reason)
+                if on_deferred:
+                    on_deferred()
                 continue
             except APIUnavailableError:
                 remaining = [t for t in tasks if not t.done()]
@@ -370,6 +377,18 @@ async def _run_quality_and_save(
             if qf:
                 try:
                     return await qf.analyze_single_merged(merged, data_dir=settings.data_dir)
+                except SpendDeferred as exc:
+                    if recorder is not None:
+                        recorder.record(
+                            PropertyEvent(
+                                merged.unique_id,
+                                merged.canonical.source.value,
+                                "analysis_deferred",
+                                "analysis",
+                                {"reason": "spend_" + exc.reason},
+                            )
+                        )
+                    raise
                 except Exception:
                     await storage.pipeline.record_analysis_failure(merged.unique_id)
                     raise
@@ -457,6 +476,8 @@ async def _run_quality_and_save(
             max_images=settings.quality_filter_max_images,
             enable_extended_thinking=settings.enable_extended_thinking,
             analysis_config=settings.analysis_config,
+            spend_repository=storage.spend,
+            spend_policy=settings.analysis_spend_policy,
         ) as quality_filter:
             count = await _do_analysis(quality_filter)
             token_usage = quality_filter.token_usage
@@ -601,6 +622,8 @@ async def _drain_reanalysis_queue(
         max_images=settings.quality_filter_max_images,
         enable_extended_thinking=settings.enable_extended_thinking,
         analysis_config=settings.analysis_config,
+        spend_repository=storage.spend,
+        spend_policy=settings.analysis_spend_policy,
     ) as quality_filter:
 
         async def _analyze(
@@ -700,6 +723,8 @@ async def run_reanalysis(
             max_images=settings.quality_filter_max_images,
             enable_extended_thinking=settings.enable_extended_thinking,
             analysis_config=settings.analysis_config,
+            spend_repository=storage.spend,
+            spend_policy=settings.analysis_spend_policy,
         ) as quality_filter:
 
             async def _analyze(
@@ -730,6 +755,10 @@ async def run_reanalysis(
                 nonlocal failed
                 failed += 1
 
+            def _count_deferred() -> None:
+                nonlocal deferred
+                deferred += 1
+
             await _run_concurrent_analysis(
                 queue,
                 _analyze,
@@ -737,6 +766,7 @@ async def run_reanalysis(
                 concurrency=settings.quality_concurrency,
                 per_property_timeout=settings.property_analysis_timeout,
                 on_error=_count_error,
+                on_deferred=_count_deferred,
                 breaker_log_event="reanalysis_api_circuit_breaker",
                 error_log_event="reanalysis_failed",
             )

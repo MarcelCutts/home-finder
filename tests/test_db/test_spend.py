@@ -264,6 +264,9 @@ async def run():
     await storage.initialize()
     attempt = await storage.spend.admit(spec(), policy())
     await storage.spend.mark_dispatched(attempt)
+    async with storage._read_connection() as conn:
+        async with conn.execute("PRAGMA synchronous") as cursor:
+            assert (await cursor.fetchone())[0] == 2
     os._exit(23)
 asyncio.run(run())
 """

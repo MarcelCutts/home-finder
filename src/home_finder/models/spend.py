@@ -13,6 +13,14 @@ Units = Annotated[int, Field(strict=True, ge=0, le=10_000_000)]
 USD = Annotated[Decimal, Field(ge=0, le=1_000_000, max_digits=16, decimal_places=9)]
 
 
+class SpendDeferred(Exception):
+    """No new paid dispatch is allowed; retain the work for review or retry."""
+
+    def __init__(self, reason: str) -> None:
+        self.reason = reason
+        super().__init__(reason)
+
+
 def nanousd(amount: Decimal) -> int:
     """Never round a budget or provider charge into a different monetary value."""
     scaled = amount * NANOUSD_PER_USD

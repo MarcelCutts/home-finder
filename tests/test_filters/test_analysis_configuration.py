@@ -18,6 +18,8 @@ from tests.test_filters.test_quality_respx import (
     PHASE2_EVALUATION_RESPONSE,
 )
 
+pytestmark = pytest.mark.usefixtures("native_analysis_spending")
+
 
 def test_legacy_flag_applies_only_without_explicit_configuration():
     legacy = PropertyQualityFilter("fixture", enable_extended_thinking=False)

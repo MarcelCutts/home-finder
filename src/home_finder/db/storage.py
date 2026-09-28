@@ -73,7 +73,8 @@ class DuplicateTelegramUpdateError(Exception):
 _CONNECTION_PRAGMAS: Final[tuple[str, ...]] = (
     "PRAGMA journal_mode=WAL",
     "PRAGMA busy_timeout=5000",
-    "PRAGMA synchronous=NORMAL",
+    # Paid-attempt reservations must reach durable storage before dispatch.
+    "PRAGMA synchronous=FULL",
     "PRAGMA foreign_keys=ON",
     "PRAGMA cache_size=-32000",
     "PRAGMA temp_store=MEMORY",

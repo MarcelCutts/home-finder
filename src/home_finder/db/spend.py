@@ -18,17 +18,12 @@ from home_finder.models.spend import (
     nanousd,
     usd_text,
 )
+from home_finder.models.spend import (
+    SpendDeferred as SpendDeferred,
+)
 
 ConnectionScope = Callable[[], AbstractAsyncContextManager[aiosqlite.Connection]]
 _HELD = "('reserved', 'dispatched', 'unknown')"
-
-
-class SpendDeferred(Exception):
-    """Admission did not dispatch work or consume an attempt."""
-
-    def __init__(self, reason: str) -> None:
-        self.reason = reason
-        super().__init__(reason)
 
 
 class AttemptTransitionError(Exception):
@@ -192,14 +187,19 @@ class SpendRepository:
             if cursor.rowcount != 1:
                 raise AttemptTransitionError("Only an undispatched reservation can be released")
 
-    async def mark_unknown(self, attempt_id: str, reason: str) -> None:
+    async def mark_unknown(
+        self, attempt_id: str, reason: str, *, request_id: str | None = None
+    ) -> None:
         if reason not in {"timeout", "cancelled", "connection", "process_exit", "invalid_usage"}:
             raise ValueError("Unsupported uncertainty reason")
+        if request_id is not None and len(request_id) > 128:
+            raise ValueError("Request ID exceeds metadata limit")
         async with self._transaction() as conn:
             cursor = await conn.execute(
-                """UPDATE paid_attempts SET state = 'unknown', result = COALESCE(result, ?)
+                """UPDATE paid_attempts SET state = 'unknown', result = COALESCE(result, ?),
+                    request_id = COALESCE(request_id, ?)
                     WHERE attempt_id = ? AND state IN ('dispatched', 'unknown')""",
-                (reason, attempt_id),
+                (reason, request_id, attempt_id),
             )
             if cursor.rowcount != 1:
                 raise AttemptTransitionError("Attempt was not dispatched or is already settled")

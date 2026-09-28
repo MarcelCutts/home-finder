@@ -24,6 +24,8 @@ from home_finder.models import (
     PropertySource,
 )
 
+pytestmark = pytest.mark.usefixtures("native_analysis_spending")
+
 
 @pytest.fixture
 async def native_api():

@@ -1,6 +1,6 @@
 # PR13a: Durable paid-attempt ledger and exact reservations
 
-**Date:** 28 September 2026. **State:** implemented and verified.
+**Date:** 28 September 2026. **State:** committed as `02093c0`.
 **Predecessor:** PR20c output failures, `f632dd4`.
 **Parent:** [PR13 specification](2026-09-28-research-synthesis-and-delivery-plan.md#pr13--account-for-every-paid-attempt-and-reserve-spend-before-admission-m).
 
@@ -8,7 +8,7 @@
 
 This segment establishes the durable accounting contract. Migration 009 adds `paid_attempts`; [SpendRepository](../../src/home_finder/db/spend.py) admits, dispatches, settles and reconciles attempts through PR04's owned transactions. [Spending models](../../src/home_finder/models/spend.py) define exact amounts, the supported rate card and bounded metadata. A separate operator command reports spending without initialising storage or running the application.
 
-**PR13b must connect this ledger to every physical analysis request, including SDK retries and reanalysis.** The existing analysis path is not yet metered by this foundation alone. No live policy, paid request, collection restart or notification was activated. Chargeable route/browser services still need their provider-specific units, terms and admission boundary before they can be enabled under a common spending policy.
+**This foundation alone did not meter the application.** The subsequent [PR13b enforcement](2026-09-28-pr13b-native-spend-enforcement.md) connects every physical native analysis attempt, including SDK retries and reanalysis, adds guarded reconciliation and strengthens WAL commit durability to `FULL`. No live policy, paid request, collection restart or notification was activated. Chargeable route/browser services still need their provider-specific units, terms and admission boundary before they can be enabled under a common spending policy.
 
 ## Amounts and rates
 
