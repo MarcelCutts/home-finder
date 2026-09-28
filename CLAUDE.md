@@ -155,7 +155,7 @@ async with AsyncSession() as session:
 
 ## Web Dashboard Notes
 
-- **Access and writes:** Status PATCH and reanalysis POST mutate state; application-level owner authentication/CSRF protection are pending PR02. Keep access private. `--no-pipeline` disables collection but does not make the dashboard read-only. Do not use `sync-to-fly.sh` to overwrite dashboard-written history; authority/restore work is PR05.
+- **Access and writes:** All dashboard routes and mounted assets require owner HTTP Basic authentication. Set `HOME_FINDER_WEB_OWNER_PASSWORD` (random, 24+ characters) and the canonical `WEB_BASE_URL`; missing/short passwords fail closed. Mutations require an exact same-origin Origin/Referer, with body/time/rate bounds. `/health` is minimal/public; `/diagnostics` is protected. Telegram callbacks require secret + chat + owner and deduplicate update IDs in status history (schema 7). This local implementation does not establish that production ingress is protected. `--no-pipeline` disables collection but does not make the dashboard read-only. Do not use `sync-to-fly.sh` to overwrite dashboard-written history; authority/restore work is PR05.
 - **Scheduling:** Serve mode waits 55 minutes by default ±5 minutes after completion, using an in-process lock only. The old cron `*/55` runs at :00 and :55 (55/5-minute gaps), not every 55 minutes. PR12a will establish process exclusion and a reliable schedule.
 - **HTMX pattern:** Dashboard `GET /` checks `HX-Request` header — returns `_results.html` partial or full `dashboard.html`. Filter form uses `hx-get="/" hx-target="#results" hx-push-url="true"`.
 - **Image serving:** `GET /images/{unique_id}/{filename}` serves cached images with directory traversal protection and immutable cache headers.

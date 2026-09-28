@@ -27,6 +27,11 @@ class Settings(BaseSettings):
         default=0,
         description="Telegram chat ID to send notifications to",
     )
+    telegram_owner_user_id: int | None = Field(
+        default=None,
+        gt=0,
+        description="Callback owner user ID; defaults to a positive private chat ID",
+    )
 
     # TravelTime API configuration (optional, needed for commute filtering)
     traveltime_app_id: str = Field(
@@ -160,6 +165,11 @@ class Settings(BaseSettings):
     )
 
     # Web dashboard
+    web_owner_username: str = Field(default="owner", pattern=r"^[A-Za-z0-9._-]{1,64}$")
+    web_owner_password: SecretStr = Field(
+        default=SecretStr(""),
+        description="Owner password (24+ characters); unset or short denies access",
+    )
     web_base_url: str = Field(
         default="",
         description="Base URL for web dashboard (e.g. https://home-finder.fly.dev)",

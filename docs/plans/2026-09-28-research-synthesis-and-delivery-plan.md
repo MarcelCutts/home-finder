@@ -1,7 +1,7 @@
 # Home Finder: research synthesis and sequential delivery plan
 
 **Reviewed:** 28 September 2026. **Code baseline:** `a86e51e`.
-**Status:** PR01 reviewed and accepted for local commit; sequential implementation continues on `codex/pr01-ci-baseline`. See the [segment handoff](2026-09-28-pr01-ci-baseline.md) and subsequent implementation records. Local commits do not imply merge or deployment.
+**Status:** PR01 committed as `1dfdcb4`; PR02 implemented and verified on `codex/pr01-ci-baseline`, with PR03 next. See the [PR01 handoff](2026-09-28-pr01-ci-baseline.md) and [PR02 record](2026-09-28-pr02-owner-access.md). Local commits do not imply merge or deployment. Continue sequential verified commits under the owner's latest instruction; per-segment pauses are superseded.
 **Audience:** the owner, reviewers, and agents implementing one PR at a time.
 **Revision:** incorporates the verified findings from [Fable's final review](2026-09-28-research-synthesis-and-delivery-plan-review.md); see §11 for accepted corrections, qualifications and fresh checks.
 

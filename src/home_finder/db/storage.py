@@ -47,6 +47,11 @@ __all__ = ["PropertyStorage"]
 
 logger = get_logger(__name__)
 
+
+class DuplicateTelegramUpdateError(Exception):
+    """The callback's status change has already been committed."""
+
+
 _CONNECTION_PRAGMAS: Final[tuple[str, ...]] = (
     "PRAGMA journal_mode=WAL",
     "PRAGMA busy_timeout=5000",
@@ -1194,12 +1199,23 @@ class PropertyStorage:
         *,
         note: str | None = None,
         source: str = "web",
+        telegram_update_id: int | None = None,
     ) -> UserStatus | None:
         """Update property user_status and log the event.
 
-        Returns the previous status, or None if property not found.
+        Returns the previous status, or None if property not found. A replayed
+        Telegram update raises DuplicateTelegramUpdateError without changing state.
         """
         async with self._transaction() as conn:
+            if telegram_update_id is not None:
+                if source != "telegram" or not 0 <= telegram_update_id < 2**63:
+                    raise ValueError("Invalid Telegram update identity")
+                cursor = await conn.execute(
+                    "SELECT 1 FROM status_events WHERE telegram_update_id = ?",
+                    (telegram_update_id,),
+                )
+                if await cursor.fetchone():
+                    raise DuplicateTelegramUpdateError
             cursor = await conn.execute(
                 "SELECT user_status FROM properties WHERE unique_id = ?",
                 (unique_id,),
@@ -1216,9 +1232,9 @@ class PropertyStorage:
             )
             await conn.execute(
                 """INSERT INTO status_events
-                   (property_unique_id, from_status, to_status, note, source)
-                   VALUES (?, ?, ?, ?, ?)""",
-                (unique_id, from_status, new_status.value, note, source),
+                   (property_unique_id, from_status, to_status, note, source, telegram_update_id)
+                   VALUES (?, ?, ?, ?, ?, ?)""",
+                (unique_id, from_status, new_status.value, note, source, telegram_update_id),
             )
         logger.debug(
             "user_status_updated",

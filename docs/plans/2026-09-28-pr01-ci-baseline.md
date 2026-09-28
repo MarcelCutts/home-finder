@@ -1,6 +1,6 @@
 # PR01: CI baseline and explicit release activation
 
-**Date:** 28 September 2026. **State:** reviewed and accepted for local commit; not pushed, merged or deployed.
+**Date:** 28 September 2026. **State:** committed as `1dfdcb4`; not pushed, merged or deployed.
 **Branch:** `codex/pr01-ci-baseline`, based on `a86e51e`.
 **Parent:** [delivery plan, PR01](2026-09-28-research-synthesis-and-delivery-plan.md#pr01--restore-a-reproducible-ci-baseline-and-control-release-activation-s).
 **Review boundary:** segment 1 was completed and the goal paused. The owner subsequently instructed: “commit each step and continue through the tasks, continuing to use goals.” Proceed with sequential verified commits; the earlier pause requirement is superseded.
