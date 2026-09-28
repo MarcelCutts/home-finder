@@ -1,0 +1,66 @@
+# PR06b-1: Immutable source observations and deterministic replay
+
+**Date:** 28 September 2026. **State:** implemented and verified; collector integration follows.
+**Predecessors:** PR06a text retention, `19d6f24`; PR05a authority/restore, `ad34ba9`; PR19a reference pack, `9498f39`.
+**Parent:** [PR06 specification](2026-09-28-research-synthesis-and-delivery-plan.md#pr06--preserve-descriptions-features-corrections-and-source-provenance-l).
+
+## Outcome and delivery boundary
+
+The application now has an additive source-evidence ledger, a bounded versioned ingestion contract, immutable historical baselines and deterministic per-source field replay. Retries with the same producer/event identity are harmless; changed evidence under that identity is rejected atomically. Missing fields preserve known information, explicit corrections can clear it, and equally authoritative disagreements remain visible instead of silently picking an arrival winner.
+
+This is the **foundation slice of PR06b**. Existing scrapers, detail enrichment, current listing projections, model inputs and dashboard reads have not yet switched to this ledger. Normal collection consequently does not automatically produce these new records yet. That integration is the next slice, followed by the authenticated transport if collection must remain on a separate host. Keeping the foundation additive allows isolated comparison before changing visible behavior. The broader PR06b gate remains open.
+
+## Why arrival order needed an explicit rule
+
+The earlier current-text repair correctly protects detail text from search summaries and rejects older timestamps. Those two rules alone can yield different results when a newer search result arrives before an older detail response, compared with the reverse arrival order. An immutable replay system must make the same choice from the same set of evidence.
+
+Policy version 1 ranks **description and features** by authority first: detail and explicit correction share tier 2; search uses tier 1. Within a tier, the latest UTC observation time wins. All other currently supported fields use the latest source observation time. Receipt time never changes authority or freshness. This means an older retained detail description can outrank a later summary, but its old observation timestamp remains explicit; authority is not a guarantee of freshness. A later detail/correction can replace it.
+
+At the same authority and observation time, identical values can share provenance. Different values produce `conflicting`, no selected value, the alternative count and all winning observation IDs. A later authoritative correction resolves the projection while preserving the conflicting originals. An explicit clear participates in the same ranking; a sparse response or older detail cannot revive the cleared value. Sources remain separate, so a Rightmove statement cannot silently overwrite a Zoopla statement.
+
+The read query retains every top-rank tie with `DENSE_RANK`, then the shared pure projection function derives a stable result and checksum. Replaying all 24 arrival permutations of the four-event correction scenario yields the same checksum. The SQL and offline replay outputs agree. This uses supported SQLite window behavior without adding another service. [SQLite window functions](https://www.sqlite.org/windowfunctions.html).
+
+## Versioned normalized contract
+
+The [models](../../src/home_finder/models/observations.py) and [repository](../../src/home_finder/db/observations.py) expose `storage.observations.ingest`, `get`, `history`, `project` and `baseline`. No HTTP endpoint or command accepting arbitrary SQL/file replacement is introduced.
+
+Each fresh observation records schema version, producer/event identity, provider/source ID, canonical listing URL, search/detail/correction origin, aware UTC observation time, parser name/version/code checksum and typed fields. The authority assigns a separate first receipt time. Normalized JSON has stable key ordering, exact retained Unicode and a SHA-256 identifier. Repeated delivery does not update the first receipt or append duplicate field evidence. The same producer/event identity with changed content fails the whole batch; re-parsing an old response with a different parser is a new explicitly identified event, not an overwrite.
+
+The fields currently cover title, monthly price, bedrooms, address, postcode, paired coordinates, description, features, gallery/floorplan URL sets, reported floorplan count, portal-reported date, availability date and explicit agent/branch identifiers. Null/omitted means unavailable. A present value is separately represented from `cleared`; empty strings/lists are not an implicit clear. Clearing requires correction origin and a reason. Zero bedrooms or zero reported floorplans are valid observed numbers; booleans cannot masquerade as numeric values. Invalid coordinates, arbitrary extra fields and budgeting assumptions such as `council_tax_budget_estimate` are rejected.
+
+Portal dates retain the exact source wording, its declared meaning (`listed`, `first_visible`, `reduced`, `relisted`, `available` or `unspecified`) and optional calendar-date **or** instant precision. They are not collector first-seen dates. Agent names without an explicit source agent/branch ID are rejected. The contract provides room for the adapter metadata already observed in the saved Rightmove responses; it does not claim the adapters now extract it.
+
+The optional raw-capture reference contains the private capture manifest checksum, request-record index, response checksum and size. It is **an external reference**, not verification that those response bytes exist in the authority. Without it, only normalized projection replay is possible; parser replay still requires the retained capture. No raw body, request/response headers or provider credentials enter this ledger. Version 1 accepts URLs without user-info, query or fragment; an adapter must retain the original response separately and supply an appropriate canonical URL or omit an unsupported optional URL field. Host/target identity and retrieval authorization still belong to adapter/identity/intake validation; this repository performs no URL requests.
+
+The contract bounds normalized observations to **250,000 UTF-8 bytes**, batches to **100 events / 4,000,000 bytes**, descriptions to 100,000 characters and features to 100 entries. An observation more than five minutes ahead of authority receipt time is rejected instead of poisoning the latest-value ordering. The five-minute allowance is a clock-skew tolerance, not permission to fabricate observation times. Provider dates can differ because they have separate semantics.
+
+History uses stable checksum keyset pagination, with at most 100 records and 4 MB per page. A page can be shorter than the requested count due to the byte bound; continue after its last checksum until an empty page, not merely until a short page. Checksums are not chronological sort keys. Projection material is bounded to 512 winning field rows / 4 MB; excessive ties fail explicitly rather than truncating disagreement. Limits can be revised with measured need, while remaining within the small-service scope.
+
+## Atomicity, historical classification and retention
+
+Migration 010 adds three tables: `source_observations`, its normalized field index, and `source_observation_baselines`. Existing source, canonical property, status, price, note and alias rows remain intact. Each pre-existing source-listing row is preserved using an explicit source-column allowlist, its exact row-content checksum, original backfill flag, nonempty-description-column state and migration-record time. Its category is `historical_projection`; no fresh source observation time is invented. Existing `text_json` and historical timestamps remain in the snapshot even though the baseline itself does not certify their acquisition provenance. Missing descriptions are not reconstructed from model summaries.
+
+Fresh observations and field rows commit in the same owned `BEGIN IMMEDIATE` transaction already established by PR04, under the durable PR13 connection policy. A later item conflict or field-write failure rolls the entire batch back. SQLite serializes competing writers; two independent connections delivering the same event admit exactly one copy. Idempotency uses explicit identity checks and uniqueness, not destructive replacement. [SQLite transactions](https://www.sqlite.org/lang_transaction.html), [SQLite UPSERT behavior](https://www.sqlite.org/lang_upsert.html).
+
+The evidence tables have no dependency on the lifetime of a canonical property, pipeline run, notification or quality analysis. SQL triggers reject updates and deletes to committed evidence. Corrections append new observations. No automatic expiration or deletion job is enabled in this foundation: preserve these private records through review/cutover and include them in the consistent backup. Any later retention/purge operation must be an explicit reviewed lifecycle change that accounts for assessments still referencing the evidence; PR14 owns that integration. The external raw capture retains its own access/retention policy, and a checksum reference does not extend its availability or content-use permission.
+
+The repository is an internal trusted-process interface. `producer_id` is an idempotency namespace, **not authentication**. The future transport must authenticate and bind that identity server-side, constrain correction capability, bound the incoming request before parsing and implement retryable receipts. The ledger's existence does not open remote writes, make a client assertion true, start analysis or authorize notifications.
+
+## Production-copy rehearsal
+
+A new private working copy was made from the verified PR05a DB, whose original SHA-256 remains `e1494adf0f5b174cd9a2e142f50aa25b8ffd5a85ba3f4d66383a3e8762cea639`. Only the copy was initialized through schema **6 → 10**. The working database is 27,291,648 bytes after migration and the isolated test events; this introduces no scale-driven reason to change databases.
+
+- **All original application columns and rows remain identical**, including 1,016 properties, 3,267 source listings, 1,001 analyses, 15,872 image references, 43,521 property events, 106 price events, 30 status events, 201 aliases, the saved viewing message and `sqlite_sequence`.
+- All **3,267 historical baseline snapshots** match the source row values and original backfill flags exactly. Every historical description column is absent/empty and classified unavailable. No new fresh observation is inferred from that historical inventory.
+- Three synthetic events under an explicitly isolated fixture identity were ingested in reversed order and replayed again. No duplicates were inserted; SQL and pure offline projections match. Existing application rows remain identical after this experiment.
+- Integrity reports `ok`, with zero foreign-key violations. SQLite refreshed only its expected internal `sqlite_stat1`/`sqlite_stat4` planner statistics among the compared existing tables. The input backup file is unchanged.
+
+Private evidence: `/tmp/home-finder-pr06b/migration-work/rehearsal.json` and `migration-probe.log`. No production initialization, write, deployment, portal request, paid call or notification occurred.
+
+## Verification and next agent segment
+
+The focused suite passes **52 tests**, including the existing migration suite. It covers strict provenance/value types, UTF-8 byte caps, malformed in-process model copies, source-only inputs, canonical URL constraints, exact redelivery, conflicting event identities, all 24 arrival permutations, sparse/stale responses, explicit clear, equal-rank conflict and resolution, separate sources, two SQLite connections, partial-write failure, cancellation, SQL immutability, bounded pagination/ties, exact historical preservation and a real subprocess `os._exit(23)` after acknowledgement. That last case verifies the committed observation and its field projection survive reopening without graceful shutdown.
+
+The full suite passes **2,938 tests on both Python 3.11.16 and 3.14.7**, with **88.12% / 88.02%** combined line/branch coverage. Ruff lint/format (215 files), strict mypy (92 source files) and `git diff --check` pass. Evidence is under `/tmp/home-finder-pr06b/`.
+
+The next PR06b slice must connect actual adapter outputs and detail results to this contract, carry stable event identities and real parser/capture provenance, retain portal-date/agent/floorplan metadata from verified fixtures, and compare current versus replayed projections. Preserve existing user/history rows during integration; do not label a current projection as a raw response or use a property object's construction time as a fabricated capture time. Keep malformed/sparse responses distinct from authoritative corrections. Carry selected source-observation references into the actual assessment-input provenance, then complete the bounded authenticated collector interface if separate placement is needed. Only after those checks should the active projection path switch. PR07 identity and PR08b/09b cross-source/coverage semantics remain subsequent work.

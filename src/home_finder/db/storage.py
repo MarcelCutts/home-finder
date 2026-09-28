@@ -24,6 +24,7 @@ from home_finder.db.listing_text import (
     text_from_source_row,
 )
 from home_finder.db.migrations import run_migrations
+from home_finder.db.observations import ObservationRepository
 from home_finder.db.pipeline_repo import PipelineRepository
 from home_finder.db.row_mappers import (
     build_base_insert,
@@ -120,6 +121,12 @@ class PropertyStorage:
             self._transaction,
         )
         self._spend = SpendRepository(self._read_connection, self._transaction)
+        self._observations = ObservationRepository(self._read_connection, self._transaction)
+
+    @property
+    def observations(self) -> ObservationRepository:
+        """Immutable source evidence; separate from current listing projections."""
+        return self._observations
 
     @property
     def spend(self) -> SpendRepository:

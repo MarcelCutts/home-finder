@@ -793,6 +793,13 @@ async def migrate_009_paid_attempts(conn: aiosqlite.Connection) -> None:
     """)
 
 
+async def migrate_010_source_observations(conn: aiosqlite.Connection) -> None:
+    """Preserve historical rows and add independently replayable source evidence."""
+    from home_finder.db.observations import create_observation_schema
+
+    await create_observation_schema(conn)
+
+
 _MigrationFn = Callable[[aiosqlite.Connection], Coroutine[Any, Any, None]]
 
 MIGRATIONS: list[_MigrationFn] = [
@@ -805,6 +812,7 @@ MIGRATIONS: list[_MigrationFn] = [
     migrate_007_telegram_update_ids,
     migrate_008_listing_text,
     migrate_009_paid_attempts,
+    migrate_010_source_observations,
 ]
 
 

@@ -1,6 +1,6 @@
 # PR19a: Retained development evidence and independent review tooling
 
-**Date:** 28 September 2026. **State:** implemented and verified; human labels remain pending.
+**Date:** 28 September 2026. **State:** committed as `9498f39`; human labels remain pending.
 **Predecessor:** PR05a authority/restore, `ad34ba9`; PR13b spend enforcement, `58d538b`.
 **Parent:** [PR19 specification](2026-09-28-research-synthesis-and-delivery-plan.md#pr19--build-independent-evaluation-data-and-task-specific-rubrics-m--human-labelling).
 
