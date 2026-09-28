@@ -434,6 +434,7 @@ async def _load_unenriched(
     """Load unenriched properties for retry, clearing stale image caches."""
     max_attempts = settings.max_enrichment_attempts
     unenriched = await storage.pipeline.get_unenriched_properties(max_attempts=max_attempts)
+    unenriched = unenriched[: settings.max_analysis_per_run]
     re_enrichment_ids: set[str] = set()
     if unenriched:
         retry_stats = await storage.pipeline.get_unenriched_retry_stats(max_attempts=max_attempts)
@@ -814,11 +815,12 @@ async def _run_pre_analysis_pipeline(
         )
         timings["scraping_seconds"] = time.monotonic() - t0
         if scrape_result is None:
-            return None
-        all_properties, scraper_metrics = scrape_result
-        progress.scraper_metrics = scraper_metrics
+            all_properties: list[Property] = []
+        else:
+            all_properties, scraper_metrics = scrape_result
+            progress.scraper_metrics = scraper_metrics
         progress.scraped_count = max(
-            len(all_properties), sum(m.properties_found for m in scraper_metrics)
+            len(all_properties), sum(m.properties_found for m in progress.scraper_metrics)
         )
 
         # Step 1b: Record all scraped listings in source_listings
@@ -834,11 +836,11 @@ async def _run_pre_analysis_pipeline(
             all_properties, criteria, search_areas, recorder=recorder, progress=progress
         )
         if filter_result is None:
-            if recorder is not None:
-                await recorder.flush()
-            timings["filtering_seconds"] = time.monotonic() - t0
-            return None
-        filtered, criteria_filtered_count, location_filtered_count = filter_result
+            filtered: list[Property] = []
+            criteria_filtered_count = progress.criteria_filtered_count
+            location_filtered_count = progress.location_filtered_count
+        else:
+            filtered, criteria_filtered_count, location_filtered_count = filter_result
         if recorder is not None:
             await recorder.flush()
 

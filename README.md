@@ -84,7 +84,9 @@ Availability checks need evidence for the requested listing. Generic redirects, 
 
 ## Web Dashboard
 
-The `--serve` flag starts a FastAPI web server on port 8000. Unless `--no-pipeline` is supplied, it starts a background pipeline after an initial delay, then waits the configured interval (55 minutes by default) plus or minus five minutes **after each run finishes**. This is not a fixed 55-minute start-to-start schedule. The lock covers only this process; it does not exclude another CLI/cron process. Fly uses `--serve --no-pipeline`.
+The `--serve` flag starts a FastAPI web server on port 8000. Unless `--no-pipeline` is supplied, it starts a background pipeline after 30 seconds, then waits the configured interval (55 minutes by default) plus zero to five minutes of jitter **after each run finishes**. Long runs do not accumulate missed starts. CLI, maintenance and serve entry points share a nonblocking process lock beside the resolved database path. An overlapping invocation logs `runner_skipped` with `already_running` and performs no collection or analysis. Fly uses `--serve --no-pipeline`.
+
+Runs with no eligible new listings still recover pending enrichment, initial analysis, reanalysis and price-drop delivery. Missing cached images leave analysis pending with a deferred reason; incomplete model output is not delivery-ready. Initial analysis exceptions, incomplete results and timeouts stop automatic retries after three attempts. Exhausted rows remain retained. Reanalysis preserves the existing result until a valid replacement arrives, and recovery of an already-notified fallback cannot create a second discovery alert. The initial-analysis batch alternates older retries and new work. Enrichment recovery and reanalysis are each capped at `MAX_ANALYSIS_PER_RUN` as well; these are separate bounded drains, **not a global paid-call or dollar budget**. PR13 supplies that admission/ledger contract, and PR12b adds durable due times, per-request attempts and explicit operator retry controls.
 
 ### Dashboard Features
 
@@ -108,7 +110,7 @@ The `--serve` flag starts a FastAPI web server on port 8000. Unless `--no-pipeli
 | `HOME_FINDER_WEB_PORT` | `8000` | Web server port |
 | `HOME_FINDER_WEB_HOST` | `0.0.0.0` | Web server bind address |
 | `HOME_FINDER_CARTO_BASEMAP_API_KEY` | `""` | Browser tile key for both maps; absent/failed maps fall back to listings or a location link |
-| `HOME_FINDER_PIPELINE_INTERVAL_MINUTES` | `55` | Delay after a serve-mode pipeline run, with ±5 minutes of jitter |
+| `HOME_FINDER_PIPELINE_INTERVAL_MINUTES` | `55` | Minimum delay after a serve-mode run, plus 0–5 minutes of jitter |
 
 Maps use a shared CARTO raster configuration with visible OpenStreetMap/CARTO attribution. Request a key from [CARTO](https://www.carto.com/basemaps/apikey/), check the [current terms](https://www.carto.com/legal/basemap-terms/), and restrict the key to the dashboard's actual origins in the provider console. This key is intentionally visible in the browser; it must be a dedicated basemap key, not a private backend credential. Keep other keys private. Monitor usage across all project keys; the September 25, 2026 terms allow 5 million monthly requests for non-commercial use or 1 million for commercial use. A business-operated service can count as commercial even without a user subscription. Do not enable a paid plan automatically. The tested application falls back cleanly without a key or when tiles fail; an actual provisioned key and origin restrictions still need verification before production map activation.
 
@@ -401,9 +403,11 @@ docker run --env-file .env -p 127.0.0.1:8000:8000 -v ./data:/app/data home-finde
 
 The `collector` target uses the same runtime and locked packages, with the CLI as its command. It does not install a browser or qualify live scraping; retain the collection gates below. Both targets run as UID 1000, so the mounted data directory must be writable by that user. The default target is the dashboard.
 
-### Local pipeline (cron/systemd)
+### Local pipeline scheduling
 
-The following are historical deployment examples, kept to explain existing scheduling. Keep scheduled collection disabled during the repair series. PR12a must establish a reliable single runner and exclusion across CLI/cron processes before resumption.
+Use **one scheduler** on the chosen local SQLite authority: the systemd timer below, or the serve loop. Both use a completion-relative delay of at least 55 minutes plus up to five minutes of jitter by default. Do not enable both. Keep scheduled collection and paid processing inactive until the delivery plan's source, authority and spend gates pass; implementing run exclusion does not activate collection.
+
+The advisory lock uses Unix `flock` on a local filesystem. Relative paths and symlinks resolve to the same authority; hard-linked database aliases are rejected. The lock covers participating application entry points, including standalone reanalysis and maintenance. It is not a distributed lease and cannot coordinate independent database copies, network filesystems or scripts that bypass the application. Keep `<database>.runner.lock` in place; process exit/crash releases its descriptor lock. Deleting a live lock file can defeat exclusion. Dashboard mutations continue under the existing SQLite transaction ownership rules.
 
 **systemd timer:**
 
@@ -419,20 +423,20 @@ Type=oneshot
 WorkingDirectory=/path/to/home-finder
 ExecStart=/path/to/uv run home-finder
 User=your-user
-
-[Install]
-WantedBy=multi-user.target
+TimeoutStartSec=0
 ```
 
 Create `/etc/systemd/system/home-finder.timer`:
 
 ```ini
 [Unit]
-Description=Run Home Finder every 55 minutes
+Description=Run Home Finder after its previous run finishes
 
 [Timer]
 OnBootSec=1min
-OnUnitActiveSec=55min
+OnUnitInactiveSec=55min
+RandomizedDelaySec=5min
+AccuracySec=1s
 
 [Install]
 WantedBy=timers.target
@@ -444,13 +448,7 @@ After the collection gates pass, a reviewed timer can be enabled with:
 sudo systemctl enable --now home-finder.timer
 ```
 
-**Existing cron example (not a 55-minute interval):**
-
-```bash
-*/55 * * * * cd /path/to/home-finder && /path/to/uv run home-finder >> /var/log/home-finder.log 2>&1
-```
-
-This runs at minute 00 and 55 of every hour, producing alternating 55-minute and 5-minute gaps. It has no cross-process overlap protection. The systemd example measures from activation (`OnUnitActiveSec`); the serve-mode loop measures from completion. Their semantics differ; PR12a will replace the ambiguous scheduling guidance alongside the implementation.
+The repository's `crontab` is intentionally inactive. Remove any previously installed `*/55` entry when selecting this timer: it ran at :00 and :55, giving alternating 55- and 5-minute gaps. No scheduler or service is installed/enabled by these repository changes. To stop new scheduled work, stop the selected timer or use `--no-pipeline`; do not delete pending work or the lock file. Versioned active/paused/dormant search episodes remain PR12b.
 
 ## License
 

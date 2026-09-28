@@ -31,6 +31,7 @@ from home_finder.pipeline.commands import (
     run_dedup_existing,
 )
 from home_finder.pipeline.event_recorder import EventRecorder, PropertyEvent
+from home_finder.pipeline.runner import exclusive_runner, runner_lock
 from home_finder.pipeline.scraping import (
     scrape_all_platforms,
 )
@@ -61,7 +62,17 @@ def _make_notify_callback(
     ) -> None:
         # Skip notification for properties with no images — not useful
         if not merged.images and not merged.canonical.image_url:
-            await storage.mark_notified(merged.unique_id)
+            logger.info("notification_deferred", property_id=merged.unique_id, reason="no_images")
+            if recorder is not None:
+                recorder.record(
+                    PropertyEvent(
+                        merged.unique_id,
+                        merged.canonical.source.value,
+                        "notification_deferred",
+                        "notification",
+                        {"reason": "no_images"},
+                    )
+                )
             return
 
         commute_minutes = commute_info[0] if commute_info else None
@@ -144,6 +155,7 @@ def _log_dry_run_summary(
     logger.info("dry_run_summary", count=len(processed))
 
 
+@exclusive_runner
 async def run_pipeline(
     settings: Settings,
     *,
@@ -293,11 +305,9 @@ async def _run_pipeline_with_storage(
                         _record_pre_analysis_progress(storage, run_id, progress)
                     )
             if pre is None:
-                if dry_run:
-                    logger.info("dry_run_no_new_properties")
-                elif run_id is not None:
-                    await storage.pipeline.complete_pipeline_run(run_id, progress.collection_status)
-                return
+                # Discovery is one producer of work. Existing pending analysis,
+                # reanalysis and price-drop delivery still need their drainers.
+                pre = progress
 
             logger.info(
                 "pipeline_started",
@@ -415,6 +425,7 @@ async def run_dry_run(
     await run_pipeline(settings, dry_run=True, **kwargs)  # type: ignore[arg-type]
 
 
+@exclusive_runner
 async def run_scrape_only(
     settings: Settings,
     *,
@@ -602,13 +613,17 @@ def main() -> None:
     elif args.dedup_existing:
         asyncio.run(run_dedup_existing(settings))
     elif args.generate_thumbnails:
-        generated, skipped, deleted = backfill_thumbnails(settings.data_dir)
-        logger.info(
-            "thumbnails_backfilled",
-            generated=generated,
-            skipped=skipped,
-            corrupt_deleted=deleted,
-        )
+        with runner_lock(settings.database_path) as acquired:
+            if not acquired:
+                logger.info("runner_skipped", operation="thumbnails", reason="already_running")
+                return
+            generated, skipped, deleted = backfill_thumbnails(settings.data_dir)
+            logger.info(
+                "thumbnails_backfilled",
+                generated=generated,
+                skipped=skipped,
+                corrupt_deleted=deleted,
+            )
     elif args.reanalyze:
         outcodes = [o.strip().upper() for o in args.outcode.split(",")] if args.outcode else None
         asyncio.run(

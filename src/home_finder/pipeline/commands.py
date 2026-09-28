@@ -10,11 +10,13 @@ from home_finder.filters import CommuteFilter, Deduplicator
 from home_finder.logging import get_logger
 from home_finder.models import CommuteResult
 from home_finder.models.commute import commute_minutes_projection
+from home_finder.pipeline.runner import exclusive_runner
 from home_finder.utils.image_cache import clear_image_cache, copy_cached_images
 
 logger = get_logger(__name__)
 
 
+@exclusive_runner
 async def run_backfill_commute(settings: Settings) -> None:
     """Backfill commute data for properties that have coordinates but no commute_minutes.
 
@@ -61,6 +63,7 @@ async def run_backfill_commute(settings: Settings) -> None:
         logger.info("backfill_commute_complete", updated=updated, total=len(properties))
 
 
+@exclusive_runner
 async def run_check_off_market(
     settings: Settings,
     *,
@@ -244,6 +247,7 @@ async def run_check_off_market(
         )
 
 
+@exclusive_runner
 async def run_dedup_existing(settings: Settings) -> None:
     """Retroactively merge duplicate properties already in the database.
 

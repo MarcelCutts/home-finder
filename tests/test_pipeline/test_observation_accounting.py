@@ -50,7 +50,7 @@ def boundaries():
     with (
         patch("home_finder.pipeline.scraping.OpenRentScraper", return_value=scraper),
         patch("home_finder.main.TelegramNotifier", return_value=AsyncMock()) as notifier,
-        patch("home_finder.main._run_quality_and_save", new_callable=AsyncMock) as quality,
+        patch("home_finder.pipeline.analysis.PropertyQualityFilter") as quality,
         patch("home_finder.pipeline.scraping.random.shuffle"),
     ):
         yield scraper, notifier, quality
@@ -96,7 +96,7 @@ async def test_known_quote_refreshes_before_criteria_without_analysis(
     assert latest["criteria_filtered_count"] == (1 if price <= 2500 else 0)
     assert latest["new_count"] == latest["analyzed_count"] == 0
     assert len(await rows(storage, "scraper_runs")) == 2
-    quality.assert_not_awaited()
+    quality.assert_not_called()
 
 
 async def test_cap_retains_extra_observations_and_counts_only_attempted_area(
@@ -120,7 +120,7 @@ async def test_cap_retains_extra_observations_and_counts_only_attempted_area(
     assert metrics["areas_attempted"] == metrics["areas_completed"] == 1
     assert metrics["properties_found"] == 2
     scraper.area_delay.assert_not_awaited()
-    quality.assert_not_awaited()
+    quality.assert_not_called()
 
 
 @pytest.mark.parametrize(
@@ -143,7 +143,7 @@ async def test_empty_and_failed_collection_remain_distinguishable(
     assert metrics["is_healthy"] == (status == "completed")
     assert metrics["pages_failed"] == result.pages_failed
     assert metrics["parse_errors"] == result.parse_errors
-    quality.assert_not_awaited()
+    quality.assert_not_called()
 
 
 async def test_later_page_failure_retains_prefix_and_marks_run_partial(
@@ -166,7 +166,7 @@ async def test_later_page_failure_retains_prefix_and_marks_run_partial(
     assert metrics["pages_fetched"] == metrics["pages_failed"] == 1
     assert metrics["is_healthy"] == 0
     assert len(await rows(storage, "source_listings")) == 1
-    quality.assert_not_awaited()
+    quality.assert_not_called()
 
 
 async def test_breaker_does_not_count_unattempted_areas(settings, storage, boundaries):
@@ -212,7 +212,7 @@ async def test_floorplan_exit_keeps_prior_funnel_counts(
     assert latest["post_floorplan_count"] == latest["new_count"] == 0
     assert latest["enrichment_seconds"] >= 0
     assert len(await rows(storage, "scraper_runs")) == 1
-    quality.assert_not_awaited()
+    quality.assert_not_called()
 
 
 async def test_cancellation_keeps_prefix_and_settles_repeated_cancel_during_accounting(
@@ -262,7 +262,7 @@ async def test_cancellation_keeps_prefix_and_settles_repeated_cancel_during_acco
     assert metrics["is_healthy"] == 0
     assert len(await rows(storage, "source_listings")) == 1
     scraper.close.assert_awaited_once()
-    quality.assert_not_awaited()
+    quality.assert_not_called()
 
 
 async def test_cancel_during_observation_write_finishes_received_facts(

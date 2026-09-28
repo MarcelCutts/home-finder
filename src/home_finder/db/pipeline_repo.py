@@ -599,6 +599,7 @@ class PipelineRepository:
             query = """
                 SELECT * FROM properties
                 WHERE notification_status = ?
+                  AND COALESCE(analysis_attempts, 0) < 3
                 ORDER BY first_seen ASC
             """
             params: list[Any] = [NotificationStatus.PENDING_ANALYSIS.value]
@@ -608,6 +609,7 @@ class PipelineRepository:
                 query = f"""
                     SELECT * FROM properties
                     WHERE notification_status = ?
+                      AND COALESCE(analysis_attempts, 0) < 3
                       AND unique_id NOT IN ({placeholders})
                     ORDER BY first_seen ASC
                 """
@@ -629,6 +631,16 @@ class PipelineRepository:
                     count=len(results),
                 )
             return results
+
+    async def record_analysis_failure(self, unique_id: str) -> None:
+        """Bound failed initial-analysis retries without making delivery eligible."""
+        async with self._transaction() as conn:
+            await conn.execute(
+                """UPDATE properties
+                   SET analysis_attempts = COALESCE(analysis_attempts, 0) + 1
+                   WHERE unique_id = ? AND notification_status = 'pending_analysis'""",
+                (unique_id,),
+            )
 
     async def complete_analysis(
         self,
@@ -673,8 +685,8 @@ class PipelineRepository:
 
         Finds properties where quality analysis ran but produced only the
         minimal fallback (overall_rating IS NULL), indicating the API failed.
-        Deletes the fallback quality data and transitions them back to
-        'pending_analysis' so the next pipeline run re-analyzes them.
+        Undelivered items return to 'pending_analysis'. Delivered fallbacks
+        keep their data and notification status and enter the reanalysis queue.
 
         Properties that have already been retried ``max_analysis_attempts``
         times are skipped and logged as permanently failed.
@@ -689,7 +701,7 @@ class PipelineRepository:
         async with self._transaction() as conn:
             cursor = await conn.execute(
                 """
-                SELECT p.unique_id, p.analysis_attempts FROM properties p
+                SELECT p.unique_id, p.analysis_attempts, p.notification_status FROM properties p
                 JOIN quality_analyses q ON p.unique_id = q.property_unique_id
                 WHERE q.overall_rating IS NULL
                   AND p.notification_status != ?
@@ -722,7 +734,22 @@ class PipelineRepository:
             if not retryable:
                 return 0
 
-            ids = retryable
+            # Recover already-delivered fallbacks without creating another alert.
+            sent_ids = [
+                row["unique_id"]
+                for row in rows
+                if row["unique_id"] in retryable and row["notification_status"] == "sent"
+            ]
+            if sent_ids:
+                await conn.executemany(
+                    """UPDATE quality_analyses
+                       SET reanalysis_requested_at = COALESCE(reanalysis_requested_at, ?)
+                       WHERE property_unique_id = ?""",
+                    [(datetime.now(UTC).isoformat(), uid) for uid in sent_ids],
+                )
+            ids = [uid for uid in retryable if uid not in sent_ids]
+            if not ids:
+                return len(sent_ids)
             placeholders = ",".join("?" * len(ids))
 
             await conn.execute(
@@ -738,7 +765,7 @@ class PipelineRepository:
             )
 
         logger.info("reset_failed_analyses", count=len(ids), unique_ids=ids)
-        return len(ids)
+        return len(retryable)
 
     # ------------------------------------------------------------------
     # Re-analysis support

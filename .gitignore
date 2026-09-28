@@ -140,6 +140,7 @@ dmypy.json
 
 # Database files
 *.db
+*.runner.lock
 /data/
 
 # Playwright

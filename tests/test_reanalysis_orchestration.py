@@ -405,14 +405,14 @@ class TestRunReanalysisErrorHandling:
         assert complete_events[0]["completed"] == 1
         assert complete_events[0]["failed"] == 1
 
-    async def test_none_analysis_counts_as_failed(
+    async def test_none_analysis_counts_as_deferred(
         self,
         populated_storage: PropertyStorage,
         reanalysis_settings: Settings,
         make_merged_property: Callable[..., MergedProperty],
         make_quality_analysis: Callable[..., PropertyQualityAnalysis],
     ) -> None:
-        """analyze_single_merged returning None analysis counts as failure."""
+        """Missing cached evidence defers work without replacing the prior analysis."""
         merged = await _save_and_flag(
             populated_storage, make_merged_property, make_quality_analysis
         )
@@ -433,11 +433,13 @@ class TestRunReanalysisErrorHandling:
         complete_events = [e for e in captured if e["event"] == "reanalysis_complete"]
         assert len(complete_events) == 1
         assert complete_events[0]["completed"] == 0
-        assert complete_events[0]["failed"] == 1
+        assert complete_events[0]["failed"] == 0
+        assert complete_events[0]["deferred"] == 1
 
         # Flag should still be set
         queue = await populated_storage.pipeline.get_reanalysis_queue()
         assert len(queue) == 1
+        assert (await populated_storage.get_quality_analysis(merged.unique_id)).overall_rating == 4
 
     async def test_close_called_on_api_error(
         self,

@@ -183,7 +183,7 @@ class Settings(BaseSettings):
     pipeline_interval_minutes: int = Field(
         default=55,
         ge=1,
-        description="Minutes between pipeline runs in serve mode",
+        description="Minimum delay after a serve-mode run finishes, plus 0-5 minutes jitter",
     )
 
     # Database

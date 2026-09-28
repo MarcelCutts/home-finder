@@ -1,6 +1,6 @@
 # PR09a: Retain fetched observations and account for incomplete runs
 
-**Date:** 28 September 2026. **State:** implemented and verified; not deployed.
+**Date:** 28 September 2026. **State:** committed as `67a34a9`; not deployed.
 **Parent:** [delivery plan, PR09](2026-09-28-research-synthesis-and-delivery-plan.md#pr09--preserve-known-page-observations-and-report-collection-coverage-honestly-m).
 **Predecessor:** PR08a, commit `9149e48`. No schema migration or live external effects.
 

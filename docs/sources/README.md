@@ -31,7 +31,7 @@ When cross-platform duplicates are merged, higher-priority source images are kep
 
 The `BaseScraper._paginate()` method supports early-stop: if all results on a page are already in the DB, pagination stops. Only works when results are sorted newest-first.
 
-Current code can return before retaining that fetched known page, losing its price/availability observations (PR09a). The table below describes configured sort assumptions; it is not a guarantee of newest-first ordering on today's sites.
+PR09a retains that fetched known page before stopping, including updated prices/text and last-seen information. A processing cap also retains observations already received beyond its selection limit. Later page failures preserve the received prefix and report unhealthy/partial collection. This does not establish complete coverage or target availability. The table below describes configured sort assumptions; it is not a guarantee of newest-first ordering on today's sites.
 
 | Source | Supports Early-Stop | Why |
 |--------|-------------------|-----|
@@ -46,7 +46,7 @@ Properties without floorplans are dropped when `require_floorplan=True` (default
 
 Enrichment scans cached gallery images with PIL-based heuristics to rescue misclassified floorplans. The gate also allows the configured gallery-photo fallback (`min_gallery_for_photo_inference`, default 5; 0 disables it).
 
-Enrichment runs **before** geocoding/commute calculation and deduplication. Text/features fetched here can still be lost before persistence and analysis; PR06a repairs that handoff. The normal analysis path reads cached images and sends base64 content, including Rightmove images.
+Enrichment runs **before** geocoding/commute calculation and deduplication. PR06a preserves source-labelled descriptions/features through persistence and the bounded model inputs. PR12a drains enrichment and analysis recovery even without eligible new discovery; missing cached images defer analysis and delivery. The normal analysis path reads cached images and sends base64 content, including Rightmove images. Artifact integrity/reuse and the full recovery-work contract remain PR14/12b.
 
 ## Coordinate and Postcode Availability
 

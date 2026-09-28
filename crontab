@@ -1,1 +1,5 @@
-*/55 * * * * cd /app && uv run home-finder 2>&1
+# No cron jobs are installed by this repository.
+# Use ONE scheduler after the collection gates pass: the completion-relative
+# systemd timer in README.md, or the serve loop. Both wait at least 55 minutes
+# after completion by default, plus 0–5 minutes jitter. Keep the Fly dashboard
+# on --no-pipeline. The former */55 expression alternated 55- and 5-minute gaps.

@@ -16,6 +16,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest_asyncio
 from pydantic import HttpUrl
 
+from home_finder.config import Settings
 from home_finder.db.storage import PropertyStorage
 from home_finder.filters.off_market import BatchResult, CheckResult, ListingStatus
 from home_finder.models import MergedProperty, Property, PropertySource
@@ -70,11 +71,8 @@ def _make_merged(
     )
 
 
-def _mock_settings(proxy_url: str = "") -> MagicMock:
-    settings = MagicMock()
-    settings.proxy_url = proxy_url
-    settings.database_path = ":memory:"  # not used — we patch PropertyStorage
-    return settings
+def _mock_settings(proxy_url: str = "") -> Settings:
+    return Settings(_env_file=None, proxy_url=proxy_url, database_path=":memory:")
 
 
 class TestRunCheckOffMarketIntegration:
