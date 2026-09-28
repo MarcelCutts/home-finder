@@ -384,12 +384,19 @@ async def _run_quality_and_save(
                 reason = (
                     "missing_cached_images" if quality_analysis is None else "analysis_incomplete"
                 )
+                failure_meta = (
+                    quality_analysis.analysis_failure.model_dump(mode="json")
+                    if quality_analysis is not None
+                    and quality_analysis.analysis_failure is not None
+                    else None
+                )
                 if quality_analysis is not None:
                     await storage.pipeline.record_analysis_failure(merged.unique_id)
                 logger.info(
                     "analysis_deferred",
                     property_id=merged.unique_id,
                     reason=reason,
+                    failure=failure_meta,
                 )
                 if recorder is not None:
                     recorder.record(
@@ -398,7 +405,10 @@ async def _run_quality_and_save(
                             merged.canonical.source.value,
                             "analysis_deferred",
                             "analysis",
-                            {"reason": reason},
+                            {
+                                "reason": reason,
+                                **({"failure": failure_meta} if failure_meta else {}),
+                            },
                         )
                     )
                 return (

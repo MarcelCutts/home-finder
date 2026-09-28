@@ -10,13 +10,23 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Final, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field
 
 from home_finder.data.area_context import (
     ACOUSTIC_PROFILES,
     DEFAULT_BENCHMARK,
     RENTAL_BENCHMARKS,
     build_property_context,
+)
+from home_finder.filters.analysis_contracts import (
+    AnalysisOutputError,
+    check_stop_reason,
+    evaluation_json,
+    rejected_request,
+    validate_output,
+)
+from home_finder.filters.analysis_contracts import (
+    failure as output_failure,
 )
 from home_finder.filters.listing_text import select_listing_text, supported_council_tax_band
 from home_finder.logging import get_logger
@@ -806,6 +816,7 @@ class PropertyQualityFilter:
             return hashlib.sha256(text.encode()).hexdigest()
 
         return AnalysisProvenance(
+            version=2,
             configuration=self.analysis_config,
             sdk_version=sdk_version,
             max_images=self._max_images,
@@ -922,7 +933,8 @@ class PropertyQualityFilter:
         """Analyze quality for a single pre-enriched merged property.
 
         Does NOT sleep between calls — caller controls pacing.
-        Handles errors internally (returns minimal analysis on failure).
+        Invalid required output returns an unrated, typed failure.
+        Provider outages propagate to the caller's circuit-breaker handling.
         Returns ``None`` analysis when images are incomplete (missing cache).
 
         Args:
@@ -1008,13 +1020,22 @@ class PropertyQualityFilter:
             )
         except APIUnavailableError:
             raise  # Propagate to caller for circuit breaker handling
+        except AnalysisOutputError as exc:
+            logger.warning(
+                "analysis_output_failed",
+                property_id=merged.unique_id,
+                **exc.failure.model_dump(),
+            )
+            return merged, self._create_failed_analysis(value, exc)
         except Exception:
             logger.error(
                 "analyze_single_merged_failed",
                 property_id=merged.unique_id,
                 exc_info=True,
             )
-            return merged, self._create_minimal_analysis(value=value)
+            return merged, self._create_failed_analysis(
+                value, output_failure("assembly", "internal_error")
+            )
 
         if analysis:
             merged_value = ValueAnalysis(
@@ -1055,7 +1076,23 @@ class PropertyQualityFilter:
             )
             return merged, analysis
         else:
-            return merged, self._create_minimal_analysis(value=value)
+            return merged, self._create_failed_analysis(
+                value, output_failure("assembly", "malformed_output")
+            )
+
+    def _create_failed_analysis(
+        self, value: ValueAnalysis | None, error: AnalysisOutputError
+    ) -> PropertyQualityAnalysis:
+        incomplete = self._create_minimal_analysis(value)
+        return incomplete.model_copy(
+            update={
+                "kitchen": KitchenAnalysis(notes="Quality analysis incomplete"),
+                "light_space": LightSpaceAnalysis(notes="Quality analysis incomplete"),
+                "summary": f"Quality analysis incomplete ({error})",
+                "analysis_failure": error.failure,
+                "analysis_provenance": self._analysis_provenance(),
+            }
+        )
 
     async def analyze_merged_properties(
         self,
@@ -1122,9 +1159,10 @@ class PropertyQualityFilter:
             data_dir: Data directory for image cache (used to clear cache on bad request).
 
         Returns:
-            Raw visual analysis dict, or None if the call failed.
+            Validated visual analysis dict.
 
         Raises:
+            AnalysisOutputError: If the request or required output is invalid.
             APIUnavailableError: If circuit breaker trips (outage-indicating errors).
         """
         from anthropic import (
@@ -1196,21 +1234,18 @@ class PropertyQualityFilter:
                         cache_creation_tokens=cache_creation,
                     )
 
-            tool_use_block = next(
-                (block for block in response.content if isinstance(block, ToolUseBlock)),
-                None,
+            check_stop_reason(response, "visual")
+            tools = [block for block in response.content if isinstance(block, ToolUseBlock)]
+            if len(tools) != 1 or tools[0].name != "property_visual_analysis":
+                raise output_failure("visual", "malformed_output", response)
+            visual_data = validate_output(
+                tools[0].input, _VisualAnalysisResponse, "visual", response
             )
-            if not tool_use_block:
-                logger.warning(
-                    "no_tool_use_in_response",
-                    property_id=property_id,
-                    phase="visual",
-                    stop_reason=response.stop_reason,
-                )
-                return None
-
             self._breaker.record_success()
-            return tool_use_block.input
+            return visual_data
+
+        except AnalysisOutputError:
+            raise
 
         except BadRequestError as e:
             logger.warning(
@@ -1234,7 +1269,7 @@ class PropertyQualityFilter:
                     "image_cache_cleared_on_bad_request",
                     property_id=property_id,
                 )
-            return None
+            raise rejected_request("visual", e) from e
 
         except AuthenticationError as e:
             self._breaker.record_failure()
@@ -1276,7 +1311,7 @@ class PropertyQualityFilter:
                 error=str(e),
                 request_id=getattr(e, "_request_id", None),
             )
-            return None
+            raise rejected_request("visual", e) from e
 
         except Exception as e:
             logger.warning(
@@ -1286,7 +1321,7 @@ class PropertyQualityFilter:
                 error_type=type(e).__name__,
                 exc_info=True,
             )
-            return None
+            raise output_failure("visual", "internal_error") from e
 
     async def _run_evaluation(
         self,
@@ -1330,15 +1365,16 @@ class PropertyQualityFilter:
             hosting_tolerance: Hosting tolerance string.
 
         Returns:
-            Evaluation data dict (empty if Phase 2 failed).
+            Validated evaluation data dict.
 
         Raises:
+            AnalysisOutputError: If the request or required output is invalid.
             APIUnavailableError: On authentication, rate-limit, server, or
                 connection errors (mirrors Phase 1 contract).
         """
         if self._breaker.is_open():
             logger.info("circuit_breaker_open_skipping_evaluation", property_id=property_id)
-            return {}
+            raise APIUnavailableError("Circuit breaker opened before evaluation")
 
         phase = self.analysis_config.evaluation
         client = self._phase_client(phase)
@@ -1364,7 +1400,9 @@ class PropertyQualityFilter:
 
         from anthropic import (
             APIConnectionError,
+            APIStatusError,
             AuthenticationError,
+            BadRequestError,
             InternalServerError,
             RateLimitError,
         )
@@ -1420,31 +1458,15 @@ class PropertyQualityFilter:
             if hasattr(eval_response, "usage"):
                 self.token_usage.add_from_response(eval_response.usage)
 
-            # Extract raw JSON from text content block
-            raw_json = _extract_eval_json(eval_response)
-            if raw_json is not None:
-                # Filter any invalid enum values before Pydantic validation
-                _sanitize_eval_enums(raw_json)
-                try:
-                    validated = _EvaluationResponse.model_validate(raw_json)
-                    eval_data = validated.model_dump()
-                    self._breaker.record_success()
-                except ValidationError as ve:
-                    # Enum filtering wasn't enough; use raw dict
-                    eval_data = raw_json
-                    self._breaker.record_success()
-                    logger.warning(
-                        "evaluation_coerced_invalid_fields",
-                        property_id=property_id,
-                        error=str(ve),
-                    )
-            else:
-                logger.warning(
-                    "no_json_in_evaluation_response",
-                    property_id=property_id,
-                    phase="evaluation",
-                    stop_reason=getattr(eval_response, "stop_reason", None),
-                )
+            check_stop_reason(eval_response, "evaluation")
+            raw_json = evaluation_json(eval_response)
+            eval_data = validate_output(raw_json, _EvaluationResponse, "evaluation", eval_response)
+            self._breaker.record_success()
+
+        except AnalysisOutputError:
+            raise
+        except BadRequestError as e:
+            raise rejected_request("evaluation", e) from e
 
         except AuthenticationError as e:
             self._breaker.record_failure()
@@ -1467,6 +1489,9 @@ class PropertyQualityFilter:
             )
             raise APIUnavailableError(str(e)) from e
 
+        except APIStatusError as e:
+            raise rejected_request("evaluation", e) from e
+
         except Exception as e:
             logger.warning(
                 "evaluation_phase_failed",
@@ -1475,6 +1500,7 @@ class PropertyQualityFilter:
                 error_type=type(e).__name__,
                 exc_info=True,
             )
+            raise output_failure("evaluation", "internal_error") from e
 
         logger.info(
             "evaluation_complete",
@@ -1493,8 +1519,8 @@ class PropertyQualityFilter:
     ) -> PropertyQualityAnalysis | None:
         """Merge Phase 1 + Phase 2 results into a PropertyQualityAnalysis.
 
-        Cleans response data, validates with Pydantic, and applies post-processing
-        (e.g. 2+ bed space override).
+        Live callers validate both response contracts first. Historical data
+        can still use the storage model's bounded repairs here.
 
         Args:
             visual_data: Phase 1 visual analysis output.
@@ -1523,6 +1549,7 @@ class PropertyQualityFilter:
             # These fields describe the application's actual execution. Ignore
             # any model-supplied attempt to supply or invalidate that provenance.
             merged_data.pop("analysis_provenance", None)
+            merged_data.pop("analysis_failure", None)
             merged_data.pop("listing_text_inputs", None)
             merged_data.setdefault("summary", "Analysis completed")
 
@@ -1670,7 +1697,7 @@ class PropertyQualityFilter:
         # Phase 1: Visual Analysis
         visual_data = await self._run_visual_analysis(content, property_id, data_dir=data_dir)
         if visual_data is None:
-            return None
+            raise output_failure("visual", "malformed_output")
 
         logger.info("visual_analysis_complete", property_id=property_id)
 
@@ -1699,6 +1726,9 @@ class PropertyQualityFilter:
             energy_estimate=energy_estimate,
             hosting_tolerance=hosting_tolerance,
         )
+
+        if not eval_data:
+            raise output_failure("evaluation", "malformed_output")
 
         # Phase 3: Merge and validate
         analysis = self._merge_analysis_results(visual_data, eval_data, bedrooms, property_id)

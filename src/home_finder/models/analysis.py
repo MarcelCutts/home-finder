@@ -56,7 +56,9 @@ class AnalysisProvenance(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    version: Literal[1] = 1
+    # v1 precedes required live-output validation; v2 records that contract.
+    # Keep the v1 default when reading an older record without a version field.
+    version: Literal[1, 2] = 1
     configuration: AnalysisConfig
     sdk_version: str
     max_images: int = Field(ge=1, le=20)
@@ -71,3 +73,26 @@ class AnalysisProvenance(BaseModel):
         """Stable identity for PR13/14 to include in their durable work keys."""
         canonical = json.dumps(self.model_dump(mode="json"), sort_keys=True, separators=(",", ":"))
         return hashlib.sha256(canonical.encode()).hexdigest()
+
+
+AnalysisFailureKind = Literal[
+    "refusal",
+    "truncated",
+    "unsupported_schema",
+    "request_rejected",
+    "unexpected_stop_reason",
+    "malformed_output",
+    "oversized_output",
+    "internal_error",
+]
+
+
+class AnalysisFailure(BaseModel):
+    """A failed required phase, with no provider text or listing content."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    phase: Literal["visual", "evaluation", "assembly"]
+    kind: AnalysisFailureKind
+    stop_reason: str | None = Field(default=None, max_length=80)
+    request_id: str | None = Field(default=None, max_length=128)

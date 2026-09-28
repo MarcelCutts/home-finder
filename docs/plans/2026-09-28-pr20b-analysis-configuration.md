@@ -1,6 +1,6 @@
 # PR20b: Explicit phase settings and assessment provenance
 
-**Date:** 28 September 2026. **State:** implemented and verified.
+**Date:** 28 September 2026. **State:** committed as `fee3448` and verified.
 **Predecessor:** SDK transport migration, `03e3e4c`.
 **Parent:** [PR20 specification](2026-09-28-research-synthesis-and-delivery-plan.md#pr20--isolate-sdk-transport-phase-configuration-and-output-contracts-m).
 
