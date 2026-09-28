@@ -18,7 +18,7 @@ from home_finder.scrapers.rightmove import RightmoveScraper
 from home_finder.scrapers.rightmove_payloads import (
     MAX_PAYLOAD_CHARACTERS,
     MAX_SEARCH_LISTINGS,
-    legacy_detail_property,
+    detail_property,
     parse_structured_search,
 )
 
@@ -177,13 +177,13 @@ async def test_actual_scrape_to_storage_retains_observations_beyond_selection_ca
 def test_legacy_json_strings_cannot_break_object_boundary(description) -> None:
     data = {"propertyData": {"id": 123, "text": {"description": description}}}
     html = "<script>window.PAGE_MODEL = " + json.dumps(data) + ";someOtherCode();</script>"
-    assert legacy_detail_property(html, "123")["text"]["description"] == description
+    assert detail_property(html, "123")["text"]["description"] == description
 
 
 @pytest.mark.parametrize(
     "html,reason",
     [
-        ('window.__PAGE_MODEL = {"data":"[]","encoding":"on"}', "unsupported_page_model_variant"),
+        ('window.__PAGE_MODEL = {"data":"[]","encoding":"on"}', "page_model_node_limit"),
         ('window.PAGE_MODEL = {"data":"[]","encoding":"on"}', "unsupported_page_model_variant"),
         ('window.PAGE_MODEL = {"propertyData":{}}', "missing_property_data"),
         ('window.PAGE_MODEL = {"propertyData":{"id":999}}', "mismatched_property_id"),
@@ -193,7 +193,7 @@ def test_legacy_json_strings_cannot_break_object_boundary(description) -> None:
 )
 def test_unsupported_or_wrong_target_detail_fails_explicitly(html, reason) -> None:
     with pytest.raises(ValueError, match=reason):
-        legacy_detail_property(html, "123")
+        detail_property(html, "123")
 
 
 async def test_retained_http_error_does_not_reach_detail_parser(monkeypatch):
@@ -204,7 +204,7 @@ async def test_retained_http_error_does_not_reach_detail_parser(monkeypatch):
     )
     fetcher = _ReplayDetailFetcher(response)
     parser = MagicMock(side_effect=AssertionError("must not parse an HTTP error"))
-    monkeypatch.setattr("home_finder.scrapers.detail_fetcher.legacy_detail_property", parser)
+    monkeypatch.setattr("home_finder.scrapers.detail_fetcher.detail_property", parser)
     prop = Property(
         source="rightmove",
         source_id="123",

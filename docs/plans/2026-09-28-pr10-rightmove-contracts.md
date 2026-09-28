@@ -1,6 +1,6 @@
 # PR10: Evidence-backed Rightmove search and legacy-detail repairs
 
-**Date:** 28 September 2026. **State:** offline slice implemented and verified. The reported encoded detail format, current typeahead and live adapter qualification remain open.
+**Date:** 28 September 2026. **State:** offline slice committed as `11d08d7`. The subsequent [indexed-detail follow-up](2026-09-28-pr10-indexed-detail.md) supplies successful source evidence and the new decoder. Current typeahead and live adapter qualification remain open.
 **Predecessor:** PR18a tooling, `02a75f1`.
 **Parent:** [delivery plan, PR10](2026-09-28-research-synthesis-and-delivery-plan.md#pr10--repair-and-fixture-the-rightmove-parsing-contract-m).
 
@@ -12,7 +12,7 @@ A separate run through the PR18a capture/replay CLI contract reproduces the 25 e
 
 `tests/fixtures/rightmove_next_search.html` is a small structural derivative of the first two records. IDs, addresses, descriptions, coordinates, media URLs and branch identity are replaced with non-real examples; irrelevant configuration/tracking data is removed. The adjacent provenance file records the original and transformed hashes, retained fields and the fact that acquisition was a research HTTPX probe. It is not presented as a successful production Crawlee canary.
 
-The two retained Rightmove detail bodies are HTTP 429, not successful examples of `window.__PAGE_MODEL`. The researcher's surviving parser experiment generates a synthetic array from the *described* format. A rendered browser/accessibility result is also not the serialized input needed to qualify that decoder. An optional request for the original successful detail HTML remains pending; no new acquisition is implied.
+The two original retained Rightmove detail bodies are HTTP 429, not successful examples of `window.__PAGE_MODEL`. The researcher's surviving parser experiment generates a synthetic array from the *described* format. A rendered browser/accessibility result is also not the serialized input needed to qualify that decoder. After this commit, the owner requested a terminal curl probe; its successful retained response and verified decoder are documented in the [follow-up](2026-09-28-pr10-indexed-detail.md).
 
 ## Search and failure behaviour
 
@@ -28,12 +28,12 @@ Legacy plain `window.PAGE_MODEL` extraction now uses `JSONDecoder.raw_decode` ra
 
 Non-200 responses are rejected before detail parsing. Known challenge headers/body markers are classified separately, using a shared conservative helper also used by availability and isolated capture. Missing, invalid and unsupported model variants produce warning-level diagnostics rather than a debug miss or an empty `DetailPageData` object.
 
-The new reference-array format is deliberately **unsupported pending retained successful evidence**. This slice does not deploy a speculative resolver, claim current Rightmove detail repair, or remove Crawlee/browser alternatives. Legacy records without an explicit ID still use the historical parser contract; complete target binding for the new format remains a required fixture gate.
+At `11d08d7`, the new reference-array format remained unsupported pending successful evidence. The [subsequent follow-up](2026-09-28-pr10-indexed-detail.md) closes that narrow gap with the captured format, bounded decoding and target-ID binding. Legacy records without an explicit ID still use the historical parser contract.
 
 ## What remains in PR10 / PR11
 
-1. Retain successful current detail and typeahead examples for the intended areas. Verify the full adapter's actual headers/session/transport, not only a simplified cold probe. O2's source qualification still applies to fresh collection.
-2. If the encoded format is confirmed, implement only its observed semantics with bounded references, missing/null handling, identity, invalid-reference/cycle/depth/size cases, and old/new search-to-observation fixtures.
+1. Retain current typeahead and additional detail examples for the intended areas, including a successful encoded page with floorplans. Verify the full adapter's actual headers/session/transport. O2's source qualification still applies to scheduled collection.
+2. The captured encoded form and its bounded decoder are now handled by the follow-up. Extend support only when another retained variant demonstrates the need.
 3. `firstVisibleDate`, customer/branch and floorplan-count fields remain preserved in the original retained body and the derivative fixture. They are **not yet projected into application metadata**. Add dated per-source persistence with the observation contract; never substitute the portal date for `Property.first_seen` or treat a search floorplan count as a downloaded floorplan. This is an explicit outstanding PR10/PR06b handoff.
 4. Requalify current typeahead/mapping, query leakage, source ordering and availability; keep local criteria/location filtering. Source observations alone do not establish full-market coverage.
 5. PR11 still needs matched, bounded full-adapter transport trials and OpenRent/Zoopla pagination/detail coverage evidence. Shared challenge recognition here is a small prerequisite, not completion of PR11's backoff/circuit/transport work.

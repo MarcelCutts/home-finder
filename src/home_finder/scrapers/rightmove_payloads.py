@@ -1,6 +1,7 @@
 """Bounded Rightmove contracts supported by retained source evidence."""
 
 import json
+import math
 import re
 from dataclasses import dataclass, field
 from typing import Any
@@ -14,6 +15,9 @@ from home_finder.scrapers.parsing import extract_postcode
 
 MAX_PAYLOAD_CHARACTERS = 4_000_000
 MAX_SEARCH_LISTINGS = 200
+MAX_DETAIL_NODES = 20_000
+MAX_DETAIL_REFERENCES = 100_000
+MAX_DETAIL_DEPTH = 64
 
 
 @dataclass
@@ -106,25 +110,97 @@ def _search_listing(listing: dict[str, Any]) -> Property:
     )
 
 
-def legacy_detail_property(html: str, expected_id: str) -> dict[str, Any]:
-    """Decode the evidenced plain JSON form; reject unqualified encoded variants.
-
-    JSONDecoder handles braces and escapes inside strings. It does not evaluate
-    JavaScript or guess the semantics of the reported reference-array format.
-    """
+def detail_property(html: str, expected_id: str) -> dict[str, Any]:
+    """Decode retained plain JSON and indexed-array forms without executing JS."""
     if len(html) > MAX_PAYLOAD_CHARACTERS:
         raise ValueError("page_model_size_limit")
     match = re.search(r"window\.(?:__)?PAGE_MODEL\s*=\s*", html)
     if match is None:
         raise ValueError("missing_page_model")
-    if "__PAGE_MODEL" in match.group():
+    decoder = json.JSONDecoder(parse_constant=_reject_constant)
+    data, _ = decoder.raw_decode(html, match.end())
+    indexed = "__PAGE_MODEL" in match.group()
+    if not isinstance(data, dict):
         raise ValueError("unsupported_page_model_variant")
-    data, _ = json.JSONDecoder().raw_decode(html, match.end())
-    if not isinstance(data, dict) or "data" in data or "encoding" in data:
+    if indexed:
+        if data.get("encoding") != "on" or not isinstance(data.get("data"), str):
+            raise ValueError("unsupported_page_model_variant")
+        data = _decode_indexed_model(decoder.decode(data["data"]))
+    elif "data" in data or "encoding" in data:
         raise ValueError("unsupported_page_model_variant")
     property_data = data.get("propertyData")
     if not isinstance(property_data, dict) or not property_data:
         raise ValueError("missing_property_data")
+    if indexed and "id" not in property_data:
+        raise ValueError("missing_property_id")
     if "id" in property_data and str(property_data["id"]) != expected_id:
         raise ValueError("mismatched_property_id")
     return property_data
+
+
+def _reject_constant(value: str) -> Any:
+    raise ValueError("nonfinite_page_model_number")
+
+
+def _decode_indexed_model(table: Any) -> dict[str, Any]:
+    """Container values are indexes; scalar table entries are literal values.
+
+    The retained response uses nonnegative integer references, including an
+    index to a literal null. Negative sentinels and cycles have no evidenced
+    semantics and fail explicitly. Memoization preserves shared containers
+    without expanding a compact graph into an exponentially larger tree.
+    """
+    if not isinstance(table, list) or not table or len(table) > MAX_DETAIL_NODES:
+        raise ValueError("page_model_node_limit")
+    references = 0
+    for entry in table:
+        if isinstance(entry, float) and not math.isfinite(entry):
+            raise ValueError("nonfinite_page_model_number")
+        if not isinstance(entry, (dict, list)):
+            continue
+        references += len(entry)
+        if references > MAX_DETAIL_REFERENCES:
+            raise ValueError("page_model_reference_limit")
+        for ref in entry.values() if isinstance(entry, dict) else entry:
+            if type(ref) is not int or not 0 <= ref < len(table):
+                raise ValueError("invalid_page_model_reference")
+
+    decoded: dict[int, Any] = {}
+    heights: dict[int, int] = {}
+    active: set[int] = set()
+
+    def resolve(index: int, depth: int) -> Any:
+        if depth > MAX_DETAIL_DEPTH:
+            raise ValueError("page_model_depth_limit")
+        if index in active:
+            raise ValueError("cyclic_page_model_reference")
+        if index in decoded:
+            # A cached subtree may be reached through a longer path later.
+            if depth + heights[index] > MAX_DETAIL_DEPTH:
+                raise ValueError("page_model_depth_limit")
+            return decoded[index]
+        active.add(index)
+        entry = table[index]
+        value: Any
+        if isinstance(entry, dict):
+            value = {key: resolve(ref, depth + 1) for key, ref in entry.items()}
+            children = list(entry.values())
+        elif isinstance(entry, list):
+            value = [resolve(ref, depth + 1) for ref in entry]
+            children = entry
+        else:
+            value = entry
+            children = []
+        active.remove(index)
+        decoded[index] = value
+        heights[index] = max((heights[ref] + 1 for ref in children), default=0)
+        return value
+
+    root = resolve(0, 0)
+    if not isinstance(root, dict):
+        raise ValueError("invalid_page_model_root")
+    # Validate unused nodes too; accepting malformed hidden branches would make
+    # the supported format depend on which fields happen to be consumed today.
+    for index in range(len(table)):
+        resolve(index, 0)
+    return root

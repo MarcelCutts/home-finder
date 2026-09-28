@@ -23,7 +23,7 @@ from home_finder.logging import get_logger
 from home_finder.models import SQM_PER_SQFT, Property, PropertySource
 from home_finder.scrapers.constants import BROWSER_HEADERS
 from home_finder.scrapers.retry import RetryableHttpError
-from home_finder.scrapers.rightmove_payloads import legacy_detail_property
+from home_finder.scrapers.rightmove_payloads import detail_property
 from home_finder.utils.circuit_breaker import ConsecutiveFailureBreaker
 from home_finder.utils.http_evidence import is_challenge
 from home_finder.utils.image_cache import is_valid_image_bytes
@@ -553,7 +553,7 @@ class DetailFetcher:
             if is_challenge(html, response.headers):
                 logger.warning("rightmove_challenge", property_id=prop.unique_id)
                 return None
-            property_data = legacy_detail_property(html, prop.source_id)
+            property_data = detail_property(html, prop.source_id)
 
             # Extract floorplan
             floorplan_url: str | None = None
