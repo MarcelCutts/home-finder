@@ -52,6 +52,7 @@ from home_finder.utils.listing_facts import supported_band
 
 if TYPE_CHECKING:
     import anthropic
+    import httpx2
     from anthropic.types import ImageBlockParam
 
 logger = get_logger(__name__)
@@ -735,6 +736,7 @@ class PropertyQualityFilter:
         max_images: int = 20,
         *,
         enable_extended_thinking: bool = True,
+        http_client: "httpx2.AsyncClient | None" = None,
     ) -> None:
         """Initialize the quality filter.
 
@@ -742,11 +744,13 @@ class PropertyQualityFilter:
             api_key: Anthropic API key.
             max_images: Maximum number of gallery images to analyze.
             enable_extended_thinking: Enable extended thinking for deeper analysis.
+            http_client: Optional native SDK transport client, closed with this filter.
         """
         self._api_key = api_key
         self._max_images = max_images
         self._enable_extended_thinking = enable_extended_thinking
         self._client: anthropic.AsyncAnthropic | None = None
+        self._http_client = http_client
         self.token_usage = TokenUsage()
         # Circuit breaker (asyncio is single-threaded, no lock needed)
         from home_finder.utils.circuit_breaker import CircuitBreaker
@@ -761,12 +765,12 @@ class PropertyQualityFilter:
         """Get or create the Anthropic client with optimized settings."""
         if self._client is None:
             import anthropic as _anthropic
-            import httpx
 
             self._client = _anthropic.AsyncAnthropic(
                 api_key=self._api_key,
                 max_retries=MAX_RETRIES,  # SDK handles retry with exponential backoff
-                timeout=httpx.Timeout(
+                http_client=self._http_client,
+                timeout=_anthropic.Timeout(
                     PHASE1_REQUEST_TIMEOUT, connect=5.0
                 ),  # Default to Phase 1 timeout
             )
@@ -1125,11 +1129,11 @@ class PropertyQualityFilter:
                     "name": "property_visual_analysis",
                 }
 
-            import httpx as _httpx
+            from anthropic import Timeout
 
             response = await client.messages.create(
                 **create_kwargs,
-                timeout=_httpx.Timeout(PHASE1_REQUEST_TIMEOUT, connect=5.0),
+                timeout=Timeout(PHASE1_REQUEST_TIMEOUT, connect=5.0),
             )
 
             if hasattr(response, "usage"):
@@ -1337,7 +1341,7 @@ class PropertyQualityFilter:
                 acoustic_context=acoustic_context,
             )
 
-            import httpx as _httpx
+            from anthropic import Timeout
 
             eval_response = await client.messages.create(
                 model="claude-sonnet-4-6",
@@ -1356,7 +1360,7 @@ class PropertyQualityFilter:
                         "schema": _eval_json_schema(),
                     }
                 },
-                timeout=_httpx.Timeout(PHASE2_REQUEST_TIMEOUT, connect=5.0),
+                timeout=Timeout(PHASE2_REQUEST_TIMEOUT, connect=5.0),
             )
 
             if hasattr(eval_response, "usage"):
@@ -1665,3 +1669,6 @@ class PropertyQualityFilter:
         if self._client is not None:
             await self._client.close()
             self._client = None
+        elif self._http_client is not None:
+            await self._http_client.aclose()
+        self._http_client = None

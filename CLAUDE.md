@@ -62,7 +62,7 @@ uv run mypy src                       # Type check (strict mode)
 
 See README.md for full configuration reference. All settings use `HOME_FINDER_` prefix. See `config.py` for field definitions. Use a development database, never a frozen research export. `--dry-run` still writes data and can incur model/commute costs; it suppresses notifications only.
 
-Python support is `>=3.11,<3.15`; CI tests 3.11.16 and 3.14.7. Local/default container Python is 3.14.7, installed by pinned uv 0.12.19. One Dockerfile provides `dashboard` (default/Fly) and `collector` targets, using a managed Python build with SQLite 3.53.1 and an explicit WAL-fix version check. The old official Python/bookworm image's Debian SQLite lacked that fix. CI includes package/container builds and a dependency audit; release remains manual. Anthropic is temporarily constrained to `<1` pending PR20. Crawlee 1.3.2b4 retains its original wheel URL/hash until PR11; no live source qualification is implied.
+Python support is `>=3.11,<3.15`; CI tests 3.11.16 and 3.14.7. Local/default container Python is 3.14.7, installed by pinned uv 0.12.19. One Dockerfile provides `dashboard` (default/Fly) and `collector` targets, using a managed Python build with SQLite 3.53.1 and an explicit WAL-fix version check. The old official Python/bookworm image's Debian SQLite lacked that fix. CI includes package/container builds and a dependency audit; release remains manual. Anthropic is locked to 1.8.0 with native `httpx2` timeouts/client injection; its transport migration preserves baseline requests. Phase configuration/output contracts remain PR20. Crawlee 1.3.2b4 retains its original wheel URL/hash until PR11; no live source qualification is implied.
 
 ## Pipeline Flow (main.py and pipeline/stages.py)
 
