@@ -8,7 +8,8 @@ from home_finder.config import Settings
 from home_finder.db import PropertyStorage
 from home_finder.filters import CommuteFilter, Deduplicator
 from home_finder.logging import get_logger
-from home_finder.models import TransportMode
+from home_finder.models import CommuteResult
+from home_finder.models.commute import commute_minutes_projection
 from home_finder.utils.image_cache import clear_image_cache, copy_cached_images
 
 logger = get_logger(__name__)
@@ -42,25 +43,18 @@ async def run_backfill_commute(settings: Settings) -> None:
             destination_postcode=criteria.destination_postcode,
         )
 
-        commute_lookup: dict[str, tuple[int, TransportMode]] = {}
+        commute_results: list[CommuteResult] = []
         for mode in criteria.transport_modes:
             results = await commute_filter.filter_properties(
                 properties,
                 max_minutes=criteria.max_commute_minutes,
                 transport_mode=mode,
             )
-            for result in results:
-                if result.within_limit and (
-                    result.property_id not in commute_lookup
-                    or result.travel_time_minutes < commute_lookup[result.property_id][0]
-                ):
-                    commute_lookup[result.property_id] = (
-                        result.travel_time_minutes,
-                        result.transport_mode,
-                    )
+            commute_results.extend(results)
 
+        commute_lookup = commute_minutes_projection(commute_results)
         if not commute_lookup:
-            logger.info("no_properties_within_commute_limit")
+            logger.info("no_measured_commute_results", unknown=len(properties))
             return
 
         updated = await storage.update_commute_data(commute_lookup)

@@ -248,12 +248,14 @@ def _format_header_lines(
         location_parts: list[str] = []
         if escaped_postcode:
             location_parts.append(f"📍 {escaped_postcode}")
-        if commute_minutes is not None:
+        if commute_minutes is not None and commute_minutes > 0:
             mode_emoji = TRANSPORT_MODE_EMOJI.get(transport_mode, "") if transport_mode else ""
             if mode_emoji:
-                location_parts.append(f"{mode_emoji} {commute_minutes} min")
+                location_parts.append(f"{mode_emoji} {commute_minutes} min estimate · check route")
             else:
-                location_parts.append(f"{commute_minutes} min")
+                location_parts.append(f"{commute_minutes} min estimate · check route")
+        else:
+            location_parts.append("Commute unknown")
         if location_parts:
             lines.append(" · ".join(location_parts))
     else:
@@ -261,10 +263,12 @@ def _format_header_lines(
         escaped_address = html.escape(address)
         location = f"{escaped_address}, {escaped_postcode}" if postcode else escaped_address
         lines.append(f"📍 {location}")
-        if commute_minutes is not None:
+        if commute_minutes is not None and commute_minutes > 0:
             mode_emoji = TRANSPORT_MODE_EMOJI.get(transport_mode, "") if transport_mode else ""
             prefix = f"{mode_emoji} " if mode_emoji else ""
-            lines.append(f"{prefix}{commute_minutes} min")
+            lines.append(f"{prefix}{commute_minutes} min estimate · check route")
+        else:
+            lines.append("Commute unknown")
 
     return lines
 

@@ -874,6 +874,20 @@ class TestFitScorePopover:
 @pytest.mark.browser
 class TestMobileViewport:
     @pytest.mark.parametrize("width", [375, 1280])
+    def test_commute_estimate_is_qualified_and_fits(self, page, width, tmp_path):
+        page.set_viewport_size({"width": width, "height": 900})
+        page.goto("/")
+        card = page.locator("article.property-card").first
+        expect(card.locator(".commute-pill")).to_contain_text("15 min · estimate")
+        expect(card.locator(".commute-pill")).to_have_attribute(
+            "class", "commute-pill commute-estimate"
+        )
+        assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
+        card.screenshot(path=str(tmp_path / f"commute-estimate-{width}.png"))
+        page.goto("/property/openrent:1003")
+        expect(page.locator(".commute-pill")).to_contain_text("estimate")
+
+    @pytest.mark.parametrize("width", [375, 1280])
     def test_honest_budget_is_readable(self, page, width, tmp_path):
         page.set_viewport_size({"width": width, "height": 900})
         page.goto("/property/openrent:1003")

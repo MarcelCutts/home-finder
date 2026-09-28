@@ -1,6 +1,6 @@
 # PR17a: Honest tenant costs and rental guidance
 
-**Date:** 28 September 2026. **State:** implemented and verified; not deployed.
+**Date:** 28 September 2026. **State:** committed as `b4cf2f9`; verified; not deployed.
 **Parent:** [delivery plan, PR17](2026-09-28-research-synthesis-and-delivery-plan.md#pr17--make-costs-market-context-and-rental-guidance-evidence-based-m).
 **Predecessor:** PR06a, commit `19d6f24`. No schema migration, paid calls, source collection or messages sent.
 

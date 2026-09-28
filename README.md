@@ -24,7 +24,7 @@ The current application serves one owner's search. The agreed target is a small 
 
 - **Multi-platform scraping**: Adapters for OpenRent, Rightmove, Zoopla and OnTheMarket; current source contracts and access need qualification before collection resumes
 - **Cross-platform deduplication**: Graduated multi-signal scoring merges the same property listed on different platforms (two-phase: pre- and post-enrichment)
-- **Commute information**: TravelTime estimates against a configured destination and limit; advisory/error semantics need the PR16 repair described in the delivery plan
+- **Commute information**: Advisory TravelTime estimates against a configured destination and limit. Unknown/error results remain unknown and never exclude a home or become a zero-minute success. Saved route context remains unverified pending PR16b.
 - **AI quality analysis**: Two-phase Claude vision analysis — Phase 1 observes images (kitchen, condition, space, light), Phase 2 evaluates value, generates viewing notes, and curates highlights
 - **Web dashboard**: FastAPI-powered dashboard with HTMX live filtering, map view with MarkerCluster, property detail pages with area context, and lightbox gallery
 - **Rent and bills**: Separate advertised rent and explicit named bill claims from unpriced costs; show source conflicts and fee questions. Historical research and unsupported earlier EPC/council-tax claims are labelled unverified. England tenancy guidance is dated and scoped; the dashboard does not recommend fixed offer discounts.
@@ -155,7 +155,7 @@ Create a `.env` file with these settings (all use `HOME_FINDER_` prefix):
 
 ### Optional APIs
 
-- `HOME_FINDER_TRAVELTIME_APP_ID`: TravelTime API app ID (enables commute filtering)
+- `HOME_FINDER_TRAVELTIME_APP_ID`: TravelTime API app ID (enables advisory commute estimates)
 - `HOME_FINDER_TRAVELTIME_API_KEY`: TravelTime API key
 - `HOME_FINDER_ANTHROPIC_API_KEY`: Anthropic API key (enables AI quality analysis)
 
@@ -256,7 +256,7 @@ The full pipeline (`uv run home-finder`) executes these steps in order:
 4. **Wrap and detect price changes** — Wrap single-source `MergedProperty` objects; detect price changes on known properties
 5. **Select new properties and enrichment retries** — Listings already linked to a canonical record are considered seen; load eligible enrichment retries
 6. **Detail enrichment** — Fetch gallery, floorplans, descriptions and features; retain text by source, cache and classify images, then generate thumbnails
-7. **Geocode and compute commute** — Runs after enrichment so detail coordinates are available; current mixed reachable/unreachable results are advisory, but an all-unreachable batch can still abort
+7. **Geocode and compute commute** — Runs after enrichment so detail coordinates are available; compares seconds to the limit, rounds displayed minutes up, and retains all homes. Measured over-limit journeys, bounded-search unreachable results, missing inputs and provider errors remain distinct. The within-limit count is measured matches, not a funnel/admission count.
 8. **Post-enrichment deduplication and floorplan gate** — Merge within/across runs using enriched evidence; apply floorplan exemptions and configured photo fallback
 9. **Analyze, save and notify** — Phase 1 observes images and listing text using a tool response; phase 2 evaluates phase 1 output and listing text using native JSON schema `output_config`. Save results and deliver notifications in live mode
 10. **Drain reanalysis and price-drop work** — Process queued reanalysis, then send pending price-drop notifications in live mode; finish run accounting

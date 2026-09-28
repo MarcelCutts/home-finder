@@ -871,21 +871,9 @@ nav.container-fluid li {
     line-height: 1.4;
     white-space: nowrap;
 }
-.commute-green {
-    background: var(--status-success-bg);
-    color: var(--status-success-text);
-}
-.commute-indigo {
+.commute-estimate {
     background: var(--status-info-bg);
-    color: var(--status-info-text);
-}
-.commute-amber {
-    background: var(--status-warning-bg);
-    color: var(--status-warning-text);
-}
-.commute-red {
-    background: var(--status-danger-bg);
-    color: var(--status-danger-text);
+    color: var(--text-muted);
 }
 
 /* Rating + property type row */

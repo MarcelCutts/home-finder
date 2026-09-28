@@ -128,18 +128,13 @@ if (mapEl && resultsEl) {
     }
 
     // Commute pill
-    if (p.commute_minutes) {
-      const pill = document.createElement("span");
-      pill.className = "commute-pill";
-      if (p.commute_minutes <= 15) pill.className += " commute-green";
-      else if (p.commute_minutes <= 30) pill.className += " commute-indigo";
-      else if (p.commute_minutes <= 45) pill.className += " commute-amber";
-      else pill.className += " commute-red";
-      pill.textContent = p.commute_minutes + " min";
-      pill.style.marginTop = "6px";
-      pill.style.display = "inline-block";
-      container.appendChild(pill);
-    }
+    const commutePill = document.createElement("span");
+    commutePill.className = "commute-pill commute-estimate";
+    commutePill.textContent = p.commute_minutes > 0 ? p.commute_minutes + " min · estimate" : "Commute unknown";
+    commutePill.title = "Saved route context is unverified. Check your route.";
+    commutePill.style.marginTop = "6px";
+    commutePill.style.display = "inline-block";
+    container.appendChild(commutePill);
 
     // Value badge
     if (p.value_rating) {
@@ -147,7 +142,7 @@ if (mapEl && resultsEl) {
       badge.className = "value-badge value-" + p.value_rating;
       badge.textContent = p.value_rating;
       badge.style.marginTop = "4px";
-      badge.style.marginLeft = p.commute_minutes ? "4px" : "0";
+      badge.style.marginLeft = "4px";
       badge.style.display = "inline-block";
       container.appendChild(badge);
     }

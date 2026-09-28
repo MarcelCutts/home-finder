@@ -1,5 +1,6 @@
 """Pydantic models for properties and search criteria."""
 
+from home_finder.models.commute import CommuteResult, CommuteState
 from home_finder.models.core import (
     SOURCE_BADGES,
     SOURCE_NAMES,
@@ -48,6 +49,8 @@ __all__ = [
     "BathroomAnalysis",
     "BedroomAnalysis",
     "CoercedBool",
+    "CommuteResult",
+    "CommuteState",
     "ConditionAnalysis",
     "FlooringNoiseAnalysis",
     "FurnishType",

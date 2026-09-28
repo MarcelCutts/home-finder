@@ -16,11 +16,14 @@ from home_finder.filters import (
 from home_finder.filters.detail_enrichment import is_floorplan_exempt
 from home_finder.logging import get_logger
 from home_finder.models import (
+    CommuteResult,
+    CommuteState,
     MergedProperty,
     Property,
     SearchCriteria,
     TransportMode,
 )
+from home_finder.models.commute import best_measured_commutes, commute_minutes_projection
 from home_finder.pipeline.event_recorder import EventRecorder, PropertyEvent
 from home_finder.pipeline.scraping import ScraperMetrics, _run_scrape, _source_counts
 from home_finder.scrapers.detail_fetcher import DetailFetcher
@@ -443,114 +446,102 @@ async def _geocode_and_compute_commute(
     *,
     recorder: EventRecorder | None = None,
 ) -> tuple[list[MergedProperty], dict[str, tuple[int, TransportMode]], int]:
-    """Geocode properties and compute commute times via TravelTime API.
+    """Annotate an advisory commute decision, retaining every input property.
 
-    This is NOT a hard filter — it returns all properties (geocoded) plus a
-    lookup of commute times for those within the configured limit.  Properties
-    without coordinates or beyond the commute limit are still returned so that
-    downstream steps receive geocoded data.  The only filtering is an early-exit
-    gate: if TravelTime is configured and zero properties are reachable, the
-    caller can abort the pipeline.
-
-    Returns:
-        Tuple of (all properties with geocoded coordinates, commute lookup
-        mapping unique_id -> (minutes, transport_mode) for reachable properties,
-        count of properties within commute limit).
+    The count is measured journeys within the limit, not properties admitted or
+    a monotonic funnel stage. Missing/error/unreachable results are unknown.
+    Known over-limit measurements remain useful, but never remove a home.
     """
-    commute_lookup: dict[str, tuple[int, TransportMode]] = {}
-    if settings.traveltime_app_id and settings.traveltime_api_key:
-        logger.info("pipeline_started", phase="commute_filtering")
+    results: list[CommuteResult] = []
+    configured = bool(settings.traveltime_app_id and settings.traveltime_api_key)
+    if configured:
+        assert settings.traveltime_api_key is not None
         commute_filter = CommuteFilter(
             app_id=settings.traveltime_app_id,
             api_key=settings.traveltime_api_key.get_secret_value(),
             destination_postcode=criteria.destination_postcode,
         )
-
         merged = await commute_filter.geocode_properties(merged)
-
-        merged_with_coords = [m for m in merged if m.canonical.latitude and m.canonical.longitude]
-        merged_without_coords = [
-            m for m in merged if not (m.canonical.latitude and m.canonical.longitude)
-        ]
-
-        props_with_coords = [m.canonical for m in merged_with_coords]
-
-        commute_results = []
-        if props_with_coords:
-            for mode in criteria.transport_modes:
-                results = await commute_filter.filter_properties(
-                    props_with_coords,
-                    max_minutes=criteria.max_commute_minutes,
-                    transport_mode=mode,
-                )
-                commute_results.extend(results)
-
-        for result in commute_results:
-            if result.within_limit and (
-                result.property_id not in commute_lookup
-                or result.travel_time_minutes < commute_lookup[result.property_id][0]
-            ):
-                commute_lookup[result.property_id] = (
-                    result.travel_time_minutes,
-                    result.transport_mode,
-                )
-
-        within_limit = [m for m in merged_with_coords if m.canonical.unique_id in commute_lookup]
-        notify_count = len(within_limit) + len(merged_without_coords)
-
-        logger.info(
-            "commute_filter_summary",
-            within_limit=notify_count,
-            total_checked=len(merged_with_coords),
-            without_coords=len(merged_without_coords),
-            by_source=_source_counts(merged),
-        )
-
-        # T4: record commute events
-        if recorder is not None:
-            for m in merged_with_coords:
-                uid = m.canonical.unique_id
-                src = m.canonical.source.value
-                if uid in commute_lookup:
-                    mins, mode = commute_lookup[uid]
-                    recorder.record(
-                        PropertyEvent(
-                            uid,
-                            src,
-                            "commute_passed",
-                            "commute",
-                            {"minutes": mins, "mode": mode.value},
-                        )
-                    )
-                else:
-                    recorder.record(
-                        PropertyEvent(
-                            uid,
-                            src,
-                            "commute_dropped",
-                            "commute",
-                            {"reason": "beyond_limit"},
-                        )
-                    )
-            for m in merged_without_coords:
-                recorder.record(
-                    PropertyEvent(
-                        m.canonical.unique_id,
-                        m.canonical.source.value,
-                        "commute_passed",
-                        "commute",
-                        {"reason": "no_coords_included"},
+        for mode in criteria.transport_modes:
+            mode_results = await commute_filter.filter_properties(
+                [m.canonical for m in merged],
+                max_minutes=criteria.max_commute_minutes,
+                transport_mode=mode,
+            )
+            by_id = {r.property_id: r for r in mode_results if r.transport_mode == mode}
+            for m in merged:
+                # Defensive completeness when an adapter omits an input.
+                results.append(
+                    by_id.get(m.unique_id)
+                    or CommuteResult(
+                        property_id=m.unique_id,
+                        destination_postcode=criteria.destination_postcode,
+                        transport_mode=mode,
+                        limit_seconds=criteria.max_commute_minutes * 60,
+                        state=CommuteState.INVALID_RESPONSE,
                     )
                 )
-            await recorder.flush()
-
-        if not within_limit and not merged_without_coords:
-            return [], commute_lookup, 0
     else:
-        notify_count = len(merged)
-        logger.info("skipping_commute_filter", reason="no_traveltime_credentials")
+        logger.info("skipping_commute_filter", reason="not_configured")
 
-    return merged, commute_lookup, notify_count
+    selected = best_measured_commutes(results)
+    commute_lookup = commute_minutes_projection(results)
+    within_count = sum(r.within_limit is True for r in selected.values())
+    over_count = sum(r.within_limit is False for r in selected.values())
+    unknown_count = len(merged) - len(selected)
+    logger.info(
+        "commute_filter_summary",
+        policy="advisory",
+        within_limit=within_count,
+        over_limit=over_count,
+        unknown=unknown_count,
+        retained=len(merged),
+        dropped=0,
+        by_source=_source_counts(merged),
+    )
+
+    if recorder is not None:
+        for m in merged:
+            chosen = selected.get(m.unique_id)
+            states = {
+                r.transport_mode.value: r.state.value
+                for r in results
+                if r.property_id == m.unique_id
+            }
+            event_type = (
+                "commute_passed"
+                if chosen and chosen.within_limit is True
+                else "commute_over_limit"
+                if chosen
+                else "commute_unknown"
+            )
+            metadata: dict[str, object] = {
+                "policy": "advisory",
+                "retained": True,
+                "mode_states": states,
+                "within_limit": chosen.within_limit if chosen else None,
+            }
+            if chosen:
+                metadata.update(
+                    {
+                        "minutes": chosen.travel_time_minutes,
+                        "mode": chosen.transport_mode.value,
+                    }
+                )
+            elif not configured or not criteria.transport_modes:
+                metadata["reason"] = "not_configured"
+            recorder.record(
+                PropertyEvent(
+                    m.unique_id,
+                    m.canonical.source.value,
+                    event_type,
+                    "commute",
+                    metadata,
+                )
+            )
+        await recorder.flush()
+
+    return merged, commute_lookup, within_count
 
 
 async def _run_enrichment(
@@ -883,7 +874,7 @@ async def _run_pre_analysis_pipeline(
         enriched, criteria, settings, recorder=recorder
     )
     if not geocoded:
-        logger.info("no_properties_within_commute_limit")
+        logger.info("no_properties_after_enrichment")
         timings["enrichment_seconds"] = time.monotonic() - t0
         return None
 

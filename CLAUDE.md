@@ -72,12 +72,12 @@ Python support is `>=3.11,<3.15`; CI tests 3.11.16 and 3.14.7. Local/default con
 4. **Wrap and detect price changes** — `properties_to_merged()` wraps single-source properties; update known price observations
 5. **Select new properties and retries** — A source listing is seen when it has a `merged_id`, not merely because it was scraped; load eligible unenriched properties for retry
 6. **Detail enrichment** — Fetch media/text, cache images, classify EPCs/floorplans and generate thumbnails
-7. **Geocode and compute commute** — Runs after enrichment; detail coordinates are available. Mixed reachable/unreachable results are advisory, but an all-unreachable batch can currently abort
+7. **Geocode and compute commute** — Runs after enrichment; detail coordinates are available. Advisory for every outcome, including all-unreachable and provider failures. Thresholds use seconds; display rounds up. Unknowns never become zero-minute passes, and the within-limit counter counts actual measurements.
 8. **Post-enrichment deduplication and floorplan gate** — Merge across sources/runs and update existing anchors; apply floorplan exemptions and configured photo fallback
 9. **Analyze, save and notify** — Two-phase analysis (if enabled); persist each result and send notifications in live mode
 10. **Drain reanalysis, deliver price drops, finish accounting** — Later work only runs if the pre-analysis stage did not return early
 
-PR06a retains descriptions/features by source through save/reload and both model phases. `MergedProperty.source_text` holds current text with per-field observation times; undated search text only fills gaps, missing fields preserve evidence, and explicit dated corrections can clear it. `PropertyQualityAnalysis.listing_text_inputs` records the exact bounded selected text/features and full-input hashes. This is not the immutable revision system in PR06b. Known-page/early-return accounting remains incomplete (PR09a); discovery-independent recovery and process exclusion need PR12a. Do not describe the current commute implementation as a reliable hard filter (PR16a).
+PR06a retains descriptions/features by source through save/reload and both model phases. `MergedProperty.source_text` holds current text with per-field observation times; undated search text only fills gaps, missing fields preserve evidence, and explicit dated corrections can clear it. `PropertyQualityAnalysis.listing_text_inputs` records the exact bounded selected text/features and full-input hashes. This is not the immutable revision system in PR06b. Known-page/early-return accounting remains incomplete (PR09a); discovery-independent recovery and process exclusion need PR12a. PR16a's typed commute outcomes and mode-state events fix admission/accounting; stored minute projections still lack versioned route context, precision and expiry (PR16b). They are labelled estimates, and legacy zero/absent values display as unknown.
 
 ## Gotchas & Constraints
 

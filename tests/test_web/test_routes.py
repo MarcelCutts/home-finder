@@ -761,6 +761,17 @@ class TestCardRendering:
         resp = client.get("/")
         assert resp.status_code == 200
         assert "25 min" in resp.text
+        assert "25 min · estimate" in resp.text
+        assert "journey date/time and location precision are unverified" in resp.text
+
+    @pytest.mark.parametrize("minutes", [None, 0])
+    async def test_unknown_commute_is_not_zero_minute_success(
+        self, client: TestClient, storage: PropertyStorage, merged_a: MergedProperty, minutes
+    ) -> None:
+        await storage.save_merged_property(merged_a, commute_minutes=minutes)
+        resp = client.get("/")
+        assert "Commute unknown" in resp.text
+        assert ">0 min" not in resp.text
 
     @pytest.mark.asyncio
     async def test_fit_tier_pill_rendered(
