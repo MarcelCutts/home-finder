@@ -30,6 +30,7 @@ class _ReplayDetailFetcher(DetailFetcher):
 
     def __init__(self, response: httpx.Response) -> None:
         super().__init__()
+        self._record_observations = False  # Re-parsing is not a new provider receipt.
         self.response = response
 
     async def _httpx_get_with_retry(self, url: str) -> httpx.Response:
@@ -149,9 +150,12 @@ async def replay(capture_dir: Path, output_root: Path) -> Path:
                 assert request.listing is not None
                 fetcher = _ReplayDetailFetcher(response)
                 data = await fetcher.fetch_detail_page(request.listing)
-                result["detail"] = asdict(data) if data else None
+                detail = asdict(data) if data else None
+                if detail is not None:
+                    detail.pop("source_observation", None)
+                result["detail"] = detail
                 result["outcome"] = (
-                    "extracted" if data and any(asdict(data).values()) else "empty_or_unrecognised"
+                    "extracted" if detail and any(detail.values()) else "empty_or_unrecognised"
                 )
             else:
                 result["outcome"] = "reference_only"

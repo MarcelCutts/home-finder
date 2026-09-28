@@ -20,6 +20,7 @@ from home_finder.models import (
 from home_finder.models.listing_text import merge_listing_text
 from home_finder.scrapers.detail_fetcher import DetailFetcher
 from home_finder.utils.address import is_outcode
+from home_finder.utils.async_tasks import finish_before_cancelling
 from home_finder.utils.epc_detector import detect_epc
 from home_finder.utils.floorplan_detector import detect_floorplan
 from home_finder.utils.image_cache import (
@@ -33,11 +34,16 @@ from home_finder.utils.image_cache import (
     read_image_bytes,
     save_image_bytes,
 )
+from home_finder.utils.listing_identity import listing_id
 
 if TYPE_CHECKING:
     from home_finder.db import PropertyStorage
 
 logger = get_logger(__name__)
+
+
+class DetailEvidenceError(RuntimeError):
+    """Received detail evidence could not be retained; do not report provider failure."""
 
 
 @dataclass
@@ -173,6 +179,7 @@ async def _enrich_single(
     detail_fetcher: DetailFetcher,
     semaphore: asyncio.Semaphore,
     data_dir: str | None = None,
+    storage: PropertyStorage | None = None,
 ) -> MergedProperty:
     """Enrich a single merged property with detail page data."""
     async with semaphore:
@@ -185,9 +192,17 @@ async def _enrich_single(
         canon_updates: dict[str, float | str] = {}
 
         for source, url in merged.source_urls.items():
+            source_id = listing_id(source.value, str(url))
+            if source_id is None and source == prop.source and url == prop.url:
+                source_id = prop.source_id  # An already identified canonical/legacy listing.
+            if source_id is None:
+                logger.warning(
+                    "detail_identity_unresolved", property_id=merged.unique_id, source=source.value
+                )
+                continue
             temp_prop = Property(
                 source=source,
-                source_id=prop.source_id,
+                source_id=source_id,
                 url=url,
                 title=prop.title,
                 price_pcm=prop.price_pcm,
@@ -202,14 +217,31 @@ async def _enrich_single(
                 detail_data = await detail_fetcher.fetch_detail_page(temp_prop)
 
                 if detail_data:
-                    observed_at = datetime.now(UTC)
-                    source_text[source] = merge_listing_text(
-                        source_text.get(source, ListingTextEvidence()),
-                        ListingTextEvidence.observed(
-                            observed_at=observed_at,
+                    observation = detail_data.source_observation
+                    if observation is not None:
+                        if observation.source_unique_id != temp_prop.unique_id:
+                            raise DetailEvidenceError(
+                                "Detail observation has the wrong provider ID"
+                            )
+                        if storage is None:
+                            raise DetailEvidenceError("Captured detail evidence requires storage")
+                        try:
+                            await finish_before_cancelling(
+                                storage.retain_detail_observation(observation)
+                            )
+                        except Exception as exc:
+                            raise DetailEvidenceError("Detail evidence write failed") from exc
+                        incoming_text = ListingTextEvidence.from_observation(observation)
+                    else:
+                        # Legacy/test adapters have no immutable observation ID.
+                        incoming_text = ListingTextEvidence.observed(
+                            observed_at=datetime.now(UTC),
                             description=detail_data.description,
                             features=detail_data.features,
-                        ),
+                        )
+                    source_text[source] = merge_listing_text(
+                        source_text.get(source, ListingTextEvidence()),
+                        incoming_text,
                     )
 
                     if detail_data.gallery_urls:
@@ -305,6 +337,8 @@ async def _enrich_single(
                         floor_area_sqm = detail_data.floor_area_sqm
                         floor_area_source = detail_data.floor_area_source
 
+            except DetailEvidenceError:
+                raise
             except Exception as exc:
                 # Keep text already received from this source and continue with
                 # the others; image or parser failure must not erase that evidence.
@@ -458,8 +492,9 @@ async def enrich_merged_properties(
         merged_properties: Properties to enrich.
         detail_fetcher: DetailFetcher instance for HTTP requests.
         data_dir: Data directory for image cache. None disables caching.
-        storage: DB storage for loading cached property images. Required when
-            data_dir is set to reconstruct images for skipped properties.
+        storage: DB storage for retaining freshly captured detail observations
+            before image work, and loading cached property images. Required for
+            normal adapters that return source observations.
 
     Returns:
         EnrichmentResult with enriched properties (got images/floorplan)
@@ -488,10 +523,14 @@ async def enrich_merged_properties(
             to_enrich.append(merged)
 
     semaphore = asyncio.Semaphore(_ENRICHMENT_CONCURRENCY)
-    tasks = [_enrich_single(merged, detail_fetcher, semaphore, data_dir) for merged in to_enrich]
+    tasks = [
+        _enrich_single(merged, detail_fetcher, semaphore, data_dir, storage) for merged in to_enrich
+    ]
     enriched_list = list(await asyncio.gather(*tasks, return_exceptions=True))
 
     for i, item in enumerate(enriched_list):
+        if isinstance(item, DetailEvidenceError):
+            raise item
         if isinstance(item, BaseException):
             logger.warning(
                 "enrichment_task_failed",

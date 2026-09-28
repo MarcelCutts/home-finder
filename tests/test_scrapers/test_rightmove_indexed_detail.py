@@ -54,6 +54,7 @@ async def test_actual_detail_path_extracts_retained_indexed_fields(indexed_fixtu
     assert result.postcode == "E8 1AA"
     assert result.latitude == 51.54 and result.longitude == -0.06
     assert result.floorplan_url is None and result.floor_area_sqm is None
+    assert result.source_observation is None  # Offline replay is not a fresh receipt.
 
 
 def test_shared_container_is_reused_without_tree_expansion():

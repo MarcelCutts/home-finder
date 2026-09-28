@@ -1465,13 +1465,24 @@ class TestAnalyzeSingleMerged:
     async def test_detail_text_survives_save_reload_and_reaches_both_requests(
         self, tmp_path, make_property, sample_visual_response, sample_evaluation_response
     ) -> None:
+        from datetime import UTC, datetime
+
         from home_finder.db import PropertyStorage
         from home_finder.filters.detail_enrichment import enrich_merged_properties
         from home_finder.scrapers.detail_fetcher import DetailFetcher, DetailPageData
+        from home_finder.scrapers.observations import detail_observation
 
-        rm = make_property(source=PropertySource.RIGHTMOVE, source_id="rm-text", description=None)
+        rm = make_property(
+            source=PropertySource.RIGHTMOVE,
+            source_id="100001",
+            url=HttpUrl("https://www.rightmove.co.uk/properties/100001"),
+            description=None,
+        )
         otm = make_property(
-            source=PropertySource.ONTHEMARKET, source_id="otm-text", description=None
+            source=PropertySource.ONTHEMARKET,
+            source_id="200002",
+            url=HttpUrl("https://www.onthemarket.com/details/200002/"),
+            description=None,
         )
         merged = MergedProperty(
             canonical=rm,
@@ -1492,6 +1503,11 @@ class TestAnalyzeSingleMerged:
                 gallery_urls=["https://example.com/otm-fixture.jpg"],
             ),
         }
+        for prop in (rm, otm):
+            detail = details[prop.source]
+            detail.source_observation = detail_observation(
+                prop, detail, observed_at=datetime.now(UTC)
+            )
 
         async def fetch(prop):
             return details[prop.source]
@@ -1500,7 +1516,7 @@ class TestAnalyzeSingleMerged:
             await storage.upsert_source_listings([rm, otm])
             async with DetailFetcher() as fetcher:
                 with patch.object(fetcher, "fetch_detail_page", side_effect=fetch):
-                    result = await enrich_merged_properties([merged], fetcher)
+                    result = await enrich_merged_properties([merged], fetcher, storage=storage)
             enriched = result.enriched[0]
             await storage.pipeline.save_pre_analysis_properties([enriched], {})
 
@@ -1537,6 +1553,10 @@ class TestAnalyzeSingleMerged:
             ):
                 _, analysis = await quality_filter.analyze_single_merged(reloaded)
             assert analysis is not None and analysis.listing_text_inputs is not None
+            assert analysis.listing_text_inputs.source_observation_ids == {
+                source.value: (detail.source_observation.sha256,)
+                for source, detail in details.items()
+            }
             requests = quality_filter._client.messages.create.call_args_list
             assert len(requests) == 2
             for request in requests:

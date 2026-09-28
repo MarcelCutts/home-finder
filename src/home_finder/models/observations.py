@@ -164,6 +164,9 @@ class SourceObservation(_EvidenceModel):
     observed_at: AwareDatetime
     parser: ObservationParser
     raw_capture: RawCaptureReference | None = None
+    normalization_omissions: (
+        dict[Literal["gallery_urls", "floorplan_urls"], Literal["unsupported_url"]] | None
+    ) = None
     correction_reason: str | None = Field(default=None, min_length=1, max_length=1000)
     fields: ObservationFields = Field(default_factory=ObservationFields)
 
@@ -183,6 +186,8 @@ class SourceObservation(_EvidenceModel):
             )
         for name in ObservationFields.model_fields:
             change = getattr(self.fields, name)
+            if change is not None and name in (self.normalization_omissions or {}):
+                raise ValueError("An omitted field cannot also supply observed evidence")
             if change is not None and change.state == "cleared" and self.origin != "correction":
                 raise ValueError("Only an explicit correction can clear a field")
         if len(self.payload_json().encode()) > MAX_OBSERVATION_BYTES:

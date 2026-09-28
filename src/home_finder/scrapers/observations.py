@@ -1,18 +1,28 @@
 """Attach bounded source observations at the successful search-response boundary."""
 
+from __future__ import annotations
+
 import hashlib
 from datetime import datetime
 from functools import lru_cache
 from importlib.resources import files
-from typing import Any
+from typing import TYPE_CHECKING, Any, Literal
 from urllib.parse import parse_qsl, urlsplit, urlunsplit
 from uuid import uuid4
 
-from pydantic import HttpUrl, ValidationError
+from pydantic import HttpUrl, TypeAdapter, ValidationError
 
 from home_finder.logging import get_logger
 from home_finder.models import Property
-from home_finder.models.observations import ObservationFields, ObservationParser, SourceObservation
+from home_finder.models.observations import (
+    ObservationFields,
+    ObservationParser,
+    PublicURL,
+    SourceObservation,
+)
+
+if TYPE_CHECKING:
+    from home_finder.scrapers.detail_fetcher import DetailPageData
 
 logger = get_logger(__name__)
 
@@ -109,3 +119,73 @@ def search_observations(
             continue
         result.append(prop.model_copy(update={"source_observation": observation}))
     return result, errors
+
+
+@lru_cache(maxsize=4)
+def detail_parser(source: str) -> ObservationParser:
+    modules = [
+        "scrapers/detail_fetcher.py",
+        "scrapers/observations.py",
+        "utils/http_evidence.py",
+        "utils/listing_identity.py",
+    ]
+    if source == "rightmove":
+        modules.append("scrapers/rightmove_payloads.py")
+    root = files("home_finder")
+    digest = hashlib.sha256()
+    for name in sorted(modules):
+        digest.update(name.encode() + b"\x00" + root.joinpath(name).read_bytes() + b"\x00")
+    return ObservationParser(name=f"{source}.detail", version="1", code_sha256=digest.hexdigest())
+
+
+_PUBLIC_URL = TypeAdapter(PublicURL)
+
+
+def detail_observation(
+    prop: Property,
+    data: DetailPageData,
+    *,
+    observed_at: datetime,
+    metadata: ObservationFields | None = None,
+) -> SourceObservation | None:
+    """Retain the parsed detail subset, never copied search facts or invented empties.
+
+    Media URLs are selected by the existing parser's gallery limit. They are
+    references, not complete source inventories or proof of downloaded bytes.
+    Unsupported optional URL sets are explicitly marked unavailable as a whole.
+    """
+    fields: dict[str, Any] = metadata.model_dump(mode="json", exclude_none=True) if metadata else {}
+    for name in ("description", "features", "postcode"):
+        value = getattr(data, name)
+        if value and (not isinstance(value, str) or value.strip()):
+            fields[name] = {"value": value}
+    if data.latitude is not None and data.longitude is not None:
+        fields["coordinates"] = {"value": {"latitude": data.latitude, "longitude": data.longitude}}
+    omissions: dict[Literal["gallery_urls", "floorplan_urls"], Literal["unsupported_url"]] = {}
+    media: dict[Literal["gallery_urls", "floorplan_urls"], list[str] | None] = {
+        "gallery_urls": data.gallery_urls,
+        "floorplan_urls": [data.floorplan_url] if data.floorplan_url else None,
+    }
+    for name, urls in media.items():
+        if urls:
+            try:
+                fields[name] = {"value": [_PUBLIC_URL.validate_python(url) for url in urls]}
+            except ValidationError:
+                omissions[name] = "unsupported_url"
+    if not fields and not omissions:
+        return None  # An empty parser result cannot manufacture positive evidence.
+    try:
+        return SourceObservation(
+            producer_id="local-detail-v1",
+            event_id=uuid4().hex,
+            source=prop.source,
+            source_id=prop.source_id,
+            listing_url=_listing_url(prop),
+            origin="detail",
+            observed_at=observed_at,
+            parser=detail_parser(prop.source.value),
+            fields=ObservationFields.model_validate(fields),
+            normalization_omissions=omissions or None,
+        )
+    except ValidationError:
+        raise ValueError("invalid_detail_evidence") from None

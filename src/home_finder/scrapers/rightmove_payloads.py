@@ -90,6 +90,15 @@ def _search_metadata(listing: dict[str, Any]) -> ObservationFields:
     return ObservationFields.model_validate(fields)
 
 
+def detail_metadata(property_data: dict[str, Any]) -> ObservationFields:
+    """Retain the verified detail branch shape and an explicitly present plan set."""
+    metadata = {"customer": property_data.get("customer")}
+    floorplans = property_data.get("floorplans")
+    if isinstance(floorplans, list):
+        metadata["numberOfFloorplans"] = len(floorplans)
+    return _search_metadata(metadata)
+
+
 def parse_structured_search(soup: BeautifulSoup) -> SearchPage | None:
     """None means no structured script; malformed/present data is an error page."""
     script = soup.find("script", id="__NEXT_DATA__")

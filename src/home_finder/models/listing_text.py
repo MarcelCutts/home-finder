@@ -11,6 +11,8 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from home_finder.models.observations import SourceObservation
+
 TextOrigin = Literal["legacy", "search", "detail", "correction"]
 
 
@@ -62,6 +64,24 @@ class ListingTextEvidence(BaseModel):
                 raise ValueError("Text observation timestamps must include a timezone")
             return value.astimezone(UTC)
         return value
+
+    @classmethod
+    def from_observation(cls, observation: SourceObservation) -> ListingTextEvidence:
+        """Reference only the exact fields in a retained source observation."""
+        description = observation.fields.description
+        features = observation.fields.features
+        return cls(
+            description=("" if description.state == "cleared" else description.value)
+            if description
+            else None,
+            description_observed_at=observation.observed_at if description else None,
+            description_origin=observation.origin,
+            features=(() if features.state == "cleared" else features.value) if features else None,
+            features_observed_at=observation.observed_at if features else None,
+            features_origin=observation.origin,
+            description_observation_ids=(observation.sha256,) if description else (),
+            features_observation_ids=(observation.sha256,) if features else (),
+        )
 
     @classmethod
     def observed(

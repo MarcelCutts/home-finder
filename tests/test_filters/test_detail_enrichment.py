@@ -94,7 +94,7 @@ class TestEnrichMergedProperties:
     ) -> None:
         """Should collect images from all source URLs."""
         rm_prop = make_property(source=PropertySource.RIGHTMOVE, source_id="rm1")
-        zp_url = HttpUrl("https://zoopla.co.uk/to-rent/details/zp1")
+        zp_url = HttpUrl("https://zoopla.co.uk/to-rent/details/200001")
         merged = MergedProperty(
             canonical=rm_prop,
             sources=(PropertySource.RIGHTMOVE, PropertySource.ZOOPLA),
@@ -135,7 +135,7 @@ class TestEnrichMergedProperties:
     ) -> None:
         """Should skip PDF floorplans and keep image-format ones."""
         rm_prop = make_property(source=PropertySource.RIGHTMOVE, source_id="rm1")
-        zp_url = HttpUrl("https://zoopla.co.uk/to-rent/details/zp1")
+        zp_url = HttpUrl("https://zoopla.co.uk/to-rent/details/200001")
         merged = MergedProperty(
             canonical=rm_prop,
             sources=(PropertySource.RIGHTMOVE, PropertySource.ZOOPLA),

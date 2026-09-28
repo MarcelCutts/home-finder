@@ -1,6 +1,6 @@
 # PR06b-2: Retain search revisions and assessment evidence references
 
-**Date:** 28 September 2026. **Predecessor:** observation foundation `a48fcb2`.
+**Date:** 28 September 2026. **Commit:** `f305e04`. **Predecessor:** observation foundation `a48fcb2`.
 **Scope:** local search-response integration. Detail capture, the authoritative projection switch and remote transport remain separate steps.
 
 ## Result

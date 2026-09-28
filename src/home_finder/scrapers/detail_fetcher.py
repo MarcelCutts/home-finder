@@ -5,6 +5,7 @@ import io
 import json
 import re
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Any, NamedTuple, assert_never
 
 import httpx
@@ -21,9 +22,11 @@ from tenacity import (
 
 from home_finder.logging import get_logger
 from home_finder.models import SQM_PER_SQFT, Property, PropertySource
+from home_finder.models.observations import ObservationFields, SourceObservation
 from home_finder.scrapers.constants import BROWSER_HEADERS
+from home_finder.scrapers.observations import detail_observation
 from home_finder.scrapers.retry import RetryableHttpError
-from home_finder.scrapers.rightmove_payloads import detail_property
+from home_finder.scrapers.rightmove_payloads import detail_metadata, detail_property
 from home_finder.utils.circuit_breaker import ConsecutiveFailureBreaker
 from home_finder.utils.http_evidence import is_challenge
 from home_finder.utils.image_cache import is_valid_image_bytes
@@ -354,6 +357,7 @@ class DetailPageData:
     postcode: str | None = None
     floor_area_sqm: float | None = None
     floor_area_source: str | None = None  # "rightmove" | "zoopla" | "onthemarket"
+    source_observation: SourceObservation | None = None
 
 
 class DetailFetcher:
@@ -370,6 +374,7 @@ class DetailFetcher:
         self._curl_session: AsyncSession | None = None  # type: ignore[type-arg]
         self._max_gallery_images = max_gallery_images
         self._proxy_url = proxy_url
+        self._record_observations = True  # Offline replay explicitly disables fresh receipts.
         # Per-purpose throttles: Zoopla detail pages are heavily rate-limited,
         # OTM less so.  Image CDNs get their own per-CDN throttles.
         self._zoopla_lock = asyncio.Lock()
@@ -521,6 +526,20 @@ class DetailFetcher:
         data = await self.fetch_detail_page(prop)
         return data.floorplan_url if data else None
 
+    def _observed_detail(
+        self,
+        prop: Property,
+        data: DetailPageData,
+        observed_at: datetime,
+        *,
+        metadata: ObservationFields | None = None,
+    ) -> DetailPageData:
+        if self._record_observations:
+            data.source_observation = detail_observation(
+                prop, data, observed_at=observed_at, metadata=metadata
+            )
+        return data
+
     async def fetch_detail_page(self, prop: Property) -> DetailPageData | None:
         """Fetch detail page and extract floorplan and gallery URLs.
 
@@ -546,6 +565,7 @@ class DetailFetcher:
         """Extract floorplan and gallery URLs from Rightmove detail page."""
         try:
             response = await self._httpx_get_with_retry(str(prop.url))
+            observed_at = datetime.now(UTC)
             if response.status_code != 200:
                 logger.warning("rightmove_http_error", status=response.status_code)
                 return None
@@ -609,16 +629,21 @@ class DetailFetcher:
                         floor_area_sqm = round(raw * SQM_PER_SQFT, 1)
                         break
 
-            return DetailPageData(
-                floorplan_url=floorplan_url,
-                gallery_urls=gallery_urls if gallery_urls else None,
-                description=description,
-                features=features if features else None,
-                latitude=latitude,
-                longitude=longitude,
-                postcode=postcode,
-                floor_area_sqm=floor_area_sqm,
-                floor_area_source="rightmove" if floor_area_sqm else None,
+            return self._observed_detail(
+                prop,
+                DetailPageData(
+                    floorplan_url=floorplan_url,
+                    gallery_urls=gallery_urls if gallery_urls else None,
+                    description=description,
+                    features=features if features else None,
+                    latitude=latitude,
+                    longitude=longitude,
+                    postcode=postcode,
+                    floor_area_sqm=floor_area_sqm,
+                    floor_area_source="rightmove" if floor_area_sqm else None,
+                ),
+                observed_at,
+                metadata=detail_metadata(property_data),
             )
 
         except Exception as e:
@@ -637,6 +662,7 @@ class DetailFetcher:
         """
         try:
             response = await self._curl_get_with_retry(str(prop.url))
+            observed_at = datetime.now(UTC)
             if response.status_code != 200:
                 logger.warning(
                     "zoopla_http_error",
@@ -645,6 +671,9 @@ class DetailFetcher:
                 )
                 return None
             html: str = response.text
+            if is_challenge(html, response.headers):
+                logger.warning("zoopla_challenge", property_id=prop.unique_id)
+                return None
             max_imgs = self._max_gallery_images
 
             floorplan_url: str | None = None
@@ -681,13 +710,17 @@ class DetailFetcher:
             raw_sqft = _zoopla_size_from_rsc(html)
             floor_area_sqm = round(raw_sqft * SQM_PER_SQFT, 1) if raw_sqft else None
 
-            return DetailPageData(
-                floorplan_url=floorplan_url,
-                gallery_urls=gallery_urls if gallery_urls else None,
-                description=description,
-                features=features if features else None,
-                floor_area_sqm=floor_area_sqm,
-                floor_area_source="zoopla" if floor_area_sqm else None,
+            return self._observed_detail(
+                prop,
+                DetailPageData(
+                    floorplan_url=floorplan_url,
+                    gallery_urls=gallery_urls if gallery_urls else None,
+                    description=description,
+                    features=features if features else None,
+                    floor_area_sqm=floor_area_sqm,
+                    floor_area_source="zoopla" if floor_area_sqm else None,
+                ),
+                observed_at,
             )
 
         except Exception as e:
@@ -702,6 +735,7 @@ class DetailFetcher:
                 min_interval=_OPENRENT_MIN_INTERVAL,
                 throttle_name="openrent",
             )
+            observed_at = datetime.now(UTC)
             if response.status_code != 200:
                 logger.warning(
                     "openrent_http_error",
@@ -712,6 +746,9 @@ class DetailFetcher:
             html: str = response.text
 
             # Check if we got redirected to homepage (property no longer available)
+            if is_challenge(html, response.headers):
+                logger.warning("openrent_challenge", property_id=prop.unique_id)
+                return None
             if "/properties-to-rent" in str(response.url) or "homepage" in html.lower()[:1000]:
                 logger.debug("openrent_property_unavailable", property_id=prop.unique_id)
                 return None
@@ -805,11 +842,15 @@ class DetailFetcher:
                     if text:
                         features.append(text)
 
-            return DetailPageData(
-                floorplan_url=floorplan_url,
-                gallery_urls=gallery_urls if gallery_urls else None,
-                description=description,
-                features=features if features else None,
+            return self._observed_detail(
+                prop,
+                DetailPageData(
+                    floorplan_url=floorplan_url,
+                    gallery_urls=gallery_urls if gallery_urls else None,
+                    description=description,
+                    features=features if features else None,
+                ),
+                observed_at,
             )
 
         except Exception as e:
@@ -826,6 +867,7 @@ class DetailFetcher:
             response = await self._curl_get_with_retry(
                 str(prop.url), min_interval=_OTM_MIN_INTERVAL
             )
+            observed_at = datetime.now(UTC)
             if response.status_code != 200:
                 logger.warning(
                     "onthemarket_http_error",
@@ -836,6 +878,9 @@ class DetailFetcher:
             html: str = response.text
 
             # OnTheMarket uses Next.js with Redux state in __NEXT_DATA__
+            if is_challenge(html, response.headers):
+                logger.warning("onthemarket_challenge", property_id=prop.unique_id)
+                return None
             match = re.search(
                 r'<script id="__NEXT_DATA__"[^>]*>(.*?)</script>',
                 html,
@@ -898,13 +943,17 @@ class DetailFetcher:
             ):
                 floor_area_sqm = round(raw_sqft * SQM_PER_SQFT, 1)
 
-            return DetailPageData(
-                floorplan_url=floorplan_url,
-                gallery_urls=gallery_urls if gallery_urls else None,
-                description=description,
-                features=features if features else None,
-                floor_area_sqm=floor_area_sqm,
-                floor_area_source="onthemarket" if floor_area_sqm else None,
+            return self._observed_detail(
+                prop,
+                DetailPageData(
+                    floorplan_url=floorplan_url,
+                    gallery_urls=gallery_urls if gallery_urls else None,
+                    description=description,
+                    features=features if features else None,
+                    floor_area_sqm=floor_area_sqm,
+                    floor_area_source="onthemarket" if floor_area_sqm else None,
+                ),
+                observed_at,
             )
 
         except Exception as e:

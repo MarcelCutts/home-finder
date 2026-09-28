@@ -1074,18 +1074,7 @@ class PropertyStorage:
         observation = prop.source_observation
         if observation is None:
             return ListingTextEvidence(description=prop.description)
-        description = observation.fields.description
-        features = observation.fields.features
-        return ListingTextEvidence(
-            description=description.value if description else None,
-            description_observed_at=observation.observed_at if description else None,
-            description_origin="search",
-            features=features.value if features else None,
-            features_observed_at=observation.observed_at if features else None,
-            features_origin="search",
-            description_observation_ids=(observation.sha256,) if description else (),
-            features_observation_ids=(observation.sha256,) if features else (),
-        )
+        return ListingTextEvidence.from_observation(observation)
 
     async def _upsert_source_listing(
         self,
@@ -1223,6 +1212,24 @@ class PropertyStorage:
             )
             for merged_id in {merged_id for _, merged_id in links}:
                 await refresh_merged_text(conn, merged_id)
+
+    async def retain_detail_observation(self, observation: SourceObservation) -> None:
+        """Persist a receipt and its current text before any image or model work.
+
+        A missing legacy/source row never invents an identity or discards the
+        independent evidence. Identity reconciliation can associate it later.
+        """
+        if observation.origin != "detail":
+            raise ValueError("Detail persistence requires detail-origin evidence")
+        async with self._transaction() as conn:
+            await self.observations.ingest([observation], _conn=conn)
+            linked_id = await apply_source_text(
+                conn,
+                observation.source_unique_id,
+                ListingTextEvidence.from_observation(observation),
+            )
+            if linked_id:
+                await refresh_merged_text(conn, linked_id)
 
     async def update_source_text(
         self, source_unique_id: str, evidence: ListingTextEvidence
