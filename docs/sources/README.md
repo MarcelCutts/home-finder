@@ -2,6 +2,8 @@
 
 > Reference for behavior shared across all four property portals (Zoopla, Rightmove, OpenRent, OnTheMarket).
 
+**Status, 2026-09-28:** these notes describe implemented adapters and historical observations, not current live qualification or permission to collect/redisplay content. Follow O2 and PR10/PR11 in the [delivery plan](../plans/2026-09-28-research-synthesis-and-delivery-plan.md). Keep normal collection paused; live tests are now explicit opt-in. Record dated fixtures and source scope when qualifying a source, including separate acquisition, storage, model-processing and hosted-display constraints.
+
 See individual source files for platform-specific details:
 - [zoopla.md](zoopla.md)
 - [rightmove.md](rightmove.md)
@@ -10,7 +12,7 @@ See individual source files for platform-specific details:
 
 ## HTTP Client Routing
 
-See [CLAUDE.md — HTTP Client Selection](../../CLAUDE.md#http-client-selection) for the full routing table. The wrong client gets 403s due to TLS fingerprinting on Zoopla and OnTheMarket.
+See [CLAUDE.md — HTTP Client Selection](../../CLAUDE.md#http-client-selection) for the implemented routing table. Historical Zoopla/OnTheMarket requests encountered TLS/challenge blocks. A successful response or choice of client is not evidence that access is permitted or that extraction still works.
 
 ## CDN Domains and Image Routing
 
@@ -29,6 +31,8 @@ When cross-platform duplicates are merged, higher-priority source images are kep
 
 The `BaseScraper._paginate()` method supports early-stop: if all results on a page are already in the DB, pagination stops. Only works when results are sorted newest-first.
 
+Current code can return before retaining that fetched known page, losing its price/availability observations (PR09a). The table below describes configured sort assumptions; it is not a guarantee of newest-first ordering on today's sites.
+
 | Source | Supports Early-Stop | Why |
 |--------|-------------------|-----|
 | Zoopla | Yes | Sorted newest-first |
@@ -40,7 +44,9 @@ The `BaseScraper._paginate()` method supports early-stop: if all results on a pa
 
 Properties without floorplans are dropped when `require_floorplan=True` (default). Exception: OpenRent-only properties are exempt because OpenRent has no dedicated floorplan section — landlords upload everything into a single gallery. See `_FLOORPLAN_EXEMPT_SOURCES`.
 
-When no structural floorplan is found, a PIL-based heuristic scans cached gallery images to rescue misclassified floorplans.
+Enrichment scans cached gallery images with PIL-based heuristics to rescue misclassified floorplans. The gate also allows the configured gallery-photo fallback (`min_gallery_for_photo_inference`, default 5; 0 disables it).
+
+Enrichment runs **before** geocoding/commute calculation and deduplication. Text/features fetched here can still be lost before persistence and analysis; PR06a repairs that handoff. The normal analysis path reads cached images and sends base64 content, including Rightmove images.
 
 ## Coordinate and Postcode Availability
 

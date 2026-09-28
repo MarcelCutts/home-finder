@@ -4,7 +4,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Why This Exists
 
-Personal rental property finder for Marcel, based in Stoke Newington, London. Scrapes listings, filters, analyzes quality with AI vision, and sends Telegram notifications for good matches.
+Home Finder began as Marcel's personal rental search in London. The confirmed target is a small hosted service for tens to hundreds of users, introduced gradually after reliability and access-control repairs. Current implementation and stored preferences still belong to one owner's search; do not treat them as a multi-user design.
+
+Follow the execution queue in [the delivery plan](docs/plans/2026-09-28-research-synthesis-and-delivery-plan.md), including its operational and rollout gates. Keep normal production collection paused. After reviewing PR01, the user instructed agents to commit each completed segment and continue through the tasks using goals. This supersedes the earlier pause after every segment: verify, document and commit each step, then continue to the next eligible item. External rollout, source-access and elapsed-evidence gates still apply.
 
 Marcel runs a small remote software consultancy (WFH full-time) and music events. Key preferences that should inform quality analysis, scoring, and UX decisions:
 
@@ -18,7 +20,7 @@ Marcel runs a small remote software consultancy (WFH full-time) and music events
 
 ```bash
 # Install dependencies (includes dev deps)
-uv sync --all-extras
+uv sync --locked --all-extras
 
 # Run the application
 uv run home-finder                      # Full pipeline with Telegram notifications
@@ -26,6 +28,7 @@ uv run home-finder --dry-run            # Full pipeline, save to DB but no notif
 uv run home-finder --scrape-only        # Just scrape and print (no filtering/storage)
 uv run home-finder --max-per-scraper 5  # Limit results per scraper (for testing)
 uv run home-finder --serve              # Web dashboard + recurring pipeline scheduler
+uv run home-finder --serve --no-pipeline # Dashboard only; status/reanalysis routes still write
 uv run home-finder --debug              # Enable debug-level logging
 uv run home-finder --generate-thumbnails   # Generate missing thumbnails for cached images
 uv run home-finder --check-off-market                     # Spot-check URLs for removed/let-agreed signals
@@ -33,9 +36,9 @@ uv run home-finder --check-off-market --scrapers zoopla   # Check specific platf
 
 # Testing — runs in parallel by default via pytest-xdist (-n auto in addopts).
 # Timeout is already configured in pyproject.toml addopts (30s default).
-# Do NOT pass --timeout on the command line; it's handled automatically.
+# Slow-marked tests receive a 120s timeout; override only for a justified diagnostic.
 # PYTHONUNBUFFERED=1 prevents hanging when stdout is piped (e.g. Claude Code).
-PYTHONUNBUFFERED=1 uv run pytest                         # Run all tests in parallel (slow tests excluded by default)
+PYTHONUNBUFFERED=1 uv run pytest                         # Default suite; excludes slow/browser and blocks network sockets
 PYTHONUNBUFFERED=1 uv run pytest tests/test_models.py    # Run specific test file
 PYTHONUNBUFFERED=1 uv run pytest -k "test_openrent"      # Run tests matching pattern
 PYTHONUNBUFFERED=1 uv run pytest -n0 tests/test_foo.py   # Run single-threaded (useful for debugging)
@@ -57,37 +60,39 @@ uv run mypy src                       # Type check (strict mode)
 
 ## Environment Setup
 
-See README.md for full configuration reference. All settings use `HOME_FINDER_` prefix. See `config.py` for field definitions.
+See README.md for full configuration reference. All settings use `HOME_FINDER_` prefix. See `config.py` for field definitions. Use a development database, never a frozen research export. `--dry-run` still writes data and can incur model/commute costs; it suppresses notifications only.
 
-## Pipeline Flow (main.py)
+CI and Fly use Python 3.14, while package metadata advertises 3.11+ and the generic Dockerfile uses 3.11. PR03 must reconcile that policy and patch the runtime. CI uses uv 0.9.29, matching the current Docker build tool. PR01 adds a cache-free locked install/build and a separate manual dashboard release; a green PR or push cannot deploy. Anthropic is temporarily constrained to `<1` pending the deliberate PR20 SDK/transport migration.
+
+## Pipeline Flow (main.py and pipeline/stages.py)
 
 1. **Retry Unsent** — Resend failed notifications from previous runs
-2. **Scrape** — All scrapers run against configured `SEARCH_AREAS`
-3. **Criteria Filter** — Price/bedroom filters from `SearchCriteria`
-4. **Location Filter** — Validate postcodes match search areas (catches scraper leakage)
-5. **Wrap as MergedProperty** — `Deduplicator.properties_to_merged()` wraps each Property as single-source
-6. **New Property Filter** — Check `source_listings` table to only process unseen properties. "Seen" means the listing has a `merged_id` (was promoted to a golden record in a previous run), not merely that it was scraped. This avoids re-processing listings that were previously filtered out or failed enrichment.
-7. **Commute Filter** — TravelTime API (if configured); geocodes missing coordinates
-8. **Detail Enrichment** — Fetch gallery, floorplans, descriptions; cache images to disk; detect/remove EPC charts; detect floorplans in gallery via PIL heuristics; generate thumbnails for surviving gallery images
-9. **Post-Enrichment Dedup** — `deduplicate_merged_async()` merges cross-platform duplicates using enriched data
-10. **Floorplan Gate** — Drop properties without floorplans (if `require_floorplan=True`)
-11. **Quality Analysis** — Claude vision analyzes images (if configured)
-12. **Save & Notify** — Store in DB, send Telegram notifications
+2. **Scrape and record source listings** — Selected scrapers run against configured areas; upsert returned listings
+3. **Criteria and location filters** — Apply `SearchCriteria` and validate search-area postcodes
+4. **Wrap and detect price changes** — `properties_to_merged()` wraps single-source properties; update known price observations
+5. **Select new properties and retries** — A source listing is seen when it has a `merged_id`, not merely because it was scraped; load eligible unenriched properties for retry
+6. **Detail enrichment** — Fetch media/text, cache images, classify EPCs/floorplans and generate thumbnails
+7. **Geocode and compute commute** — Runs after enrichment; detail coordinates are available. Mixed reachable/unreachable results are advisory, but an all-unreachable batch can currently abort
+8. **Post-enrichment deduplication and floorplan gate** — Merge across sources/runs and update existing anchors; apply floorplan exemptions and configured photo fallback
+9. **Analyze, save and notify** — Two-phase analysis (if enabled); persist each result and send notifications in live mode
+10. **Drain reanalysis, deliver price drops, finish accounting** — Later work only runs if the pre-analysis stage did not return early
+
+Known repairs are still pending: description/features can be lost between fetch and analysis (PR06a); known-page/early-return accounting is incomplete (PR09a); discovery-independent recovery and process exclusion need PR12a. Do not describe the current commute implementation as a reliable hard filter (PR16a).
 
 ## Gotchas & Constraints
 
 ### HTTP Client Selection
 
-**Scrapers MUST use the correct HTTP client to avoid 403 blocks:**
+These are the transports implemented in the current adapters, based on historical source behaviour. They do not establish present access rights or current portal compatibility. Qualify source access and preserve fixtures before live use; parser/transport repairs are PR10/PR11.
 
 | Component | HTTP Client | Reason |
 |-----------|-------------|--------|
-| Zoopla scraper | `curl_cffi` with `impersonate="chrome"` | TLS fingerprinting bypasses Cloudflare |
+| Zoopla scraper | `curl_cffi` with per-area browser-profile rotation | Historical TLS/challenge handling; requests can still be blocked |
 | OnTheMarket scraper | `curl_cffi` with `impersonate="chrome"` | TLS fingerprinting detection |
-| Rightmove scraper | `crawlee.BeautifulSoupCrawler` | Standard requests work |
+| Rightmove scraper | `crawlee.BeautifulSoupCrawler` | Current search implementation; parser contract needs PR10 qualification |
 | OpenRent scraper | `curl_cffi` with `impersonate="chrome"` | TLS fingerprinting detection |
 | DetailFetcher (Zoopla/OTM/OpenRent) | `curl_cffi` with `impersonate="chrome"` | TLS fingerprinting on detail pages |
-| DetailFetcher (Rightmove) | `httpx.AsyncClient` | Standard requests work |
+| DetailFetcher (Rightmove) | `httpx.AsyncClient` | Current implementation parses `PAGE_MODEL`; live contract may differ |
 
 ```python
 # Example: curl_cffi usage for anti-bot sites
@@ -108,7 +113,7 @@ async with AsyncSession() as session:
 ### Image Caching
 
 - Disk cache at `{data_dir}/image_cache/{safe_id}/` (see `utils/image_cache.py`)
-- Detail enrichment downloads and caches images during pipeline step 8
+- Detail enrichment downloads and caches images before geocoding/commute computation
 - Quality analysis reads cached images from disk (avoids re-downloading)
 - Web dashboard serves cached images via `GET /images/{unique_id}/{filename}` with immutable cache headers
 - `image_url_map` in detail template maps original CDN URLs to local `/images/` URLs for cached images
@@ -120,14 +125,14 @@ async with AsyncSession() as session:
 - Uses claude-sonnet-4-6 (`claude-sonnet-4-6`) via Anthropic API
 - **Two-phase chained analysis** (perception → evaluation):
   - **Phase 1 (Visual)**: Images + listing text → structured observations (kitchen, condition, space, etc.). Uses adaptive thinking (`type: adaptive`), `tool_choice: auto`, `max_tokens: 21000` (total cap for thinking + response; SDK enforces ~21333 non-streaming ceiling). Non-strict (schema exceeds Anthropic's grammar complexity limit).
-  - **Phase 2 (Evaluation)**: Phase 1 JSON + listing text (no images) → value assessment, viewing notes, highlights, one-liner. Uses forced tool choice, `strict: true`, `max_tokens: 4096`.
-- Tool schemas auto-generated from Pydantic models (`_VisualAnalysisResponse`, `_EvaluationResponse`) via `_build_tool_schema()` in `quality.py`; prompts in `quality_prompts.py`
+  - **Phase 2 (Evaluation)**: Phase 1 JSON + listing text (no images) → value assessment, viewing notes, highlights, one-liner. Calls `messages.create()` with native `output_config.format.type = "json_schema"` and `max_tokens: 4096`; it does not force a tool call.
+- Phase 1's tool schema comes from `_VisualAnalysisResponse` through `_build_tool_schema()`; phase 2's native schema comes from `_EvaluationResponse` through `_eval_json_schema()`. Both are in `quality.py`; prompts are in `quality_prompts.py`
 - Phase 1 output feeds Phase 2 via `build_evaluation_prompt()` (wraps Phase 1 JSON in `<visual_analysis>` XML tags)
 - Graceful degradation: Phase 1 fails → `None`; Phase 2 fails → partial analysis with visual data only
 - Post-processing strips `{"..."}` artifacts from string fields (Claude sometimes wraps text in JSON-like braces even with strict mode)
 - Rate limited: 0.2s delay between calls (Tier 2: 1,000 RPM)
-- Uses prompt caching (`cache_control: ephemeral`) for ~90% cost savings on system prompt
-- ~$0.05-0.07/property (Phase 1 ~$0.04-0.06 multimodal + thinking, Phase 2 ~$0.005-0.01 text-only)
+- Requests ephemeral prompt caching; realized savings depend on cache writes/hits and the actual request mix
+- Historical February 13–28, 2026 cohort: 15 metered runs, 200 counted analyses, $32.1247557 estimated model cost (~$0.1606 per counted analysis). This incomplete ledger is not cost per unique home, a full invoice or a future price guarantee; see [the data review](docs/reviews/production-data-2026-09-27.md). PR13 adds complete accounting
 - All images read from disk cache (populated during detail enrichment) and sent as base64; no CDN re-downloads during analysis
 
 ### Proxy Support
@@ -150,6 +155,8 @@ async with AsyncSession() as session:
 
 ## Web Dashboard Notes
 
+- **Access and writes:** Status PATCH and reanalysis POST mutate state; application-level owner authentication/CSRF protection are pending PR02. Keep access private. `--no-pipeline` disables collection but does not make the dashboard read-only. Do not use `sync-to-fly.sh` to overwrite dashboard-written history; authority/restore work is PR05.
+- **Scheduling:** Serve mode waits 55 minutes by default ±5 minutes after completion, using an in-process lock only. The old cron `*/55` runs at :00 and :55 (55/5-minute gaps), not every 55 minutes. PR12a will establish process exclusion and a reliable schedule.
 - **HTMX pattern:** Dashboard `GET /` checks `HX-Request` header — returns `_results.html` partial or full `dashboard.html`. Filter form uses `hx-get="/" hx-target="#results" hx-push-url="true"`.
 - **Image serving:** `GET /images/{unique_id}/{filename}` serves cached images with directory traversal protection and immutable cache headers.
 - **Security:** XSS: descriptions use `| e | replace("\n", "<br>") | safe` (escape first). Leaflet popups use `textContent`. All query params clamped; sort whitelisted against `VALID_SORT_OPTIONS`.
@@ -164,12 +171,12 @@ async with AsyncSession() as session:
 ## Testing Patterns
 
 - `pytest-asyncio` with `asyncio_mode = "auto"`
-- Slow tests excluded by default (`-m 'not slow'`); run with `pytest -m slow`
+- Slow and browser tests are excluded by default (`-m 'not slow and not browser'`); default network sockets are blocked. Live `pytest -m slow` requires qualified source access. Dashboard-only browser selection is `-m 'browser and not slow'`
 - Mock HTTP with `pytest-httpx` and `AsyncMock` for curl_cffi/TravelTime
 - Common fixtures in `tests/conftest.py`: `sample_property`, `sample_property_no_coords`, `default_search_criteria`
 - Use `Property.model_copy()` for variations; `hypothesis` for property-based testing
 - Integration tests in `tests/integration/` reset Crawlee global state with autouse fixtures
-- **Concurrent-safe:** All tests use in-memory SQLite, no shared state — multiple agents/processes can run `pytest` simultaneously without interference
+- Tests use in-memory or temporary SQLite databases and files. Parallel agents should use separate checkouts/output paths to avoid collisions in coverage, browser artifacts and other generated files
 
 **Test structure:**
 - `tests/test_scrapers/` — per-platform scraper tests

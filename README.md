@@ -6,6 +6,8 @@
 
 Multi-platform London rental property scraper with commute filtering, AI quality analysis, web dashboard, and Telegram notifications.
 
+The current application serves one owner's search. The agreed target is a small hosted service for tens to hundreds of users, introduced gradually after reliability and access-control repairs. Multi-user isolation is not implemented yet. Follow the [delivery plan](docs/plans/2026-09-28-research-synthesis-and-delivery-plan.md) in its execution order; keep normal collection paused until its rollout gates pass.
+
 ## Table of Contents
 
 - [Features](#features)
@@ -20,9 +22,9 @@ Multi-platform London rental property scraper with commute filtering, AI quality
 
 ## Features
 
-- **Multi-platform scraping**: OpenRent, Rightmove, Zoopla, OnTheMarket
+- **Multi-platform scraping**: Adapters for OpenRent, Rightmove, Zoopla and OnTheMarket; current source contracts and access need qualification before collection resumes
 - **Cross-platform deduplication**: Graduated multi-signal scoring merges the same property listed on different platforms (two-phase: pre- and post-enrichment)
-- **Commute filtering**: Filter properties within X minutes of your destination using TravelTime API
+- **Commute information**: TravelTime estimates against a configured destination and limit; advisory/error semantics need the PR16 repair described in the delivery plan
 - **AI quality analysis**: Two-phase Claude vision analysis — Phase 1 observes images (kitchen, condition, space, light), Phase 2 evaluates value, generates viewing notes, and curates highlights
 - **Web dashboard**: FastAPI-powered dashboard with HTMX live filtering, map view with MarkerCluster, property detail pages with area context, and lightbox gallery
 - **Rich Telegram notifications**: Property cards with photos, star ratings, commute times, quality summaries, and direct links (including web dashboard deep links)
@@ -36,7 +38,7 @@ Multi-platform London rental property scraper with commute filtering, AI quality
 1. **Install dependencies**:
 
    ```bash
-   uv sync --all-extras
+   uv sync --locked --all-extras
    ```
 
 2. **Configure environment**:
@@ -48,12 +50,11 @@ Multi-platform London rental property scraper with commute filtering, AI quality
 
 3. **Run**:
    ```bash
-   # One-shot pipeline (scrape + filter + notify)
-   uv run home-finder
-
-   # Web dashboard with background pipeline
-   uv run home-finder --serve
+   # Local dashboard, with background collection disabled
+   HOME_FINDER_WEB_HOST=127.0.0.1 uv run home-finder --serve --no-pipeline
    ```
+
+This still provides writable status and reanalysis controls; see [Security](#security). Use a development database, never the frozen research export. The pipeline commands below require the relevant collection/release gates. `--dry-run` suppresses Telegram notifications but still writes data, fetches listings and can incur analysis/commute charges.
 
 ### Run Modes
 
@@ -80,7 +81,7 @@ uv run home-finder --debug              # Enable debug-level logging
 
 ## Web Dashboard
 
-The `--serve` flag starts a FastAPI web server on port 8000 with a background pipeline scheduler that runs every 55 minutes (configurable via `HOME_FINDER_PIPELINE_INTERVAL_MINUTES`).
+The `--serve` flag starts a FastAPI web server on port 8000. Unless `--no-pipeline` is supplied, it starts a background pipeline after an initial delay, then waits the configured interval (55 minutes by default) plus or minus five minutes **after each run finishes**. This is not a fixed 55-minute start-to-start schedule. The lock covers only this process; it does not exclude another CLI/cron process. Fly uses `--serve --no-pipeline`.
 
 ### Dashboard Features
 
@@ -101,11 +102,11 @@ The `--serve` flag starts a FastAPI web server on port 8000 with a background pi
 | `HOME_FINDER_WEB_BASE_URL` | `""` | Public URL for the dashboard (enables Telegram deep links) |
 | `HOME_FINDER_WEB_PORT` | `8000` | Web server port |
 | `HOME_FINDER_WEB_HOST` | `0.0.0.0` | Web server bind address |
-| `HOME_FINDER_PIPELINE_INTERVAL_MINUTES` | `55` | Minutes between pipeline runs in serve mode |
+| `HOME_FINDER_PIPELINE_INTERVAL_MINUTES` | `55` | Delay after a serve-mode pipeline run, with ±5 minutes of jitter |
 
 ### Security
 
-The web dashboard is read-only (no forms that mutate state). Security measures include:
+The dashboard **writes data**: status updates modify the database, and reanalysis requests queue work that can later incur API charges. Application-level owner authentication and CSRF protection are pending PR02. Use a local bind or protected private ingress until that work is verified. `--no-pipeline` disables the collector, not these routes. Existing protections include:
 
 - **XSS prevention**: All user-controlled content is escaped. Scraped descriptions use `| e | safe` in Jinja2. Leaflet popups use `textContent` instead of HTML injection.
 - **Security headers**: `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy: strict-origin-when-cross-origin`
@@ -197,20 +198,33 @@ Create a `.env` file with these settings (all use `HOME_FINDER_` prefix):
 
 1. Get an API key at https://console.anthropic.com/
 2. Add to your `.env` as `HOME_FINDER_ANTHROPIC_API_KEY`
-3. Enables two-phase AI property quality analysis using Claude vision (~$0.05-0.07/property)
+3. Enables two-phase AI property quality analysis using Claude vision
+
+The retained February 13–28, 2026 snapshot contains 15 metered runs with 200 counted analyses and $32.1247557 of estimated model cost: approximately $0.1606 per counted analysis in that cohort. This is incomplete historical telemetry, not an invoice, a cost per unique home, or a future price guarantee. It excludes unrecorded calls and other service costs. See the [production-data review](docs/reviews/production-data-2026-09-27.md) and the planned complete spend ledger in PR13.
+
+The SDK remains locked to Anthropic 0.81.0, with a temporary `>=0.81.0,<1` constraint so routine dependency resolution does not perform the separate PR20 SDK/transport migration. This does not change the model, prompts or API pricing.
 
 ## Running Tests
 
 ```bash
-uv run pytest                         # Run all tests (slow tests excluded by default)
+uv run pytest                         # Default suite; excludes slow and browser, blocks network sockets
 uv run pytest tests/test_models.py    # Run specific test file
 uv run pytest -k "test_openrent"      # Run tests matching pattern
 uv run pytest --cov=src               # Run with coverage
-uv run pytest -m slow                 # Run slow tests (real scraping)
-uv run pytest -m browser              # Run browser E2E tests (requires Playwright)
+uv run pytest -m slow                 # Opt-in live portal tests; qualify source access first
+uv run playwright install chromium  # Install browser for dashboard tests
+uv run pytest -m 'browser and not slow' # Dashboard browser tests; excludes live portal sort tests
 ```
 
-> **Note:** Don't pass `--timeout` on the command line — it's already configured in `pyproject.toml` (30s default).
+Tests have a 30-second default timeout; slow-marked tests receive 120 seconds. The default coverage gate is 75%, including branches.
+
+### CI and runtime baseline
+
+CI retains separate Ruff/format, strict mypy and default test jobs. A separate build job installs `uv.lock` with no package cache and builds the wheel and source distribution. The source archive explicitly includes application code, tests, README, licence and dependency files, keeping unrelated local logs and research out. Coverage XML and distributions are downloadable workflow artifacts; CI no longer needs permission to post pull-request comments. Pull requests, pushes and scheduled CI have no deployment job.
+
+The workflow uses Python 3.14 and uv 0.9.29 (the existing Docker build tool). Package metadata still advertises Python 3.11+, and the generic `Dockerfile` uses 3.11, while `Dockerfile.fly` and CI use 3.14. That is a declared/tested-runtime mismatch, not proof that all versions work. PR03 will align the supported versions and patch the runtime; until then, use Python 3.14 for the measured baseline.
+
+Weekly CI includes dashboard browser tests, excluding tests marked `slow`. Manual CI has separate `run_browser_tests` and `run_live_tests` switches, both off by default. Live portal tests require explicit opt-in and qualified source access. The remote CI workflow was `disabled_inactivity` when inspected on September 28, 2026; changing local YAML does not re-enable it. Re-enable CI after the release split is reviewed and merged, then confirm a hosted run.
 
 ## Architecture
 
@@ -219,17 +233,17 @@ uv run pytest -m browser              # Run browser E2E tests (requires Playwrig
 The full pipeline (`uv run home-finder`) executes these steps in order:
 
 1. **Retry Unsent** — Resend failed notifications from previous runs
-2. **Scrape** — All scrapers run against configured search areas
-3. **Criteria Filter** — Apply price/bedroom filters
-4. **Location Filter** — Validate postcodes match search areas (catches scraper leakage)
-5. **Wrap as MergedProperty** — Wrap each property as a single-source `MergedProperty`
-6. **New Property Filter** — Check SQLite DB to only process unseen properties
-7. **Commute Filter** — TravelTime API filters by travel time (if configured)
-8. **Detail Enrichment** — Fetch gallery images, floorplans, descriptions; cache images to disk
-9. **Post-Enrichment Dedup** — Cross-platform deduplication using enriched data (images, postcodes, coordinates)
-10. **Floorplan Gate** — Drop properties without floorplans (if enabled)
-11. **Quality Analysis** — Two-phase Claude vision analysis: Phase 1 (visual observations from images), Phase 2 (evaluation using Phase 1 output + listing text)
-12. **Save & Notify** — Store in DB, send Telegram notifications
+2. **Scrape and record source listings** — Configured adapters search selected areas; persist the listings returned by the scraping stage
+3. **Criteria and location filters** — Apply price/bedroom criteria and validate search-area postcodes
+4. **Wrap and detect price changes** — Wrap single-source `MergedProperty` objects; detect price changes on known properties
+5. **Select new properties and enrichment retries** — Listings already linked to a canonical record are considered seen; load eligible enrichment retries
+6. **Detail enrichment** — Fetch gallery, floorplans and descriptions; cache and classify images, then generate thumbnails
+7. **Geocode and compute commute** — Runs after enrichment so detail coordinates are available; current mixed reachable/unreachable results are advisory, but an all-unreachable batch can still abort
+8. **Post-enrichment deduplication and floorplan gate** — Merge within/across runs using enriched evidence; apply floorplan exemptions and configured photo fallback
+9. **Analyze, save and notify** — Phase 1 observes images and listing text using a tool response; phase 2 evaluates phase 1 output and listing text using native JSON schema `output_config`. Save results and deliver notifications in live mode
+10. **Drain reanalysis and price-drop work** — Process queued reanalysis, then send pending price-drop notifications in live mode; finish run accounting
+
+This describes current code in `main.py` and `pipeline/stages.py`, including its limitations. Early returns before analysis can skip later recovery, price-drop delivery and accounting work (PR09a/PR12a). Description/feature propagation needs PR06a; a fetch succeeding does not prove that its text reaches the model.
 
 ### Deduplication
 
@@ -323,11 +337,19 @@ The deployment is split into two parts:
 
 - **Fly.io** hosts the **web dashboard only** (`--serve --no-pipeline`). It serves the property database and cached images but does not run scrapers.
 - **Pipeline runs locally** on your machine (cron, systemd timer, or manual `uv run home-finder`). It scrapes, filters, enriches, analyzes, and writes to the local SQLite DB + image cache.
-- **`scripts/sync-to-fly.sh`** pushes the local DB and image cache to Fly.io after each pipeline run.
+- **Legacy `scripts/sync-to-fly.sh`** replaces Fly's database and syncs images. It is not safe for preserving dashboard-written history; replacement is pending the authority/restore work in PR05.
+
+### Manual release
+
+Production deployment is a separate **Release dashboard** workflow (`.github/workflows/release.yml`), invoked manually against `main`. It calls the same CI workflow at that revision, with no secrets passed to validation, and deploys only if validation succeeds. Only the deployment step maps the environment secret `FLY_PRODUCTION_API_TOKEN` to Fly's `FLY_API_TOKEN`. The Fly CLI binary is version-pinned and checked against its upstream SHA-256 digest.
+
+Before activating the revised workflows, configure a GitHub environment named `production` with deployment branches restricted to `main` and an app-scoped `FLY_PRODUCTION_API_TOKEN` secret. Retire the old repository-wide `FLY_API_TOKEN`; a repository secret can be referenced by edited workflows in same-repository PRs even if the current CI file never uses it. On September 28 the old repository secret existed and the required environment was not configured. PR01 makes the workflow changes locally; it does not claim that this credential migration or branch policy is already in place. The new release deliberately has no fallback to the old secret.
+
+After the access/release prerequisites are met, select **Actions → Release dashboard → Run workflow → main**. This releases the dashboard configured in `Dockerfile.fly`; it does not enable pipeline collection. Ordinary CI, Dependabot updates and merging repair PRs have no automatic deployment step. Keep a previously verified Fly image/release for operational rollback; do not restore automatic push deployment as a rollback shortcut.
 
 ### Fly.io setup
 
-Deploys to London (`lhr`) for UK IP:
+The existing configuration targets London (`lhr`). These are provisioning commands, not the procedure for restarting collection; establish private access and a consistent backup before releasing:
 
 ```bash
 fly apps create home-finder
@@ -340,24 +362,14 @@ fly secrets set \
 # Optional:
 # fly secrets set HOME_FINDER_TRAVELTIME_APP_ID=xxx HOME_FINDER_TRAVELTIME_API_KEY=xxx
 # fly secrets set HOME_FINDER_PROXY_URL=socks5://user:pass@host:port
-fly deploy
+# Use the manual Release dashboard workflow after validation and access setup.
 ```
 
 The `fly.toml` includes a health check on `/health` with a 30-second grace period. The `Dockerfile.fly` runs `home-finder --serve --no-pipeline` — dashboard only, no scraping.
 
 ### Syncing data to Fly.io
 
-After running the pipeline locally, push data to the dashboard:
-
-```bash
-# Incremental sync (new property image dirs only)
-./scripts/sync-to-fly.sh
-
-# Full sync (replaces all images — use after re-enrichment or cache changes)
-./scripts/sync-to-fly.sh --full
-```
-
-The sync script: checkpoints the local WAL, replaces the DB on the remote (rm + sftp put to work around flyctl's no-overwrite policy), syncs images as tarballs, restarts the machine, and runs a health check.
+The legacy sync script checkpoints the local WAL, removes the remote DB/WAL/SHM files, uploads a replacement database, syncs images, restarts the machine and checks health. Both its normal and `--full` modes replace the database; “incremental” only describes image transfer. This can overwrite status/history written on the dashboard and is not a consistent backup of the live remote database. Keep it inactive while PR05 establishes one authority and proves backup/restore. Do not point application startup at a frozen research export.
 
 ### Docker (local)
 
@@ -368,7 +380,7 @@ docker run --env-file .env -p 8000:8000 -v ./data:/app/data home-finder
 
 ### Local pipeline (cron/systemd)
 
-Run the pipeline on a schedule to keep the database fresh:
+The following are historical deployment examples, kept to explain existing scheduling. Keep scheduled collection disabled during the repair series. PR12a must establish a reliable single runner and exclusion across CLI/cron processes before resumption.
 
 **systemd timer:**
 
@@ -403,17 +415,19 @@ OnUnitActiveSec=55min
 WantedBy=timers.target
 ```
 
-Enable:
+After the collection gates pass, a reviewed timer can be enabled with:
 
 ```bash
 sudo systemctl enable --now home-finder.timer
 ```
 
-**cron:**
+**Existing cron example (not a 55-minute interval):**
 
 ```bash
 */55 * * * * cd /path/to/home-finder && /path/to/uv run home-finder >> /var/log/home-finder.log 2>&1
 ```
+
+This runs at minute 00 and 55 of every hour, producing alternating 55-minute and 5-minute gaps. It has no cross-process overlap protection. The systemd example measures from activation (`OnUnitActiveSec`); the serve-mode loop measures from completion. Their semantics differ; PR12a will replace the ambiguous scheduling guidance alongside the implementation.
 
 ## License
 
