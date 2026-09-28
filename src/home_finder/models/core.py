@@ -219,6 +219,13 @@ class MergedProperty(BaseModel):
     def text_by_source(self) -> dict[PropertySource, ListingTextEvidence]:
         """Include legacy descriptions without overriding newer evidence/clears."""
         result = dict(self.source_text)
+        observation = self.canonical.source_observation
+        if observation is not None:
+            source = self.canonical.source
+            result[source] = merge_listing_text(
+                result.get(source, ListingTextEvidence()),
+                ListingTextEvidence.from_observation(observation),
+            )
         legacy = dict(self.descriptions)
         if self.canonical.description and self.canonical.source not in legacy:
             legacy[self.canonical.source] = self.canonical.description

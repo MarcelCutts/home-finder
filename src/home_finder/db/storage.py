@@ -951,6 +951,29 @@ class PropertyStorage:
                 )
             return images
 
+    async def get_current_text(
+        self, property_ids: list[str]
+    ) -> dict[str, dict[PropertySource, ListingTextEvidence]]:
+        """Load the bounded analysis batch's saved text in one consistent snapshot."""
+        if len(property_ids) > 500:
+            raise ValueError("Current-text lookup exceeds the 500-property analysis bound")
+        result: dict[str, dict[PropertySource, ListingTextEvidence]] = {}
+        if not property_ids:
+            return result
+        async with self._read_connection() as conn:
+            # Keep below traditional SQLite variable limits, including older backups.
+            for start in range(0, len(property_ids), 100):
+                batch = property_ids[start : start + 100]
+                placeholders = ",".join("?" for _ in batch)
+                cursor = await conn.execute(
+                    "SELECT unique_id, source, description, descriptions_json, source_text_json "
+                    f"FROM properties WHERE unique_id IN ({placeholders})",
+                    batch,
+                )
+                for row in await cursor.fetchall():
+                    result[row["unique_id"]] = text_from_property_row(row)
+        return result
+
     async def get_property_images_and_row(
         self, unique_id: str
     ) -> tuple[list[PropertyImage], Property | None, dict[PropertySource, ListingTextEvidence]]:
@@ -1221,6 +1244,20 @@ class PropertyStorage:
         """
         if observation.origin != "detail":
             raise ValueError("Detail persistence requires detail-origin evidence")
+        await self._retain_text_observation(observation)
+
+    async def retain_text_correction(self, observation: SourceObservation) -> None:
+        """Apply an explicit, reasoned correction to source text with its evidence."""
+        present = set(observation.fields.model_dump(exclude_none=True))
+        if (
+            observation.origin != "correction"
+            or not present
+            or present - {"description", "features"}
+        ):
+            raise ValueError("A text correction requires only description/features and a reason")
+        await self._retain_text_observation(observation)
+
+    async def _retain_text_observation(self, observation: SourceObservation) -> None:
         async with self._transaction() as conn:
             await self.observations.ingest([observation], _conn=conn)
             linked_id = await apply_source_text(

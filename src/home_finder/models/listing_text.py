@@ -6,10 +6,11 @@ Legacy text has no invented observation date or evidence identifier.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Annotated, Literal
+from typing import Annotated, Literal, cast
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from home_finder.models.observations import SourceObservation
 
@@ -48,8 +49,25 @@ class ListingTextEvidence(BaseModel):
     features: tuple[str, ...] | None = None
     features_observed_at: datetime | None = None
     features_origin: TextOrigin = "legacy"
-    description_observation_ids: tuple[Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")], ...] = ()
-    features_observation_ids: tuple[Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")], ...] = ()
+    description_observation_ids: tuple[Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")], ...] = (
+        Field(default=(), max_length=512)
+    )
+    features_observation_ids: tuple[Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")], ...] = Field(
+        default=(), max_length=512
+    )
+    description_conflicting: bool = False
+    features_conflicting: bool = False
+
+    @model_validator(mode="after")
+    def explicit_conflicts(self) -> ListingTextEvidence:
+        for name in ("description", "features"):
+            if getattr(self, f"{name}_conflicting") and (
+                getattr(self, name)
+                or getattr(self, f"{name}_observed_at") is None
+                or len(set(getattr(self, f"{name}_observation_ids"))) < 2
+            ):
+                raise ValueError("A text conflict needs dated evidence IDs and no chosen value")
+        return self
 
     @field_validator("features")
     @classmethod
@@ -102,55 +120,100 @@ class ListingTextEvidence(BaseModel):
         )
 
 
-def _accept(
-    incoming: str | tuple[str, ...] | None,
-    observed_at: datetime | None,
-    origin: TextOrigin,
-    previous: str | tuple[str, ...] | None,
-    previous_at: datetime | None,
-    previous_origin: TextOrigin,
-) -> bool:
-    if incoming is None:
-        return False
-    empty = not incoming or (isinstance(incoming, str) and not incoming.strip())
-    if empty and (origin != "correction" or observed_at is None):
-        return False
-    if previous_at is not None and (observed_at is None or observed_at <= previous_at):
-        return False
-    if previous_origin in {"detail", "correction"} and origin in {"legacy", "search"}:
-        return False
-    # Undated input can fill a gap, but cannot claim to be a newer correction.
-    return not (observed_at is None and previous)
+@dataclass(frozen=True)
+class _TextField:
+    value: str | tuple[str, ...] | None
+    observed_at: datetime | None
+    origin: TextOrigin
+    ids: tuple[str, ...]
+    conflicting: bool
+
+    @property
+    def present(self) -> bool:
+        if self.conflicting:
+            return True
+        if self.value is None:
+            return False
+        if self.value and (not isinstance(self.value, str) or self.value.strip()):
+            return True
+        return self.origin == "correction" and self.observed_at is not None
+
+    @property
+    def authority(self) -> int:
+        return 2 if self.origin in {"detail", "correction"} else 1 if self.origin == "search" else 0
+
+
+def _merge_field(
+    previous: _TextField, incoming: _TextField, *, empty: str | tuple[str, ...]
+) -> _TextField:
+    if not incoming.present:
+        return previous
+    if not previous.present:
+        return incoming
+    # Undated historical text remains a separate category. It can fill a gap,
+    # but cannot claim a new capture time or revise an existing dated value.
+    if incoming.observed_at is None:
+        return previous
+    if previous.observed_at is None:
+        return incoming if incoming.authority >= previous.authority else previous
+
+    previous_rank = (previous.authority, previous.observed_at)
+    incoming_rank = (incoming.authority, incoming.observed_at)
+    if incoming_rank != previous_rank:
+        return incoming if incoming_rank > previous_rank else previous
+
+    conflict = previous.conflicting or incoming.conflicting or previous.value != incoming.value
+    if incoming.conflicting and not previous.ids:
+        return incoming
+    if conflict and not (previous.ids and incoming.ids):
+        return previous  # Do not invent immutable provenance for legacy disagreement.
+    identifiers = tuple(sorted(set(previous.ids) | set(incoming.ids)))
+    if len(identifiers) > 512:
+        raise ValueError("Too many tied text observations; adjudication is required")
+    # At equal authority this makes mixed detail/correction provenance stable;
+    # the exact original origins remain in the referenced immutable observations.
+    origin: TextOrigin = (
+        "correction"
+        if "correction" in {previous.origin, incoming.origin}
+        else min(previous.origin, incoming.origin)
+    )
+    return _TextField(
+        empty if conflict else previous.value, previous.observed_at, origin, identifiers, conflict
+    )
+
+
+def _field(evidence: ListingTextEvidence, name: Literal["description", "features"]) -> _TextField:
+    if name == "description":
+        return _TextField(
+            evidence.description,
+            evidence.description_observed_at,
+            evidence.description_origin,
+            evidence.description_observation_ids,
+            evidence.description_conflicting,
+        )
+    return _TextField(
+        evidence.features,
+        evidence.features_observed_at,
+        evidence.features_origin,
+        evidence.features_observation_ids,
+        evidence.features_conflicting,
+    )
 
 
 def merge_listing_text(
     previous: ListingTextEvidence, incoming: ListingTextEvidence
 ) -> ListingTextEvidence:
-    description = _accept(
-        incoming.description,
-        incoming.description_observed_at,
-        incoming.description_origin,
-        previous.description,
-        previous.description_observed_at,
-        previous.description_origin,
-    )
-    features = _accept(
-        incoming.features,
-        incoming.features_observed_at,
-        incoming.features_origin,
-        previous.features,
-        previous.features_observed_at,
-        previous.features_origin,
-    )
-    desc = incoming if description else previous
-    feats = incoming if features else previous
+    desc = _merge_field(_field(previous, "description"), _field(incoming, "description"), empty="")
+    feats = _merge_field(_field(previous, "features"), _field(incoming, "features"), empty=())
     return ListingTextEvidence(
-        description=desc.description,
-        description_observed_at=desc.description_observed_at,
-        description_origin=desc.description_origin,
-        features=feats.features,
-        features_observed_at=feats.features_observed_at,
-        features_origin=feats.features_origin,
-        description_observation_ids=desc.description_observation_ids,
-        features_observation_ids=feats.features_observation_ids,
+        description=cast(str | None, desc.value),
+        description_observed_at=desc.observed_at,
+        description_origin=desc.origin,
+        features=cast(tuple[str, ...] | None, feats.value),
+        features_observed_at=feats.observed_at,
+        features_origin=feats.origin,
+        description_observation_ids=desc.ids,
+        features_observation_ids=feats.ids,
+        description_conflicting=desc.conflicting,
+        features_conflicting=feats.conflicting,
     )

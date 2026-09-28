@@ -20,7 +20,17 @@ def select_listing_text(merged: MergedProperty) -> ListingTextInputs:
     proof; the model must still treat listing content as untrusted evidence.
     """
     evidence = sorted(merged.text_by_source.items(), key=lambda item: item[0].value)
-    descriptions = [(source, value.description) for source, value in evidence if value.description]
+    descriptions = [
+        (
+            source,
+            "Conflicting descriptions were received for this listing. "
+            "Description facts are withheld pending clarification."
+            if value.description_conflicting
+            else value.description,
+        )
+        for source, value in evidence
+        if value.description or value.description_conflicting
+    ]
     description_parts = []
     if descriptions:
         allowance = 3000 // len(descriptions) - 40
@@ -34,7 +44,14 @@ def select_listing_text(merged: MergedProperty) -> ListingTextInputs:
     feature_groups = [
         [
             (source, f"[{source.display_name}] {html.escape(feature, quote=False)[:200]}")
-            for feature in (value.features or ())[:15]
+            for feature in (
+                (
+                    "Conflicting listing features were received; "
+                    "feature facts are withheld pending clarification.",
+                )
+                if value.features_conflicting
+                else (value.features or ())[:15]
+            )
             if feature.strip()
         ]
         for source, value in evidence
@@ -57,6 +74,7 @@ def select_listing_text(merged: MergedProperty) -> ListingTextInputs:
         if identifiers:
             observation_ids[source.value] = tuple(sorted(identifiers))
     return ListingTextInputs(
+        policy_version=2,
         description="\n\n".join(description_parts) or None,
         features=tuple(feature for _source, feature in selected_features),
         source_hashes={

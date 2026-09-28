@@ -371,9 +371,17 @@ async def _run_quality_and_save(
         )
 
     async def _do_analysis(qf: PropertyQualityFilter | None) -> int:
+        # Saving can preserve richer source text or a conflict absent from an
+        # in-memory discovery object. Both new work and retries use that saved
+        # projection, without changing price, route or scheduling decisions.
+        current_text = await storage.get_current_text([m.unique_id for m in all_to_analyze])
+
         async def _analyze(
             merged: MergedProperty,
         ) -> tuple[MergedProperty, PropertyQualityAnalysis | None]:
+            if merged.unique_id not in current_text:
+                raise RuntimeError("Analysis candidate is missing its saved text projection")
+            merged = merged.model_copy(update={"source_text": current_text[merged.unique_id]})
             if qf:
                 try:
                     return await qf.analyze_single_merged(merged, data_dir=settings.data_dir)

@@ -431,6 +431,13 @@
     {% endif %}
 
     {# 4. Description — agent copy, lower priority #}
+    {% for source, evidence in prop.get('listing_evidence', {}).items() %}
+    {% if evidence.description_conflicting or evidence.features_conflicting %}
+    <p class="meta-dim" role="status">
+        {{ source.display_name }} has conflicting listing details. Check the source listing before relying on them.
+    </p>
+    {% endif %}
+    {% endfor %}
     {% if best_description %}
     <section id="section-description" class="detail-section">
         <h3>Description</h3>

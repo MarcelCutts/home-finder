@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import json
 from collections.abc import Mapping
+from datetime import datetime
 from typing import Any
 
 import aiosqlite
 
 from home_finder.models import ListingTextEvidence, MergedProperty, PropertySource
 from home_finder.models.listing_text import merge_listing_text
+from home_finder.models.observations import MAX_BATCH_BYTES
 
 
 def decode_source_text(value: str | None) -> dict[PropertySource, ListingTextEvidence]:
@@ -46,6 +48,59 @@ def text_from_source_row(row: aiosqlite.Row) -> ListingTextEvidence:
     return merge_listing_text(evidence, ListingTextEvidence(description=row["description"]))
 
 
+async def _captured_text(conn: aiosqlite.Connection, unique_id: str) -> ListingTextEvidence:
+    """Fold all winning captured fields, including receipts predating a source row.
+
+    Rank identically to SourceProjection while keeping exact original origins.
+    This uses the immutable field index in the caller's owned transaction.
+    """
+    try:
+        cursor = await conn.execute(
+            """WITH ranked AS (
+                SELECT *, DENSE_RANK() OVER (
+                    PARTITION BY field_name ORDER BY authority DESC, observed_at DESC
+                ) AS rank FROM source_observation_fields
+                WHERE source_unique_id = ? AND field_name IN ('description', 'features')
+            ) SELECT f.*, o.origin FROM ranked f
+              JOIN source_observations o ON o.observation_id = f.observation_id
+              WHERE rank = 1 ORDER BY field_name, observation_id LIMIT 513""",
+            (unique_id,),
+        )
+    except aiosqlite.OperationalError as exc:
+        if str(exc) not in {
+            "no such table: source_observation_fields",
+            "no such table: source_observations",
+        }:
+            raise
+        async with conn.execute("PRAGMA user_version") as version_cursor:
+            version = await version_cursor.fetchone()
+        if version is not None and version[0] < 10:
+            return ListingTextEvidence()  # Explicit historical migration construction.
+        raise  # Missing evidence tables in a current database are corruption, not absence.
+    async with cursor:
+        result = ListingTextEvidence()
+        size = count = 0
+        async for row in cursor:
+            count += 1
+            size += len(row["value_json"].encode())
+            if count > 512 or size > MAX_BATCH_BYTES:
+                raise ValueError("Too many tied text observations; adjudication is required")
+            name = row["field_name"]
+            value = json.loads(row["value_json"])
+            if row["field_state"] == "cleared":
+                value = "" if name == "description" else ()
+            evidence = ListingTextEvidence.model_validate(
+                {
+                    name: value,
+                    f"{name}_observed_at": datetime.fromisoformat(row["observed_at"]),
+                    f"{name}_origin": row["origin"],
+                    f"{name}_observation_ids": (row["observation_id"],),
+                }
+            )
+            result = merge_listing_text(result, evidence)
+        return result
+
+
 async def apply_source_text(
     conn: aiosqlite.Connection, unique_id: str, incoming: ListingTextEvidence
 ) -> str | None:
@@ -58,6 +113,7 @@ async def apply_source_text(
     if row is None:
         return None
     result = merge_listing_text(text_from_source_row(row), incoming)
+    result = merge_listing_text(result, await _captured_text(conn, unique_id))
     await conn.execute(
         "UPDATE source_listings SET description = ?, text_json = ? WHERE unique_id = ?",
         (result.description, result.model_dump_json(), unique_id),

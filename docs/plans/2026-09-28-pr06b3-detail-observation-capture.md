@@ -1,6 +1,7 @@
 # PR06b-3: Retain detail evidence before image work
 
 **Date:** 28 September 2026. **Predecessor:** search capture `f305e04`.
+**Commit:** `d736289`.
 **Scope:** normalized detail receipts, correct provider IDs during enrichment, and durable text references. This is another PR06b integration slice, not completion of the full observation/projection epic.
 
 ## Result and concrete defect

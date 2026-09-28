@@ -257,3 +257,36 @@ async def test_missing_notification_images_are_not_marked_sent(storage, make_mer
     await callback(merged, None, None)
     assert (await storage.get_property(merged.unique_id)).notification_status.value == "pending"
     notifier.send_merged_property_notification.assert_not_awaited()
+
+
+async def test_fresh_analysis_uses_saved_text_projection_with_durable_ids(
+    storage, settings, boundaries, make_merged_property
+):
+    from datetime import UTC, datetime
+
+    from home_finder.scrapers.detail_fetcher import DetailPageData
+    from home_finder.scrapers.observations import detail_observation
+
+    _, quality, _ = boundaries
+    fresh = make_merged_property()
+    observation = detail_observation(
+        fresh.canonical,
+        DetailPageData(description="Retained authoritative detail", features=["Gas hob"]),
+        observed_at=datetime(2026, 9, 1, tzinfo=UTC),
+    )
+    await storage.upsert_source_listings([fresh.canonical])
+    await storage.retain_detail_observation(observation)
+    assert fresh.source_text == {}
+    await _run_quality_and_save(
+        PreAnalysisResult(merged_to_process=[fresh]), settings, storage, AsyncMock()
+    )
+    called = quality.analyze_single_merged.call_args.args[0]
+    selected = called.text_by_source[fresh.canonical.source]
+    assert selected.description == "Retained authoritative detail" and selected.features == (
+        "Gas hob",
+    )
+    assert (
+        selected.description_observation_ids
+        == selected.features_observation_ids
+        == (observation.sha256,)
+    )

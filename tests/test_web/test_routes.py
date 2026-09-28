@@ -303,6 +303,53 @@ class TestDashboard:
 
 class TestPropertyDetail:
     @pytest.mark.asyncio
+    async def test_conflicting_source_text_is_withheld_and_explained(
+        self, client: TestClient, storage: PropertyStorage, merged_a: MergedProperty
+    ) -> None:
+        from datetime import UTC, datetime, timedelta
+
+        from home_finder.models.observations import SourceObservation
+
+        await storage.save_merged_property(merged_a)
+        prop = merged_a.canonical
+        at = datetime(2026, 9, 1, tzinfo=UTC)
+        for i, description in enumerate(("First disputed literal", "Second disputed literal")):
+            await storage.retain_detail_observation(
+                SourceObservation(
+                    producer_id="web-fixture",
+                    event_id=str(i),
+                    source=prop.source,
+                    source_id=prop.source_id,
+                    listing_url=prop.url,
+                    origin="detail",
+                    observed_at=at,
+                    parser={"name": "fixture", "version": "1", "code_sha256": "1" * 64},
+                    fields={"description": {"value": description}},
+                )
+            )
+        response = client.get(f"/property/{prop.unique_id}")
+        assert response.status_code == 200
+        assert "OpenRent has conflicting listing details" in response.text
+        assert "First disputed literal" not in response.text
+        assert "Second disputed literal" not in response.text
+        correction = SourceObservation(
+            producer_id="web-fixture",
+            event_id="resolved",
+            source=prop.source,
+            source_id=prop.source_id,
+            listing_url=prop.url,
+            origin="correction",
+            observed_at=at + timedelta(minutes=1),
+            correction_reason="Source clarification",
+            parser={"name": "fixture", "version": "1"},
+            fields={"description": {"value": "Confirmed literal"}},
+        )
+        await storage.retain_text_correction(correction)
+        response = client.get(f"/property/{prop.unique_id}")
+        assert "has conflicting listing details" not in response.text
+        assert "Confirmed literal" in response.text
+
+    @pytest.mark.asyncio
     async def test_found(
         self, client: TestClient, storage: PropertyStorage, merged_a: MergedProperty
     ) -> None:
