@@ -20,6 +20,7 @@ from pydantic import (
     model_validator,
 )
 
+from home_finder.models.source_area import SourceAreaReading
 from home_finder.models.sources import PropertySource
 
 MAX_OBSERVATION_BYTES = 250_000
@@ -136,6 +137,9 @@ class ObservationFields(_EvidenceModel):
     first_visible_date: FieldChange[PortalDate] | None = None
     availability_date: FieldChange[PortalDate] | None = None
     agent: FieldChange[AgentReference] | None = None
+    floor_area_readings: (
+        FieldChange[Annotated[tuple[SourceAreaReading, ...], Field(max_length=10)]] | None
+    ) = None
 
 
 class RawCaptureReference(_EvidenceModel):
@@ -166,7 +170,11 @@ class SourceObservation(_EvidenceModel):
     parser: ObservationParser
     raw_capture: RawCaptureReference | None = None
     normalization_omissions: (
-        dict[Literal["gallery_urls", "floorplan_urls"], Literal["unsupported_url"]] | None
+        dict[
+            Literal["gallery_urls", "floorplan_urls", "floor_area_readings"],
+            Literal["unsupported_url", "unsupported_quantity"],
+        ]
+        | None
     ) = None
     correction_reason: str | None = Field(default=None, min_length=1, max_length=1000)
     fields: ObservationFields = Field(default_factory=ObservationFields)
@@ -178,6 +186,9 @@ class SourceObservation(_EvidenceModel):
 
     @model_validator(mode="after")
     def correction_and_limits(self) -> SourceObservation:
+        for omitted_name, reason in (self.normalization_omissions or {}).items():
+            if (omitted_name == "floor_area_readings") != (reason == "unsupported_quantity"):
+                raise ValueError("Normalization omission reason does not match its field")
         if self.origin == "correction":
             if not self.correction_reason or not self.correction_reason.strip():
                 raise ValueError("Explicit corrections require a reason")

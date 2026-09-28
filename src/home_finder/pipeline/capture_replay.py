@@ -208,6 +208,10 @@ async def _replay_verified(capture: VerifiedCapture, output_root: Path) -> Path:
                 detail = asdict(data) if data else None
                 if detail is not None:
                     detail.pop("source_observation", None)
+                    if data is not None and data.floor_area_readings:
+                        detail["floor_area_readings"] = [
+                            item.model_dump(mode="json") for item in data.floor_area_readings
+                        ]
                 result["detail"] = detail
                 result["outcome"] = (
                     "extracted" if detail and any(detail.values()) else "empty_or_unrecognised"

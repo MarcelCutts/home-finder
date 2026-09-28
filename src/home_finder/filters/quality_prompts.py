@@ -367,7 +367,9 @@ def build_user_prompt(
     if floor_area_sqm:
         prompt += (
             f"\n\n<scraped_floor_area>\n"
-            f"Total floor area from listing: {floor_area_sqm} m². "
+            f"Recorded floor-area figure: {floor_area_sqm} m² (rounded). "
+            f"Its provenance and measurement basis are unspecified in this input. "
+            f"Do not treat it as a verified usable internal area. "
             f"Cross-reference this with your floorplan estimate if available.\n"
             f"</scraped_floor_area>"
         )

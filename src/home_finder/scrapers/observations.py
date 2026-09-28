@@ -126,6 +126,8 @@ def detail_parser(source: str) -> ObservationParser:
     modules = [
         "scrapers/detail_fetcher.py",
         "scrapers/observations.py",
+        "scrapers/source_area.py",
+        "models/source_area.py",
         "utils/http_evidence.py",
         "utils/listing_identity.py",
     ]
@@ -161,7 +163,16 @@ def detail_observation(
             fields[name] = {"value": value}
     if data.latitude is not None and data.longitude is not None:
         fields["coordinates"] = {"value": {"latitude": data.latitude, "longitude": data.longitude}}
-    omissions: dict[Literal["gallery_urls", "floorplan_urls"], Literal["unsupported_url"]] = {}
+    omissions: dict[
+        Literal["gallery_urls", "floorplan_urls", "floor_area_readings"],
+        Literal["unsupported_url", "unsupported_quantity"],
+    ] = {}
+    if data.floor_area_readings:
+        fields["floor_area_readings"] = {
+            "value": [item.model_dump(mode="json") for item in data.floor_area_readings]
+        }
+    if data.floor_area_omission:
+        omissions["floor_area_readings"] = data.floor_area_omission
     media: dict[Literal["gallery_urls", "floorplan_urls"], list[str] | None] = {
         "gallery_urls": data.gallery_urls,
         "floorplan_urls": [data.floorplan_url] if data.floorplan_url else None,

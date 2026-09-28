@@ -124,51 +124,57 @@ class TestRightmoveFloorArea:
         <script>window.PAGE_MODEL = {json.dumps(page_model)}</script>
         </body></html>"""
 
-    async def test_extracts_sqft_from_sizings(self, fetcher: DetailFetcher) -> None:
+    async def test_preserves_sqft_range_from_sizings(self, fetcher: DetailFetcher) -> None:
         html = self._rightmove_html([{"unit": "sqft", "minimumSize": 650, "maximumSize": 700}])
         fetcher._httpx_get_with_retry = AsyncMock(return_value=_mock_httpx_response(html))
         result = await fetcher.fetch_detail_page(_make_property(PropertySource.RIGHTMOVE))
         assert result is not None
-        assert result.floor_area_sqm == 65.0  # 700 sqft * 0.0929
-        assert result.floor_area_source == "rightmove"
+        assert result.floor_area_sqm is None and result.floor_area_source is None
+        assert result.floor_area_readings[0].lower == 650
+        assert result.floor_area_readings[0].upper == 700
 
-    async def test_prefers_maximum_size(self, fetcher: DetailFetcher) -> None:
+    async def test_never_promotes_maximum_of_a_range_to_total(self, fetcher: DetailFetcher) -> None:
         html = self._rightmove_html([{"unit": "sqft", "minimumSize": 500, "maximumSize": 800}])
         fetcher._httpx_get_with_retry = AsyncMock(return_value=_mock_httpx_response(html))
         result = await fetcher.fetch_detail_page(_make_property(PropertySource.RIGHTMOVE))
         assert result is not None
-        assert result.floor_area_sqm == 74.3  # 800 sqft * 0.0929
+        assert result.floor_area_sqm is None
+        assert result.floor_area_readings[0].kind == "range"
 
-    async def test_falls_back_to_minimum_size(self, fetcher: DetailFetcher) -> None:
+    async def test_minimum_is_not_an_exact_total(self, fetcher: DetailFetcher) -> None:
         html = self._rightmove_html([{"unit": "sqft", "minimumSize": 600}])
         fetcher._httpx_get_with_retry = AsyncMock(return_value=_mock_httpx_response(html))
         result = await fetcher.fetch_detail_page(_make_property(PropertySource.RIGHTMOVE))
         assert result is not None
-        assert result.floor_area_sqm == 55.7  # 600 sqft * 0.0929
+        assert result.floor_area_sqm is None
+        assert result.floor_area_readings[0].kind == "minimum"
+        assert result.floor_area_readings[0].lower == 600
 
-    async def test_ignores_non_sqft_units(self, fetcher: DetailFetcher) -> None:
+    async def test_preserves_native_metric_minimum(self, fetcher: DetailFetcher) -> None:
         html = self._rightmove_html([{"unit": "sqm", "minimumSize": 60}])
         fetcher._httpx_get_with_retry = AsyncMock(return_value=_mock_httpx_response(html))
         result = await fetcher.fetch_detail_page(_make_property(PropertySource.RIGHTMOVE))
         assert result is not None
         assert result.floor_area_sqm is None
+        assert result.floor_area_readings[0].unit == "sq_m"
+        assert result.floor_area_readings[0].lower == 60
 
     async def test_rejects_below_min_bound(self, fetcher: DetailFetcher) -> None:
-        html = self._rightmove_html([{"unit": "sqft", "minimumSize": 99}])
+        html = self._rightmove_html([{"unit": "sqft", "minimumSize": 99, "maximumSize": 99}])
         fetcher._httpx_get_with_retry = AsyncMock(return_value=_mock_httpx_response(html))
         result = await fetcher.fetch_detail_page(_make_property(PropertySource.RIGHTMOVE))
         assert result is not None
         assert result.floor_area_sqm is None
 
     async def test_rejects_above_max_bound(self, fetcher: DetailFetcher) -> None:
-        html = self._rightmove_html([{"unit": "sqft", "minimumSize": 5001}])
+        html = self._rightmove_html([{"unit": "sqft", "minimumSize": 5001, "maximumSize": 5001}])
         fetcher._httpx_get_with_retry = AsyncMock(return_value=_mock_httpx_response(html))
         result = await fetcher.fetch_detail_page(_make_property(PropertySource.RIGHTMOVE))
         assert result is not None
         assert result.floor_area_sqm is None
 
     async def test_accepts_boundary_values(self, fetcher: DetailFetcher) -> None:
-        html = self._rightmove_html([{"unit": "sqft", "minimumSize": 100}])
+        html = self._rightmove_html([{"unit": "sqft", "minimumSize": 100, "maximumSize": 100}])
         fetcher._httpx_get_with_retry = AsyncMock(return_value=_mock_httpx_response(html))
         result = await fetcher.fetch_detail_page(_make_property(PropertySource.RIGHTMOVE))
         assert result is not None
@@ -256,8 +262,9 @@ class TestOnTheMarketFloorArea:
         fetcher._curl_get_with_retry = AsyncMock(return_value=_mock_curl_response(html))
         result = await fetcher.fetch_detail_page(_make_property(PropertySource.ONTHEMARKET))
         assert result is not None
-        assert result.floor_area_sqm == 79.0  # 850 sqft * 0.0929
-        assert result.floor_area_source == "onthemarket"
+        assert result.floor_area_sqm is None and result.floor_area_source is None
+        assert result.floor_area_readings[0].kind == "minimum"
+        assert result.floor_area_readings[0].lower == 850
 
     async def test_rejects_below_min(self, fetcher: DetailFetcher) -> None:
         html = self._otm_html({"minimumAreaSqFt": 50})

@@ -5,6 +5,7 @@ import math
 import re
 from dataclasses import dataclass, field
 from datetime import datetime
+from decimal import Decimal
 from typing import Any
 from urllib.parse import urljoin
 
@@ -184,14 +185,16 @@ def _search_listing(listing: dict[str, Any]) -> Property:
     )
 
 
-def detail_property(html: str, expected_id: str) -> dict[str, Any]:
+def detail_property(html: str, expected_id: str, *, exact_numbers: bool = False) -> dict[str, Any]:
     """Decode retained plain JSON and indexed-array forms without executing JS."""
     if len(html) > MAX_PAYLOAD_CHARACTERS:
         raise ValueError("page_model_size_limit")
     match = re.search(r"window\.(?:__)?PAGE_MODEL\s*=\s*", html)
     if match is None:
         raise ValueError("missing_page_model")
-    decoder = json.JSONDecoder(parse_constant=_reject_constant)
+    decoder = json.JSONDecoder(
+        parse_constant=_reject_constant, parse_float=Decimal if exact_numbers else float
+    )
     data, _ = decoder.raw_decode(html, match.end())
     indexed = "__PAGE_MODEL" in match.group()
     if not isinstance(data, dict):
@@ -229,6 +232,8 @@ def _decode_indexed_model(table: Any) -> dict[str, Any]:
     references = 0
     for entry in table:
         if isinstance(entry, float) and not math.isfinite(entry):
+            raise ValueError("nonfinite_page_model_number")
+        if isinstance(entry, Decimal) and not entry.is_finite():
             raise ValueError("nonfinite_page_model_number")
         if not isinstance(entry, (dict, list)):
             continue

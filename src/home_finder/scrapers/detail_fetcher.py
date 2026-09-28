@@ -6,7 +6,8 @@ import json
 import re
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Any, NamedTuple, assert_never
+from decimal import Decimal
+from typing import Any, Literal, NamedTuple, assert_never
 
 import httpx
 from curl_cffi import CurlError
@@ -21,12 +22,14 @@ from tenacity import (
 )
 
 from home_finder.logging import get_logger
-from home_finder.models import SQM_PER_SQFT, Property, PropertySource
+from home_finder.models import Property, PropertySource
 from home_finder.models.observations import ObservationFields, SourceObservation
+from home_finder.models.source_area import SourceAreaReading, display_area_square_metres
 from home_finder.scrapers.constants import BROWSER_HEADERS
 from home_finder.scrapers.observations import detail_observation
 from home_finder.scrapers.retry import RetryableHttpError
 from home_finder.scrapers.rightmove_payloads import detail_metadata, detail_property
+from home_finder.scrapers.source_area import AreaResult, rightmove_areas, single_area
 from home_finder.utils.circuit_breaker import ConsecutiveFailureBreaker
 from home_finder.utils.http_evidence import is_challenge
 from home_finder.utils.image_cache import is_valid_image_bytes
@@ -295,11 +298,8 @@ def _zoopla_images_from_full_urls(
     return [url for _, url in sorted_imgs[:remaining]]
 
 
-def _zoopla_size_from_rsc(html: str) -> int | None:
-    """Extract sizeSqft from RSC taxonomy payload.
-
-    Returns floor area in sqft, or None if not found/invalid.
-    """
+def _zoopla_area_from_rsc(html: str) -> AreaResult:
+    """Keep a structured sizeSqft quantity before conversion or display rounding."""
     rsc_pattern = r"self\.__next_f\.push\(\s*\[(.*?)\]\s*\)"
     for m in re.finditer(rsc_pattern, html, re.DOTALL):
         match_text = m.group(1)
@@ -311,17 +311,24 @@ def _zoopla_size_from_rsc(html: str) -> int | None:
                 payload = arr[1]
                 colon_idx = payload.find(":")
                 if colon_idx >= 0:
-                    parsed = json.loads(payload[colon_idx + 1 :])
+                    parsed = json.loads(payload[colon_idx + 1 :], parse_float=Decimal)
                     taxonomy = _find_dict_with_key(parsed, "sizeSqft")
                     if taxonomy:
-                        raw = taxonomy.get("sizeSqft")
-                        if (
-                            isinstance(raw, (int, float))
-                            and _FLOOR_AREA_MIN_SQFT <= raw <= _FLOOR_AREA_MAX_SQFT
-                        ):
-                            return int(raw)
+                        return single_area(
+                            taxonomy.get("sizeSqft"), source_field="taxonomy.sizeSqft"
+                        )
         except (json.JSONDecodeError, TypeError):
             continue
+    return None, None
+
+
+def _zoopla_size_from_rsc(html: str) -> Decimal | None:
+    """Legacy bounded scalar helper; fractions are no longer truncated."""
+    readings, _omission = _zoopla_area_from_rsc(html)
+    if readings:
+        amount = readings[0].lower
+        if amount is not None and _FLOOR_AREA_MIN_SQFT <= amount <= _FLOOR_AREA_MAX_SQFT:
+            return amount
     return None
 
 
@@ -357,6 +364,8 @@ class DetailPageData:
     postcode: str | None = None
     floor_area_sqm: float | None = None
     floor_area_source: str | None = None  # "rightmove" | "zoopla" | "onthemarket"
+    floor_area_readings: tuple[SourceAreaReading, ...] | None = None
+    floor_area_omission: Literal["unsupported_quantity"] | None = None
     source_observation: SourceObservation | None = None
 
 
@@ -573,7 +582,7 @@ class DetailFetcher:
             if is_challenge(html, response.headers):
                 logger.warning("rightmove_challenge", property_id=prop.unique_id)
                 return None
-            property_data = detail_property(html, prop.source_id)
+            property_data = detail_property(html, prop.source_id, exact_numbers=True)
 
             # Extract floorplan
             floorplan_url: str | None = None
@@ -616,18 +625,8 @@ class DetailFetcher:
             if outcode and incode:
                 postcode = f"{outcode} {incode}"
 
-            # Extract floor area from sizings (validate in sqft, convert to sqm)
-            floor_area_sqm: float | None = None
-            sizings = property_data.get("sizings", [])
-            for sizing in sizings:
-                if sizing.get("unit") == "sqft":
-                    raw = sizing.get("maximumSize") or sizing.get("minimumSize")
-                    if (
-                        isinstance(raw, (int, float))
-                        and _FLOOR_AREA_MIN_SQFT <= raw <= _FLOOR_AREA_MAX_SQFT
-                    ):
-                        floor_area_sqm = round(raw * SQM_PER_SQFT, 1)
-                        break
+            areas, area_omission = rightmove_areas(property_data.get("sizings"))
+            floor_area_sqm = display_area_square_metres(areas)
 
             return self._observed_detail(
                 prop,
@@ -641,6 +640,8 @@ class DetailFetcher:
                     postcode=postcode,
                     floor_area_sqm=floor_area_sqm,
                     floor_area_source="rightmove" if floor_area_sqm else None,
+                    floor_area_readings=areas,
+                    floor_area_omission=area_omission,
                 ),
                 observed_at,
                 metadata=detail_metadata(property_data),
@@ -706,9 +707,8 @@ class DetailFetcher:
             if not floorplan_url:
                 floorplan_url = _zoopla_floorplan_from_html(html)
 
-            # Extract floor area from RSC payload (sqft), convert to sqm
-            raw_sqft = _zoopla_size_from_rsc(html)
-            floor_area_sqm = round(raw_sqft * SQM_PER_SQFT, 1) if raw_sqft else None
+            areas, area_omission = _zoopla_area_from_rsc(html)
+            floor_area_sqm = display_area_square_metres(areas)
 
             return self._observed_detail(
                 prop,
@@ -719,6 +719,8 @@ class DetailFetcher:
                     features=features if features else None,
                     floor_area_sqm=floor_area_sqm,
                     floor_area_source="zoopla" if floor_area_sqm else None,
+                    floor_area_readings=areas,
+                    floor_area_omission=area_omission,
                 ),
                 observed_at,
             )
@@ -889,7 +891,7 @@ class DetailFetcher:
             if not match:
                 return None
 
-            data = json.loads(match.group(1))
+            data = json.loads(match.group(1), parse_float=Decimal)
             redux_state = data.get("props", {}).get("initialReduxState", {})
             property_data = redux_state.get("property", {})
 
@@ -934,14 +936,12 @@ class DetailFetcher:
                 if isinstance(feat, dict) and feat.get("feature"):
                     features.append(feat["feature"])
 
-            # Extract floor area (validate in sqft, convert to sqm)
-            floor_area_sqm: float | None = None
-            raw_sqft = property_data.get("minimumAreaSqFt")
-            if (
-                isinstance(raw_sqft, (int, float))
-                and _FLOOR_AREA_MIN_SQFT <= raw_sqft <= _FLOOR_AREA_MAX_SQFT
-            ):
-                floor_area_sqm = round(raw_sqft * SQM_PER_SQFT, 1)
+            areas, area_omission = single_area(
+                property_data.get("minimumAreaSqFt"),
+                source_field="property.minimumAreaSqFt",
+                minimum_only=True,
+            )
+            floor_area_sqm = display_area_square_metres(areas)
 
             return self._observed_detail(
                 prop,
@@ -952,6 +952,8 @@ class DetailFetcher:
                     features=features if features else None,
                     floor_area_sqm=floor_area_sqm,
                     floor_area_source="onthemarket" if floor_area_sqm else None,
+                    floor_area_readings=areas,
+                    floor_area_omission=area_omission,
                 ),
                 observed_at,
             )

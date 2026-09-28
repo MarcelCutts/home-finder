@@ -1,6 +1,7 @@
 # PR06b-5: Verifiable raw references, replayed observations and explicit expiry
 
 **Date:** 29 September 2026. **Predecessor:** current text `e5f1a9e`.
+**Commit:** `9d41a13`.
 **Scope:** offline association of retained PR18a responses with normalized observations, bounded reference resolution, and an explicit raw-body retention operation. Normal collectors still retain normalized observations; this slice does not enable collection or a second database writer.
 
 ## Result

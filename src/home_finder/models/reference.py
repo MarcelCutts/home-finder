@@ -14,6 +14,8 @@ from pydantic import (
     model_validator,
 )
 
+from home_finder.models.source_area import SQUARE_METRES_PER_SQUARE_FOOT
+
 RUBRIC_VERSION: Final = "home-finder-reference-v1"
 _Value = TypeVar("_Value")
 
@@ -71,7 +73,7 @@ class PrintedArea(BaseModel):
     @property
     def square_metres(self) -> Decimal:
         """Exact international-foot conversion; retain the printed area definition."""
-        return self.amount if self.unit == "sq_m" else self.amount * Decimal("0.09290304")
+        return self.amount if self.unit == "sq_m" else self.amount * SQUARE_METRES_PER_SQUARE_FOOT
 
 
 class ReferenceFacts(BaseModel):
