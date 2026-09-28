@@ -1,6 +1,6 @@
 # PR18a: Isolated response capture, parser replay and historical export
 
-**Date:** 28 September 2026. **State:** tooling and offline exercise implemented and verified. Live acquisition and the later elapsed canary remain unqualified.
+**Date:** 28 September 2026. **State:** tooling and offline exercise committed as `02a75f1`, verified. Live acquisition and the later elapsed canary remain unqualified.
 **Predecessor:** PR12a, `b5d9859`.
 **Parent:** [delivery plan, PR18](2026-09-28-research-synthesis-and-delivery-plan.md#pr18--run-a-controlled-collection-restart-and-qualify-source-coverage-m--elapsed-canary).
 

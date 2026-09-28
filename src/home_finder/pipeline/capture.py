@@ -23,6 +23,7 @@ from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, HttpUrl, model
 
 from home_finder.models import Property, PropertySource
 from home_finder.pipeline.runner import runner_lock
+from home_finder.utils.http_evidence import is_challenge
 
 _HOSTS = {
     PropertySource.RIGHTMOVE: {"www.rightmove.co.uk"},
@@ -136,13 +137,13 @@ def _parser_fingerprint() -> dict[str, str]:
     """Hash the installed parser/model source, including local uncommitted changes."""
     root = Path(__file__).parents[1]
     files = sorted((root / "scrapers").glob("*.py")) + sorted((root / "models").glob("*.py"))
+    files.append(root / "utils" / "http_evidence.py")
     return {str(p.relative_to(root)): hashlib.sha256(p.read_bytes()).hexdigest() for p in files}
 
 
 def _stop_reason(status: int, headers: dict[str, str], body: bytes) -> str | None:
-    text = body[:100_000].lower()
-    if headers.get("cf-mitigated", "").lower() == "challenge" or any(
-        marker in text for marker in (b"cf-chl-", b"verify you are human", b"captcha challenge")
+    if is_challenge(
+        body[:100_000].decode("utf-8", errors="replace"), headers, scan_characters=100_000
     ):
         return "challenge"
     if status != 200:

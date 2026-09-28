@@ -55,7 +55,7 @@ Enrichment runs **before** geocoding/commute calculation and deduplication. PR06
 | Source | Coordinates at Scrape | Full Postcode at Scrape | Backfilled from Detail Page |
 |--------|----------------------|------------------------|---------------------------|
 | Zoopla | Yes (RSC `pos` field) | Usually full | No (already has data) |
-| Rightmove | No | Outcode only (e.g., `E8`) | Yes — full postcode + coords from `PAGE_MODEL` |
+| Rightmove | Yes from retained structured search; no from legacy cards | Usually outcode only (e.g., `E8`) | Legacy `PAGE_MODEL`; new encoded detail still unqualified |
 | OpenRent | Yes (JS arrays) | Usually full | No (already has data) |
 | OnTheMarket | Yes (Redux `location`) | Usually full | No (already has data) |
 

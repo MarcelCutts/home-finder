@@ -17,6 +17,8 @@ from urllib.parse import urlsplit
 
 from bs4 import BeautifulSoup
 
+from home_finder.utils.http_evidence import is_challenge as is_challenge
+
 
 class ListingStatus(Enum):
     ACTIVE = "active"
@@ -56,25 +58,6 @@ def listing_id(source: str, url: str) -> str | None:
     pattern = _PATHS.get(source)
     match = pattern.fullmatch(parsed.path) if pattern else None
     return match[1] if match else None
-
-
-def is_challenge(html: str, headers: Mapping[str, str] | None = None) -> bool:
-    """A challenge takes precedence over a 404/410 or any listing text."""
-    normalized = {key.lower(): value.lower() for key, value in (headers or {}).items()}
-    if normalized.get("cf-mitigated") == "challenge":
-        return True
-    lower = html[:5000].lower()
-    return any(
-        token in lower
-        for token in (
-            "checking your browser",
-            "just a moment",
-            "enable javascript and cookies",
-            "cf-chl-",
-            "cloudflare ray id",
-            "verify you are human",
-        )
-    )
 
 
 def _at(value: object, *keys: str) -> Any:
