@@ -108,8 +108,6 @@ async def run_check_off_market(
                     url = str(sl["url"])
                     sl_uid = str(sl["unique_id"])
                     covered_urls.add(url)
-                    if only_scrapers and source not in only_scrapers:
-                        continue
                     key = (prop["unique_id"], source, url)
                     checks.append(key)
                     sl_lookup[key] = sl_uid
@@ -126,15 +124,20 @@ async def run_check_off_market(
                 for source, url in source_urls.items():
                     if url in covered_urls:
                         continue
-                    if only_scrapers and source not in only_scrapers:
-                        continue
                     checks.append((prop["unique_id"], source, url))
             elif not linked_sls:
                 # No source_listings and no source_urls — use primary source/url
                 source = prop["source"]
-                if only_scrapers and source not in only_scrapers:
-                    continue
                 checks.append((prop["unique_id"], source, prop["url"]))
+
+        # Removal requires evidence for every known URL, including URLs outside
+        # a selected source subset. Multiple listings on one portal are distinct.
+        checks = list(dict.fromkeys(checks))
+        expected: dict[str, set[tuple[str, str]]] = {}
+        for uid, source, url in checks:
+            expected.setdefault(uid, set()).add((source, url))
+        if only_scrapers:
+            checks = [check for check in checks if check[1] in only_scrapers]
 
         if not checks:
             logger.info("no_urls_to_check", reason="source filter may have excluded all")
@@ -147,7 +150,8 @@ async def run_check_off_market(
             batch = await checker.check_batch(checks)
         check_elapsed = round(time.monotonic() - check_t0, 1)
 
-        results = batch.results
+        requested = set(checks)
+        results = [r for r in batch.results if (r.property_id, r.source, r.url) in requested]
 
         # --- Persist per-source results on source_listings ---
         for r in results:
@@ -170,32 +174,33 @@ async def run_check_off_market(
         def _is_inactive(s: ListingStatus) -> bool:
             return s in (ListingStatus.REMOVED, ListingStatus.LET_AGREED)
 
-        per_property: dict[str, dict[str, ListingStatus]] = {}
+        per_property: dict[str, dict[tuple[str, str], ListingStatus]] = {}
         for r in results:
-            per_property.setdefault(r.property_id, {})[r.source] = r.status
+            per_property.setdefault(r.property_id, {})[(r.source, r.url)] = r.status
 
         marked_off = 0
         marked_returned = 0
         for prop in db_props:
             uid = prop["unique_id"]
-            source_statuses = per_property.get(uid, {})
-            if not source_statuses:
+            observed_statuses = per_property.get(uid, {})
+            if not observed_statuses:
                 continue
+            source_statuses = {
+                key: observed_statuses.get(key, ListingStatus.UNKNOWN) for key in expected[uid]
+            }
 
             has_active = any(s == ListingStatus.ACTIVE for s in source_statuses.values())
             all_inactive = all(_is_inactive(s) for s in source_statuses.values())
             was_off_market = bool(prop.get("is_off_market"))
 
-            # Determine reason from the first inactive source
+            # Prefer an explicit let-agreed observation over a missing URL.
             reason: str | None = None
             if all_inactive:
-                for _s, st in source_statuses.items():
-                    if st == ListingStatus.LET_AGREED:
-                        reason = "let_agreed"
-                        break
-                    if st == ListingStatus.REMOVED:
-                        reason = "removed"
-                        break
+                reason = (
+                    "let_agreed"
+                    if ListingStatus.LET_AGREED in source_statuses.values()
+                    else "removed"
+                )
 
             if all_inactive:
                 if not was_off_market:
@@ -205,7 +210,7 @@ async def run_check_off_market(
                         "property_confirmed_off_market",
                         unique_id=uid,
                         reason=reason,
-                        sources=list(source_statuses.keys()),
+                        sources=sorted({source for source, _ in source_statuses}),
                     )
             elif has_active and was_off_market:
                 await storage.mark_returned_to_market(uid)
@@ -214,7 +219,9 @@ async def run_check_off_market(
                     "property_returned_to_market",
                     unique_id=uid,
                     active_sources=[
-                        s for s, st in source_statuses.items() if st == ListingStatus.ACTIVE
+                        source
+                        for (source, _), st in source_statuses.items()
+                        if st == ListingStatus.ACTIVE
                     ],
                 )
 

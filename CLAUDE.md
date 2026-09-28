@@ -79,6 +79,8 @@ Python support is `>=3.11,<3.15`; CI tests 3.11.16 and 3.14.7. Local/default con
 
 PR06a retains descriptions/features by source through save/reload and both model phases. `MergedProperty.source_text` holds current text with per-field observation times; undated search text only fills gaps, missing fields preserve evidence, and explicit dated corrections can clear it. `PropertyQualityAnalysis.listing_text_inputs` records the exact bounded selected text/features and full-input hashes. This is not the immutable revision system in PR06b. Known-page/early-return accounting remains incomplete (PR09a); discovery-independent recovery and process exclusion need PR12a. PR16a's typed commute outcomes and mode-state events fix admission/accounting; stored minute projections still lack versioned route context, precision and expiry (PR16b). They are labelled estimates, and legacy zero/absent values display as unknown.
 
+PR08a keeps ranges consistent with existing price-change paths. Same-source changes update their quote atomically; the existing `cross_platform` selection path keeps each original quote intact. Freshness, consistent selection and historical rebuild policy remain PR08b. Availability uses target IDs, explicit primary status and conservative unknowns. Bare 404s, generic redirects and challenge responses do not prove removal. All known listing URLs must be confirmed inactive before marking a home off market; a partial source check cannot satisfy that condition. Source parser fixtures are contracts, not proof of current live portal support. Existing `is_off_market=0` defaults and check-attempt timestamps must not be described as confirmed fresh availability.
+
 ## Gotchas & Constraints
 
 ### HTTP Client Selection

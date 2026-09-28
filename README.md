@@ -80,6 +80,8 @@ uv run home-finder --check-off-market --scrapers zoopla  # Check only specific p
 uv run home-finder --debug              # Enable debug-level logging
 ```
 
+Availability checks need evidence for the requested listing. Generic redirects, bare 404s, challenges and unrecognised pages remain unknown. Selecting one source cannot establish that every listing for a home is off market. Existing unchecked records are historical candidates, not confirmed available homes; source activation still requires the delivery plan's access and fixture checks.
+
 ## Web Dashboard
 
 The `--serve` flag starts a FastAPI web server on port 8000. Unless `--no-pipeline` is supplied, it starts a background pipeline after an initial delay, then waits the configured interval (55 minutes by default) plus or minus five minutes **after each run finishes**. This is not a fixed 55-minute start-to-start schedule. The lock covers only this process; it does not exclude another CLI/cron process. Fly uses `--serve --no-pipeline`.

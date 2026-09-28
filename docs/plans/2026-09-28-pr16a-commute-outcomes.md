@@ -1,6 +1,6 @@
 # PR16a: Honest commute outcomes and consistent advisory behaviour
 
-**Date:** 28 September 2026. **State:** implemented and verified; not deployed.
+**Date:** 28 September 2026. **State:** committed as `3e0c05d`; verified; not deployed.
 **Parent:** [delivery plan, PR16](2026-09-28-research-synthesis-and-delivery-plan.md#pr16--correct-commute-semantics-and-version-personal-decision-policy-m).
 **Predecessor:** PR17a, commit `b4cf2f9`. No schema migration, provider calls, collection or notifications.
 

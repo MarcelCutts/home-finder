@@ -1493,17 +1493,38 @@ class PropertyStorage:
         """
         async with self._transaction() as conn:
             cursor = await conn.execute(
-                "SELECT price_pcm FROM properties WHERE unique_id = ?",
+                "SELECT price_pcm, source FROM properties WHERE unique_id = ?",
                 (unique_id,),
             )
             row = await cursor.fetchone()
             if row is None:
+                return None
+            if source is not None and source not in {row["source"], "cross_platform"}:
+                # A cheaper quote from a different portal is not a reduction
+                # by this listing. Cross-source selection is a separate policy.
+                logger.warning("price_observation_source_mismatch", unique_id=unique_id)
                 return None
             old_price = row["price_pcm"]
             if old_price == new_price:
                 return None
 
             change_amount = new_price - old_price
+            # Keep the actual canonical source observation in sync. Never
+            # rewrite a source listing owned by a different golden record.
+            if source != "cross_platform":
+                await conn.execute(
+                    "UPDATE source_listings SET price_pcm = ? "
+                    "WHERE unique_id = ? AND (merged_id = ? OR merged_id IS NULL)",
+                    (new_price, unique_id, unique_id),
+                )
+            prices_cursor = await conn.execute(
+                "SELECT price_pcm FROM source_listings WHERE merged_id = ? "
+                "AND (? OR unique_id != ?)",
+                (unique_id, source == "cross_platform", unique_id),
+            )
+            # Use attributed retained prices, not an old unattributed range.
+            # Freshness/availability eligibility and projection revisions are PR08b.
+            prices = [new_price, *(r[0] for r in await prices_cursor.fetchall())]
             await conn.execute(
                 """INSERT INTO price_history
                    (property_unique_id, old_price, new_price, change_amount, source)
@@ -1511,8 +1532,9 @@ class PropertyStorage:
                 (unique_id, old_price, new_price, change_amount, source),
             )
             await conn.execute(
-                "UPDATE properties SET price_pcm = ?, price_drop_notified = 0 WHERE unique_id = ?",
-                (new_price, unique_id),
+                "UPDATE properties SET price_pcm = ?, min_price = ?, max_price = ?, "
+                "price_drop_notified = 0 WHERE unique_id = ?",
+                (new_price, min(prices), max(prices), unique_id),
             )
 
             # Recompute value rating and fit_score for the new price
