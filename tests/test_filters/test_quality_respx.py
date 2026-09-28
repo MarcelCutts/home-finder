@@ -283,9 +283,18 @@ def _make_quality_filter() -> PropertyQualityFilter:
 class TestTwoPhaseAnalysisViaHTTP:
     """Test the full two-phase analysis through the HTTP layer with respx."""
 
+    @pytest.mark.parametrize(
+        ("description", "expected_epc"),
+        [("EPC rating C", "C"), ("No rating stated.", "unknown"), ("EPC B. EPC C.", "unknown")],
+    )
     @respx.mock
-    async def test_full_two_phase_analysis(self, test_merged_property: MergedProperty) -> None:
+    async def test_full_two_phase_analysis(
+        self, test_merged_property: MergedProperty, description: str, expected_epc: str
+    ) -> None:
         """Full two-phase analysis through real HTTP layer."""
+        test_merged_property = test_merged_property.model_copy(
+            update={"descriptions": {test_merged_property.canonical.source: description}}
+        )
         route = respx.post("https://api.anthropic.com/v1/messages").mock(
             side_effect=[
                 httpx.Response(200, json=PHASE1_VISUAL_RESPONSE),
@@ -314,7 +323,7 @@ class TestTwoPhaseAnalysisViaHTTP:
 
         # Phase 2 evaluation data parsed correctly
         assert analysis.listing_extraction is not None
-        assert analysis.listing_extraction.epc_rating == "C"
+        assert analysis.listing_extraction.epc_rating == expected_epc
         assert analysis.listing_extraction.broadband_type == "fttc"
         assert analysis.highlights is not None
         assert "Gas hob" in analysis.highlights

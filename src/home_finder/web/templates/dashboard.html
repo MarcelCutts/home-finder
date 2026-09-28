@@ -96,7 +96,7 @@
                     <option value="price_asc" {% if sort == "price_asc" %}selected{% endif %}>Price: Low</option>
                     <option value="price_desc" {% if sort == "price_desc" %}selected{% endif %}>Price: High</option>
                     <option value="fit_desc" {% if sort == "fit_desc" %}selected{% endif %}>Best Fit</option>
-                    <option value="longest_listed" {% if sort == "longest_listed" %}selected{% endif %}>Longest Listed</option>
+                    <option value="longest_listed" {% if sort == "longest_listed" %}selected{% endif %}>First observed: oldest</option>
                 </select>
 
                 <button type="button" id="open-filters-btn" class="filter-modal-btn">Filters{% if secondary_filter_count %} <span class="filter-badge">{{ secondary_filter_count }}</span>{% endif %}</button>

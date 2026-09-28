@@ -69,6 +69,7 @@ class PropertyListItem(TypedDict, total=False):
     property_type: str | None
     one_line: str | None
     epc_rating: str | None
+    epc_unverified: bool
     # Analysis JSON for fit_score computation in routes
     analysis_json: str | None
     # User status (Ticket 7)
@@ -95,6 +96,7 @@ class PropertyDetailItem(PropertyListItem, total=False):
     quality_analysis: PropertyQualityAnalysis | None
     gallery_images: list[PropertyImage]
     floorplan_images: list[PropertyImage]
+    listing_evidence: dict[PropertySource, ListingTextEvidence]
 
 
 def parse_json_fields(prop_dict: dict[str, Any]) -> None:

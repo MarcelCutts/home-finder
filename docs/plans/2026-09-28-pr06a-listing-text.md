@@ -1,6 +1,6 @@
 # PR06a: Retain listing text through analysis
 
-**Date:** 28 September 2026. **State:** implemented and verified; not deployed.
+**Date:** 28 September 2026. **State:** committed as `19d6f24`; not deployed.
 **Parent:** [delivery plan, PR06](2026-09-28-research-synthesis-and-delivery-plan.md#pr06--preserve-descriptions-features-corrections-and-source-provenance-l).
 **Predecessor:** PR04, commit `55f3171`. No live collection, model calls or notifications.
 

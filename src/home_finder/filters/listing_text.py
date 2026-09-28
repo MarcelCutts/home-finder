@@ -4,11 +4,11 @@ from __future__ import annotations
 
 import hashlib
 import html
-import re
 from itertools import zip_longest
 
 from home_finder.models import MergedProperty
 from home_finder.models.listing_text import ListingTextInputs
+from home_finder.utils.listing_facts import supported_band
 
 
 def select_listing_text(merged: MergedProperty) -> ListingTextInputs:
@@ -65,17 +65,4 @@ def supported_council_tax_band(
     mentions stay unknown. Reference-area costs and image observations do not
     establish a council-tax band. This does not verify a portal's claim with VOA.
     """
-    if claimed_band in (None, "unknown"):
-        return claimed_band
-    text = html.unescape("\n".join([description or "", *(features or [])]))
-    text = re.sub(r"<[^>]*>", " ", text)
-    matches = re.finditer(
-        r"\bcouncil\s+tax\s*(?:band\s*)?[:\-\u2013]?\s*([A-H])\b", text, re.IGNORECASE
-    )
-    bands = set()
-    for match in matches:
-        context = text[max(0, match.start() - 30) : match.end() + 30].lower()
-        if re.search(r"\b(estimate[ds]?|assum\w*|budget\w*)\b", context):
-            continue
-        bands.add(match[1].upper())
-    return claimed_band if bands == {claimed_band} else "unknown"
+    return supported_band("council_tax", claimed_band, description, features)

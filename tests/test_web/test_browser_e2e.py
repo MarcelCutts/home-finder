@@ -873,6 +873,25 @@ class TestFitScorePopover:
 
 @pytest.mark.browser
 class TestMobileViewport:
+    @pytest.mark.parametrize("width", [375, 1280])
+    def test_honest_budget_is_readable(self, page, width, tmp_path):
+        page.set_viewport_size({"width": width, "height": 900})
+        page.goto("/property/openrent:1003")
+        budget = page.locator(".cost-breakdown-card")
+        expect(budget).to_contain_text("Incomplete budget")
+        expect(budget).to_contain_text("Advertised subtotal")
+        expect(budget).to_contain_text("Unknown")
+        budget.locator("summary").click()
+        expect(budget).to_contain_text("England: private assured periodic tenancies")
+        expect(budget.get_by_role("link", name="Rental bidding rules")).to_be_visible()
+        assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
+        # Leave room above the card so the sticky section nav does not obscure
+        # its heading in the evidence screenshot.
+        page.set_viewport_size({"width": width, "height": 1400})
+        budget.scroll_into_view_if_needed()
+        page.evaluate("window.scrollBy(0, -80)")
+        budget.screenshot(path=str(tmp_path / f"rent-and-bills-{width}.png"))
+
     """Phase 2: Mobile viewport optimizations."""
 
     def test_filter_bar_not_sticky_on_mobile(self, page):

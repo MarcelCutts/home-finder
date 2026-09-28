@@ -48,6 +48,7 @@ from home_finder.utils.image_processing import (
 from home_finder.utils.image_processing import (
     resize_image_bytes as _resize_image_bytes,
 )
+from home_finder.utils.listing_facts import supported_band
 
 if TYPE_CHECKING:
     import anthropic
@@ -512,12 +513,10 @@ class _EvaluationResponse(BaseModel):
         )
         reasoning: str = Field(
             description=(
-                "Value justification: why this price is or isn't fair for "
-                "what you get. Focus on price factors: stock type "
-                "premium/discount, true monthly cost, area rent trajectory, "
-                "service charges, incentives. Reference condition only as "
-                "'condition justifies/doesn't justify price' — don't "
-                "restate specific issues."
+                "Discuss advertised rent and observed trade-offs. Separate supported "
+                "tenant payments from estimates and unknown bills. Do not infer service "
+                "charges, fixed stock premiums, a complete monthly total or an offer "
+                "discount from undated research. Acknowledge missing comparable evidence."
             ),
         )
 
@@ -1644,11 +1643,12 @@ class PropertyQualityFilter:
         if analysis is not None and analysis.listing_extraction is not None:
             extraction = analysis.listing_extraction
             band = supported_council_tax_band(extraction.council_tax_band, description, features)
-            if band != extraction.council_tax_band:
+            epc = supported_band("epc", extraction.epc_rating, description, features)
+            if band != extraction.council_tax_band or epc != extraction.epc_rating:
                 analysis = analysis.model_copy(
                     update={
                         "listing_extraction": extraction.model_copy(
-                            update={"council_tax_band": band}
+                            update={"council_tax_band": band, "epc_rating": epc}
                         )
                     }
                 )

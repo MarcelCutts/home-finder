@@ -8,6 +8,7 @@
 <article>
     <section class="detail-section area-page-header">
         <h3>Area Guide: {{ outcode }}</h3>
+        <p class="cost-line-note">{{ area_context.reference_note }}</p>
         {% if area_context.description %}
         <p class="area-description">{{ area_context.description }}</p>
         {% endif %}
@@ -43,7 +44,8 @@
 
     {% if area_context.benchmarks %}
     <section class="detail-section">
-        <h4 class="section-subhead">Rental Benchmarks ({{ outcode }})</h4>
+        <h4 class="section-subhead">Historical research comparisons ({{ outcode }})</h4>
+        <p class="cost-line-note">Source, sample and effective date are unverified. These figures are not current market medians.</p>
         {% set max_rent = area_context.benchmarks.values() | max %}
         <div class="benchmark-list">
             {% for beds, rent in area_context.benchmarks.items() %}
@@ -64,7 +66,8 @@
         <div class="area-details">
             {% if area_context.borough and area_context.council_tax %}
             <div>
-                <h4>Council Tax ({{ area_context.borough }})</h4>
+                <h4>Council Tax ({{ area_context.borough }}, undated research)</h4>
+                <p class="cost-line-note">Check the property's actual band, billing council, current annual rates and household discounts. These historical monthly figures are not used in your budget.</p>
                 <table>
                     <thead><tr><th>Band</th><th>Monthly</th></tr></thead>
                     <tbody>
@@ -108,7 +111,7 @@
             {% if area_context.rent_trend %}
             <div>
                 <h4>Rent Trend</h4>
-                <p>+{{ area_context.rent_trend.yoy_pct }}% YoY ({{ area_context.rent_trend.direction }})</p>
+                <p>{{ area_context.rent_trend }}</p>
             </div>
             {% endif %}
         </div>

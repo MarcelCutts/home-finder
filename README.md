@@ -27,6 +27,7 @@ The current application serves one owner's search. The agreed target is a small 
 - **Commute information**: TravelTime estimates against a configured destination and limit; advisory/error semantics need the PR16 repair described in the delivery plan
 - **AI quality analysis**: Two-phase Claude vision analysis — Phase 1 observes images (kitchen, condition, space, light), Phase 2 evaluates value, generates viewing notes, and curates highlights
 - **Web dashboard**: FastAPI-powered dashboard with HTMX live filtering, map view with MarkerCluster, property detail pages with area context, and lightbox gallery
+- **Rent and bills**: Separate advertised rent and explicit named bill claims from unpriced costs; show source conflicts and fee questions. Historical research and unsupported earlier EPC/council-tax claims are labelled unverified. England tenancy guidance is dated and scoped; the dashboard does not recommend fixed offer discounts.
 - **Rich Telegram notifications**: Property cards with photos, star ratings, commute times, quality summaries, and direct links (including web dashboard deep links)
 - **Detail enrichment**: Fetches gallery images, floorplans, and descriptions from property detail pages
 - **Disk-based image caching**: Images cached locally for reliable display in dashboard and quality analysis

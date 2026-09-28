@@ -6,6 +6,7 @@ analysis filter and web dashboard routes.
 """
 
 import json
+import math
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -130,6 +131,20 @@ SERVICE_CHARGE_RANGES: Final[dict[str, ServiceChargeRange]] = _DATA.get("service
 HOSTING_TOLERANCE: Final[dict[str, HostingTolerance]] = _DATA.get("hosting_tolerance", {})
 CREATIVE_SCENE: Final[dict[str, CreativeScene]] = _DATA.get("creative_scene", {})
 
+LEGACY_CONTEXT_NOTE = (
+    "Undated area research; current accuracy is unverified. Postcode areas can cross borough "
+    "boundaries. Area descriptions and broad averages do not establish facts about this flat."
+)
+
+
+def format_rent_trend(trend: RentTrend) -> str:
+    """Numeric sign controls wording; conflicting legacy labels are not authoritative."""
+    value = trend["yoy_pct"]
+    if not math.isfinite(value):
+        return "Unknown change (invalid reference value)"
+    direction = "rising" if value > 0 else "falling" if value < 0 else "unchanged"
+    return f"{value:+g}% YoY ({direction}); observation period and source unverified"
+
 
 def build_area_context(outcode: str) -> dict[str, Any]:
     """Build common area context dict for an outcode.
@@ -139,6 +154,7 @@ def build_area_context(outcode: str) -> dict[str, Any]:
     borough info (council tax, rent trends), and crime rates.
     """
     ctx: dict[str, Any] = {
+        "reference_note": LEGACY_CONTEXT_NOTE,
         "description": get_area_overview(outcode),
         "benchmarks": RENTAL_BENCHMARKS.get(outcode),
         "crime": CRIME_RATES.get(outcode),
@@ -147,7 +163,8 @@ def build_area_context(outcode: str) -> dict[str, Any]:
     if borough:
         ctx["borough"] = borough
         ctx["council_tax"] = COUNCIL_TAX_MONTHLY.get(borough)
-        ctx["rent_trend"] = RENT_TRENDS.get(borough)
+        trend = RENT_TRENDS.get(borough)
+        ctx["rent_trend"] = format_rent_trend(trend) if trend else None
     return ctx
 
 
@@ -187,20 +204,21 @@ def build_property_context(postcode: str | None, bedrooms: int) -> PropertyConte
     area_overview = get_area_overview(outcode)
 
     borough = OUTCODE_BOROUGH.get(outcode)
-    council_tax_c = COUNCIL_TAX_MONTHLY.get(borough, {}).get("C") if borough else None
-
-    bed_key = f"{min(max(bedrooms, 1), 2)}_bed"
-    energy_estimate = ENERGY_COSTS_MONTHLY.get("D", {}).get(bed_key)
+    # The bundled cost values have no effective period or property/household
+    # applicability. Do not turn Band C / EPC D defaults into model inputs.
 
     crime = CRIME_RATES.get(outcode)
     crime_summary: str | None = None
     if crime:
-        crime_summary = f"{crime['rate']}/1,000 ({crime['vs_london']} vs London avg)"
+        crime_summary = (
+            f"Undated research: {crime['rate']}/1,000 ({crime['vs_london']} vs London avg); "
+            "period, geography and current accuracy unverified"
+        )
         if crime.get("note"):
             crime_summary += f". {crime['note']}"
 
     trend = RENT_TRENDS.get(borough) if borough else None
-    rent_trend = f"+{trend['yoy_pct']}% YoY ({trend['direction']})" if trend else None
+    rent_trend = format_rent_trend(trend) if trend else None
 
     hosting_data = HOSTING_TOLERANCE.get(outcode)
     hosting_str: str | None = None
@@ -211,10 +229,10 @@ def build_property_context(postcode: str | None, bedrooms: int) -> PropertyConte
 
     return PropertyContext(
         outcode=outcode,
-        area_overview=area_overview,
+        area_overview=f"{LEGACY_CONTEXT_NOTE}\n{area_overview}" if area_overview else None,
         borough=borough,
-        council_tax_band_c=council_tax_c,
-        energy_estimate=energy_estimate,
+        council_tax_band_c=None,
+        energy_estimate=None,
         crime_summary=crime_summary,
         rent_trend=rent_trend,
         hosting_tolerance=hosting_str,

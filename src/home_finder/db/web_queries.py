@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 import aiosqlite
 
+from home_finder.db.listing_text import text_from_property_row
 from home_finder.db.row_mappers import (
     ImageReader,
     PropertyDetailItem,
@@ -18,6 +19,7 @@ from home_finder.db.row_mappers import (
 )
 from home_finder.logging import get_logger
 from home_finder.models import PropertyQualityAnalysis
+from home_finder.utils.listing_facts import supported_band
 from home_finder.web.filters import ADDED_OPTIONS
 
 if TYPE_CHECKING:
@@ -60,6 +62,7 @@ _QUALITY_FIELD_DEFAULTS: dict[str, Any] = {
     "one_line": None,
     "property_type": None,
     "epc_rating": None,
+    "epc_unverified": False,
     "living_room_sqm": None,
 }
 
@@ -102,6 +105,14 @@ def _row_to_card_dict(row: aiosqlite.Row) -> PropertyListItem:
     listing_ext = analysis.get("listing_extraction") or {}
     prop_dict["property_type"] = listing_ext.get("property_type")
     prop_dict["epc_rating"] = listing_ext.get("epc_rating")
+    evidence = text_from_property_row(row)
+    text = "\n".join(
+        part
+        for value in evidence.values()
+        for part in (value.description or "", *(value.features or ()))
+    )
+    supported = supported_band("epc", prop_dict["epc_rating"], text, None)
+    prop_dict["epc_unverified"] = supported != prop_dict["epc_rating"]
 
     space = analysis.get("space") or {}
     prop_dict["living_room_sqm"] = space.get("living_room_sqm")
@@ -434,6 +445,7 @@ class WebQueryService:
 
             prop_dict = dict(row)
             parse_json_fields(prop_dict)
+            prop_dict["listing_evidence"] = text_from_property_row(row)
 
             # Parse quality analysis
             if prop_dict.get("analysis_json"):

@@ -3,6 +3,8 @@
 import json
 from typing import Any, Final
 
+from home_finder.data.rental_guidance import GUIDANCE
+
 # System prompt for Phase 1: Visual analysis - cached for cost savings
 VISUAL_ANALYSIS_SYSTEM_PROMPT: Final = """\
 You are an expert London rental property analyst with perfect vision \
@@ -46,7 +48,7 @@ glazing, rising damp, uneven floors. \
 Acoustic: ~35-40 dB airborne (below Part E 45 dB). High hosting noise risk \
 unless converted post-2003 with acoustic treatment.
 - Purpose-built new-build / Build-to-Rent: Clean lines, uniform finish, large \
-windows. Commands 15-30% premium but check for small rooms, thin partition \
+windows. Check for small rooms, thin partition \
 walls, developer-grade finishes that wear quickly. \
 Acoustic: 45-55 dB (Part E compliant). Concrete floors good; lightweight \
 timber-frame can underperform.
@@ -56,7 +58,7 @@ damp from inadequate conversion. \
 Acoustic: Variable 30-50 dB — original concrete/masonry excellent but new \
 stud partition walls between units often only 30-35 dB.
 - Ex-council / post-war estate: Concrete construction, uniform exteriors, \
-communal corridors. Should be 20-40% below area average. Communal area \
+communal corridors. Do not assume a rent discount from stock type. Communal area \
 quality signals management standards. \
 Acoustic: 42-48 dB airborne — concrete mass outperforms many newer builds. \
 Weak on impact noise without carpet.
@@ -67,11 +69,14 @@ Listed status may prevent acoustic upgrades.
 
 <listing_signals>
 Scan the description for cost and quality signals to cross-reference with images:
-- EPC rating: Band D-G = £50-150/month higher energy bills
-- "Service charge" amount: Add to headline rent for true monthly cost
+- EPC rating: Extract only an explicitly stated property rating; do not infer \
+a monthly bill from the band or default to D.
+- "Service charge" or "ground rent": Flag for review of tenant liability and \
+rent inclusion. Never add a guessed leaseholder charge to a renter's budget.
 - "Rent-free weeks" or move-in incentives: Calculate effective monthly discount
 - "Selective licensing" or licence number: Compliant landlord (positive)
-- "Ground rent" or leasehold terms: Check for escalation clauses
+- Included bills: Identify which bills are explicitly named. A generic \
+"bills included" statement does not establish complete coverage, caps or a zero bill.
 - Proximity to active construction/regeneration: Short-term noise but \
 potential rent increases (relevant in E9, E15, N17)
 </listing_signals>
@@ -226,13 +231,14 @@ For broadband_type: fttp = "fibre", "FTTP", "FTTH", \
 "FTTC", "up to 80Mbps"; cable = "Virgin Media", "cable"; standard = \
 "broadband" alone, ADSL. Use "unknown" if not mentioned.
 
-2. Value Assessment: Consider stock type (new-build at +15-30% is expected, \
-Victorian at +15% is overpriced, ex-council at average is poor value). Factor \
-area context, true monthly cost (council tax, service charges, EPC costs, \
-rent-free incentives), crime context, and rent trend trajectory. Ground your \
-reasoning in the visual observations — reference specific findings like \
-"modern kitchen" or "dated bathroom" to justify the rating. Your reasoning \
-should focus on price-side factors — don't restate condition details.
+2. Value Assessment: Discuss the advertised rent and observed trade-offs. \
+Undated area research is not a current market median; do not apply fixed \
+stock-type premiums or negotiation discounts. Separate rent, explicitly named \
+bill inclusions, supported separate tenant payments, estimates and unknowns. \
+Do not add leaseholder service charges, infer a total budget from an EPC band, \
+or treat an assumed council-tax band as fact. Source conflicts and unclear fee \
+wording need a question for the agent. Ground your reasoning in visual observations \
+but avoid claiming current market value without comparable evidence.
 
 3. Viewing Notes: Generate property-specific items to check during a viewing, \
 questions for the letting agent, and quick deal-breaker tests. Base these on \
@@ -287,15 +293,17 @@ def _format_property_context(
         price_comparison = "at"
 
     parts = [f"<property>\nPrice: £{price_pcm:,}/month | Bedrooms: {bedrooms}"]
-    parts.append(f" | Area avg: £{area_average:,}/month ({price_comparison})")
-    if council_tax_band_c:
-        true_cost = price_pcm + council_tax_band_c
-        parts.append(f"\nCouncil tax (Band C est.): £{council_tax_band_c}/month")
-        if energy_estimate:
-            true_cost += energy_estimate
-            parts.append(f" + energy ~£{energy_estimate}/mo")
-        parts.append(f" → True monthly cost: ~£{true_cost:,}")
+    parts.append("\nBills, council-tax band and EPC: use only explicit listing evidence.")
     parts.append("\n</property>")
+
+    parts.append(
+        f"\n\n<unverified_reference>\nHistorical research comparator: £{area_average:,}/month "
+        f"(rent is {price_comparison}). Effective date, sample and applicability are unverified; "
+        "this is not a current market median or an offer recommendation.\n</unverified_reference>"
+    )
+    # Keep callers compatible, but do not expose undated numerical cost defaults.
+    if council_tax_band_c is not None or energy_estimate is not None:
+        parts.append("\nUnverified generic cost defaults withheld; current bill amounts unknown.")
 
     if area_context and outcode:
         parts.append(f'\n\n<area_context outcode="{outcode}">\n{area_context}')
@@ -426,6 +434,13 @@ def build_evaluation_prompt(
         prompt += "\n\n<acoustic_context>\n"
         prompt += acoustic_context
         prompt += "\n</acoustic_context>"
+
+    prompt += (
+        "\n\n<rental_guidance>\n"
+        f"{GUIDANCE['scope']}; effective {GUIDANCE['effective_from']}; "
+        f"checked {GUIDANCE['checked_on']}. {GUIDANCE['text']} "
+        f"Source: {GUIDANCE['bidding_url']}\n</rental_guidance>"
+    )
 
     prompt += "\n\nBased on the visual analysis observations above, provide your "
     prompt += "evaluation as JSON matching the output schema."

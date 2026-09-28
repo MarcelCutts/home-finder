@@ -2035,6 +2035,7 @@ nav.container-fluid li {
 /* Cost breakdown card — compact receipt style */
 .cost-header {
     display: flex;
+    flex-wrap: wrap;
     align-items: baseline;
     justify-content: space-between;
     gap: 0.75rem;
@@ -2073,6 +2074,11 @@ nav.container-fluid li {
     font-size: 0.72rem;
     color: var(--text-dim);
     font-weight: 400;
+}
+.cost-breakdown-card > .cost-line-note {
+    font-size: 0.8rem;
+    line-height: 1.6;
+    color: var(--text-muted);
 }
 .cost-line-amount {
     font-variant-numeric: tabular-nums;

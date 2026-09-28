@@ -128,7 +128,7 @@ async with AsyncSession() as session:
   - **Phase 2 (Evaluation)**: Phase 1 JSON + listing text (no images) → value assessment, viewing notes, highlights, one-liner. Calls `messages.create()` with native `output_config.format.type = "json_schema"` and `max_tokens: 4096`; it does not force a tool call.
 - Phase 1's tool schema comes from `_VisualAnalysisResponse` through `_build_tool_schema()`; phase 2's native schema comes from `_EvaluationResponse` through `_eval_json_schema()`. Both are in `quality.py`; prompts are in `quality_prompts.py`
 - Phase 1 output feeds Phase 2 via `build_evaluation_prompt()` (wraps Phase 1 JSON in `<visual_analysis>` XML tags)
-- Both phases receive persisted listing descriptions and features, labelled when sources disagree. Generic area budgets cannot substantiate extracted council-tax bands; unsupported/conflicting band claims are reset to unknown. PR17a still needs to repair the broader cost/EPC/reference-context presentation.
+- Both phases receive persisted listing descriptions and features, labelled when sources disagree. Generic cost defaults are withheld; unsupported/conflicting council-tax and EPC claims are reset to unknown. PR17a separates advertised tenant costs from unknown bills, labels historical claims/research, removes fixed negotiation discounts and supplies dated England tenancy guidance. PR17b still owns current, versioned reference estimates and complete projection contracts.
 - Graceful degradation: Phase 1 fails → `None`; Phase 2 fails → partial analysis with visual data only
 - Post-processing strips `{"..."}` artifacts from string fields (Claude sometimes wraps text in JSON-like braces even with strict mode)
 - Rate limited: 0.2s delay between calls (Tier 2: 1,000 RPM)

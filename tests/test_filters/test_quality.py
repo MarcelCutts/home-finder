@@ -1526,11 +1526,13 @@ class TestAnalyzeSingleMerged:
                 assert "West-facing kitchen" in prompt
                 assert "Gas hob" in prompt and "Induction hob" in prompt
                 assert "[Rightmove]" in prompt and "[OnTheMarket]" in prompt
-                assert "Band C est." in prompt
+                assert "Band C est." not in prompt
+                assert "True monthly cost" not in prompt
                 assert "<script>fixture</script>" not in prompt
                 assert analysis.listing_text_inputs.description in prompt
             # The fixture model returns Band C, but neither listing states a band.
             assert analysis.listing_extraction.council_tax_band == "unknown"
+            assert analysis.listing_extraction.epc_rating == "unknown"
             await storage.pipeline.complete_analysis(reloaded.unique_id, analysis)
             saved = await storage.get_quality_analysis(reloaded.unique_id)
             assert saved.listing_text_inputs == analysis.listing_text_inputs

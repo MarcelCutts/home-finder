@@ -231,7 +231,8 @@ class TestQualityAnalysisIntegration:
         assert "Bright flat" in analysis.summary
         # Phase 2 fields
         assert analysis.listing_extraction is not None
-        assert analysis.listing_extraction.epc_rating == "C"
+        # A valid model response still cannot substantiate a band without text.
+        assert analysis.listing_extraction.epc_rating == "unknown"
         assert analysis.highlights is not None
         assert "Gas hob" in analysis.highlights
         assert analysis.one_line is not None
