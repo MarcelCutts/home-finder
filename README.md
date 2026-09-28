@@ -359,11 +359,11 @@ tests/
 
 ### Architecture
 
-The deployment is split into two parts:
+The initial authority is the retained hosted SQLite store; the next active search will be a new episode with historical records preserved. See the [PR05 authority and restore record](docs/plans/2026-09-28-pr05a-backup-and-authority.md).
 
 - **Fly.io** hosts the **web dashboard only** (`--serve --no-pipeline`). It serves the property database and cached images but does not run scrapers.
-- **Pipeline runs locally** on your machine (cron, systemd timer, or manual `uv run home-finder`). It scrapes, filters, enriches, analyzes, and writes to the local SQLite DB + image cache.
-- **Legacy `scripts/sync-to-fly.sh`** replaces Fly's database and syncs images. It is not safe for preserving dashboard-written history; replacement is pending the authority/restore work in PR05.
+- **Collection remains gated.** Colocate it with the authority if qualified source access permits; otherwise use the planned authenticated observation interface. A local development database is a separate store.
+- **Legacy `scripts/sync-to-fly.sh` is disabled.** Every invocation exits before making changes. The dashboard's database and WAL must never be deleted and replaced by a collector's file.
 
 ### Manual release
 
@@ -394,9 +394,9 @@ fly secrets set \
 
 The `fly.toml` includes a health check on `/health` with a 30-second grace period. It explicitly builds the `dashboard` target, which runs `home-finder --serve --no-pipeline`.
 
-### Syncing data to Fly.io
+### Consistent backups and isolated restore
 
-The legacy sync script checkpoints the local WAL, removes the remote DB/WAL/SHM files, uploads a replacement database, syncs images, restarts the machine and checks health. Both its normal and `--full` modes replace the database; “incremental” only describes image transfer. This can overwrite status/history written on the dashboard and is not a consistent backup of the live remote database. Keep it inactive while PR05 establishes one authority and proves backup/restore. Do not point application startup at a frozen research export.
+Use `uv run python -m home_finder.pipeline.backup --help` for `create`, `verify` and `restore`. Creation uses SQLite's backup API, includes committed WAL data, and optionally copies a file-by-file image manifest. Omitted assets are reported explicitly. Restore requires a new isolated destination and never overwrites an authority. The [runbook](docs/plans/2026-09-28-pr05a-backup-and-authority.md) documents commands, actual rehearsal evidence and the remaining write-pause/cutover steps. Do not point application startup at a frozen research export or assume a database backup includes its image cache.
 
 ### Docker (local)
 
