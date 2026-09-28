@@ -1,6 +1,6 @@
 # PR20c: Required analysis output and explicit failure outcomes
 
-**Date:** 28 September 2026. **State:** implemented and verified.
+**Date:** 28 September 2026. **State:** committed as `f632dd4` and verified.
 **Predecessor:** phase configuration/provenance, `fee3448`.
 **Parent:** [PR20 specification](2026-09-28-research-synthesis-and-delivery-plan.md#pr20--isolate-sdk-transport-phase-configuration-and-output-contracts-m).
 

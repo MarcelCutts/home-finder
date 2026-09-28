@@ -32,6 +32,7 @@ from home_finder.db.row_mappers import (
     row_to_property,
 )
 from home_finder.db.source_listing_ops import link_source_listings_by_url
+from home_finder.db.spend import SpendRepository
 from home_finder.db.web_queries import WebQueryService
 from home_finder.filters.fit_score import compute_fit_score
 from home_finder.logging import get_logger
@@ -117,6 +118,12 @@ class PropertyStorage:
             self.save_quality_analysis,
             self._transaction,
         )
+        self._spend = SpendRepository(self._read_connection, self._transaction)
+
+    @property
+    def spend(self) -> SpendRepository:
+        """Durable paid-attempt reservations and accounting."""
+        return self._spend
 
     @property
     def pipeline(self) -> PipelineRepository:

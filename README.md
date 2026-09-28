@@ -82,6 +82,8 @@ uv run home-finder --debug              # Enable debug-level logging
 
 Availability checks need evidence for the requested listing. Generic redirects, bare 404s, challenges and unrecognised pages remain unknown. Selecting one source cannot establish that every listing for a home is off market. Existing unchecked records are historical candidates, not confirmed available homes; source activation still requires the delivery plan's access and fixture checks.
 
+The [PR13a spending ledger](docs/plans/2026-09-28-pr13a-spend-ledger.md) can be inspected with `uv run python -m home_finder.pipeline.spend_report --database /path/to/properties.db`. This command is read-only and does not load credentials or start processing. Missing historical ledgers report unknown costs. PR13b still needs to connect reservations and accounting to every analysis request; the foundation alone does not enforce a live budget.
+
 ## Web Dashboard
 
 The `--serve` flag starts a FastAPI web server on port 8000. Unless `--no-pipeline` is supplied, it starts a background pipeline after 30 seconds, then waits the configured interval (55 minutes by default) plus zero to five minutes of jitter **after each run finishes**. Long runs do not accumulate missed starts. CLI, maintenance and serve entry points share a nonblocking process lock beside the resolved database path. An overlapping invocation logs `runner_skipped` with `already_running` and performs no collection or analysis. Fly uses `--serve --no-pipeline`.
