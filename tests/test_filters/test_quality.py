@@ -1438,6 +1438,103 @@ class TestBuildEvaluationPrompt:
 class TestAnalyzeSingleMerged:
     """Tests for analyze_single_merged method."""
 
+    async def test_detail_text_survives_save_reload_and_reaches_both_requests(
+        self, tmp_path, make_property, sample_visual_response, sample_evaluation_response
+    ) -> None:
+        from home_finder.db import PropertyStorage
+        from home_finder.filters.detail_enrichment import enrich_merged_properties
+        from home_finder.scrapers.detail_fetcher import DetailFetcher, DetailPageData
+
+        rm = make_property(source=PropertySource.RIGHTMOVE, source_id="rm-text", description=None)
+        otm = make_property(
+            source=PropertySource.ONTHEMARKET, source_id="otm-text", description=None
+        )
+        merged = MergedProperty(
+            canonical=rm,
+            sources=(rm.source, otm.source),
+            source_urls={rm.source: rm.url, otm.source: otm.url},
+            min_price=rm.price_pcm,
+            max_price=rm.price_pcm,
+        )
+        details = {
+            rm.source: DetailPageData(
+                description="East-facing café-style kitchen <script>fixture</script>",
+                features=["Gas hob", "Private balcony"],
+                gallery_urls=["https://example.com/rm-fixture.jpg"],
+            ),
+            otm.source: DetailPageData(
+                description="West-facing kitchen; verify the conflicting orientation",
+                features=["Induction hob", "Shared garden"],
+                gallery_urls=["https://example.com/otm-fixture.jpg"],
+            ),
+        }
+
+        async def fetch(prop):
+            return details[prop.source]
+
+        async with PropertyStorage(str(tmp_path / "text.db")) as storage:
+            await storage.upsert_source_listings([rm, otm])
+            async with DetailFetcher() as fetcher:
+                with patch.object(fetcher, "fetch_detail_page", side_effect=fetch):
+                    result = await enrich_merged_properties([merged], fetcher)
+            enriched = result.enriched[0]
+            await storage.pipeline.save_pre_analysis_properties([enriched], {})
+
+            # Both the next sparse search and aggregate rebuild must retain text.
+            await storage.upsert_source_listings([rm, otm])
+            await storage.update_merged_sources(merged.unique_id, merged)
+            reloaded = (await storage.pipeline.get_pending_analysis_properties())[0]
+            assert reloaded.source_text[rm.source].features == ("Gas hob", "Private balcony")
+            assert reloaded.source_text[otm.source].description == details[otm.source].description
+            async with storage._read_connection() as conn:
+                rows = await (
+                    await conn.execute("SELECT source, description, text_json FROM source_listings")
+                ).fetchall()
+            assert {row["description"] for row in rows} == {d.description for d in details.values()}
+            assert all(row["text_json"] for row in rows)
+
+            quality_filter = PropertyQualityFilter(api_key="fixture-no-live-calls")
+            quality_filter._client = MagicMock()
+            _setup_two_phase_mocks(
+                quality_filter._client, sample_visual_response, sample_evaluation_response
+            )
+            with patch.object(
+                quality_filter,
+                "_build_image_block",
+                new_callable=AsyncMock,
+                return_value={
+                    "type": "image",
+                    "source": {
+                        "type": "base64",
+                        "media_type": "image/jpeg",
+                        "data": "Zml4dHVyZQ==",
+                    },
+                },
+            ):
+                _, analysis = await quality_filter.analyze_single_merged(reloaded)
+            assert analysis is not None and analysis.listing_text_inputs is not None
+            requests = quality_filter._client.messages.create.call_args_list
+            assert len(requests) == 2
+            for request in requests:
+                content = request.kwargs["messages"][0]["content"]
+                prompt = (
+                    content
+                    if isinstance(content, str)
+                    else "\n".join(block["text"] for block in content if block["type"] == "text")
+                )
+                assert "East-facing café-style" in prompt
+                assert "West-facing kitchen" in prompt
+                assert "Gas hob" in prompt and "Induction hob" in prompt
+                assert "[Rightmove]" in prompt and "[OnTheMarket]" in prompt
+                assert "Band C est." in prompt
+                assert "<script>fixture</script>" not in prompt
+                assert analysis.listing_text_inputs.description in prompt
+            # The fixture model returns Band C, but neither listing states a band.
+            assert analysis.listing_extraction.council_tax_band == "unknown"
+            await storage.pipeline.complete_analysis(reloaded.unique_id, analysis)
+            saved = await storage.get_quality_analysis(reloaded.unique_id)
+            assert saved.listing_text_inputs == analysis.listing_text_inputs
+
     async def test_with_images_returns_analysis(
         self,
         sample_merged_property: MergedProperty,

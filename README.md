@@ -254,13 +254,13 @@ The full pipeline (`uv run home-finder`) executes these steps in order:
 3. **Criteria and location filters** — Apply price/bedroom criteria and validate search-area postcodes
 4. **Wrap and detect price changes** — Wrap single-source `MergedProperty` objects; detect price changes on known properties
 5. **Select new properties and enrichment retries** — Listings already linked to a canonical record are considered seen; load eligible enrichment retries
-6. **Detail enrichment** — Fetch gallery, floorplans and descriptions; cache and classify images, then generate thumbnails
+6. **Detail enrichment** — Fetch gallery, floorplans, descriptions and features; retain text by source, cache and classify images, then generate thumbnails
 7. **Geocode and compute commute** — Runs after enrichment so detail coordinates are available; current mixed reachable/unreachable results are advisory, but an all-unreachable batch can still abort
 8. **Post-enrichment deduplication and floorplan gate** — Merge within/across runs using enriched evidence; apply floorplan exemptions and configured photo fallback
 9. **Analyze, save and notify** — Phase 1 observes images and listing text using a tool response; phase 2 evaluates phase 1 output and listing text using native JSON schema `output_config`. Save results and deliver notifications in live mode
 10. **Drain reanalysis and price-drop work** — Process queued reanalysis, then send pending price-drop notifications in live mode; finish run accounting
 
-This describes current code in `main.py` and `pipeline/stages.py`, including its limitations. Early returns before analysis can skip later recovery, price-drop delivery and accounting work (PR09a/PR12a). Description/feature propagation needs PR06a; a fetch succeeding does not prove that its text reaches the model.
+This describes current code in `main.py` and `pipeline/stages.py`, including its limitations. Early returns before analysis can skip later recovery, price-drop delivery and accounting work (PR09a/PR12a). Source descriptions/features now survive save, reload and sparse refreshes; both model phases receive bounded, source-labelled inputs, recorded with each completed analysis. Missing text preserves prior evidence, while dated corrections can explicitly clear it. Historical missing inputs are not reconstructed from model summaries. Full immutable source revisions and replay remain PR06b/14.
 
 ### Deduplication
 

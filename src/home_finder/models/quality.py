@@ -11,6 +11,8 @@ from typing import Annotated, Any, Literal, Union, get_args, get_origin
 from pydantic import BaseModel, ConfigDict, field_validator, model_validator
 from pydantic.functional_validators import BeforeValidator
 
+from home_finder.models.listing_text import ListingTextInputs
+
 # ---------------------------------------------------------------------------
 # Shared coercion functions for backward compat with old DB data
 # ---------------------------------------------------------------------------
@@ -424,6 +426,7 @@ class ViewingNotes(_LenientLiteralModel):
 # Defined outside the class to avoid Pydantic treating it as a private attribute.
 _QUALITY_SUB_MODEL_FIELDS: frozenset[str] = frozenset(
     {
+        "listing_text_inputs",
         "kitchen",
         "condition",
         "light_space",
@@ -445,6 +448,9 @@ class PropertyQualityAnalysis(_LenientLiteralModel):
     """Complete quality analysis of a property."""
 
     model_config = ConfigDict(frozen=True)
+
+    # Set by the application after model validation, never by model output.
+    listing_text_inputs: ListingTextInputs | None = None
 
     kitchen: KitchenAnalysis
     condition: ConditionAnalysis

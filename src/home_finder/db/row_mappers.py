@@ -10,7 +10,9 @@ from typing import Any, Protocol, TypedDict
 import aiosqlite
 from pydantic import HttpUrl
 
+from home_finder.db.listing_text import text_from_property_row, text_from_source_row
 from home_finder.models import (
+    ListingTextEvidence,
     MergedProperty,
     NotificationStatus,
     Property,
@@ -19,6 +21,7 @@ from home_finder.models import (
     PropertySource,
     TransportMode,
 )
+from home_finder.models.listing_text import merge_listing_text
 
 
 class ImageReader(Protocol):
@@ -250,6 +253,21 @@ async def row_to_merged_property(
     except (IndexError, KeyError):
         pass
 
+    source_text = text_from_property_row(row)
+    for source_row in source_listings or []:
+        source = PropertySource(source_row["source"])
+        source_text[source] = merge_listing_text(
+            source_text.get(source, ListingTextEvidence()), text_from_source_row(source_row)
+        )
+    descriptions = {
+        source: text.description
+        for source, text in source_text.items()
+        if text.description is not None
+    }
+    canonical_text = source_text.get(prop.source)
+    if canonical_text is not None and canonical_text.description is not None:
+        prop = prop.model_copy(update={"description": canonical_text.description})
+
     return MergedProperty(
         canonical=prop,
         sources=tuple(sources_list),
@@ -259,6 +277,7 @@ async def row_to_merged_property(
         min_price=min_price,
         max_price=max_price,
         descriptions=descriptions,
+        source_text=source_text,
         floor_area_sqm=floor_area_sqm,
         floor_area_source=floor_area_source,
     )

@@ -16,6 +16,13 @@ from typing import Any, Final, TypeVar
 import aiosqlite
 
 from home_finder.data.area_context import HOSTING_TOLERANCE
+from home_finder.db.listing_text import (
+    apply_source_text,
+    persist_merged_text,
+    refresh_merged_text,
+    text_from_property_row,
+    text_from_source_row,
+)
 from home_finder.db.migrations import run_migrations
 from home_finder.db.pipeline_repo import PipelineRepository
 from home_finder.db.row_mappers import (
@@ -29,6 +36,7 @@ from home_finder.db.web_queries import WebQueryService
 from home_finder.filters.fit_score import compute_fit_score
 from home_finder.logging import get_logger
 from home_finder.models import (
+    ListingTextEvidence,
     MergedProperty,
     NotificationStatus,
     Property,
@@ -39,6 +47,7 @@ from home_finder.models import (
     TransportMode,
     UserStatus,
 )
+from home_finder.models.listing_text import merge_listing_text
 
 # Default lookback window for cross-platform dedup anchors
 _DEDUP_LOOKBACK_DAYS: Final = 30
@@ -408,7 +417,6 @@ class PropertyStorage:
                 ON CONFLICT(unique_id) DO UPDATE SET
                     price_pcm = excluded.price_pcm,
                     title = excluded.title,
-                    description = excluded.description,
                     image_url = excluded.image_url,
                     commute_minutes = COALESCE(excluded.commute_minutes, commute_minutes),
                     transport_mode = COALESCE(excluded.transport_mode, transport_mode)
@@ -717,7 +725,7 @@ class PropertyStorage:
         Args:
             existing_unique_id: The unique_id of the existing DB record.
             merged: The MergedProperty containing combined source data
-                (used only for saving new images).
+                (used for saving new images and source text).
             absorbed_ids: unique_ids of source_listings to link to this
                 golden record before rebuilding.  When provided, sets
                 ``merged_id`` on matching source_listings rows.
@@ -743,10 +751,9 @@ class PropertyStorage:
                 return
 
             # Deduplicate sources (same platform may appear via multiple listings)
-            # ORDER BY last_seen ASC ensures last-write-wins for URLs/descriptions
+            # ORDER BY last_seen ASC retains the existing URL selection policy.
             sources = list(dict.fromkeys(r["source"] for r in rows))
             source_urls = {r["source"]: r["url"] for r in rows}
-            descriptions = {r["source"]: r["description"] for r in rows if r["description"]}
             prices = [r["price_pcm"] for r in rows]
 
             await conn.execute(
@@ -754,7 +761,6 @@ class PropertyStorage:
                 UPDATE properties SET
                     sources = ?,
                     source_urls = ?,
-                    descriptions_json = ?,
                     min_price = ?,
                     max_price = ?,
                     sources_updated_at = ?
@@ -763,13 +769,14 @@ class PropertyStorage:
                 (
                     json.dumps(sources),
                     json.dumps(source_urls),
-                    json.dumps(descriptions) if descriptions else None,
                     min(prices),
                     max(prices),
                     datetime.now(UTC).isoformat(),
                     existing_unique_id,
                 ),
             )
+
+            await persist_merged_text(conn, merged, unique_id=existing_unique_id)
 
             # Save any new images from the merged property
             new_images = list(merged.images)
@@ -820,7 +827,6 @@ class PropertyStorage:
                 ON CONFLICT(unique_id) DO UPDATE SET
                     price_pcm = excluded.price_pcm,
                     title = excluded.title,
-                    description = excluded.description,
                     image_url = excluded.image_url,
                     commute_minutes = COALESCE(excluded.commute_minutes, commute_minutes),
                     transport_mode = COALESCE(excluded.transport_mode, transport_mode),
@@ -828,7 +834,6 @@ class PropertyStorage:
                     source_urls = excluded.source_urls,
                     min_price = excluded.min_price,
                     max_price = excluded.max_price,
-                    descriptions_json = COALESCE(excluded.descriptions_json, descriptions_json),
                     ward = COALESCE(excluded.ward, ward)
             """,
                 values,
@@ -839,6 +844,7 @@ class PropertyStorage:
             )
             # Link non-canonical source_listings by URL (in-run dedup absorbed sources)
             await link_source_listings_by_url(conn, merged.canonical.unique_id, merged.source_urls)
+            await persist_merged_text(conn, merged)
 
         logger.debug(
             "merged_property_saved",
@@ -952,7 +958,7 @@ class PropertyStorage:
 
     async def get_property_images_and_row(
         self, unique_id: str
-    ) -> tuple[list[PropertyImage], Property | None]:
+    ) -> tuple[list[PropertyImage], Property | None, dict[PropertySource, ListingTextEvidence]]:
         """Load property images and the property row in a single call.
 
         Combines get_property_images() and row_to_property() to avoid two
@@ -962,7 +968,7 @@ class PropertyStorage:
             unique_id: Property unique ID.
 
         Returns:
-            Tuple of (images, property_or_none).
+            Tuple of (images, property_or_none, source_text).
         """
         async with self._read_connection() as conn:
             # Images
@@ -993,7 +999,7 @@ class PropertyStorage:
             prop_row = await prop_cursor.fetchone()
             prop = row_to_property(prop_row) if prop_row is not None else None
 
-            return images, prop
+            return images, prop, text_from_property_row(prop_row) if prop_row else {}
 
     async def get_properties_needing_commute(self) -> list[Property]:
         """Get properties with coordinates but no commute data.
@@ -1072,7 +1078,6 @@ class PropertyStorage:
             ON CONFLICT(unique_id) DO UPDATE SET
                 price_pcm = excluded.price_pcm,
                 title = excluded.title,
-                description = excluded.description,
                 image_url = excluded.image_url,
                 last_seen = excluded.last_seen,
                 latitude = COALESCE(excluded.latitude, latitude),
@@ -1104,6 +1109,11 @@ class PropertyStorage:
             if "no such table" in str(e).lower():
                 return
             raise
+        linked_id = await apply_source_text(
+            conn, prop.unique_id, ListingTextEvidence(description=prop.description)
+        )
+        if linked_id:
+            await refresh_merged_text(conn, linked_id)
 
     async def upsert_source_listings(self, properties: list[Property]) -> int:
         """Record scraped properties in source_listings (Layer 1).
@@ -1148,7 +1158,6 @@ class PropertyStorage:
                 ON CONFLICT(unique_id) DO UPDATE SET
                     price_pcm = excluded.price_pcm,
                     title = excluded.title,
-                    description = excluded.description,
                     image_url = excluded.image_url,
                     last_seen = excluded.last_seen,
                     latitude = COALESCE(excluded.latitude, latitude),
@@ -1157,6 +1166,15 @@ class PropertyStorage:
                 """,
                 rows,
             )
+            linked_ids = set()
+            for prop in properties:
+                linked_id = await apply_source_text(
+                    conn, prop.unique_id, ListingTextEvidence(description=prop.description)
+                )
+                if linked_id:
+                    linked_ids.add(linked_id)
+            for linked_id in linked_ids:
+                await refresh_merged_text(conn, linked_id)
         return len(rows)
 
     async def link_source_listings(self, links: list[tuple[str, str]]) -> None:
@@ -1171,6 +1189,28 @@ class PropertyStorage:
                 "UPDATE source_listings SET merged_id = ? WHERE unique_id = ?",
                 [(merged_id, uid) for uid, merged_id in links],
             )
+            for merged_id in {merged_id for _, merged_id in links}:
+                await refresh_merged_text(conn, merged_id)
+
+    async def update_source_text(
+        self, source_unique_id: str, evidence: ListingTextEvidence
+    ) -> bool:
+        """Apply dated text/corrections without touching prices or personal state."""
+        async with self._transaction() as conn:
+            cursor = await conn.execute(
+                "SELECT description, text_json FROM source_listings WHERE unique_id = ?",
+                (source_unique_id,),
+            )
+            row = await cursor.fetchone()
+            if row is None:
+                return False
+            previous = text_from_source_row(row)
+            if merge_listing_text(previous, evidence) == previous:
+                return False
+            linked_id = await apply_source_text(conn, source_unique_id, evidence)
+            if linked_id:
+                await refresh_merged_text(conn, linked_id)
+        return True
 
     async def get_all_known_source_ids(self) -> dict[str, set[str]]:
         """Get all source_ids grouped by property source.

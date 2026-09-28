@@ -727,6 +727,14 @@ async def migrate_007_telegram_update_ids(conn: aiosqlite.Connection) -> None:
     """)
 
 
+async def migrate_008_listing_text(conn: aiosqlite.Connection) -> None:
+    """Retain current source text without inventing missing historical evidence."""
+    for table, column in (("source_listings", "text_json"), ("properties", "source_text_json")):
+        cursor = await conn.execute(f"PRAGMA table_info({table})")
+        if column not in {row[1] for row in await cursor.fetchall()}:
+            await conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} TEXT")
+
+
 _MigrationFn = Callable[[aiosqlite.Connection], Coroutine[Any, Any, None]]
 
 MIGRATIONS: list[_MigrationFn] = [
@@ -737,6 +745,7 @@ MIGRATIONS: list[_MigrationFn] = [
     migrate_005_fix_source_listings_linkage,
     migrate_006_off_market_enhancements,
     migrate_007_telegram_update_ids,
+    migrate_008_listing_text,
 ]
 
 

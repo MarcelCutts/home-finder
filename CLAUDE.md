@@ -77,7 +77,7 @@ Python support is `>=3.11,<3.15`; CI tests 3.11.16 and 3.14.7. Local/default con
 9. **Analyze, save and notify** — Two-phase analysis (if enabled); persist each result and send notifications in live mode
 10. **Drain reanalysis, deliver price drops, finish accounting** — Later work only runs if the pre-analysis stage did not return early
 
-Known repairs are still pending: description/features can be lost between fetch and analysis (PR06a); known-page/early-return accounting is incomplete (PR09a); discovery-independent recovery and process exclusion need PR12a. Do not describe the current commute implementation as a reliable hard filter (PR16a).
+PR06a retains descriptions/features by source through save/reload and both model phases. `MergedProperty.source_text` holds current text with per-field observation times; undated search text only fills gaps, missing fields preserve evidence, and explicit dated corrections can clear it. `PropertyQualityAnalysis.listing_text_inputs` records the exact bounded selected text/features and full-input hashes. This is not the immutable revision system in PR06b. Known-page/early-return accounting remains incomplete (PR09a); discovery-independent recovery and process exclusion need PR12a. Do not describe the current commute implementation as a reliable hard filter (PR16a).
 
 ## Gotchas & Constraints
 
@@ -128,6 +128,7 @@ async with AsyncSession() as session:
   - **Phase 2 (Evaluation)**: Phase 1 JSON + listing text (no images) → value assessment, viewing notes, highlights, one-liner. Calls `messages.create()` with native `output_config.format.type = "json_schema"` and `max_tokens: 4096`; it does not force a tool call.
 - Phase 1's tool schema comes from `_VisualAnalysisResponse` through `_build_tool_schema()`; phase 2's native schema comes from `_EvaluationResponse` through `_eval_json_schema()`. Both are in `quality.py`; prompts are in `quality_prompts.py`
 - Phase 1 output feeds Phase 2 via `build_evaluation_prompt()` (wraps Phase 1 JSON in `<visual_analysis>` XML tags)
+- Both phases receive persisted listing descriptions and features, labelled when sources disagree. Generic area budgets cannot substantiate extracted council-tax bands; unsupported/conflicting band claims are reset to unknown. PR17a still needs to repair the broader cost/EPC/reference-context presentation.
 - Graceful degradation: Phase 1 fails → `None`; Phase 2 fails → partial analysis with visual data only
 - Post-processing strips `{"..."}` artifacts from string fields (Claude sometimes wraps text in JSON-like braces even with strict mode)
 - Rate limited: 0.2s delay between calls (Tier 2: 1,000 RPM)

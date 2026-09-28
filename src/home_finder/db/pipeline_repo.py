@@ -14,6 +14,7 @@ if TYPE_CHECKING:
 
 import aiosqlite
 
+from home_finder.db.listing_text import persist_merged_text
 from home_finder.db.row_mappers import (
     ImageReader,
     build_merged_insert_columns,
@@ -270,6 +271,7 @@ class PipelineRepository:
 
                 # Link non-canonical source_listings by URL (in-run dedup absorbed sources)
                 await link_source_listings_by_url(conn, prop.unique_id, merged.source_urls)
+                await persist_merged_text(conn, merged)
 
                 # Save images (important for cross-run dedup image matching)
                 images = list(merged.images)
@@ -364,6 +366,7 @@ class PipelineRepository:
             )
             # Link non-canonical source_listings by URL (in-run dedup absorbed sources)
             await link_source_listings_by_url(conn, prop.unique_id, merged.source_urls)
+            await persist_merged_text(conn, merged)
         logger.debug("unenriched_property_saved", unique_id=merged.canonical.unique_id)
 
     async def get_unenriched_properties(self, max_attempts: int = 3) -> list[MergedProperty]:
@@ -510,8 +513,7 @@ class PipelineRepository:
                         sources = excluded.sources,
                         source_urls = excluded.source_urls,
                         min_price = excluded.min_price,
-                        max_price = excluded.max_price,
-                        descriptions_json = COALESCE(excluded.descriptions_json, descriptions_json)
+                        max_price = excluded.max_price
                     """,
                     values,
                 )
@@ -558,6 +560,7 @@ class PipelineRepository:
 
                 # Link non-canonical source_listings by URL (in-run dedup absorbed sources)
                 await link_source_listings_by_url(conn, prop.unique_id, merged.source_urls)
+                await persist_merged_text(conn, merged)
 
                 # Save images
                 images = list(merged.images)

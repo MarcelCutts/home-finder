@@ -1,6 +1,6 @@
 # PR04: Complete SQLite operation ownership
 
-**Date:** 28 September 2026. **State:** implemented and verified for local commit; not deployed.
+**Date:** 28 September 2026. **State:** committed as `55f3171`; not deployed.
 **Parent:** [delivery plan, PR04](2026-09-28-research-synthesis-and-delivery-plan.md#pr04--give-every-database-write-an-explicit-unit-of-work-m).
 **Predecessor:** PR03, commit `8bb73cc`. No deployment, collection, paid calls or notifications.
 

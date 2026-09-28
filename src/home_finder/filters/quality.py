@@ -17,6 +17,7 @@ from home_finder.data.area_context import (
     RENTAL_BENCHMARKS,
     build_property_context,
 )
+from home_finder.filters.listing_text import select_listing_text, supported_council_tax_band
 from home_finder.logging import get_logger
 from home_finder.models import (
     BathroomAnalysis,
@@ -939,11 +940,7 @@ class PropertyQualityFilter:
             )
             return merged, self._create_minimal_analysis(value=value)
 
-        # Use best description from descriptions dict
-        best_description: str | None = None
-        for desc in merged.descriptions.values():
-            if desc and (not best_description or len(desc) > len(best_description)):
-                best_description = desc
+        text_inputs = select_listing_text(merged)
 
         try:
             analysis = await self._analyze_property(
@@ -953,8 +950,8 @@ class PropertyQualityFilter:
                 bedrooms=prop.bedrooms,
                 price_pcm=prop.price_pcm,
                 area_average=value.area_average,
-                description=best_description,
-                features=None,
+                description=text_inputs.description,
+                features=list(text_inputs.features) or None,
                 area_context=ctx.area_overview,
                 outcode=ctx.outcode,
                 council_tax_band_c=ctx.council_tax_band_c,
@@ -991,6 +988,7 @@ class PropertyQualityFilter:
                 else "",
             )
             analysis = PropertyQualityAnalysis(
+                listing_text_inputs=text_inputs,
                 kitchen=analysis.kitchen,
                 condition=analysis.condition,
                 light_space=analysis.light_space,
@@ -1247,6 +1245,7 @@ class PropertyQualityFilter:
         property_id: str,
         *,
         description: str | None,
+        features: list[str] | None = None,
         price_pcm: int,
         bedrooms: int,
         effective_average: int,
@@ -1325,6 +1324,7 @@ class PropertyQualityFilter:
             eval_prompt = build_evaluation_prompt(
                 visual_data=visual_data,
                 description=description,
+                features=features,
                 price_pcm=price_pcm,
                 bedrooms=bedrooms,
                 area_average=effective_average,
@@ -1626,6 +1626,7 @@ class PropertyQualityFilter:
             visual_data,
             property_id,
             description=description,
+            features=features,
             price_pcm=price_pcm,
             bedrooms=bedrooms,
             effective_average=effective_average,
@@ -1639,7 +1640,19 @@ class PropertyQualityFilter:
         )
 
         # Phase 3: Merge and validate
-        return self._merge_analysis_results(visual_data, eval_data, bedrooms, property_id)
+        analysis = self._merge_analysis_results(visual_data, eval_data, bedrooms, property_id)
+        if analysis is not None and analysis.listing_extraction is not None:
+            extraction = analysis.listing_extraction
+            band = supported_council_tax_band(extraction.council_tax_band, description, features)
+            if band != extraction.council_tax_band:
+                analysis = analysis.model_copy(
+                    update={
+                        "listing_extraction": extraction.model_copy(
+                            update={"council_tax_band": band}
+                        )
+                    }
+                )
+        return analysis
 
     async def __aenter__(self) -> "PropertyQualityFilter":
         return self
