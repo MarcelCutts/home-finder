@@ -398,6 +398,14 @@ The `fly.toml` includes a health check on `/health` with a 30-second grace perio
 
 Use `uv run python -m home_finder.pipeline.backup --help` for `create`, `verify` and `restore`. Creation uses SQLite's backup API, includes committed WAL data, and optionally copies a file-by-file image manifest. Omitted assets are reported explicitly. Restore requires a new isolated destination and never overwrites an authority. The [runbook](docs/plans/2026-09-28-pr05a-backup-and-authority.md) documents commands, actual rehearsal evidence and the remaining write-pause/cutover steps. Do not point application startup at a frozen research export or assume a database backup includes its image cache.
 
+### Independent reference review
+
+The private development reference pack can be built from a verified backup with
+`uv run python -m home_finder.pipeline.reference_pack --help`. It retains exact evidence,
+produces blank independent-review forms and validates case-bound labels. See the
+[reference review workflow](docs/plans/2026-09-28-pr19a-blind-reference-pack.md).
+Historical material and unreviewed labels do not qualify a model or an untouched holdout.
+
 ### Docker (local)
 
 ```bash

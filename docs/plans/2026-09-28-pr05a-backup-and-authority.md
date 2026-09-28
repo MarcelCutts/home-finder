@@ -1,6 +1,6 @@
 # PR05a: Consistent backups, restore proof and database authority
 
-**Date:** 28 September 2026. **State:** implemented and verified, including the full asset restore.
+**Date:** 28 September 2026. **State:** committed as `ad34ba9`, including the full asset restore.
 **Predecessor:** PR13b native spend enforcement, `58d538b`.
 **Parent:** [PR05 specification](2026-09-28-research-synthesis-and-delivery-plan.md#pr05--establish-one-database-authority-and-retire-live-file-replacement-l).
 

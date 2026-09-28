@@ -1,0 +1,192 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src 'self'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; connect-src 'none'; base-uri 'none'; form-action 'none'">
+  <title>Case {{ number }} · Home Finder reference review</title>
+  <style>
+    :root{font-family:system-ui,sans-serif;color:#1e293b;background:#f4f6f8;line-height:1.5}
+    body{margin:0;padding:1.5rem}a{color:#145b86}h1,h2,h3{line-height:1.2}
+    .notice{background:#fff4ce;border-left:4px solid #987200;padding:1rem}
+    main{display:grid;grid-template-columns:minmax(0,1.2fr) minmax(320px,1fr);gap:1.5rem}
+    .gallery{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:1rem}
+    figure{margin:0;background:white;padding:.7rem;border:1px solid #cbd5e1;border-radius:6px}
+    figure.floorplan{grid-column:1/-1}img{width:100%;height:270px;object-fit:contain}
+    .floorplan img{height:auto;max-height:620px}figcaption small{display:block;font-size:.7rem}
+    code,small{overflow-wrap:anywhere}pre{white-space:pre-wrap;overflow-wrap:anywhere;font:inherit;background:white;padding:1rem}
+    .review{position:sticky;top:1rem;max-height:calc(100vh - 2rem);overflow:auto;padding:0 .4rem 1rem}
+    fieldset{background:white;border:1px solid #cbd5e1;border-radius:6px;margin:1rem 0;padding:1rem}
+    legend{font-weight:650}label{display:block;margin:.55rem 0}input:not([type=checkbox]),select,textarea{display:block;box-sizing:border-box;width:100%;padding:.5rem;font:inherit;border:1px solid #94a3b8;border-radius:4px;background:white}
+    input[type=checkbox]{width:1.1rem;height:1.1rem}textarea{min-height:65px}
+    .help{color:#475569;font-size:.9rem}.citation{border-top:1px solid #e2e8f0;padding-top:.4rem}
+    button{background:#145b86;color:white;border:0;border-radius:5px;font:inherit;padding:.7rem 1rem;cursor:pointer}
+    #message{padding:.6rem 0;white-space:pre-wrap}nav{display:flex;gap:1rem;flex-wrap:wrap}
+    [hidden]{display:none!important}:focus-visible{outline:3px solid #b36b00;outline-offset:2px}
+    @media(max-width:800px){body{padding:1rem}main{display:block}.review{position:static;max-height:none;overflow:visible}.gallery{grid-template-columns:1fr}}
+  </style>
+</head>
+<body>
+  <nav><a href="../index.html">All cases</a><a href="../rubric.md">Rubric</a>
+    {% if next_case %}<a href="{{ next_case }}.html">Next case</a>{% endif %}</nav>
+  <h1>Case {{ number }} of {{ total }}</h1>
+  <p class="notice">Development review · Historical inputs · <strong>Unreviewed until you inspect the evidence.</strong>
+    Review independently of candidate answers. The form starts blank on reload; download to keep your work.</p>
+  <main>
+    <section aria-label="Retained evidence">
+      <h2>Retained evidence</h2>
+      <p>{{ case.images|length }} retained images. Open an image for full resolution.
+        {% if case.omitted_image_candidates %}{{ case.omitted_image_candidates }} other image candidates were omitted (cap, format or readability).{% endif %}
+        Recovery time does not establish original observation time.</p>
+      <div class="gallery">
+      {% for item in case.images %}
+        <figure class="{{ 'floorplan' if 'floorplan' in item.roles else '' }}">
+          <a href="../{{ item.file }}" target="_blank" rel="noopener"><img src="../{{ item.file }}" alt="Retained {{ item.roles|join(' / ') }} image {{ loop.index }}" loading="lazy"></a>
+          <figcaption>Image {{ loop.index }} · {{ item.roles|join(' / ') }} · {{ item.width }} × {{ item.height }}
+            <small>image:{{ item.sha256 }}</small></figcaption>
+        </figure>
+      {% endfor %}
+      </div>
+      <h2>Stored source descriptions</h2>
+      {% for item in case.texts %}
+        <h3>Text {{ loop.index }} · {{ item.source }}</h3>
+        <p class="help">Historical stored description{% if item.is_backfilled %} · Backfilled{% endif %}. Its original capture time and response bytes are unavailable.</p>
+        <small>text:{{ item.sha256 }}</small><pre>{{ texts[item.sha256] }}</pre>
+      {% else %}
+        <p>No source description was retained for this case. Do not substitute a previous model summary or a typical area value.</p>
+      {% endfor %}
+    </section>
+    <section class="review" aria-label="Reference labels">
+      <h2>Your review</h2>
+      <form id="review" novalidate>
+        {% for field in fields %}
+        <fieldset data-fact="{{ field.name }}" data-kind="{{ field.kind }}">
+          <legend>{{ field.title }}</legend><p class="help">{{ field.help }}</p>
+          <label>Evidence state<select data-part="state"><option value="unreviewed">Unreviewed</option><option value="supported">Supported</option><option value="unknown">Unknown</option><option value="conflicting">Conflicting</option></select></label>
+          <div data-section="value" hidden>
+          {% if field.kind == 'area' %}
+            <label>Exact printed amount<input data-part="amount" inputmode="decimal" placeholder="e.g. 500"></label>
+            <label>Printed unit<select data-part="unit"><option value="sq_ft">Square feet</option><option value="sq_m">Square metres</option></select></label>
+            <label>Printed measurement definition<select data-part="definition"><option value="unspecified_total">Unspecified total</option><option value="gross_internal">Gross internal</option><option value="net_internal">Net internal</option><option value="gross_external">Gross external</option></select></label>
+          {% elif field.kind == 'integer' %}
+            <label>Labelled bedrooms<input data-part="value" type="number" min="0" max="20" step="1"></label>
+          {% else %}
+            <label>Supported value<select data-part="value"><option value="">Choose a value</option>
+            {% if field.kind == 'boolean' %}<option value="true">True</option><option value="false">False</option>
+            {% else %}{% for value in field['values'] %}<option>{{ value }}</option>{% endfor %}{% endif %}</select></label>
+          {% endif %}
+          </div>
+          <div data-section="reviewed" hidden>
+            <label>Reason / qualification<textarea data-part="reason" maxlength="1000"></textarea></label>
+            {% for n in range(2) %}
+            <div class="citation">
+              <label>Evidence {{ n + 1 }}<select data-cite="material"><option value="">No citation</option>{% for item in materials %}<option value="{{ item.id }}">{{ item.label }}</option>{% endfor %}</select></label>
+              <label>Location in evidence {{ n + 1 }}<input data-cite="location" maxlength="300" placeholder="e.g. lower-right area label"></label>
+              <label>Exact wording in evidence {{ n + 1 }}<textarea data-cite="quote" maxlength="1000"></textarea></label>
+            </div>
+            {% endfor %}
+          </div>
+        </fieldset>
+        {% endfor %}
+        <fieldset id="owner">
+          <legend>Optional owner preferences</legend>
+          <p class="help">Personal judgments, separate from verifiable facts. Use the rubric's 1–5 scale.</p>
+          <label>Judgment state<select data-part="state"><option value="unreviewed">Unreviewed</option><option value="reviewed">Reviewed</option><option value="insufficient_evidence">Insufficient evidence</option></select></label>
+          <div data-section="reviewed" hidden>
+            <label>Profile version / reference<input data-part="profile_reference" maxlength="200"></label>
+            <label>Rationale<textarea data-part="reason" maxlength="1000"></textarea></label>
+          </div>
+          <div data-section="value" hidden>
+            <label>Workspace fit<input type="number" min="1" max="5" step="1" data-part="workspace_rating"></label>
+            <label>Hosting fit<input type="number" min="1" max="5" step="1" data-part="hosting_rating"></label>
+            <label>Worth further review<select data-part="retain_for_review"><option value="">Choose a value</option><option value="true">Yes</option><option value="false">No</option></select></label>
+          </div>
+        </fieldset>
+        <fieldset><legend>Review declaration</legend>
+          <label>Reviewer ID<input id="reviewer" maxlength="100" autocomplete="off"></label>
+          <label><input id="independent" type="checkbox"> I reviewed this material independently of candidate model answers.</label>
+          <p class="help">This form creates revision 1. Keep original downloads; corrections and second-review records follow the rubric. A partial review can be saved with some fields unreviewed.</p>
+        </fieldset>
+        <button type="submit">Download review JSON</button><p id="message" role="status" aria-live="polite"></p>
+      </form>
+    </section>
+  </main>
+  <script>
+    const blank = {{ blank|tojson }};
+    const textBodies = {{ texts|tojson }};
+    const form = document.getElementById('review');
+    const part = (root, name) => root.querySelector(`[data-part="${name}"]`).value.trim();
+    function updateVisibility(root) {
+      const state = part(root, 'state');
+      root.querySelectorAll('[data-section="reviewed"]').forEach(el => { el.hidden = state === 'unreviewed'; });
+      root.querySelectorAll('[data-section="value"]').forEach(el => { el.hidden = !['supported','reviewed'].includes(state); });
+    }
+    document.querySelectorAll('[data-fact],#owner').forEach(root => {
+      root.querySelector('[data-part="state"]').addEventListener('change', () => updateVisibility(root));
+      updateVisibility(root);
+    });
+    const need = (condition, message) => { if (!condition) throw new Error(message); };
+    form.addEventListener('submit', event => {
+      event.preventDefault();
+      const message = document.getElementById('message');
+      try {
+        const result = JSON.parse(JSON.stringify(blank));
+        for (const root of document.querySelectorAll('[data-fact]')) {
+          const name = root.dataset.fact, title = root.querySelector('legend').textContent;
+          const state = part(root, 'state');
+          if (state === 'unreviewed') continue;
+          const fact = {state, value:null, reason:part(root,'reason') || null, evidence:[]};
+          for (const citation of root.querySelectorAll('.citation')) {
+            const get = name => citation.querySelector(`[data-cite="${name}"]`).value.trim();
+            const material = get('material'), location = get('location'), quote = get('quote');
+            if (!material) { need(!location && !quote, `${title}: choose material for your citation.`); continue; }
+            need(location, `${title}: supply a location for each citation.`);
+            if (material.startsWith('text:') && quote) need(textBodies[material.slice(5)].includes(quote), `${title}: quote is absent from the selected text.`);
+            fact.evidence.push({material_id:material, location, quote:quote || null});
+          }
+          if (state === 'supported') {
+            need(fact.evidence.length, `${title}: supported requires evidence.`);
+            if (name.startsWith('advertised_') || name === 'printed_total_area') need(fact.evidence.some(c => c.quote), `${title}: transcribe the exact printed wording.`);
+            if (root.dataset.kind === 'area') {
+              const amount = part(root,'amount');
+              need(/^\d+(\.\d{1,4})?$/.test(amount) && Number(amount)>0 && Number(amount)<=100000, `${title}: use a positive exact decimal, at most four decimal places.`);
+              fact.value = {amount, unit:part(root,'unit'), definition:part(root,'definition')};
+            } else {
+              const value = part(root,'value');
+              need(value !== '', `${title}: choose a supported value.`);
+              if (root.dataset.kind === 'integer') {
+                need(/^\d+$/.test(value) && Number(value)<=20, `${title}: use an integer from 0 to 20.`);
+                fact.value = Number(value);
+              } else fact.value = root.dataset.kind === 'boolean' ? value === 'true' : value;
+            }
+          } else {
+            need(fact.reason, `${title}: explain unknown or conflicting evidence.`);
+            if (state === 'conflicting') need(fact.evidence.length >= 2, `${title}: cite both conflicting sources.`);
+          }
+          result.facts[name] = fact;
+        }
+        const owner = document.getElementById('owner'), state = part(owner,'state');
+        if (state !== 'unreviewed') {
+          const judgment = result.owner_judgment;
+          judgment.state = state; judgment.profile_reference = part(owner,'profile_reference'); judgment.reason = part(owner,'reason');
+          need(judgment.profile_reference && judgment.reason, 'Owner preferences require a profile and rationale.');
+          if (state === 'reviewed') {
+            for (const field of ['workspace_rating','hosting_rating']) {
+              const value = part(owner,field); need(/^[1-5]$/.test(value), 'Owner scores must be integers from 1 to 5.'); judgment[field] = Number(value);
+            }
+            need(part(owner,'retain_for_review') !== '', 'Choose whether this case is worth further review.');
+            judgment.retain_for_review = part(owner,'retain_for_review') === 'true';
+          }
+        }
+        result.reviewer_id = document.getElementById('reviewer').value.trim();
+        result.independent_of_candidate = document.getElementById('independent').checked;
+        need(result.reviewer_id && result.independent_of_candidate, 'Supply your reviewer ID and truthful independence declaration.');
+        result.reviewed_at = new Date().toISOString();
+        const url = URL.createObjectURL(new Blob([JSON.stringify(result,null,2)+'\n'], {type:'application/json'}));
+        const link = document.createElement('a'); link.href = url; link.download = result.case_id+'.json';
+        document.body.append(link); link.click(); link.remove(); setTimeout(() => URL.revokeObjectURL(url),1000);
+        message.textContent = 'Review downloaded. Keep it in a private label directory and run the validator. Reloading this page clears the form.';
+      } catch (error) { message.textContent = error.message; }
+    });
+  </script>
+</body>
+</html>

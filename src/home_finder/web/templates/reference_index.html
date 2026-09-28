@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'">
+  <title>Home Finder · Development reference pack</title>
+  <style>
+    :root{font-family:system-ui,sans-serif;color:#1e293b;background:#f4f6f8;line-height:1.5}
+    body{max-width:850px;margin:2rem auto;padding:0 1.25rem}a{color:#145b86}
+    .notice{background:#fff4ce;border-left:4px solid #987200;padding:1rem}
+    ol{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:.6rem;list-style:none;padding:0}
+    li a{display:block;background:white;border:1px solid #cbd5e1;border-radius:6px;padding:1rem}
+    code{overflow-wrap:anywhere}h1{line-height:1.2}
+  </style>
+</head>
+<body>
+  <h1>Home Finder reference review</h1>
+  <p>{{ manifest.cases|length }} cases · {{ manifest.rubric_version }} · Created {{ manifest.created_at }}</p>
+  <p class="notice"><strong>Development material. All labels start unreviewed.</strong>
+    These are recovered historical inputs. They cannot confirm current availability.
+    This pack has no qualified holdout and shows no model answers.</p>
+  <p>Read the <a href="rubric.md">review rubric</a>, then review each case independently.
+    The forms run locally. They download JSON; nothing is submitted and progress is not saved on reload.
+    Save downloads in a private review folder and run the validator described in the handoff.</p>
+  <ol>
+  {% for entry in manifest.cases %}
+    <li><a href="cases/{{ entry.case_id }}.html">Case {{ loop.index }} <small>· Open review</small></a></li>
+  {% endfor %}
+  </ol>
+  <p>Source text and image contents may identify a property. Keep the whole pack private.
+    Case identifiers are pseudonyms, not a claim of anonymisation.</p>
+</body>
+</html>
