@@ -11,7 +11,7 @@ import json
 import os
 import platform
 import time
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from importlib.metadata import version
 from pathlib import Path
 from typing import Any, Literal, Self
@@ -69,6 +69,15 @@ class CaptureRequest(BaseModel):
     fixture_headers: dict[str, str] = Field(default_factory=dict, max_length=20)
 
 
+class CaptureRetention(BaseModel):
+    """Operator-selected raw-body deadline, not a grant of source rights."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+    policy_version: Literal[1] = 1
+    policy_reference: str = Field(min_length=1, max_length=1000, pattern=r"\S")
+    retain_until: AwareDatetime
+
+
 class CapturePlan(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
     source: PropertySource
@@ -78,6 +87,7 @@ class CapturePlan(BaseModel):
     request_timeout_seconds: float = Field(default=30, gt=0, le=60)
     delay_seconds: float = Field(default=3, ge=0, le=60)
     qualification: CaptureQualification | None = None
+    raw_retention: CaptureRetention | None = None
 
     @model_validator(mode="after")
     def validate_requests(self) -> Self:
@@ -182,6 +192,14 @@ async def capture(
     elif fixture_root is None or any(r.fixture is None for r in plan.requests):
         raise ValueError("Offline capture requires a fixture directory and every fixture filename")
 
+    if live and plan.raw_retention is None:
+        raise ValueError("Live capture requires an explicit raw-body retention deadline")
+    now = datetime.now(UTC)
+    if plan.raw_retention is not None and not (
+        now < plan.raw_retention.retain_until <= now + timedelta(days=90)
+    ):
+        raise ValueError("New raw captures require a future retention deadline within 90 days")
+
     root = output_root.resolve()
     root.mkdir(mode=0o700, parents=True, exist_ok=True)
     with runner_lock(str(root / "capture-authority")) as acquired:
@@ -217,6 +235,11 @@ async def capture(
             for index, request in enumerate(plan.requests):
                 if index and live:
                     await asyncio.sleep(plan.delay_seconds)
+                if (
+                    plan.raw_retention is not None
+                    and plan.raw_retention.retain_until <= datetime.now(UTC)
+                ):
+                    raise ValueError("Raw retention deadline elapsed before acquisition")
                 if index >= plan.max_requests:
                     raise RuntimeError("Capture budget exhausted")
                 record: dict[str, Any] = {

@@ -145,6 +145,7 @@ class RawCaptureReference(_EvidenceModel):
     record_index: int = Field(ge=0, le=11, strict=True)
     response_sha256: Digest
     response_bytes: int = Field(gt=0, le=8_000_000, strict=True)
+    capture_mode: Literal["live", "fixture"] | None = None
 
 
 class ObservationParser(_EvidenceModel):

@@ -34,6 +34,13 @@ def make_plan(*, fixture: str | None = "input.html", **changes: Any) -> CaptureP
 
 
 def qualified_plan(**changes: Any) -> CapturePlan:
+    changes.setdefault(
+        "raw_retention",
+        {
+            "policy_reference": "temporary mocked capture only",
+            "retain_until": datetime.now(UTC) + timedelta(days=1),
+        },
+    )
     return make_plan(
         fixture=None,
         qualification={

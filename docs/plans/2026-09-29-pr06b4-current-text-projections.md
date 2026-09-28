@@ -1,6 +1,7 @@
 # PR06b-4: Derive current assessment text from retained observations
 
 **Date:** 29 September 2026. **Predecessor:** detail capture `d736289`.
+**Commit:** `e5f1a9e`.
 **Scope:** deterministic current description/features, explicit conflicts and corrections, and the saved text supplied to analysis. Non-text projections and the complete observation/authority cutover remain follow-on work.
 
 ## Result

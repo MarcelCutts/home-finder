@@ -3,7 +3,8 @@
 import hashlib
 import json
 from dataclasses import asdict
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
+from importlib.resources import files
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -12,13 +13,18 @@ import httpx
 from bs4 import BeautifulSoup
 
 from home_finder.models import Property, PropertySource
-from home_finder.pipeline.capture import (
-    CapturePlan,
-    _parser_fingerprint,
-    _stop_reason,
-    _write_json,
+from home_finder.models.observations import (
+    MAX_BATCH_BYTES,
+    ObservationFields,
+    ObservationParser,
+    RawCaptureReference,
+    SourceObservation,
+    canonical_json,
 )
-from home_finder.scrapers.detail_fetcher import DetailFetcher
+from home_finder.pipeline.capture import _parser_fingerprint, _stop_reason, _write_private
+from home_finder.pipeline.capture_evidence import VerifiedCapture, verified_capture
+from home_finder.scrapers.detail_fetcher import DetailFetcher, DetailPageData
+from home_finder.scrapers.observations import detail_observation, search_observations
 from home_finder.scrapers.onthemarket import OnTheMarketScraper
 from home_finder.scrapers.openrent import OpenRentScraper
 from home_finder.scrapers.rightmove import RightmoveScraper
@@ -28,10 +34,25 @@ from home_finder.scrapers.zoopla import ZooplaScraper
 class _ReplayDetailFetcher(DetailFetcher):
     """Use production extraction paths, replacing their complete fetch boundary."""
 
-    def __init__(self, response: httpx.Response) -> None:
+    def __init__(self, response: httpx.Response, observed_at: datetime | None = None) -> None:
         super().__init__()
         self._record_observations = False  # Re-parsing is not a new provider receipt.
         self.response = response
+        self.captured_at = observed_at
+
+    def _observed_detail(
+        self,
+        prop: Property,
+        data: DetailPageData,
+        observed_at: datetime,
+        *,
+        metadata: ObservationFields | None = None,
+    ) -> DetailPageData:
+        if self.captured_at is not None:
+            data.source_observation = detail_observation(
+                prop, data, observed_at=self.captured_at, metadata=metadata
+            )
+        return data
 
     async def _httpx_get_with_retry(self, url: str) -> httpx.Response:
         if url != str(self.response.request.url):
@@ -82,63 +103,89 @@ async def replay(capture_dir: Path, output_root: Path) -> Path:
     Parser success is not a correctness label or source qualification. Empty
     parser output cannot establish that a query has no matching homes.
     """
-    capture_dir = capture_dir.resolve(strict=True)
-    with (capture_dir / "manifest.json").open("rb") as stream:
-        raw_manifest = stream.read(256_001)
-    if len(raw_manifest) > 256_000:
-        raise ValueError("Capture manifest exceeds 256,000 bytes")
-    manifest = json.loads(raw_manifest)
-    if manifest.get("schema_version") != 1 or manifest.get("mode") not in {"live", "fixture"}:
-        raise ValueError("Replay requires a version 1 source-response capture")
-    plan = CapturePlan.model_validate(manifest["plan"])
-    attempts = manifest["attempts"]
-    if len(attempts) > len(plan.requests):
-        raise ValueError("Capture has more attempts than its plan")
+    with verified_capture(capture_dir) as capture:
+        return await _replay_verified(capture, output_root)
+
+
+def _bind_capture(
+    observation: SourceObservation,
+    reference: RawCaptureReference,
+    index: int,
+    implementation_sha256: str,
+) -> SourceObservation:
+    """Stable event identity per capture, parser implementation and record position."""
+    assert observation.parser.code_sha256 is not None
+    digest = hashlib.sha256((observation.parser.code_sha256 + ":" + implementation_sha256).encode())
+    parser = ObservationParser(
+        name=observation.parser.name + ".capture_replay",
+        version="1",
+        code_sha256=digest.hexdigest(),
+    )
+    event_id = hashlib.sha256(
+        canonical_json([reference.model_dump(mode="json"), parser.model_dump(), index]).encode()
+    ).hexdigest()
+    payload = observation.model_dump(mode="json", exclude_none=True)
+    payload.update(
+        producer_id=f"capture-{reference.capture_mode}-replay-v1",
+        event_id=event_id,
+        parser=parser.model_dump(mode="json"),
+        raw_capture=reference.model_dump(mode="json"),
+    )
+    return SourceObservation.model_validate(payload)
+
+
+async def _replay_verified(capture: VerifiedCapture, output_root: Path) -> Path:
+    manifest = capture.manifest
+    plan = manifest.plan
     results: list[dict[str, Any]] = []
-    for index, record in enumerate(attempts):
+    normalized_bytes = 0
+    now = datetime.now(UTC)
+    parser_files = _parser_fingerprint()
+    root = files("home_finder")
+    for name in (
+        "pipeline/capture.py",
+        "pipeline/capture_replay.py",
+        "pipeline/capture_evidence.py",
+        "utils/listing_identity.py",
+    ):
+        parser_files[name] = hashlib.sha256(root.joinpath(name).read_bytes()).hexdigest()
+    implementation_sha256 = hashlib.sha256(canonical_json(parser_files).encode()).hexdigest()
+    for index, record in enumerate(manifest.attempts):
         request = plan.requests[index]
-        if (
-            record["index"] != index
-            or record["url"] != str(request.url)
-            or record["kind"] != request.kind
-        ):
-            raise ValueError("Capture attempt does not match its plan")
-        result: dict[str, Any] = {"index": index, "observed_at": record.get("observed_at")}
+        result: dict[str, Any] = {
+            "index": index,
+            "observed_at": record.observed_at.isoformat() if record.observed_at else None,
+            "observations": [],
+            "observation_state": "not_extracted",
+        }
         results.append(result)
-        if "body_file" not in record:
+        if record.body_file is None:
             result["outcome"] = "incomplete_capture"
             continue
-        if record["body_file"] != f"{index:02d}.body":
-            raise ValueError("Unexpected response filename")
-        path = (capture_dir / record["body_file"]).resolve(strict=True)
-        if path.parent != capture_dir:
-            raise ValueError("Response escapes its capture directory")
-        with path.open("rb") as stream:
-            body = stream.read(plan.max_response_bytes + 1)
-        if (
-            len(body) > plan.max_response_bytes
-            or len(body) != record["body_bytes"]
-            or hashlib.sha256(body).hexdigest() != record["body_sha256"]
-        ):
-            raise ValueError("Response bytes do not match the capture hash/size")
-        result["body_sha256"] = record["body_sha256"]
-        if record["state"] != "received":
+        body = capture.body(index, now=now)
+        result["body_sha256"] = record.body_sha256
+        if record.state != "received":
             result["outcome"] = "incomplete_capture"
             continue
-        headers = record["response_headers"]
-        stop = _stop_reason(record["status"], headers, body)
+        assert record.status is not None
+        stop = _stop_reason(record.status, record.response_headers, body)
         if stop:
             result.update(outcome="unusable_response", reason=stop)
             continue
+        if record.observed_at is not None and record.observed_at > now + timedelta(minutes=5):
+            raise ValueError("Capture observation time is implausibly in the future")
         response = httpx.Response(
-            record["status"],
+            record.status,
             content=body,
-            headers=headers,
+            headers=record.response_headers,
             request=httpx.Request("GET", str(request.url)),
         )
+        observations: list[SourceObservation] = []
         try:
             if request.kind == "search":
                 properties = _parse_search(plan.source, response.text, str(request.url))
+                if properties and len(properties) > 100:
+                    raise ValueError("Capture replay exceeds 100 listings per response")
                 result["outcome"] = "extracted" if properties else "empty_or_unrecognised"
                 # Constructor defaults are not historical observations. Preserve the
                 # capture's explicit observed_at separately, including unknown dates.
@@ -146,10 +193,18 @@ async def replay(capture_dir: Path, output_root: Path) -> Path:
                     prop.model_dump(mode="json", exclude={"first_seen"})
                     for prop in properties or []
                 ]
+                if record.observed_at is not None:
+                    observed, errors = search_observations(
+                        properties or [], observed_at=record.observed_at
+                    )
+                    observations = [p.source_observation for p in observed if p.source_observation]
+                    result["normalization_errors"] = errors
             elif request.kind == "detail":
                 assert request.listing is not None
-                fetcher = _ReplayDetailFetcher(response)
+                fetcher = _ReplayDetailFetcher(response, record.observed_at)
                 data = await fetcher.fetch_detail_page(request.listing)
+                if data and data.source_observation:
+                    observations = [data.source_observation]
                 detail = asdict(data) if data else None
                 if detail is not None:
                     detail.pop("source_observation", None)
@@ -161,25 +216,41 @@ async def replay(capture_dir: Path, output_root: Path) -> Path:
                 result["outcome"] = "reference_only"
         except Exception as exc:
             result.update(outcome="parser_error", error_type=type(exc).__name__)
+            continue
+        if observations:
+            reference = capture.reference(index, body)
+            for position, observation in enumerate(observations):
+                event = _bind_capture(observation, reference, position, implementation_sha256)
+                normalized_bytes += len(event.payload_json().encode())
+                if normalized_bytes > MAX_BATCH_BYTES:
+                    raise ValueError("Replay exceeds the 4 MB normalized observation bound")
+                result["observations"].append(event.model_dump(mode="json", exclude_none=True))
+            result["observation_state"] = f"exported_{manifest.mode}_evidence"
+        elif record.observed_at is None and request.kind != "reference":
+            result["observation_state"] = "unavailable_capture_time"
+    report = {
+        "schema_version": 2,
+        "capture_manifest_sha256": capture.sha256,
+        "capture_mode": manifest.mode,
+        "capture_state": manifest.state,
+        "raw_retention": (
+            plan.raw_retention.model_dump(mode="json") if plan.raw_retention else None
+        ),
+        "parser_files": parser_files,
+        "replayed_at": now.isoformat(),
+        "human_labels": None,
+        "live_requests_reserved": 0,
+        "model_calls": 0,
+        "commute_calls": 0,
+        "notifications": 0,
+        "results": results,
+    }
+    encoded = (json.dumps(report, indent=2, sort_keys=True, allow_nan=False) + "\n").encode()
+    if len(encoded) > 16_000_000:
+        raise ValueError("Replay output exceeds 16 MB")
     output_root = output_root.resolve()
     output_root.mkdir(mode=0o700, parents=True, exist_ok=True)
     output_dir = output_root / ("replay-" + uuid4().hex)
     output_dir.mkdir(mode=0o700)
-    _write_json(
-        output_dir / "replay.json",
-        {
-            "schema_version": 1,
-            "capture_manifest_sha256": hashlib.sha256(raw_manifest).hexdigest(),
-            "capture_mode": manifest["mode"],
-            "capture_state": manifest["state"],
-            "parser_files": _parser_fingerprint(),
-            "replayed_at": datetime.now(UTC).isoformat(),
-            "human_labels": None,
-            "live_requests_reserved": 0,
-            "model_calls": 0,
-            "commute_calls": 0,
-            "notifications": 0,
-            "results": results,
-        },
-    )
+    _write_private(output_dir / "replay.json", encoded)
     return output_dir
