@@ -500,7 +500,9 @@ class TestRightmoveEarlyStop:
             )
 
         assert len(pages_fetched) == 1  # Only page 1 fetched
-        assert result.properties == []  # All known → nothing returned
+        assert {p.source_id for p in result.properties} == known_ids
+        assert result.observations == result.properties
+        assert result.stop_reason == "known_page"
 
     @pytest.mark.asyncio
     async def test_continues_when_some_results_new(

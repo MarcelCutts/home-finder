@@ -63,6 +63,16 @@ class PreAnalysisResult:
     post_dedup_count: int = 0
     post_floorplan_count: int = 0
 
+    @property
+    def collection_status(self) -> str:
+        """Separate a partial/failed acquisition from a healthy empty result."""
+        attempted = [m for m in self.scraper_metrics if m.areas_attempted > 0]
+        if all(m.is_healthy for m in attempted):
+            return "completed"
+        if any(m.properties_found or m.is_healthy for m in attempted):
+            return "partial"
+        return "failed"
+
 
 async def _cross_run_deduplicate(
     deduplicator: Deduplicator,
@@ -341,6 +351,7 @@ def _run_criteria_and_location_filters(
     search_areas: list[str],
     *,
     recorder: EventRecorder | None = None,
+    progress: PreAnalysisResult | None = None,
 ) -> tuple[list[Property], int, int] | None:
     """Apply criteria and location filters.
 
@@ -350,6 +361,8 @@ def _run_criteria_and_location_filters(
     criteria_filter = CriteriaFilter(criteria)
     filtered = criteria_filter.filter_properties(properties)
     criteria_count = len(filtered)
+    if progress is not None:
+        progress.criteria_filtered_count = criteria_count
     logger.info(
         "criteria_filter_summary", matched=len(filtered), by_source=_source_counts(filtered)
     )
@@ -382,6 +395,8 @@ def _run_criteria_and_location_filters(
     pre_location = filtered
     filtered = location_filter.filter_properties(filtered)
     location_count = len(filtered)
+    if progress is not None:
+        progress.location_filtered_count = location_count
     logger.info(
         "location_filter_summary", matched=len(filtered), by_source=_source_counts(filtered)
     )
@@ -621,6 +636,7 @@ async def _run_post_enrichment(
     *,
     recorder: EventRecorder | None = None,
     commute_lookup: dict[str, tuple[int, TransportMode]] | None = None,
+    progress: PreAnalysisResult | None = None,
 ) -> tuple[list[MergedProperty], int, int, int] | None:
     """Cross-run dedup and floorplan gate. Returns None if nothing remains.
 
@@ -645,6 +661,10 @@ async def _run_post_enrichment(
     )
     merged_to_notify = dedup_result.genuinely_new
     anchors_updated = dedup_result.anchors_updated
+    if progress is not None:
+        progress.anchors_updated = anchors_updated
+        progress.post_dedup_count = len(merged_to_notify)
+        progress.post_floorplan_count = len(merged_to_notify)
 
     if not merged_to_notify:
         logger.info("no_new_properties_after_cross_run_dedup")
@@ -659,6 +679,8 @@ async def _run_post_enrichment(
             merged_to_notify,
             min_gallery_for_photo_inference=settings.min_gallery_for_photo_inference,
         )
+        if progress is not None:
+            progress.post_floorplan_count = len(merged_to_notify)
         photo_inference_eligible = sum(
             1
             for m in merged_to_notify
@@ -767,144 +789,157 @@ async def _run_pre_analysis_pipeline(
     only_scrapers: set[str] | None = None,
     full_scrape: bool = False,
     recorder: EventRecorder | None = None,
+    progress: PreAnalysisResult | None = None,
 ) -> PreAnalysisResult | None:
     """Run the pre-analysis pipeline: scrape, filter, deduplicate, enrich.
 
     Returns None if pipeline ends early (no properties at any stage).
     Quality analysis is handled separately by the caller for concurrency.
     """
-    timings: dict[str, float] = {}
-    scraper_metrics: list[ScraperMetrics] = []
+    progress = progress if progress is not None else PreAnalysisResult()
+    timings = progress.stage_timings
+    active_phase = "scraping_seconds"
 
-    # Step 1: Scrape all platforms
     t0 = time.monotonic()
-    scrape_result = await _run_scrape(
-        settings,
-        storage,
-        max_per_scraper=max_per_scraper,
-        only_scrapers=only_scrapers,
-        full_scrape=full_scrape,
-    )
-    timings["scraping_seconds"] = time.monotonic() - t0
-    if scrape_result is None:
-        return None
-    all_properties, scraper_metrics = scrape_result
+    try:
+        # Step 1: Scrape all platforms
+        t0 = time.monotonic()
+        scrape_result = await _run_scrape(
+            settings,
+            storage,
+            max_per_scraper=max_per_scraper,
+            only_scrapers=only_scrapers,
+            full_scrape=full_scrape,
+            metrics_out=progress.scraper_metrics,
+        )
+        timings["scraping_seconds"] = time.monotonic() - t0
+        if scrape_result is None:
+            return None
+        all_properties, scraper_metrics = scrape_result
+        progress.scraper_metrics = scraper_metrics
+        progress.scraped_count = max(
+            len(all_properties), sum(m.properties_found for m in scraper_metrics)
+        )
 
-    # Step 1b: Record all scraped listings in source_listings
-    sl_count = await storage.upsert_source_listings(all_properties)
-    logger.info("source_listings_upserted", count=sl_count)
+        # Step 1b: Record all scraped listings in source_listings
+        sl_count = await storage.upsert_source_listings(all_properties)
+        logger.info("source_listings_upserted", count=sl_count)
 
-    # Step 2: Criteria + location filters
-    t0 = time.monotonic()
-    criteria = settings.get_search_criteria()
-    search_areas = settings.get_search_areas()
-    filter_result = _run_criteria_and_location_filters(
-        all_properties, criteria, search_areas, recorder=recorder
-    )
-    if filter_result is None:
+        # Step 2: Criteria + location filters
+        active_phase = "filtering_seconds"
+        t0 = time.monotonic()
+        criteria = settings.get_search_criteria()
+        search_areas = settings.get_search_areas()
+        filter_result = _run_criteria_and_location_filters(
+            all_properties, criteria, search_areas, recorder=recorder, progress=progress
+        )
+        if filter_result is None:
+            if recorder is not None:
+                await recorder.flush()
+            timings["filtering_seconds"] = time.monotonic() - t0
+            return None
+        filtered, criteria_filtered_count, location_filtered_count = filter_result
         if recorder is not None:
             await recorder.flush()
-        timings["filtering_seconds"] = time.monotonic() - t0
-        return None
-    filtered, criteria_filtered_count, location_filtered_count = filter_result
-    if recorder is not None:
-        await recorder.flush()
 
-    # Step 3: Wrap as single-source MergedProperties + filter to new only
-    logger.info("pipeline_started", phase="wrap_merged")
-    deduplicator = Deduplicator(
-        enable_cross_platform=True,
-        enable_image_hashing=settings.enable_image_hash_matching,
-        data_dir=settings.data_dir,
-    )
-    merged_properties = deduplicator.properties_to_merged(filtered)
-    logger.info(
-        "wrap_merged_summary",
-        count=len(merged_properties),
-        by_source=_source_counts(merged_properties),
-    )
+        # Step 3: Wrap as single-source MergedProperties + filter to new only
+        logger.info("pipeline_started", phase="wrap_merged")
+        deduplicator = Deduplicator(
+            enable_cross_platform=True,
+            enable_image_hashing=settings.enable_image_hash_matching,
+            data_dir=settings.data_dir,
+        )
+        merged_properties = deduplicator.properties_to_merged(filtered)
+        logger.info(
+            "wrap_merged_summary",
+            count=len(merged_properties),
+            by_source=_source_counts(merged_properties),
+        )
 
-    # Step 3b: Detect price changes for already-known properties
-    await _detect_price_changes(merged_properties, storage)
+        # Step 3b: Detect price changes for already-known properties
+        await _detect_price_changes(merged_properties, storage)
 
-    logger.info("pipeline_started", phase="new_property_filter")
-    new_merged = await storage.filter_new_merged(merged_properties)
-    new_property_count = len(new_merged)
-    logger.info(
-        "new_property_summary", new_count=len(new_merged), by_source=_source_counts(new_merged)
-    )
+        logger.info("pipeline_started", phase="new_property_filter")
+        new_merged = await storage.filter_new_merged(merged_properties)
+        new_property_count = len(new_merged)
+        progress.new_property_count = new_property_count
+        logger.info(
+            "new_property_summary", new_count=len(new_merged), by_source=_source_counts(new_merged)
+        )
 
-    # T4: record new property filter events
-    if recorder is not None:
-        new_ids = {m.canonical.unique_id for m in new_merged}
-        for m in merged_properties:
-            uid = m.canonical.unique_id
-            src = m.canonical.source.value
-            if uid in new_ids:
-                recorder.record(PropertyEvent(uid, src, "new_property_passed", "new_property"))
-            else:
-                recorder.record(
-                    PropertyEvent(
-                        uid,
-                        src,
-                        "duplicate_known",
-                        "new_property",
-                        {"reason": "already_seen"},
+        # T4: record new property filter events
+        if recorder is not None:
+            new_ids = {m.canonical.unique_id for m in new_merged}
+            for m in merged_properties:
+                uid = m.canonical.unique_id
+                src = m.canonical.source.value
+                if uid in new_ids:
+                    recorder.record(PropertyEvent(uid, src, "new_property_passed", "new_property"))
+                else:
+                    recorder.record(
+                        PropertyEvent(
+                            uid,
+                            src,
+                            "duplicate_known",
+                            "new_property",
+                            {"reason": "already_seen"},
+                        )
                     )
-                )
-        await recorder.flush()
+            await recorder.flush()
 
-    # Step 4: Load unenriched retries
-    unenriched, re_enrichment_ids = await _load_unenriched(storage, settings)
-    timings["filtering_seconds"] = time.monotonic() - t0
-    if not new_merged and not unenriched:
-        logger.info("no_new_properties")
-        return None
+        # Step 4: Load unenriched retries
+        unenriched, re_enrichment_ids = await _load_unenriched(storage, settings)
+        timings["filtering_seconds"] = time.monotonic() - t0
+        if not new_merged and not unenriched:
+            logger.info("no_new_properties")
+            return None
 
-    # Step 5: Enrichment
-    t0 = time.monotonic()
-    merged_to_enrich = list(new_merged) + list(unenriched)
-    enriched = await _run_enrichment(merged_to_enrich, settings, storage, recorder=recorder)
-    if enriched is None:
+        # Step 5: Enrichment
+        active_phase = "enrichment_seconds"
+        t0 = time.monotonic()
+        merged_to_enrich = list(new_merged) + list(unenriched)
+        enriched = await _run_enrichment(merged_to_enrich, settings, storage, recorder=recorder)
+        if enriched is None:
+            timings["enrichment_seconds"] = time.monotonic() - t0
+            return None
+        progress.enriched_count = len(enriched)
+
+        # Step 6: Geocode + commute (after enrichment so all properties have full coords)
+        geocoded, commute_lookup, commute_within_limit_count = await _geocode_and_compute_commute(
+            enriched, criteria, settings, recorder=recorder
+        )
+        progress.commute_lookup = commute_lookup
+        progress.commute_within_limit_count = commute_within_limit_count
+        if not geocoded:
+            logger.info("no_properties_after_enrichment")
+            timings["enrichment_seconds"] = time.monotonic() - t0
+            return None
+
+        # Step 7: Post-enrichment dedup + floorplan gate
+        # Use geocoded list (not enriched) so coordinates from geocoding are preserved
+        post_result = await _run_post_enrichment(
+            geocoded,
+            storage,
+            settings,
+            re_enrichment_ids,
+            recorder=recorder,
+            commute_lookup=commute_lookup,
+            progress=progress,
+        )
         timings["enrichment_seconds"] = time.monotonic() - t0
-        return None
+        if post_result is None:
+            return None
 
-    # Step 6: Geocode + commute (after enrichment so all properties have full coords)
-    geocoded, commute_lookup, commute_within_limit_count = await _geocode_and_compute_commute(
-        enriched, criteria, settings, recorder=recorder
-    )
-    if not geocoded:
-        logger.info("no_properties_after_enrichment")
-        timings["enrichment_seconds"] = time.monotonic() - t0
-        return None
-
-    # Step 7: Post-enrichment dedup + floorplan gate
-    # Use geocoded list (not enriched) so coordinates from geocoding are preserved
-    post_result = await _run_post_enrichment(
-        geocoded,
-        storage,
-        settings,
-        re_enrichment_ids,
-        recorder=recorder,
-        commute_lookup=commute_lookup,
-    )
-    timings["enrichment_seconds"] = time.monotonic() - t0
-    if post_result is None:
-        return None
-
-    final_merged, anchors_updated, post_dedup_count, post_floorplan_count = post_result
-    return PreAnalysisResult(
-        merged_to_process=final_merged,
-        commute_lookup=commute_lookup,
-        scraped_count=len(all_properties),
-        enriched_count=len(enriched),
-        anchors_updated=anchors_updated,
-        stage_timings=timings,
-        scraper_metrics=scraper_metrics,
-        criteria_filtered_count=criteria_filtered_count,
-        location_filtered_count=location_filtered_count,
-        new_property_count=new_property_count,
-        commute_within_limit_count=commute_within_limit_count,
-        post_dedup_count=post_dedup_count,
-        post_floorplan_count=post_floorplan_count,
-    )
+        final_merged, anchors_updated, post_dedup_count, post_floorplan_count = post_result
+        progress.merged_to_process = final_merged
+        progress.anchors_updated = anchors_updated
+        progress.criteria_filtered_count = criteria_filtered_count
+        progress.location_filtered_count = location_filtered_count
+        progress.post_dedup_count = post_dedup_count
+        progress.post_floorplan_count = post_floorplan_count
+        return progress
+    finally:
+        timings[active_phase] = time.monotonic() - t0
+        progress.scraped_count = max(
+            progress.scraped_count, sum(m.properties_found for m in progress.scraper_metrics)
+        )

@@ -1,6 +1,6 @@
 # PR08a: Consistent price ranges and target-specific availability
 
-**Date:** 28 September 2026. **State:** implemented and verified; not deployed.
+**Date:** 28 September 2026. **State:** committed as `9149e48`; not deployed.
 **Parent:** [delivery plan, PR08](2026-09-28-research-synthesis-and-delivery-plan.md#pr08--repair-price-projections-and-evidence-based-availability-m).
 **Predecessor:** PR16a, commit `3e0c05d`. No schema migration, portal requests, paid calls or notifications.
 

@@ -94,7 +94,7 @@ class PipelineRepository:
 
         Args:
             run_id: The pipeline run ID.
-            status: Final status ('completed' or 'failed').
+            status: Terminal status (completed, partial, failed or cancelled).
             error_message: Error message if status is 'failed'.
         """
         async with self._transaction() as conn:
@@ -119,7 +119,7 @@ class PipelineRepository:
             )
 
     async def get_last_pipeline_run(self) -> dict[str, Any] | None:
-        """Get the most recent completed pipeline run.
+        """Get the most recent terminal pipeline run, including partial/cancelled.
 
         Returns:
             Dict with run data, or None if no runs exist.
@@ -128,7 +128,7 @@ class PipelineRepository:
             cursor = await conn.execute(
                 """
                 SELECT * FROM pipeline_runs
-                WHERE status IN ('completed', 'failed')
+                WHERE status IN ('completed', 'partial', 'failed', 'cancelled')
                 ORDER BY id DESC LIMIT 1
                 """
             )

@@ -35,9 +35,11 @@ from home_finder.pipeline.scraping import (
     scrape_all_platforms,
 )
 from home_finder.pipeline.stages import (
+    PreAnalysisResult,
     _days_since,
     _run_pre_analysis_pipeline,
 )
+from home_finder.utils.async_tasks import finish_before_cancelling
 from home_finder.utils.image_cache import backfill_thumbnails
 
 logger = get_logger(__name__)
@@ -187,6 +189,29 @@ async def run_pipeline(
             )
 
 
+async def _record_pre_analysis_progress(
+    storage: PropertyStorage, run_id: int, progress: PreAnalysisResult
+) -> None:
+    """Persist the last known counts, even when the next stage never starts."""
+    await storage.pipeline.update_pipeline_run(
+        run_id,
+        scraped_count=max(
+            progress.scraped_count, sum(m.properties_found for m in progress.scraper_metrics)
+        ),
+        new_count=len(progress.merged_to_process),
+        enriched_count=progress.enriched_count,
+        anchors_updated=progress.anchors_updated,
+        criteria_filtered_count=progress.criteria_filtered_count,
+        location_filtered_count=progress.location_filtered_count,
+        new_property_count=progress.new_property_count,
+        commute_within_limit_count=progress.commute_within_limit_count,
+        post_dedup_count=progress.post_dedup_count,
+        post_floorplan_count=progress.post_floorplan_count,
+        **progress.stage_timings,
+    )
+    await storage.pipeline.save_scraper_runs(run_id, [asdict(m) for m in progress.scraper_metrics])
+
+
 async def _run_pipeline_with_storage(
     settings: Settings,
     storage: PropertyStorage,
@@ -204,27 +229,27 @@ async def _run_pipeline_with_storage(
         structlog.contextvars.bind_contextvars(run_id=run_id)
         logger.info("pipeline_run_created", run_id=run_id)
 
-    # Notifier context — real TelegramNotifier in live mode, nullcontext for dry run
-    notifier_cm: contextlib.AbstractAsyncContextManager[TelegramNotifier | None]
-    if dry_run:
-        notifier_cm = contextlib.nullcontext(None)
-    else:
-        notifier_cm = TelegramNotifier(
-            bot_token=settings.telegram_bot_token.get_secret_value(),
-            chat_id=settings.telegram_chat_id,
-            web_base_url=settings.web_base_url,
-            data_dir=settings.data_dir,
-        )
+    try:
+        # Notifier context — real TelegramNotifier in live mode, nullcontext for dry run
+        notifier_cm: contextlib.AbstractAsyncContextManager[TelegramNotifier | None]
+        if dry_run:
+            notifier_cm = contextlib.nullcontext(None)
+        else:
+            notifier_cm = TelegramNotifier(
+                bot_token=settings.telegram_bot_token.get_secret_value(),
+                chat_id=settings.telegram_chat_id,
+                web_base_url=settings.web_base_url,
+                data_dir=settings.data_dir,
+            )
 
-    # T4: EventRecorder for property audit trail
-    recorder_cm: contextlib.AbstractAsyncContextManager[EventRecorder | None]
-    if run_id is not None:
-        recorder_cm = EventRecorder(storage, run_id)
-    else:
-        recorder_cm = contextlib.nullcontext(None)
+        # T4: EventRecorder for property audit trail
+        recorder_cm: contextlib.AbstractAsyncContextManager[EventRecorder | None]
+        if run_id is not None:
+            recorder_cm = EventRecorder(storage, run_id)
+        else:
+            recorder_cm = contextlib.nullcontext(None)
 
-    async with notifier_cm as notifier, recorder_cm as recorder:
-        try:
+        async with notifier_cm as notifier, recorder_cm as recorder:
             # Step 0: Retry unsent notifications (live mode only)
             if not dry_run and notifier is not None:
                 unsent = await storage.get_unsent_notifications()
@@ -249,40 +274,30 @@ async def _run_pipeline_with_storage(
                             )
                         await asyncio.sleep(1)
 
-            pre = await _run_pre_analysis_pipeline(
-                settings,
-                storage,
-                max_per_scraper=max_per_scraper,
-                only_scrapers=only_scrapers,
-                full_scrape=full_scrape,
-                recorder=recorder,
-            )
+            progress = PreAnalysisResult()
+            try:
+                pre = await _run_pre_analysis_pipeline(
+                    settings,
+                    storage,
+                    max_per_scraper=max_per_scraper,
+                    only_scrapers=only_scrapers,
+                    full_scrape=full_scrape,
+                    recorder=recorder,
+                    progress=progress,
+                )
+                if pre is not None:
+                    progress = pre
+            finally:
+                if run_id is not None:
+                    await finish_before_cancelling(
+                        _record_pre_analysis_progress(storage, run_id, progress)
+                    )
             if pre is None:
                 if dry_run:
                     logger.info("dry_run_no_new_properties")
                 elif run_id is not None:
-                    await storage.pipeline.complete_pipeline_run(run_id, "completed")
+                    await storage.pipeline.complete_pipeline_run(run_id, progress.collection_status)
                 return
-
-            if not dry_run and run_id is not None:
-                await storage.pipeline.update_pipeline_run(
-                    run_id,
-                    scraped_count=pre.scraped_count,
-                    new_count=len(pre.merged_to_process),
-                    enriched_count=pre.enriched_count,
-                    anchors_updated=pre.anchors_updated,
-                    criteria_filtered_count=pre.criteria_filtered_count,
-                    location_filtered_count=pre.location_filtered_count,
-                    new_property_count=pre.new_property_count,
-                    commute_within_limit_count=pre.commute_within_limit_count,
-                    post_dedup_count=pre.post_dedup_count,
-                    post_floorplan_count=pre.post_floorplan_count,
-                    **pre.stage_timings,
-                )
-                if pre.scraper_metrics:
-                    await storage.pipeline.save_scraper_runs(
-                        run_id, [asdict(m) for m in pre.scraper_metrics]
-                    )
 
             logger.info(
                 "pipeline_started",
@@ -364,7 +379,7 @@ async def _run_pipeline_with_storage(
                     notification_seconds=notification_seconds,
                     **cost_kwargs,
                 )
-                await storage.pipeline.complete_pipeline_run(run_id, "completed")
+                await storage.pipeline.complete_pipeline_run(run_id, progress.collection_status)
 
                 # T4: prune old property events
                 await storage.pipeline.cleanup_old_events(settings.event_retention_runs)
@@ -376,20 +391,20 @@ async def _run_pipeline_with_storage(
                     price_drops=price_drop_count,
                 )
 
-        except asyncio.CancelledError:
-            if run_id is not None:
-                logger.warning("pipeline_cancelled", run_id=run_id)
-                await storage.pipeline.complete_pipeline_run(run_id, "cancelled")
-            raise
-        except Exception as exc:
-            if run_id is not None:
-                await storage.pipeline.complete_pipeline_run(
-                    run_id, "failed", error_message=str(exc)
-                )
-            raise
-        finally:
-            if not dry_run:
-                structlog.contextvars.clear_contextvars()
+    except asyncio.CancelledError:
+        if run_id is not None:
+            logger.warning("pipeline_cancelled", run_id=run_id)
+            await finish_before_cancelling(
+                storage.pipeline.complete_pipeline_run(run_id, "cancelled")
+            )
+        raise
+    except Exception as exc:
+        if run_id is not None:
+            await storage.pipeline.complete_pipeline_run(run_id, "failed", error_message=str(exc))
+        raise
+    finally:
+        if not dry_run:
+            structlog.contextvars.clear_contextvars()
 
 
 async def run_dry_run(

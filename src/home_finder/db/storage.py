@@ -6,12 +6,12 @@ import asyncio
 import contextlib
 import json
 import time
-from collections.abc import AsyncIterator, Awaitable
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from functools import partial
 from pathlib import Path
-from typing import Any, Final, TypeVar
+from typing import Any, Final
 
 import aiosqlite
 
@@ -48,6 +48,7 @@ from home_finder.models import (
     UserStatus,
 )
 from home_finder.models.listing_text import merge_listing_text
+from home_finder.utils.async_tasks import finish_before_cancelling as _settle
 
 # Default lookback window for cross-platform dedup anchors
 _DEDUP_LOOKBACK_DAYS: Final = 30
@@ -57,33 +58,11 @@ __all__ = ["PropertyStorage"]
 
 logger = get_logger(__name__)
 
-_T = TypeVar("_T")
-
 
 async def _execute_control(conn: aiosqlite.Connection, sql: str) -> None:
     """Finish a transaction/PRAGMA statement without leaving an open cursor."""
     cursor = await conn.execute(sql)
     await cursor.close()
-
-
-async def _settle(operation: Awaitable[_T]) -> _T:
-    """Finish SQLite cleanup/commit before releasing ownership on cancellation.
-
-    Cancelling an aiosqlite await does not remove work from its worker queue.
-    Shield alone is insufficient: the caller must also wait for that work to
-    finish. Repeated cancellations are deferred, then delivered to the caller.
-    """
-    future = asyncio.ensure_future(operation)
-    cancelled = False
-    while not future.done():
-        try:
-            await asyncio.shield(future)
-        except asyncio.CancelledError:
-            cancelled = True
-    result = future.result()
-    if cancelled:
-        raise asyncio.CancelledError
-    return result
 
 
 class DuplicateTelegramUpdateError(Exception):

@@ -1,7 +1,7 @@
 # Home Finder: research synthesis and sequential delivery plan
 
 **Reviewed:** 28 September 2026. **Code baseline:** `a86e51e`.
-**Status:** PR01 committed as `1dfdcb4`, PR02 as `84fb43b`, PR03 as `8bb73cc`, PR04 as `55f3171`, PR06a as `19d6f24`, PR17a as `b4cf2f9`, PR16a as `3e0c05d`; PR08a implemented and verified on `codex/pr01-ci-baseline`, with PR09a next. See the [PR01 handoff](2026-09-28-pr01-ci-baseline.md), [PR02 record](2026-09-28-pr02-owner-access.md), [PR03 record](2026-09-28-pr03-runtime-and-maps.md), [PR04 record](2026-09-28-pr04-database-ownership.md), [PR06a record](2026-09-28-pr06a-listing-text.md), [PR17a record](2026-09-28-pr17a-costs-and-guidance.md) [PR16a record](2026-09-28-pr16a-commute-outcomes.md) and [PR08a record](2026-09-28-pr08a-price-and-availability.md). Runtime audit findings and map activation checks remain explicit. Local commits do not imply merge or deployment. Continue sequential verified commits under the owner's latest instruction; per-segment pauses are superseded.
+**Status:** PR01 committed as `1dfdcb4`, PR02 as `84fb43b`, PR03 as `8bb73cc`, PR04 as `55f3171`, PR06a as `19d6f24`, PR17a as `b4cf2f9`, PR16a as `3e0c05d`, PR08a as `9149e48`; PR09a implemented on `codex/pr01-ci-baseline`, with PR12a next after verification. See the [PR01 handoff](2026-09-28-pr01-ci-baseline.md), [PR02 record](2026-09-28-pr02-owner-access.md), [PR03 record](2026-09-28-pr03-runtime-and-maps.md), [PR04 record](2026-09-28-pr04-database-ownership.md), [PR06a record](2026-09-28-pr06a-listing-text.md), [PR17a record](2026-09-28-pr17a-costs-and-guidance.md), [PR16a record](2026-09-28-pr16a-commute-outcomes.md), [PR08a record](2026-09-28-pr08a-price-and-availability.md) and [PR09a record](2026-09-28-pr09a-observations-and-accounting.md). Runtime audit findings and map activation checks remain explicit. Local commits do not imply merge or deployment. Continue sequential verified commits under the owner's latest instruction; per-segment pauses are superseded.
 **Audience:** the owner, reviewers, and agents implementing one PR at a time.
 **Revision:** incorporates the verified findings from [Fable's final review](2026-09-28-research-synthesis-and-delivery-plan-review.md); see §11 for accepted corrections, qualifications and fresh checks.
 
@@ -504,6 +504,8 @@ Repair `filters/off_market.py` and source-specific detail parsing to inspect the
 ### PR09 — Preserve known-page observations and report collection coverage honestly [M]
 
 **Delivery slices:** PR09a depends on PR06a; PR09b depends on PR06b/08b. **Outcome:** promptly stop losing known-page observations, then report complete source/query coverage and freshness.
+
+**PR09a implementation record:** [observation retention, partial outcomes and cancellation accounting](2026-09-28-pr09a-observations-and-accounting.md). Full per-query coverage, periodic deeper refresh and source readiness remain PR09b.
 
 **Work:** in `scrapers/base.py`, retain fetched known listings before stopping pagination. Feed their prices, last-seen information and changed evidence through normal observation handling without re-running unchanged analysis. Separate “stop looking for new listings” from refreshing the current watchlist; otherwise a known first page can indefinitely conceal changes on older pages. Define periodic bounded refresh/deeper-sweep policy and expose its coverage limitations.
 
