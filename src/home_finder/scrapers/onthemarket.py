@@ -3,6 +3,7 @@
 import asyncio
 import json
 import re
+from datetime import UTC, datetime
 from typing import Any
 
 from curl_cffi.requests import AsyncSession
@@ -13,6 +14,7 @@ from home_finder.logging import get_logger
 from home_finder.models import FurnishType, Property, PropertySource
 from home_finder.scrapers.base import BaseScraper, ScrapeResult
 from home_finder.scrapers.constants import BROWSER_HEADERS
+from home_finder.scrapers.observations import search_observations
 from home_finder.scrapers.parsing import extract_bedrooms, extract_postcode, extract_price
 from home_finder.scrapers.retry import SCRAPER_WAIT, RetryableHttpError
 
@@ -89,11 +91,14 @@ class OnTheMarketScraper(BaseScraper):
             if html is None:
                 return None  # Signals fetch failure to _paginate
 
+            observed_at = datetime.now(UTC)
             # Parse __NEXT_DATA__ JSON
             properties = self._parse_next_data(html)
             if properties is None:
                 parse_errors += 1
                 return []
+            properties, evidence_errors = search_observations(properties, observed_at=observed_at)
+            parse_errors += evidence_errors
             logger.info(
                 "scraped_onthemarket_page",
                 url=url,

@@ -8,6 +8,7 @@ import random
 import re
 import urllib.parse
 from contextlib import suppress
+from datetime import UTC, datetime
 from typing import Any
 
 from bs4 import BeautifulSoup, Tag
@@ -20,6 +21,7 @@ from home_finder.logging import get_logger
 from home_finder.models import FurnishType, Property, PropertySource
 from home_finder.scrapers.base import BaseScraper, ScrapeResult
 from home_finder.scrapers.constants import BROWSER_HEADERS
+from home_finder.scrapers.observations import search_observations
 from home_finder.scrapers.parsing import extract_bedrooms, extract_postcode, extract_price
 from home_finder.scrapers.retry import SCRAPER_WAIT, RetryableHttpError
 from home_finder.utils.address import is_outcode
@@ -335,6 +337,7 @@ class ZooplaScraper(BaseScraper):
             if html is None:
                 return None  # Signals fetch failure to _paginate
 
+            observed_at = datetime.now(UTC)
             # Try RSC extraction first (primary method)
             rsc_result = self._parse_rsc_properties(html)
             rsc_failed = rsc_result is None
@@ -360,6 +363,8 @@ class ZooplaScraper(BaseScraper):
                     properties = []
                     method = "html"
 
+            properties, evidence_errors = search_observations(properties, observed_at=observed_at)
+            parse_errors += evidence_errors
             logger.info(
                 "scraped_zoopla_page",
                 url=url,

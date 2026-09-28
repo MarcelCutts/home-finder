@@ -4,6 +4,7 @@ import json
 import math
 import re
 from dataclasses import dataclass, field
+from datetime import datetime
 from typing import Any
 from urllib.parse import urljoin
 
@@ -11,6 +12,11 @@ from bs4 import BeautifulSoup
 from pydantic import HttpUrl
 
 from home_finder.models import Property, PropertySource
+from home_finder.models.observations import (
+    AgentReference,
+    FieldChange,
+    ObservationFields,
+)
 from home_finder.scrapers.parsing import extract_postcode
 
 MAX_PAYLOAD_CHARACTERS = 4_000_000
@@ -24,6 +30,64 @@ MAX_DETAIL_DEPTH = 64
 class SearchPage:
     properties: list[Property] = field(default_factory=list)
     parse_errors: int = 0
+
+
+def _portal_date(raw: Any, meaning: str, *, reason: str = "") -> dict[str, Any] | None:
+    if raw is None or raw == "":
+        return None
+    if not isinstance(raw, str):
+        raise ValueError("invalid_portal_date")
+    instant = None
+    try:
+        parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        if parsed.tzinfo is not None and parsed.utcoffset() is not None:
+            instant = parsed
+    except ValueError:
+        pass  # Keep source wording without inventing precision or a timezone.
+    return {
+        "value": {
+            "literal": f"{reason}: {raw}" if reason else raw,
+            "meaning": meaning,
+            "instant": instant,
+        }
+    }
+
+
+def _search_metadata(listing: dict[str, Any]) -> ObservationFields:
+    fields: dict[str, Any] = {}
+    fields["first_visible_date"] = _portal_date(listing.get("firstVisibleDate"), "first_visible")
+    fields["availability_date"] = _portal_date(listing.get("letAvailableDate"), "available")
+    update = listing.get("listingUpdate")
+    if update:
+        if not isinstance(update, dict):
+            raise ValueError("invalid_listing_update")
+        reason = update.get("listingUpdateReason") or "unspecified"
+        if not isinstance(reason, str):
+            raise ValueError("invalid_listing_update_reason")
+        meaning = {"price_reduced": "reduced", "new": "listed", "added": "listed"}.get(
+            reason, "unspecified"
+        )
+        fields["portal_date"] = _portal_date(
+            update.get("listingUpdateDate"), meaning, reason=reason
+        )
+    count = listing.get("numberOfFloorplans")
+    if count is not None:
+        fields["observed_floorplan_count"] = {"value": count}
+    customer = listing.get("customer")
+    if customer:
+        if not isinstance(customer, dict):
+            raise ValueError("invalid_customer")
+        branch = customer.get("branchId")
+        if type(branch) is int or (isinstance(branch, str) and branch.strip()):
+            fields["agent"] = FieldChange[AgentReference](
+                value=AgentReference(
+                    branch_id=str(branch), branch_name=customer.get("branchDisplayName") or None
+                )
+            )
+    features = listing.get("keyFeatures")
+    if features:
+        fields["features"] = {"value": features}
+    return ObservationFields.model_validate(fields)
 
 
 def parse_structured_search(soup: BeautifulSoup) -> SearchPage | None:
@@ -107,6 +171,7 @@ def _search_listing(listing: dict[str, Any]) -> Property:
         longitude=longitude,
         description=description,
         image_url=images.get("mainImageSrc") or None,
+        listing_metadata=_search_metadata(listing),
     )
 
 

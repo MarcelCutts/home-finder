@@ -21,6 +21,9 @@ class ScrapeResult:
     pages_failed: int = 0
     parse_errors: int = 0
     observations: list[Property] = field(default_factory=list)
+    # Fresh revisions before identity deduplication. The older observations view
+    # remains the latest property per provider ID for compatibility/selection.
+    observation_history: list[Property] = field(default_factory=list)
     stop_reason: str = "unspecified"
 
     @property
@@ -140,6 +143,9 @@ class BaseScraper(ABC):
                     break
 
                 previous_ids = set(observed)
+                result.observation_history.extend(
+                    prop for prop in properties if prop.source_observation is not None
+                )
                 observed.update((p.source_id, p) for p in properties)
                 # Retain the fetched page before applying any stop/cap policy.
                 # Last received data wins within this scrape's current projection.

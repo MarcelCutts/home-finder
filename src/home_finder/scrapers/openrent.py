@@ -2,6 +2,7 @@
 
 import asyncio
 import re
+from datetime import UTC, datetime
 from urllib.parse import urljoin
 
 from bs4 import BeautifulSoup, Tag
@@ -13,6 +14,7 @@ from home_finder.logging import get_logger
 from home_finder.models import FurnishType, Property, PropertySource
 from home_finder.scrapers.base import BaseScraper, ScrapeResult
 from home_finder.scrapers.constants import BROWSER_HEADERS
+from home_finder.scrapers.observations import search_observations
 from home_finder.scrapers.retry import SCRAPER_WAIT, RetryableHttpError
 
 logger = get_logger(__name__)
@@ -148,11 +150,17 @@ class OpenRentScraper(BaseScraper):
             if html is None:
                 return None  # Signals fetch failure to _paginate
 
+            observed_at = datetime.now(UTC)
             soup = BeautifulSoup(html, "html.parser")
             page_properties = self._parse_search_results(soup, url)
             if page_properties is None:
                 parse_errors += 1
                 return []
+
+            page_properties, evidence_errors = search_observations(
+                page_properties, observed_at=observed_at
+            )
+            parse_errors += evidence_errors
 
             logger.info(
                 "scraped_openrent_page",

@@ -7,7 +7,7 @@ from collections.abc import Callable
 from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import Any, Protocol
 
 import aiosqlite
 
@@ -22,6 +22,12 @@ from home_finder.models.observations import (
 )
 
 ConnectionScope = Callable[[], AbstractAsyncContextManager[aiosqlite.Connection]]
+
+
+class ObservationTransaction(Protocol):
+    def __call__(
+        self, *, conn: aiosqlite.Connection | None = None
+    ) -> AbstractAsyncContextManager[aiosqlite.Connection]: ...
 
 
 class ObservationConflict(ValueError):
@@ -158,7 +164,7 @@ class ObservationRepository:
     def __init__(
         self,
         read_connection: ConnectionScope,
-        transaction: ConnectionScope,
+        transaction: ObservationTransaction,
         *,
         clock: Callable[[], datetime] = lambda: datetime.now(UTC),
     ) -> None:
@@ -166,7 +172,12 @@ class ObservationRepository:
         self._transaction = transaction
         self._clock = clock
 
-    async def ingest(self, observations: list[SourceObservation]) -> ObservationReceipt:
+    async def ingest(
+        self,
+        observations: list[SourceObservation],
+        *,
+        _conn: aiosqlite.Connection | None = None,
+    ) -> ObservationReceipt:
         """Commit a bounded atomic batch; duplicate delivery never updates evidence."""
         if not 1 <= len(observations) <= 100:
             raise ValueError("Observation batch requires 1..100 events")
@@ -185,7 +196,7 @@ class ObservationRepository:
             raise ValueError("Observation clock is more than five minutes ahead of receipt")
         received = now.isoformat(timespec="microseconds")
         inserted = replayed = 0
-        async with self._transaction() as conn:
+        async with self._transaction(conn=_conn) as conn:
             for item, body in zip(batch, bodies, strict=True):
                 digest = sha256_text(body)
                 async with conn.execute(

@@ -1,13 +1,13 @@
 """Current source text, with explicit missing/correction and freshness rules.
 
-This is a small current-value contract. Immutable source revisions belong to
-the later observation system; legacy text has no invented observation date.
+This current-value contract can reference immutable source observations.
+Legacy text has no invented observation date or evidence identifier.
 """
 
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from typing import Literal
+from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -18,7 +18,8 @@ class ListingTextInputs(BaseModel):
     """Application-selected listing text sent to both model phases.
 
     Hashes refer to the full normalized source evidence. These bounded inputs
-    survive later source refreshes; complete immutable revisions come later.
+    survive later source refreshes; identifiers link newly captured evidence
+    to its immutable source observation when available.
     """
 
     model_config = ConfigDict(frozen=True)
@@ -27,6 +28,7 @@ class ListingTextInputs(BaseModel):
     features: tuple[str, ...] = ()
     source_hashes: dict[str, str] = Field(default_factory=dict)
     source_urls: dict[str, str] = Field(default_factory=dict)
+    source_observation_ids: dict[str, tuple[str, ...]] = Field(default_factory=dict)
 
 
 class ListingTextEvidence(BaseModel):
@@ -44,6 +46,8 @@ class ListingTextEvidence(BaseModel):
     features: tuple[str, ...] | None = None
     features_observed_at: datetime | None = None
     features_origin: TextOrigin = "legacy"
+    description_observation_ids: tuple[Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")], ...] = ()
+    features_observation_ids: tuple[Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")], ...] = ()
 
     @field_validator("features")
     @classmethod
@@ -127,4 +131,6 @@ def merge_listing_text(
         features=feats.features,
         features_observed_at=feats.features_observed_at,
         features_origin=feats.features_origin,
+        description_observation_ids=desc.description_observation_ids,
+        features_observation_ids=feats.features_observation_ids,
     )

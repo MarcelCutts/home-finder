@@ -50,6 +50,7 @@ from home_finder.models import (
     UserStatus,
 )
 from home_finder.models.listing_text import merge_listing_text
+from home_finder.models.observations import MAX_BATCH_BYTES, SourceObservation
 from home_finder.utils.async_tasks import finish_before_cancelling as _settle
 
 # Default lookback window for cross-platform dedup anchors
@@ -1047,6 +1048,45 @@ class PropertyStorage:
     # Source listings (Layer 1 of golden record pattern)
     # ------------------------------------------------------------------
 
+    async def _retain_search_observations(
+        self, conn: aiosqlite.Connection, properties: list[Property]
+    ) -> None:
+        """Join the projection writer's transaction; chunk only the validation bound."""
+        batch: list[SourceObservation] = []
+        size = 0
+        for prop in properties:
+            observation = prop.source_observation
+            if observation is None:
+                continue  # Legacy/fake callers have no manufactured capture time.
+            if observation.source_unique_id != prop.unique_id or observation.origin != "search":
+                raise ValueError("Search property and observation identity do not match")
+            incoming_size = len(observation.payload_json().encode())
+            if batch and (len(batch) == 100 or size + incoming_size > MAX_BATCH_BYTES):
+                await self.observations.ingest(batch, _conn=conn)
+                batch, size = [], 0
+            batch.append(observation)
+            size += incoming_size
+        if batch:
+            await self.observations.ingest(batch, _conn=conn)
+
+    @staticmethod
+    def _search_text(prop: Property) -> ListingTextEvidence:
+        observation = prop.source_observation
+        if observation is None:
+            return ListingTextEvidence(description=prop.description)
+        description = observation.fields.description
+        features = observation.fields.features
+        return ListingTextEvidence(
+            description=description.value if description else None,
+            description_observed_at=observation.observed_at if description else None,
+            description_origin="search",
+            features=features.value if features else None,
+            features_observed_at=observation.observed_at if features else None,
+            features_origin="search",
+            description_observation_ids=(observation.sha256,) if description else (),
+            features_observation_ids=(observation.sha256,) if features else (),
+        )
+
     async def _upsert_source_listing(
         self,
         conn: aiosqlite.Connection,
@@ -1060,6 +1100,7 @@ class PropertyStorage:
         (pre-migration 004 DBs that save properties before migrations run).
         """
         now = datetime.now(UTC).isoformat()
+        await self._retain_search_observations(conn, [prop])
         try:
             await conn.execute(
                 """
@@ -1103,9 +1144,7 @@ class PropertyStorage:
             if "no such table" in str(e).lower():
                 return
             raise
-        linked_id = await apply_source_text(
-            conn, prop.unique_id, ListingTextEvidence(description=prop.description)
-        )
+        linked_id = await apply_source_text(conn, prop.unique_id, self._search_text(prop))
         if linked_id:
             await refresh_merged_text(conn, linked_id)
 
@@ -1120,6 +1159,7 @@ class PropertyStorage:
         if not properties:
             return 0
         async with self._transaction() as conn:
+            await self._retain_search_observations(conn, properties)
             now = datetime.now(UTC).isoformat()
             rows = [
                 (
@@ -1162,9 +1202,7 @@ class PropertyStorage:
             )
             linked_ids = set()
             for prop in properties:
-                linked_id = await apply_source_text(
-                    conn, prop.unique_id, ListingTextEvidence(description=prop.description)
-                )
+                linked_id = await apply_source_text(conn, prop.unique_id, self._search_text(prop))
                 if linked_id:
                     linked_ids.add(linked_id)
             for linked_id in linked_ids:

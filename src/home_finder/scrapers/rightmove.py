@@ -2,6 +2,7 @@
 
 import asyncio
 import re
+from datetime import UTC, datetime
 from urllib.parse import urljoin
 
 import httpx
@@ -14,6 +15,7 @@ from home_finder.data.location_mappings import RIGHTMOVE_LOCATIONS, RIGHTMOVE_OU
 from home_finder.logging import get_logger
 from home_finder.models import FurnishType, Property, PropertySource
 from home_finder.scrapers.base import BaseScraper, ScrapeResult
+from home_finder.scrapers.observations import search_observations
 from home_finder.scrapers.parsing import extract_bedrooms, extract_postcode, extract_price
 from home_finder.scrapers.rightmove_payloads import SearchPage, parse_structured_search
 from home_finder.utils.address import is_outcode
@@ -130,10 +132,15 @@ class RightmoveScraper(BaseScraper):
                 _props: list[Property] = page_properties,
             ) -> None:
                 nonlocal parse_errors
+                observed_at = datetime.now(UTC)
                 soup = context.soup
                 parsed = self._parse_search_page(soup)
                 parse_errors += parsed.parse_errors
-                _props.extend(parsed.properties)
+                observed, evidence_errors = search_observations(
+                    parsed.properties, observed_at=observed_at
+                )
+                parse_errors += evidence_errors
+                _props.extend(observed)
 
             crawler = BeautifulSoupCrawler(
                 max_requests_per_crawl=1,

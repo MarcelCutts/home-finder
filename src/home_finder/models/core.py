@@ -7,32 +7,10 @@ from typing import Final, Literal, Self
 from pydantic import BaseModel, ConfigDict, Field, HttpUrl, field_validator, model_validator
 
 from home_finder.models.listing_text import ListingTextEvidence, merge_listing_text
-
-
-class PropertySource(StrEnum):
-    """Supported property listing platforms."""
-
-    RIGHTMOVE = "rightmove"
-    ZOOPLA = "zoopla"
-    OPENRENT = "openrent"
-    ONTHEMARKET = "onthemarket"
-
-    @property
-    def display_name(self) -> str:
-        """Human-readable display name for this source."""
-        return _SOURCE_META[self.value]["name"]
-
-
-_SOURCE_META: Final[dict[str, dict[str, str]]] = {
-    "openrent": {"name": "OpenRent", "abbr": "O", "color": "#00b4d8"},
-    "rightmove": {"name": "Rightmove", "abbr": "R", "color": "#00deb6"},
-    "zoopla": {"name": "Zoopla", "abbr": "Z", "color": "#8040bf"},
-    "onthemarket": {"name": "OnTheMarket", "abbr": "M", "color": "#e54b4b"},
-}
-
-SOURCE_NAMES: Final[dict[str, str]] = {k: v["name"] for k, v in _SOURCE_META.items()}
-SOURCE_BADGES: Final[dict[str, dict[str, str]]] = _SOURCE_META
-
+from home_finder.models.observations import ObservationFields, SourceObservation
+from home_finder.models.sources import SOURCE_BADGES as SOURCE_BADGES
+from home_finder.models.sources import SOURCE_NAMES as SOURCE_NAMES
+from home_finder.models.sources import PropertySource as PropertySource
 
 SQM_PER_SQFT: Final[float] = 0.0929
 """Square metres per square foot. Used for sqft↔sqm conversions throughout."""
@@ -75,6 +53,11 @@ class Property(BaseModel):
     image_hash: str | None = None  # Perceptual hash of main listing image
     available_from: datetime | None = None
     first_seen: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    # Transient adapter evidence is persisted independently in the source ledger.
+    # Excluding it from general property serialization avoids duplicating it in
+    # unrelated output or claiming a legacy DB reload is a new observation.
+    listing_metadata: ObservationFields | None = Field(default=None, exclude=True)
+    source_observation: SourceObservation | None = Field(default=None, exclude=True)
 
     @field_validator("postcode")
     @classmethod

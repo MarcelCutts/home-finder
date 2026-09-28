@@ -1403,6 +1403,65 @@ class TestBuildEvaluationPrompt:
 class TestAnalyzeSingleMerged:
     """Tests for analyze_single_merged method."""
 
+    async def test_search_evidence_ids_reach_saved_assessment_with_both_request_inputs(
+        self, sample_merged_property, sample_visual_response, sample_evaluation_response
+    ) -> None:
+        from datetime import UTC, datetime
+
+        from home_finder.db import PropertyStorage
+        from home_finder.scrapers.observations import search_observations
+
+        original = sample_merged_property.canonical.model_copy(
+            update={"description": "Source-only kitchen description <fixture>"}
+        )
+        tagged, errors = search_observations([original], observed_at=datetime.now(UTC))
+        assert errors == 0
+        prop = tagged[0]
+        async with PropertyStorage(":memory:") as storage:
+            await storage.upsert_source_listings(tagged)
+            merged = sample_merged_property.model_copy(
+                update={"canonical": prop, "descriptions": {prop.source: prop.description}}
+            )
+            await storage.pipeline.save_pre_analysis_properties([merged], {})
+            reloaded = (await storage.pipeline.get_pending_analysis_properties())[0]
+            quality_filter = PropertyQualityFilter(api_key="fixture-no-live-calls")
+            quality_filter._client = MagicMock()
+            _setup_two_phase_mocks(
+                quality_filter._client, sample_visual_response, sample_evaluation_response
+            )
+            with patch.object(
+                quality_filter,
+                "_build_image_block",
+                new_callable=AsyncMock,
+                return_value={
+                    "type": "image",
+                    "source": {
+                        "type": "base64",
+                        "media_type": "image/jpeg",
+                        "data": "Zml4dHVyZQ==",
+                    },
+                },
+            ):
+                _, analysis = await quality_filter.analyze_single_merged(reloaded)
+            assert analysis.listing_text_inputs.source_observation_ids == {
+                prop.source.value: (prop.source_observation.sha256,)
+            }
+            requests = quality_filter._client.messages.create.call_args_list
+            assert len(requests) == 2
+            for request in requests:
+                content = request.kwargs["messages"][0]["content"]
+                prompt = (
+                    content
+                    if isinstance(content, str)
+                    else "\n".join(block["text"] for block in content if block["type"] == "text")
+                )
+                assert "Source-only kitchen description &lt;fixture&gt;" in prompt
+            await storage.pipeline.complete_analysis(reloaded.unique_id, analysis)
+            saved = await storage.get_quality_analysis(reloaded.unique_id)
+            assert saved.listing_text_inputs == analysis.listing_text_inputs
+            referenced = await storage.observations.get(prop.source_observation.sha256)
+            assert referenced.fields.description.value == prop.description
+
     async def test_detail_text_survives_save_reload_and_reaches_both_requests(
         self, tmp_path, make_property, sample_visual_response, sample_evaluation_response
     ) -> None:

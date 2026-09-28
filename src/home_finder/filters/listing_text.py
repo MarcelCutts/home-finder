@@ -33,26 +33,38 @@ def select_listing_text(merged: MergedProperty) -> ListingTextInputs:
     # Round-robin prevents the first portal from consuming every feature slot.
     feature_groups = [
         [
-            f"[{source.display_name}] {html.escape(feature, quote=False)[:200]}"
+            (source, f"[{source.display_name}] {html.escape(feature, quote=False)[:200]}")
             for feature in (value.features or ())[:15]
             if feature.strip()
         ]
         for source, value in evidence
     ]
-    features = [
+    selected_features = [
         feature
         for group in zip_longest(*feature_groups)
         for feature in group
         if feature is not None
     ][:15]
+    description_sources = {source for source, _description in descriptions}
+    feature_sources = {source for source, _feature in selected_features}
+    observation_ids = {}
+    for source, value in evidence:
+        identifiers: set[str] = set()
+        if source in description_sources:
+            identifiers.update(value.description_observation_ids)
+        if source in feature_sources:
+            identifiers.update(value.features_observation_ids)
+        if identifiers:
+            observation_ids[source.value] = tuple(sorted(identifiers))
     return ListingTextInputs(
         description="\n\n".join(description_parts) or None,
-        features=tuple(features),
+        features=tuple(feature for _source, feature in selected_features),
         source_hashes={
             source.value: hashlib.sha256(value.model_dump_json().encode()).hexdigest()
             for source, value in evidence
         },
         source_urls={source.value: str(url) for source, url in merged.source_urls.items()},
+        source_observation_ids=observation_ids,
     )
 
 

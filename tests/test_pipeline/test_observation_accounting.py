@@ -1,6 +1,7 @@
 """Real storage and orchestration; external effects are replaced at their boundaries."""
 
 import asyncio
+from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -11,6 +12,7 @@ from home_finder.db import PropertyStorage
 from home_finder.main import _run_pipeline_with_storage
 from home_finder.models import PropertySource
 from home_finder.scrapers.base import ScrapeResult
+from home_finder.scrapers.observations import search_observations
 from home_finder.scrapers.openrent import OpenRentScraper
 
 
@@ -120,6 +122,37 @@ async def test_cap_retains_extra_observations_and_counts_only_attempted_area(
     assert metrics["areas_attempted"] == metrics["areas_completed"] == 1
     assert metrics["properties_found"] == 2
     scraper.area_delay.assert_not_awaited()
+    quality.assert_not_called()
+
+
+async def test_pipeline_retains_revisions_before_selection_and_counts_unique_listings(
+    settings, storage, boundaries, make_property
+):
+    scraper, _, quality = boundaries
+    original = make_property(price_pcm=3000, postcode=None)
+    at = datetime(2026, 9, 1, tzinfo=UTC)
+    first, _ = search_observations([original], observed_at=at)
+    second, _ = search_observations(
+        [original.model_copy(update={"price_pcm": 3100})], observed_at=at + timedelta(seconds=1)
+    )
+    scraper.scrape.return_value = ScrapeResult(
+        properties=second,
+        observations=second,
+        observation_history=first + second,
+        pages_fetched=2,
+    )
+
+    await run(settings, storage)
+    await run(settings, storage)  # Delivery and selected-property fallback are idempotent.
+
+    history = await storage.observations.history(original.unique_id)
+    assert len(history) == 2
+    assert {event.fields.price_pcm.value for event in history} == {3000, 3100}
+    assert all(event.fields.postcode is None for event in history)  # Query scope is not evidence.
+    source = (await rows(storage, "source_listings"))[0]
+    assert source["price_pcm"] == 3100 and source["postcode"] == "E8"
+    assert (await storage.pipeline.get_last_pipeline_run())["scraped_count"] == 1
+    assert all(row["properties_found"] == 1 for row in await rows(storage, "scraper_runs"))
     quality.assert_not_called()
 
 

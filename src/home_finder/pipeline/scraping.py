@@ -147,7 +147,9 @@ async def scrape_all_platforms(
                 metrics.parse_errors += result.parse_errors
                 if result.stop_reason != "cancelled":
                     metrics.areas_completed += 1
-                observations = result.observations or result.properties
+                observations = (
+                    result.observation_history or result.observations or result.properties
+                )
                 if is_outcode(area):
                     observations = [
                         p.model_copy(update={"postcode": area.upper()}) if p.postcode is None else p

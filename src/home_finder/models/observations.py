@@ -20,7 +20,7 @@ from pydantic import (
     model_validator,
 )
 
-from home_finder.models.core import PropertySource
+from home_finder.models.sources import PropertySource
 
 MAX_OBSERVATION_BYTES = 250_000
 MAX_BATCH_BYTES = 4_000_000
@@ -133,6 +133,7 @@ class ObservationFields(_EvidenceModel):
         FieldChange[Annotated[int, Field(ge=0, le=100, strict=True)]] | None
     ) = None
     portal_date: FieldChange[PortalDate] | None = None
+    first_visible_date: FieldChange[PortalDate] | None = None
     availability_date: FieldChange[PortalDate] | None = None
     agent: FieldChange[AgentReference] | None = None
 

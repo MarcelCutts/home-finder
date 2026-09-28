@@ -1,6 +1,6 @@
 # PR06b-1: Immutable source observations and deterministic replay
 
-**Date:** 28 September 2026. **State:** implemented and verified; collector integration follows.
+**Date:** 28 September 2026. **State:** committed as `a48fcb2`; this record describes the foundation at that commit. Search integration follows in [PR06b-2](2026-09-28-pr06b2-search-observation-capture.md).
 **Predecessors:** PR06a text retention, `19d6f24`; PR05a authority/restore, `ad34ba9`; PR19a reference pack, `9498f39`.
 **Parent:** [PR06 specification](2026-09-28-research-synthesis-and-delivery-plan.md#pr06--preserve-descriptions-features-corrections-and-source-provenance-l).
 
