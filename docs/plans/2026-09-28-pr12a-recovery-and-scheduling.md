@@ -1,6 +1,6 @@
 # PR12a: Recover existing work and exclude overlapping runners
 
-**Date:** 28 September 2026. **State:** implemented and verified; not deployed.
+**Date:** 28 September 2026. **State:** committed as `b5d9859`; verified, not deployed.
 **Parent:** [delivery plan, PR12](2026-09-28-research-synthesis-and-delivery-plan.md#pr12--drain-persisted-work-independently-of-discovery-l).
 **Predecessor:** PR09a, `67a34a9`. No schema migration, scheduler activation, deployment or external provider effects.
 

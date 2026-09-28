@@ -4,6 +4,8 @@
 
 **Status, 2026-09-28:** these notes describe implemented adapters and historical observations, not current live qualification or permission to collect/redisplay content. Follow O2 and PR10/PR11 in the [delivery plan](../plans/2026-09-28-research-synthesis-and-delivery-plan.md). Keep normal collection paused; live tests are now explicit opt-in. Record dated fixtures and source scope when qualifying a source, including separate acquisition, storage, model-processing and hosted-display constraints.
 
+Use the [PR18a capture/replay commands](../plans/2026-09-28-pr18a-isolated-capture.md#commands) for isolated evidence work. The default is offline; live mode has an explicit request budget and source qualification record. A historical database export retains projections and unverified prior model output, without opening the production pipeline. This simplified capture transport does not qualify the full application adapters.
+
 See individual source files for platform-specific details:
 - [zoopla.md](zoopla.md)
 - [rightmove.md](rightmove.md)
