@@ -1,0 +1,460 @@
+{
+  "schema_version": 1,
+  "version": "2026-09-29-agent-v1",
+  "reviewer": "Codex multimodal agent",
+  "review_date": "2026-09-29",
+  "purpose": "Development adjudication and regression cases; not an independent human-labelled holdout or authorization to change live memberships.",
+  "prior_exposure": "Reviewer had already seen live matcher outcomes and two suspected misses. Review deck hides predictions, but this review is not blind.",
+  "coverage": "All 50 listing galleries and available original floorplans viewed, descriptive text/features inspected; ambiguous images enlarged. All 1225 pairs screened mechanically; 51 broad-screen pairs plus seven additional counterfactual candidates adjudicated. Unreviewed pairs are not negatives.",
+  "input_sha256": {
+    "properties.db": "e2bdf0073f39067b85a8f1deb707b828cd369f45c9244a9c0360aed2f0934fa7",
+    "events.jsonl": "417d73e2b522ef97f444e9a3dd9a15424452724ab9283de2c52ce526071caf55"
+  },
+  "listing_ids": {
+    "O01": "onthemarket:6851720",
+    "O02": "onthemarket:9750088",
+    "O03": "onthemarket:20425618",
+    "O04": "onthemarket:20424591",
+    "O05": "onthemarket:3150003",
+    "O06": "onthemarket:11064641",
+    "O07": "onthemarket:20409523",
+    "O08": "onthemarket:20385686",
+    "O09": "onthemarket:20370518",
+    "O10": "onthemarket:20368474",
+    "O11": "onthemarket:12423727",
+    "O12": "onthemarket:20317264",
+    "O13": "onthemarket:20249338",
+    "O14": "onthemarket:20143681",
+    "O15": "onthemarket:19983662",
+    "O16": "onthemarket:19937070",
+    "O17": "onthemarket:19652092",
+    "O18": "onthemarket:17785160",
+    "O19": "onthemarket:11699021",
+    "O20": "onthemarket:20163460",
+    "O21": "onthemarket:20323250",
+    "O22": "onthemarket:19161258",
+    "O23": "onthemarket:20190434",
+    "O24": "onthemarket:20186925",
+    "O25": "onthemarket:19836825",
+    "R01": "rightmove:93075393",
+    "R02": "rightmove:93648756",
+    "R03": "rightmove:93643656",
+    "R04": "rightmove:93639357",
+    "R05": "rightmove:93593679",
+    "R06": "rightmove:93589635",
+    "R07": "rightmove:93549909",
+    "R08": "rightmove:93317997",
+    "R09": "rightmove:93134076",
+    "R10": "rightmove:93032499",
+    "R11": "rightmove:92645574",
+    "R12": "rightmove:92037342",
+    "R13": "rightmove:91938783",
+    "R14": "rightmove:172081808",
+    "R15": "rightmove:92145288",
+    "R16": "rightmove:93255555",
+    "R17": "rightmove:93067692",
+    "R18": "rightmove:93028908",
+    "R19": "rightmove:92353701",
+    "R20": "rightmove:92353155",
+    "R21": "rightmove:92277987",
+    "R22": "rightmove:90358545",
+    "R23": "rightmove:151572749",
+    "R24": "rightmove:93379668",
+    "R25": "rightmove:92331951"
+  },
+  "same_home_groups": [
+    {
+      "case_id": "S01",
+      "members": [
+        "R01",
+        "O02"
+      ],
+      "confidence": "high_agent_judgment",
+      "rationale": "Wilmot: same four photographs, including the brick chimney kitchen, purple sofa and green rug; matching floorplan and listing text. Distinct from the other Wilmot units."
+    },
+    {
+      "case_id": "S02",
+      "members": [
+        "R02",
+        "O03"
+      ],
+      "confidence": "high_agent_judgment",
+      "rationale": "Meath Crescent: same four photographs of the occupied living/kitchen space and building, same floorplan, fifth-floor description and agency reference CHPK3582527."
+    },
+    {
+      "case_id": "S03",
+      "members": [
+        "R03",
+        "O04"
+      ],
+      "confidence": "high_agent_judgment",
+      "rationale": "Allgood Street: same four photographs and irregular third-floor floorplan. O04 supplies Flat 12; the matching interior, balcony and text corroborate that more specific address."
+    },
+    {
+      "case_id": "S04",
+      "members": [
+        "R05",
+        "O05"
+      ],
+      "confidence": "high_agent_judgment",
+      "rationale": "Corfield Street: same four photographs and ground-floor two-bedroom layout. Kitchen appliances, bedroom details and exterior agree."
+    },
+    {
+      "case_id": "S05",
+      "members": [
+        "R07",
+        "O07"
+      ],
+      "confidence": "high_agent_judgment",
+      "rationale": "Hackney Road: same four photographs, including pink sofas, tall arched windows, wooden chest and fitted kitchen; matching text. Different from the two-floor Hackney Road flat."
+    },
+    {
+      "case_id": "S06",
+      "members": [
+        "R08",
+        "O10"
+      ],
+      "confidence": "high_agent_judgment",
+      "rationale": "Millenium Place: same four photographs, including the skylit kitchen, and same second-floor floorplan. Different from the third-floor R04 unit."
+    },
+    {
+      "case_id": "S07",
+      "members": [
+        "R09",
+        "O01"
+      ],
+      "confidence": "high_agent_judgment",
+      "rationale": "Hackney Road: same four photographs and split first/second-floor plan; same wooden kitchen, living-room stairwell and description."
+    },
+    {
+      "case_id": "S08",
+      "members": [
+        "R10",
+        "O12"
+      ],
+      "confidence": "high_agent_judgment",
+      "rationale": "Columbia Road: same four photographs and long first-floor plan; same industrial window grid, kitchen and agency reference CHPK0185159."
+    },
+    {
+      "case_id": "S09",
+      "members": [
+        "R11",
+        "O13"
+      ],
+      "confidence": "high_agent_judgment",
+      "rationale": "Wilmot: same four photographs and lower-ground-floor garden plan; same white kitchen, patio doorway and agency reference CHPK3247417. Different from both other Wilmot units."
+    },
+    {
+      "case_id": "S10",
+      "members": [
+        "R12",
+        "O14"
+      ],
+      "confidence": "high_agent_judgment",
+      "rationale": "Queensbridge Road: same four photographs and floorplan geometry; same canal-side block, kitchen, patterned rug and agency reference CHPK3464168. Small rendered measurement text is not the basis for the decision."
+    },
+    {
+      "case_id": "S11",
+      "members": [
+        "R15",
+        "O20"
+      ],
+      "confidence": "high_agent_judgment",
+      "rationale": "Cadogan Terrace: same four photographs, first-floor plan and property reference 3009430. The text explicitly says the furnished photos are from a previous tenancy; identity and current furnishing must remain separate questions."
+    },
+    {
+      "case_id": "S12",
+      "members": [
+        "R16",
+        "O19"
+      ],
+      "confidence": "high_agent_judgment",
+      "rationale": "Prince Edward Road: same four photographs and second-floor floorplan labelled Wallis Road; matching black kitchen and balcony geometry. The title/plan street-name difference occurs in both sources."
+    },
+    {
+      "case_id": "S13",
+      "members": [
+        "R17",
+        "O21"
+      ],
+      "confidence": "high_agent_judgment",
+      "rationale": "San House: same four photographs of the building, cream kitchen and open-plan room, including matching windows and balcony door; same description."
+    },
+    {
+      "case_id": "S14",
+      "members": [
+        "R21",
+        "O24"
+      ],
+      "confidence": "high_agent_judgment",
+      "rationale": "Sky Apartments: same four photographs and seventh-floor plan, including the occupied kitchen and distinctive furniture; agency reference CHPK3707955 agrees."
+    },
+    {
+      "case_id": "S15",
+      "members": [
+        "R22",
+        "O25"
+      ],
+      "confidence": "high_agent_judgment",
+      "rationale": "Chelmer Road: same four photographs and first-floor two-bedroom plan, plus property reference 2487475 in both text and photo watermark. Availability dates differ by one day, which is not unit identity evidence."
+    },
+    {
+      "case_id": "S16",
+      "members": [
+        "R19",
+        "R20"
+      ],
+      "confidence": "high_agent_judgment",
+      "rationale": "Southborough Road: same exterior and three occupied interior photographs, down to plants, green chairs, cushions and kitchen objects; same full postcode, coordinates, rent, bedrooms and description apart from a disclaimer. Two distinct Rightmove listing IDs for the same advertised home."
+    },
+    {
+      "case_id": "S17",
+      "members": [
+        "R13",
+        "O08",
+        "O09"
+      ],
+      "confidence": "high_agent_judgment",
+      "rationale": "Wilmot GBP1850: same window and curtain pattern, projecting wall beside the kitchen opening, circular wire mirror, framed horizontal mirror, wall art, lamps, white cabinet and rug. R13/O08 show the same black-tiled kitchen and cabinet layout from different angles and both describe the second floor. O09 shows the same living room from closer viewpoints. Portable heater, furniture positions, lighting and floor appearance vary; the combined architectural and distinctive-object evidence supports one advertised home. No reliance on one decorative item alone."
+    }
+  ],
+  "different_home_cases": [
+    {
+      "case_id": "D01",
+      "left": [
+        "R01",
+        "O02"
+      ],
+      "right": [
+        "R11",
+        "O13"
+      ],
+      "confidence": "high_agent_judgment",
+      "rationale": "Wilmot top-floor brick-feature kitchen and tall windows versus lower-ground white kitchen, patio access and different floorplan."
+    },
+    {
+      "case_id": "D02",
+      "left": [
+        "R01",
+        "O02"
+      ],
+      "right": [
+        "R13",
+        "O08",
+        "O09"
+      ],
+      "confidence": "high_agent_judgment",
+      "rationale": "Wilmot brick chimney, grey kitchen and differently shaped living room versus cream kitchen with black subway tiles, projecting wall and distinctive wire mirror; different floorplans for R01/R13. Near-identical coordinates and similar rents do not identify the unit."
+    },
+    {
+      "case_id": "D03",
+      "left": [
+        "R11",
+        "O13"
+      ],
+      "right": [
+        "R13",
+        "O08",
+        "O09"
+      ],
+      "confidence": "high_agent_judgment",
+      "rationale": "Lower-ground garden flat with external patio door versus second-floor flat with a different internal plan and black-tiled separate kitchen."
+    },
+    {
+      "case_id": "D04",
+      "left": [
+        "R06"
+      ],
+      "right": [
+        "O06"
+      ],
+      "confidence": "high_agent_judgment",
+      "rationale": "Cheshire: R06 floorplan is 33.3 square metres, irregular entrance and narrow shower room; O06 is 43.0 square metres on the third floor with a balcony and a different entrance/bathroom arrangement. Window geometry and kitchen fixtures also differ."
+    },
+    {
+      "case_id": "D05",
+      "left": [
+        "R06"
+      ],
+      "right": [
+        "O16"
+      ],
+      "confidence": "high_agent_judgment",
+      "rationale": "Cheshire: R06 has two shuttered sash windows, central chimney/storage and a compact irregular plan; O16 has a broad double balcony door, recessed ceiling lights and a different modern open-plan kitchen. Distinct physical layouts."
+    },
+    {
+      "case_id": "D06",
+      "left": [
+        "R04"
+      ],
+      "right": [
+        "R08",
+        "O10"
+      ],
+      "confidence": "high_agent_judgment",
+      "rationale": "Millennium Place: third floor, 37.53 square metres and different room arrangement versus second floor, approximately 44.2 square metres with skylit kitchen. Shared building/postcode is not shared dwelling."
+    },
+    {
+      "case_id": "D07",
+      "left": [
+        "R07",
+        "O07"
+      ],
+      "right": [
+        "R09",
+        "O01"
+      ],
+      "confidence": "high_agent_judgment",
+      "rationale": "Hackney Road: pink-sofa reception with arched windows and cream kitchen versus unfurnished split-level flat with rectangular sash windows and wooden kitchen. Separate floor configurations and locations."
+    },
+    {
+      "case_id": "D08",
+      "left": [
+        "R17",
+        "O21"
+      ],
+      "right": [
+        "O23"
+      ],
+      "confidence": "high_agent_judgment",
+      "rationale": "Bradstock: San House single-level one-bedroom flat with modern cream kitchen versus Granard House seventh-floor two-bedroom maisonette with timber-panelled kitchen ceiling and internal staircase. This comparison crosses the bedroom block."
+    },
+    {
+      "case_id": "D09",
+      "left": [
+        "R05",
+        "O05"
+      ],
+      "right": [
+        "R11",
+        "O13"
+      ],
+      "confidence": "high_agent_judgment",
+      "rationale": "Nearby Corfield and Wilmot: ground-floor two-bedroom plan with separate kitchen and bay-fronted reception versus one-bedroom lower-ground garden layout and open white kitchen. This comparison crosses the bedroom block."
+    },
+    {
+      "case_id": "D10",
+      "left": [
+        "R10"
+      ],
+      "right": [
+        "R14"
+      ],
+      "confidence": "high_agent_judgment",
+      "rationale": "Nearby Columbia/Virginia: wide gridded reception window and long first-floor plan versus second-floor period conversion with a distinct L-shaped plan, sash windows and small galley kitchen."
+    },
+    {
+      "case_id": "D11",
+      "left": [
+        "R01"
+      ],
+      "right": [
+        "O07"
+      ],
+      "confidence": "high_agent_judgment",
+      "rationale": "Wilmot brick-feature grey kitchen and green-rug reception versus Hackney Road arched-window reception, pink sofas and cream kitchen.",
+      "selection": "Additional qualifying pair under the deliberately relaxed threshold experiment."
+    },
+    {
+      "case_id": "D12",
+      "left": [
+        "R03"
+      ],
+      "right": [
+        "O12"
+      ],
+      "confidence": "high_agent_judgment",
+      "rationale": "Allgood third-floor modern development with irregular plan and handleless white kitchen versus Columbia first-floor flat with long narrow plan and broad gridded windows.",
+      "selection": "Additional qualifying pair under the deliberately relaxed threshold experiment."
+    },
+    {
+      "case_id": "D13",
+      "left": [
+        "R03"
+      ],
+      "right": [
+        "O16"
+      ],
+      "confidence": "high_agent_judgment",
+      "rationale": "Allgood third-floor irregular flat with white handleless peninsula kitchen versus Cheshire first-floor flat with broad double balcony door and a different kitchen/reception arrangement. Different physical layout as well as different advertised street and floor.",
+      "selection": "Additional qualifying pair under the deliberately relaxed threshold experiment."
+    },
+    {
+      "case_id": "D14",
+      "left": [
+        "R06"
+      ],
+      "right": [
+        "O01"
+      ],
+      "confidence": "high_agent_judgment",
+      "rationale": "Cheshire compact single-level flat with shuttered windows and narrow shower-room plan versus Hackney split-level first/second-floor plan and wooden galley kitchen.",
+      "selection": "Additional qualifying pair under the deliberately relaxed threshold experiment."
+    },
+    {
+      "case_id": "D15",
+      "left": [
+        "R07"
+      ],
+      "right": [
+        "O02"
+      ],
+      "confidence": "high_agent_judgment",
+      "rationale": "Hackney pink-sofa reception with arched windows and cream kitchen versus Wilmot brick-feature grey kitchen and differently shaped living room.",
+      "selection": "Additional qualifying pair under the deliberately relaxed threshold experiment."
+    },
+    {
+      "case_id": "D16",
+      "left": [
+        "R10"
+      ],
+      "right": [
+        "O04"
+      ],
+      "confidence": "high_agent_judgment",
+      "rationale": "Columbia long narrow first-floor plan and industrial-style gridded glazing versus Allgood modern third-floor irregular plan and white peninsula kitchen.",
+      "selection": "Additional qualifying pair under the deliberately relaxed threshold experiment."
+    },
+    {
+      "case_id": "D17",
+      "left": [
+        "R13"
+      ],
+      "right": [
+        "O17"
+      ],
+      "confidence": "high_agent_judgment",
+      "rationale": "Wilmot period second-floor flat with projecting wall, black-tiled kitchen and sash-style window geometry versus Weymouth tower-block flat with wide horizontal modern glazing and a different living-room layout.",
+      "selection": "Additional qualifying pair under the deliberately relaxed threshold experiment."
+    }
+  ],
+  "uncertain_pairs": [
+    {
+      "case_id": "U01",
+      "members": [
+        "O06",
+        "O16"
+      ],
+      "rationale": "Similar modern Cheshire Street interiors and coordinates only 1.81 metres apart, but the advertisements say third versus first floor. O06 also discloses digitally enhanced marketing images. Different homes is plausible and they must remain separate; retained evidence lacks a corroborated unit identifier for a definitive label."
+    }
+  ],
+  "unmatched_listing_notes": {
+    "R04": "Different Millennium Place unit; compared with R08/O10.",
+    "R06": "Compact Cheshire Street unit; compared with O06 and O16.",
+    "R14": "Virginia Road; compared with nearby Columbia Road R10.",
+    "R18": "Furrow Lane/Alvares House: distinctive corner-block exterior and occupied first-floor flat with white kitchen and arched doorway. No counterpart found in this capture.",
+    "R23": "Moulins Road: lower-ground flat with rear-garden access and separate white kitchen. No counterpart found in this capture.",
+    "R24": "Terront Road: two-bedroom first-floor Victorian conversion, bay windows and wooden kitchen. No counterpart found in this capture.",
+    "R25": "St Anns Road: two-bedroom renovated flat with green cabinetry and distinct two-window reception. No counterpart found in this capture.",
+    "O06": "Cheshire Street third-floor unit; R06 is different, relationship to O16 remains uncertain.",
+    "O11": "Diss Street/George Loveless House: eighth-floor plan and separate galley kitchen. No counterpart found in this capture.",
+    "O15": "Turin Street: two bedrooms, distinctive brick feature wall and balcony room. No counterpart found in this capture. Its fourth original gallery photo is a bathroom, incorrectly promoted to a floorplan by the live heuristic; this does not establish a duplicate.",
+    "O16": "Cheshire Street first-floor advertisement; R06 is different, relationship to O06 remains uncertain.",
+    "O17": "Weymouth Terrace: tower-block exterior, second-floor description, renovation text and distinct reception. No counterpart found in this capture.",
+    "O18": "Bethnal Green Road: two-bedroom split-level flat on second/third floors, parquet floor and visible staircase. No counterpart found in this capture.",
+    "O22": "Trego Road: new development, blue kitchen and broad balcony glazing. No counterpart found in this capture.",
+    "O23": "Granard House, Bradstock Road: seventh-floor two-bedroom maisonette. Different from San House R17/O21."
+  },
+  "unlabelled_pair_policy": "Keep every other pair unreviewed. Absence of a found counterpart is not an exhaustive negative label.",
+  "evidence_index": "Private data/dedup-review-2026-09-29/manifest.json maps neutral IDs to original source URLs, cached files and image SHA256. Raw listing text and images are not distributed in this label file."
+}

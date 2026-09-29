@@ -61,6 +61,8 @@ The run correctly finished **`incomplete`**, with discovery health **`partial`**
 
 ### Accepted and rejected match review
 
+**Subsequent review:** [direct visual/textual adjudication of all 50 listings](../reviews/2026-09-29-deduplication-quality-review.md) now supports all 15 accepted pairs, confirms the Southborough pair and all three Wilmot advertisements as high-confidence agent judgments, and retains one other uncertain relationship. Supported consolidations would reduce 35 cards to 32. Offline threshold changes demonstrate a wrong Cheshire merge at 22 and 24. These are versioned development labels, not independent human truth. The sections below retain the original investigation chronology; the linked review supplies the fuller assessment.
+
 Every accepted live pair had four gallery-hash matches. Recomputing from each source's original image URLs found an exact perceptual-hash match in all 15 pairs; it did not compare against galleries augmented by the merge. Prices and bedrooms agree for all pairs. The lowest accepted total was 102.838, the highest 125; these are weighted scores, **not probabilities**.
 
 The reviewed Chelmer Road pair (`rightmove:90358545`, `onthemarket:19836825`) shares the same kitchen photograph and explicit property reference 2487475. The Wilmot Street pair (`rightmove:93075393`, `onthemarket:9750088`) also shares the same kitchen image and listing features. These developer checks support those accepted pairs; they are not independent labels for a benchmark and do not establish overall dedup precision or recall.
@@ -71,6 +73,8 @@ Two additional candidate types need review:
 2. **Two listings on the same portal.** `rightmove:92353701` and `rightmove:92353155` advertise the same Southborough Road address/postcode, £2,250 rent and one bedroom, with four matching cached photos and closely matching descriptions. They remain separate because the matcher skips any overlapping source. Changing that guard alone is unsafe: current merged projections include maps keyed by portal, so multiple listings from one portal need explicit identity/membership support before merging.
 
 There is also conflicting furnishing evidence: the accepted £1,800 Wilmot Street pair's features say “furnished”, although the search requested unfurnished/part-furnished. Local filters currently enforce rent, bedrooms and location, not a normalized furnishing contract. Treat this as a source/filter coverage case for PR11, not proof that a portal query parameter is always broken.
+
+The later visual audit also explains the 36-floorplan enrichment count: 35 listings have source-declared plans, while `onthemarket:19983662` had a white bathroom gallery photo promoted by the heuristic at confidence 0.665. The source declares no plan; the promoted bytes are identical to that photograph. This is a confirmed classification defect, not a missing captured floorplan. See the linked review for reproduction and PR11/14/21 follow-up. No model assessment reached this property in the batch.
 
 ### Network-blocked replays
 
