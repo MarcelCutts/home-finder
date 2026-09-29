@@ -322,6 +322,7 @@ async def _run_scrape(
         total_found=len(all_properties),
         by_source=_source_counts(all_properties),
     )
+    logger.debug("scraping_selection", property_ids=[prop.unique_id for prop in all_properties])
 
     if not all_properties:
         logger.info("no_properties_found")

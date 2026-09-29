@@ -58,17 +58,21 @@ def small_analysis_config() -> AnalysisConfig:
 
 
 def small_spend_policy(budget_usd: str) -> SpendPolicy:
+    return _bounded_spend_policy(budget_usd, max_properties=1, maximum_usd="1")
+
+
+def _bounded_spend_policy(budget_usd: str, *, max_properties: int, maximum_usd: str) -> SpendPolicy:
     policy = SpendPolicy(
         per_call_usd=Decimal(budget_usd),
         daily_usd=Decimal(budget_usd),
         monthly_usd=Decimal(budget_usd),
         lifetime_usd=Decimal(budget_usd),
-        max_total_attempts=2,
+        max_total_attempts=2 * max_properties,
         max_in_flight=1,
         max_attempts_per_operation=1,
     )
-    if not Decimal("0") <= policy.daily_usd <= Decimal("1"):
-        raise ValueError("This one-property smoke permits a total budget of at most US$1")
+    if not Decimal("0") <= policy.daily_usd <= Decimal(maximum_usd):
+        raise ValueError(f"This experiment permits a total budget of at most US${maximum_usd}")
     return policy
 
 
@@ -123,13 +127,15 @@ def _write_report(path: Path, report: dict[str, Any]) -> None:
         os.fsync(handle.fileno())
 
 
-def audit_report(report: dict[str, Any], *, budget_usd: Decimal) -> dict[str, bool]:
+def audit_report(
+    report: dict[str, Any], *, budget_usd: Decimal, max_properties: int = 1
+) -> dict[str, bool]:
     """Check operating invariants independently of whether an assessment exists."""
     counts, spend = report["counts"], report["spending"]
     return {
-        "at_most_one_property": counts["properties"] <= 1,
-        "at_most_one_assessment": counts["quality_analyses"] <= 1,
-        "at_most_two_model_attempts": counts["paid_attempts"] == spend["attempts"] <= 2,
+        "property_limit": counts["properties"] <= max_properties,
+        "assessment_limit": counts["quality_analyses"] <= max_properties,
+        "model_attempt_limit": counts["paid_attempts"] == spend["attempts"] <= 2 * max_properties,
         "within_total_model_budget": spend["lifetime_accounted_nanousd"] + spend["held_nanousd"]
         <= nanousd(budget_usd),
         "no_exceeded_reservations": spend["over_reservation_count"] == 0,
@@ -153,11 +159,57 @@ def _application_sources_sha256() -> str:
 
 async def run_smoke(output: Path, *, source: str, area: str, budget_usd: str) -> dict[str, Any]:
     """Invoke once per CLI process, with a fresh database and process-scoped logging."""
-    if source not in {"rightmove", "openrent", "zoopla", "onthemarket"}:
-        raise ValueError("Unknown source")
     if re.fullmatch(r"[A-Za-z]{1,2}[0-9][0-9A-Za-z]?", area) is None:
         raise ValueError("Smoke scope must be exactly one postcode outcode")
-    policy = small_spend_policy(budget_usd)
+    return await _run_observed_pipeline(
+        output,
+        sources={source},
+        areas=[area],
+        max_properties=1,
+        policy=small_spend_policy(budget_usd),
+        timeout_seconds=600,
+    )
+
+
+async def run_batch_smoke(
+    output: Path, *, sources: set[str], areas: list[str], max_properties: int, budget_usd: str
+) -> dict[str, Any]:
+    """Observe up to 50 input listings, sharing a fresh ledger and no recovery backlog.
+
+    Equal per-source quotas bound selected listings before criteria filtering;
+    complete search pages may retain more observations. No source is topped up
+    automatically if another returns fewer than its quota.
+    """
+    if not 1 <= max_properties <= 50 or not sources or max_properties % len(sources):
+        raise ValueError("Choose 1-50 listings, evenly divisible between the selected sources")
+    return await _run_observed_pipeline(
+        output,
+        sources=sources,
+        areas=areas,
+        max_properties=max_properties,
+        policy=_bounded_spend_policy(budget_usd, max_properties=max_properties, maximum_usd="10"),
+        timeout_seconds=2400,
+    )
+
+
+async def _run_observed_pipeline(
+    output: Path,
+    *,
+    sources: set[str],
+    areas: list[str],
+    max_properties: int,
+    policy: SpendPolicy,
+    timeout_seconds: int,
+) -> dict[str, Any]:
+    if not sources or not sources <= {"rightmove", "openrent", "zoopla", "onthemarket"}:
+        raise ValueError("Unknown source")
+    if (
+        not areas
+        or len(areas) > 20
+        or any(re.fullmatch(r"[A-Za-z]{1,2}[0-9][0-9A-Za-z]?", area) is None for area in areas)
+    ):
+        raise ValueError("Provide between one and twenty postcode outcodes")
+    per_source_limit = max_properties // len(sources)
     inherited = Settings()
     if policy.daily_usd and not inherited.anthropic_api_key.get_secret_value():
         raise ValueError("A positive model budget requires an Anthropic API key")
@@ -166,7 +218,7 @@ async def run_smoke(output: Path, *, source: str, area: str, budget_usd: str) ->
     settings = Settings(  # type: ignore[call-arg]
         _env_file=None,
         database_path=str(output / "properties.db"),
-        search_areas=area.lower(),
+        search_areas=",".join(areas).lower(),
         min_price=inherited.min_price,
         max_price=inherited.max_price,
         min_bedrooms=inherited.min_bedrooms,
@@ -183,7 +235,7 @@ async def run_smoke(output: Path, *, source: str, area: str, budget_usd: str) ->
         enable_quality_filter=True,
         analysis_config=small_analysis_config(),
         analysis_spend_policy=policy,
-        max_analysis_per_run=1,
+        max_analysis_per_run=max_properties,
         quality_concurrency=1,
         quality_filter_max_images=4,
         require_floorplan=False,
@@ -199,13 +251,16 @@ async def run_smoke(output: Path, *, source: str, area: str, budget_usd: str) ->
     structlog.contextvars.bind_contextvars(smoke_id=smoke_id, dry_run=True)
     started = time.monotonic()
     report: dict[str, Any] = {
-        "schema_version": 2,
+        "schema_version": 3,
         "smoke_id": smoke_id,
         "started_at": datetime.now(UTC).isoformat(),
         "scope": {
-            "source": source,
-            "area": area.upper(),
-            "max_properties": 1,
+            "sources": sorted(sources),
+            "areas": [area.upper() for area in areas],
+            "max_properties": max_properties,
+            "max_selected_per_source": per_source_limit,
+            "limit_applies_to": "selected listings before criteria filtering and deduplication",
+            "timeout_seconds": timeout_seconds,
             "max_gallery_images": 4,
             "max_model_images_including_floorplan": 4,
             "floorplan_required": False,
@@ -239,11 +294,11 @@ async def run_smoke(output: Path, *, source: str, area: str, budget_usd: str) ->
     try:
         async with PropertyStorage(settings.database_path) as storage:
             try:
-                async with asyncio.timeout(600):
+                async with asyncio.timeout(timeout_seconds):
                     await run_pipeline(
                         settings,
-                        max_per_scraper=1,
-                        only_scrapers={source},
+                        max_per_scraper=per_source_limit,
+                        only_scrapers=sources,
                         dry_run=True,
                         storage=storage,
                     )
@@ -269,7 +324,7 @@ async def run_smoke(output: Path, *, source: str, area: str, budget_usd: str) ->
                             counts[table] = row[0]
                     async with conn.execute(
                         "SELECT unique_id, enrichment_status, notification_status, "
-                        "analysis_attempts "
+                        "analysis_attempts, sources, source_urls "
                         "FROM properties ORDER BY unique_id"
                     ) as cursor:
                         report["properties"] = [dict(row) for row in await cursor.fetchall()]
@@ -277,16 +332,24 @@ async def run_smoke(output: Path, *, source: str, area: str, budget_usd: str) ->
                         "SELECT property_unique_id, overall_rating FROM quality_analyses"
                     ) as cursor:
                         report["assessments"] = [dict(row) for row in await cursor.fetchall()]
+                    async with conn.execute(
+                        "SELECT unique_id, source, merged_id FROM source_listings "
+                        "ORDER BY unique_id"
+                    ) as cursor:
+                        report["source_membership"] = [dict(row) for row in await cursor.fetchall()]
                     async with conn.execute("PRAGMA integrity_check") as cursor:
                         report["integrity"] = [row[0] for row in await cursor.fetchall()]
                     async with conn.execute("PRAGMA foreign_key_check") as cursor:
                         report["foreign_key_errors"] = sum(1 for _ in await cursor.fetchall())
                 report["counts"] = counts
         complete = (
-            len(report.get("assessments", [])) == 1
-            and report["assessments"][0]["overall_rating"] is not None
+            bool(report.get("assessments"))
+            and len(report["assessments"]) == report["counts"]["properties"]
+            and all(item["overall_rating"] is not None for item in report["assessments"])
         )
-        report["checks"] = audit_report(report, budget_usd=policy.daily_usd)
+        report["checks"] = audit_report(
+            report, budget_usd=policy.daily_usd, max_properties=max_properties
+        )
         report["status"] = (
             "failed"
             if interrupted or not all(report["checks"].values())
@@ -304,6 +367,28 @@ async def run_smoke(output: Path, *, source: str, area: str, budget_usd: str) ->
     finally:
         report["completed_at"] = datetime.now(UTC).isoformat()
         report["duration_seconds"] = round(time.monotonic() - started, 3)
+        selections = [e for e in evidence.events if e.get("event") == "scraping_summary"]
+        if selections:
+            report["selection"] = selections[-1]
+            report["target_reached"] = selections[-1]["total_found"] == max_properties
+            if "checks" in report:
+                report["checks"]["selected_input_limit"] = (
+                    selections[-1]["total_found"] <= max_properties
+                )
+        report["deduplication"] = [
+            event
+            for event in evidence.events
+            if event.get("event")
+            in {
+                "deduplication_candidate_summary",
+                "deduplication_block_summary",
+                "properties_merged",
+                "canonical_merge_deferred",
+                "cross_run_property_fates",
+                "deduplication_merge_summary",
+                "match_rejected_no_image_evidence",
+            }
+        ]
         report["diagnostics"] = [
             event
             for event in evidence.events
@@ -311,6 +396,9 @@ async def run_smoke(output: Path, *, source: str, area: str, budget_usd: str) ->
             in {
                 "pipeline_started",
                 "pipeline_discovery_finished",
+                "scraping_summary",
+                "scraping_selection",
+                "scraping_complete",
                 "analysis_queue_selected",
                 "analyzing_property",
                 "visual_analysis_complete",
@@ -320,6 +408,7 @@ async def run_smoke(output: Path, *, source: str, area: str, budget_usd: str) ->
                 "criteria_filter_summary",
                 "location_filter_summary",
                 "enrichment_summary",
+                "post_enrichment_funnel",
                 "cross_run_property_fates",
                 "smoke_interrupted",
                 "analysis_dispatch_deferred",
@@ -333,6 +422,8 @@ async def run_smoke(output: Path, *, source: str, area: str, budget_usd: str) ->
             }
             or event.get("level") in {"warning", "error", "critical"}
         ]
+        if report.get("checks") and not all(report["checks"].values()):
+            report["status"] = "failed"
         logger.info(
             "smoke_finished",
             status=report["status"],
@@ -343,7 +434,9 @@ async def run_smoke(output: Path, *, source: str, area: str, budget_usd: str) ->
         )
         evidence.close()
         report["events_sha256"] = hashlib.sha256(evidence.path.read_bytes()).hexdigest()
-        _write_report(output / "report.json", evidence.clean(report))
+        # Each event is redacted as it is recorded. Do not truncate report arrays:
+        # a 50-listing experiment can have hundreds of source rows and decisions.
+        _write_report(output / "report.json", report)
         structlog.configure(processors=processors)
         structlog.contextvars.unbind_contextvars("smoke_id", "dry_run")
     if interrupted is not None:

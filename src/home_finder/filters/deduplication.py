@@ -276,10 +276,24 @@ class Deduplicator:
 
         # Score and merge within each block
         results: list[MergedProperty] = []
+        logger.info(
+            "deduplication_candidate_summary",
+            input_count=len(items),
+            blocks={key: len(value) for key, value in candidates_by_block.items()},
+            missing_outcode_ids=[mp.unique_id for mp in no_outcode],
+            image_hash_properties=len(image_hashes),
+        )
 
         for block_key, candidates in candidates_by_block.items():
             match_log: list[MatchDecision] = []
             groups = _group_items_greedy(candidates, image_hashes, match_log=match_log)
+            logger.info(
+                "deduplication_block_summary",
+                block=block_key,
+                input_ids=[mp.unique_id for mp in candidates],
+                output_groups=[[mp.unique_id for mp in group] for group in groups],
+                accepted_pairs=len(match_log),
+            )
             for group in groups:
                 if len(group) == 1:
                     results.append(group[0])
@@ -632,6 +646,26 @@ def _group_items_greedy(
                 continue
 
             score = calculate_match_score(prop_i, prop_j, image_hashes)
+            both_have_galleries = (
+                prop_i.unique_id in image_hashes and prop_j.unique_id in image_hashes
+            )
+            logger.debug(
+                "deduplication_pair_scored",
+                prop1=prop_i.unique_id,
+                prop2=prop_j.unique_id,
+                score=score.to_dict(),
+                gallery_hash_counts=[
+                    len(image_hashes.get(prop_i.unique_id, [])),
+                    len(image_hashes.get(prop_j.unique_id, [])),
+                ],
+                eligible_for_grouping=score.is_match
+                and not (both_have_galleries and score.image_hash == 0),
+                reason="below_match_threshold"
+                if not score.is_match
+                else "no_shared_image"
+                if both_have_galleries and score.image_hash == 0
+                else "qualifying_pair",
+            )
 
             if score.total >= 40:
                 logger.debug(
@@ -649,11 +683,6 @@ def _group_items_greedy(
                 # location signals (postcode, coords, street, outcode) are
                 # perfectly correlated for properties in the same building,
                 # so high location scores are uninformative in this case.
-                both_have_galleries = (
-                    image_hashes
-                    and prop_i.unique_id in image_hashes
-                    and prop_j.unique_id in image_hashes
-                )
                 if both_have_galleries and score.image_hash == 0:
                     logger.debug(
                         "match_rejected_no_image_evidence",
