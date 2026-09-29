@@ -285,7 +285,11 @@ class RightmoveScraper(BaseScraper):
         structured = parse_structured_search(soup)
         if structured is not None:
             if structured.parse_errors:
-                logger.warning("rightmove_search_parse_failed", errors=structured.parse_errors)
+                logger.warning(
+                    "rightmove_search_parse_failed",
+                    errors=structured.parse_errors,
+                    reasons=structured.error_reasons,
+                )
             return structured
         result = SearchPage()
 

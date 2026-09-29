@@ -49,6 +49,34 @@ def test_structured_search_retains_summary_coordinates_and_rent(next_payload) ->
     assert second.price_pcm == 1600
 
 
+def test_search_feature_objects_retain_plain_source_words(next_payload):
+    item = next_payload["props"]["pageProps"]["searchResults"]["properties"][0]
+    item["keyFeatures"] = [
+        {
+            "order": 1,
+            "description": "Available October",
+            "htmlDescription": "<b>Available October</b>",
+        },
+        {"order": 2, "description": "Fitted appliances", "htmlDescription": "Fitted appliances"},
+    ]
+    result = parse_structured_search(as_soup(next_payload))
+    assert result.parse_errors == 0 and len(result.properties) == 2
+    assert result.properties[0].listing_metadata.features.value == (
+        "Available October",
+        "Fitted appliances",
+    )
+
+
+def test_malformed_feature_reports_field_without_echoing_payload(next_payload):
+    item = next_payload["props"]["pageProps"]["searchResults"]["properties"][0]
+    item["keyFeatures"] = [{"description": {"secret": "private source value"}}]
+    result = parse_structured_search(as_soup(next_payload))
+    assert result.parse_errors == 1
+    assert result.error_reasons == {"features.value:string_type": 1}
+    assert "private" not in json.dumps(result.error_reasons)
+    assert len(result.properties) == 1
+
+
 @pytest.mark.parametrize(
     "field,value",
     [

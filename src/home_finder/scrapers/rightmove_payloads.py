@@ -10,7 +10,7 @@ from typing import Any
 from urllib.parse import urljoin
 
 from bs4 import BeautifulSoup
-from pydantic import HttpUrl
+from pydantic import HttpUrl, ValidationError
 
 from home_finder.models import Property, PropertySource
 from home_finder.models.observations import (
@@ -31,6 +31,7 @@ MAX_DETAIL_DEPTH = 64
 class SearchPage:
     properties: list[Property] = field(default_factory=list)
     parse_errors: int = 0
+    error_reasons: dict[str, int] = field(default_factory=dict)
 
 
 def _portal_date(raw: Any, meaning: str, *, reason: str = "") -> dict[str, Any] | None:
@@ -87,6 +88,10 @@ def _search_metadata(listing: dict[str, Any]) -> ObservationFields:
             )
     features = listing.get("keyFeatures")
     if features:
+        if isinstance(features, list) and all(isinstance(item, dict) for item in features):
+            # Retained September search payloads use ordered feature objects.
+            # Their plain description is source text; htmlDescription is markup.
+            features = [item.get("description") for item in features]
         fields["features"] = {"value": features}
     return ObservationFields.model_validate(fields)
 
@@ -119,13 +124,22 @@ def parse_structured_search(soup: BeautifulSoup) -> SearchPage | None:
         ):
             raise ValueError("ambiguous_empty_search")
     except (ValueError, KeyError, TypeError, RecursionError):
-        return SearchPage(parse_errors=1)
+        return SearchPage(parse_errors=1, error_reasons={"invalid_search_payload": 1})
     result = SearchPage()
     for listing in listings:
         try:
             result.properties.append(_search_listing(listing))
-        except (ValueError, KeyError, TypeError, AttributeError):
+        except (ValueError, KeyError, TypeError, AttributeError) as exc:
             result.parse_errors += 1
+            if isinstance(exc, ValidationError):
+                # Paths and error types are useful without logging source text.
+                error = exc.errors(include_input=False, include_url=False)[0]
+                reason = ".".join(str(part) for part in error["loc"][:2]) + ":" + error["type"]
+            elif type(exc) is ValueError:
+                reason = str(exc)[:80]
+            else:
+                reason = type(exc).__name__
+            result.error_reasons[reason] = result.error_reasons.get(reason, 0) + 1
     return result
 
 

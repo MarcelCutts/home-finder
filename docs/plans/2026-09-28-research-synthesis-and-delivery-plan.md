@@ -523,7 +523,7 @@ Expose process liveness separately from database readiness, worker heartbeat, so
 
 ### PR10 — Repair and fixture the Rightmove parsing contract [M]
 
-**Implementation records:** [structured search and legacy JSON repair](2026-09-28-pr10-rightmove-contracts.md), then [captured indexed-detail decoder](2026-09-28-pr10-indexed-detail.md). These are partial slices: typeahead, dated metadata projections, additional encoded floorplan examples and full adapter qualification remain open. Continue independent PR20; do not mark PR10/11 or the scheduled live PR18 capture complete.
+**Implementation records:** [structured search and legacy JSON repair](2026-09-28-pr10-rightmove-contracts.md), then [captured indexed-detail decoder](2026-09-28-pr10-indexed-detail.md). The [29 September search-feature repair](2026-09-29-pr10-search-feature-objects.md) handles current feature objects and logs validation reason counts, verified against retained response bytes and a fresh application search. These are partial slices: typeahead, dated metadata projections, additional encoded floorplan examples and full adapter qualification remain open. Continue independent PR20; do not mark PR10/11 or the scheduled live PR18 capture complete.
 
 **Depends on:** PR01, PR06a/09a and O2 for live acquisition. **Outcome:** supported current Rightmove payloads are parsed deterministically or fail visibly; work does not wait for full coverage infrastructure.
 
