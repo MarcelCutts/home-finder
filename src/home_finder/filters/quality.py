@@ -768,7 +768,12 @@ def _visual_output(response: Any) -> dict[str, Any]:
     check_stop_reason(response, "visual")
     tools = [block for block in response.content if isinstance(block, ToolUseBlock)]
     if len(tools) != 1 or tools[0].name != "property_visual_analysis":
-        raise output_failure("visual", "malformed_output", response)
+        raise output_failure(
+            "visual",
+            "malformed_output",
+            response,
+            diagnostics={"reason": "expected_one_visual_tool", "tool_block_count": len(tools)},
+        )
     return validate_output(tools[0].input, _VisualAnalysisResponse, "visual", response)
 
 
@@ -1099,6 +1104,7 @@ class PropertyQualityFilter:
             logger.warning(
                 "analysis_output_failed",
                 property_id=merged.unique_id,
+                output_diagnostics=exc.diagnostics,
                 **exc.failure.model_dump(),
             )
             return merged, self._create_failed_analysis(value, exc)

@@ -310,6 +310,7 @@ class AnalysisSpendMeter:
         try:
             cost = 0
             usage_fields: dict[str, Any] = {}
+            output_diagnostics: dict[str, Any] = {}
             outcome: str
             if response.status_code >= 400:
                 rejection = provider_rejection(response.status_code, payload, request_id)
@@ -328,6 +329,7 @@ class AnalysisSpendMeter:
                     scope.validate(await response.parse())
                 except AnalysisOutputError as exc:
                     outcome = exc.failure.kind
+                    output_diagnostics = exc.diagnostics
                 except Exception:
                     outcome = "malformed_output"
                 stop = payload.get("stop_reason")
@@ -357,6 +359,7 @@ class AnalysisSpendMeter:
             outcome=outcome,
             accounted_usd=usd_text(cost),
             duration_ms=round((time.monotonic() - started) * 1000, 1),
+            output_diagnostics=output_diagnostics,
             **usage_fields,
         )
         if cost > reserved:
