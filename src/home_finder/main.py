@@ -300,6 +300,15 @@ async def _run_pipeline_with_storage(
                 if pre is not None:
                     progress = pre
             finally:
+                logger.info(
+                    "pipeline_discovery_finished",
+                    collection_status=progress.collection_status,
+                    scraped=progress.scraped_count,
+                    enriched=progress.enriched_count,
+                    ready_for_analysis=len(progress.merged_to_process),
+                    stage_seconds=progress.stage_timings,
+                    scrapers=[asdict(metric) for metric in progress.scraper_metrics],
+                )
                 if run_id is not None:
                     await finish_before_cancelling(
                         _record_pre_analysis_progress(storage, run_id, progress)

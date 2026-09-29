@@ -45,8 +45,10 @@ class SpendPolicy(BaseModel):
     monthly_usd: USD
     max_in_flight: int = Field(default=5, strict=True, ge=1, le=50)
     max_attempts_per_operation: int = Field(default=2, strict=True, ge=1, le=3)
+    lifetime_usd: USD | None = None
+    max_total_attempts: int | None = Field(default=None, strict=True, ge=1, le=10000)
 
-    @field_validator("per_call_usd", "daily_usd", "monthly_usd", mode="before")
+    @field_validator("per_call_usd", "daily_usd", "monthly_usd", "lifetime_usd", mode="before")
     @classmethod
     def _exact_amounts(cls, value: Any) -> Any:
         if isinstance(value, (bool, float)):
@@ -77,18 +79,51 @@ class RateCard(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    version: Literal["anthropic-sonnet-4-6-global-standard-2026-09-28-v1"] = (
-        "anthropic-sonnet-4-6-global-standard-2026-09-28-v1"
-    )
+    version: Literal[
+        "anthropic-sonnet-4-6-global-standard-2026-09-28-v1",
+        "anthropic-sonnet-5-5-global-standard-2026-09-29-v1",
+    ] = "anthropic-sonnet-4-6-global-standard-2026-09-28-v1"
     provider: Literal["anthropic"] = "anthropic"
-    model: Literal["claude-sonnet-4-6"] = "claude-sonnet-4-6"
+    model: Literal["claude-sonnet-4-6", "claude-sonnet-5-5"] = "claude-sonnet-4-6"
     currency: Literal["USD"] = "USD"
-    input_nanousd: Literal[3000] = 3000
-    output_nanousd: Literal[15000] = 15000
-    cache_write_5m_nanousd: Literal[3750] = 3750
-    cache_write_1h_nanousd: Literal[6000] = 6000
-    cache_read_nanousd: Literal[300] = 300
+    input_nanousd: Literal[3000, 2000] = 3000
+    output_nanousd: Literal[15000, 10000] = 15000
+    cache_write_5m_nanousd: Literal[3750, 2500] = 3750
+    cache_write_1h_nanousd: Literal[6000, 4000] = 6000
+    cache_read_nanousd: Literal[300, 200] = 300
     input_context_bound: Literal[1000000] = 1000000
+
+    @model_validator(mode="after")
+    def _coherent_rates(self) -> "RateCard":
+        actual = (
+            self.version,
+            self.input_nanousd,
+            self.output_nanousd,
+            self.cache_write_5m_nanousd,
+            self.cache_write_1h_nanousd,
+            self.cache_read_nanousd,
+        )
+        expected = {
+            "claude-sonnet-4-6": (
+                "anthropic-sonnet-4-6-global-standard-2026-09-28-v1",
+                3000,
+                15000,
+                3750,
+                6000,
+                300,
+            ),
+            "claude-sonnet-5-5": (
+                "anthropic-sonnet-5-5-global-standard-2026-09-29-v1",
+                2000,
+                10000,
+                2500,
+                4000,
+                200,
+            ),
+        }
+        if actual != expected[self.model]:
+            raise ValueError("Rate card does not match its model and version")
+        return self
 
     def cost(self, usage: BillableUsage) -> int:
         return (
@@ -100,20 +135,40 @@ class RateCard(BaseModel):
         )
 
     def reservation(self, phase: PhaseConfig) -> int:
-        """Cover a full context at the highest input rate, plus maximum output.
+        """Cover admitted input at the highest input rate, plus maximum output.
 
-        This deliberately avoids treating approximate token counting or cache
-        hits as a hard bound. Regional/priority/batch/server-tool charges are
-        outside this rate card and must not be dispatched under it.
+        The default reserves the full context. Smaller explicit limits require
+        the local supported-payload admission policy; they are not a provider
+        input or dollar cap. Cache hits never reduce the reservation. Regional,
+        priority, batch and server-tool charges are outside this rate card.
         """
         if (phase.provider, phase.model) != (self.provider, self.model):
             raise ValueError("Unpriced provider/model")
-        return self.input_context_bound * self.cache_write_1h_nanousd + (
+        # An explicit input limit is checked against the supported payload at
+        # the native HTTP boundary. Older configurations keep the full context.
+        input_bound = phase.input_token_limit or self.input_context_bound
+        return input_bound * self.cache_write_1h_nanousd + (
             phase.max_output_tokens * self.output_nanousd
         )
 
 
 SONNET_STANDARD_RATES = RateCard()
+SONNET_5_5_STANDARD_RATES = RateCard(
+    version="anthropic-sonnet-5-5-global-standard-2026-09-29-v1",
+    model="claude-sonnet-5-5",
+    input_nanousd=2000,
+    output_nanousd=10000,
+    cache_write_5m_nanousd=2500,
+    cache_write_1h_nanousd=4000,
+    cache_read_nanousd=200,
+)
+
+
+def rate_card_for(model: str) -> RateCard:
+    for card in (SONNET_STANDARD_RATES, SONNET_5_5_STANDARD_RATES):
+        if card.model == model:
+            return card
+    raise ValueError("Unpriced model")
 
 
 class AttemptSpec(BaseModel):

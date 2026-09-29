@@ -9,13 +9,13 @@ from uuid import uuid4
 import aiosqlite
 
 from home_finder.models.spend import (
-    SONNET_STANDARD_RATES,
     AttemptSpec,
     ConfirmedCost,
     ProviderRejection,
     SpendPolicy,
     UsageSettlement,
     nanousd,
+    rate_card_for,
     usd_text,
 )
 from home_finder.models.spend import (
@@ -110,7 +110,8 @@ class SpendRepository:
 
     async def admit(self, spec: AttemptSpec, policy: SpendPolicy) -> str:
         """Reserve and record exactly one attempt before any network dispatch."""
-        reserve = SONNET_STANDARD_RATES.reservation(spec.phase_config)
+        rates = rate_card_for(spec.phase_config.model)
+        reserve = rates.reservation(spec.phase_config)
         if reserve > nanousd(policy.per_call_usd):
             raise SpendDeferred("per_call_limit")
         attempt_id = uuid4().hex
@@ -133,6 +134,18 @@ class SpendRepository:
             if attempts >= policy.max_attempts_per_operation:
                 raise SpendDeferred("attempt_limit")
             report = await spend_report(conn, now)
+            if report["over_reservation_count"]:
+                raise SpendDeferred("reservation_exceeded")
+            if (
+                policy.max_total_attempts is not None
+                and report["attempts"] >= policy.max_total_attempts
+            ):
+                raise SpendDeferred("total_attempt_limit")
+            if policy.lifetime_usd is not None and (
+                report["lifetime_accounted_nanousd"] + report["held_nanousd"] + reserve
+                > nanousd(policy.lifetime_usd)
+            ):
+                raise SpendDeferred("lifetime_limit")
             if report["in_flight"] >= policy.max_in_flight:
                 raise SpendDeferred("concurrency_limit")
             if report["day_committed_nanousd"] + reserve > nanousd(policy.daily_usd):
@@ -155,8 +168,8 @@ class SpendRepository:
                     spec.request_sha256,
                     spec.provenance.model_dump_json(),
                     spec.provenance.fingerprint,
-                    SONNET_STANDARD_RATES.version,
-                    SONNET_STANDARD_RATES.model_dump_json(),
+                    rates.version,
+                    rates.model_dump_json(),
                     policy.model_dump_json(),
                     utc_stamp(now),
                     reserve,

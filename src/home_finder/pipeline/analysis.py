@@ -359,6 +359,15 @@ async def _run_quality_and_save(
     if not all_to_analyze:
         return 0, None
 
+    logger.info(
+        "analysis_queue_selected",
+        fresh=len(pre.merged_to_process),
+        recovery=len(retried),
+        selected=len(all_to_analyze),
+        cap=max_per_run,
+        property_ids=[merged.unique_id for merged in all_to_analyze],
+    )
+
     # Ward lookup and evidence recovery need no work on a completely empty drain.
     await _lookup_wards(storage)
 

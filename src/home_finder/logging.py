@@ -24,6 +24,7 @@ def configure_logging(*, json_output: bool = False, level: int = logging.INFO) -
         # Production: JSON output
         processors: list[structlog.types.Processor] = [
             *shared_processors,
+            structlog.processors.format_exc_info,
             structlog.processors.JSONRenderer(),
         ]
     else:

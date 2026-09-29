@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import time
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager, suppress
 from contextvars import ContextVar
@@ -12,6 +13,8 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 from home_finder.filters.analysis_contracts import AnalysisOutputError, Phase
+from home_finder.filters.request_budget import input_reservation_tokens
+from home_finder.logging import get_logger
 from home_finder.models.analysis import AnalysisProvenance
 from home_finder.models.spend import (
     AttemptSpec,
@@ -20,8 +23,12 @@ from home_finder.models.spend import (
     SpendDeferred,
     SpendPolicy,
     UsageSettlement,
+    rate_card_for,
+    usd_text,
 )
 from home_finder.utils.async_tasks import finish_before_cancelling
+
+logger = get_logger(__name__)
 
 if TYPE_CHECKING:
     from anthropic import APIRequest, AsyncAPIResponse, AsyncCallNext
@@ -57,10 +64,12 @@ def _default_cache_ttl(value: Any) -> bool:
     return True
 
 
-def reported_usage(body: dict[str, Any]) -> BillableUsage:
+def reported_usage(
+    body: dict[str, Any], *, expected_model: str = "claude-sonnet-4-6"
+) -> BillableUsage:
     """Price only the known model, billing modes and complete non-overlapping units."""
     usage = body.get("usage")
-    if not isinstance(usage, dict) or body.get("model") != "claude-sonnet-4-6":
+    if not isinstance(usage, dict) or body.get("model") != expected_model:
         raise ValueError("Missing usage or unpriced response model")
     if usage.get("service_tier") not in {None, "standard"} or usage.get("inference_geo") not in {
         None,
@@ -139,6 +148,13 @@ async def _retain_uncertainty(
 ) -> None:
     try:
         await finish_before_cancelling(repo.mark_unknown(attempt_id, reason, request_id=request_id))
+        logger.warning(
+            "analysis_attempt_unknown",
+            attempt_id=attempt_id,
+            reason=reason,
+            request_id=request_id,
+            reservation_held=True,
+        )
     except Exception:
         # The committed dispatched reservation still holds if this write fails.
         raise SpendDeferred("ledger_unavailable") from None
@@ -174,6 +190,7 @@ class AnalysisSpendMeter:
         scope = self._context.get()
         repo, policy = self._repository, self._policy
         if scope is None or repo is None or policy is None:
+            logger.info("analysis_dispatch_deferred", reason="spending_not_configured")
             raise SpendDeferred("spending_not_configured")
         body = request.json
         phase_config = getattr(scope.provenance.configuration, scope.phase)
@@ -211,6 +228,22 @@ class AnalysisSpendMeter:
             raise SpendDeferred("unpriced_request")
         # Pin billing scope independently of account-level priority defaults.
         body = {**body, "service_tier": "standard_only", "inference_geo": "global"}
+        input_bound = None
+        if phase_config.input_token_limit is not None:
+            try:
+                input_bound = input_reservation_tokens(body)
+                if input_bound > phase_config.input_token_limit:
+                    raise SpendDeferred("input_limit")
+            except SpendDeferred as exc:
+                logger.warning(
+                    "analysis_dispatch_deferred",
+                    property_id=scope.property_id,
+                    phase=scope.phase,
+                    reason=exc.reason,
+                    input_bound=input_bound,
+                    input_limit=phase_config.input_token_limit,
+                )
+                raise
         request = request.copy(body=body)
         request_digest = _digest(body)
         spec = AttemptSpec(
@@ -222,16 +255,36 @@ class AnalysisSpendMeter:
             phase=scope.phase,
             provenance=scope.provenance,
         )
+        log = logger.bind(
+            property_id=scope.property_id,
+            phase=scope.phase,
+            model=phase_config.model,
+            operation_key=spec.operation_key,
+            request_sha256=request_digest,
+            configuration_sha256=scope.provenance.fingerprint,
+        )
+        reserved = rate_card_for(phase_config.model).reservation(phase_config)
         try:
             attempt_id = await repo.admit(spec, policy)
+            log = log.bind(attempt_id=attempt_id)
+            log.info(
+                "analysis_attempt_reserved",
+                reserved_usd=usd_text(reserved),
+                input_bound=input_bound,
+                input_limit=phase_config.input_token_limit,
+                max_output_tokens=phase_config.max_output_tokens,
+            )
             await repo.mark_dispatched(attempt_id)
-        except SpendDeferred:
+        except SpendDeferred as exc:
+            log.warning("analysis_dispatch_deferred", reason=exc.reason)
             raise
         except Exception:
             # No provider work may proceed if durable admission fails.
             raise SpendDeferred("ledger_unavailable") from None
 
         request_id: str | None = None
+        started = time.monotonic()
+        log.info("analysis_attempt_dispatched")
         try:
             response = await call_next(request)
             request_id = response.headers.get("request-id")
@@ -255,15 +308,21 @@ class AnalysisSpendMeter:
             raise SpendDeferred("uncertain_provider_outcome") from None
 
         try:
+            cost = 0
+            usage_fields: dict[str, Any] = {}
+            outcome: str
             if response.status_code >= 400:
                 rejection = provider_rejection(response.status_code, payload, request_id)
+                outcome = rejection.result
                 if rejection.result not in {"rate_limit", "transient"}:
                     response.http_response.headers["x-should-retry"] = "false"
                 action = repo.settle_rejection(attempt_id, rejection)
             else:
                 if response.status_code != 200 or not isinstance(payload, dict):
                     raise ValueError("Unsupported response")
-                usage = reported_usage(payload)
+                usage = reported_usage(payload, expected_model=phase_config.model)
+                cost = rate_card_for(phase_config.model).cost(usage)
+                usage_fields = usage.model_dump()
                 outcome = "success"
                 try:
                     scope.validate(await response.parse())
@@ -291,4 +350,16 @@ class AnalysisSpendMeter:
             await finish_before_cancelling(action)
         except Exception:
             raise SpendDeferred("ledger_unavailable") from None
+        log.info(
+            "analysis_attempt_settled",
+            request_id=request_id,
+            http_status=response.status_code,
+            outcome=outcome,
+            accounted_usd=usd_text(cost),
+            duration_ms=round((time.monotonic() - started) * 1000, 1),
+            **usage_fields,
+        )
+        if cost > reserved:
+            log.error("analysis_reservation_exceeded", accounted_usd=usd_text(cost))
+            raise SpendDeferred("reservation_exceeded")
         return response

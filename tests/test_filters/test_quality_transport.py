@@ -68,6 +68,7 @@ async def test_metered_requests_preserve_baseline_except_explicit_billing_scope(
         "output_tokens": 499,
         "cache_read_tokens": 2000,
         "cache_creation_tokens": 0,
+        "cost_adjustment_nanousd": 0,
     }
     assert native.is_closed
 

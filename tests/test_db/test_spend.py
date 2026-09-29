@@ -315,7 +315,7 @@ async def test_usage_exceeding_reservation_is_recorded_and_blocks_new_spend(in_m
     report = await repo.report()
     assert report["lifetime_accounted_nanousd"] == 7_500_000_000
     assert report["over_reservation_count"] == 1
-    with pytest.raises(SpendDeferred, match="daily_limit"):
+    with pytest.raises(SpendDeferred, match="reservation_exceeded"):
         await repo.admit(spec("next"), cap)
 
 
