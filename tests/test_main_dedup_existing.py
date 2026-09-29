@@ -1,6 +1,5 @@
 """Integration tests for the --dedup-existing CLI command."""
 
-import json
 from contextlib import asynccontextmanager
 from pathlib import Path
 from unittest.mock import patch
@@ -103,14 +102,14 @@ async def _run_with_storage(storage: PropertyStorage, settings: Settings) -> Non
 
 class TestRunDedupExisting:
     @pytest.mark.asyncio
-    async def test_merges_duplicate_properties(
+    async def test_reports_established_duplicates_without_erasing_them(
         self,
         settings: Settings,
         merged_otm: MergedProperty,
         merged_rm: MergedProperty,
         tmp_path: Path,
     ) -> None:
-        """Two properties at the same address/postcode/price should be merged."""
+        """Matching established homes need reviewed, reversible membership changes."""
         storage = PropertyStorage(":memory:")
         await storage.initialize()
 
@@ -135,30 +134,25 @@ class TestRunDedupExisting:
         all_props = await storage.get_all_properties()
         assert len(all_props) == 2
 
-        await _run_with_storage(storage, settings)
+        with structlog.testing.capture_logs() as captured:
+            await _run_with_storage(storage, settings)
 
-        # One property should remain, the other absorbed
+        # Both identities, source memberships and cached inputs remain intact.
         remaining = await storage.get_all_properties()
-        assert len(remaining) == 1
+        assert len(remaining) == 2
 
-        # The winner should have both sources in its sources JSON
         conn = await storage._get_connection()
-        cursor = await conn.execute(
-            "SELECT sources FROM properties WHERE unique_id = ?",
-            (remaining[0].property.unique_id,),
-        )
-        row = await cursor.fetchone()
-        assert row is not None
-        sources = json.loads(row["sources"]) if row["sources"] else []
-        assert len(sources) >= 2
-        assert "onthemarket" in sources
-        assert "rightmove" in sources
-
-        # Winner's image cache should have at least its own files
-        winner_dir = get_cache_dir(str(tmp_path), remaining[0].property.unique_id)
-        assert winner_dir.is_dir()
-        cached_files = list(winner_dir.iterdir())
-        assert len(cached_files) >= 1
+        cursor = await conn.execute("SELECT unique_id,merged_id FROM source_listings")
+        assert dict(await cursor.fetchall()) == {
+            merged_otm.unique_id: merged_otm.unique_id,
+            merged_rm.unique_id: merged_rm.unique_id,
+        }
+        assert list(otm_dir.iterdir()) and list(rm_dir.iterdir())
+        summary = next(event for event in captured if event["event"] == "dedup_complete")
+        assert summary["proposed_absorptions"] == summary["deferred"] == 1
+        assert summary["absorbed"] == 0 and summary["remaining"] == 2
+        refusal = next(event for event in captured if event["event"] == "canonical_merge_deferred")
+        assert any("established_property" in reasons for reasons in refusal["blockers"].values())
 
         await storage.close()
 

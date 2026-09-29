@@ -72,7 +72,7 @@ uv run home-finder --reanalyze          # Re-run quality analysis on flagged pro
 uv run home-finder --reanalyze --all    # Flag ALL analyzed properties for re-analysis
 uv run home-finder --reanalyze --outcode E2,E8  # Flag specific outcodes for re-analysis
 uv run home-finder --reanalyze --request-only   # Only flag for re-analysis, don't run it
-uv run home-finder --dedup-existing     # Retroactively merge duplicates already in the DB
+uv run home-finder --dedup-existing     # Report established duplicates; preserve their histories
 uv run home-finder --backfill-commute   # Backfill commute data for properties missing it
 uv run home-finder --generate-thumbnails   # Generate missing thumbnails for cached images
 uv run home-finder --check-off-market             # Check active properties for off-market signals

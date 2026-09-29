@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 
 from home_finder.config import Settings
 from home_finder.db import PropertyStorage
+from home_finder.db.merge_safety import MergeBlockedError
 from home_finder.filters import (
     CommuteFilter,
     CriteriaFilter,
@@ -113,12 +114,12 @@ async def _cross_run_deduplicate(
 
     # Map each anchor's source URLs to its DB unique_id so we can detect
     # merges even when the deduplicator picks a different canonical.
-    anchor_url_to_id: dict[str, str] = {}
+    anchor_url_to_ids: dict[str, set[str]] = {}
     anchor_by_id: dict[str, MergedProperty] = {}
     for anchor in db_anchors:
         anchor_by_id[anchor.canonical.unique_id] = anchor
         for url in anchor.source_urls.values():
-            anchor_url_to_id[str(url)] = anchor.canonical.unique_id
+            anchor_url_to_ids.setdefault(str(url), set()).add(anchor.canonical.unique_id)
 
     # Map source URLs from new properties to their original unique_id so we
     # can copy cached images from the new source to the anchor after merge.
@@ -138,14 +139,30 @@ async def _cross_run_deduplicate(
     anchors_updated = 0
     seen_anchor_ids: set[str] = set()
     absorbed_to_anchor: dict[str, str] = {}  # new_id -> anchor_id
+    retired_staging_ids: set[str] = set()
+    represented_new_ids: set[str] = set()
+    deferred_ids: set[str] = set()
+    new_by_id = {mp.unique_id: mp for mp in merged_to_notify}
     for merged in dedup_results:
         # Check if this result involves any DB anchor (by URL match)
-        matched_anchor_id: str | None = None
+        matched_anchor_ids: set[str] = set()
         for url in merged.source_urls.values():
-            aid = anchor_url_to_id.get(str(url))
-            if aid is not None:
-                matched_anchor_id = aid
-                break
+            matched_anchor_ids.update(anchor_url_to_ids.get(str(url), set()))
+        candidate_ids = {
+            new_url_to_unique_id[str(url)]
+            for url in merged.source_urls.values()
+            if str(url) in new_url_to_unique_id
+        }
+        if len(matched_anchor_ids) > 1:
+            deferred_ids.update(candidate_ids)
+            logger.warning(
+                "canonical_merge_deferred",
+                anchor_ids=sorted(matched_anchor_ids),
+                absorbed_ids=sorted(candidate_ids),
+                reason="multiple_established_anchors",
+            )
+            continue
+        matched_anchor_id = next(iter(matched_anchor_ids), None)
 
         if matched_anchor_id is not None:
             if matched_anchor_id in seen_anchor_ids:
@@ -163,18 +180,21 @@ async def _cross_run_deduplicate(
             original_anchor = anchor_by_id[matched_anchor_id]
 
             # Track which new IDs were absorbed into this anchor
-            absorbed_ids = [
-                new_url_to_unique_id[str(url)]
-                for url in merged.source_urls.values()
-                if str(url) in new_url_to_unique_id
-            ]
+            absorbed_ids = sorted(candidate_ids - {matched_anchor_id})
+
+            # Check history, move all source memberships and retire pending rows
+            # under one write lock. A refused group leaves every identity intact.
+            try:
+                retired = await storage.absorb_staging_properties(
+                    matched_anchor_id, merged, absorbed_ids=absorbed_ids
+                )
+            except MergeBlockedError:
+                deferred_ids.update(candidate_ids)
+                continue
+            represented_new_ids.update(candidate_ids)
+            retired_staging_ids.update(retired)
             for aid in absorbed_ids:
                 absorbed_to_anchor[aid] = matched_anchor_id
-
-            # Link absorbed source_listings and rebuild denormalized caches
-            await storage.update_merged_sources(
-                matched_anchor_id, merged, absorbed_ids=absorbed_ids
-            )
             anchors_updated += 1
 
             new_sources_added = [
@@ -238,33 +258,15 @@ async def _cross_run_deduplicate(
                 )
         else:
             genuinely_new.append(merged)
+            represented_new_ids.update(candidate_ids)
 
-    # Clean up unenriched DB rows consumed by anchor merges.
-    # When a re-enriched property merges into an existing anchor,
-    # update_merged_sources adds data to the anchor but the old
-    # unenriched row still exists — delete it.
+    # A refused or ambiguous group remains independently processable. Never infer
+    # deletion from absence in a deduplicator result (including a missing retry).
+    unrepresented_ids = new_by_id.keys() - represented_new_ids
+    genuinely_new.extend(new_by_id[uid] for uid in sorted(unrepresented_ids))
+    deferred_ids.update(unrepresented_ids)
     genuinely_new_ids = {m.unique_id for m in genuinely_new}
-    consumed_retries = re_enrichment_ids - genuinely_new_ids
-    for uid in consumed_retries:
-        await storage.delete_property(uid)
-        if data_dir:
-            clear_image_cache(data_dir, uid)
-        logger.debug("consumed_retry_cleaned", unique_id=uid)
-
-    # Safety net: re-link absorbed source_listings after the loop.
-    # update_merged_sources() already links inside the loop, but this
-    # second pass covers any edge case where an absorbed ID wasn't
-    # included in an update_merged_sources() call (e.g. if absorbed_ids
-    # calculation diverges from absorbed_to_anchor tracking).  Both calls
-    # are idempotent UPDATEs so the duplicate is harmless.
-    link_tuples: list[tuple[str, str]] = []
-    for new_uid, anchor_id in absorbed_to_anchor.items():
-        if new_uid in consumed_retries:
-            continue
-        link_tuples.append((new_uid, anchor_id))
-    if link_tuples:
-        await storage.link_source_listings(link_tuples)
-        logger.info("source_listings_linked", count=len(link_tuples))
+    consumed_retries = re_enrichment_ids & retired_staging_ids
 
     # Build per-property fates for observability
     fates: list[dict[str, str | int]] = []
@@ -276,7 +278,9 @@ async def _cross_run_deduplicate(
             "price": mp.canonical.price_pcm,
             "postcode": mp.canonical.postcode or "",
         }
-        if uid in genuinely_new_ids:
+        if uid in deferred_ids:
+            entry["fate"] = "retained_for_review"
+        elif uid in genuinely_new_ids:
             entry["fate"] = "genuinely_new"
         elif uid in consumed_retries:
             entry["fate"] = "consumed_retry"
@@ -285,7 +289,7 @@ async def _cross_run_deduplicate(
             entry["fate"] = "merged_into_anchor"
             entry["anchor"] = absorbed_to_anchor[uid]
         else:
-            entry["fate"] = "merged_into_anchor"
+            entry["fate"] = "represented_in_new_group"
         fates.append(entry)
 
     merged_into_anchor_count = sum(1 for f in fates if f["fate"] == "merged_into_anchor")
@@ -295,6 +299,7 @@ async def _cross_run_deduplicate(
         genuinely_new=len(genuinely_new_ids),
         merged_into_anchor=merged_into_anchor_count,
         consumed_retry=len(consumed_retries),
+        retained_for_review=len(deferred_ids),
         fates=fates,
     )
 
@@ -339,6 +344,10 @@ async def _cross_run_deduplicate(
                             "reason": "consumed_retry",
                         },
                     )
+                )
+            elif fate == "retained_for_review":
+                recorder.record(
+                    PropertyEvent(uid, src, "dedup_deferred", "dedup", {"reason": fate})
                 )
         await recorder.flush()
 

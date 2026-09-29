@@ -23,6 +23,11 @@ from home_finder.db.listing_text import (
     text_from_property_row,
     text_from_source_row,
 )
+from home_finder.db.merge_safety import (
+    MergeBlockedError,
+    ensure_staging_merge,
+    staging_blockers,
+)
 from home_finder.db.migrations import run_migrations
 from home_finder.db.observations import ObservationRepository
 from home_finder.db.pipeline_repo import PipelineRepository
@@ -609,25 +614,16 @@ class PropertyStorage:
         return [m for m in properties if m.canonical.unique_id not in seen]
 
     async def delete_property(self, unique_id: str) -> None:
-        """Delete a property and all related rows from the database.
+        """Retire only an unused pending staging row; preserve established history.
 
-        Used to clean up unenriched rows consumed by cross-platform anchor merges.
-        Linked source_listings have their ``merged_id`` set to NULL automatically
-        via the FK ``ON DELETE SET NULL``, so they can re-enter the pipeline.
+        Canonical merges use absorb_staging_properties so source reassociation
+        and retirement share one transaction. This standalone cleanup leaves
+        source evidence intact and unlinked. It is not an erase-history API.
         """
         async with self._transaction() as conn:
-            for table in (
-                "property_images",
-                "quality_analyses",
-                "status_events",
-                "viewing_messages",
-                "price_history",
-                "enquiry_log",
-            ):
-                await conn.execute(
-                    f"DELETE FROM {table} WHERE property_unique_id = ?",
-                    (unique_id,),
-                )
+            blockers = await staging_blockers(conn, [unique_id])
+            if blockers:
+                raise MergeBlockedError(blockers)
             await conn.execute(
                 "DELETE FROM properties WHERE unique_id = ?",
                 (unique_id,),
@@ -711,6 +707,7 @@ class PropertyStorage:
         merged: MergedProperty,
         *,
         absorbed_ids: list[str] | None = None,
+        _conn: aiosqlite.Connection | None = None,
     ) -> None:
         """Update golden record's denormalized caches from source_listings.
 
@@ -721,16 +718,19 @@ class PropertyStorage:
             existing_unique_id: The unique_id of the existing DB record.
             merged: The MergedProperty containing combined source data
                 (used for saving new images and source text).
-            absorbed_ids: unique_ids of source_listings to link to this
-                golden record before rebuilding.  When provided, sets
-                ``merged_id`` on matching source_listings rows.
+            absorbed_ids: Pending or unpromoted source identities to link. All
+                source rows owned by an absorbed staging property move together.
+                Established properties and protected histories require review.
+            _conn: Explicitly join an owning merge transaction.
         """
-        async with self._transaction() as conn:
+        absorbed_ids = sorted(set(absorbed_ids or []) - {existing_unique_id})
+        async with self._transaction(conn=_conn) as conn:
             # Link absorbed source listings to this golden record
             if absorbed_ids:
+                await ensure_staging_merge(conn, existing_unique_id, absorbed_ids)
                 await conn.executemany(
-                    "UPDATE source_listings SET merged_id = ? WHERE unique_id = ?",
-                    [(existing_unique_id, uid) for uid in absorbed_ids],
+                    "UPDATE source_listings SET merged_id = ? WHERE unique_id = ? OR merged_id = ?",
+                    [(existing_unique_id, uid, uid) for uid in absorbed_ids],
                 )
 
             # Rebuild denormalized caches from source_listings
@@ -781,12 +781,65 @@ class PropertyStorage:
                 await self.save_property_images(existing_unique_id, new_images, _conn=conn)
 
         logger.info(
-            "merged_sources_updated",
+            "merged_sources_updated" if _conn is None else "merge_projection_prepared",
             unique_id=existing_unique_id,
             sources=sources,
             min_price=min(prices),
             max_price=max(prices),
         )
+
+    async def absorb_staging_properties(
+        self, anchor_id: str, merged: MergedProperty, *, absorbed_ids: list[str]
+    ) -> list[str]:
+        """Atomically move source membership and retire only unprotected staging rows.
+
+        Images on disk are deliberately retained. A failed group leaves both
+        sides and their source memberships intact; no partial merge is applied.
+        Returns the IDs of property rows actually retired (sources may have no
+        promoted property row yet). Established identity merge/split is separate.
+        """
+        ids = sorted(set(absorbed_ids) - {anchor_id})
+        retired: list[str] = []
+        try:
+            async with self._transaction() as conn:
+                if not ids:
+                    await ensure_staging_merge(conn, anchor_id, ids)
+                await self.update_merged_sources(anchor_id, merged, absorbed_ids=ids, _conn=conn)
+                for uid in ids:
+                    async with conn.execute(
+                        "DELETE FROM properties WHERE unique_id = ?", (uid,)
+                    ) as cur:
+                        if cur.rowcount:
+                            retired.append(uid)
+        except MergeBlockedError as exc:
+            logger.warning(
+                "canonical_merge_deferred",
+                anchor_id=anchor_id,
+                absorbed_ids=ids,
+                reason="protected_or_unresolved_identity",
+                blockers=exc.blockers,
+            )
+            raise
+        except BaseException as exc:
+            # Cancellation can arrive while COMMIT is being acknowledged. Do
+            # not log a guessed rollback outcome or automatically replay writes.
+            logger.error(
+                "canonical_merge_interrupted",
+                anchor_id=anchor_id,
+                absorbed_ids=ids,
+                error_type=type(exc).__name__,
+                recovery="inspect_membership_before_retry",
+                exc_info=True,
+            )
+            raise
+        logger.info(
+            "canonical_merge_committed",
+            anchor_id=anchor_id,
+            absorbed_ids=ids,
+            retired_staging_ids=retired,
+            source_cache_cleanup="retained",
+        )
+        return retired
 
     async def save_merged_property(
         self,

@@ -6,12 +6,13 @@ import time
 
 from home_finder.config import Settings
 from home_finder.db import PropertyStorage
+from home_finder.db.merge_safety import MergeBlockedError
 from home_finder.filters import CommuteFilter, Deduplicator
 from home_finder.logging import get_logger
 from home_finder.models import CommuteResult
 from home_finder.models.commute import commute_minutes_projection
 from home_finder.pipeline.runner import exclusive_runner
-from home_finder.utils.image_cache import clear_image_cache, copy_cached_images
+from home_finder.utils.image_cache import copy_cached_images
 
 logger = get_logger(__name__)
 
@@ -249,10 +250,10 @@ async def run_check_off_market(
 
 @exclusive_runner
 async def run_dedup_existing(settings: Settings) -> None:
-    """Retroactively merge duplicate properties already in the database.
+    """Report established duplicate groups and preserve their histories.
 
-    Loads all stored properties, runs the deduplicator, and merges any
-    cross-platform duplicates that were ingested before image hashing was enabled.
+    Only unused pending staging rows can be retired automatically. Established
+    canonical memberships require the later reversible merge/review operation.
     """
     async with PropertyStorage(settings.database_path) as storage:
         # Load all properties from DB
@@ -284,6 +285,8 @@ async def run_dedup_existing(settings: Settings) -> None:
 
         # For each merged result that absorbed other properties, update the DB
         merged_count = 0
+        retired_count = 0
+        deferred_count = 0
         for merged in dedup_results:
             # Find which input properties were absorbed into this result
             merged_source_urls = {str(u) for u in merged.source_urls.values()}
@@ -301,10 +304,16 @@ async def run_dedup_existing(settings: Settings) -> None:
                 continue
 
             anchor_id = merged.canonical.unique_id
-            # Update DB anchor with merged sources
-            await storage.update_merged_sources(anchor_id, merged, absorbed_ids=absorbed_into_this)
+            try:
+                retired = await storage.absorb_staging_properties(
+                    anchor_id, merged, absorbed_ids=absorbed_into_this
+                )
+            except MergeBlockedError:
+                deferred_count += len(absorbed_into_this)
+                continue
 
-            # Copy cached images and delete absorbed properties
+            # Cache copies happen after the atomic database change.
+            # Retain the original files for recovery; never delete merge inputs.
             for absorbed_id in absorbed_into_this:
                 if settings.data_dir:
                     copied = copy_cached_images(settings.data_dir, absorbed_id, anchor_id)
@@ -315,9 +324,6 @@ async def run_dedup_existing(settings: Settings) -> None:
                             to_id=anchor_id,
                             count=copied,
                         )
-                await storage.delete_property(absorbed_id)
-                if settings.data_dir:
-                    clear_image_cache(settings.data_dir, absorbed_id)
                 logger.info(
                     "dedup_property_absorbed",
                     absorbed_id=absorbed_id,
@@ -325,11 +331,14 @@ async def run_dedup_existing(settings: Settings) -> None:
                 )
 
             merged_count += 1
+            retired_count += len(retired)
 
-        remaining = len(all_properties) - len(absorbed_ids)
+        remaining = len(all_properties) - retired_count
         logger.info(
             "dedup_complete",
             merged_groups=merged_count,
-            absorbed=len(absorbed_ids),
+            proposed_absorptions=len(absorbed_ids),
+            absorbed=retired_count,
+            deferred=deferred_count,
             remaining=remaining,
         )

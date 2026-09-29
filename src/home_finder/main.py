@@ -518,7 +518,7 @@ def main() -> None:
     parser.add_argument(
         "--dedup-existing",
         action="store_true",
-        help="Retroactively merge duplicate properties already in the database",
+        help="Report established duplicate groups without discarding their histories",
     )
     parser.add_argument(
         "--generate-thumbnails",
