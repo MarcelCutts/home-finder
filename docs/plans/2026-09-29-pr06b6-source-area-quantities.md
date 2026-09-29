@@ -1,6 +1,7 @@
 # PR06b-6: Preserve source area quantities without inventing exact totals
 
 **Date:** 29 September 2026. **Predecessor:** raw references `9d41a13`.
+**Commit:** `7361f43`.
 **Scope:** structured area evidence, decimal parsing, and the existing scalar supplied to analysis. No historical data repair or new source acquisition is implied.
 
 ## Defects and resulting behavior

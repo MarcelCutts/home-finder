@@ -26,7 +26,7 @@ from home_finder.models import Property, PropertySource
 from home_finder.models.observations import ObservationFields, SourceObservation
 from home_finder.models.source_area import SourceAreaReading, display_area_square_metres
 from home_finder.scrapers.constants import BROWSER_HEADERS
-from home_finder.scrapers.observations import detail_observation
+from home_finder.scrapers.observations import detail_observation, request_context
 from home_finder.scrapers.retry import RetryableHttpError
 from home_finder.scrapers.rightmove_payloads import detail_metadata, detail_property
 from home_finder.scrapers.source_area import AreaResult, rightmove_areas, single_area
@@ -545,7 +545,11 @@ class DetailFetcher:
     ) -> DetailPageData:
         if self._record_observations:
             data.source_observation = detail_observation(
-                prop, data, observed_at=observed_at, metadata=metadata
+                prop,
+                data,
+                observed_at=observed_at,
+                metadata=metadata,
+                request=request_context(str(prop.url)),
             )
         return data
 

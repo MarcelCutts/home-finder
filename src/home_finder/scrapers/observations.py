@@ -13,10 +13,12 @@ from uuid import uuid4
 from pydantic import HttpUrl, TypeAdapter, ValidationError
 
 from home_finder.logging import get_logger
-from home_finder.models import Property
+from home_finder.models import FurnishType, Property
 from home_finder.models.observations import (
+    CollectionQuery,
     ObservationFields,
     ObservationParser,
+    ObservationRequest,
     PublicURL,
     SourceObservation,
 )
@@ -25,6 +27,43 @@ if TYPE_CHECKING:
     from home_finder.scrapers.detail_fetcher import DetailPageData
 
 logger = get_logger(__name__)
+
+
+def collection_query(
+    *,
+    area: str,
+    min_price: int,
+    max_price: int,
+    min_bedrooms: int,
+    max_bedrooms: int,
+    furnish_types: tuple[FurnishType, ...] = (),
+    min_bathrooms: int = 0,
+    include_let_agreed: bool = True,
+) -> CollectionQuery:
+    return CollectionQuery.model_validate(
+        {
+            "area": area,
+            "min_price": min_price,
+            "max_price": max_price,
+            "min_bedrooms": min_bedrooms,
+            "max_bedrooms": max_bedrooms,
+            "furnish_types": tuple(item.value for item in furnish_types),
+            "min_bathrooms": min_bathrooms,
+            "include_let_agreed": include_let_agreed,
+        }
+    )
+
+
+def request_context(
+    url: str, *, query: CollectionQuery | None = None, page_index: int | None = None
+) -> ObservationRequest:
+    if not 0 < len(url) <= 16_384:
+        raise ValueError("Request URL is outside the supported fingerprint bound")
+    return ObservationRequest(
+        requested_url_sha256=hashlib.sha256(url.encode()).hexdigest(),
+        query=query,
+        page_index=page_index,
+    )
 
 
 def _listing_url(prop: Property) -> HttpUrl:
@@ -74,7 +113,10 @@ def search_parser(source: str) -> ObservationParser:
 
 
 def search_observations(
-    properties: list[Property], *, observed_at: datetime
+    properties: list[Property],
+    *,
+    observed_at: datetime,
+    request: ObservationRequest | None = None,
 ) -> tuple[list[Property], int]:
     """Stamp once after receipt, before policy changes/caps; no invented body hash.
 
@@ -109,6 +151,7 @@ def search_observations(
                 origin="search",
                 observed_at=observed_at,
                 parser=search_parser(prop.source.value),
+                request=request,
                 fields=ObservationFields.model_validate(fields),
             )
         except ValidationError:
@@ -149,6 +192,7 @@ def detail_observation(
     *,
     observed_at: datetime,
     metadata: ObservationFields | None = None,
+    request: ObservationRequest | None = None,
 ) -> SourceObservation | None:
     """Retain the parsed detail subset, never copied search facts or invented empties.
 
@@ -195,6 +239,7 @@ def detail_observation(
             origin="detail",
             observed_at=observed_at,
             parser=detail_parser(prop.source.value),
+            request=request,
             fields=ObservationFields.model_validate(fields),
             normalization_omissions=omissions or None,
         )

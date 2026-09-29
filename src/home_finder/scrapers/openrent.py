@@ -14,7 +14,7 @@ from home_finder.logging import get_logger
 from home_finder.models import FurnishType, Property, PropertySource
 from home_finder.scrapers.base import BaseScraper, ScrapeResult
 from home_finder.scrapers.constants import BROWSER_HEADERS
-from home_finder.scrapers.observations import search_observations
+from home_finder.scrapers.observations import collection_query, request_context, search_observations
 from home_finder.scrapers.retry import SCRAPER_WAIT, RetryableHttpError
 
 logger = get_logger(__name__)
@@ -139,6 +139,16 @@ class OpenRentScraper(BaseScraper):
             include_let_agreed=include_let_agreed,
         )
 
+        query = collection_query(
+            area=area,
+            min_price=min_price,
+            max_price=max_price,
+            min_bedrooms=min_bedrooms,
+            max_bedrooms=max_bedrooms,
+            furnish_types=furnish_types,
+            min_bathrooms=min_bathrooms,
+            include_let_agreed=include_let_agreed,
+        )
         parse_errors = 0
 
         async def fetch_page(page_idx: int) -> list[Property] | None:
@@ -158,7 +168,9 @@ class OpenRentScraper(BaseScraper):
                 return []
 
             page_properties, evidence_errors = search_observations(
-                page_properties, observed_at=observed_at
+                page_properties,
+                observed_at=observed_at,
+                request=request_context(url, query=query, page_index=page_idx),
             )
             parse_errors += evidence_errors
 

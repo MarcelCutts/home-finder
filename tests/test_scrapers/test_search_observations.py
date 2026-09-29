@@ -1,6 +1,7 @@
 """Fresh search evidence reaches persistence without invented capture provenance."""
 
 import asyncio
+import hashlib
 import json
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
@@ -141,15 +142,23 @@ async def test_http_search_boundaries_attach_evidence_before_pagination(
     event = result.properties[0].source_observation
     assert before <= event.observed_at <= datetime.now(UTC)
     assert event.source == source and event.parser.name == f"{source.value}.search"
+    request_url = scraper._fetch_page.call_args.args[0]
+    assert event.request.requested_url_sha256 == hashlib.sha256(request_url.encode()).hexdigest()
+    assert event.request.page_index == 0
+    assert event.request.query.area == "e8"
+    assert event.request.query.min_price == 1000 and event.request.query.max_price == 3000
+    assert event.request.query.min_bedrooms == 0 and event.request.query.max_bedrooms == 3
 
 
 async def test_crawlee_boundary_attaches_evidence_to_verified_fixture(fixtures_path):
     soup = BeautifulSoup((fixtures_path / "rightmove_next_search.html").read_text(), "html.parser")
     handler = []
+    requested_urls = []
     crawler = MagicMock()
     crawler.router.default_handler = handler.append
 
     async def crawl(_urls):
+        requested_urls.extend(_urls)
         await handler[0](SimpleNamespace(soup=soup))
 
     crawler.run = crawl
@@ -172,6 +181,54 @@ async def test_crawlee_boundary_attaches_evidence_to_verified_fixture(fixtures_p
         before <= p.source_observation.observed_at <= datetime.now(UTC)
         for p in result.observation_history
     )
+    for prop in result.observation_history:
+        request = prop.source_observation.request
+        assert request.query.area == "e8" and request.page_index == 0
+        assert (
+            request.requested_url_sha256 == hashlib.sha256(requested_urls[0].encode()).hexdigest()
+        )
+
+
+@pytest.mark.parametrize(
+    "scraper_class,source",
+    [
+        (OpenRentScraper, PropertySource.OPENRENT),
+        (OnTheMarketScraper, PropertySource.ONTHEMARKET),
+        (ZooplaScraper, PropertySource.ZOOPLA),
+    ],
+)
+async def test_two_page_receipts_keep_distinct_scope_but_identical_material(
+    scraper_class, source, make_property, monkeypatch
+):
+    scraper = scraper_class()
+    prop = make_property(source=source)
+    fetch = AsyncMock(return_value="<html>same fixture content</html>")
+    monkeypatch.setattr(scraper, "_fetch_page", fetch)
+    monkeypatch.setattr(scraper, "MAX_PAGES", 2)
+    if source != PropertySource.ZOOPLA:
+        monkeypatch.setattr(scraper, "PAGE_DELAY_SECONDS", 0)
+    if source == PropertySource.ONTHEMARKET:
+        monkeypatch.setattr(scraper, "_parse_next_data", lambda _html: [prop])
+    elif source == PropertySource.ZOOPLA:
+        monkeypatch.setattr(scraper, "_warm_up", AsyncMock())
+        monkeypatch.setattr(scraper, "_page_delay", AsyncMock())
+        monkeypatch.setattr(scraper, "_parse_rsc_properties", lambda _html: [prop])
+    else:
+        monkeypatch.setattr(scraper, "_parse_search_results", lambda *_args: [prop])
+    try:
+        result = await scraper.scrape(
+            min_price=1000, max_price=3000, min_bedrooms=0, max_bedrooms=3, area="e8"
+        )
+    finally:
+        await scraper.close()
+    assert len(result.observation_history) == 2
+    first, second = [prop.source_observation for prop in result.observation_history]
+    assert first.sha256 != second.sha256 and first.material_sha256 == second.material_sha256
+    assert [first.request.page_index, second.request.page_index] == [0, 1]
+    assert first.request.query == second.request.query
+    assert [first.request.requested_url_sha256, second.request.requested_url_sha256] == [
+        hashlib.sha256(call.args[0].encode()).hexdigest() for call in fetch.call_args_list
+    ]
 
 
 async def test_repeated_provider_id_retains_each_revision_and_latest_selection(sample_property):

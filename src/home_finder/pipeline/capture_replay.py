@@ -24,7 +24,11 @@ from home_finder.models.observations import (
 from home_finder.pipeline.capture import _parser_fingerprint, _stop_reason, _write_private
 from home_finder.pipeline.capture_evidence import VerifiedCapture, verified_capture
 from home_finder.scrapers.detail_fetcher import DetailFetcher, DetailPageData
-from home_finder.scrapers.observations import detail_observation, search_observations
+from home_finder.scrapers.observations import (
+    detail_observation,
+    request_context,
+    search_observations,
+)
 from home_finder.scrapers.onthemarket import OnTheMarketScraper
 from home_finder.scrapers.openrent import OpenRentScraper
 from home_finder.scrapers.rightmove import RightmoveScraper
@@ -50,7 +54,11 @@ class _ReplayDetailFetcher(DetailFetcher):
     ) -> DetailPageData:
         if self.captured_at is not None:
             data.source_observation = detail_observation(
-                prop, data, observed_at=self.captured_at, metadata=metadata
+                prop,
+                data,
+                observed_at=self.captured_at,
+                metadata=metadata,
+                request=request_context(str(self.response.request.url)),
             )
         return data
 
@@ -195,7 +203,9 @@ async def _replay_verified(capture: VerifiedCapture, output_root: Path) -> Path:
                 ]
                 if record.observed_at is not None:
                     observed, errors = search_observations(
-                        properties or [], observed_at=record.observed_at
+                        properties or [],
+                        observed_at=record.observed_at,
+                        request=request_context(str(request.url)),
                     )
                     observations = [p.source_observation for p in observed if p.source_observation]
                     result["normalization_errors"] = errors

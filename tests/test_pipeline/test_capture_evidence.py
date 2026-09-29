@@ -89,6 +89,9 @@ async def test_replay_exports_stable_exact_evidence_and_survives_ledger_roundtri
     assert a[0].fields.observed_floorplan_count.value == 0
     assert a[0].fields.agent.value.branch_id
     assert a[0].parser.name == "rightmove.search.capture_replay"
+    assert a[0].request.query is None and a[0].request.page_index is None
+    request_url = metadata(original)["plan"]["requests"][0]["url"]
+    assert a[0].request.requested_url_sha256 == hashlib.sha256(request_url.encode()).hexdigest()
     async with PropertyStorage(str(tmp_path / "isolated.db")) as db:
         receipt = await db.observations.ingest(a)
         assert receipt.inserted == 2

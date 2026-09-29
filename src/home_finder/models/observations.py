@@ -158,6 +158,39 @@ class ObservationParser(_EvidenceModel):
     code_sha256: Digest | None = None
 
 
+class CollectionQuery(_EvidenceModel):
+    """Requested collection filters, kept outside source-reported property facts."""
+
+    area: str = Field(min_length=1, max_length=100, pattern=r"\S")
+    min_price: int = Field(ge=0, le=1_000_000, strict=True)
+    max_price: int = Field(ge=0, le=1_000_000, strict=True)
+    min_bedrooms: int = Field(ge=0, le=100, strict=True)
+    max_bedrooms: int = Field(ge=0, le=100, strict=True)
+    furnish_types: tuple[Literal["furnished", "unfurnished", "part_furnished"], ...] = Field(
+        default=(), max_length=3
+    )
+    min_bathrooms: int = Field(default=0, ge=0, le=100, strict=True)
+    include_let_agreed: bool = Field(default=True, strict=True)
+
+    @model_validator(mode="after")
+    def valid_ranges(self) -> CollectionQuery:
+        if self.min_price > self.max_price or self.min_bedrooms > self.max_bedrooms:
+            raise ValueError("Collection query has reversed bounds")
+        return self
+
+
+class ObservationRequest(_EvidenceModel):
+    """Hash the requested URL argument; never retain credentials or raw query URLs.
+
+    This is request intent, not proof of the wire URL or a redirect's target.
+    Query filters are collector configuration, not evidence that a result fits.
+    """
+
+    requested_url_sha256: Digest
+    query: CollectionQuery | None = None
+    page_index: int | None = Field(default=None, ge=0, le=1000, strict=True)
+
+
 class SourceObservation(_EvidenceModel):
     schema_version: Literal[1] = 1
     producer_id: str = Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,79}$")
@@ -168,6 +201,7 @@ class SourceObservation(_EvidenceModel):
     origin: Literal["search", "detail", "correction"]
     observed_at: AwareDatetime
     parser: ObservationParser
+    request: ObservationRequest | None = None
     raw_capture: RawCaptureReference | None = None
     normalization_omissions: (
         dict[
@@ -218,6 +252,46 @@ class SourceObservation(_EvidenceModel):
     @property
     def sha256(self) -> str:
         return sha256_text(self.payload_json())
+
+    @property
+    def material_sha256(self) -> str:
+        """Version 1 material content, independent of receipt/parser provenance.
+
+        This is the observed subset, not a merged current projection or an
+        automatic extraction cache key. Price-only changes alter this digest;
+        consumers must choose their actual field dependencies separately.
+        """
+        return sha256_text(
+            canonical_json(
+                {
+                    "material_policy_version": 1,
+                    "source": self.source.value,
+                    "source_id": self.source_id,
+                    "listing_url": str(self.listing_url),
+                    "fields": self.fields.model_dump(mode="json", exclude_none=True),
+                    "normalization_omissions": self.normalization_omissions or {},
+                }
+            )
+        )
+
+    def field_material_sha256(self, name: str) -> str | None:
+        """Hash one reported field's value/state without its capture clock or IDs."""
+        if name not in ObservationFields.model_fields:
+            raise ValueError("Unknown observation field")
+        value = getattr(self.fields, name)
+        if value is None:
+            return None
+        return sha256_text(
+            canonical_json(
+                {
+                    "material_policy_version": 1,
+                    "source": self.source.value,
+                    "source_id": self.source_id,
+                    "field": name,
+                    "change": value.model_dump(mode="json", exclude_none=True),
+                }
+            )
+        )
 
 
 def field_authority(name: str, origin: str) -> int:

@@ -1,6 +1,7 @@
 """Receipt provenance survives image failure, cancellation and cross-source enrichment."""
 
 import asyncio
+import hashlib
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock
 
@@ -52,6 +53,8 @@ async def test_all_detail_boundaries_record_parsed_values_and_actual_receipt_tim
     assert event.source_unique_id == prop.unique_id and event.origin == "detail"
     assert event.parser.name == f"{source.value}.detail" and event.parser.code_sha256
     assert event.raw_capture is None
+    assert event.request.requested_url_sha256 == hashlib.sha256(str(prop.url).encode()).hexdigest()
+    assert event.request.query is None and event.request.page_index is None
     assert (
         event.fields.description.value if event.fields.description else None
     ) == detail.description
