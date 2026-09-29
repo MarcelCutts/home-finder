@@ -105,12 +105,57 @@ def test_explicit_weekly_rent_and_studio_are_supported(next_payload) -> None:
     assert result.properties[0].price_pcm == 1300 and result.properties[0].bedrooms == 0
 
 
-@pytest.mark.parametrize("count,errors", [(0, 0), (None, 1), (5, 1), (False, 1), ("0", 1)])
+@pytest.mark.parametrize(
+    "count,errors", [(0, 0), (None, 1), (5, 1), (False, 1), ("0", 0), ("0.0", 1), ("-1", 1)]
+)
 def test_only_explicit_zero_can_establish_empty_structured_search(next_payload, count, errors):
     payload = next_payload["props"]["pageProps"]["searchResults"]
     payload.update(properties=[], resultCount=count)
     result = parse_structured_search(as_soup(next_payload))
     assert result is not None and result.parse_errors == errors and result.properties == []
+
+
+def test_verified_beyond_final_page_is_exhausted_not_parse_drift(next_payload):
+    # Reduced from the separate 29 September E2 index=24 capture: HTTP 200,
+    # resultCount="14", total=1, page="2", last="0", no property records.
+    payload = next_payload["props"]["pageProps"]["searchResults"]
+    payload.update(
+        properties=[],
+        resultCount="14",
+        searchParameters={"index": "24", "numberOfPropertiesPerPage": "24"},
+        pagination={"total": 1, "page": "2", "last": "0"},
+    )
+    scraper = RightmoveScraper()
+    result = scraper._parse_search_page(as_soup(next_payload), requested_index=24)
+    assert result.end_of_results and result.parse_errors == 0 and not result.properties
+    # A stale/different response cannot establish that the requested first page
+    # is empty, even though its own pagination is internally coherent.
+    assert scraper._parse_search_page(as_soup(next_payload)).parse_errors == 1
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("resultCount", "25"),
+        ("resultCount", True),
+        ("resultCount", "14.0"),
+        ("pagination", {"total": 1, "page": "1", "last": "0"}),
+        ("pagination", {"total": 2, "page": "2", "last": "24"}),
+        ("searchParameters", {"index": "24", "numberOfPropertiesPerPage": "0"}),
+        ("searchParameters", {"index": "0", "numberOfPropertiesPerPage": "24"}),
+    ],
+)
+def test_empty_positive_count_requires_consistent_pagination(next_payload, field, value):
+    payload = next_payload["props"]["pageProps"]["searchResults"]
+    payload.update(
+        properties=[],
+        resultCount="14",
+        searchParameters={"index": "24", "numberOfPropertiesPerPage": "24"},
+        pagination={"total": 1, "page": "2", "last": "0"},
+    )
+    payload[field] = value
+    result = parse_structured_search(as_soup(next_payload), requested_index=24)
+    assert result is not None and result.parse_errors == 1 and not result.end_of_results
 
 
 @pytest.mark.parametrize(

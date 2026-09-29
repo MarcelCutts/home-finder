@@ -144,7 +144,7 @@ class RightmoveScraper(BaseScraper):
                 nonlocal parse_errors
                 observed_at = datetime.now(UTC)
                 soup = context.soup
-                parsed = self._parse_search_page(soup)
+                parsed = self._parse_search_page(soup, requested_index=index)
                 parse_errors += parsed.parse_errors
                 observed, evidence_errors = search_observations(
                     parsed.properties,
@@ -278,11 +278,11 @@ class RightmoveScraper(BaseScraper):
             return None
         return result.properties
 
-    def _parse_search_page(self, soup: BeautifulSoup) -> SearchPage:
+    def _parse_search_page(self, soup: BeautifulSoup, *, requested_index: int = 0) -> SearchPage:
         if is_challenge(str(soup)):
             logger.warning("rightmove_search_challenge")
             return SearchPage(parse_errors=1)
-        structured = parse_structured_search(soup)
+        structured = parse_structured_search(soup, requested_index=requested_index)
         if structured is not None:
             if structured.parse_errors:
                 logger.warning(
@@ -290,6 +290,8 @@ class RightmoveScraper(BaseScraper):
                     errors=structured.parse_errors,
                     reasons=structured.error_reasons,
                 )
+            elif structured.end_of_results:
+                logger.info("rightmove_search_exhausted", requested_index=requested_index)
             return structured
         result = SearchPage()
 
