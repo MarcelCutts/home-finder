@@ -10,15 +10,19 @@ _HOSTS = {
     "onthemarket": {"onthemarket.com", "www.onthemarket.com"},
 }
 _PATHS = {
-    "rightmove": re.compile(r"/properties/(\d+)/?"),
-    "zoopla": re.compile(r"/(?:to-rent/)?details/(\d+)/?"),
-    "onthemarket": re.compile(r"/details/(\d+)/?"),
-    "openrent": re.compile(r"/(?:property-to-rent/.+/|property/)?(\d+)/?"),
+    "rightmove": re.compile(r"/properties/([0-9]+)/?"),
+    "zoopla": re.compile(r"/(?:to-rent/)?details/([0-9]+)/?"),
+    "onthemarket": re.compile(r"/details/([0-9]+)/?"),
+    "openrent": re.compile(r"/(?:property-to-rent/.+/|property/)?([0-9]+)/?"),
 }
 
 
 def listing_id(source: str, url: str) -> str | None:
     """Match an explicit listing path; this is not response-target validation."""
+    # urlsplit silently strips some control characters and leading spaces.
+    # Identity resolution must not turn malformed input into an exact match.
+    if any(ord(character) <= 32 or ord(character) == 127 for character in url):
+        return None
     try:
         parsed = urlsplit(url)
         if (

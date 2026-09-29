@@ -6,7 +6,7 @@ import json
 import subprocess
 import sys
 from datetime import UTC, datetime, timedelta
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import aiosqlite
 import pytest
@@ -351,7 +351,12 @@ async def test_historical_migration_preserves_exact_rows_and_never_invents_fresh
     tmp_path, sample_property
 ):
     path = str(tmp_path / "historical.db")
-    with patch("home_finder.db.migrations.MIGRATIONS", MIGRATIONS[:9]):
+    # Simulate the version-9 writer as well as its schema: identity recording
+    # was introduced in version 11 and must not run while preparing this fixture.
+    with (
+        patch("home_finder.db.migrations.MIGRATIONS", MIGRATIONS[:9]),
+        patch("home_finder.db.storage.record_stored_identities", new_callable=AsyncMock),
+    ):
         async with PropertyStorage(path) as old:
             await old.save_property(sample_property)
             await old.update_source_text(

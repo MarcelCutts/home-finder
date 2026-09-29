@@ -14,6 +14,7 @@ if TYPE_CHECKING:
 
 import aiosqlite
 
+from home_finder.db.identities import record_stored_identities
 from home_finder.db.listing_text import persist_merged_text
 from home_finder.db.row_mappers import (
     ImageReader,
@@ -269,6 +270,7 @@ class PipelineRepository:
                     ),
                 )
 
+                await record_stored_identities(conn, [prop.unique_id])
                 # Link non-canonical source_listings by URL (in-run dedup absorbed sources)
                 await link_source_listings_by_url(conn, prop.unique_id, merged.source_urls)
                 await persist_merged_text(conn, merged)
@@ -364,6 +366,7 @@ class PipelineRepository:
                     prop.unique_id,
                 ),
             )
+            await record_stored_identities(conn, [prop.unique_id])
             # Link non-canonical source_listings by URL (in-run dedup absorbed sources)
             await link_source_listings_by_url(conn, prop.unique_id, merged.source_urls)
             await persist_merged_text(conn, merged)
@@ -558,6 +561,7 @@ class PipelineRepository:
                     ),
                 )
 
+                await record_stored_identities(conn, [prop.unique_id])
                 # Link non-canonical source_listings by URL (in-run dedup absorbed sources)
                 await link_source_listings_by_url(conn, prop.unique_id, merged.source_urls)
                 await persist_merged_text(conn, merged)

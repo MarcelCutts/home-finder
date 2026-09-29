@@ -16,6 +16,7 @@ from typing import Any, Final
 import aiosqlite
 
 from home_finder.data.area_context import HOSTING_TOLERANCE
+from home_finder.db.identities import IdentityRepository, record_stored_identities
 from home_finder.db.listing_text import (
     apply_source_text,
     persist_merged_text,
@@ -128,6 +129,12 @@ class PropertyStorage:
         )
         self._spend = SpendRepository(self._read_connection, self._transaction)
         self._observations = ObservationRepository(self._read_connection, self._transaction)
+        self._identities = IdentityRepository(self._read_connection)
+
+    @property
+    def identities(self) -> IdentityRepository:
+        """Exact provider identities and all current source representations of a home."""
+        return self._identities
 
     @property
     def observations(self) -> ObservationRepository:
@@ -1209,6 +1216,7 @@ class PropertyStorage:
             if "no such table" in str(e).lower():
                 return
             raise
+        await record_stored_identities(conn, [prop.unique_id])
         linked_id = await apply_source_text(conn, prop.unique_id, self._search_text(prop))
         if linked_id:
             await refresh_merged_text(conn, linked_id)
@@ -1265,6 +1273,7 @@ class PropertyStorage:
                 """,
                 rows,
             )
+            await record_stored_identities(conn, [prop.unique_id for prop in properties])
             linked_ids = set()
             for prop in properties:
                 linked_id = await apply_source_text(conn, prop.unique_id, self._search_text(prop))

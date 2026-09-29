@@ -800,6 +800,13 @@ async def migrate_010_source_observations(conn: aiosqlite.Connection) -> None:
     await create_observation_schema(conn)
 
 
+async def migrate_011_provider_identities(conn: aiosqlite.Connection) -> None:
+    """Resolve exact provider identities without rewriting or reassigning legacy rows."""
+    from home_finder.db.identities import create_identity_schema
+
+    await create_identity_schema(conn)
+
+
 _MigrationFn = Callable[[aiosqlite.Connection], Coroutine[Any, Any, None]]
 
 MIGRATIONS: list[_MigrationFn] = [
@@ -813,6 +820,7 @@ MIGRATIONS: list[_MigrationFn] = [
     migrate_008_listing_text,
     migrate_009_paid_attempts,
     migrate_010_source_observations,
+    migrate_011_provider_identities,
 ]
 
 
