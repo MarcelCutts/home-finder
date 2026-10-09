@@ -16,6 +16,7 @@ from typing import Any, Final
 import aiosqlite
 
 from home_finder.data.area_context import HOSTING_TOLERANCE
+from home_finder.db.homes import HomeRepository, ensure_home, redirect_staging_homes, resolve_home
 from home_finder.db.identities import IdentityRepository, record_stored_identities
 from home_finder.db.listing_text import (
     apply_source_text,
@@ -130,6 +131,12 @@ class PropertyStorage:
         self._spend = SpendRepository(self._read_connection, self._transaction)
         self._observations = ObservationRepository(self._read_connection, self._transaction)
         self._identities = IdentityRepository(self._read_connection)
+        self._homes = HomeRepository(self._read_connection)
+
+    @property
+    def homes(self) -> HomeRepository:
+        """Stable home identity and legacy-link resolution."""
+        return self._homes
 
     @property
     def identities(self) -> IdentityRepository:
@@ -812,6 +819,7 @@ class PropertyStorage:
                 if not ids:
                     await ensure_staging_merge(conn, anchor_id, ids)
                 await self.update_merged_sources(anchor_id, merged, absorbed_ids=ids, _conn=conn)
+                await redirect_staging_homes(conn, anchor_id, ids)
                 for uid in ids:
                     async with conn.execute(
                         "DELETE FROM properties WHERE unique_id = ?", (uid,)
@@ -1166,11 +1174,9 @@ class PropertyStorage:
         *,
         merged_id: str | None = None,
     ) -> None:
-        """Upsert a single property into source_listings (no commit).
-
-        Silently skips if the source_listings table doesn't exist yet
-        (pre-migration 004 DBs that save properties before migrations run).
-        """
+        """Upsert a source and its identity inside an initialized storage transaction."""
+        if merged_id is not None:
+            await ensure_home(conn, merged_id)
         now = datetime.now(UTC).isoformat()
         await self._retain_search_observations(conn, [prop])
         try:
@@ -1535,6 +1541,10 @@ class PropertyStorage:
                 )
                 if await cursor.fetchone():
                     raise DuplicateTelegramUpdateError
+            target = await resolve_home(conn, unique_id)
+            if target is None:
+                return None
+            unique_id = target.property_id
             cursor = await conn.execute(
                 "SELECT user_status FROM properties WHERE unique_id = ?",
                 (unique_id,),

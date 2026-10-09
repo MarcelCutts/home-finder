@@ -520,6 +520,10 @@ async def property_detail(
             status_code=404,
         )
 
+    # Files and history retain their original storage IDs even for a stable or
+    # redirected home URL. Use the resolved row for every downstream lookup.
+    unique_id = prop["unique_id"]
+
     # Hide properties with no images — not worth viewing without photos
     has_images = prop.get("image_url") or prop.get("gallery_images") or prop.get("floorplan_images")
     if not has_images:

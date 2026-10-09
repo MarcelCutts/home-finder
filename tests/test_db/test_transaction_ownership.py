@@ -9,6 +9,7 @@ from unittest.mock import patch
 
 import aiosqlite
 import pytest
+from aiosqlite.context import contextmanager as sqlite_contextmanager
 from pydantic import HttpUrl
 
 from home_finder.db.storage import PropertyStorage
@@ -33,6 +34,7 @@ async def test_failed_price_change_cannot_commit_through_unrelated_notification(
     price_written = asyncio.Event()
     fail_price = asyncio.Event()
 
+    @sqlite_contextmanager
     async def intercept(sql: str, *args, **kwargs):  # type: ignore[no-untyped-def]
         if sql.startswith("SELECT q.analysis_json, p.postcode"):
             price_written.set()
@@ -325,6 +327,7 @@ async def test_failed_status_change_cannot_commit_through_pipeline_write(
     status_written = asyncio.Event()
     fail_status = asyncio.Event()
 
+    @sqlite_contextmanager
     async def intercept(sql: str, *args, **kwargs):  # type: ignore[no-untyped-def]
         if "INSERT INTO status_events" in sql:
             status_written.set()

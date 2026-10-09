@@ -11,7 +11,7 @@
 <meta property="og:title" content="{{ prop.title }} — £{{ '{:,}'.format(prop.price_pcm) }}/mo">
 <meta property="og:description" content="{{ prop.bedrooms }} bed · {{ prop.address }}{% if prop.postcode %}, {{ prop.postcode }}{% endif %}">
 {% if og_image_url %}<meta property="og:image" content="{{ og_image_url }}">{% endif %}
-{% if base_url %}<meta property="og:url" content="{{ base_url }}/property/{{ prop.unique_id }}">{% endif %}
+{% if base_url %}<meta property="og:url" content="{{ base_url }}/property/{{ prop.home_id or prop.unique_id }}">{% endif %}
 <meta property="og:locale" content="en_GB">
 <meta name="twitter:card" content="summary_large_image">
 {% endblock %}
@@ -108,7 +108,7 @@
                 {%- endif %}
             </p>
             <div class="detail-header-meta">
-                {% set unique_id = prop.unique_id %}
+                {% set unique_id = prop.home_id or prop.unique_id %}
                 {% set current_status = user_status %}
                 <div class="status-selector-wrap">
                     {% include "_status_controls.html" %}

@@ -16,6 +16,7 @@ from home_finder.db import PropertyStorage
 from home_finder.db.migrations import MIGRATIONS
 from home_finder.db.observations import ObservationConflict
 from home_finder.models import ListingTextEvidence, UserStatus
+from home_finder.models.home_identity import HomeTarget
 from home_finder.models.observations import (
     ObservationFields,
     SourceObservation,
@@ -352,10 +353,15 @@ async def test_historical_migration_preserves_exact_rows_and_never_invents_fresh
 ):
     path = str(tmp_path / "historical.db")
     # Simulate the version-9 writer as well as its schema: identity recording
-    # was introduced in version 11 and must not run while preparing this fixture.
+    # was introduced in versions 11/12 and must not run while preparing this fixture.
     with (
         patch("home_finder.db.migrations.MIGRATIONS", MIGRATIONS[:9]),
         patch("home_finder.db.storage.record_stored_identities", new_callable=AsyncMock),
+        patch("home_finder.db.storage.ensure_home", new_callable=AsyncMock),
+        patch(
+            "home_finder.db.storage.resolve_home",
+            AsyncMock(return_value=HomeTarget("unused-fixture-id", sample_property.unique_id)),
+        ),
     ):
         async with PropertyStorage(path) as old:
             await old.save_property(sample_property)

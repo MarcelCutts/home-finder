@@ -1,7 +1,5 @@
 """Telegram webhook endpoint for inline keyboard callbacks."""
 
-import re
-
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
@@ -10,6 +8,7 @@ from home_finder.db import PropertyStorage
 from home_finder.db.storage import DuplicateTelegramUpdateError
 from home_finder.logging import get_logger
 from home_finder.models import UserStatus
+from home_finder.models.home_identity import is_callback_target
 from home_finder.web.access import valid_webhook_secret
 
 logger = get_logger(__name__)
@@ -92,7 +91,7 @@ async def telegram_webhook(request: Request) -> JSONResponse:
     # uid may contain colons (e.g. "openrent:12345"), so rejoin middle parts
     status_str = parts[-1]
     uid = ":".join(parts[1:-1])
-    if not re.fullmatch(r"[A-Za-z0-9_-]+:[A-Za-z0-9_-]+", uid):
+    if not is_callback_target(uid):
         await _answer_callback(settings, callback_id, "Invalid property")
         return JSONResponse({"ok": True})
 

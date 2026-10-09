@@ -14,6 +14,7 @@ if TYPE_CHECKING:
 
 import aiosqlite
 
+from home_finder.db.homes import ensure_home, resolve_home
 from home_finder.db.identities import record_stored_identities
 from home_finder.db.listing_text import persist_merged_text
 from home_finder.db.row_mappers import (
@@ -270,6 +271,7 @@ class PipelineRepository:
                     ),
                 )
 
+                await ensure_home(conn, prop.unique_id)
                 await record_stored_identities(conn, [prop.unique_id])
                 # Link non-canonical source_listings by URL (in-run dedup absorbed sources)
                 await link_source_listings_by_url(conn, prop.unique_id, merged.source_urls)
@@ -366,6 +368,7 @@ class PipelineRepository:
                     prop.unique_id,
                 ),
             )
+            await ensure_home(conn, prop.unique_id)
             await record_stored_identities(conn, [prop.unique_id])
             # Link non-canonical source_listings by URL (in-run dedup absorbed sources)
             await link_source_listings_by_url(conn, prop.unique_id, merged.source_urls)
@@ -561,6 +564,7 @@ class PipelineRepository:
                     ),
                 )
 
+                await ensure_home(conn, prop.unique_id)
                 await record_stored_identities(conn, [prop.unique_id])
                 # Link non-canonical source_listings by URL (in-run dedup absorbed sources)
                 await link_source_listings_by_url(conn, prop.unique_id, merged.source_urls)
@@ -790,6 +794,12 @@ class PipelineRepository:
         if not unique_ids:
             return 0
         async with self._transaction() as conn:
+            resolved = set()
+            for identifier in unique_ids:
+                target = await resolve_home(conn, identifier)
+                if target is not None:
+                    resolved.add(target.property_id)
+            unique_ids = sorted(resolved)
             now = datetime.now(UTC).isoformat()
             total = 0
             chunk_size = 500

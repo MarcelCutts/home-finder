@@ -4,6 +4,7 @@ import asyncio
 import html
 import random
 import urllib.parse
+from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Final
 
 from aiogram.exceptions import (
@@ -25,6 +26,7 @@ from home_finder.models import (
     PropertyQualityAnalysis,
     TransportMode,
 )
+from home_finder.models.home_identity import HomeTarget, is_callback_target, is_home_id
 from home_finder.utils.listing_facts import supported_band
 
 if TYPE_CHECKING:
@@ -644,6 +646,7 @@ def _format_followup_detail(
 def _build_inline_keyboard(
     merged: MergedProperty,
     web_base_url: str = "",
+    home_id: str | None = None,
 ) -> "InlineKeyboardMarkup":
     """Build an inline keyboard markup with source URL buttons and map button.
 
@@ -652,12 +655,15 @@ def _build_inline_keyboard(
     """
     from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo
 
+    if home_id is not None and not is_home_id(home_id):
+        raise ValueError("Invalid stable home identity")
+    target_id = home_id or merged.unique_id
     buttons: list[InlineKeyboardButton] = []
 
     # Add web dashboard link if configured
     if web_base_url:
         base = web_base_url.rstrip("/")
-        detail_url = f"{base}/property/{merged.unique_id}"
+        detail_url = f"{base}/property/{target_id}"
         if base.startswith("https://"):
             # Open inside Telegram as a Mini App
             buttons.append(
@@ -689,15 +695,14 @@ def _build_inline_keyboard(
     rows: list[list[InlineKeyboardButton]] = []
 
     # Telegram limits callback_data to 64 bytes. Never truncate an identity:
-    # longer IDs keep their source/details links until tokenized callbacks exist.
-    interested = f"st:{merged.unique_id}:interested"
-    if len(interested.encode()) <= 64:
+    # The live notifier resolves the persisted short home ID before building this.
+    # Standalone legacy callers retain exact valid IDs, never truncated targets.
+    interested = f"st:{target_id}:interested"
+    if is_callback_target(target_id) and len(interested.encode()) <= 64:
         rows.append(
             [
                 InlineKeyboardButton(text="\U0001f44d Interested", callback_data=interested),
-                InlineKeyboardButton(
-                    text="\u23ed Skip", callback_data=f"st:{merged.unique_id}:archived"
-                ),
+                InlineKeyboardButton(text="\u23ed Skip", callback_data=f"st:{target_id}:archived"),
             ]
         )
 
@@ -794,7 +799,13 @@ class TelegramNotifier:
     """Send property notifications via Telegram."""
 
     def __init__(
-        self, *, bot_token: str, chat_id: int, web_base_url: str = "", data_dir: str = ""
+        self,
+        *,
+        bot_token: str,
+        chat_id: int,
+        web_base_url: str = "",
+        data_dir: str = "",
+        home_resolver: Callable[[str], Awaitable[HomeTarget | None]] | None = None,
     ) -> None:
         """Initialize the notifier.
 
@@ -808,7 +819,20 @@ class TelegramNotifier:
         self.chat_id = chat_id
         self.web_base_url = web_base_url.rstrip("/") if web_base_url else ""
         self.data_dir = data_dir
+        self._home_resolver = home_resolver
         self._bot: Bot | None = None
+
+    async def _home_id(self, property_id: str) -> str | None:
+        if self._home_resolver is not None:
+            target = await self._home_resolver(property_id)
+            if target is None or target.property_id != property_id:
+                raise ValueError("Notification requires the current persisted home identity")
+            return target.home_id
+        return None
+
+    async def _keyboard(self, merged: MergedProperty) -> "InlineKeyboardMarkup":
+        home_id = await self._home_id(merged.unique_id)
+        return _build_inline_keyboard(merged, web_base_url=self.web_base_url, home_id=home_id)
 
     def _get_bot(self) -> "Bot":
         """Get or create the bot instance."""
@@ -860,7 +884,7 @@ class TelegramNotifier:
                 min_price=prop.price_pcm,
                 max_price=prop.price_pcm,
             )
-            keyboard = _build_inline_keyboard(temp_merged, web_base_url=self.web_base_url)
+            keyboard = await self._keyboard(temp_merged)
 
             from aiogram.types import LinkPreviewOptions
 
@@ -947,7 +971,7 @@ class TelegramNotifier:
 
         try:
             bot = self._get_bot()
-            keyboard = _build_inline_keyboard(merged, web_base_url=self.web_base_url)
+            keyboard = await self._keyboard(merged)
             gallery_urls = _get_gallery_urls(merged)
 
             sent_photo = False
@@ -1224,12 +1248,12 @@ class TelegramNotifier:
         if days_listed > 0:
             lines.append(f"First observed by Home Finder {days_listed} days ago")
 
-        buttons: list[list[InlineKeyboardButton]] = []
-        if self.web_base_url:
-            detail_url = f"{self.web_base_url}/property/{unique_id}"
-            buttons.append([InlineKeyboardButton(text="Details", url=detail_url)])
-
         try:
+            target_id = await self._home_id(unique_id) or unique_id
+            buttons: list[list[InlineKeyboardButton]] = []
+            if self.web_base_url:
+                detail_url = f"{self.web_base_url}/property/{target_id}"
+                buttons.append([InlineKeyboardButton(text="Details", url=detail_url)])
             bot = self._get_bot()
             await bot.send_message(
                 chat_id=self.chat_id,

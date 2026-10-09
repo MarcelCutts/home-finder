@@ -195,7 +195,7 @@ if (mapEl && resultsEl) {
       resultsEl.scrollTop = 0;
 
       try {
-        const r = await fetch("/property/" + encodeURIComponent(p.id) + "/card");
+        const r = await fetch("/property/" + encodeURIComponent(p.home_id || p.id) + "/card");
         if (!r.ok) throw new Error(r.status);
         const html = await r.text();
         if (thisRequest !== pinnedCardRequestId) return;
@@ -223,7 +223,7 @@ if (mapEl && resultsEl) {
       } catch {
         if (thisRequest !== pinnedCardRequestId) return;
         wrapper.remove();
-        window.location.href = "/property/" + encodeURIComponent(p.id);
+        window.location.href = "/property/" + encodeURIComponent(p.home_id || p.id);
       }
     });
     marker.on("popupopen", function () {

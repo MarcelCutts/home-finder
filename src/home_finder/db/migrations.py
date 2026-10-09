@@ -807,6 +807,13 @@ async def migrate_011_provider_identities(conn: aiosqlite.Connection) -> None:
     await create_identity_schema(conn)
 
 
+async def migrate_012_home_identities(conn: aiosqlite.Connection) -> None:
+    """Preserve old canonical and alias IDs behind stable portal-independent home IDs."""
+    from home_finder.db.homes import create_home_schema
+
+    await create_home_schema(conn)
+
+
 _MigrationFn = Callable[[aiosqlite.Connection], Coroutine[Any, Any, None]]
 
 MIGRATIONS: list[_MigrationFn] = [
@@ -821,6 +828,7 @@ MIGRATIONS: list[_MigrationFn] = [
     migrate_009_paid_attempts,
     migrate_010_source_observations,
     migrate_011_provider_identities,
+    migrate_012_home_identities,
 ]
 
 

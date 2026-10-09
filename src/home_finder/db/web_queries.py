@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 import aiosqlite
 
+from home_finder.db.homes import resolve_home
 from home_finder.db.listing_text import text_from_property_row
 from home_finder.db.row_mappers import (
     ImageReader,
@@ -30,7 +31,7 @@ logger = get_logger(__name__)
 # ── Shared SQL fragments for card-format queries ──────────────────────
 
 _CARD_COLUMNS = """
-    p.*, q.overall_rating as quality_rating,
+    p.*, h.home_id, q.overall_rating as quality_rating,
     q.condition_concerns as quality_concerns,
     q.concern_severity as quality_severity,
     q.analysis_json,
@@ -52,6 +53,7 @@ _CARD_COLUMNS = """
 _CARD_JOINS = """
     FROM properties p
     LEFT JOIN quality_analyses q ON p.unique_id = q.property_unique_id
+    LEFT JOIN homes h ON h.current_property_id = p.unique_id
 """
 
 _QUALITY_FIELD_DEFAULTS: dict[str, Any] = {
@@ -315,7 +317,7 @@ class WebQueryService:
             where_sql, params = build_filter_clauses(filters)
             cursor = await conn.execute(
                 f"""
-                SELECT p.unique_id, p.latitude, p.longitude, p.price_pcm,
+                SELECT p.unique_id, h.home_id, p.latitude, p.longitude, p.price_pcm,
                        p.bedrooms, p.title, p.postcode,
                        p.commute_minutes, p.image_url,
                        p.is_off_market,
@@ -326,6 +328,7 @@ class WebQueryService:
                        json_extract(q.analysis_json, '$.one_line') as one_line
                 FROM properties p
                 LEFT JOIN quality_analyses q ON p.unique_id = q.property_unique_id
+                LEFT JOIN homes h ON h.current_property_id = p.unique_id
                 WHERE {where_sql}
                   AND p.latitude IS NOT NULL AND p.longitude IS NOT NULL
                 """,
@@ -335,6 +338,7 @@ class WebQueryService:
             return [
                 {
                     "id": row["unique_id"],
+                    "home_id": row["home_id"],
                     "lat": row["latitude"],
                     "lon": row["longitude"],
                     "price": row["price_pcm"],
@@ -342,7 +346,7 @@ class WebQueryService:
                     "rating": row["quality_rating"],
                     "fit_score": row["fit_score"],
                     "title": row["title"],
-                    "url": f"/property/{row['unique_id']}",
+                    "url": f"/property/{row['home_id'] or row['unique_id']}",
                     "image_url": row["image_url"],
                     "postcode": row["postcode"],
                     "commute_minutes": row["commute_minutes"],
@@ -413,6 +417,10 @@ class WebQueryService:
         when the card isn't on the current paginated page.
         """
         async with self._read_connection() as conn:
+            target = await resolve_home(conn, unique_id)
+            if target is None:
+                return None
+            unique_id = target.property_id
             cursor = await conn.execute(
                 f"SELECT {_CARD_COLUMNS} {_CARD_JOINS} WHERE p.unique_id = ? LIMIT 1",
                 [unique_id],
@@ -430,6 +438,10 @@ class WebQueryService:
             Dict with property data, quality analysis, and images, or None.
         """
         async with self._read_connection() as conn:
+            target = await resolve_home(conn, unique_id)
+            if target is None:
+                return None
+            unique_id = target.property_id
             cursor = await conn.execute(
                 """
                 SELECT p.*, q.analysis_json, q.overall_rating as quality_rating
@@ -444,6 +456,7 @@ class WebQueryService:
                 return None
 
             prop_dict = dict(row)
+            prop_dict["home_id"] = target.home_id
             parse_json_fields(prop_dict)
             prop_dict["listing_evidence"] = text_from_property_row(row)
 

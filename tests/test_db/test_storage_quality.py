@@ -219,8 +219,22 @@ class TestSaveAndGetQualityAnalysis:
         """)
         await conn.commit()
 
-        # Save property, then manually insert bad analysis_json
-        await storage.save_property(prop_a)
+        # Seed the legacy schema directly; today's writer requires today's schema.
+        await conn.execute(
+            "INSERT INTO properties "
+            "(unique_id, source, source_id, url, title, price_pcm, bedrooms, address, first_seen) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, '2026-01-01')",
+            (
+                prop_a.unique_id,
+                prop_a.source.value,
+                prop_a.source_id,
+                str(prop_a.url),
+                prop_a.title,
+                prop_a.price_pcm,
+                prop_a.bedrooms,
+                prop_a.address,
+            ),
+        )
         bad_json = (
             '{"one_line": {"one_line": "Bright flat"}, "summary": "Good",'
             ' "condition_concerns": false, "kitchen": {"overall_quality": "modern",'

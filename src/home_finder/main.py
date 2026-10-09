@@ -252,6 +252,7 @@ async def _run_pipeline_with_storage(
                 chat_id=settings.telegram_chat_id,
                 web_base_url=settings.web_base_url,
                 data_dir=settings.data_dir,
+                home_resolver=storage.homes.resolve,
             )
 
         # T4: EventRecorder for property audit trail

@@ -40,6 +40,7 @@ class PropertyListItem(TypedDict, total=False):
     """
 
     unique_id: str
+    home_id: str | None
     title: str
     price_pcm: int
     bedrooms: int
