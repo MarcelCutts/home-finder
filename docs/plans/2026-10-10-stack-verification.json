@@ -1,0 +1,1320 @@
+{
+  "version": 1,
+  "reviewed_on": "2026-10-10",
+  "repository": "MarcelCutts/home-finder",
+  "native_stack": 29,
+  "stack_size": 26,
+  "baseline": "a86e51e9ef3e6f767ed307bcae5cbce5087d3cea",
+  "original_application_tip": "545ad7c470bfe2b7b2ccc532d63cd7f378fe8a13",
+  "original_branch": "codex/pr01-ci-baseline",
+  "original_implementation_commits": 37,
+  "remote_ci": {
+    "workflow_id": 262027904,
+    "state": "disabled_inactivity",
+    "runs": "not_run",
+    "activation_note": "Review and land the safe operating baseline before enabling the old main workflow."
+  },
+  "verification_runtime": "CPython 3.14.7, three exact uv.lock revisions, per-worktree source import asserted",
+  "targeted_test_executions": 4435,
+  "tip_full_suites": [
+    {
+      "python": "3.14.7",
+      "passed": 3259,
+      "coverage_percent": 88.32
+    },
+    {
+      "python": "3.11.16",
+      "passed": 3259,
+      "coverage_percent": 88.4
+    }
+  ],
+  "builds": [
+    {
+      "index": 1,
+      "head": "a7ebfedafbac6c7a0e2a8f7b4a92e6c385b5b7ed",
+      "wheel_sha256": "c0d946d483197010621680d4681db568575dfb0e4770b9c6492490fb42f06398",
+      "source_files_verified": 92,
+      "result": "passed"
+    },
+    {
+      "index": 3,
+      "head": "15feb710ba6d1d6b5ef1b6bc2a7b2c26a82195da",
+      "wheel_sha256": "78d6c682a4ef84b01bdf0e1f1e8d591c0837cce6f69f68e161563b2f35b49304",
+      "source_files_verified": 94,
+      "result": "passed"
+    },
+    {
+      "index": 12,
+      "head": "c5078408d8671cbcfd98162e0d37462147b31524",
+      "wheel_sha256": "3a651c4b071876006fd913dd09c933609fe60a2f34eb03660f8802d0fb17cec4",
+      "source_files_verified": 111,
+      "result": "passed"
+    },
+    {
+      "index": 26,
+      "head": "ea23bc5f1a76f41f49a2e11acd1b6c3027c8f90e",
+      "wheel_sha256": "8074bb0360a81ee8faa4b03718cd3ff7a5c69825df6735b595155c1372e99b36",
+      "source_files_verified": 141,
+      "result": "passed"
+    }
+  ],
+  "groups": [
+    {
+      "index": 1,
+      "title": "Restore reproducible CI and require explicit releases",
+      "branch": "codex/stack/01-operating-baseline",
+      "base": "main",
+      "original_end": "1dfdcb4be3b7240f60ff70535969e428a1723576",
+      "commits": [
+        {
+          "original": "1dfdcb4be3b7240f60ff70535969e428a1723576",
+          "stack": "a7ebfedafbac6c7a0e2a8f7b4a92e6c385b5b7ed"
+        }
+      ],
+      "why": "Every later review needs a reproducible build and a release path that cannot deploy merely because a branch changes.",
+      "behavior": "Pin tooling/actions, verify a cold locked install and distribution contents, document the delivery contract, and move deployment behind an explicit main-only workflow. Extend PR validation to this stack's base-branch namespace.",
+      "review": "Checked event filters, minimal workflow permissions, release conditions, package inclusion, and the temporary SDK bound. The stack filter is the only packaging change to this original segment.",
+      "limits": "This is an operating baseline, not security approval for the old runtime. Owner access and dependency repairs follow before any deployment.",
+      "tests": [
+        "tests/test_config.py"
+      ],
+      "handoffs": [
+        "docs/plans/2026-09-28-pr01-ci-baseline.md"
+      ],
+      "diffstat": "12 files changed, 1387 insertions(+), 123 deletions(-)",
+      "plan_slices": "PR01",
+      "architectural_prerequisites": [],
+      "pull_request": 3,
+      "url": "https://github.com/MarcelCutts/home-finder/pull/3",
+      "focused_tests_passed": 14,
+      "lock_sha256": "309fd4ce07a13c3e048364c52c9637ccb7392cfb1c8f9b02916c9001b29f2df2",
+      "checks_passed": [
+        "import",
+        "lint",
+        "format",
+        "types",
+        "workflows",
+        "tests"
+      ],
+      "tree_equivalence": "Application/tests exactly equal original boundary; stack CI filter added",
+      "verified_head": "a7ebfedafbac6c7a0e2a8f7b4a92e6c385b5b7ed"
+    },
+    {
+      "index": 2,
+      "title": "Protect owner access and make Telegram callbacks replay-safe",
+      "branch": "codex/stack/02-owner-access",
+      "base": "codex/stack/01-operating-baseline",
+      "original_end": "84fb43ba73403d2025c3f6b9a3da0b170262bd8e",
+      "commits": [
+        {
+          "original": "84fb43ba73403d2025c3f6b9a3da0b170262bd8e",
+          "stack": "bedfb23224958f62117ecaf8744c34cd940271cd"
+        }
+      ],
+      "why": "The dashboard and mutation endpoints need an explicit access boundary before further user-state behavior is added.",
+      "behavior": "Enforce owner access across pages/assets and mutations, verify Telegram credentials and identity, retain callback update IDs, and suppress oversized legacy callback payloads.",
+      "review": "Reviewed constant-time credential comparison, request-origin enforcement, bounded request bodies, mounted-file protection, webhook sender/chat binding, and atomic replay detection. Long legacy IDs remain link-only until the final stable-home PR.",
+      "limits": "Single-owner protection is not multi-user isolation. Actual ingress/environment setup remains a deployment check.",
+      "tests": [
+        "tests/test_db/test_status.py",
+        "tests/test_db/test_storage_reanalysis.py",
+        "tests/test_notifiers/test_telegram_status.py",
+        "tests/test_web/test_access.py",
+        "tests/test_web/test_routes.py",
+        "tests/test_web/test_telegram_webhook.py"
+      ],
+      "handoffs": [
+        "docs/plans/2026-09-28-pr02-owner-access.md"
+      ],
+      "diffstat": "23 files changed, 940 insertions(+), 49 deletions(-)",
+      "plan_slices": "PR02",
+      "architectural_prerequisites": [
+        1
+      ],
+      "pull_request": 4,
+      "url": "https://github.com/MarcelCutts/home-finder/pull/4",
+      "focused_tests_passed": 287,
+      "lock_sha256": "309fd4ce07a13c3e048364c52c9637ccb7392cfb1c8f9b02916c9001b29f2df2",
+      "checks_passed": [
+        "import",
+        "lint",
+        "format",
+        "types",
+        "workflows",
+        "tests"
+      ],
+      "tree_equivalence": "Application/tests exactly equal original boundary; stack CI filter added",
+      "verified_head": "bedfb23224958f62117ecaf8744c34cd940271cd"
+    },
+    {
+      "index": 3,
+      "title": "Repair the runtime dependency set and configure map providers",
+      "branch": "codex/stack/03-runtime-and-maps",
+      "base": "codex/stack/02-owner-access",
+      "original_end": "8bb73ccec9cab449b3080df89af9aad05ca03a00",
+      "commits": [
+        {
+          "original": "8bb73ccec9cab449b3080df89af9aad05ca03a00",
+          "stack": "15feb710ba6d1d6b5ef1b6bc2a7b2c26a82195da"
+        }
+      ],
+      "why": "A protected service still needs compatible, audited dependencies and map behavior that does not assume unavailable provider credentials.",
+      "behavior": "Update the compatible runtime group, verify Python 3.11/3.14 and both container targets, tighten packaging/runtime privileges, and make tile-provider activation explicit.",
+      "review": "Reviewed grouped lockfile updates, SDK compatibility boundary, map URL/key escaping and CSP, and the recorded residual native/Crawlee findings. Existing browser screenshots and fixture-based tile checks document visual behavior.",
+      "limits": "The dated dependency/container audit is not perpetual certification. Real map entitlements, origin restrictions, and current image findings remain rollout gates.",
+      "tests": [
+        "tests/test_notifiers/test_telegram.py",
+        "tests/test_web/test_access.py"
+      ],
+      "handoffs": [
+        "docs/plans/2026-09-28-pr03-runtime-and-maps.md"
+      ],
+      "diffstat": "26 files changed, 2207 insertions(+), 511 deletions(-)",
+      "plan_slices": "PR03",
+      "architectural_prerequisites": [
+        1,
+        2
+      ],
+      "pull_request": 5,
+      "url": "https://github.com/MarcelCutts/home-finder/pull/5",
+      "focused_tests_passed": 118,
+      "lock_sha256": "2adaf5ea8c92d8599f2743dd8364d80c7116c3c1795b92c002548d2afd5d3bc9",
+      "checks_passed": [
+        "import",
+        "lint",
+        "format",
+        "types",
+        "workflows",
+        "tests"
+      ],
+      "tree_equivalence": "Application/tests exactly equal original boundary; stack CI filter added",
+      "verified_head": "15feb710ba6d1d6b5ef1b6bc2a7b2c26a82195da"
+    },
+    {
+      "index": 4,
+      "title": "Give each SQLite operation complete transaction ownership",
+      "branch": "codex/stack/04-sqlite-ownership",
+      "base": "codex/stack/03-runtime-and-maps",
+      "original_end": "55f317192121c135b81f23dc5e50bdbeb31f8dd4",
+      "commits": [
+        {
+          "original": "55f317192121c135b81f23dc5e50bdbeb31f8dd4",
+          "stack": "19698d3bedc852f4dd701021272635d75c6ff5e7"
+        }
+      ],
+      "why": "Concurrent dashboard and pipeline calls could commit or roll back another task's work; all later durable state relies on fixing that first.",
+      "behavior": "Own complete read/write scopes, pass explicit handles for composition, and finish commit/rollback/close cleanup before releasing connection ownership.",
+      "review": "Reviewed cancellation during begin/commit/rollback, child-task handle rejection, query-only reads, close failures, and real interleaving tests. This is the architectural base for every subsequent migration and ledger.",
+      "limits": "SQLite access is deliberately serialized per storage object. This does not introduce a distributed worker or PostgreSQL.",
+      "tests": [
+        "tests/test_db/test_connection_lifecycle.py",
+        "tests/test_db/test_storage_analysis_retry.py",
+        "tests/test_db/test_storage_reanalysis.py",
+        "tests/test_db/test_transaction_ownership.py",
+        "tests/test_main_dedup_existing.py"
+      ],
+      "handoffs": [
+        "docs/plans/2026-09-28-pr04-database-ownership.md"
+      ],
+      "diffstat": "13 files changed, 2045 insertions(+), 1461 deletions(-)",
+      "plan_slices": "PR04",
+      "architectural_prerequisites": [
+        2,
+        3
+      ],
+      "pull_request": 6,
+      "url": "https://github.com/MarcelCutts/home-finder/pull/6",
+      "focused_tests_passed": 78,
+      "lock_sha256": "2adaf5ea8c92d8599f2743dd8364d80c7116c3c1795b92c002548d2afd5d3bc9",
+      "checks_passed": [
+        "import",
+        "lint",
+        "format",
+        "types",
+        "workflows",
+        "tests"
+      ],
+      "tree_equivalence": "Application/tests exactly equal original boundary; stack CI filter added",
+      "verified_head": "19698d3bedc852f4dd701021272635d75c6ff5e7"
+    },
+    {
+      "index": 5,
+      "title": "Retain listing text through persistence and model input",
+      "branch": "codex/stack/05-listing-text",
+      "base": "codex/stack/04-sqlite-ownership",
+      "original_end": "19d6f24450c25caa9cb643ff197cca00de0fa4b4",
+      "commits": [
+        {
+          "original": "19d6f24450c25caa9cb643ff197cca00de0fa4b4",
+          "stack": "37def7416ea672f652644b5e89d25031dc1f7ac6"
+        }
+      ],
+      "why": "Description and feature loss makes later model output less useful regardless of model capability.",
+      "behavior": "Carry source-specific description/features through merge, persistence, reload, enrichment and analysis; distinguish absent text from deliberately empty evidence.",
+      "review": "Traced the source-to-prompt path, source separation, retry reloads, and legacy compatibility. The initial text representation is intentionally replaced by an observation-backed projection later in the stack.",
+      "limits": "Retaining text fixes an input defect; it does not prove historical assessment accuracy or complete evidence provenance.",
+      "tests": [
+        "tests/test_db/test_listing_text.py",
+        "tests/test_db/test_storage.py",
+        "tests/test_filters/test_detail_enrichment.py",
+        "tests/test_filters/test_listing_text.py",
+        "tests/test_filters/test_quality.py",
+        "tests/test_filters/test_quality_prompts.py"
+      ],
+      "handoffs": [
+        "docs/plans/2026-09-28-pr06a-listing-text.md"
+      ],
+      "diffstat": "25 files changed, 1081 insertions(+), 147 deletions(-)",
+      "plan_slices": "PR06a",
+      "architectural_prerequisites": [
+        4
+      ],
+      "pull_request": 7,
+      "url": "https://github.com/MarcelCutts/home-finder/pull/7",
+      "focused_tests_passed": 405,
+      "lock_sha256": "2adaf5ea8c92d8599f2743dd8364d80c7116c3c1795b92c002548d2afd5d3bc9",
+      "checks_passed": [
+        "import",
+        "lint",
+        "format",
+        "types",
+        "workflows",
+        "tests"
+      ],
+      "tree_equivalence": "Application/tests exactly equal original boundary; stack CI filter added",
+      "verified_head": "37def7416ea672f652644b5e89d25031dc1f7ac6"
+    },
+    {
+      "index": 6,
+      "title": "Ground tenant costs and guidance in retained evidence",
+      "branch": "codex/stack/06-tenant-costs",
+      "base": "codex/stack/05-listing-text",
+      "original_end": "b4cf2f9984b89676da59c815f24672b44e5abff0",
+      "commits": [
+        {
+          "original": "b4cf2f9984b89676da59c815f24672b44e5abff0",
+          "stack": "b2531af86cb5e60d7182a8e38bd76e033ec46710"
+        }
+      ],
+      "why": "The rental decision UI must distinguish advertised tenant obligations from estimates and unsupported advice.",
+      "behavior": "Remove unsupported tenant service-charge and negotiation assumptions, constrain council-tax use to retained evidence, and update dashboard/Telegram explanations and dated guidance.",
+      "review": "Reviewed arithmetic and source support across model, cost calculator, templates and notifications. Committed desktop/mobile screenshots show the revised presentation; primary guidance checks are dated in the handoff.",
+      "limits": "Legal and market guidance needs continuing review. Estimates are not an individual tenancy quote.",
+      "tests": [
+        "tests/integration/test_quality_analysis_integration.py",
+        "tests/test_data/test_area_context.py",
+        "tests/test_filters/test_quality.py",
+        "tests/test_filters/test_quality_prompts.py",
+        "tests/test_filters/test_quality_respx.py",
+        "tests/test_utils/test_cost_calculator.py",
+        "tests/test_utils/test_negotiation.py",
+        "tests/test_web/test_routes.py"
+      ],
+      "handoffs": [
+        "docs/plans/2026-09-28-pr17a-costs-and-guidance.md"
+      ],
+      "diffstat": "34 files changed, 864 insertions(+), 1242 deletions(-)",
+      "plan_slices": "PR17a",
+      "architectural_prerequisites": [
+        5
+      ],
+      "pull_request": 8,
+      "url": "https://github.com/MarcelCutts/home-finder/pull/8",
+      "focused_tests_passed": 588,
+      "lock_sha256": "2adaf5ea8c92d8599f2743dd8364d80c7116c3c1795b92c002548d2afd5d3bc9",
+      "checks_passed": [
+        "import",
+        "lint",
+        "format",
+        "types",
+        "workflows",
+        "tests"
+      ],
+      "tree_equivalence": "Application/tests exactly equal original boundary; stack CI filter added",
+      "verified_head": "b2531af86cb5e60d7182a8e38bd76e033ec46710"
+    },
+    {
+      "index": 7,
+      "title": "Preserve unknown commute results and advisory behavior",
+      "branch": "codex/stack/07-commute-outcomes",
+      "base": "codex/stack/06-tenant-costs",
+      "original_end": "3e0c05dc61e10cf4bd5eea8b26060092ffd0fefb",
+      "commits": [
+        {
+          "original": "3e0c05dc61e10cf4bd5eea8b26060092ffd0fefb",
+          "stack": "6aa656f35c328defadeb0f0132c1a066ba280a58"
+        }
+      ],
+      "why": "A failed route calculation must not appear as a zero-minute journey or silently exclude a promising home for a WFH user.",
+      "behavior": "Represent route outcome categories explicitly, keep commute advisory, and show uncertainty consistently in the dashboard, maps and Telegram.",
+      "review": "Reviewed provider errors, absent coordinates, request-boundary semantics, unknown rendering, and end-to-end admission. Existing mobile/desktop evidence covers the UI change.",
+      "limits": "Route caching, profile-specific travel preferences and provider retention entitlements remain separate work.",
+      "tests": [
+        "tests/integration/test_commute_integration.py",
+        "tests/integration/test_full_pipeline_e2e.py",
+        "tests/test_filters/test_commute.py",
+        "tests/test_notifiers/test_telegram.py",
+        "tests/test_pipeline/test_commute_outcomes.py",
+        "tests/test_web/test_routes.py"
+      ],
+      "handoffs": [
+        "docs/plans/2026-09-28-pr16a-commute-outcomes.md"
+      ],
+      "diffstat": "23 files changed, 763 insertions(+), 316 deletions(-)",
+      "plan_slices": "PR16a",
+      "architectural_prerequisites": [
+        3
+      ],
+      "pull_request": 9,
+      "url": "https://github.com/MarcelCutts/home-finder/pull/9",
+      "focused_tests_passed": 306,
+      "lock_sha256": "2adaf5ea8c92d8599f2743dd8364d80c7116c3c1795b92c002548d2afd5d3bc9",
+      "checks_passed": [
+        "import",
+        "lint",
+        "format",
+        "types",
+        "workflows",
+        "tests"
+      ],
+      "tree_equivalence": "Application/tests exactly equal original boundary; stack CI filter added",
+      "verified_head": "6aa656f35c328defadeb0f0132c1a066ba280a58"
+    },
+    {
+      "index": 8,
+      "title": "Keep price ranges coherent and bind availability to the listing",
+      "branch": "codex/stack/08-price-and-availability",
+      "base": "codex/stack/07-commute-outcomes",
+      "original_end": "9149e48d0438afec257ebb70ccab5df7cf5a1f59",
+      "commits": [
+        {
+          "original": "9149e48d0438afec257ebb70ccab5df7cf5a1f59",
+          "stack": "004015b6d1834a22fb4ab457b594bb3cf9f02330"
+        }
+      ],
+      "why": "Price and availability changes need to refer to the exact advertisement before they can safely update a saved home.",
+      "behavior": "Update persisted min/max prices consistently and reject availability evidence belonging to a different listing or an unqualified response.",
+      "review": "Reviewed single-source and multi-source range changes, price-history retention, identity binding, and fail-open handling of unclear portal responses.",
+      "limits": "This repairs current scalar behavior; complete membership-aware price and availability projections remain PR08b work.",
+      "tests": [
+        "tests/integration/test_off_market_e2e.py",
+        "tests/test_db/test_price_history.py",
+        "tests/test_filters/test_availability.py",
+        "tests/test_filters/test_off_market.py"
+      ],
+      "handoffs": [
+        "docs/plans/2026-09-28-pr08a-price-and-availability.md"
+      ],
+      "diffstat": "13 files changed, 820 insertions(+), 495 deletions(-)",
+      "plan_slices": "PR08a",
+      "architectural_prerequisites": [
+        4,
+        5
+      ],
+      "pull_request": 10,
+      "url": "https://github.com/MarcelCutts/home-finder/pull/10",
+      "focused_tests_passed": 126,
+      "lock_sha256": "2adaf5ea8c92d8599f2743dd8364d80c7116c3c1795b92c002548d2afd5d3bc9",
+      "checks_passed": [
+        "import",
+        "lint",
+        "format",
+        "types",
+        "workflows",
+        "tests"
+      ],
+      "tree_equivalence": "Application/tests exactly equal original boundary; stack CI filter added",
+      "verified_head": "004015b6d1834a22fb4ab457b594bb3cf9f02330"
+    },
+    {
+      "index": 9,
+      "title": "Retain fetched listings and report incomplete collection honestly",
+      "branch": "codex/stack/09-collection-accounting",
+      "base": "codex/stack/08-price-and-availability",
+      "original_end": "67a34a9d9b330f0a4bda40202d18ed3b930dce1a",
+      "commits": [
+        {
+          "original": "67a34a9d9b330f0a4bda40202d18ed3b930dce1a",
+          "stack": "7079e46863f18bfb9643c063193ef8e6d506ab42"
+        }
+      ],
+      "why": "A partially failed collection run should preserve useful receipts without reporting false completeness.",
+      "behavior": "Persist received listings across partial source/page failures and cancellation, and distinguish completed, partial and failed run accounting.",
+      "review": "Reviewed pagination failure boundaries, retained partial buffers, cancellation propagation and source-run totals. Later observation revisions extend this receipt-preservation contract.",
+      "limits": "Run accounting is not a qualified source coverage model or evidence that all portals are usable.",
+      "tests": [
+        "tests/test_db/test_pipeline_runs.py",
+        "tests/test_pipeline/test_observation_accounting.py",
+        "tests/test_scrapers/test_onthemarket.py",
+        "tests/test_scrapers/test_pagination.py",
+        "tests/test_scrapers/test_rightmove.py",
+        "tests/test_scrapers/test_zoopla.py"
+      ],
+      "handoffs": [
+        "docs/plans/2026-09-28-pr09a-observations-and-accounting.md"
+      ],
+      "diffstat": "20 files changed, 989 insertions(+), 379 deletions(-)",
+      "plan_slices": "PR09a",
+      "architectural_prerequisites": [
+        4,
+        8
+      ],
+      "pull_request": 11,
+      "url": "https://github.com/MarcelCutts/home-finder/pull/11",
+      "focused_tests_passed": 163,
+      "lock_sha256": "2adaf5ea8c92d8599f2743dd8364d80c7116c3c1795b92c002548d2afd5d3bc9",
+      "checks_passed": [
+        "import",
+        "lint",
+        "format",
+        "types",
+        "workflows",
+        "tests"
+      ],
+      "tree_equivalence": "Application/tests exactly equal original boundary; stack CI filter added",
+      "verified_head": "7079e46863f18bfb9643c063193ef8e6d506ab42"
+    },
+    {
+      "index": 10,
+      "title": "Recover pending work and exclude overlapping pipeline runners",
+      "branch": "codex/stack/10-recovery-and-scheduling",
+      "base": "codex/stack/09-collection-accounting",
+      "original_end": "b5d9859ef8467982dcf8df4a490555578dbf24fd",
+      "commits": [
+        {
+          "original": "b5d9859ef8467982dcf8df4a490555578dbf24fd",
+          "stack": "bd32ce92f565b78adf7c8598db5604793321f64f"
+        }
+      ],
+      "why": "Retained work must resume after failure, and CLI/scheduler entry points must not run conflicting pipelines.",
+      "behavior": "Recover persisted enrichment/analysis work, bound retries, enforce cross-entry-point run exclusion, and correct interval scheduling.",
+      "review": "Reviewed first-run and restart paths, no-new-listing recovery, process-death lock release versus live ownership, cancellation and retry counts.",
+      "limits": "This is local durable recovery, not the later general work-state machine or distributed execution contract.",
+      "tests": [
+        "tests/integration/test_off_market_e2e.py",
+        "tests/integration/test_run_pipeline_e2e.py",
+        "tests/test_db/test_storage_analysis_retry.py",
+        "tests/test_pipeline/test_observation_accounting.py",
+        "tests/test_pipeline/test_recovery.py",
+        "tests/test_pipeline/test_runner.py",
+        "tests/test_reanalysis_orchestration.py"
+      ],
+      "handoffs": [
+        "docs/plans/2026-09-28-pr12a-recovery-and-scheduling.md"
+      ],
+      "diffstat": "23 files changed, 830 insertions(+), 101 deletions(-)",
+      "plan_slices": "PR12a",
+      "architectural_prerequisites": [
+        9
+      ],
+      "pull_request": 12,
+      "url": "https://github.com/MarcelCutts/home-finder/pull/12",
+      "focused_tests_passed": 102,
+      "lock_sha256": "2adaf5ea8c92d8599f2743dd8364d80c7116c3c1795b92c002548d2afd5d3bc9",
+      "checks_passed": [
+        "import",
+        "lint",
+        "format",
+        "types",
+        "workflows",
+        "tests"
+      ],
+      "tree_equivalence": "Application/tests exactly equal original boundary; stack CI filter added",
+      "verified_head": "bd32ce92f565b78adf7c8598db5604793321f64f"
+    },
+    {
+      "index": 11,
+      "title": "Capture isolated evidence and repair Rightmove payload decoding",
+      "branch": "codex/stack/11-capture-and-rightmove",
+      "base": "codex/stack/10-recovery-and-scheduling",
+      "original_end": "9aba9454e3d91b1d00b50392ad003b0d9773cacf",
+      "commits": [
+        {
+          "original": "02a75f181fd6e8cfb1cc90063eb388eb3a69de7a",
+          "stack": "4a3cead8d2713f819509f0595d268204b825adde"
+        },
+        {
+          "original": "11d08d789b9fcad83732b6b3e67cdd79d4df8965",
+          "stack": "e933ab24271c4a73c6c7857b9b1b11067212efd0"
+        },
+        {
+          "original": "9aba9454e3d91b1d00b50392ad003b0d9773cacf",
+          "stack": "5b8c8134451fdfae668eedfdeca6363cdd1de67b"
+        }
+      ],
+      "why": "Parser repairs need retained, replayable responses so source behavior can be verified without repeated live requests.",
+      "behavior": "Add isolated capture/export/replay tooling and decode structured search plus indexed detail payloads with explicit malformed/blocked outcomes.",
+      "review": "Grouped capture and both parser repairs because the captured format supplies their verification boundary. Reviewed output isolation, snapshot read-only handling, listing-ID binding, and decoder cycle/bounds controls.",
+      "limits": "A successful fixture is not a source canary, typeahead implementation, permission grant, or production restart.",
+      "tests": [
+        "tests/test_pipeline/test_capture.py",
+        "tests/test_scrapers/test_rightmove_contracts.py",
+        "tests/test_scrapers/test_rightmove_indexed_detail.py"
+      ],
+      "handoffs": [
+        "docs/plans/2026-09-28-pr10-indexed-detail.md",
+        "docs/plans/2026-09-28-pr10-rightmove-contracts.md",
+        "docs/plans/2026-09-28-pr18a-isolated-capture.md"
+      ],
+      "diffstat": "22 files changed, 2230 insertions(+), 74 deletions(-)",
+      "plan_slices": "PR18a / PR10",
+      "architectural_prerequisites": [
+        9,
+        10
+      ],
+      "pull_request": 13,
+      "url": "https://github.com/MarcelCutts/home-finder/pull/13",
+      "focused_tests_passed": 107,
+      "lock_sha256": "2adaf5ea8c92d8599f2743dd8364d80c7116c3c1795b92c002548d2afd5d3bc9",
+      "checks_passed": [
+        "import",
+        "lint",
+        "format",
+        "types",
+        "workflows",
+        "tests"
+      ],
+      "tree_equivalence": "Application/tests exactly equal original boundary; stack CI filter added",
+      "verified_head": "5b8c8134451fdfae668eedfdeca6363cdd1de67b"
+    },
+    {
+      "index": 12,
+      "title": "Use native model transport with explicit phases and strict output contracts",
+      "branch": "codex/stack/12-model-transport",
+      "base": "codex/stack/11-capture-and-rightmove",
+      "original_end": "f632dd4fbd5b33224c7fb44ba53c2291dda39fa4",
+      "commits": [
+        {
+          "original": "03e3e4cbf28cfb4ec102e841daf7c1993b6fd59f",
+          "stack": "d8f298504161ebb3963b5ef835eae7022f8d6b19"
+        },
+        {
+          "original": "fee3448cdbe1307b29c74c063f101b191dce071e",
+          "stack": "745f4d6e0d1bd4879ec75e37f857bdaa29e06d3a"
+        },
+        {
+          "original": "f632dd4fbd5b33224c7fb44ba53c2291dda39fa4",
+          "stack": "c5078408d8671cbcfd98162e0d37462147b31524"
+        }
+      ],
+      "why": "Transport compatibility, phase configuration and output acceptance must be explicit before durable spending can wrap each physical request.",
+      "behavior": "Migrate to the native Anthropic SDK, record per-phase configuration/provenance, and reject refusals, truncation and incomplete required output with typed failures.",
+      "review": "Reviewed exact request/response mapping, refusal/stop reasons, raw-output limits, no invented required fields, and pending-work preservation. These three commits form one model I/O boundary.",
+      "limits": "No model-quality improvement is claimed. Historical coercion remains a legacy read concern; fresh responses must satisfy the new contract.",
+      "tests": [
+        "tests/integration/test_quality_analysis_integration.py",
+        "tests/test_filters/test_analysis_configuration.py",
+        "tests/test_filters/test_analysis_output_failures.py",
+        "tests/test_filters/test_quality.py",
+        "tests/test_filters/test_quality_respx.py",
+        "tests/test_filters/test_quality_transport.py"
+      ],
+      "handoffs": [
+        "docs/plans/2026-09-28-pr20a-sdk-transport.md",
+        "docs/plans/2026-09-28-pr20b-analysis-configuration.md",
+        "docs/plans/2026-09-28-pr20c-output-failures.md"
+      ],
+      "diffstat": "21 files changed, 1508 insertions(+), 332 deletions(-)",
+      "plan_slices": "PR20a\u2013c",
+      "architectural_prerequisites": [
+        3,
+        5
+      ],
+      "pull_request": 14,
+      "url": "https://github.com/MarcelCutts/home-finder/pull/14",
+      "focused_tests_passed": 328,
+      "lock_sha256": "e4d11bd91b1e3b9f826eaa8ed26baf7740a0edac094df1514e73e5e930f83d1c",
+      "checks_passed": [
+        "import",
+        "lint",
+        "format",
+        "types",
+        "workflows",
+        "tests"
+      ],
+      "tree_equivalence": "Application/tests exactly equal original boundary; stack CI filter added",
+      "verified_head": "c5078408d8671cbcfd98162e0d37462147b31524"
+    },
+    {
+      "index": 13,
+      "title": "Reserve and account for every paid model attempt",
+      "branch": "codex/stack/13-model-spend",
+      "base": "codex/stack/12-model-transport",
+      "original_end": "58d538ba9c8607678de003fc5f072951e2f5a7f1",
+      "commits": [
+        {
+          "original": "02093c0a621e48606989b976353e7d09883e8336",
+          "stack": "cac92555e3545b62518dd287fa43d8a003077bb1"
+        },
+        {
+          "original": "58d538ba9c8607678de003fc5f072951e2f5a7f1",
+          "stack": "b3d45712c61d7e61da8e667c8ea7e909096ed053"
+        }
+      ],
+      "why": "A request cap is ineffective if retries or interrupted requests can bypass it; admission and settlement need durable state.",
+      "behavior": "Add the paid-attempt ledger, policy administration/reporting, conservative reservations and enforcement around each native model request.",
+      "review": "Reviewed concurrent admission, exact decimal accounting, unknown outcome retention, retry charging, settlement idempotence and disabled-policy behavior. The ledger and its enforcement are reviewed together so the PR ends with an active guard.",
+      "limits": "Provider usage is an estimate rather than an invoice. Unknown attempts retain reservations; no normal-operation spend policy is silently enabled.",
+      "tests": [
+        "tests/test_db/test_connection_lifecycle.py",
+        "tests/test_db/test_spend.py",
+        "tests/test_filters/test_analysis_configuration.py",
+        "tests/test_filters/test_analysis_output_failures.py",
+        "tests/test_filters/test_analysis_spend.py",
+        "tests/test_filters/test_quality_respx.py",
+        "tests/test_filters/test_quality_transport.py",
+        "tests/test_pipeline/test_spend_admin.py"
+      ],
+      "handoffs": [
+        "docs/plans/2026-09-28-pr13a-spend-ledger.md",
+        "docs/plans/2026-09-28-pr13b-native-spend-enforcement.md"
+      ],
+      "diffstat": "25 files changed, 2272 insertions(+), 70 deletions(-)",
+      "plan_slices": "PR13a\u2013b",
+      "architectural_prerequisites": [
+        4,
+        12
+      ],
+      "pull_request": 15,
+      "url": "https://github.com/MarcelCutts/home-finder/pull/15",
+      "focused_tests_passed": 151,
+      "lock_sha256": "e4d11bd91b1e3b9f826eaa8ed26baf7740a0edac094df1514e73e5e930f83d1c",
+      "checks_passed": [
+        "import",
+        "lint",
+        "format",
+        "types",
+        "workflows",
+        "tests"
+      ],
+      "tree_equivalence": "Application/tests exactly equal original boundary; stack CI filter added",
+      "verified_head": "b3d45712c61d7e61da8e667c8ea7e909096ed053"
+    },
+    {
+      "index": 14,
+      "title": "Verify complete backups and retire database-file replacement",
+      "branch": "codex/stack/14-backup-authority",
+      "base": "codex/stack/13-model-spend",
+      "original_end": "ad34ba918b723ecb8bcd19eec0fe980d7ca4e515",
+      "commits": [
+        {
+          "original": "ad34ba918b723ecb8bcd19eec0fe980d7ca4e515",
+          "stack": "cc9e514f8911537241575db24a7af52a045c3398"
+        }
+      ],
+      "why": "New state is unsafe if an operational sync can overwrite user actions or a restore omits image evidence.",
+      "behavior": "Create and verify database/asset backup manifests, rehearse restore, and retire the old push-a-database synchronization workflow.",
+      "review": "Reviewed online SQLite backup consistency, hash/path validation, restore isolation, and authoritative-store ownership. The original rehearsal preserved the retained database and all 27,517 assets.",
+      "limits": "A backup rehearsal is not an automatic production restore or migration rollback. Restore destinations must remain isolated until reviewed.",
+      "tests": [
+        "tests/test_db/test_backup.py"
+      ],
+      "handoffs": [
+        "docs/plans/2026-09-28-pr05a-backup-and-authority.md"
+      ],
+      "diffstat": "7 files changed, 1016 insertions(+), 119 deletions(-)",
+      "plan_slices": "PR05a",
+      "architectural_prerequisites": [
+        4,
+        10
+      ],
+      "pull_request": 16,
+      "url": "https://github.com/MarcelCutts/home-finder/pull/16",
+      "focused_tests_passed": 34,
+      "lock_sha256": "e4d11bd91b1e3b9f826eaa8ed26baf7740a0edac094df1514e73e5e930f83d1c",
+      "checks_passed": [
+        "import",
+        "lint",
+        "format",
+        "types",
+        "workflows",
+        "tests"
+      ],
+      "tree_equivalence": "Application/tests exactly equal original boundary; stack CI filter added",
+      "verified_head": "cc9e514f8911537241575db24a7af52a045c3398"
+    },
+    {
+      "index": 15,
+      "title": "Build blind development reference packs for assessment review",
+      "branch": "codex/stack/15-reference-packs",
+      "base": "codex/stack/14-backup-authority",
+      "original_end": "9498f39360c258c107517b8b74aefac561e1b76d",
+      "commits": [
+        {
+          "original": "9498f39360c258c107517b8b74aefac561e1b76d",
+          "stack": "ef1f0d3bf1e785b0be8a437e3b1b32186df9272b"
+        }
+      ],
+      "why": "Model and dedup quality need inspectable source evidence and independent labels rather than agreement with existing output.",
+      "behavior": "Select grouped cases, retain exact available images, render blind review packs and provide a rubric with blank human labels.",
+      "review": "Reviewed deterministic sampling, image provenance, missing-evidence reporting, blind presentation and case/group separation. Private packs are excluded from commits.",
+      "limits": "The 48-case development pack has not become an independently labeled holdout; no model promotion follows from generating it.",
+      "tests": [
+        "tests/test_models/test_reference.py",
+        "tests/test_pipeline/test_reference_pack.py"
+      ],
+      "handoffs": [
+        "docs/plans/2026-09-28-pr19a-blind-reference-pack.md"
+      ],
+      "diffstat": "12 files changed, 1710 insertions(+), 2 deletions(-)",
+      "plan_slices": "PR19a",
+      "architectural_prerequisites": [
+        11,
+        14
+      ],
+      "pull_request": 17,
+      "url": "https://github.com/MarcelCutts/home-finder/pull/17",
+      "focused_tests_passed": 42,
+      "lock_sha256": "e4d11bd91b1e3b9f826eaa8ed26baf7740a0edac094df1514e73e5e930f83d1c",
+      "checks_passed": [
+        "import",
+        "lint",
+        "format",
+        "types",
+        "workflows",
+        "tests"
+      ],
+      "tree_equivalence": "Application/tests exactly equal original boundary; stack CI filter added",
+      "verified_head": "ef1f0d3bf1e785b0be8a437e3b1b32186df9272b"
+    },
+    {
+      "index": 16,
+      "title": "Add immutable source observations and historical baselines",
+      "branch": "codex/stack/16-observation-ledger",
+      "base": "codex/stack/15-reference-packs",
+      "original_end": "a48fcb2346078af51ce51fd5f759ffe6be822e10",
+      "commits": [
+        {
+          "original": "a48fcb2346078af51ce51fd5f759ffe6be822e10",
+          "stack": "8f201968df5f2c9d75a1a00c9e1052a3b34ce7a8"
+        }
+      ],
+      "why": "Changing current rows cannot explain which evidence existed at an earlier assessment; later projections need immutable inputs.",
+      "behavior": "Introduce observation/field records with deterministic identity and an additive historical baseline migration without inventing fresh capture times.",
+      "review": "Reviewed immutability, duplicate and conflicting receipts, transaction rollback, restart idempotence, and preservation of every original row in migration rehearsals.",
+      "limits": "A historical baseline records what the old database retained, not a reconstruction of missing original portal responses.",
+      "tests": [
+        "tests/test_db/test_observations.py"
+      ],
+      "handoffs": [
+        "docs/plans/2026-09-28-pr06b1-source-observation-ledger.md"
+      ],
+      "diffstat": "8 files changed, 1089 insertions(+), 2 deletions(-)",
+      "plan_slices": "PR06b-1",
+      "architectural_prerequisites": [
+        4,
+        14
+      ],
+      "pull_request": 18,
+      "url": "https://github.com/MarcelCutts/home-finder/pull/18",
+      "focused_tests_passed": 39,
+      "lock_sha256": "e4d11bd91b1e3b9f826eaa8ed26baf7740a0edac094df1514e73e5e930f83d1c",
+      "checks_passed": [
+        "import",
+        "lint",
+        "format",
+        "types",
+        "workflows",
+        "tests"
+      ],
+      "tree_equivalence": "Application/tests exactly equal original boundary; stack CI filter added",
+      "verified_head": "8f201968df5f2c9d75a1a00c9e1052a3b34ce7a8"
+    },
+    {
+      "index": 17,
+      "title": "Retain search and detail revisions before downstream work",
+      "branch": "codex/stack/17-observation-capture",
+      "base": "codex/stack/16-observation-ledger",
+      "original_end": "d736289266c91a21bd6abc825c2af3c72b47eb05",
+      "commits": [
+        {
+          "original": "f305e0491cceef90599e5a370b8bf69c97ea1e15",
+          "stack": "fd9d7c7514951a9da7d122de0aad986b247d787e"
+        },
+        {
+          "original": "d736289266c91a21bd6abc825c2af3c72b47eb05",
+          "stack": "01767d94ba12f6b28fe0e96bf4f73a6a05de6c28"
+        }
+      ],
+      "why": "The immutable ledger only helps when real adapter receipts enter it before filtering, image work or model calls can fail.",
+      "behavior": "Capture search revisions and detail evidence with source-specific IDs, dates/branch metadata and assessment evidence references; persist details before image processing.",
+      "review": "Reviewed source-ID isolation, per-source text, receipt persistence on downstream failure, parser provenance and idempotent replay. Search and detail integration share the same ledger admission boundary.",
+      "limits": "This does not yet derive every current fact from observations or define collection completeness.",
+      "tests": [
+        "tests/test_filters/test_detail_enrichment.py",
+        "tests/test_filters/test_quality.py",
+        "tests/test_pipeline/test_observation_accounting.py",
+        "tests/test_scrapers/test_detail_observations.py",
+        "tests/test_scrapers/test_rightmove_indexed_detail.py",
+        "tests/test_scrapers/test_search_observations.py"
+      ],
+      "handoffs": [
+        "docs/plans/2026-09-28-pr06b2-search-observation-capture.md",
+        "docs/plans/2026-09-28-pr06b3-detail-observation-capture.md"
+      ],
+      "diffstat": "30 files changed, 1449 insertions(+), 124 deletions(-)",
+      "plan_slices": "PR06b-2/3",
+      "architectural_prerequisites": [
+        11,
+        16
+      ],
+      "pull_request": 19,
+      "url": "https://github.com/MarcelCutts/home-finder/pull/19",
+      "focused_tests_passed": 390,
+      "lock_sha256": "e4d11bd91b1e3b9f826eaa8ed26baf7740a0edac094df1514e73e5e930f83d1c",
+      "checks_passed": [
+        "import",
+        "lint",
+        "format",
+        "types",
+        "workflows",
+        "tests"
+      ],
+      "tree_equivalence": "Application/tests exactly equal original boundary; stack CI filter added",
+      "verified_head": "01767d94ba12f6b28fe0e96bf4f73a6a05de6c28"
+    },
+    {
+      "index": 18,
+      "title": "Derive current listing text from retained evidence",
+      "branch": "codex/stack/18-current-text",
+      "base": "codex/stack/17-observation-capture",
+      "original_end": "e5f1a9e9d7d57420d961188a959f83d2134577de",
+      "commits": [
+        {
+          "original": "e5f1a9e9d7d57420d961188a959f83d2134577de",
+          "stack": "7655418f647404800c7f28289380150f3b0a6a53"
+        }
+      ],
+      "why": "Once revisions are retained, current descriptions/features need deterministic precedence and visible conflicts.",
+      "behavior": "Project current text from observations, preserve equal-rank conflicts and supply the stored projection to retries, analysis and the detail page.",
+      "review": "Reviewed evidence rank versus arrival order, explicit empty values, stale fallback prevention, source conflict display and recovery input consistency.",
+      "limits": "Non-text projections, markup normalization and full artifact invalidation remain separate contracts.",
+      "tests": [
+        "tests/test_db/test_current_text_projection.py",
+        "tests/test_pipeline/test_recovery.py",
+        "tests/test_web/test_routes.py"
+      ],
+      "handoffs": [
+        "docs/plans/2026-09-29-pr06b4-current-text-projections.md"
+      ],
+      "diffstat": "13 files changed, 634 insertions(+), 53 deletions(-)",
+      "plan_slices": "PR06b-4",
+      "architectural_prerequisites": [
+        5,
+        17
+      ],
+      "pull_request": 20,
+      "url": "https://github.com/MarcelCutts/home-finder/pull/20",
+      "focused_tests_passed": 204,
+      "lock_sha256": "e4d11bd91b1e3b9f826eaa8ed26baf7740a0edac094df1514e73e5e930f83d1c",
+      "checks_passed": [
+        "import",
+        "lint",
+        "format",
+        "types",
+        "workflows",
+        "tests"
+      ],
+      "tree_equivalence": "Application/tests exactly equal original boundary; stack CI filter added",
+      "verified_head": "7655418f647404800c7f28289380150f3b0a6a53"
+    },
+    {
+      "index": 19,
+      "title": "Verify raw replay references and expire managed captures explicitly",
+      "branch": "codex/stack/19-raw-evidence",
+      "base": "codex/stack/18-current-text",
+      "original_end": "9d41a13ceb834179d7c7c3dc0873af1eb3d75c1c",
+      "commits": [
+        {
+          "original": "9d41a13ceb834179d7c7c3dc0873af1eb3d75c1c",
+          "stack": "8ee0ef6bfeb3dfa7dd0d7610c2c91b39657a11c1"
+        }
+      ],
+      "why": "A normalized observation must point to the exact retained body, and body expiry must not erase the observation's existence.",
+      "behavior": "Bind replay evidence to raw hashes and normalized observations, reject corrupt references, and record explicit expiry for managed raw bodies.",
+      "review": "Reviewed hash/path tampering, retention boundaries, repeat expiry and observation stability when raw bodies are removed.",
+      "limits": "Retention scheduling and source-specific permissions remain operational work; the command only manages its own capture store.",
+      "tests": [
+        "tests/test_pipeline/test_capture.py",
+        "tests/test_pipeline/test_capture_evidence.py"
+      ],
+      "handoffs": [
+        "docs/plans/2026-09-29-pr06b5-raw-capture-references.md"
+      ],
+      "diffstat": "9 files changed, 983 insertions(+), 69 deletions(-)",
+      "plan_slices": "PR06b-5",
+      "architectural_prerequisites": [
+        11,
+        17
+      ],
+      "pull_request": 21,
+      "url": "https://github.com/MarcelCutts/home-finder/pull/21",
+      "focused_tests_passed": 78,
+      "lock_sha256": "e4d11bd91b1e3b9f826eaa8ed26baf7740a0edac094df1514e73e5e930f83d1c",
+      "checks_passed": [
+        "import",
+        "lint",
+        "format",
+        "types",
+        "workflows",
+        "tests"
+      ],
+      "tree_equivalence": "Application/tests exactly equal original boundary; stack CI filter added",
+      "verified_head": "8ee0ef6bfeb3dfa7dd0d7610c2c91b39657a11c1"
+    },
+    {
+      "index": 20,
+      "title": "Preserve source area units, ranges and minimums",
+      "branch": "codex/stack/20-source-area",
+      "base": "codex/stack/19-raw-evidence",
+      "original_end": "7361f43e37bd2fd034b04d226a6168263db6814f",
+      "commits": [
+        {
+          "original": "7361f43e37bd2fd034b04d226a6168263db6814f",
+          "stack": "49e306d7c5791ad21a42b49375d4f9856dd0cf16"
+        }
+      ],
+      "why": "A printed range or minimum cannot safely become a single total floor area used for value judgments.",
+      "behavior": "Retain exact decimal units/bounds and keep qualified quantities distinct from scalar totals in parsing, evidence and model input.",
+      "review": "Reviewed unit conversion, range/minimum semantics, parser fallback and reference-pack compatibility using authored source fixtures.",
+      "limits": "This does not solve missed floorplan totals or classify whether an image is a genuine floorplan.",
+      "tests": [
+        "tests/test_filters/test_floor_area.py",
+        "tests/test_scrapers/test_source_area_evidence.py"
+      ],
+      "handoffs": [
+        "docs/plans/2026-09-29-pr06b6-source-area-quantities.md"
+      ],
+      "diffstat": "14 files changed, 568 insertions(+), 60 deletions(-)",
+      "plan_slices": "PR06b-6",
+      "architectural_prerequisites": [
+        15,
+        17
+      ],
+      "pull_request": 22,
+      "url": "https://github.com/MarcelCutts/home-finder/pull/22",
+      "focused_tests_passed": 79,
+      "lock_sha256": "e4d11bd91b1e3b9f826eaa8ed26baf7740a0edac094df1514e73e5e930f83d1c",
+      "checks_passed": [
+        "import",
+        "lint",
+        "format",
+        "types",
+        "workflows",
+        "tests"
+      ],
+      "tree_equivalence": "Application/tests exactly equal original boundary; stack CI filter added",
+      "verified_head": "49e306d7c5791ad21a42b49375d4f9856dd0cf16"
+    },
+    {
+      "index": 21,
+      "title": "Separate request context from material listing revisions",
+      "branch": "codex/stack/21-receipt-context",
+      "base": "codex/stack/20-source-area",
+      "original_end": "6a9be2273ff34f9a325e49b96ad5e159e32c1d9f",
+      "commits": [
+        {
+          "original": "6a9be2273ff34f9a325e49b96ad5e159e32c1d9f",
+          "stack": "a5430e05f62b6abd7a8806b3b57af7ccf88d6bd6"
+        }
+      ],
+      "why": "Receipt clocks and query metadata should explain collection without forcing unnecessary reassessment of unchanged evidence.",
+      "behavior": "Retain requested query/page metadata separately from source facts and derive material fingerprints independent of receipt/parser provenance.",
+      "review": "Reviewed same-fact/different-receipt equivalence, meaningful source changes, parser context and replay stability.",
+      "limits": "Material fingerprints are groundwork; complete assessment dependency and scheduling invalidation is not claimed.",
+      "tests": [
+        "tests/test_models/test_observation_material.py",
+        "tests/test_pipeline/test_capture_evidence.py",
+        "tests/test_scrapers/test_detail_observations.py",
+        "tests/test_scrapers/test_search_observations.py"
+      ],
+      "handoffs": [
+        "docs/plans/2026-09-29-pr06b7-request-context-and-material.md"
+      ],
+      "diffstat": "15 files changed, 502 insertions(+), 17 deletions(-)",
+      "plan_slices": "PR06b-7",
+      "architectural_prerequisites": [
+        17,
+        19
+      ],
+      "pull_request": 23,
+      "url": "https://github.com/MarcelCutts/home-finder/pull/23",
+      "focused_tests_passed": 104,
+      "lock_sha256": "e4d11bd91b1e3b9f826eaa8ed26baf7740a0edac094df1514e73e5e930f83d1c",
+      "checks_passed": [
+        "import",
+        "lint",
+        "format",
+        "types",
+        "workflows",
+        "tests"
+      ],
+      "tree_equivalence": "Application/tests exactly equal original boundary; stack CI filter added",
+      "verified_head": "a5430e05f62b6abd7a8806b3b57af7ccf88d6bd6"
+    },
+    {
+      "index": 22,
+      "title": "Add observable bounded model smoke runs and repair feature objects",
+      "branch": "codex/stack/22-bounded-smoke",
+      "base": "codex/stack/21-receipt-context",
+      "original_end": "b6bddb038b9ffc4ab391637c5eb0c44d0c8f3550",
+      "commits": [
+        {
+          "original": "16c46337966dfdffebe708370f1712de858f80b0",
+          "stack": "8c0d264ce5ccc6517af8eb3977186c6c9c7af64f"
+        },
+        {
+          "original": "b6bddb038b9ffc4ab391637c5eb0c44d0c8f3550",
+          "stack": "14ee5778f222e08024f911bbc08991f47263a16f"
+        }
+      ],
+      "why": "After evidence and spend controls, a small isolated run can test the actual pipeline with an explicit request and dollar ceiling.",
+      "behavior": "Fix structured Rightmove feature objects and add an isolated one-property smoke with request limits, spend admission, structured stage/model diagnostics and post-run audits.",
+      "review": "Reviewed configuration isolation, every physical request/retry boundary, redaction, ledger totals and guard failure behavior. The parser fix is retained here because this bounded run exposed it against the newer evidence contract.",
+      "limits": "The recorded two-request US$0.082314500 experiment is historical and exhausted; it does not authorize further paid runs or change the default model.",
+      "tests": [
+        "tests/integration/test_quality_analysis_integration.py",
+        "tests/test_db/test_spend.py",
+        "tests/test_filters/test_quality.py",
+        "tests/test_filters/test_quality_transport.py",
+        "tests/test_filters/test_small_run_spending.py",
+        "tests/test_pipeline/test_smoke.py",
+        "tests/test_scrapers/test_rightmove_contracts.py"
+      ],
+      "handoffs": [
+        "docs/plans/2026-09-29-bounded-pipeline-smoke.md",
+        "docs/plans/2026-09-29-pr10-search-feature-objects.md"
+      ],
+      "diffstat": "23 files changed, 1327 insertions(+), 70 deletions(-)",
+      "plan_slices": "PR10 / bounded smoke",
+      "architectural_prerequisites": [
+        11,
+        13,
+        21
+      ],
+      "pull_request": 24,
+      "url": "https://github.com/MarcelCutts/home-finder/pull/24",
+      "focused_tests_passed": 362,
+      "lock_sha256": "e4d11bd91b1e3b9f826eaa8ed26baf7740a0edac094df1514e73e5e930f83d1c",
+      "checks_passed": [
+        "import",
+        "lint",
+        "format",
+        "types",
+        "workflows",
+        "tests"
+      ],
+      "tree_equivalence": "Application/tests exactly equal original boundary; stack CI filter added",
+      "verified_head": "14ee5778f222e08024f911bbc08991f47263a16f"
+    },
+    {
+      "index": 23,
+      "title": "Protect established property history during duplicate merges",
+      "branch": "codex/stack/23-merge-preservation",
+      "base": "codex/stack/22-bounded-smoke",
+      "original_end": "f46958b60fce35fcaf4c91acd4e4b5175fd0f891",
+      "commits": [
+        {
+          "original": "f46958b60fce35fcaf4c91acd4e4b5175fd0f891",
+          "stack": "dbf2def334a0b4b02ae1cb9c941a59319653247a"
+        }
+      ],
+      "why": "A larger dedup experiment must not destroy established assessments, status, price history or cached evidence.",
+      "behavior": "Guard established records, retire only eligible empty staging rows atomically, retain source aliases and original caches, and defer protected merge proposals.",
+      "review": "Reviewed each protected table/state, injected retirement rollback, missing/stale proposals and real copied-database preservation. This is a safety boundary before further identity changes.",
+      "limits": "Established merges remain blocked. Reversible merge/split decisions are later work, not an exception to the guard.",
+      "tests": [
+        "tests/test_db/test_merge_safety.py",
+        "tests/test_db/test_storage_enrichment.py",
+        "tests/test_main_dedup_existing.py"
+      ],
+      "handoffs": [
+        "docs/plans/2026-09-29-pr07a-merge-preservation.md"
+      ],
+      "diffstat": "11 files changed, 644 insertions(+), 110 deletions(-)",
+      "plan_slices": "PR07a",
+      "architectural_prerequisites": [
+        4,
+        13,
+        17
+      ],
+      "pull_request": 25,
+      "url": "https://github.com/MarcelCutts/home-finder/pull/25",
+      "focused_tests_passed": 42,
+      "lock_sha256": "e4d11bd91b1e3b9f826eaa8ed26baf7740a0edac094df1514e73e5e930f83d1c",
+      "checks_passed": [
+        "import",
+        "lint",
+        "format",
+        "types",
+        "workflows",
+        "tests"
+      ],
+      "tree_equivalence": "Application/tests exactly equal original boundary; stack CI filter added",
+      "verified_head": "dbf2def334a0b4b02ae1cb9c941a59319653247a"
+    },
+    {
+      "index": 24,
+      "title": "Exercise bounded batches and retain the deduplication review evidence",
+      "branch": "codex/stack/24-batch-and-dedup-review",
+      "base": "codex/stack/23-merge-preservation",
+      "original_end": "d50f4201b585a6dcd5d71ea1f5b9e12b920f4560",
+      "commits": [
+        {
+          "original": "7414332fe5d65248ebe8a8021aa91a4b2cf6d3fa",
+          "stack": "c2288fdeca8dc3e8db5ec7be2963fe9099f3d2a8"
+        },
+        {
+          "original": "6ed61641784cdc538807017441b266065e246c52",
+          "stack": "b4e332bddce1c6a4e6de5b23c729f2367e45dad6"
+        },
+        {
+          "original": "42f41f995dbdd3569f4b8ec4fcefdce22718ab01",
+          "stack": "f6d2c65b2bcf8311fc8aa6334d94738350cb8e35"
+        },
+        {
+          "original": "89d0f4c992eb05a281ad2644438ba29ae25108ec",
+          "stack": "3ab410cdec4828df9e66d21b953ab29969478127"
+        },
+        {
+          "original": "d50f4201b585a6dcd5d71ea1f5b9e12b920f4560",
+          "stack": "30e972651df5af57287636defd914850fe6894c9"
+        }
+      ],
+      "why": "The matching pipeline needs a larger inspectable sample before identity-policy changes are justified.",
+      "behavior": "Add the bounded 50-listing runner, repair exhausted Rightmove pages and redacted output diagnostics, and retain offline replay plus the qualitative dedup audit.",
+      "review": "Grouped the experiment, directly observed repairs and its review so readers can trace each conclusion to the run. Verified same/split-run memberships, known-input no-op behavior, spend-stop behavior, and agent-label limitations. Threshold experiments support leaving automatic matching unchanged.",
+      "limits": "The historical run produced 35 homes but no complete assessments; three additional consolidations are provisional review findings, not production changes or independent human labels.",
+      "tests": [
+        "tests/test_filters/test_analysis_diagnostics.py",
+        "tests/test_pipeline/test_batch_smoke.py",
+        "tests/test_scrapers/test_rightmove_contracts.py"
+      ],
+      "handoffs": [
+        "docs/plans/2026-09-29-fifty-listing-pipeline-experiment.md"
+      ],
+      "diffstat": "20 files changed, 1898 insertions(+), 48 deletions(-)",
+      "plan_slices": "Batch / dedup review",
+      "architectural_prerequisites": [
+        11,
+        22,
+        23
+      ],
+      "pull_request": 26,
+      "url": "https://github.com/MarcelCutts/home-finder/pull/26",
+      "focused_tests_passed": 63,
+      "lock_sha256": "e4d11bd91b1e3b9f826eaa8ed26baf7740a0edac094df1514e73e5e930f83d1c",
+      "checks_passed": [
+        "import",
+        "lint",
+        "format",
+        "types",
+        "workflows",
+        "tests"
+      ],
+      "tree_equivalence": "Application/tests exactly equal original boundary; stack CI filter added",
+      "verified_head": "30e972651df5af57287636defd914850fe6894c9"
+    },
+    {
+      "index": 25,
+      "title": "Retain exact provider identities and audit conflicting home ownership",
+      "branch": "codex/stack/25-provider-identities",
+      "base": "codex/stack/24-batch-and-dedup-review",
+      "original_end": "08e31450c45f717d81b8279330a24fbf3ffc20ef",
+      "commits": [
+        {
+          "original": "08e31450c45f717d81b8279330a24fbf3ffc20ef",
+          "stack": "1542e41202eec9fd191e1cac56b9e8ad5850acc7"
+        }
+      ],
+      "why": "Portal advertisement identity must be recovered without conflating multiple advertisements or silently choosing a historical owner.",
+      "behavior": "Add exact provider keys and immutable original-representation claims, retain unresolved cases, and provide a read-only ownership audit.",
+      "review": "Reviewed exact URL/provider-ID normalization, malformed/URL-shaped legacy IDs, multiple same-portal advertisements and additive backfill. Rehearsals retain all 261 duplicate representations and 17 conflicts across 28 historical homes.",
+      "limits": "Provider identity is not home identity. Ownership conflicts are surfaced rather than automatically repaired.",
+      "tests": [
+        "tests/test_db/test_observations.py",
+        "tests/test_db/test_provider_identities.py",
+        "tests/test_models/test_provider_identity.py",
+        "tests/test_pipeline/test_identity_audit.py"
+      ],
+      "handoffs": [
+        "docs/plans/2026-09-29-pr07b1-provider-identities.md"
+      ],
+      "diffstat": "13 files changed, 1056 insertions(+), 8 deletions(-)",
+      "plan_slices": "PR07b-1",
+      "architectural_prerequisites": [
+        16,
+        23,
+        24
+      ],
+      "pull_request": 27,
+      "url": "https://github.com/MarcelCutts/home-finder/pull/27",
+      "focused_tests_passed": 101,
+      "lock_sha256": "e4d11bd91b1e3b9f826eaa8ed26baf7740a0edac094df1514e73e5e930f83d1c",
+      "checks_passed": [
+        "import",
+        "lint",
+        "format",
+        "types",
+        "workflows",
+        "tests"
+      ],
+      "tree_equivalence": "Application/tests exactly equal original boundary; stack CI filter added",
+      "verified_head": "1542e41202eec9fd191e1cac56b9e8ad5850acc7"
+    },
+    {
+      "index": 26,
+      "title": "Give saved homes durable identities and short web and Telegram links",
+      "branch": "codex/stack/26-stable-home-links",
+      "base": "codex/stack/25-provider-identities",
+      "original_end": "545ad7c470bfe2b7b2ccc532d63cd7f378fe8a13",
+      "commits": [
+        {
+          "original": "545ad7c470bfe2b7b2ccc532d63cd7f378fe8a13",
+          "stack": "ea23bc5f1a76f41f49a2e11acd1b6c3027c8f90e"
+        }
+      ],
+      "why": "Home links must survive staging retirement and long portal IDs before reviewed membership changes can safely follow.",
+      "behavior": "Assign persisted home UUIDs, retain exact legacy aliases and guarded staging redirects, resolve mutations inside their write transaction, and use short IDs for dashboard/map/Telegram links while keeping image/history storage keys.",
+      "review": "Reviewed additive backfill, all canonical save paths, alias ambiguity/cycles, rollback, callback size and authorization, replay protection and cached-evidence lookup. Copy rehearsals preserve every original row, 1,016 homes and 201 historical aliases.",
+      "limits": "General anchor reassociation and reversible membership decisions remain PR07b-3. This PR also records the stack's review/verification manifest; it does not reconcile historical ownership conflicts.",
+      "tests": [
+        "tests/test_db/test_home_identities.py",
+        "tests/test_db/test_observations.py",
+        "tests/test_db/test_storage_quality.py",
+        "tests/test_db/test_transaction_ownership.py",
+        "tests/test_web/test_home_links.py"
+      ],
+      "handoffs": [
+        "docs/plans/2026-10-09-pr07b2-stable-home-links.md"
+      ],
+      "diffstat": "21 files changed, 988 insertions(+), 36 deletions(-)",
+      "plan_slices": "PR07b-2",
+      "architectural_prerequisites": [
+        2,
+        23,
+        25
+      ],
+      "pull_request": 28,
+      "url": "https://github.com/MarcelCutts/home-finder/pull/28",
+      "focused_tests_passed": 124,
+      "lock_sha256": "e4d11bd91b1e3b9f826eaa8ed26baf7740a0edac094df1514e73e5e930f83d1c",
+      "checks_passed": [
+        "import",
+        "lint",
+        "format",
+        "types",
+        "workflows",
+        "tests"
+      ],
+      "tree_equivalence": "Application/tests exactly equal original boundary; stack CI filter added",
+      "verified_head": "ea23bc5f1a76f41f49a2e11acd1b6c3027c8f90e"
+    }
+  ],
+  "scope_note": "verified_head identifies code that was tested. Later stack-index/handoff-only commits do not change those application/test trees.",
+  "bottom_full_suite": {
+    "python": "3.14.7",
+    "passed": 2378,
+    "coverage_percent": 85.2
+  }
+}
