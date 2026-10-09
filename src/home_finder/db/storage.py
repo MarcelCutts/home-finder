@@ -25,6 +25,8 @@ from home_finder.db.listing_text import (
     text_from_property_row,
     text_from_source_row,
 )
+from home_finder.db.membership import MembershipRepository
+from home_finder.db.membership_ops import link_memberships
 from home_finder.db.merge_safety import (
     MergeBlockedError,
     ensure_staging_merge,
@@ -132,6 +134,12 @@ class PropertyStorage:
         self._observations = ObservationRepository(self._read_connection, self._transaction)
         self._identities = IdentityRepository(self._read_connection)
         self._homes = HomeRepository(self._read_connection)
+        self._memberships = MembershipRepository(self._transaction)
+
+    @property
+    def memberships(self) -> MembershipRepository:
+        """Reviewed listing ownership, reversal, and original personal-state provenance."""
+        return self._memberships
 
     @property
     def homes(self) -> HomeRepository:
@@ -638,6 +646,13 @@ class PropertyStorage:
             blockers = await staging_blockers(conn, [unique_id])
             if blockers:
                 raise MergeBlockedError(blockers)
+            async with conn.execute(
+                "SELECT unique_id FROM source_listings WHERE merged_id = ?", (unique_id,)
+            ) as cursor:
+                links = [(row[0], None) for row in await cursor.fetchall()]
+            await link_memberships(
+                conn, links, operation="cleanup", reason="unused_staging_cleanup"
+            )
             await conn.execute(
                 "DELETE FROM properties WHERE unique_id = ?",
                 (unique_id,),
@@ -742,9 +757,18 @@ class PropertyStorage:
             # Link absorbed source listings to this golden record
             if absorbed_ids:
                 await ensure_staging_merge(conn, existing_unique_id, absorbed_ids)
-                await conn.executemany(
-                    "UPDATE source_listings SET merged_id = ? WHERE unique_id = ? OR merged_id = ?",
-                    [(existing_unique_id, uid, uid) for uid in absorbed_ids],
+                links: list[tuple[str, str | None]] = []
+                for uid in absorbed_ids:
+                    async with conn.execute(
+                        "SELECT unique_id FROM source_listings "
+                        "WHERE unique_id = ? OR merged_id = ?",
+                        (uid, uid),
+                    ) as cursor:
+                        links.extend(
+                            (row[0], existing_unique_id) for row in await cursor.fetchall()
+                        )
+                await link_memberships(
+                    conn, links, operation="staging_link", reason="guarded_staging_absorption"
                 )
 
             # Rebuild denormalized caches from source_listings
@@ -1195,8 +1219,7 @@ class PropertyStorage:
                 last_seen = excluded.last_seen,
                 latitude = COALESCE(excluded.latitude, latitude),
                 longitude = COALESCE(excluded.longitude, longitude),
-                postcode = COALESCE(excluded.postcode, postcode),
-                merged_id = COALESCE(excluded.merged_id, merged_id)
+                postcode = COALESCE(excluded.postcode, postcode)
             """,
                 (
                     prop.unique_id,
@@ -1215,7 +1238,7 @@ class PropertyStorage:
                     prop.available_from.isoformat() if prop.available_from else None,
                     prop.first_seen.isoformat(),
                     now,
-                    merged_id,
+                    None,
                 ),
             )
         except aiosqlite.OperationalError as e:
@@ -1223,6 +1246,8 @@ class PropertyStorage:
                 return
             raise
         await record_stored_identities(conn, [prop.unique_id])
+        if merged_id is not None:
+            await link_memberships(conn, [(prop.unique_id, merged_id)], reason="canonical_save")
         linked_id = await apply_source_text(conn, prop.unique_id, self._search_text(prop))
         if linked_id:
             await refresh_merged_text(conn, linked_id)
@@ -1297,10 +1322,7 @@ class PropertyStorage:
         if not links:
             return
         async with self._transaction() as conn:
-            await conn.executemany(
-                "UPDATE source_listings SET merged_id = ? WHERE unique_id = ?",
-                [(merged_id, uid) for uid, merged_id in links],
-            )
+            await link_memberships(conn, list(links), reason="explicit_unowned_linkage")
             for merged_id in {merged_id for _, merged_id in links}:
                 await refresh_merged_text(conn, merged_id)
 

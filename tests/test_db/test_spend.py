@@ -9,6 +9,7 @@ from contextlib import closing
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
+import aiosqlite
 import pytest
 from pydantic import ValidationError
 
@@ -319,15 +320,19 @@ async def test_usage_exceeding_reservation_is_recorded_and_blocks_new_spend(in_m
         await repo.admit(spec("next"), cap)
 
 
-async def test_ledger_survives_property_deletion(in_memory_storage, sample_property):
+async def test_ledger_and_owned_property_survive_unreviewed_deletion(
+    in_memory_storage, sample_property
+):
     await in_memory_storage.save_property(sample_property)
     attempt_spec = spec().model_copy(update={"property_id": sample_property.unique_id})
     attempt = await in_memory_storage.spend.admit(attempt_spec, policy())
     await in_memory_storage.spend.mark_dispatched(attempt)
-    async with in_memory_storage._transaction() as conn:
-        await conn.execute(
-            "DELETE FROM properties WHERE unique_id = ?", (sample_property.unique_id,)
-        )
+    with pytest.raises(aiosqlite.IntegrityError, match="membership decision"):
+        async with in_memory_storage._transaction() as conn:
+            await conn.execute(
+                "DELETE FROM properties WHERE unique_id = ?", (sample_property.unique_id,)
+            )
+    assert await in_memory_storage.get_property(sample_property.unique_id) is not None
     assert (await in_memory_storage.spend.report())["held_nanousd"] == 6_315_000_000
 
 

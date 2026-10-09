@@ -259,13 +259,9 @@ class TestRowToMergedPropertyDeduplicates:
         await storage.save_merged_property(merged)
         await storage.upsert_source_listings([zoopla1, zoopla2])
 
-        # Manually link both zoopla listings
-        conn = await storage._get_connection()
-        await conn.execute(
-            "UPDATE source_listings SET merged_id = ? WHERE unique_id IN (?, ?)",
-            (canonical.unique_id, zoopla1.unique_id, zoopla2.unique_id),
+        await storage.link_source_listings(
+            [(prop.unique_id, canonical.unique_id) for prop in (zoopla1, zoopla2)]
         )
-        await conn.commit()
 
         # Load as dedup anchor — should have deduplicated sources
         results = await storage.get_recent_properties_for_dedup(days=7)

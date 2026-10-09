@@ -352,12 +352,20 @@ async def test_historical_migration_preserves_exact_rows_and_never_invents_fresh
     tmp_path, sample_property
 ):
     path = str(tmp_path / "historical.db")
+
     # Simulate the version-9 writer as well as its schema: identity recording
-    # was introduced in versions 11/12 and must not run while preparing this fixture.
+    # was introduced in versions 11/12/13 and must not run while preparing this fixture.
+    async def legacy_link(conn, links, **_kwargs):
+        await conn.executemany(
+            "UPDATE source_listings SET merged_id = ? WHERE unique_id = ?",
+            [(owner, source) for source, owner in links],
+        )
+
     with (
         patch("home_finder.db.migrations.MIGRATIONS", MIGRATIONS[:9]),
         patch("home_finder.db.storage.record_stored_identities", new_callable=AsyncMock),
         patch("home_finder.db.storage.ensure_home", new_callable=AsyncMock),
+        patch("home_finder.db.storage.link_memberships", side_effect=legacy_link),
         patch(
             "home_finder.db.storage.resolve_home",
             AsyncMock(return_value=HomeTarget("unused-fixture-id", sample_property.unique_id)),

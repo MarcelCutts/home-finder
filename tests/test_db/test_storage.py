@@ -4,6 +4,7 @@ import json
 from collections.abc import AsyncGenerator
 from datetime import datetime, timedelta
 
+import aiosqlite
 import pytest
 import pytest_asyncio
 from pydantic import HttpUrl
@@ -1266,13 +1267,13 @@ class TestSourceListingsReadPath:
         assert await storage.is_seen("zoopla:link-test") is True
 
 
-class TestOnDeleteCascade:
-    """Verify ON DELETE CASCADE removes child rows when parent is deleted."""
+class TestOwnedHistoryDeletionGuard:
+    """Ownership protection prevents a raw deletion from cascading through history."""
 
-    async def test_cascade_deletes_child_rows(
+    async def test_owned_parent_deletion_preserves_child_rows(
         self, storage: PropertyStorage, storage_sample_property: Property
     ) -> None:
-        """Deleting a parent property row should cascade to all 6 child tables."""
+        """The database refuses deletion before any of the six child tables change."""
         prop = storage_sample_property
         uid = prop.unique_id
 
@@ -1330,11 +1331,12 @@ class TestOnDeleteCascade:
             )
             assert (await cursor.fetchone())[0] > 0, f"Expected rows in {table}"
 
-        # Delete parent directly (bypasses delete_property's manual cascade)
-        await conn.execute("DELETE FROM properties WHERE unique_id = ?", (uid,))
-        await conn.commit()
+        # A raw parent deletion can no longer bypass membership provenance.
+        with pytest.raises(aiosqlite.IntegrityError, match="membership decision"):
+            await conn.execute("DELETE FROM properties WHERE unique_id = ?", (uid,))
+        await conn.rollback()
 
-        # All children should be gone via CASCADE
+        # The abort preserves every child, including histories with CASCADE FKs.
         for table in (
             "property_images",
             "quality_analyses",
@@ -1346,4 +1348,4 @@ class TestOnDeleteCascade:
             cursor = await conn.execute(
                 f"SELECT COUNT(*) FROM {table} WHERE property_unique_id = ?", (uid,)
             )
-            assert (await cursor.fetchone())[0] == 0, f"Expected 0 rows in {table} after CASCADE"
+            assert (await cursor.fetchone())[0] > 0, f"Expected preserved rows in {table}"

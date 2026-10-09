@@ -10,6 +10,7 @@ from datetime import UTC, datetime
 
 import aiosqlite
 
+from home_finder.db.homes import resolve_home
 from home_finder.db.observations import ConnectionScope
 from home_finder.logging import get_logger
 from home_finder.models.identity import (
@@ -169,16 +170,17 @@ class IdentityRepository:
         return audit_source_identities(rows)
 
     async def members(self, home_id: str) -> tuple[SourceIdentityResolution, ...]:
-        """Return every source representation, including several IDs on the same portal."""
-        async with (
-            self._read_connection() as conn,
-            conn.execute(
+        """Return all members for a stable or legacy home ID, including repeated portals."""
+        async with self._read_connection() as conn:
+            target = await resolve_home(conn, home_id)
+            if target is None:
+                return ()
+            async with conn.execute(
                 f"SELECT {IDENTITY_COLUMNS} FROM source_listings "
                 "WHERE merged_id = ? ORDER BY source, source_id, unique_id",
-                (home_id,),
-            ) as cursor,
-        ):
-            return tuple(
-                resolve_source_identity(SourceIdentityInput.model_validate(dict(row)))
-                for row in await cursor.fetchall()
-            )
+                (target.property_id,),
+            ) as cursor:
+                return tuple(
+                    resolve_source_identity(SourceIdentityInput.model_validate(dict(row)))
+                    for row in await cursor.fetchall()
+                )

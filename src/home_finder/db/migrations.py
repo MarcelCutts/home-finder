@@ -814,6 +814,13 @@ async def migrate_012_home_identities(conn: aiosqlite.Connection) -> None:
     await create_home_schema(conn)
 
 
+async def migrate_013_membership_decisions(conn: aiosqlite.Connection) -> None:
+    """Retain current owners and require journaled, versioned membership changes."""
+    from home_finder.db.membership_schema import create_membership_schema
+
+    await create_membership_schema(conn)
+
+
 _MigrationFn = Callable[[aiosqlite.Connection], Coroutine[Any, Any, None]]
 
 MIGRATIONS: list[_MigrationFn] = [
@@ -829,6 +836,7 @@ MIGRATIONS: list[_MigrationFn] = [
     migrate_010_source_observations,
     migrate_011_provider_identities,
     migrate_012_home_identities,
+    migrate_013_membership_decisions,
 ]
 
 

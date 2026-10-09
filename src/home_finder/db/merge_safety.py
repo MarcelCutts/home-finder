@@ -53,6 +53,15 @@ async def staging_blockers(
             ) as cur:
                 if await cur.fetchone() is not None:
                     reasons.append(table)
+        # A reviewed donor can have no current members and still be the target
+        # of a later split or reversal. It is no longer disposable staging.
+        async with conn.execute(
+            "SELECT 1 FROM membership_projection_invalidations i JOIN homes h USING(home_id) "
+            "WHERE h.origin_property_id = ? LIMIT 1",
+            (uid,),
+        ) as cur:
+            if await cur.fetchone() is not None:
+                reasons.append("reviewed_membership")
         if reasons:
             blockers[uid] = reasons
     return blockers

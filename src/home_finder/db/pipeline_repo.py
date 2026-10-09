@@ -17,6 +17,7 @@ import aiosqlite
 from home_finder.db.homes import ensure_home, resolve_home
 from home_finder.db.identities import record_stored_identities
 from home_finder.db.listing_text import persist_merged_text
+from home_finder.db.membership_ops import link_memberships
 from home_finder.db.row_mappers import (
     ImageReader,
     build_merged_insert_columns,
@@ -247,8 +248,7 @@ class PipelineRepository:
                         last_seen, merged_id
                     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     ON CONFLICT(unique_id) DO UPDATE SET
-                        last_seen = excluded.last_seen,
-                        merged_id = COALESCE(excluded.merged_id, merged_id)
+                        last_seen = excluded.last_seen
                     """,
                     (
                         prop.unique_id,
@@ -267,12 +267,15 @@ class PipelineRepository:
                         prop.available_from.isoformat() if prop.available_from else None,
                         prop.first_seen.isoformat(),
                         now,
-                        prop.unique_id,
+                        None,
                     ),
                 )
 
                 await ensure_home(conn, prop.unique_id)
                 await record_stored_identities(conn, [prop.unique_id])
+                await link_memberships(
+                    conn, [(prop.unique_id, prop.unique_id)], reason="canonical_pipeline_save"
+                )
                 # Link non-canonical source_listings by URL (in-run dedup absorbed sources)
                 await link_source_listings_by_url(conn, prop.unique_id, merged.source_urls)
                 await persist_merged_text(conn, merged)
@@ -345,8 +348,7 @@ class PipelineRepository:
                     last_seen, merged_id
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(unique_id) DO UPDATE SET
-                    last_seen = excluded.last_seen,
-                    merged_id = COALESCE(excluded.merged_id, merged_id)
+                    last_seen = excluded.last_seen
                 """,
                 (
                     prop.unique_id,
@@ -365,11 +367,14 @@ class PipelineRepository:
                     prop.available_from.isoformat() if prop.available_from else None,
                     prop.first_seen.isoformat(),
                     now,
-                    prop.unique_id,
+                    None,
                 ),
             )
             await ensure_home(conn, prop.unique_id)
             await record_stored_identities(conn, [prop.unique_id])
+            await link_memberships(
+                conn, [(prop.unique_id, prop.unique_id)], reason="canonical_pipeline_save"
+            )
             # Link non-canonical source_listings by URL (in-run dedup absorbed sources)
             await link_source_listings_by_url(conn, prop.unique_id, merged.source_urls)
             await persist_merged_text(conn, merged)
@@ -540,8 +545,7 @@ class PipelineRepository:
                         last_seen = excluded.last_seen,
                         latitude = COALESCE(excluded.latitude, latitude),
                         longitude = COALESCE(excluded.longitude, longitude),
-                        postcode = COALESCE(excluded.postcode, postcode),
-                        merged_id = COALESCE(excluded.merged_id, merged_id)
+                        postcode = COALESCE(excluded.postcode, postcode)
                     """,
                     (
                         prop.unique_id,
@@ -560,12 +564,15 @@ class PipelineRepository:
                         prop.available_from.isoformat() if prop.available_from else None,
                         prop.first_seen.isoformat(),
                         now,
-                        prop.unique_id,
+                        None,
                     ),
                 )
 
                 await ensure_home(conn, prop.unique_id)
                 await record_stored_identities(conn, [prop.unique_id])
+                await link_memberships(
+                    conn, [(prop.unique_id, prop.unique_id)], reason="canonical_pipeline_save"
+                )
                 # Link non-canonical source_listings by URL (in-run dedup absorbed sources)
                 await link_source_listings_by_url(conn, prop.unique_id, merged.source_urls)
                 await persist_merged_text(conn, merged)

@@ -157,4 +157,4 @@ packages = ["src/home_finder"]
 
 [tool.hatch.build.targets.sdist]
 # Keep local logs, research exports and agent notes out of release artifacts.
-only-include = ["src", "tests", "README.md", "LICENSE", "pyproject.toml", "uv.lock"]
+only-include = ["src", "tests", "scripts/audit_merges.py", "README.md", "LICENSE", "pyproject.toml", "uv.lock"]

@@ -1,0 +1,156 @@
+{
+  "segment": "PR07b-3a",
+  "date": "2026-10-10",
+  "stack_position": 27,
+  "base_branch": "codex/stack/26-stable-home-links",
+  "base_commit": "3eec6fec59b7a429294a96bcc445f27d2c29a58c",
+  "head_branch": "codex/stack/27-reversible-membership",
+  "schema_version": 13,
+  "lock_sha256": "e4d11bd91b1e3b9f826eaa8ed26baf7740a0edac094df1514e73e5e930f83d1c",
+  "matrix": [
+    {
+      "tests": 3317,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "python": "3.14.7",
+      "branch_coverage_percent": 88.34,
+      "external_sockets_blocked": true,
+      "log_sha256": "37ca39e56204d47fe307cedb5ec985f7dfb7ebc2ef5a1c7e26117efd70669c0c",
+      "junit_sha256": "547a7d45770e2504e205a8b1aa9c86b9045a74130cb5f359981e912a6fdd004d"
+    },
+    {
+      "tests": 3317,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "python": "3.11.16",
+      "branch_coverage_percent": 88.42,
+      "external_sockets_blocked": true,
+      "log_sha256": "f5acac6e035046e9a32e72f6a4b1ce4a0bc13b2a86a7954f90e07114cf2870cf",
+      "junit_sha256": "7f46befb2cc99e36913ea90bb345c48d600ac5af2bc02db55611beadcfa586a6"
+    }
+  ],
+  "static_checks": {
+    "ruff_src_tests_and_maintenance": "passed",
+    "ruff_format_src_tests_and_maintenance": "passed",
+    "strict_mypy_source_files": 111,
+    "git_diff_check": "passed"
+  },
+  "copy_rehearsals": {
+    "historical": {
+      "network_blocked": true,
+      "source_sha256": "e1494adf0f5b174cd9a2e142f50aa25b8ffd5a85ba3f4d66383a3e8762cea639",
+      "source_unchanged": true,
+      "original_schema": 6,
+      "migrated_schema": 13,
+      "all_original_rows_preserved": true,
+      "migration_and_restart_idempotent": true,
+      "ownership_conflicts": 17,
+      "counts": {
+        "homes": 1016,
+        "home_aliases": 1217,
+        "source_memberships": 3267,
+        "membership_decisions": 0,
+        "membership_changes": 0,
+        "membership_projection_invalidations": 0
+      },
+      "foreign_key_errors": 0,
+      "projection_drift": 0,
+      "integrity": "ok",
+      "examples": {},
+      "membership_replay_audit": {
+        "revision": 0,
+        "decisions": 0,
+        "retained_source_memberships": 3267,
+        "errors": {},
+        "valid": true
+      }
+    },
+    "fifty": {
+      "network_blocked": true,
+      "source_sha256": "e2bdf0073f39067b85a8f1deb707b828cd369f45c9244a9c0360aed2f0934fa7",
+      "source_unchanged": true,
+      "original_schema": 10,
+      "migrated_schema": 13,
+      "all_original_rows_preserved": true,
+      "migration_and_restart_idempotent": true,
+      "ownership_conflicts": 0,
+      "counts": {
+        "homes": 35,
+        "home_aliases": 35,
+        "source_memberships": 55,
+        "membership_decisions": 8,
+        "membership_changes": 12,
+        "membership_projection_invalidations": 20
+      },
+      "foreign_key_errors": 0,
+      "projection_drift": 0,
+      "integrity": "ok",
+      "examples": {
+        "southborough": {
+          "advertisements": 2,
+          "changed_members": 1,
+          "all_original_rows_after_split_and_reversal": true,
+          "replayed_merge_after_split_is_noop": true,
+          "issued_links_preserved": true
+        },
+        "wilmot": {
+          "advertisements": 3,
+          "changed_members": 2,
+          "all_original_rows_after_split_and_reversal": true,
+          "replayed_merge_after_split_is_noop": true,
+          "issued_links_preserved": true
+        }
+      },
+      "membership_replay_audit": {
+        "revision": 8,
+        "decisions": 8,
+        "retained_source_memberships": 55,
+        "errors": {},
+        "valid": true
+      }
+    }
+  },
+  "offline_pipeline_replay": {
+    "input_count": 50,
+    "checks": {
+      "same_and_split_match_live_membership": true,
+      "known_replay_produces_no_new_work": true,
+      "no_model_attempts": true,
+      "database_integrity": true,
+      "original_artifacts_unchanged": true
+    },
+    "cases": {
+      "same_run": {
+        "groups": 35,
+        "members": 50,
+        "known_replay_new_work": 0,
+        "model_attempts": 0
+      },
+      "split_run": {
+        "groups": 35,
+        "members": 50,
+        "known_replay_new_work": 0,
+        "model_attempts": 0
+      }
+    }
+  },
+  "build": {
+    "wheel_application_files_verified": 145,
+    "read_only_maintenance_in_sdist": true,
+    "private_artifacts_excluded": true,
+    "artifacts": {
+      "home_finder-0.1.0-py3-none-any.whl": "19bdc8fddf3145d6a93da4d6f800b836811b0cd28481e6e685a9373969afdb2b",
+      "home_finder-0.1.0.tar.gz": "cc2ee064b90efee81699b7704f68dd710c99f68598635eb6f34260d153e10f90"
+    }
+  },
+  "user_files_preserved": 57,
+  "remote_ci": "not run; workflow disabled_inactivity",
+  "no_new_portal_model_telegram_or_production_actions": true,
+  "remaining": [
+    "PR07b-3b reviewed home grouping/routing, personal-state presentation and recoverable staging retirement",
+    "PR07b-4 complete member projections before active reconciliation",
+    "17 historical ownership conflicts remain unresolved"
+  ]
+}

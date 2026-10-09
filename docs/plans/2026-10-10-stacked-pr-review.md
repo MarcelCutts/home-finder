@@ -1,6 +1,8 @@
 # Home Finder: reviewed stack of draft PRs
 
-**Reviewed:** 10 October 2026. **Native GitHub stack:** [#29, visible from the top draft](https://github.com/MarcelCutts/home-finder/pull/28). **Scope:** 37 implementation commits, presented as 26 draft PRs from `main` at `a86e51e`. The original `codex/pr01-ci-baseline` branch is preserved; the stable-home segment was committed there as `545ad7c`.
+**Reviewed:** 10 October 2026. **Native GitHub stack:** [#29, visible from the original top draft](https://github.com/MarcelCutts/home-finder/pull/28). **Scope:** 37 implementation commits, presented as 26 draft PRs from `main` at `a86e51e`. The original `codex/pr01-ci-baseline` branch is preserved; the stable-home segment was committed there as `545ad7c`.
+
+**Follow-on implementation:** [PR07b-3a: journaled ownership](2026-10-10-pr07b3a-membership-decisions.md) adds position 27 above this original 26-layer snapshot. Its separate verification record covers the new code; the 26 boundary counts below remain the evidence for their original heads.
 
 This index is the review and navigation layer for the [delivery plan](2026-09-28-research-synthesis-and-delivery-plan.md). Stack positions are separate from the plan's original PR numbers. Each draft has a bounded behavior change, an author review, fresh verification, limits and a link to its detailed handoff. None has been approved on behalf of another reviewer, merged or deployed.
 
@@ -299,7 +301,7 @@ Fresh local verification details and reproduction test selections are in the JSO
 
 ## Next implementation
 
-1. **PR07b-3: reversible membership decisions.** Add append-only actor/reason/evidence records, expected prior membership, stale-command rejection and explicit reversal. Stable home IDs, aliases and personal-state provenance must survive merge/split and anchor reassociation. Preserve the existing staging-redirect evidence rather than deleting it to implement reversal.
+1. **PR07b-3b: home grouping/provenance and recoverable staging retirement.** The [PR07b-3a ownership contract](2026-10-10-pr07b3a-membership-decisions.md) now covers journaled writes, stale reviews, split/reversal, personal-state preservation and offline replay. Complete grouped routing/cards and original-link action semantics, retain conflicting states visibly, exclude retained donor rows from duplicate scheduling, and make staging retirement recoverable. Keep old staging-redirect evidence. The reviewed command API remains for isolated copies until complete consumers are ready.
 2. **PR07b-4: complete membership projections and reviewed reconciliation.** Support multiple advertisements from one portal throughout text, price, image and current-home projections. Rehearse any proposed ownership reconciliation against copies; the 17 historical conflicts remain unresolved until a reviewed decision exists.
 3. **PR08b / PR09b:** derive current price/availability from member evidence and represent complete, partial, failed and empty collection attempts accurately. A terminal empty page is not proof that previously seen homes disappeared.
 4. Carry the bathroom-as-floorplan error, missed printed total, uncertain deductions, image selection and structured-output failures into the already-planned adapter, artifact and quality work. Independent reference checking and sustained source qualification precede a larger paid-quality or hosted trial. The prior experiment budgets do not create a standing authorization for new requests.
