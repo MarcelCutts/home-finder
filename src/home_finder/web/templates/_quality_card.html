@@ -96,17 +96,20 @@
         {% endif %}
 
         {% if qa.outdoor_space %}
+        {% set outdoor_availability = qa.outdoor_space.effective_availability %}
         {% set outdoor_items = [] %}
         {% if qa.outdoor_space.has_balcony %}{% set _ = outdoor_items.append("Balcony") %}{% endif %}
         {% if qa.outdoor_space.has_garden %}{% set _ = outdoor_items.append("Garden") %}{% endif %}
-        {% if qa.outdoor_space.has_terrace %}{% set _ = outdoor_items.append("Terrace") %}{% endif %}
+        {% if qa.outdoor_space.has_terrace %}{% set _ = outdoor_items.append("Terrace / patio / courtyard") %}{% endif %}
         {% if qa.outdoor_space.has_shared_garden %}{% set _ = outdoor_items.append("Shared garden") %}{% endif %}
-        <div class="quality-item {% if outdoor_items %}quality-item-excellent{% else %}quality-item-poor{% endif %}">
+        <div class="quality-item {% if outdoor_availability == 'yes' %}quality-item-excellent{% elif outdoor_availability == 'no' %}quality-item-poor{% endif %}">
             <h4>Outdoor Space</h4>
-            {% if outdoor_items %}
-            <span class="badge badge-green">{{ outdoor_items | join(", ") }}</span>
+            {% if outdoor_availability == 'yes' %}
+            <span class="badge badge-green">{{ outdoor_items | join(", ") if outdoor_items else "Outdoor space available" }}</span>
+            {% elif outdoor_availability == 'no' %}
+            <span class="badge badge-neutral">No outdoor space</span>
             {% else %}
-            <span class="badge badge-neutral">None</span>
+            <span class="badge badge-neutral">Unknown</span>
             {% endif %}
             {% if qa.outdoor_space.notes %}<p><small>{{ qa.outdoor_space.notes }}</small></p>{% endif %}
         </div>

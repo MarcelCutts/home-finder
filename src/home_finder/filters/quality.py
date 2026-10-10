@@ -449,9 +449,13 @@ class _VisualAnalysisResponse(BaseModel):
 
     class OutdoorSpace(BaseModel):
         model_config = _Forbid
+        availability: Literal["yes", "no", "unknown"] = Field(
+            description="Overall outdoor access: yes if evidenced, no only if explicitly absent; "
+            "otherwise unknown. All false type flags do not establish absence."
+        )
         has_balcony: bool
         has_garden: bool
-        has_terrace: bool
+        has_terrace: bool = Field(description="Includes private patios and courtyards.")
         has_shared_garden: bool
         notes: str
 

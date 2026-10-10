@@ -5,6 +5,7 @@ import functools
 import json
 import re
 import types
+from collections.abc import Mapping
 from enum import StrEnum
 from typing import Annotated, Any, Literal, Union, get_args, get_origin
 
@@ -57,6 +58,23 @@ def _coerce_none_to_unknown(v: Any) -> Any:
 TriStateBool = Annotated[Literal["yes", "no", "unknown"], BeforeValidator(_coerce_bool_to_tristate)]
 CoercedBool = Annotated[bool, BeforeValidator(_coerce_none_to_false)]
 _CoerceUnknown = BeforeValidator(_coerce_none_to_unknown)
+
+OutdoorAvailability = Literal["yes", "no", "unknown"]
+OUTDOOR_SPACE_FLAGS = ("has_balcony", "has_garden", "has_terrace", "has_shared_garden")
+
+
+def outdoor_availability(outdoor: Mapping[str, Any] | None) -> OutdoorAvailability:
+    """Resolve positive evidence without treating unobserved types as absence."""
+    if not outdoor:
+        return "unknown"
+    if any(outdoor.get(name) is True for name in OUTDOOR_SPACE_FLAGS):
+        return "yes"
+    availability = outdoor.get("availability")
+    if availability == "yes":
+        return "yes"
+    if availability == "no":
+        return "no"
+    return "unknown"
 
 
 # ---------------------------------------------------------------------------
@@ -207,6 +225,15 @@ class PropertyLowlight(StrEnum):
     POOR_HOSTING_LAYOUT = "Poor hosting layout"
 
 
+def filter_outdoor_absence_badge(
+    badges: list[str] | None, availability: OutdoorAvailability
+) -> list[str] | None:
+    """Require explicit absence to present a 'No outdoor space' badge as fact."""
+    if badges is None or availability == "no":
+        return badges
+    return [badge for badge in badges if badge != PropertyLowlight.NO_OUTDOOR_SPACE]
+
+
 class PropertyType(StrEnum):
     """Property stock type."""
 
@@ -349,11 +376,18 @@ class OutdoorSpaceAnalysis(_LenientLiteralModel):
 
     model_config = ConfigDict(frozen=True)
 
+    availability: Annotated[OutdoorAvailability, _CoerceUnknown] = "unknown"
     has_balcony: CoercedBool = False
     has_garden: CoercedBool = False
+    # Includes private patios and courtyards, not just roof terraces.
     has_terrace: CoercedBool = False
     has_shared_garden: CoercedBool = False
     notes: str = ""
+
+    @property
+    def effective_availability(self) -> OutdoorAvailability:
+        """Derived evidence state; retain the original flags and availability."""
+        return outdoor_availability(self.model_dump())
 
 
 class StorageAnalysis(_LenientLiteralModel):
@@ -480,6 +514,14 @@ class PropertyQualityAnalysis(_LenientLiteralModel):
     highlights: list[str] | None = None
     lowlights: list[str] | None = None
     one_line: str | None = None
+
+    @property
+    def display_lowlights(self) -> list[str] | None:
+        """Hide unsupported outdoor absence without rewriting the saved badges."""
+        availability = (
+            self.outdoor_space.effective_availability if self.outdoor_space else "unknown"
+        )
+        return filter_outdoor_absence_badge(self.lowlights, availability)
 
     @model_validator(mode="before")
     @classmethod
