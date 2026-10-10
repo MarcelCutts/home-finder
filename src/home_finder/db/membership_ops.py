@@ -44,6 +44,7 @@ async def write_membership_decision(
     changes: dict[str, tuple[str | None, str | None]],
     reverses: str | None = None,
     route_changes: dict[str, tuple[HomeRoute, HomeRoute]] | None = None,
+    invalidation_home_ids: tuple[str, ...] = (),
 ) -> MembershipReceipt:
     """Append evidence and update both projections under the caller's write lock."""
     if not conn.in_transaction:
@@ -108,6 +109,19 @@ async def write_membership_decision(
             (target_property_id, source_id),
         )
     await write_routes(conn, decision_id, revision, route_changes)
+    affected = set(invalidation_home_ids)
+    affected.update(home for pair in changes.values() for home in pair if home is not None)
+    affected.update(route_changes)
+    affected.update(
+        route.target_home_id
+        for pair in route_changes.values()
+        for route in pair
+        if route.target_home_id is not None
+    )
+    await conn.executemany(
+        "INSERT INTO membership_projection_invalidations VALUES (?, ?)",
+        [(decision_id, home_id) for home_id in sorted(affected)],
+    )
     logger.debug(
         "membership_decision_prepared",
         routes_changed=len(route_changes),

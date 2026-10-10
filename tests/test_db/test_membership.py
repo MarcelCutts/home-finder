@@ -61,7 +61,7 @@ async def snapshot(db):
     async with (
         db._read_connection() as conn,
         conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='table' AND name != 'sqlite_sequence'"
+            "SELECT name FROM sqlite_master WHERE type='table' AND name NOT GLOB 'sqlite_*'"
         ) as cur,
     ):
         tables = [row[0] for row in await cur.fetchall()]
@@ -111,6 +111,7 @@ async def test_merge_split_replay_preserves_all_rows_and_original_links(
         "home_routes",
         "home_route_changes",
         "membership_projection_invalidations",
+        "home_projection_generations",
     }:
         assert await rows(db, table) == original[table], table
     # A status action through an issued link retains its original provenance.

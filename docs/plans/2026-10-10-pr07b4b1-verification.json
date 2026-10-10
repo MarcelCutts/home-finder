@@ -1,0 +1,212 @@
+{
+  "segment": "PR07b-4b-1",
+  "base": "859228467031a609721a3ad86adf119e3dbd2d2a",
+  "schema": 15,
+  "stack_position": 30,
+  "source_and_test_manifest_sha256": "f533fd754d348d2da71849ef4d44521f68822aa7048be1c24488c8bac4413750",
+  "full_suites": [
+    {
+      "python": "3.14.7",
+      "passed": 3406,
+      "failures": 0,
+      "coverage_percent": 88.33,
+      "workers": 4,
+      "seconds": 501.443,
+      "network": "pytest-socket blocked except Unix sockets",
+      "log_sha256": "ae935a12884ab4a925a7ae0bf46a9177d4abe019085d4eb7756cef53d77b0d48",
+      "junit_sha256": "375302a360a1f70d4e0fc73d39788c1cb026669eacc45a1b0e2ba7724f0bc7e6"
+    },
+    {
+      "python": "3.11.16",
+      "passed": 3406,
+      "failures": 0,
+      "coverage_percent": 88.41,
+      "workers": 8,
+      "seconds": 263.003,
+      "network": "pytest-socket blocked except Unix sockets",
+      "log_sha256": "dc4a78c73b17098f6929a006e918b548084cf1d120e46552a46de5c825b23bcb",
+      "junit_sha256": "295676abc216c215ddf69da2c4caa3b89a9c9e8e4f6f302adb7b51071a6fe16f"
+    }
+  ],
+  "focused_tests": 187,
+  "final_audit_suites": [
+    {
+      "python": "3.14.7",
+      "passed": 8,
+      "junit_sha256": "38dd696925a0f4a45e8110c71f04b6f7dcfdf7f9a1032c918561ec9f3b3ea633"
+    },
+    {
+      "python": "3.11.16",
+      "passed": 8,
+      "junit_sha256": "9822d48fc9e5b24b3b7bc24711ee5ce9f1d5691a351bcfefc68989f12bbae7a7"
+    }
+  ],
+  "verification_order": "Full suites began before a typing/lint-only adjustment to audit member lists. All eight audit cases then passed against the final module on each interpreter; no other application/test file changed after full collection. Static checks and byte-exact archives cover the final files.",
+  "static_checks": {
+    "ruff_check": "passed",
+    "ruff_format": "passed (267 Python files)",
+    "mypy": "passed (120 source files)",
+    "diff_check": "passed"
+  },
+  "packaging": {
+    "application_files": 154,
+    "all_application_files_byte_exact": true,
+    "wheel_sha256": "66fc7b7f7dcf2ad409f42da45b45a364031cce6213e0ab2f9ce9fc098a0be6ec",
+    "sdist_sha256": "c08c39697663197a3690db553964b9e54a47c7186d1ea5ac117946cd26db0294",
+    "sdist_allowlisted_files_byte_exact": 325,
+    "private_artifacts_excluded": true,
+    "projection_audit_in_both_archives": true,
+    "generator": "Wheel-Version: 1.0\nGenerator: hatchling 1.32.4\nRoot-Is-Purelib: true\nTag: py3-none-any\n"
+  },
+  "copy_rehearsals": {
+    "historical": {
+      "network_blocked": true,
+      "source_sha256": "e1494adf0f5b174cd9a2e142f50aa25b8ffd5a85ba3f4d66383a3e8762cea639",
+      "source_unchanged": true,
+      "original_schema": 6,
+      "migrated_schema": 15,
+      "all_original_rows_preserved": true,
+      "migration_and_restart_idempotent": true,
+      "ownership_conflicts": 17,
+      "loaded_anchors": 1015,
+      "loaded_members": 1713,
+      "initially_rebuilt_homes": 1016,
+      "all_listing_inputs_current_after_restart": true,
+      "exact_rebuild_retries_unchanged": true,
+      "counts": {
+        "homes": 1016,
+        "home_aliases": 1217,
+        "source_memberships": 3267,
+        "membership_decisions": 0,
+        "membership_changes": 0,
+        "membership_projection_invalidations": 0,
+        "home_routes": 1016,
+        "home_route_changes": 0,
+        "home_projection_generations": 1016,
+        "home_listing_projection_snapshots": 1016,
+        "home_listing_projection_heads": 1016,
+        "membership_projection_consumptions": 0
+      },
+      "foreign_key_errors": 0,
+      "projection_drift": 0,
+      "integrity": "ok",
+      "examples": {},
+      "membership_replay_audit": {
+        "revision": 0,
+        "decisions": 0,
+        "retained_source_memberships": 3267,
+        "errors": {},
+        "valid": true
+      }
+    },
+    "fifty": {
+      "network_blocked": true,
+      "source_sha256": "e2bdf0073f39067b85a8f1deb707b828cd369f45c9244a9c0360aed2f0934fa7",
+      "source_unchanged": true,
+      "original_schema": 10,
+      "migrated_schema": 15,
+      "all_original_rows_preserved": true,
+      "migration_and_restart_idempotent": true,
+      "ownership_conflicts": 0,
+      "loaded_anchors": 35,
+      "loaded_members": 50,
+      "initially_rebuilt_homes": 35,
+      "all_listing_inputs_current_after_restart": true,
+      "exact_rebuild_retries_unchanged": true,
+      "counts": {
+        "homes": 35,
+        "home_aliases": 35,
+        "source_memberships": 55,
+        "membership_decisions": 8,
+        "membership_changes": 12,
+        "membership_projection_invalidations": 20,
+        "home_routes": 35,
+        "home_route_changes": 12,
+        "home_projection_generations": 35,
+        "home_listing_projection_snapshots": 55,
+        "home_listing_projection_heads": 35,
+        "membership_projection_consumptions": 20
+      },
+      "foreign_key_errors": 0,
+      "projection_drift": 0,
+      "integrity": "ok",
+      "examples": {
+        "southborough": {
+          "advertisements": 2,
+          "changed_members": 1,
+          "all_original_rows_after_split_and_reversal": true,
+          "replayed_merge_after_split_is_noop": true,
+          "issued_links_preserved": true,
+          "all_member_text_links_and_assessment_references": true,
+          "split_removes_departed_member_inputs": true,
+          "durable_rebuild_acknowledgement": true,
+          "historical_snapshots_retained": true,
+          "material_restored_after_split_and_reversal": true,
+          "private_readonly_audit": true
+        },
+        "wilmot": {
+          "advertisements": 3,
+          "changed_members": 2,
+          "all_original_rows_after_split_and_reversal": true,
+          "replayed_merge_after_split_is_noop": true,
+          "issued_links_preserved": true,
+          "all_member_text_links_and_assessment_references": true,
+          "split_removes_departed_member_inputs": true,
+          "durable_rebuild_acknowledgement": true,
+          "historical_snapshots_retained": true,
+          "material_restored_after_split_and_reversal": true,
+          "private_readonly_audit": true
+        }
+      },
+      "membership_replay_audit": {
+        "revision": 8,
+        "decisions": 8,
+        "retained_source_memberships": 55,
+        "errors": {},
+        "valid": true
+      }
+    }
+  },
+  "fifty_property_replay": {
+    "input_count": 50,
+    "groups_per_shape": {
+      "same_run": 35,
+      "split_run": 35
+    },
+    "checks": {
+      "same_and_split_match_live_membership": true,
+      "known_replay_produces_no_new_work": true,
+      "no_model_attempts": true,
+      "database_integrity": true,
+      "original_artifacts_unchanged": true
+    },
+    "original_artifacts_unchanged": true,
+    "report_sha256": "91b1efef2378b60735d00cfdf2430ebb3cca91e50e97178711afd9ecccae39e0"
+  },
+  "independent_review_followup": {
+    "owner_local_document": "opus-ultra-findings.md (preserved untracked; not included in checkout)",
+    "confirmed_against_current_tip": [
+      "OTM different-response ID assigned to requested observation",
+      "optional/paid bill package labelled included in rent",
+      "immutable historical export accepted uncommitted hot-journal pages"
+    ],
+    "status": "Confirmed defects predate this segment and remain open; prioritized ahead of further reconciliation implementation.",
+    "synthetic_only": true,
+    "network_blocked": true
+  },
+  "remote_ci": {
+    "state": "disabled_inactivity",
+    "status_checks": [],
+    "main": "a86e51e9ef3e6f767ed307bcae5cbce5087d3cea"
+  },
+  "boundaries": {
+    "acknowledged_component": "listing_inputs",
+    "downstream_projection_readiness": false,
+    "automatic_rebuild_worker": false,
+    "historical_conflicts_resolved": false,
+    "production_changed": false,
+    "portals_fetched": false,
+    "paid_model_calls": 0,
+    "telegram_messages": 0
+  }
+}

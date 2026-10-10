@@ -828,6 +828,13 @@ async def migrate_014_home_groups(conn: aiosqlite.Connection) -> None:
     await create_home_group_schema(conn)
 
 
+async def migrate_015_home_listing_projections(conn: aiosqlite.Connection) -> None:
+    """Track changed home inputs and retain rebuild receipts without certifying old caches."""
+    from home_finder.db.home_projection_schema import create_home_projection_schema
+
+    await create_home_projection_schema(conn)
+
+
 _MigrationFn = Callable[[aiosqlite.Connection], Coroutine[Any, Any, None]]
 
 MIGRATIONS: list[_MigrationFn] = [
@@ -845,6 +852,7 @@ MIGRATIONS: list[_MigrationFn] = [
     migrate_012_home_identities,
     migrate_013_membership_decisions,
     migrate_014_home_groups,
+    migrate_015_home_listing_projections,
 ]
 
 

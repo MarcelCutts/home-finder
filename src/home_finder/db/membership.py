@@ -533,13 +533,7 @@ class MembershipRepository:
                         changes=_changed(decision),
                         route_changes=_route_changes(decision),
                         reverses=decision.reverses,
-                    )
-                    await conn.executemany(
-                        "INSERT INTO membership_projection_invalidations VALUES (?, ?)",
-                        [
-                            (decision.decision_id, home_id)
-                            for home_id in decision.before.scope_home_ids
-                        ],
+                        invalidation_home_ids=decision.before.scope_home_ids,
                     )
         except (MembershipConflict, HomeRouteConflict) as exc:
             logger.warning(

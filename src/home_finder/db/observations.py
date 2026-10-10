@@ -34,6 +34,29 @@ class ObservationConflict(ValueError):
     """An idempotency identity was reused for different normalized evidence."""
 
 
+async def projected_field_rows(
+    conn: aiosqlite.Connection, source_unique_id: str
+) -> list[dict[str, Any]]:
+    """Read bounded winning ties inside the caller's existing snapshot."""
+    rows: list[dict[str, Any]] = []
+    size = 0
+    async with conn.execute(
+        """WITH ranked AS (
+            SELECT *, DENSE_RANK() OVER (
+                PARTITION BY field_name ORDER BY authority DESC, observed_at DESC
+            ) AS rank FROM source_observation_fields WHERE source_unique_id = ?
+        ) SELECT observation_id, field_name, authority, observed_at, field_state, value_json
+          FROM ranked WHERE rank = 1 ORDER BY field_name, observation_id LIMIT 513""",
+        (source_unique_id,),
+    ) as cursor:
+        async for row in cursor:
+            size += len(row["value_json"].encode())
+            if len(rows) >= 512 or size > MAX_BATCH_BYTES:
+                raise ValueError("Projection has too many tied inputs; adjudication is required")
+            rows.append(dict(row))
+    return rows
+
+
 @dataclass(frozen=True)
 class ObservationReceipt:
     inserted: int
@@ -282,29 +305,10 @@ class ObservationRepository:
 
     async def project(self, source_unique_id: str) -> SourceProjection:
         """Read a projection of exact evidence; do not mutate existing application rows."""
-        rows: list[dict[str, Any]] = []
-        size = 0
         # Preserve all top-rank ties so contradictory values are not silently
         # resolved by arrival order or by arbitrary observation identifiers.
-        async with (
-            self._read_connection() as conn,
-            conn.execute(
-                """WITH ranked AS (
-                    SELECT *, DENSE_RANK() OVER (
-                        PARTITION BY field_name ORDER BY authority DESC, observed_at DESC
-                    ) AS rank FROM source_observation_fields WHERE source_unique_id = ?
-                ) SELECT observation_id, field_name, authority, observed_at, field_state, value_json
-                  FROM ranked WHERE rank = 1 ORDER BY field_name, observation_id LIMIT 513""",
-                (source_unique_id,),
-            ) as cursor,
-        ):
-            async for row in cursor:
-                size += len(row["value_json"].encode())
-                if len(rows) >= 512 or size > MAX_BATCH_BYTES:
-                    raise ValueError(
-                        "Projection has too many tied inputs; adjudication is required"
-                    )
-                rows.append(dict(row))
+        async with self._read_connection() as conn:
+            rows = await projected_field_rows(conn, source_unique_id)
         return project_field_rows(source_unique_id, rows)
 
     async def baseline(self, source_unique_id: str) -> dict[str, Any] | None:

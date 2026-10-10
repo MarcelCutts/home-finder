@@ -17,6 +17,7 @@ import aiosqlite
 
 from home_finder.data.area_context import HOSTING_TOLERANCE
 from home_finder.db.home_groups import HomeActionConflict, read_routes, resolve_action
+from home_finder.db.home_projections import HomeProjectionRepository
 from home_finder.db.homes import HomeRepository, ensure_home, redirect_staging_homes
 from home_finder.db.identities import IdentityRepository, record_stored_identities
 from home_finder.db.listing_members import load_source_rows, member_from_row
@@ -139,6 +140,12 @@ class PropertyStorage:
         self._identities = IdentityRepository(self._read_connection)
         self._homes = HomeRepository(self._read_connection)
         self._memberships = MembershipRepository(self._transaction)
+        self._projections = HomeProjectionRepository(self._read_connection, self._transaction)
+
+    @property
+    def projections(self) -> HomeProjectionRepository:
+        """Versioned listing input snapshots and their explicitly scoped rebuild receipts."""
+        return self._projections
 
     @property
     def memberships(self) -> MembershipRepository:

@@ -69,7 +69,9 @@ async def staging_blockers(
         # of a later split or reversal. It is no longer disposable staging.
         async with conn.execute(
             "SELECT 1 FROM membership_projection_invalidations i JOIN homes h USING(home_id) "
-            "WHERE h.origin_property_id = ? LIMIT 1",
+            "JOIN membership_decisions d USING(decision_id) "
+            "WHERE h.origin_property_id = ? "
+            "AND d.operation IN ('merge', 'split', 'reversal') LIMIT 1",
             (uid,),
         ) as cur:
             if await cur.fetchone() is not None:

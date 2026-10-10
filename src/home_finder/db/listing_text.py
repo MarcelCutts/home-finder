@@ -48,7 +48,7 @@ def text_from_source_row(row: aiosqlite.Row) -> ListingTextEvidence:
     return merge_listing_text(evidence, ListingTextEvidence(description=row["description"]))
 
 
-async def _captured_text(conn: aiosqlite.Connection, unique_id: str) -> ListingTextEvidence:
+async def captured_text(conn: aiosqlite.Connection, unique_id: str) -> ListingTextEvidence:
     """Fold all winning captured fields, including receipts predating a source row.
 
     Rank identically to SourceProjection while keeping exact original origins.
@@ -113,7 +113,7 @@ async def apply_source_text(
     if row is None:
         return None
     result = merge_listing_text(text_from_source_row(row), incoming)
-    result = merge_listing_text(result, await _captured_text(conn, unique_id))
+    result = merge_listing_text(result, await captured_text(conn, unique_id))
     await conn.execute(
         "UPDATE source_listings SET description = ?, text_json = ? WHERE unique_id = ?",
         (result.description, result.model_dump_json(), unique_id),
