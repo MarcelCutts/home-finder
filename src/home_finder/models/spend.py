@@ -46,7 +46,10 @@ class SpendPolicy(BaseModel):
     max_in_flight: int = Field(default=5, strict=True, ge=1, le=50)
     max_attempts_per_operation: int = Field(default=2, strict=True, ge=1, le=3)
 
-    @field_validator("per_call_usd", "daily_usd", "monthly_usd", mode="before")
+    lifetime_usd: USD | None = None
+    max_total_attempts: int | None = Field(default=None, strict=True, ge=1, le=10000)
+
+    @field_validator("per_call_usd", "daily_usd", "monthly_usd", "lifetime_usd", mode="before")
     @classmethod
     def _exact_amounts(cls, value: Any) -> Any:
         if isinstance(value, (bool, float)):
@@ -100,20 +103,30 @@ class RateCard(BaseModel):
         )
 
     def reservation(self, phase: PhaseConfig) -> int:
-        """Cover a full context at the highest input rate, plus maximum output.
+        """Cover admitted input at the highest input rate, plus maximum output.
 
-        This deliberately avoids treating approximate token counting or cache
-        hits as a hard bound. Regional/priority/batch/server-tool charges are
-        outside this rate card and must not be dispatched under it.
+        The default reserves the full context. Smaller explicit limits require
+        the local supported-payload admission policy; they are not a provider
+        input or dollar cap. Cache hits never reduce the reservation. Regional,
+        priority, batch and server-tool charges are outside this rate card.
         """
         if (phase.provider, phase.model) != (self.provider, self.model):
             raise ValueError("Unpriced provider/model")
-        return self.input_context_bound * self.cache_write_1h_nanousd + (
+        # An explicit input limit is checked against the supported payload at
+        # the native HTTP boundary. Older configurations keep the full context.
+        input_bound = phase.input_token_limit or self.input_context_bound
+        return input_bound * self.cache_write_1h_nanousd + (
             phase.max_output_tokens * self.output_nanousd
         )
 
 
 SONNET_STANDARD_RATES = RateCard()
+
+
+def rate_card_for(model: str) -> RateCard:
+    if model == SONNET_STANDARD_RATES.model:
+        return SONNET_STANDARD_RATES
+    raise ValueError("Unpriced model")
 
 
 class AttemptSpec(BaseModel):

@@ -99,6 +99,7 @@ class TokenUsage:
     output_tokens: int = 0
     cache_read_tokens: int = 0
     cache_creation_tokens: int = 0
+    cache_creation_1h_tokens: int = 0
 
     def add_from_response(self, usage: Any) -> None:
         """Accumulate token counts from an Anthropic response.usage object."""
@@ -106,16 +107,18 @@ class TokenUsage:
         self.output_tokens += getattr(usage, "output_tokens", 0) or 0
         self.cache_read_tokens += getattr(usage, "cache_read_input_tokens", 0) or 0
         self.cache_creation_tokens += getattr(usage, "cache_creation_input_tokens", 0) or 0
+        breakdown = getattr(usage, "cache_creation", None)
+        self.cache_creation_1h_tokens += getattr(breakdown, "ephemeral_1h_input_tokens", 0) or 0
 
     @property
     def estimated_cost_usd(self) -> float:
-        """Estimate cost using Sonnet pricing (per million tokens)."""
-        # Sonnet: $3/MTok input, $15/MTok output, $0.30/MTok cache read, $3.75/MTok cache write
+        """Estimate successful-response cost; the durable attempt ledger is authoritative."""
         return (
             self.input_tokens * 3.0
             + self.output_tokens * 15.0
             + self.cache_read_tokens * 0.30
             + self.cache_creation_tokens * 3.75
+            + self.cache_creation_1h_tokens * 2.25
         ) / 1_000_000
 
 
@@ -749,7 +752,12 @@ def _visual_output(response: Any) -> dict[str, Any]:
     check_stop_reason(response, "visual")
     tools = [block for block in response.content if isinstance(block, ToolUseBlock)]
     if len(tools) != 1 or tools[0].name != "property_visual_analysis":
-        raise output_failure("visual", "malformed_output", response)
+        raise output_failure(
+            "visual",
+            "malformed_output",
+            response,
+            diagnostics={"reason": "expected_one_visual_tool", "tool_block_count": len(tools)},
+        )
     return validate_output(tools[0].input, _VisualAnalysisResponse, "visual", response)
 
 
@@ -843,6 +851,8 @@ class PropertyQualityFilter:
     def _analysis_provenance(self) -> AnalysisProvenance:
         from anthropic import __version__ as sdk_version
 
+        from home_finder.filters.request_budget import POLICY
+
         def digest(value: Any) -> str:
             text = value if isinstance(value, str) else _json.dumps(value, sort_keys=True)
             return hashlib.sha256(text.encode()).hexdigest()
@@ -856,6 +866,12 @@ class PropertyQualityFilter:
             evaluation_system_sha256=digest(EVALUATION_SYSTEM_PROMPT),
             visual_output_sha256=digest(VISUAL_ANALYSIS_TOOL),
             evaluation_output_sha256=digest(_eval_json_schema()),
+            input_budget_policy=POLICY
+            if any(
+                phase.input_token_limit is not None
+                for phase in (self.analysis_config.visual, self.analysis_config.evaluation)
+            )
+            else None,
         )
 
     def _raise_spend_deferral(self, error: SpendDeferred) -> NoReturn:
@@ -1037,7 +1053,7 @@ class PropertyQualityFilter:
                 property_id=merged.unique_id,
                 sources=[s.value for s in merged.sources],
             )
-            return merged, self._create_minimal_analysis(value=value)
+            return merged, None
 
         text_inputs = select_listing_text(merged)
 
@@ -1072,6 +1088,7 @@ class PropertyQualityFilter:
             logger.warning(
                 "analysis_output_failed",
                 property_id=merged.unique_id,
+                output_diagnostics=exc.diagnostics,
                 **exc.failure.model_dump(),
             )
             return merged, self._create_failed_analysis(value, exc)
@@ -1391,10 +1408,9 @@ class PropertyQualityFilter:
         """Run Phase 2 evaluation API call using structured JSON output.
 
         Uses ``messages.create()`` with ``output_config`` for JSON schema
-        output, then manually extracts and validates the response. This
-        approach gives us access to the raw JSON even when Pydantic
-        validation fails (e.g. Claude invents a lowlight value), allowing
-        graceful coercion instead of losing the entire evaluation.
+        output, then validates required response fields before any lenient
+        historical-record loading. Invalid responses retain their usage and
+        redacted diagnostics without completing an assessment.
 
         Args:
             visual_data: Phase 1 visual analysis output.
@@ -1685,7 +1701,15 @@ class PropertyQualityFilter:
         # Build image content blocks
         content: list[ImageBlockParam | TextBlockParam] = []
 
-        has_floorplan = floorplan_url is not None and is_valid_image_url(floorplan_url)
+        floorplan_block = None
+        if floorplan_url and is_valid_image_url(floorplan_url):
+            floorplan_block = await self._build_image_block(
+                floorplan_url, cached_path=floorplan_cached_path
+            )
+        elif floorplan_url:
+            logger.debug("skipping_pdf_floorplan", url=floorplan_url)
+
+        has_floorplan = floorplan_block is not None
         effective_max = self._max_images - (1 if has_floorplan else 0)
 
         gallery_num = 0
@@ -1698,21 +1722,18 @@ class PropertyQualityFilter:
                 content.append(TextBlockParam(type="text", text=f"Gallery image {gallery_num}:"))
                 content.append(image_block)
 
-        if floorplan_url and is_valid_image_url(floorplan_url):
-            floorplan_block = await self._build_image_block(
-                floorplan_url, cached_path=floorplan_cached_path
-            )
-            if floorplan_block:
-                content.append(
-                    TextBlockParam(
-                        type="text",
-                        text="Floorplan \u2014 read all dimension labels carefully"
-                        " (UK formats: metres or feet/inches):",
-                    )
+        if floorplan_block:
+            content.append(
+                TextBlockParam(
+                    type="text",
+                    text="Floorplan \u2014 read all dimension labels carefully"
+                    " (UK formats: metres or feet/inches):",
                 )
-                content.append(floorplan_block)
-        elif floorplan_url:
-            logger.debug("skipping_pdf_floorplan", url=floorplan_url)
+            )
+            content.append(floorplan_block)
+
+        if not gallery_num and not has_floorplan:
+            raise SpendDeferred("missing_usable_images")
 
         effective_average = area_average or DEFAULT_BENCHMARK.get(min(bedrooms, 3), 1800)
         user_prompt = build_user_prompt(
@@ -1733,13 +1754,12 @@ class PropertyQualityFilter:
         )
         content.append(TextBlockParam(type="text", text=user_prompt))
 
-        has_usable_floorplan = floorplan_url is not None and is_valid_image_url(floorplan_url)
         image_blocks = [c for c in content if hasattr(c, "get") and c.get("type") == "image"]
         logger.info(
             "analyzing_property",
             property_id=property_id,
             gallery_count=len(gallery_urls),
-            has_floorplan=has_usable_floorplan,
+            has_floorplan=has_floorplan,
             image_blocks_sent=len(image_blocks),
             total_content_blocks=len(content),
         )

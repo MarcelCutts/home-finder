@@ -124,15 +124,31 @@ class SpendRepository:
                     raise SpendDeferred("operation_unresolved")
             async with conn.execute(
                 "SELECT COUNT(*) FROM paid_attempts "
-                "WHERE operation_key = ? AND state != 'released'",
+                "WHERE operation_key = ? AND state != 'released' "
+                "AND NOT (state = 'settled' AND cost_basis = 'provider_error' "
+                "AND accounted_nanousd = 0)",
                 (spec.operation_key,),
             ) as cursor:
                 row = await cursor.fetchone()
                 assert row is not None
                 attempts = row[0]
+            # Uncharged provider rejections remain audited, but cannot use up
+            # paid retries. Unknown outcomes and invalid billed output count.
             if attempts >= policy.max_attempts_per_operation:
                 raise SpendDeferred("attempt_limit")
             report = await spend_report(conn, now)
+            if report["over_reservation_count"]:
+                raise SpendDeferred("reservation_exceeded")
+            if (
+                policy.max_total_attempts is not None
+                and report["attempts"] >= policy.max_total_attempts
+            ):
+                raise SpendDeferred("total_attempt_limit")
+            if policy.lifetime_usd is not None and (
+                report["lifetime_accounted_nanousd"] + report["held_nanousd"] + reserve
+                > nanousd(policy.lifetime_usd)
+            ):
+                raise SpendDeferred("lifetime_limit")
             if report["in_flight"] >= policy.max_in_flight:
                 raise SpendDeferred("concurrency_limit")
             if report["day_committed_nanousd"] + reserve > nanousd(policy.daily_usd):

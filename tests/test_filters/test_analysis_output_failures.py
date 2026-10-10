@@ -47,6 +47,16 @@ def failed_message(phase, scenario):
         data["content"][0]["input"]["space"]["is_spacious_enough"] = "false"
     elif scenario == "invalid_rating":
         data["content"][0]["input"]["overall_rating"] = 6
+    elif scenario in {"fractional_rating", "boolean_rating", "string_rating"}:
+        data["content"][0]["input"]["overall_rating"] = {
+            "fractional_rating": 4.5,
+            "boolean_rating": True,
+            "string_rating": "4",
+        }[scenario]
+    elif scenario == "null_notes":
+        data["content"][0]["input"]["kitchen"]["notes"] = None
+    elif scenario == "missing_notes":
+        del data["content"][0]["input"]["kitchen"]["notes"]
     elif scenario == "oversized_visual":
         data["content"][0]["input"]["unused_extension"] = "x" * MAX_OUTPUT_CHARACTERS
     elif scenario == "missing_eval_field":
@@ -90,6 +100,11 @@ def failed_message(phase, scenario):
         ("visual", "missing_visual_field", "malformed_output"),
         ("visual", "string_boolean", "malformed_output"),
         ("visual", "invalid_rating", "malformed_output"),
+        ("visual", "fractional_rating", "malformed_output"),
+        ("visual", "boolean_rating", "malformed_output"),
+        ("visual", "string_rating", "malformed_output"),
+        ("visual", "null_notes", "malformed_output"),
+        ("visual", "missing_notes", "malformed_output"),
         ("visual", "oversized_visual", "oversized_output"),
         ("evaluation", "missing_eval_field", "malformed_output"),
         ("evaluation", "invalid_enum", "malformed_output"),
@@ -195,6 +210,30 @@ async def test_lossless_enum_casing_and_supported_nullable_fields(cached_analysi
     assert result.kitchen.overall_quality == "modern" and result.space.living_room_sqm is None
     assert result.space.area_estimation_method == "partial_dimensions"
     assert result.highlights == ["Gas hob"]
+
+
+async def test_integral_json_numbers_complete_both_native_phases(cached_analysis_property):
+    visual = copy.deepcopy(PHASE1_VISUAL_RESPONSE)
+    visual["content"][0]["input"]["overall_rating"] = 4.0
+    visual["content"][0]["input"]["listing_red_flags"]["red_flag_count"] = 0.0
+    visual["content"][0]["input"]["floorplan_detected_in_gallery"] = [1.0]
+    evaluation = copy.deepcopy(PHASE2_EVALUATION_RESPONSE)
+    payload = json.loads(evaluation["content"][0]["text"])
+    payload["listing_extraction"]["deposit_weeks"] = 5.0
+    # The other nullable integer, service_charge_pcm, deliberately stays null.
+    evaluation["content"][0]["text"] = json.dumps(payload)
+    bodies = iter([visual, evaluation])
+    native = httpx2.AsyncClient(
+        transport=httpx2.MockTransport(lambda _: httpx2.Response(200, json=next(bodies)))
+    )
+    merged, data_dir = cached_analysis_property
+    async with PropertyQualityFilter("fixture", http_client=native) as q:
+        _, result = await q.analyze_single_merged(merged, data_dir=data_dir)
+    assert result.overall_rating == 4 and type(result.overall_rating) is int
+    assert result.analysis_failure is None
+    assert result.listing_red_flags.red_flag_count == 0
+    assert result.listing_extraction.deposit_weeks == 5
+    assert result.listing_extraction.service_charge_pcm is None
 
 
 @pytest.mark.parametrize("phase", ["visual", "evaluation"])

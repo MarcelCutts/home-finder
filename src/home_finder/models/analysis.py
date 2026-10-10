@@ -15,6 +15,9 @@ class PhaseConfig(BaseModel):
     provider: Literal["anthropic"] = "anthropic"
     model: Literal["claude-sonnet-4-6"] = "claude-sonnet-4-6"
     reasoning: Literal["adaptive", "disabled"] = "disabled"
+    input_token_limit: int | None = Field(
+        default=None, ge=1, le=1_000_000, strict=True, exclude_if=lambda value: value is None
+    )
     effort: Literal["low", "medium", "high"] | None = None
     max_output_tokens: int = Field(default=4096, ge=1, le=21_000, strict=True)
     request_timeout_seconds: float = Field(
@@ -68,6 +71,10 @@ class AnalysisProvenance(BaseModel):
     evaluation_system_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
     visual_output_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
     evaluation_output_sha256: str = Field(pattern=r"^[a-f0-9]{64}$")
+
+    input_budget_policy: Literal["bounded_listing_payload_2026_09_29_v1"] | None = Field(
+        default=None, exclude_if=lambda value: value is None
+    )
 
     @property
     def fingerprint(self) -> str:

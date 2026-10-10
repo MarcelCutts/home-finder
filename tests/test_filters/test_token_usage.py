@@ -1,5 +1,7 @@
 """Tests for TokenUsage dataclass in quality.py."""
 
+from types import SimpleNamespace
+
 import pytest
 
 from home_finder.filters.quality import TokenUsage
@@ -61,6 +63,18 @@ class TestTokenUsage:
 
         assert usage.input_tokens == 200
         assert usage.output_tokens == 100
+
+    def test_cache_write_durations_keep_their_distinct_prices(self) -> None:
+        usage = TokenUsage()
+        usage.add_from_response(
+            SimpleNamespace(
+                cache_creation_input_tokens=1_000_000,
+                cache_creation=SimpleNamespace(ephemeral_1h_input_tokens=250_000),
+            )
+        )
+        assert usage.cache_creation_tokens == 1_000_000
+        assert usage.cache_creation_1h_tokens == 250_000
+        assert usage.estimated_cost_usd == pytest.approx(0.75 * 3.75 + 0.25 * 6)
 
     def test_add_from_response_handles_missing_attrs(self) -> None:
         usage = TokenUsage(input_tokens=10)

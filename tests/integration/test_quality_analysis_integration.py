@@ -19,6 +19,7 @@ from home_finder.models import (
     PropertyImage,
     PropertySource,
 )
+from tests.test_filters.test_quality import _populate_image_cache
 
 # ---------------------------------------------------------------------------
 # Shared response data and mock helpers
@@ -209,7 +210,7 @@ class TestQualityAnalysisIntegration:
     """Test quality analysis with mocked Anthropic API and real DB."""
 
     async def test_analyze_parses_tool_response(
-        self, make_merged_property: Callable[..., MergedProperty]
+        self, make_merged_property: Callable[..., MergedProperty], tmp_path: Any
     ) -> None:
         """Two-phase tool use response should be parsed into PropertyQualityAnalysis."""
         merged = make_merged_property(
@@ -220,11 +221,13 @@ class TestQualityAnalysisIntegration:
             postcode="E8 3RH",
         )
 
+        _populate_image_cache(str(tmp_path), merged)
+
         quality_filter = PropertyQualityFilter(api_key="test-key")
         quality_filter._client = MagicMock()
         _setup_two_phase_mocks(quality_filter._client)
 
-        results = await quality_filter.analyze_merged_properties([merged])
+        results = await quality_filter.analyze_merged_properties([merged], data_dir=str(tmp_path))
 
         assert len(results) == 1
         returned_merged, analysis = results[0]
@@ -249,6 +252,7 @@ class TestQualityAnalysisIntegration:
         self,
         in_memory_storage: PropertyStorage,
         make_merged_property: Callable[..., MergedProperty],
+        tmp_path: Any,
     ) -> None:
         """Analysis should roundtrip through the database."""
         merged = make_merged_property(
@@ -259,11 +263,13 @@ class TestQualityAnalysisIntegration:
             postcode="E8 3RH",
         )
 
+        _populate_image_cache(str(tmp_path), merged)
+
         quality_filter = PropertyQualityFilter(api_key="test-key")
         quality_filter._client = MagicMock()
         _setup_two_phase_mocks(quality_filter._client)
 
-        results = await quality_filter.analyze_merged_properties([merged])
+        results = await quality_filter.analyze_merged_properties([merged], data_dir=str(tmp_path))
         _, analysis = results[0]
 
         # Save to DB
@@ -281,6 +287,7 @@ class TestQualityAnalysisIntegration:
         self,
         in_memory_storage: PropertyStorage,
         make_merged_property: Callable[..., MergedProperty],
+        tmp_path: Any,
     ) -> None:
         """Analysis should be available through get_property_detail."""
         merged = make_merged_property(
@@ -291,11 +298,13 @@ class TestQualityAnalysisIntegration:
             postcode="E8 3RH",
         )
 
+        _populate_image_cache(str(tmp_path), merged)
+
         quality_filter = PropertyQualityFilter(api_key="test-key")
         quality_filter._client = MagicMock()
         _setup_two_phase_mocks(quality_filter._client)
 
-        results = await quality_filter.analyze_merged_properties([merged])
+        results = await quality_filter.analyze_merged_properties([merged], data_dir=str(tmp_path))
         _, analysis = results[0]
 
         await in_memory_storage.save_merged_property(merged)
@@ -308,7 +317,7 @@ class TestQualityAnalysisIntegration:
         assert detail["quality_analysis"].summary == analysis.summary
 
     async def test_two_bed_space_override(
-        self, make_merged_property: Callable[..., MergedProperty]
+        self, make_merged_property: Callable[..., MergedProperty], tmp_path: Any
     ) -> None:
         """2-bed property should override is_spacious_enough to True."""
         merged = make_merged_property(
@@ -326,12 +335,14 @@ class TestQualityAnalysisIntegration:
 
         mock_visual = _create_mock_response(visual_data, tool_name="property_visual_analysis")
 
+        _populate_image_cache(str(tmp_path), merged)
+
         quality_filter = PropertyQualityFilter(api_key="test-key")
         quality_filter._client = MagicMock()
         mock_eval = _create_mock_eval_response(_sample_evaluation_response())
         quality_filter._client.messages.create = AsyncMock(side_effect=[mock_visual, mock_eval])
 
-        results = await quality_filter.analyze_merged_properties([merged])
+        results = await quality_filter.analyze_merged_properties([merged], data_dir=str(tmp_path))
         _, analysis = results[0]
 
         # Raw assessment preserved — 2-bed preference now handled in fit_score
@@ -351,7 +362,7 @@ class TestQualityAnalysisIntegration:
 
         assert len(results) == 1
         _, analysis = results[0]
-        assert "No images available" in analysis.summary
+        assert analysis is None
         # API should not be called
         quality_filter._client.messages.create.assert_not_called()
 
@@ -409,7 +420,7 @@ class TestQualityAnalysisIntegration:
         assert image_blocks[0]["source"]["type"] == "base64"
 
     async def test_phase2_failure_returns_incomplete_outcome(
-        self, make_merged_property: Callable[..., MergedProperty]
+        self, make_merged_property: Callable[..., MergedProperty], tmp_path: Any
     ) -> None:
         """A failed required evaluation cannot complete the assessment."""
         merged = make_merged_property(
@@ -424,13 +435,15 @@ class TestQualityAnalysisIntegration:
             _sample_visual_response(), tool_name="property_visual_analysis"
         )
 
+        _populate_image_cache(str(tmp_path), merged)
+
         quality_filter = PropertyQualityFilter(api_key="test-key")
         quality_filter._client = MagicMock()
         quality_filter._client.messages.create = AsyncMock(
             side_effect=[mock_visual, Exception("Phase 2 timeout")]
         )
 
-        results = await quality_filter.analyze_merged_properties([merged])
+        results = await quality_filter.analyze_merged_properties([merged], data_dir=str(tmp_path))
 
         assert len(results) == 1
         _, analysis = results[0]

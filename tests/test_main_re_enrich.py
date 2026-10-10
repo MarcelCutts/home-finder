@@ -150,15 +150,56 @@ class TestDownloadMissingImages:
         fetcher = DetailFetcher()
         mock_download = AsyncMock(return_value=b"fake")
         with patch.object(fetcher, "download_image_bytes", mock_download):
-            # max_images=3, floorplan=True → effective_max=2, only first 2 checked
+            # max_images=3 → first two gallery images plus the retained floorplan
             downloaded = await _download_missing_images(merged, fetcher, data_dir, max_images=3)
 
-        assert downloaded == 2
-        assert mock_download.call_count == 2
+        assert downloaded == 3
+        assert mock_download.call_count == 3
+        assert mock_download.call_args_list[-1].args == ("https://example.com/floor.jpg",)
 
 
 class TestReEnrichIncomplete:
     """Tests for _re_enrich_incomplete()."""
+
+    async def test_repairs_missing_floorplan_even_when_gallery_is_complete(
+        self, tmp_path: Path, make_merged_property: Callable[..., MergedProperty]
+    ) -> None:
+        merged = make_merged_property(
+            images=(
+                PropertyImage(
+                    url=HttpUrl("https://example.com/gallery.jpg"),
+                    source=PropertySource.OPENRENT,
+                    image_type="gallery",
+                ),
+            ),
+            floorplan=PropertyImage(
+                url=HttpUrl("https://example.com/floorplan.jpg"),
+                source=PropertySource.OPENRENT,
+                image_type="floorplan",
+            ),
+        )
+        settings = Settings(database_path=str(tmp_path / "properties.db"))
+        path = get_cached_image_path(
+            str(tmp_path), merged.unique_id, str(merged.images[0].url), "gallery", 0
+        )
+        save_image_bytes(path, b"cached gallery")
+        fetcher = AsyncMock()
+        fetcher.__aenter__.return_value = fetcher
+        fetcher.download_image_bytes.return_value = b"recovered floorplan"
+
+        with patch("home_finder.pipeline.analysis.DetailFetcher", return_value=fetcher) as factory:
+            result = await _re_enrich_incomplete([merged], settings, AsyncMock())
+            assert result == [merged]
+            fetcher.download_image_bytes.assert_awaited_once_with(
+                "https://example.com/floorplan.jpg"
+            )
+            floorplan_path = find_cached_file(
+                str(tmp_path), merged.unique_id, "https://example.com/floorplan.jpg", "floorplan"
+            )
+            assert floorplan_path is not None
+            assert floorplan_path.read_bytes() == b"recovered floorplan"
+            await _re_enrich_incomplete([merged], settings, AsyncMock())
+            factory.assert_called_once()
 
     async def test_noop_when_all_caches_complete(
         self,

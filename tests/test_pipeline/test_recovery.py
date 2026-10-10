@@ -8,11 +8,14 @@ from pydantic import HttpUrl, SecretStr
 
 from home_finder.config import Settings
 from home_finder.db import PropertyStorage
-from home_finder.filters.quality import TokenUsage
+from home_finder.filters.quality import APIUnavailableError, PropertyQualityFilter, TokenUsage
 from home_finder.main import _make_notify_callback, _run_pipeline_with_storage
 from home_finder.models import PropertyImage, PropertySource
+from home_finder.models.analysis import AnalysisFailure
+from home_finder.models.spend import SpendDeferred, SpendPolicy
 from home_finder.pipeline.analysis import _run_quality_and_save
 from home_finder.pipeline.stages import PreAnalysisResult, _run_pre_analysis_pipeline
+from home_finder.utils.image_cache import get_cached_image_path, save_image_bytes
 
 
 @pytest.fixture
@@ -74,6 +77,52 @@ def gallery():
             image_type="gallery",
         ),
     )
+
+
+@pytest.mark.parametrize("cache_state", ["missing_floorplan", "corrupt_floorplan", "no_urls"])
+async def test_no_usable_images_remain_pending_without_spend_or_failure_penalty(
+    storage, settings, make_merged_property, cache_state
+):
+    floorplan = PropertyImage(
+        url=HttpUrl("https://example.com/floorplan.jpg"),
+        source=PropertySource.OPENRENT,
+        image_type="floorplan",
+    )
+    merged = make_merged_property(floorplan=None if cache_state == "no_urls" else floorplan)
+    if cache_state == "corrupt_floorplan":
+        path = get_cached_image_path(
+            settings.data_dir, merged.unique_id, str(floorplan.url), "floorplan", 0
+        )
+        save_image_bytes(path, b"not an image")
+    await storage.pipeline.save_pre_analysis_properties([merged], {})
+    on_result = AsyncMock()
+    with (
+        patch("home_finder.pipeline.analysis._lookup_wards", new_callable=AsyncMock),
+        patch(
+            "home_finder.pipeline.analysis.DetailFetcher.download_image_bytes",
+            new_callable=AsyncMock,
+            return_value=None,
+        ),
+        patch.object(PropertyQualityFilter, "_run_visual_analysis", new_callable=AsyncMock) as api,
+    ):
+        for _ in range(4):
+            count, _ = await _run_quality_and_save(
+                PreAnalysisResult(), settings, storage, on_result
+            )
+            assert count == 0
+        api.assert_not_awaited()
+    on_result.assert_not_awaited()
+    assert [p.unique_id for p in await storage.pipeline.get_pending_analysis_properties()] == [
+        merged.unique_id
+    ]
+    async with (
+        storage._read_connection() as conn,
+        conn.execute("SELECT analysis_attempts FROM properties") as cursor,
+    ):
+        assert [row[0] for row in await cursor.fetchall()] == [0]
+    assert await storage.get_quality_analysis(merged.unique_id) is None
+    report = await storage.spend.report()
+    assert report["attempts"] == report["held_nanousd"] == report["lifetime_accounted_nanousd"] == 0
 
 
 async def test_zero_discovery_drains_pending_analysis_reanalysis_and_price_delivery(
@@ -194,6 +243,99 @@ async def test_failed_initial_analysis_has_bounded_attempts_and_no_delivery(
     assert await storage.get_quality_analysis(pending.unique_id) is None
     notifier.send_merged_property_notification.assert_not_awaited()
     notifier.send_property_notification.assert_not_awaited()
+
+
+@pytest.mark.parametrize("failure", ["api_unavailable", "request_rejected", "unsupported_schema"])
+async def test_provider_failures_leave_homes_retryable_after_multiple_runs(
+    storage, settings, boundaries, make_merged_property, make_quality_analysis, failure
+):
+    notifier, quality, _ = boundaries
+    settings.quality_concurrency = 1
+    pending = [make_merged_property(images=gallery()) for _ in range(3)]
+    await storage.pipeline.save_pre_analysis_properties(pending, {})
+    if failure == "api_unavailable":
+        quality.analyze_single_merged.side_effect = APIUnavailableError("provider unavailable")
+    else:
+        qa = make_quality_analysis().model_copy(
+            update={
+                "overall_rating": None,
+                "analysis_failure": AnalysisFailure(phase="visual", kind=failure),
+            }
+        )
+        quality.analyze_single_merged.side_effect = lambda m, **kw: (m, qa)
+
+    for _ in range(4):
+        await _run_pipeline_with_storage(settings, storage)
+    expected_calls = 12 if failure == "request_rejected" else 4
+    assert quality.analyze_single_merged.await_count == expected_calls
+    assert len(await storage.pipeline.get_pending_analysis_properties()) == 3
+    async with (
+        storage._read_connection() as conn,
+        conn.execute("SELECT analysis_attempts FROM properties") as cur,
+    ):
+        assert [row[0] for row in await cur.fetchall()] == [0, 0, 0]
+    notifier.send_merged_property_notification.assert_not_awaited()
+
+    quality.analyze_single_merged.side_effect = lambda m, **kw: (m, make_quality_analysis())
+    await _run_pipeline_with_storage(settings, storage)
+    assert not await storage.pipeline.get_pending_analysis_properties()
+    assert notifier.send_merged_property_notification.await_count == 3
+
+
+async def test_one_rejected_request_does_not_starve_healthy_homes(
+    storage, settings, boundaries, make_merged_property, make_quality_analysis
+):
+    _, quality, _ = boundaries
+    settings.quality_concurrency = 1
+    items = [make_merged_property() for _ in range(3)]
+    rejected = make_quality_analysis().model_copy(
+        update={
+            "overall_rating": None,
+            "analysis_failure": AnalysisFailure(phase="visual", kind="request_rejected"),
+        }
+    )
+    quality.analyze_single_merged.side_effect = lambda merged, **kw: (
+        merged,
+        rejected if merged.unique_id == items[0].unique_id else make_quality_analysis(),
+    )
+    count, _ = await _run_quality_and_save(
+        PreAnalysisResult(merged_to_process=items), settings, storage, AsyncMock()
+    )
+    assert count == 2
+    assert [
+        item.unique_id for item in await storage.pipeline.get_pending_analysis_properties()
+    ] == [items[0].unique_id]
+
+
+async def test_pipeline_queues_all_selected_homes_within_spending_concurrency(
+    storage, settings, boundaries, make_merged_property, make_quality_analysis
+):
+    _, quality, _ = boundaries
+    settings.quality_concurrency = 15
+    settings.analysis_spend_policy = SpendPolicy(
+        per_call_usd="7", daily_usd="20", monthly_usd="20", max_in_flight=1
+    )
+    active = 0
+
+    async def analyze(merged, **kwargs):
+        nonlocal active
+        active += 1
+        try:
+            if active > 1:
+                raise SpendDeferred("concurrency_limit")
+            await asyncio.sleep(0)
+            return merged, make_quality_analysis()
+        finally:
+            active -= 1
+
+    quality.analyze_single_merged.side_effect = analyze
+    fresh = [make_merged_property() for _ in range(6)]
+    callback = AsyncMock()
+    count, _ = await _run_quality_and_save(
+        PreAnalysisResult(merged_to_process=fresh), settings, storage, callback
+    )
+    assert count == callback.await_count == 6
+    assert not await storage.pipeline.get_pending_analysis_properties()
 
 
 async def test_legacy_sent_fallback_recovers_without_another_notification(

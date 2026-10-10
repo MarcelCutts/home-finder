@@ -315,7 +315,7 @@ async def test_usage_exceeding_reservation_is_recorded_and_blocks_new_spend(in_m
     report = await repo.report()
     assert report["lifetime_accounted_nanousd"] == 7_500_000_000
     assert report["over_reservation_count"] == 1
-    with pytest.raises(SpendDeferred, match="daily_limit"):
+    with pytest.raises(SpendDeferred, match="reservation_exceeded"):
         await repo.admit(spec("next"), cap)
 
 
@@ -366,6 +366,19 @@ async def test_complete_provider_error_releases_cost_without_inventing_usage(in_
     await repo.admit(spec(), policy())
     with pytest.raises(AttemptTransitionError):
         await repo.settle_usage(attempt, settlement())
+
+
+async def test_uncharged_rejections_still_obey_explicit_total_attempt_cap(in_memory_storage):
+    repo = in_memory_storage.spend
+    cap = policy(max_attempts_per_operation=1, max_total_attempts=1)
+    attempt = await repo.admit(spec(), cap)
+    await repo.mark_dispatched(attempt)
+    await repo.settle_rejection(
+        attempt,
+        ProviderRejection(http_status=529, error_type="overloaded_error", result="transient"),
+    )
+    with pytest.raises(SpendDeferred, match="total_attempt_limit"):
+        await repo.admit(spec(), cap)
 
 
 async def test_read_report_cli_cannot_start_processing(tmp_path):

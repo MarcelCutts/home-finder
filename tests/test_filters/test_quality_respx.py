@@ -301,7 +301,13 @@ class TestTwoPhaseAnalysisViaHTTP:
 
     @pytest.mark.parametrize(
         ("description", "expected_epc"),
-        [("EPC rating C", "C"), ("No rating stated.", "unknown"), ("EPC B. EPC C.", "unknown")],
+        [
+            ("EPC rating C", "C"),
+            ("EPC rated C (potential B). Budget friendly flat.", "C"),
+            ("EPC rating is C", "C"),
+            ("No rating stated.", "unknown"),
+            ("EPC B. EPC C.", "unknown"),
+        ],
     )
     async def test_full_two_phase_analysis(
         self,
@@ -309,6 +315,7 @@ class TestTwoPhaseAnalysisViaHTTP:
         test_merged_property: MergedProperty,
         description: str,
         expected_epc: str,
+        cached_data_dir: str,
     ) -> None:
         """Full two-phase analysis through real HTTP layer."""
         test_merged_property = test_merged_property.model_copy(
@@ -324,7 +331,9 @@ class TestTwoPhaseAnalysisViaHTTP:
 
         quality_filter = _make_quality_filter(native_api)
         try:
-            results = await quality_filter.analyze_merged_properties([test_merged_property])
+            results = await quality_filter.analyze_merged_properties(
+                [test_merged_property], data_dir=cached_data_dir
+            )
         finally:
             await quality_filter.close()
 
@@ -359,7 +368,7 @@ class TestTwoPhaseAnalysisViaHTTP:
         assert route.call_count == 2
 
     async def test_request_headers(
-        self, native_api: Mock, test_merged_property: MergedProperty
+        self, native_api: Mock, test_merged_property: MergedProperty, cached_data_dir: str
     ) -> None:
         """Requests should include correct Anthropic API headers."""
         route = native_api
@@ -372,7 +381,9 @@ class TestTwoPhaseAnalysisViaHTTP:
 
         quality_filter = _make_quality_filter(native_api)
         try:
-            await quality_filter.analyze_merged_properties([test_merged_property])
+            await quality_filter.analyze_merged_properties(
+                [test_merged_property], data_dir=cached_data_dir
+            )
         finally:
             await quality_filter.close()
 
@@ -429,7 +440,7 @@ class TestTwoPhaseAnalysisViaHTTP:
         assert phase1_body["tool_choice"] == {"type": "auto"}
 
     async def test_phase2_request_is_text_only(
-        self, native_api: Mock, test_merged_property: MergedProperty
+        self, native_api: Mock, test_merged_property: MergedProperty, cached_data_dir: str
     ) -> None:
         """Phase 2 should send text-only (no images) with output_config."""
         route = native_api
@@ -442,7 +453,9 @@ class TestTwoPhaseAnalysisViaHTTP:
 
         quality_filter = _make_quality_filter(native_api)
         try:
-            await quality_filter.analyze_merged_properties([test_merged_property])
+            await quality_filter.analyze_merged_properties(
+                [test_merged_property], data_dir=cached_data_dir
+            )
         finally:
             await quality_filter.close()
 
@@ -472,7 +485,7 @@ class TestHTTPErrorHandling:
     """Test error handling at the HTTP level."""
 
     async def test_phase1_server_error_graceful(
-        self, native_api: Mock, test_merged_property: MergedProperty
+        self, native_api: Mock, test_merged_property: MergedProperty, cached_data_dir: str
     ) -> None:
         """500 error on Phase 1 should fail gracefully (after SDK retries)."""
         native_api.configure_mock(
@@ -496,12 +509,14 @@ class TestHTTPErrorHandling:
             from home_finder.filters.quality import APIUnavailableError
 
             with pytest.raises(APIUnavailableError):
-                await quality_filter.analyze_single_merged(test_merged_property)
+                await quality_filter.analyze_single_merged(
+                    test_merged_property, data_dir=cached_data_dir
+                )
         finally:
             await quality_filter.close()
 
     async def test_phase1_rate_limit_trips_circuit(
-        self, native_api: Mock, test_merged_property: MergedProperty
+        self, native_api: Mock, test_merged_property: MergedProperty, cached_data_dir: str
     ) -> None:
         """429 rate limit should trip circuit breaker."""
         native_api.configure_mock(
@@ -528,7 +543,9 @@ class TestHTTPErrorHandling:
             from home_finder.filters.quality import APIUnavailableError
 
             with pytest.raises(APIUnavailableError):
-                await quality_filter.analyze_single_merged(test_merged_property)
+                await quality_filter.analyze_single_merged(
+                    test_merged_property, data_dir=cached_data_dir
+                )
 
             # Circuit breaker should have recorded the failure
             assert quality_filter._breaker.failure_count >= 1
@@ -536,7 +553,7 @@ class TestHTTPErrorHandling:
             await quality_filter.close()
 
     async def test_phase2_failure_raises_api_unavailable(
-        self, native_api: Mock, test_merged_property: MergedProperty
+        self, native_api: Mock, test_merged_property: MergedProperty, cached_data_dir: str
     ) -> None:
         """Phase 2 HTTP 500 should raise APIUnavailableError (circuit breaker)."""
         native_api.configure_mock(
@@ -563,7 +580,9 @@ class TestHTTPErrorHandling:
 
         try:
             with pytest.raises(APIUnavailableError):
-                await quality_filter.analyze_merged_properties([test_merged_property])
+                await quality_filter.analyze_merged_properties(
+                    [test_merged_property], data_dir=cached_data_dir
+                )
         finally:
             await quality_filter.close()
 
@@ -572,7 +591,7 @@ class TestTokenUsageParsing:
     """Test that token usage from HTTP responses is handled correctly."""
 
     async def test_cache_tokens_parsed(
-        self, native_api: Mock, test_merged_property: MergedProperty
+        self, native_api: Mock, test_merged_property: MergedProperty, cached_data_dir: str
     ) -> None:
         """Cache read/creation tokens should be parsed from the HTTP response."""
         native_api.configure_mock(
@@ -584,7 +603,9 @@ class TestTokenUsageParsing:
 
         quality_filter = _make_quality_filter(native_api)
         try:
-            results = await quality_filter.analyze_merged_properties([test_merged_property])
+            results = await quality_filter.analyze_merged_properties(
+                [test_merged_property], data_dir=cached_data_dir
+            )
         finally:
             await quality_filter.close()
 

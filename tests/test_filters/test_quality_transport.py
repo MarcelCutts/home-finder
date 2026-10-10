@@ -49,6 +49,7 @@ async def test_metered_requests_preserve_baseline_except_explicit_billing_scope(
     # Recorded with SDK 0.81.0's real serializer and native mocked HTTP client.
     # Change deliberately alongside an approved prompt/contract change, never
     # merely to accommodate a transport upgrade.
+    # Evaluation includes the guidance review date refreshed on 10 October 2026.
     payloads = [json.loads(r.content) for r in requests]
     for payload in payloads:
         assert payload.pop("service_tier") == "standard_only"
@@ -57,7 +58,7 @@ async def test_metered_requests_preserve_baseline_except_explicit_billing_scope(
         hashlib.sha256(json.dumps(body, sort_keys=True).encode()).hexdigest() for body in payloads
     ] == [
         "05007bbf2d261d843c31919c2a52daba72e6f3fb6ec202379413aca80323788b",
-        "1be5ce938e29adea05be23dc2e1609b528301e535ef2b267af7e91709fc37511",
+        "41ff19c2bb1fad136c687f2f906caa3a828271e895bdf367b584fd594abb531e",
     ]
     assert [r.extensions["timeout"]["read"] for r in requests] == [240.0, 60.0]
     assert [r.extensions["timeout"]["connect"] for r in requests] == [5.0, 5.0]
@@ -68,6 +69,7 @@ async def test_metered_requests_preserve_baseline_except_explicit_billing_scope(
         "output_tokens": 499,
         "cache_read_tokens": 2000,
         "cache_creation_tokens": 0,
+        "cache_creation_1h_tokens": 0,
     }
     assert native.is_closed
 
