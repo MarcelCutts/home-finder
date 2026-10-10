@@ -97,6 +97,8 @@ The existing GitHub CI workflow remains disabled by inactivity while the unmerge
 
 ## Next eligible segment
 
+**Follow-up now implemented:** [PR07b-3b](2026-10-10-pr07b3b-home-group-routing.md) is [draft #31](https://github.com/MarcelCutts/home-finder/pull/31), position 28. It completes the grouping, original-action provenance and recoverable retirement work described below. The next eligible segment is PR07b-4. The following text records this layer's original handoff boundary.
+
 **PR07b-3b: integrate reversible home grouping and provenance.** Use this contract as the ownership writer. Add a reviewed home-group/routing projection without altering immutable origin identity or deleting old staging-redirect evidence. Define how a grouped card, an original issued link and a status/message action identify their original home/member provenance. Expose conflicting states rather than selecting a winner. Integrate retained donor rows with retry/dedup selection so they do not create duplicate work. Make new staging retirement recoverable, and explicitly refuse restoration where old deleted state is unavailable. Validate chained grouping, split, reversal, callback authorization and retained history on fixtures/copies.
 
 **Then PR07b-4:** consume projection invalidations, carry every member ID through text, price, availability, images and links, and reconcile only reviewed evidence after complete consumers are ready. Keep same-portal automatic guards and matching thresholds unchanged. The 17 historical conflicts remain unresolved. PR08b/PR09b follow that foundation; no fresh portal/model/Telegram work or production cutover is authorized by these offline exercises.

@@ -1,6 +1,6 @@
 # PR07b-3b — home groups with original personal-state provenance
 
-Status: implementation, author review and local verification complete; ready for stacked draft review. Base: `8350a650becaa6ae2311fe379b34538ff04a29c0`, [draft #30](https://github.com/MarcelCutts/home-finder/pull/30). Branch: `codex/stack/28-home-group-routing`; position 28 in native stack #29. This extends [PR07b-3a](2026-10-10-pr07b3a-membership-decisions.md), and completes the grouping/consumer part of PR07b-3. PR07b-4 remains required before active reviewed reconciliation.
+Status: implementation, author review and local verification complete; published as [draft #31](https://github.com/MarcelCutts/home-finder/pull/31). Application commit: `588186b2c9684e1564871061aa3cd00e254ddccb`; the final publication commit changes documentation only. Base: `8350a650becaa6ae2311fe379b34538ff04a29c0`, [draft #30](https://github.com/MarcelCutts/home-finder/pull/30). Branch: `codex/stack/28-home-group-routing`; position 28 in native stack #29. This extends [PR07b-3a](2026-10-10-pr07b3a-membership-decisions.md), and completes the grouping/consumer part of PR07b-3. PR07b-4 remains required before active reviewed reconciliation.
 
 ## Outcome and boundary
 

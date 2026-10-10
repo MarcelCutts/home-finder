@@ -168,5 +168,24 @@
     "No new model, portal, Telegram, production or deployment operations.",
     "Author review is not independent approval."
   ],
-  "recovery": "Missing temporary worktree recovered into persistent repository worktree and reverified; missing prior full-suite output is not used as evidence."
+  "recovery": "Missing temporary worktree recovered into persistent repository worktree and reverified; missing prior full-suite output is not used as evidence.",
+  "implementation_commit": "588186b2c9684e1564871061aa3cd00e254ddccb",
+  "draft_pr": "https://github.com/MarcelCutts/home-finder/pull/31",
+  "native_stack": {
+    "id": 1973204,
+    "number": 29,
+    "position": 28,
+    "size_at_publication": 28,
+    "all_drafts": true
+  },
+  "source_and_test_manifest_encoding": "UTF-8 of json.dumps(per_file_sha256, sort_keys=True), default separators, no trailing newline",
+  "source_and_test_manifest_files": 309,
+  "publication_checks": {
+    "old_27_heads_unchanged": true,
+    "all_28_bases_match_preceding_heads": true,
+    "all_28_drafts_in_native_stack": true,
+    "main_sha": "a86e51e9ef3e6f767ed307bcae5cbce5087d3cea",
+    "remote_checks": [],
+    "ci_state": "disabled_inactivity"
+  }
 }
