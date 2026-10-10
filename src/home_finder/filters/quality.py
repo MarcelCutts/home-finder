@@ -697,8 +697,8 @@ VISUAL_ANALYSIS_TOOL: Final[dict[str, Any]] = _build_tool_schema(
     "property_visual_analysis",
     "Return visual property quality analysis results from images",
     _VisualAnalysisResponse,
-    # No strict=True — schema exceeds Anthropic grammar compilation limits
-    # (55 properties across 10 nested objects, ~7.8KB)
+    # No strict=True: the provider rejected this schema and an all-required wire
+    # variant in the 2026-10-10 trial. Responses remain locally validated.
 )
 
 
