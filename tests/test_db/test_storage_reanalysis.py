@@ -424,7 +424,7 @@ class TestGetReanalysisQueue:
             source=PropertySource.ZOOPLA,
             source_id="z-multi",
             postcode="E8 3RH",
-            price_pcm=2000,
+            price_pcm=2100,
         )
         merged = MergedProperty(
             canonical=prop,
@@ -440,6 +440,14 @@ class TestGetReanalysisQueue:
                 PropertySource.OPENRENT: "OpenRent desc",
             },
         )
+        # Current ranges and membership require the actual received source rows.
+        other = make_property(
+            source=PropertySource.OPENRENT,
+            source_id="99",
+            url=merged.source_urls[PropertySource.OPENRENT],
+            price_pcm=1900,
+        )
+        await storage.upsert_source_listings([prop, other])
         await storage.pipeline.save_pre_analysis_properties([merged], {})
         await storage.pipeline.complete_analysis(merged.unique_id, make_quality_analysis())
         await storage.mark_notified(merged.unique_id)

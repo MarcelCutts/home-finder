@@ -12,6 +12,7 @@ import aiosqlite
 
 from home_finder.db.home_groups import HomeActionConflict, resolve_action
 from home_finder.db.homes import resolve_home
+from home_finder.db.listing_members import load_source_rows, member_from_row
 from home_finder.db.listing_text import text_from_property_row
 from home_finder.db.row_mappers import (
     ImageReader,
@@ -21,6 +22,7 @@ from home_finder.db.row_mappers import (
 )
 from home_finder.logging import get_logger
 from home_finder.models import PropertyQualityAnalysis
+from home_finder.models.listing_member import labelled_members
 from home_finder.utils.listing_facts import supported_band
 from home_finder.web.filters import ADDED_OPTIONS
 
@@ -489,6 +491,13 @@ class WebQueryService:
                 assert personal is not None
                 prop_dict["user_status"] = personal[0]
             parse_json_fields(prop_dict)
+            source_rows = await load_source_rows(conn, [unique_id])
+            members = tuple(member_from_row(source_row) for source_row in source_rows[unique_id])
+            prop_dict["listing_members"] = members
+            prop_dict["member_links"] = [
+                {"key": member.evidence_key, "label": label, "url": str(member.url)}
+                for member, label in labelled_members(members)
+            ]
             prop_dict["listing_evidence"] = text_from_property_row(row)
 
             # Parse quality analysis

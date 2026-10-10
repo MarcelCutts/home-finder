@@ -17,6 +17,7 @@ from home_finder.models.core import (
     TransportMode,
     UserStatus,
 )
+from home_finder.models.listing_member import ListingMember
 from home_finder.models.listing_text import ListingTextEvidence
 from home_finder.models.quality import (
     BathroomAnalysis,
@@ -57,6 +58,7 @@ __all__ = [
     "KitchenAnalysis",
     "LightSpaceAnalysis",
     "ListingExtraction",
+    "ListingMember",
     "ListingRedFlags",
     "ListingTextEvidence",
     "MergedProperty",

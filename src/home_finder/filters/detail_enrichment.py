@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Final
@@ -187,11 +188,13 @@ async def _enrich_single(
         all_images: list[PropertyImage] = []
         floorplan_image: PropertyImage | None = None
         source_text = merged.text_by_source
+        members = {member.evidence_key: member for member in merged.listing_members}
         floor_area_sqm: float | None = None
         floor_area_source: str | None = None
         canon_updates: dict[str, float | str] = {}
 
-        for source, url in merged.source_urls.items():
+        for member in tuple(members.values()):
+            source, url = member.source, member.url
             source_id = listing_id(source.value, str(url))
             if source_id is None and source == prop.source and url == prop.url:
                 source_id = prop.source_id  # An already identified canonical/legacy listing.
@@ -213,6 +216,14 @@ async def _enrich_single(
                 longitude=prop.longitude,
             )
 
+            member_hash = hashlib.sha256(member.evidence_key.encode()).hexdigest()
+            logger.debug(
+                "detail_listing_started",
+                property_id=merged.unique_id,
+                source=source.value,
+                member_key_sha256=member_hash,
+                listing_members=len(members),
+            )
             try:
                 detail_data = await detail_fetcher.fetch_detail_page(temp_prop)
 
@@ -239,10 +250,12 @@ async def _enrich_single(
                             description=detail_data.description,
                             features=detail_data.features,
                         )
-                    source_text[source] = merge_listing_text(
-                        source_text.get(source, ListingTextEvidence()),
-                        incoming_text,
+                    member = member.model_copy(
+                        update={"text": merge_listing_text(member.text, incoming_text)}
                     )
+                    members[member.evidence_key] = member
+                    if sum(other.source == source for other in members.values()) == 1:
+                        source_text[source] = member.text
 
                     if detail_data.gallery_urls:
                         for idx, img_url in enumerate(detail_data.gallery_urls):
@@ -346,6 +359,7 @@ async def _enrich_single(
                     "source_detail_enrichment_failed",
                     property_id=merged.unique_id,
                     source=source.value,
+                    member_key_sha256=member_hash,
                     error_type=type(exc).__name__,
                 )
 
@@ -380,13 +394,15 @@ async def _enrich_single(
                 _generate_gallery_thumbnails, all_images, merged.unique_id, data_dir
             )
 
-        canonical_text = source_text.get(prop.source)
+        canonical_member = members.get(prop.unique_id)
+        canonical_text = canonical_member.text if canonical_member else None
         if canonical_text is not None and canonical_text.description is not None:
             canon_updates["description"] = canonical_text.description
         canonical = prop.model_copy(update=canon_updates) if canon_updates else prop
 
         updated = MergedProperty(
             canonical=canonical,
+            members=tuple(members.values()) if merged.members is not None else None,
             sources=merged.sources,
             source_urls=merged.source_urls,
             images=tuple(all_images),
@@ -428,10 +444,12 @@ async def _load_cached_property(
     in-memory canonical lacks them (e.g. Rightmove retries loaded before
     the detail page was fetched).
 
-    Uses a single combined storage call to load both images and the property
-    row, avoiding two separate DB round-trips.
+    Uses one database snapshot for images, canonical fields and exact members.
     """
-    images, db_prop, saved_text = await storage.get_property_images_and_row(merged.unique_id)
+    images, db_prop, saved_text, saved_members = await storage.get_enrichment_cache(
+        merged.unique_id
+    )
+    current_members = saved_members if saved_members is not None else merged.members
     source_text = merged.text_by_source
     for source, evidence in saved_text.items():
         source_text[source] = merge_listing_text(
@@ -456,11 +474,23 @@ async def _load_cached_property(
         if updates:
             canonical = canonical.model_copy(update=updates)
 
-    canonical_text = source_text.get(canonical.source)
+    canonical_text = (
+        next(
+            (
+                member.text
+                for member in current_members
+                if member.source_unique_id == canonical.unique_id
+            ),
+            None,
+        )
+        if current_members is not None
+        else source_text.get(canonical.source)
+    )
     if canonical_text is not None and canonical_text.description is not None:
         canonical = canonical.model_copy(update={"description": canonical_text.description})
     return MergedProperty(
         canonical=canonical,
+        members=current_members,
         sources=merged.sources,
         source_urls=merged.source_urls,
         images=gallery,

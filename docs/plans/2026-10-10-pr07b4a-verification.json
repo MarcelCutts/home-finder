@@ -1,0 +1,227 @@
+{
+  "segment": "PR07b-4a",
+  "base": "515b687c2cbb7a3cf70ca1140ff8e42fad3a30b7",
+  "schema": 14,
+  "stack_position": 29,
+  "source_and_test_manifest_sha256": "d2dafdb31f153f0eed4a13a5ac6e78ef98a46fec47a5ef219ee9fdb98af632e1",
+  "full_suites": [
+    {
+      "python": "Python 3.14.7",
+      "passed": 3365,
+      "failures": 0,
+      "coverage_percent": 88.33,
+      "workers": 4,
+      "network": "pytest-socket blocked except Unix sockets",
+      "log_sha256": "b8c1bbfabea17216aa19259a61184dd7f8078b11ffd99659798be508b96f2b73",
+      "junit_sha256": "c1bc6fe2b2fd1abaae7c548ae541f92bdc794566c27a6de716638e844368f64a"
+    },
+    {
+      "python": "Python 3.11.16",
+      "passed": 3365,
+      "failures": 0,
+      "coverage_percent": 88.4,
+      "workers": 8,
+      "network": "pytest-socket blocked except Unix sockets",
+      "log_sha256": "204b07b50e7f4db643da2d1d0292d99c350686e692ab370688320aa10eacd331",
+      "junit_sha256": "594227f0227e317e654484e1b1057ad27a9936aeb55bfd6ef2ded6a600cffa9c"
+    }
+  ],
+  "final_web_suites": [
+    {
+      "python": "Python 3.14.7",
+      "passed": 335,
+      "failures": 0,
+      "log_sha256": "0aa4f10679b1c9476aba103b8411c236db882541301c45b7bf08ec65519674b2",
+      "junit_sha256": "0147730d88c2594ea7b10c7473b341b2f59f9791d134a31ba0d9163773aeb1c9"
+    },
+    {
+      "python": "Python 3.11.16",
+      "passed": 335,
+      "failures": 0,
+      "log_sha256": "a1152e6dd0e25bd0738c9504adf3353540029c85e0144ea663417d592086600a",
+      "junit_sha256": "47969485a8f89e214ad965460683a639cc6434d735b28b6a307371122a353f8d"
+    }
+  ],
+  "verification_order": "Full suites were collected before the last description-overflow and explicit-empty-membership UI corrections. Both complete 335-test web suites then passed against the final code; no other Python subsystem changed. Final static checks, packaging, source manifest and browser checks cover the final files. A final test-only reader close was checked in all five affected cases on each interpreter with ResourceWarning treated as an error; the source archive and manifest were then rebuilt.",
+  "static_checks": {
+    "ruff_check": "passed",
+    "ruff_format": "passed (261 Python files)",
+    "mypy": "passed (116 source files)",
+    "javascript_syntax": "node --check passed for sections.js",
+    "diff_check": "passed"
+  },
+  "packaging": {
+    "application_files": 150,
+    "all_application_files_byte_exact": true,
+    "wheel_sha256": "1473d32cb6d19851e46800b6aa051b51a05963bfc432f1c2d175d895370164c2",
+    "sdist_sha256": "8cf6b5ef65ca5dcdbf221040d3231ed6d4c0337fdd66c92509e2a54394259cbb",
+    "sdist_allowlisted_files_byte_exact": 316,
+    "sdist_final_test_fixtures_present": true,
+    "sdist_private_artifacts_excluded": true,
+    "sdist_read_only_audit_script_included": true,
+    "generator": "Wheel-Version: 1.0\nGenerator: hatchling 1.32.4\nRoot-Is-Purelib: true\nTag: py3-none-any\n"
+  },
+  "copy_rehearsals": {
+    "historical": {
+      "network_blocked": true,
+      "source_sha256": "e1494adf0f5b174cd9a2e142f50aa25b8ffd5a85ba3f4d66383a3e8762cea639",
+      "source_unchanged": true,
+      "original_schema": 6,
+      "migrated_schema": 14,
+      "all_original_rows_preserved": true,
+      "migration_and_restart_idempotent": true,
+      "ownership_conflicts": 17,
+      "loaded_anchors": 1015,
+      "loaded_members": 1713,
+      "counts": {
+        "homes": 1016,
+        "home_aliases": 1217,
+        "source_memberships": 3267,
+        "membership_decisions": 0,
+        "membership_changes": 0,
+        "membership_projection_invalidations": 0,
+        "home_routes": 1016,
+        "home_route_changes": 0
+      },
+      "foreign_key_errors": 0,
+      "projection_drift": 0,
+      "integrity": "ok",
+      "examples": {},
+      "membership_replay_audit": {
+        "revision": 0,
+        "decisions": 0,
+        "retained_source_memberships": 3267,
+        "errors": {},
+        "valid": true
+      }
+    },
+    "fifty": {
+      "network_blocked": true,
+      "source_sha256": "e2bdf0073f39067b85a8f1deb707b828cd369f45c9244a9c0360aed2f0934fa7",
+      "source_unchanged": true,
+      "original_schema": 10,
+      "migrated_schema": 14,
+      "all_original_rows_preserved": true,
+      "migration_and_restart_idempotent": true,
+      "ownership_conflicts": 0,
+      "loaded_anchors": 35,
+      "loaded_members": 50,
+      "counts": {
+        "homes": 35,
+        "home_aliases": 35,
+        "source_memberships": 55,
+        "membership_decisions": 8,
+        "membership_changes": 12,
+        "membership_projection_invalidations": 20,
+        "home_routes": 35,
+        "home_route_changes": 12
+      },
+      "foreign_key_errors": 0,
+      "projection_drift": 0,
+      "integrity": "ok",
+      "examples": {
+        "southborough": {
+          "advertisements": 2,
+          "changed_members": 1,
+          "all_original_rows_after_split_and_reversal": true,
+          "replayed_merge_after_split_is_noop": true,
+          "issued_links_preserved": true,
+          "all_member_text_links_and_assessment_references": true,
+          "split_removes_departed_member_inputs": true
+        },
+        "wilmot": {
+          "advertisements": 3,
+          "changed_members": 2,
+          "all_original_rows_after_split_and_reversal": true,
+          "replayed_merge_after_split_is_noop": true,
+          "issued_links_preserved": true,
+          "all_member_text_links_and_assessment_references": true,
+          "split_removes_departed_member_inputs": true
+        }
+      },
+      "membership_replay_audit": {
+        "revision": 8,
+        "decisions": 8,
+        "retained_source_memberships": 55,
+        "errors": {},
+        "valid": true
+      }
+    }
+  },
+  "fifty_property_replay": {
+    "input_count": 50,
+    "groups_per_shape": 35,
+    "selected_members": 50,
+    "checks": {
+      "same_and_split_match_live_membership": true,
+      "known_replay_produces_no_new_work": true,
+      "no_model_attempts": true,
+      "database_integrity": true,
+      "original_artifacts_unchanged": true
+    },
+    "original_artifacts_unchanged": true,
+    "report_sha256": "511d0381d982893bd2914e33035b558ed2c6a96053e9c7ba5a6957a633dd187d"
+  },
+  "browser": {
+    "synthetic_only": true,
+    "skill": "playwright",
+    "viewports": [
+      [
+        1365,
+        1000
+      ],
+      [
+        390,
+        844
+      ]
+    ],
+    "horizontal_overflow": false,
+    "console_errors": 0,
+    "console_warnings": 0,
+    "same_portal_links_and_conflicting_claims_visible": true,
+    "literal_break_tags": false,
+    "short_description_fade": false,
+    "long_description_expansion_and_collapse": true,
+    "expanded_client_and_scroll_heights": 1152,
+    "collapsed_height": 200,
+    "screenshots": {
+      "docs/reviews/images/2026-10-10-listing-members-desktop.png": "21392ffe548e15f10dbc23419a6db48737edf2612b544667b6984e028e341263",
+      "docs/reviews/images/2026-10-10-listing-members-mobile.png": "314eaa9c1bcfddf4572944d37acc167eec6944f2e4777fd0917c7628e287fc7f"
+    }
+  },
+  "remote_ci": {
+    "workflow_id": 262027904,
+    "state": "disabled_inactivity",
+    "executed": false
+  },
+  "operating_scope": {
+    "production_writes": 0,
+    "portal_fetches": 0,
+    "paid_model_calls": 0,
+    "telegram_notifications": 0,
+    "deployment": false,
+    "matcher_policy_changed": false,
+    "historical_conflicts_reconciled": 0
+  },
+  "prior_failed_runs": {
+    "initial_full_suites": "Each interpreter found five old reference/receipt-fixture assumptions, fixed before the reported full reruns.",
+    "copy_rehearsal": "Initial member-order comparison failed; explicit source-row ordering fixed before the reported successful copy rehearsal.",
+    "browser": "Initial global fixture-auth header caused cross-origin preflight errors. A new loopback-only auth session passed the final browser review."
+  },
+  "reader_cleanup_checks": [
+    {
+      "runtime": "311",
+      "passed": 5,
+      "resource_warning_is_error": true,
+      "junit_sha256": "39c42925c00a60bd6e8ff9e679222c739eee75cf6bf721a0b69c6f85e4b38f9c",
+      "log_sha256": "1ba0c096373f9e6d5219d7929213a6003b7ee2e85a6cbea95c63ca3953ce2037"
+    },
+    {
+      "runtime": "314",
+      "passed": 5,
+      "resource_warning_is_error": true,
+      "junit_sha256": "8093ee0f388794eea5104da156e1af1415e7db58c9b13e61d120d5348fdf5310",
+      "log_sha256": "ecf1347343d39b8a33fcc155f179c182aa75575ed9215c08cb69467762bf9088"
+    }
+  ]
+}

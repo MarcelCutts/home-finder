@@ -7,7 +7,13 @@ from typing import Final
 
 from home_finder.filters.scoring import MatchScore, calculate_match_score, is_full_postcode
 from home_finder.logging import get_logger
-from home_finder.models import MergedProperty, Property, PropertyImage, PropertySource
+from home_finder.models import (
+    ListingMember,
+    MergedProperty,
+    Property,
+    PropertyImage,
+    PropertySource,
+)
 from home_finder.models.listing_text import ListingTextEvidence, merge_listing_text
 from home_finder.utils.address import extract_outcode
 from home_finder.utils.image_cache import copy_cached_images, find_cached_file
@@ -353,6 +359,22 @@ class Deduplicator:
                     all_sources.append(src)
                     all_source_urls[src] = mp.source_urls[src]
 
+        all_members: dict[str, ListingMember] = {}
+        for mp in sorted_mps:
+            for member in mp.listing_members:
+                previous = all_members.get(member.evidence_key)
+                if previous is not None:
+                    if (
+                        previous.source != member.source
+                        or previous.source_id != member.source_id
+                        or not member.has_equivalent_url(str(previous.url))
+                    ):
+                        raise ValueError("One retained listing has conflicting URLs")
+                    member = member.model_copy(
+                        update={"text": merge_listing_text(previous.text, member.text)}
+                    )
+                all_members[member.evidence_key] = member
+
         # Combine text without allowing older/sparse records to erase evidence.
         all_source_text: dict[PropertySource, ListingTextEvidence] = {}
         all_descriptions: dict[PropertySource, str] = {}
@@ -410,12 +432,14 @@ class Deduplicator:
                     best_floor_source = mp.floor_area_source
                     best_priority = priority
 
-        canonical_text = all_source_text.get(canonical.source)
+        canonical_member = all_members.get(canonical.unique_id)
+        canonical_text = canonical_member.text if canonical_member else None
         if canonical_text is not None and canonical_text.description is not None:
             canonical = canonical.model_copy(update={"description": canonical_text.description})
 
         result = MergedProperty(
             canonical=canonical,
+            members=tuple(all_members.values()),
             sources=tuple(all_sources),
             source_urls=all_source_urls,
             images=tuple(all_images),
@@ -453,6 +477,7 @@ class Deduplicator:
 
         return MergedProperty(
             canonical=prop,
+            members=(ListingMember.from_property(prop),),
             sources=(prop.source,),
             source_urls={prop.source: prop.url},
             images=(),

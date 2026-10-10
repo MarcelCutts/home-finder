@@ -2222,6 +2222,7 @@ nav.container-fluid li {
 }
 .description-text {
     position: relative;
+    white-space: pre-line;
     max-height: 200px;
     overflow: hidden;
     line-height: 1.6;
@@ -2229,7 +2230,7 @@ nav.container-fluid li {
     color: var(--text-muted);
     transition: max-height 0.3s ease;
 }
-.description-text:not(.expanded)::after {
+.description-text.collapsible:not(.expanded)::after {
     content: "";
     position: absolute;
     bottom: 0;

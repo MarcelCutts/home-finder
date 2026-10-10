@@ -119,7 +119,7 @@ def test_conflicts_withhold_disputed_facts_from_actual_selection(make_merged_pro
     current = fold([first, other])
     merged = merged.model_copy(update={"source_text": {merged.canonical.source: current}})
     selected = select_listing_text(merged)
-    assert selected.policy_version == 2
+    assert selected.policy_version == 3
     assert "Conflicting descriptions" in selected.description
     assert "Conflicting listing features" in selected.features[0]
     assert "Band C" not in selected.description and "Band D" not in selected.description
@@ -240,7 +240,7 @@ def test_in_memory_dedup_keeps_original_search_text_and_features(sample_property
     selected = select_listing_text(merged)
     assert selected.description == "Original source text"
     assert selected.features == ("[OpenRent] Gas hob",)
-    assert selected.source_observation_ids == {prop.source.value: (capture.sha256,)}
+    assert selected.source_observation_ids == {prop.unique_id: (capture.sha256,)}
 
 
 async def test_text_lookup_bounds_large_batches_without_losing_last_item(make_property):

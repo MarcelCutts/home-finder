@@ -95,6 +95,12 @@
                 {%- if prop.floor_area_sqm %} &middot; {{ prop.floor_area_sqm | round(0) | int }} m²
                 {%- if prop.floor_area_source %} <span class="meta-dim">via {{ prop.floor_area_source | title }}</span>{% endif %}
                 {%- endif %} &middot; {{ prop.address }}{% if prop.postcode %}, {{ prop.postcode }}{% endif %}
+                {%- if prop.member_links is defined %}
+                {%- for link in prop.member_links %}
+                <span class="meta-sep">&middot;</span>
+                <a href="{{ link.url }}" target="_blank" rel="noopener" class="meta-link">{{ link.label }}&nbsp;&#8599;</a>
+                {%- endfor %}
+                {%- else %}
                 {%- for source_key in prop.sources_list -%}
                 {%- set url = prop.source_urls_dict.get(source_key) -%}
                 {%- if url %}
@@ -102,6 +108,7 @@
                 <a href="{{ url }}" target="_blank" rel="noopener" class="meta-link">{{ source_names.get(source_key, source_key) }}&nbsp;&#8599;</a>
                 {%- endif -%}
                 {%- endfor -%}
+                {%- endif %}
                 {%- if prop.latitude and prop.longitude %}
                 <span class="meta-sep">&middot;</span>
                 <a href="https://www.google.com/maps?q={{ prop.latitude }},{{ prop.longitude }}" target="_blank" rel="noopener" class="meta-link meta-link-dim">Map&nbsp;&#8599;</a>
@@ -449,6 +456,15 @@
     {% endif %}
 
     {# 4. Description — agent copy, lower priority #}
+    {% if prop.listing_members is defined %}
+    {% for member, label in member_text %}
+    {% if member.text.description_conflicting or member.text.features_conflicting %}
+    <p class="meta-dim" role="status">
+        {{ label }} has conflicting listing details. Check the source listing before relying on them.
+    </p>
+    {% endif %}
+    {% endfor %}
+    {% else %}
     {% for source, evidence in prop.get('listing_evidence', {}).items() %}
     {% if evidence.description_conflicting or evidence.features_conflicting %}
     <p class="meta-dim" role="status">
@@ -456,11 +472,12 @@
     </p>
     {% endif %}
     {% endfor %}
+    {% endif %}
     {% if best_description %}
     <section id="section-description" class="detail-section">
         <h3>Description</h3>
         <div class="description-container">
-            <div class="description-text" id="description-text">{{ best_description | e | replace("\n", "<br>") | safe }}</div>
+            <div class="description-text" id="description-text">{{ best_description }}</div>
             <button class="description-toggle" id="description-toggle" hidden aria-expanded="false">Read more</button>
         </div>
     </section>

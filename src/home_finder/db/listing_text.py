@@ -174,6 +174,26 @@ async def persist_merged_text(
     provider identity is resolved by the later observation/identity work.
     """
     canonical_id = unique_id or merged.unique_id
+    if merged.members is not None:
+        for member in merged.members:
+            if member.source_unique_id is None:
+                continue
+            async with conn.execute(
+                "SELECT url FROM source_listings WHERE unique_id = ? AND source = ? "
+                "AND source_id = ? AND merged_id = ?",
+                (
+                    member.source_unique_id,
+                    member.source.value,
+                    member.source_id,
+                    canonical_id,
+                ),
+            ) as cursor:
+                found = await cursor.fetchone()
+            if found is None or not member.has_equivalent_url(found["url"]):
+                raise ValueError("Listing text does not belong to this saved member")
+            await apply_source_text(conn, member.source_unique_id, member.text)
+        await refresh_merged_text(conn, canonical_id)
+        return
     incoming = merged.text_by_source
     for source, evidence in incoming.items():
         url = merged.source_urls.get(source)

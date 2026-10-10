@@ -1,6 +1,7 @@
 """Stable home links survive source changes without reassigning protected history."""
 
 import sqlite3
+from contextlib import closing
 from unittest.mock import AsyncMock, patch
 
 import aiosqlite
@@ -57,7 +58,7 @@ async def test_all_canonical_save_paths_have_one_durable_home(storage, sample_pr
     assert target.home_id != sample_property.source_id
     await save(storage, method, sample_property)
     assert await storage.homes.resolve(target.home_id) == target
-    with sqlite3.connect(storage.db_path) as reader:
+    with closing(sqlite3.connect(storage.db_path)) as reader:
         assert reader.execute("SELECT count(*) FROM homes").fetchone()[0] == 1
         assert reader.execute("SELECT count(*) FROM home_aliases").fetchone()[0] == 1
 

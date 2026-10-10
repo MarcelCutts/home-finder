@@ -45,6 +45,7 @@ from home_finder.models import (
     PropertyLowlight,
     UserStatus,
 )
+from home_finder.models.listing_member import labelled_members
 from home_finder.utils.address import extract_outcode
 from home_finder.utils.cost_calculator import build_monthly_budget
 from home_finder.utils.image_cache import (
@@ -598,6 +599,18 @@ async def property_detail(
     if not best_description and prop.get("description"):
         best_description = prop.get("description") or ""
 
+    member_text = labelled_members(prop.get("listing_members", ()))
+    if "listing_members" in prop:
+        descriptions_by_member = [
+            (label, member.text.description)
+            for member, label in member_text
+            if member.text.description and not member.text.description_conflicting
+        ]
+        best_description = "\n\n".join(
+            (f"{label}\n" if len(member_text) > 1 else "") + description
+            for label, description in descriptions_by_member
+        )
+
     # Compute Marcel Fit Score + breakdown for detail page
     fit_score = None
     fit_breakdown = None
@@ -615,7 +628,9 @@ async def property_detail(
     extraction = qa.listing_extraction if qa else None
     cost_breakdown = build_monthly_budget(
         rent_pcm=prop.get("price_pcm", 0),
-        evidence=prop.get("listing_evidence", {}),
+        evidence={label: member.text for member, label in member_text}
+        if "listing_members" in prop
+        else prop.get("listing_evidence", {}),
         earlier_service_charge=extraction.service_charge_pcm if extraction else None,
     )
 
@@ -661,6 +676,7 @@ async def property_detail(
             "outcode": outcode,
             "area_context": area_context,
             "best_description": best_description,
+            "member_text": member_text,
             "source_names": SOURCE_NAMES,
             "source_badges": SOURCE_BADGES,
             "image_url_map": image_url_map,

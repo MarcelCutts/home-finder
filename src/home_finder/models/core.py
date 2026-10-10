@@ -6,6 +6,7 @@ from typing import Final, Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, HttpUrl, field_validator, model_validator
 
+from home_finder.models.listing_member import ListingMember
 from home_finder.models.listing_text import ListingTextEvidence, merge_listing_text
 from home_finder.models.observations import ObservationFields, SourceObservation
 from home_finder.models.sources import SOURCE_BADGES as SOURCE_BADGES
@@ -199,6 +200,50 @@ class MergedProperty(BaseModel):
     # URLs per platform (for "Also listed on...")
     source_urls: dict[PropertySource, HttpUrl]
 
+    # None is an old serialized/fixture object; () is an explicitly empty membership.
+    # Per-portal dictionaries remain compatibility summaries, never complete membership.
+    members: tuple[ListingMember, ...] | None = None
+
+    @field_validator("members")
+    @classmethod
+    def unique_member_keys(
+        cls, members: tuple[ListingMember, ...] | None
+    ) -> tuple[ListingMember, ...] | None:
+        if members is not None:
+            keys = [member.evidence_key for member in members]
+            if len(keys) != len(set(keys)):
+                raise ValueError("A listing representation may occur only once in a home")
+        return members
+
+    @property
+    def listing_members(self) -> tuple[ListingMember, ...]:
+        """Read all explicit members, or retain URL-only legacy evidence as unresolved."""
+        if self.members is not None:
+            return self.members
+        text = self.text_by_source
+        urls = self.source_urls or {self.canonical.source: self.canonical.url}
+        return tuple(
+            ListingMember(
+                source=source,
+                source_id=self.canonical.source_id
+                if source == self.canonical.source and url == self.canonical.url
+                else None,
+                source_unique_id=self.canonical.unique_id
+                if source == self.canonical.source and url == self.canonical.url
+                else None,
+                url=url,
+                price_pcm=self.canonical.price_pcm
+                if source == self.canonical.source and url == self.canonical.url
+                else None,
+                text=text.get(source, ListingTextEvidence()),
+            )
+            for source, url in urls.items()
+        )
+
+    @property
+    def listing_urls(self) -> tuple[HttpUrl, ...]:
+        return tuple(member.url for member in self.listing_members)
+
     # Combined images from all sources
     images: tuple[PropertyImage, ...] = ()
 
@@ -218,6 +263,13 @@ class MergedProperty(BaseModel):
     @property
     def text_by_source(self) -> dict[PropertySource, ListingTextEvidence]:
         """Include legacy descriptions without overriding newer evidence/clears."""
+        if self.members is not None:
+            # A portal-keyed compatibility reader cannot choose between two adverts.
+            return {
+                member.source: member.text
+                for member in self.members
+                if sum(other.source == member.source for other in self.members) == 1
+            }
         result = dict(self.source_text)
         observation = self.canonical.source_observation
         if observation is not None:

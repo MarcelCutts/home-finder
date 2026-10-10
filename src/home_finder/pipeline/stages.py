@@ -118,7 +118,7 @@ async def _cross_run_deduplicate(
     anchor_by_id: dict[str, MergedProperty] = {}
     for anchor in db_anchors:
         anchor_by_id[anchor.canonical.unique_id] = anchor
-        for url in anchor.source_urls.values():
+        for url in anchor.listing_urls:
             anchor_url_to_ids.setdefault(str(url), set()).add(anchor.canonical.unique_id)
 
     # Map source URLs from new properties to their original unique_id so we
@@ -126,7 +126,7 @@ async def _cross_run_deduplicate(
     new_url_to_unique_id: dict[str, str] = {}
     new_id_to_price: dict[str, int] = {}
     for mp in merged_to_notify:
-        for url in mp.source_urls.values():
+        for url in mp.listing_urls:
             new_url_to_unique_id[str(url)] = mp.canonical.unique_id
         new_id_to_price[mp.canonical.unique_id] = mp.canonical.price_pcm
 
@@ -146,11 +146,11 @@ async def _cross_run_deduplicate(
     for merged in dedup_results:
         # Check if this result involves any DB anchor (by URL match)
         matched_anchor_ids: set[str] = set()
-        for url in merged.source_urls.values():
+        for url in merged.listing_urls:
             matched_anchor_ids.update(anchor_url_to_ids.get(str(url), set()))
         candidate_ids = {
             new_url_to_unique_id[str(url)]
-            for url in merged.source_urls.values()
+            for url in merged.listing_urls
             if str(url) in new_url_to_unique_id
         }
         if len(matched_anchor_ids) > 1:
@@ -172,7 +172,7 @@ async def _cross_run_deduplicate(
             # Check if any new property was actually merged into this anchor
             # (vs the anchor just passing through dedup unchanged)
             new_property_merged = any(
-                str(url) in new_url_to_unique_id for url in merged.source_urls.values()
+                str(url) in new_url_to_unique_id for url in merged.listing_urls
             )
             if not new_property_merged:
                 continue
@@ -219,7 +219,7 @@ async def _cross_run_deduplicate(
                 # that don't match DB anchors, so this is the only path for
                 # cross-platform price detection.
                 new_source_prices: list[int] = []
-                for url in merged.source_urls.values():
+                for url in merged.listing_urls:
                     url_str = str(url)
                     nid = new_url_to_unique_id.get(url_str)
                     if nid is not None and nid in new_id_to_price:
@@ -241,8 +241,8 @@ async def _cross_run_deduplicate(
 
                 # Copy cached images from new source(s) to anchor directory
                 if data_dir:
-                    original_urls = {str(u) for u in original_anchor.source_urls.values()}
-                    for url in merged.source_urls.values():
+                    original_urls = {str(u) for u in original_anchor.listing_urls}
+                    for url in merged.listing_urls:
                         url_str = str(url)
                         if url_str not in original_urls and url_str in new_url_to_unique_id:
                             new_source_id = new_url_to_unique_id[url_str]

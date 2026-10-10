@@ -1155,6 +1155,8 @@ class TestPipelineFlowE2E:
         await storage.initialize()
 
         try:
+            # Mirror source ingestion before canonicalisation; members are exact rows.
+            await storage.upsert_source_listings([MARE_ST_OPENRENT, MARE_ST_ZOOPLA, DALSTON_OTM])
             deduplicator = Deduplicator(enable_cross_platform=True)
             wrapped = deduplicator.properties_to_merged(
                 [MARE_ST_OPENRENT, MARE_ST_ZOOPLA, DALSTON_OTM]

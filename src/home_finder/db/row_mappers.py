@@ -10,8 +10,10 @@ from typing import Any, Protocol, TypedDict
 import aiosqlite
 from pydantic import HttpUrl
 
+from home_finder.db.listing_members import member_from_row
 from home_finder.db.listing_text import text_from_property_row, text_from_source_row
 from home_finder.models import (
+    ListingMember,
     ListingTextEvidence,
     MergedProperty,
     NotificationStatus,
@@ -104,6 +106,8 @@ class PropertyDetailItem(PropertyListItem, total=False):
     gallery_images: list[PropertyImage]
     floorplan_images: list[PropertyImage]
     listing_evidence: dict[PropertySource, ListingTextEvidence]
+    listing_members: tuple[ListingMember, ...]
+    member_links: list[dict[str, str]]
 
 
 def parse_json_fields(prop_dict: dict[str, Any]) -> None:
@@ -172,24 +176,9 @@ async def row_to_merged_property(
 ) -> MergedProperty:
     """Convert a database row to a MergedProperty.
 
-    When *source_listings* rows are provided, multi-source data (sources,
-    URLs, descriptions, price range) is built from the normalised
-    source_listings table instead of parsing JSON columns.  Falls back to
-    JSON when *source_listings* is ``None`` or empty (backward compat).
-
-    Callers that pass *source_listings* (preferred, normalised path):
-      - ``PropertyStorage.get_recent_properties_for_dedup()`` — batch-loads
-        source_listings and passes them per-property.
-
-    Callers that rely on JSON fallback (backward compat):
-      - ``PipelineRepo.get_unenriched_properties()``
-      - ``PipelineRepo.get_pending_analysis_retries()``
-      - ``PipelineRepo.get_reanalysis_queue()``
-      - ``WebQueryRepo.get_property_detail()`` (via web queries)
-
-    The JSON fallback is kept for callers where source_listings aren't
-    batch-loaded.  Both paths produce equivalent results as long as
-    ``update_merged_sources()`` keeps the JSON caches in sync.
+    All application queue/anchor callers batch-load source rows. Explicit members
+    preserve repeated portals; the old JSON summaries remain readable for historical
+    callers. An explicit empty source list never becomes invented membership.
 
     Args:
         row: Database row from the properties table.
@@ -262,6 +251,8 @@ async def row_to_merged_property(
     except (IndexError, KeyError):
         pass
 
+    # Retain the historical compatibility fields. Current consumers use members,
+    # so an old portal cache cannot attribute another member's text to this one.
     source_text = text_from_property_row(row)
     for source_row in source_listings or []:
         source = PropertySource(source_row["source"])
@@ -273,12 +264,26 @@ async def row_to_merged_property(
         for source, text in source_text.items()
         if text.description is not None
     }
-    canonical_text = source_text.get(prop.source)
+    canonical_text = (
+        next(
+            (
+                text_from_source_row(sl)
+                for sl in source_listings
+                if sl["unique_id"] == prop.unique_id
+            ),
+            None,
+        )
+        if source_listings is not None
+        else source_text.get(prop.source)
+    )
     if canonical_text is not None and canonical_text.description is not None:
         prop = prop.model_copy(update={"description": canonical_text.description})
 
     return MergedProperty(
         canonical=prop,
+        members=tuple(member_from_row(sl) for sl in source_listings)
+        if source_listings is not None
+        else None,
         sources=tuple(sources_list),
         source_urls=source_urls,
         images=gallery,

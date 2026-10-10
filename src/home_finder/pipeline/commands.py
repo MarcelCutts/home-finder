@@ -289,13 +289,13 @@ async def run_dedup_existing(settings: Settings) -> None:
         deferred_count = 0
         for merged in dedup_results:
             # Find which input properties were absorbed into this result
-            merged_source_urls = {str(u) for u in merged.source_urls.values()}
+            merged_source_urls = {str(u) for u in merged.listing_urls}
             absorbed_into_this: list[str] = []
             for aid in absorbed_ids:
                 # Check if any of the absorbed property's URLs appear in this merged result
                 for orig in all_properties:
                     if orig.canonical.unique_id == aid:
-                        orig_urls = {str(u) for u in orig.source_urls.values()}
+                        orig_urls = {str(u) for u in orig.listing_urls}
                         if orig_urls & merged_source_urls:
                             absorbed_into_this.append(aid)
                         break

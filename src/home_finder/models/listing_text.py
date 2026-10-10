@@ -31,6 +31,8 @@ class ListingTextInputs(BaseModel):
     features: tuple[str, ...] = ()
     source_hashes: dict[str, str] = Field(default_factory=dict)
     source_urls: dict[str, str] = Field(default_factory=dict)
+    source_labels: dict[str, str] = Field(default_factory=dict)
+    omitted_description_keys: tuple[str, ...] = ()
     source_observation_ids: dict[str, tuple[str, ...]] = Field(default_factory=dict)
 
 

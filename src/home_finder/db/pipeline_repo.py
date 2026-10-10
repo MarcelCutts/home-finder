@@ -16,6 +16,7 @@ import aiosqlite
 
 from home_finder.db.homes import ensure_home, resolve_home
 from home_finder.db.identities import record_stored_identities
+from home_finder.db.listing_members import load_source_rows
 from home_finder.db.listing_text import persist_merged_text
 from home_finder.db.membership_ops import link_memberships
 from home_finder.db.row_mappers import (
@@ -277,7 +278,9 @@ class PipelineRepository:
                     conn, [(prop.unique_id, prop.unique_id)], reason="canonical_pipeline_save"
                 )
                 # Link non-canonical source_listings by URL (in-run dedup absorbed sources)
-                await link_source_listings_by_url(conn, prop.unique_id, merged.source_urls)
+                await link_source_listings_by_url(
+                    conn, prop.unique_id, merged.source_urls, members=merged.members
+                )
                 await persist_merged_text(conn, merged)
 
                 # Save images (important for cross-run dedup image matching)
@@ -376,7 +379,9 @@ class PipelineRepository:
                 conn, [(prop.unique_id, prop.unique_id)], reason="canonical_pipeline_save"
             )
             # Link non-canonical source_listings by URL (in-run dedup absorbed sources)
-            await link_source_listings_by_url(conn, prop.unique_id, merged.source_urls)
+            await link_source_listings_by_url(
+                conn, prop.unique_id, merged.source_urls, members=merged.members
+            )
             await persist_merged_text(conn, merged)
         logger.debug("unenriched_property_saved", unique_id=merged.canonical.unique_id)
 
@@ -401,7 +406,13 @@ class PipelineRepository:
             )
             rows = await cursor.fetchall()
 
-            results = [await row_to_merged_property(row, load_images=False) for row in rows]
+            source_rows = await load_source_rows(conn, [row["unique_id"] for row in rows])
+            results = [
+                await row_to_merged_property(
+                    row, source_listings=source_rows[row["unique_id"]], load_images=False
+                )
+                for row in rows
+            ]
 
             logger.info("loaded_unenriched_properties", count=len(results))
             return results
@@ -575,7 +586,9 @@ class PipelineRepository:
                     conn, [(prop.unique_id, prop.unique_id)], reason="canonical_pipeline_save"
                 )
                 # Link non-canonical source_listings by URL (in-run dedup absorbed sources)
-                await link_source_listings_by_url(conn, prop.unique_id, merged.source_urls)
+                await link_source_listings_by_url(
+                    conn, prop.unique_id, merged.source_urls, members=merged.members
+                )
                 await persist_merged_text(conn, merged)
 
                 # Save images
@@ -634,9 +647,12 @@ class PipelineRepository:
             cursor = await conn.execute(query, params)
             rows = await cursor.fetchall()
 
+            source_rows = await load_source_rows(conn, [row["unique_id"] for row in rows])
             results = [
                 await row_to_merged_property(
-                    row, get_property_images=partial(self._get_property_images, _conn=conn)
+                    row,
+                    source_listings=source_rows[row["unique_id"]],
+                    get_property_images=partial(self._get_property_images, _conn=conn),
                 )
                 for row in rows
             ]
@@ -922,9 +938,12 @@ class PipelineRepository:
 
             rows = await cursor.fetchall()
 
+            source_rows = await load_source_rows(conn, [row["unique_id"] for row in rows])
             results = [
                 await row_to_merged_property(
-                    row, get_property_images=partial(self._get_property_images, _conn=conn)
+                    row,
+                    source_listings=source_rows[row["unique_id"]],
+                    get_property_images=partial(self._get_property_images, _conn=conn),
                 )
                 for row in rows
             ]

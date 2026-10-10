@@ -1072,6 +1072,20 @@ class PropertyQualityFilter:
             return merged, self._create_minimal_analysis(value=value)
 
         text_inputs = select_listing_text(merged)
+        logger.info(
+            "analysis_listing_inputs_selected",
+            property_id=merged.unique_id,
+            policy_version=text_inputs.policy_version,
+            listing_members=len(merged.listing_members),
+            distinct_portals=len({member.source for member in merged.listing_members}),
+            evidence_keys=len(text_inputs.source_hashes),
+            referenced_observations=len(
+                {oid for ids in text_inputs.source_observation_ids.values() for oid in ids}
+            ),
+            description_characters=len(text_inputs.description or ""),
+            omitted_descriptions=len(text_inputs.omitted_description_keys),
+            selected_features=len(text_inputs.features),
+        )
 
         try:
             analysis = await self._analyze_property(

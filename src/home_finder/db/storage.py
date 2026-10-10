@@ -19,6 +19,7 @@ from home_finder.data.area_context import HOSTING_TOLERANCE
 from home_finder.db.home_groups import HomeActionConflict, read_routes, resolve_action
 from home_finder.db.homes import HomeRepository, ensure_home, redirect_staging_homes
 from home_finder.db.identities import IdentityRepository, record_stored_identities
+from home_finder.db.listing_members import load_source_rows, member_from_row
 from home_finder.db.listing_text import (
     apply_source_text,
     persist_merged_text,
@@ -48,6 +49,7 @@ from home_finder.db.web_queries import WebQueryService
 from home_finder.filters.fit_score import compute_fit_score
 from home_finder.logging import get_logger
 from home_finder.models import (
+    ListingMember,
     ListingTextEvidence,
     MergedProperty,
     NotificationStatus,
@@ -724,7 +726,8 @@ class PropertyStorage:
                 chunk = unique_ids[i : i + chunk_size]
                 placeholders = ",".join("?" * len(chunk))
                 sl_cursor = await conn.execute(
-                    f"SELECT * FROM source_listings WHERE merged_id IN ({placeholders})",
+                    f"SELECT * FROM source_listings WHERE merged_id IN ({placeholders}) "
+                    "ORDER BY source, unique_id",
                     chunk,
                 )
                 for sl in await sl_cursor.fetchall():
@@ -733,7 +736,7 @@ class PropertyStorage:
             results = [
                 await row_to_merged_property(
                     row,
-                    source_listings=sl_by_merged.get(row["unique_id"]),
+                    source_listings=sl_by_merged.get(row["unique_id"], []),
                     get_property_images=partial(self.get_property_images, _conn=conn),
                 )
                 for row in rows
@@ -964,7 +967,9 @@ class PropertyStorage:
                 conn, merged.canonical, merged_id=merged.canonical.unique_id
             )
             # Link non-canonical source_listings by URL (in-run dedup absorbed sources)
-            await link_source_listings_by_url(conn, merged.canonical.unique_id, merged.source_urls)
+            await link_source_listings_by_url(
+                conn, merged.canonical.unique_id, merged.source_urls, members=merged.members
+            )
             await persist_merged_text(conn, merged)
 
         logger.debug(
@@ -1077,6 +1082,38 @@ class PropertyStorage:
                 )
             return images
 
+    async def get_current_listing_members(
+        self, property_ids: list[str], *, _conn: aiosqlite.Connection | None = None
+    ) -> dict[str, tuple[ListingMember, ...]]:
+        """Read current membership/text for a bounded analysis batch in one snapshot."""
+        if len(property_ids) > 500:
+            raise ValueError("Current-member lookup exceeds the 500-property analysis bound")
+        result: dict[str, tuple[ListingMember, ...]] = {}
+        async with self._read_connection(conn=_conn) as conn:
+            for start in range(0, len(property_ids), 100):
+                batch = property_ids[start : start + 100]
+                placeholders = ",".join("?" for _ in batch)
+                async with conn.execute(
+                    f"SELECT unique_id FROM active_properties WHERE unique_id IN ({placeholders})",
+                    batch,
+                ) as cursor:
+                    present = [row[0] for row in await cursor.fetchall()]
+                source_rows = await load_source_rows(conn, present)
+                result.update(
+                    (key, tuple(member_from_row(row) for row in rows))
+                    for key, rows in source_rows.items()
+                )
+        logger.debug(
+            "current_listing_members_loaded",
+            properties=len(result),
+            listing_members=sum(len(members) for members in result.values()),
+            repeated_portal_groups=sum(
+                len({member.source for member in members}) < len(members)
+                for members in result.values()
+            ),
+        )
+        return result
+
     async def get_current_text(
         self, property_ids: list[str]
     ) -> dict[str, dict[PropertySource, ListingTextEvidence]]:
@@ -1100,8 +1137,22 @@ class PropertyStorage:
                     result[row["unique_id"]] = text_from_property_row(row)
         return result
 
-    async def get_property_images_and_row(
+    async def get_enrichment_cache(
         self, unique_id: str
+    ) -> tuple[
+        list[PropertyImage],
+        Property | None,
+        dict[PropertySource, ListingTextEvidence],
+        tuple[ListingMember, ...] | None,
+    ]:
+        """Read retained images, canonical fields and exact members in one snapshot."""
+        async with self._read_connection() as conn:
+            images, prop, text = await self.get_property_images_and_row(unique_id, _conn=conn)
+            members = await self.get_current_listing_members([unique_id], _conn=conn)
+            return images, prop, text, members.get(unique_id)
+
+    async def get_property_images_and_row(
+        self, unique_id: str, *, _conn: aiosqlite.Connection | None = None
     ) -> tuple[list[PropertyImage], Property | None, dict[PropertySource, ListingTextEvidence]]:
         """Load property images and the property row in a single call.
 
@@ -1114,7 +1165,7 @@ class PropertyStorage:
         Returns:
             Tuple of (images, property_or_none, source_text).
         """
-        async with self._read_connection() as conn:
+        async with self._read_connection(conn=_conn) as conn:
             # Images
             img_cursor = await conn.execute(
                 """

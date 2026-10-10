@@ -45,7 +45,7 @@ def _bill_keys(names: str) -> list[str]:
 def build_monthly_budget(
     *,
     rent_pcm: int,
-    evidence: Mapping[PropertySource, ListingTextEvidence],
+    evidence: Mapping[PropertySource, ListingTextEvidence] | Mapping[str, ListingTextEvidence],
     earlier_service_charge: int | None = None,
 ) -> dict[str, Any]:
     """Use explicit named-bill claims; preserve unknowns and source conflicts.
@@ -66,6 +66,7 @@ def build_monthly_budget(
     general_bills_claim = False
     service_mentioned = earlier_service_charge is not None
     for source, value in evidence.items():
+        label = source.display_name if isinstance(source, PropertySource) else source
         text = plain_listing_text([value.description or "", *(value.features or ())])
         parts.append(text)
         general_bills_claim |= bool(re.search(r"\bbills?\s+(?:not\s+)?included\b", text, re.I))
@@ -90,7 +91,7 @@ def build_monthly_budget(
                     )
                     for key in _bill_keys(match["names"]):
                         claims[key].add(state)
-                        quotes[key].append(f"{source.display_name}: {clause.strip()[:240]}")
+                        quotes[key].append(f"{label}: {clause.strip()[:240]}")
             for match in _AMOUNT.finditer(clause):
                 if re.search(r"\b(?:not|no)\s*$", clause[: match.start()], re.I):
                     continue
@@ -101,7 +102,7 @@ def build_monthly_budget(
                 for key in _bill_keys(match["names"]):
                     claims[key].add("excluded")
                     amounts[key].add((quote_low, quote_high))
-                    quotes[key].append(f"{source.display_name}: {clause.strip()[:240]}")
+                    quotes[key].append(f"{label}: {clause.strip()[:240]}")
 
     items = []
     subtotal_low = subtotal_high = Decimal(rent_pcm)

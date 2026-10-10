@@ -1439,7 +1439,7 @@ class TestAnalyzeSingleMerged:
             ):
                 _, analysis = await quality_filter.analyze_single_merged(reloaded)
             assert analysis.listing_text_inputs.source_observation_ids == {
-                prop.source.value: (prop.source_observation.sha256,)
+                prop.unique_id: (prop.source_observation.sha256,)
             }
             requests = quality_filter._client.messages.create.call_args_list
             assert len(requests) == 2
@@ -1457,13 +1457,22 @@ class TestAnalyzeSingleMerged:
             referenced = await storage.observations.get(prop.source_observation.sha256)
             assert referenced.fields.description.value == prop.description
 
+    @pytest.mark.parametrize(
+        "second_source", [PropertySource.ONTHEMARKET, PropertySource.RIGHTMOVE]
+    )
     async def test_detail_text_survives_save_reload_and_reaches_both_requests(
-        self, tmp_path, make_property, sample_visual_response, sample_evaluation_response
+        self,
+        tmp_path,
+        make_property,
+        sample_visual_response,
+        sample_evaluation_response,
+        second_source,
     ) -> None:
         from datetime import UTC, datetime
 
         from home_finder.db import PropertyStorage
         from home_finder.filters.detail_enrichment import enrich_merged_properties
+        from home_finder.models import ListingMember
         from home_finder.scrapers.detail_fetcher import DetailFetcher, DetailPageData
         from home_finder.scrapers.observations import detail_observation
 
@@ -1474,38 +1483,43 @@ class TestAnalyzeSingleMerged:
             description=None,
         )
         otm = make_property(
-            source=PropertySource.ONTHEMARKET,
+            source=second_source,
             source_id="200002",
-            url=HttpUrl("https://www.onthemarket.com/details/200002/"),
+            url=HttpUrl(
+                "https://www.onthemarket.com/details/200002/"
+                if second_source == PropertySource.ONTHEMARKET
+                else "https://www.rightmove.co.uk/properties/200002"
+            ),
             description=None,
         )
         merged = MergedProperty(
             canonical=rm,
-            sources=(rm.source, otm.source),
+            members=(ListingMember.from_property(rm), ListingMember.from_property(otm)),
+            sources=tuple(dict.fromkeys((rm.source, otm.source))),
             source_urls={rm.source: rm.url, otm.source: otm.url},
             min_price=rm.price_pcm,
             max_price=rm.price_pcm,
         )
         details = {
-            rm.source: DetailPageData(
+            rm.unique_id: DetailPageData(
                 description="East-facing café-style kitchen <script>fixture</script>",
                 features=["Gas hob", "Private balcony"],
                 gallery_urls=["https://example.com/rm-fixture.jpg"],
             ),
-            otm.source: DetailPageData(
+            otm.unique_id: DetailPageData(
                 description="West-facing kitchen; verify the conflicting orientation",
                 features=["Induction hob", "Shared garden"],
                 gallery_urls=["https://example.com/otm-fixture.jpg"],
             ),
         }
         for prop in (rm, otm):
-            detail = details[prop.source]
+            detail = details[prop.unique_id]
             detail.source_observation = detail_observation(
                 prop, detail, observed_at=datetime.now(UTC)
             )
 
         async def fetch(prop):
-            return details[prop.source]
+            return details[prop.unique_id]
 
         async with PropertyStorage(str(tmp_path / "text.db")) as storage:
             await storage.upsert_source_listings([rm, otm])
@@ -1519,8 +1533,9 @@ class TestAnalyzeSingleMerged:
             await storage.upsert_source_listings([rm, otm])
             await storage.update_merged_sources(merged.unique_id, merged)
             reloaded = (await storage.pipeline.get_pending_analysis_properties())[0]
-            assert reloaded.source_text[rm.source].features == ("Gas hob", "Private balcony")
-            assert reloaded.source_text[otm.source].description == details[otm.source].description
+            members = {member.source_unique_id: member for member in reloaded.members}
+            assert members[rm.unique_id].text.features == ("Gas hob", "Private balcony")
+            assert members[otm.unique_id].text.description == details[otm.unique_id].description
             async with storage._read_connection() as conn:
                 rows = await (
                     await conn.execute("SELECT source, description, text_json FROM source_listings")
@@ -1549,8 +1564,8 @@ class TestAnalyzeSingleMerged:
                 _, analysis = await quality_filter.analyze_single_merged(reloaded)
             assert analysis is not None and analysis.listing_text_inputs is not None
             assert analysis.listing_text_inputs.source_observation_ids == {
-                source.value: (detail.source_observation.sha256,)
-                for source, detail in details.items()
+                source_id: (detail.source_observation.sha256,)
+                for source_id, detail in details.items()
             }
             requests = quality_filter._client.messages.create.call_args_list
             assert len(requests) == 2
@@ -1564,7 +1579,8 @@ class TestAnalyzeSingleMerged:
                 assert "East-facing café-style" in prompt
                 assert "West-facing kitchen" in prompt
                 assert "Gas hob" in prompt and "Induction hob" in prompt
-                assert "[Rightmove]" in prompt and "[OnTheMarket]" in prompt
+                for label in analysis.listing_text_inputs.source_labels.values():
+                    assert f"[{label}]" in prompt
                 assert "Band C est." not in prompt
                 assert "True monthly cost" not in prompt
                 assert "<script>fixture</script>" not in prompt

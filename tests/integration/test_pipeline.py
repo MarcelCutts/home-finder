@@ -105,6 +105,8 @@ class TestFullPipeline:
         self, storage: PropertyStorage, mixed_properties: list[Property], criteria: SearchCriteria
     ) -> None:
         """Properties go through criteria filter, deduplication, then storage."""
+        # Scraping retains every source before criteria/dedup, as the real pipeline does.
+        await storage.upsert_source_listings(mixed_properties)
         # Step 1: Apply criteria filter
         criteria_filter = CriteriaFilter(criteria)
         filtered = criteria_filter.filter_properties(mixed_properties)
@@ -140,7 +142,8 @@ class TestFullPipeline:
         criteria_filter = CriteriaFilter(criteria)
         deduplicator = Deduplicator(enable_cross_platform=True)
 
-        # First run
+        # First run: persist received source representations before grouping.
+        await storage.upsert_source_listings(mixed_properties)
         filtered = criteria_filter.filter_properties(mixed_properties)
         merged = await deduplicator.deduplicate_and_merge_async(filtered)
         new = await storage.filter_new_merged(merged)

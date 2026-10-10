@@ -156,7 +156,7 @@ class TestGetUnenrichedProperties:
         make_property: Callable[..., Property],
     ) -> None:
         """Should reconstruct MergedProperty with sources, descriptions, prices."""
-        prop = make_property(source=PropertySource.ZOOPLA)
+        prop = make_property(source=PropertySource.ZOOPLA, price_pcm=2100)
         merged = MergedProperty(
             canonical=prop,
             sources=(PropertySource.ZOOPLA, PropertySource.OPENRENT),
@@ -170,6 +170,14 @@ class TestGetUnenrichedProperties:
             max_price=2100,
             descriptions={PropertySource.ZOOPLA: "Nice flat"},
         )
+        # Current ranges and membership require the actual received source rows.
+        other = make_property(
+            source=PropertySource.OPENRENT,
+            source_id="123",
+            url=merged.source_urls[PropertySource.OPENRENT],
+            price_pcm=1900,
+        )
+        await storage.upsert_source_listings([prop, other])
         await storage.pipeline.save_unenriched_property(merged)
 
         result = await storage.pipeline.get_unenriched_properties(max_attempts=3)

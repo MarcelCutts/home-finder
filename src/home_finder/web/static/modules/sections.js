@@ -94,12 +94,16 @@
   const text = document.getElementById("description-text");
   const btn = document.getElementById("description-toggle");
   if (text && btn) {
-    // Show button only if content overflows
-    requestAnimationFrame(function () {
-      if (text.scrollHeight > text.clientHeight + 10) {
-        btn.hidden = false;
-      }
-    });
+    // Fade only content that can be expanded. Recheck when wrapping changes
+    // after fonts load or the viewport resizes, including short multiline adverts.
+    const updateOverflow = function () {
+      if (text.classList.contains("expanded")) return;
+      const overflows = text.scrollHeight > text.clientHeight + 1;
+      text.classList.toggle("collapsible", overflows);
+      btn.hidden = !overflows;
+    };
+    new ResizeObserver(updateOverflow).observe(text);
+    requestAnimationFrame(updateOverflow);
 
     btn.addEventListener("click", function () {
       const expanded = text.classList.toggle("expanded");

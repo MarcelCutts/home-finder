@@ -27,6 +27,7 @@ from home_finder.models import (
     TransportMode,
 )
 from home_finder.models.home_identity import HomeTarget, is_callback_target, is_home_id
+from home_finder.models.listing_member import labelled_members
 from home_finder.utils.listing_facts import supported_band
 
 if TYPE_CHECKING:
@@ -520,20 +521,13 @@ def format_merged_property_message(
             image_parts.append("floorplan")
         lines.append(f"\n📸 {' + '.join(image_parts)}")
 
-    # Source information
-    if len(merged.sources) > 1:
-        source_links = []
-        for source in merged.sources:
-            name = SOURCE_NAMES.get(source.value, source.value)
-            url = merged.source_urls.get(source)
-            if url:
-                source_links.append(_html_link(str(url), name))
-            else:
-                source_links.append(name)
+    # Keep every advertisement link, even when several are on the same portal.
+    members = labelled_members(merged.listing_members)
+    if len(members) > 1:
+        source_links = [_html_link(str(member.url), label) for member, label in members]
         lines.append(f"🔗 Listed on: {', '.join(source_links)}")
-    else:
-        source_name = SOURCE_NAMES.get(prop.source.value, prop.source.value)
-        lines.append(f"🔗 {source_name}")
+    elif members:
+        lines.append(f"🔗 {members[0][1]}")
 
     return "\n".join(lines)
 
@@ -675,11 +669,8 @@ def _build_inline_keyboard(
         else:
             buttons.append(InlineKeyboardButton(text="Details", url=detail_url))
 
-    for source in merged.sources:
-        name = SOURCE_NAMES.get(source.value, source.value)
-        url = merged.source_urls.get(source)
-        if url:
-            buttons.append(InlineKeyboardButton(text=name, url=str(url)))
+    for member, label in labelled_members(merged.listing_members):
+        buttons.append(InlineKeyboardButton(text=label, url=str(member.url)))
 
     # Map button: prefer coordinates, fall back to address search
     prop = merged.canonical

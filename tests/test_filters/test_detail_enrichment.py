@@ -201,8 +201,8 @@ class TestEnrichMergedProperties:
             image_type="floorplan",
         )
         mock_storage = AsyncMock()
-        mock_storage.get_property_images_and_row = AsyncMock(
-            return_value=([gallery_img, floorplan_img], merged.canonical, {})
+        mock_storage.get_enrichment_cache = AsyncMock(
+            return_value=([gallery_img, floorplan_img], merged.canonical, {}, None)
         )
 
         fetcher = DetailFetcher()
@@ -233,7 +233,7 @@ class TestEnrichMergedProperties:
 
         # Mock storage returns NO images (property never saved to DB)
         mock_storage = AsyncMock()
-        mock_storage.get_property_images_and_row = AsyncMock(return_value=([], None, {}))
+        mock_storage.get_enrichment_cache = AsyncMock(return_value=([], None, {}, None))
 
         # Detail fetcher should be called after cache is cleared
         detail_data = DetailPageData(
@@ -926,8 +926,8 @@ class TestLoadCachedPropertyBackfillsCoords:
             image_type="gallery",
         )
         mock_storage = AsyncMock()
-        mock_storage.get_property_images_and_row = AsyncMock(
-            return_value=([gallery_img], db_prop, {})
+        mock_storage.get_enrichment_cache = AsyncMock(
+            return_value=([gallery_img], db_prop, {}, None)
         )
 
         result = await _load_cached_property(merged, mock_storage)
@@ -946,7 +946,7 @@ class TestLoadCachedPropertyBackfillsCoords:
         db_prop = merged.canonical.model_copy(update={"latitude": 99.0, "longitude": -99.0})
 
         mock_storage = AsyncMock()
-        mock_storage.get_property_images_and_row = AsyncMock(return_value=([], db_prop, {}))
+        mock_storage.get_enrichment_cache = AsyncMock(return_value=([], db_prop, {}, None))
 
         result = await _load_cached_property(merged, mock_storage)
 
@@ -962,7 +962,7 @@ class TestLoadCachedPropertyBackfillsCoords:
         db_prop = merged.canonical.model_copy(update={"postcode": "E8 3RH"})
 
         mock_storage = AsyncMock()
-        mock_storage.get_property_images_and_row = AsyncMock(return_value=([], db_prop, {}))
+        mock_storage.get_enrichment_cache = AsyncMock(return_value=([], db_prop, {}, None))
 
         result = await _load_cached_property(merged, mock_storage)
 
@@ -975,7 +975,7 @@ class TestLoadCachedPropertyBackfillsCoords:
         merged = make_merged_property(latitude=None, longitude=None)
 
         mock_storage = AsyncMock()
-        mock_storage.get_property_images_and_row = AsyncMock(return_value=([], None, {}))
+        mock_storage.get_enrichment_cache = AsyncMock(return_value=([], None, {}, None))
 
         result = await _load_cached_property(merged, mock_storage)
 

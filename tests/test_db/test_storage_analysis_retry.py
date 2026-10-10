@@ -289,7 +289,7 @@ class TestGetPendingAnalysisProperties:
         storage: PropertyStorage,
         make_property: Callable[..., Property],
     ) -> None:
-        prop = make_property(source=PropertySource.ZOOPLA)
+        prop = make_property(source=PropertySource.ZOOPLA, price_pcm=2100)
         merged = MergedProperty(
             canonical=prop,
             sources=(PropertySource.ZOOPLA, PropertySource.OPENRENT),
@@ -303,6 +303,14 @@ class TestGetPendingAnalysisProperties:
             max_price=2100,
             descriptions={PropertySource.ZOOPLA: "Nice flat"},
         )
+        # Current ranges and membership require the actual received source rows.
+        other = make_property(
+            source=PropertySource.OPENRENT,
+            source_id="123",
+            url=merged.source_urls[PropertySource.OPENRENT],
+            price_pcm=1900,
+        )
+        await storage.upsert_source_listings([prop, other])
         await storage.pipeline.save_pre_analysis_properties([merged], {})
 
         result = await storage.pipeline.get_pending_analysis_properties()
