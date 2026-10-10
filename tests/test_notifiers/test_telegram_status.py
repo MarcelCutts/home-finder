@@ -35,6 +35,20 @@ def sample_merged() -> MergedProperty:
 
 
 class TestInlineKeyboardStatusButtons:
+    @pytest.mark.parametrize("source_id", ["1" * 50, "é" * 25])
+    def test_long_ids_keep_links_but_never_send_truncated_callbacks(
+        self,
+        sample_merged: MergedProperty,
+        source_id: str,
+    ) -> None:
+        prop = sample_merged.canonical.model_copy(update={"source_id": source_id})
+        merged = sample_merged.model_copy(update={"canonical": prop})
+        kb = _build_inline_keyboard(merged, web_base_url="https://owner.example")
+        buttons = [button for row in kb.inline_keyboard for button in row]
+        assert buttons
+        assert all(button.callback_data is None for button in buttons)
+        assert any(button.text == "Details" for button in buttons)
+
     def test_first_row_has_status_buttons(self, sample_merged: MergedProperty) -> None:
         kb = _build_inline_keyboard(sample_merged)
         first_row = kb.inline_keyboard[0]

@@ -748,7 +748,7 @@ class PipelineRepository:
         """Mark specific properties for re-analysis.
 
         Sets reanalysis_requested_at on matching quality_analyses rows.
-        Idempotent — re-requesting just updates the timestamp.
+        Repeated requests coalesce into the first pending request.
 
         Args:
             unique_ids: Property unique IDs to flag for re-analysis.
@@ -768,7 +768,7 @@ class PipelineRepository:
             cursor = await conn.execute(
                 f"""
                 UPDATE quality_analyses
-                SET reanalysis_requested_at = ?
+                SET reanalysis_requested_at = COALESCE(reanalysis_requested_at, ?)
                 WHERE property_unique_id IN ({placeholders})
                 """,
                 [now, *chunk],
@@ -804,7 +804,7 @@ class PipelineRepository:
             cursor = await conn.execute(
                 """
                 UPDATE quality_analyses
-                SET reanalysis_requested_at = ?
+                SET reanalysis_requested_at = COALESCE(reanalysis_requested_at, ?)
                 WHERE property_unique_id IN (
                     SELECT unique_id FROM properties
                 )
@@ -822,7 +822,7 @@ class PipelineRepository:
             cursor = await conn.execute(
                 f"""
                 UPDATE quality_analyses
-                SET reanalysis_requested_at = ?
+                SET reanalysis_requested_at = COALESCE(reanalysis_requested_at, ?)
                 WHERE property_unique_id IN (
                     SELECT p.unique_id FROM properties p
                     WHERE {or_clause}

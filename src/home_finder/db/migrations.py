@@ -716,6 +716,17 @@ async def migrate_006_off_market_enhancements(conn: aiosqlite.Connection) -> Non
                 raise
 
 
+async def migrate_007_telegram_update_ids(conn: aiosqlite.Connection) -> None:
+    """Deduplicate callbacks atomically with their status event, across restarts."""
+    cursor = await conn.execute("PRAGMA table_info(status_events)")
+    if "telegram_update_id" not in {row[1] for row in await cursor.fetchall()}:
+        await conn.execute("ALTER TABLE status_events ADD COLUMN telegram_update_id INTEGER")
+    await conn.execute("""
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_status_events_telegram_update
+        ON status_events(telegram_update_id) WHERE telegram_update_id IS NOT NULL
+    """)
+
+
 _MigrationFn = Callable[[aiosqlite.Connection], Coroutine[Any, Any, None]]
 
 MIGRATIONS: list[_MigrationFn] = [
@@ -725,6 +736,7 @@ MIGRATIONS: list[_MigrationFn] = [
     migrate_004_source_listings,
     migrate_005_fix_source_listings_linkage,
     migrate_006_off_market_enhancements,
+    migrate_007_telegram_update_ids,
 ]
 
 

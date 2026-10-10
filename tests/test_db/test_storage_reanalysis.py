@@ -104,7 +104,7 @@ class TestRequestReanalysis:
         assert first_row is not None
         first_ts = first_row["reanalysis_requested_at"]
 
-        # Re-request updates timestamp
+        # Re-request preserves the first pending intent.
         await storage.pipeline.request_reanalysis([merged.unique_id])
         cursor = await conn.execute(
             "SELECT reanalysis_requested_at FROM quality_analyses WHERE property_unique_id = ?",
@@ -113,8 +113,7 @@ class TestRequestReanalysis:
         second_row = await cursor.fetchone()
         assert second_row is not None
         second_ts = second_row["reanalysis_requested_at"]
-        assert second_ts is not None
-        # Both should be set (may be same or different depending on timing)
+        assert second_ts == first_ts
         assert first_ts is not None
 
     @pytest.mark.asyncio

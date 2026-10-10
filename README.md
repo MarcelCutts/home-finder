@@ -99,13 +99,23 @@ The `--serve` flag starts a FastAPI web server on port 8000 with a background pi
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `HOME_FINDER_WEB_BASE_URL` | `""` | Public URL for the dashboard (enables Telegram deep links) |
+| `HOME_FINDER_WEB_OWNER_USERNAME` | `owner` | Owner HTTP Basic login |
+| `HOME_FINDER_WEB_OWNER_PASSWORD` | `""` | Required when serving; random ASCII password of at least 24 characters |
 | `HOME_FINDER_WEB_PORT` | `8000` | Web server port |
 | `HOME_FINDER_WEB_HOST` | `0.0.0.0` | Web server bind address |
 | `HOME_FINDER_PIPELINE_INTERVAL_MINUTES` | `55` | Minutes between pipeline runs in serve mode |
 
 ### Security
 
-The web dashboard is read-only (no forms that mutate state). Security measures include:
+The dashboard writes status changes and queues reanalysis, which can incur API charges. Pages, images, static assets and diagnostics require the owner's HTTP Basic login. Missing, short or non-ASCII passwords fail closed with HTTP 503. `/health` exposes liveness only; `--no-pipeline` stops collection but keeps owner actions available.
+
+Generate a password with `python -c 'import secrets; print(secrets.token_urlsafe(32))'` and set `HOME_FINDER_WEB_OWNER_PASSWORD` in your local configuration or hosting secret store. Hosted access requires HTTPS and `HOME_FINDER_WEB_BASE_URL` set to its canonical origin. For local-only use, bind to `127.0.0.1`. Never put credentials in URLs; Basic authentication uses browser-managed credentials, so close the private browsing session and rotate the password to revoke access.
+
+Mutations require a same-origin `Origin` or `Referer` header, including requests from scripts. Bodies are limited to 64 KiB and 10 seconds. Per-process limits allow 30 mutations/minute separately for the owner and Telegram, and throttle failed authentication after 10 attempts/minute per connection peer. Valid credentials remain accepted when anonymous traffic exhausts that peer's limit. HTTP 429 includes `Retry-After`; repeated reanalysis requests coalesce. Use one app worker with trusted ingress connection limits.
+
+Telegram callbacks require the webhook secret, configured chat and owner user. `HOME_FINDER_TELEGRAM_OWNER_USER_ID` defaults to a positive private chat ID; set it explicitly for group chats. Update IDs are stored atomically with status history to prevent replay across restarts. This adds schema migration 7 (one nullable column and unique index); back up the database before first startup because the previous application refuses newer schema versions.
+
+Additional protections include:
 
 - **XSS prevention**: All user-controlled content is escaped. Scraped descriptions use `| e | safe` in Jinja2. Leaflet popups use `textContent` instead of HTML injection.
 - **Security headers**: `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy: strict-origin-when-cross-origin`
@@ -123,6 +133,7 @@ The web dashboard is read-only (no forms that mutate state). Security measures i
 | `GET /property/{unique_id}/card` | Single property card partial (for map marker clicks) |
 | `GET /area/{outcode}` | Area context page (rent benchmarks, council tax, crime) |
 | `GET /health` | Health check (`{"status": "ok"}`) |
+| `GET /diagnostics` | Owner-only pipeline state and latest run information |
 | `GET /static/...` | Static assets (CSS, JS) |
 | `PATCH /property/{unique_id}/status` | Update property status (returns card or badge partial) |
 | `POST /property/{unique_id}/reanalyze` | Request quality re-analysis |
@@ -135,6 +146,7 @@ Create a `.env` file with these settings (all use `HOME_FINDER_` prefix):
 
 - `HOME_FINDER_TELEGRAM_BOT_TOKEN`: Your Telegram bot token (from @BotFather)
 - `HOME_FINDER_TELEGRAM_CHAT_ID`: Your Telegram chat ID
+- `HOME_FINDER_WEB_OWNER_PASSWORD`: Owner dashboard password (24+ ASCII characters), when serving
 
 ### Optional APIs
 
