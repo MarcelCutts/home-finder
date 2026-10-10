@@ -63,7 +63,11 @@ def assemble(request, tmp_path, cached_analysis_property):
         # Raw visual observations are neither rewritten nor invalidated by badge checks.
         assert json.loads(checkpoints[0]["data_json"]) == visual_data
         assert result.analysis_provenance.visual_input_sha256 == checkpoints[0]["input_sha256"]
-        return result, [log for log in logs if log["event"] == "analysis_badge_dropped"]
+        dropped = [log for log in logs if log["event"] == "analysis_badge_dropped"]
+        for log in dropped:
+            assert log["property_id"] == merged.unique_id
+            assert set(log) == {"event", "log_level", "property_id", "badge", "field", "reason"}
+        return result, dropped
 
     return run
 
@@ -106,7 +110,12 @@ async def test_hosting_badges_follow_final_layout_without_changing_prose_or_rati
     ("bills", "description", "corrected", "keep"),
     [
         ("yes", "All bills included.", "yes", True),
-        ("yes", "Bright flat.", "unknown", False),
+        (
+            "yes",
+            "Private listing text. Viewing link: https://private.example/room.",
+            "unknown",
+            False,
+        ),
         ("yes", "Some bills included.", "unknown", False),
         ("yes", "Bills included. Electricity extra.", "unknown", False),
         ("yes", "Bills included. Bills excluded.", "unknown", False),
@@ -116,7 +125,7 @@ async def test_hosting_badges_follow_final_layout_without_changing_prose_or_rati
     ],
 )
 async def test_bills_badge_uses_canonical_correction_not_the_raw_evaluation(
-    assemble, bills, description, corrected, keep
+    assemble, cached_analysis_property, bills, description, corrected, keep
 ):
     result, logs = await assemble(
         bills=bills,
@@ -135,6 +144,7 @@ async def test_bills_badge_uses_canonical_correction_not_the_raw_evaluation(
             {
                 "event": "analysis_badge_dropped",
                 "log_level": "info",
+                "property_id": cached_analysis_property[0].unique_id,
                 "badge": "Bills included",
                 "field": "listing_extraction.bills_included",
                 "reason": (
@@ -143,7 +153,7 @@ async def test_bills_badge_uses_canonical_correction_not_the_raw_evaluation(
                     else "unsupported_structured_value"
                 ),
             }
-        ]  # No description, property identifier, URL, model response or other payload.
+        ]  # Correlation ID only; no description, URL, model response or other private payload.
 
 
 @pytest.mark.parametrize("state", ["yes", "no", "unknown"])

@@ -1932,7 +1932,7 @@ class PropertyQualityFilter:
                     }
                 )
         if analysis is not None:
-            analysis = reconcile_analysis_badges(analysis)
+            analysis = reconcile_analysis_badges(analysis, property_id=property_id)
             provenance = self._analysis_provenance()
             input_key = visual_input_key(property_id, self._visual_request(content), provenance)
             analysis = analysis.model_copy(

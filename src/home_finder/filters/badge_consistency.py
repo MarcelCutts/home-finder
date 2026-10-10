@@ -6,7 +6,9 @@ from home_finder.models import PropertyHighlight, PropertyLowlight, PropertyQual
 logger = get_logger(__name__)
 
 
-def reconcile_analysis_badges(analysis: PropertyQualityAnalysis) -> PropertyQualityAnalysis:
+def reconcile_analysis_badges(
+    analysis: PropertyQualityAnalysis, *, property_id: str | None = None
+) -> PropertyQualityAnalysis:
     """Remove unsupported badges after canonical listing-fact corrections.
 
     This only checks direct structured counterparts; it does not infer facts,
@@ -82,8 +84,14 @@ def reconcile_analysis_badges(analysis: PropertyQualityAnalysis) -> PropertyQual
         for badge in badges:
             if badge in rejected:
                 field, reason = rejected[badge]
-                # Only fixed vocabulary identifiers/reasons; no property payload.
-                logger.info("analysis_badge_dropped", badge=badge, field=field, reason=reason)
+                # Correlate concurrent analyses without logging listing text or URLs.
+                logger.info(
+                    "analysis_badge_dropped",
+                    property_id=property_id,
+                    badge=badge,
+                    field=field,
+                    reason=reason,
+                )
             else:
                 kept.append(badge)
         return kept
