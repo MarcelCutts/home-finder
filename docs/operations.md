@@ -64,6 +64,11 @@ during cutover, and reconcile any later writes before choosing a rollback copy.
 `scripts/sync-to-fly.sh` intentionally fails: its former file replacement could
 erase remote owner decisions and lose live journal contents.
 
+For a bounded metadata review of possible duplicate canonical homes, including
+groups sharing listing platforms, see the [offline duplicate-candidate audit](audits/offline-duplicate-candidates.md).
+It produces a private review queue from a standalone snapshot without changing
+home identities or using image/model evidence.
+
 ## Paid analysis
 
 An API key alone does not authorize paid work. Set exact decimal-string caps in
