@@ -534,8 +534,7 @@ def main() -> None:
     parser.add_argument(
         "--full-scrape",
         action="store_true",
-        help="Disable pagination early-stop — scrape all pages"
-        " even if properties are already in DB",
+        help="Compatibility flag; collection continues through known listings within normal bounds",
     )
     parser.add_argument(
         "--debug",
