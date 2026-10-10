@@ -14,6 +14,7 @@ if TYPE_CHECKING:
 
 import aiosqlite
 
+from home_finder.db.delivery import enqueue_discovery
 from home_finder.db.listing_text import persist_merged_text
 from home_finder.db.row_mappers import (
     ImageReader,
@@ -426,7 +427,7 @@ class PipelineRepository:
         No-op for genuinely new properties (already 'pending').
         """
         async with self._transaction() as conn:
-            await conn.execute(
+            transition = await conn.execute(
                 """
                 UPDATE properties
                 SET enrichment_status = 'enriched',
@@ -440,6 +441,8 @@ class PipelineRepository:
                     NotificationStatus.PENDING_ENRICHMENT.value,
                 ),
             )
+            if transition.rowcount:
+                await enqueue_discovery(conn, unique_id)
 
     async def expire_unenriched(self, max_attempts: int = 3) -> int:
         """Give up on properties that exceeded max enrichment retries.
@@ -668,7 +671,7 @@ class PipelineRepository:
             if quality_analysis:
                 await self._save_quality_analysis(unique_id, quality_analysis, _conn=conn)
 
-            await conn.execute(
+            transition = await conn.execute(
                 """
                 UPDATE properties
                 SET notification_status = ?,
@@ -682,6 +685,8 @@ class PipelineRepository:
                     NotificationStatus.PENDING_ANALYSIS.value,
                 ),
             )
+            if transition.rowcount:
+                await enqueue_discovery(conn, unique_id)
         logger.debug("analysis_completed", unique_id=unique_id)
 
     async def reset_failed_analyses(self, *, max_analysis_attempts: int = 3) -> int:

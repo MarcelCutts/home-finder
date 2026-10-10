@@ -290,6 +290,7 @@ async def diagnostics(request: Request) -> JSONResponse:
             "last_run_status": last_run["status"] if last_run else None,
             "last_run_notified": last_run["notified_count"] if last_run else None,
             "processing_counts": await storage.web.get_processing_counts(),
+            "delivery": await storage.deliveries.report(),
         }
     )
 

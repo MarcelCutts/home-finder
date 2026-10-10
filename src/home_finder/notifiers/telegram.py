@@ -25,11 +25,14 @@ from home_finder.models import (
     PropertyQualityAnalysis,
     TransportMode,
 )
+from home_finder.models.delivery import DeliveryPart, DeliveryPlan, DiscoverySnapshot
 from home_finder.utils.listing_facts import supported_band
 
 if TYPE_CHECKING:
     from aiogram import Bot
     from aiogram.types import FSInputFile, InlineKeyboardMarkup
+
+    from home_finder.db.delivery import DeliveryRepository
 
 logger = get_logger(__name__)
 
@@ -798,7 +801,13 @@ class TelegramNotifier:
     """Send property notifications via Telegram."""
 
     def __init__(
-        self, *, bot_token: str, chat_id: int, web_base_url: str = "", data_dir: str = ""
+        self,
+        *,
+        bot_token: str,
+        chat_id: int,
+        web_base_url: str = "",
+        data_dir: str = "",
+        delivery_repository: "DeliveryRepository | None" = None,
     ) -> None:
         """Initialize the notifier.
 
@@ -813,6 +822,7 @@ class TelegramNotifier:
         self.web_base_url = web_base_url.rstrip("/") if web_base_url else ""
         self.data_dir = data_dir
         self._bot: Bot | None = None
+        self.delivery_repository = delivery_repository
 
     def _get_bot(self) -> "Bot":
         """Get or create the bot instance."""
@@ -915,7 +925,6 @@ class TelegramNotifier:
             )
             return False
 
-    @_telegram_retry
     async def send_merged_property_notification(
         self,
         merged: MergedProperty,
@@ -924,207 +933,60 @@ class TelegramNotifier:
         transport_mode: TransportMode | None = None,
         quality_analysis: PropertyQualityAnalysis | None = None,
     ) -> bool:
-        """Send a merged property notification with photo, inline keyboard, and venue.
+        """Deliver the saved discovery plan in production.
 
-        Notification format adapts based on quality rating:
-        - Rating >= 4: album (if 3+ images) + venue pin (message sprawl justified)
-        - Rating < 4 or unknown: single photo + no venue pin (compact triage)
-
-        Retries on Telegram flood control (429) via @_telegram_retry decorator
-        (up to 3 attempts, sleeping for Telegram-specified duration with jitter).
-
-        Args:
-            merged: Merged property to notify about.
-            commute_minutes: Commute time in minutes (optional).
-            transport_mode: Transport mode used (optional).
-            quality_analysis: Quality analysis result (optional).
-
-        Returns:
-            True if notification was sent successfully.
+        Without a repository this is a standalone, non-recoverable send helper.
+        Flood-control retries stay within one part; partial delivery never falls
+        back to a second format. The pipeline always supplies a repository.
         """
-        _fs = (
-            compute_fit_score(quality_analysis.model_dump(), merged.canonical.bedrooms)
-            if quality_analysis
-            else None
+        from home_finder.notifiers.delivery import (
+            deliver,
+            discovery_plan,
+            request_payload,
+            send_part,
         )
-        is_high_rated = _fs is not None and _fs >= 70
 
+        if self.delivery_repository is not None:
+            return await deliver(self, self.delivery_repository, f"discovery:{merged.unique_id}")
+        snapshot = DiscoverySnapshot(
+            merged=merged,
+            commute_minutes=commute_minutes,
+            transport_mode=transport_mode,
+            quality_analysis=quality_analysis,
+        )
         try:
-            bot = self._get_bot()
-            keyboard = _build_inline_keyboard(merged, web_base_url=self.web_base_url)
-            gallery_urls = _get_gallery_urls(merged)
-
-            sent_photo = False
-            if gallery_urls:
-                caption = format_merged_property_caption(
-                    merged,
-                    commute_minutes=commute_minutes,
-                    transport_mode=transport_mode,
-                    quality_analysis=quality_analysis,
-                )
-                try:
-                    if is_high_rated and len(gallery_urls) >= 3:
-                        # High-rated: album — full-size images for swipe gallery
-                        photos = _resolve_gallery_photos(
-                            gallery_urls,
-                            merged.unique_id,
-                            self.data_dir,
-                            prefer_thumbnail=False,
-                        )
-                        followup_text = _format_followup_detail(
-                            quality_analysis=quality_analysis,
-                        )
-                        sent_photo = await self._send_media_group(
-                            photos,
-                            caption=caption,
-                            keyboard=keyboard,
-                            followup_text=followup_text,
-                        )
-                    else:
-                        # Single hero image — thumbnail is fine (faster upload)
-                        photo = (
-                            _resolve_photo(
-                                gallery_urls[0],
-                                merged.unique_id,
-                                self.data_dir,
-                                prefer_thumbnail=True,
-                            )
-                            if self.data_dir
-                            else gallery_urls[0]
-                        )
-                        await bot.send_photo(
-                            chat_id=self.chat_id,
-                            photo=photo,
-                            caption=caption,
-                            reply_markup=keyboard,
-                        )
-                        sent_photo = True
-                except TelegramRetryAfter:
-                    raise  # Let the outer handler retry the whole notification
-                except Exception as photo_err:
-                    logger.warning(
-                        "send_photo_failed_falling_back_to_text",
-                        property_id=merged.unique_id,
-                        image_url=gallery_urls[0] if gallery_urls else None,
-                        error=str(photo_err),
-                        exc_info=True,
-                    )
-
-            if not sent_photo:
-                message = format_merged_property_message(
-                    merged,
-                    commute_minutes=commute_minutes,
-                    transport_mode=transport_mode,
-                    quality_analysis=quality_analysis,
-                )
-                await bot.send_message(
-                    chat_id=self.chat_id,
-                    text=message,
-                    reply_markup=keyboard,
-                )
-
-            # Venue pin only for high-rated properties (reduces message sprawl)
-            prop = merged.canonical
-            if is_high_rated and prop.latitude is not None and prop.longitude is not None:
-                await bot.send_venue(
-                    chat_id=self.chat_id,
-                    latitude=prop.latitude,
-                    longitude=prop.longitude,
-                    title=prop.address,
-                    address=prop.postcode or prop.address,
-                )
-
-            logger.info(
-                "notification_sent",
-                property_id=merged.unique_id,
-                chat_id=self.chat_id,
-                sources=[s.value for s in merged.sources],
-                has_image=bool(gallery_urls),
-            )
+            plan = discovery_plan(self, snapshot)
+            for part in plan.parts:
+                payload = request_payload(self, part)
+                for attempt in range(3):
+                    try:
+                        await send_part(self, part, payload)
+                        break
+                    except TelegramRetryAfter as exc:
+                        if attempt == 2:
+                            return False
+                        await asyncio.sleep(max(1, exc.retry_after))
             return True
-
-        except TelegramRetryAfter:
-            raise  # Propagate to tenacity @_telegram_retry decorator
-
-        except (
-            TelegramBadRequest,
-            TelegramForbiddenError,
-            TelegramNotFound,
-            TelegramUnauthorizedError,
-        ) as e:
-            logger.error(
-                "notification_permanent_failure",
-                property_id=merged.unique_id,
-                error=str(e),
-                error_type=type(e).__name__,
-                exc_info=True,
-            )
-            return False
-        except TelegramServerError as e:
+        except Exception as exc:
             logger.warning(
-                "notification_transient_failure",
+                "notification_standalone_failed",
                 property_id=merged.unique_id,
-                error=str(e),
-                error_type=type(e).__name__,
-                exc_info=True,
-            )
-            return False
-        except Exception as e:
-            logger.error(
-                "notification_unexpected_failure",
-                property_id=merged.unique_id,
-                error=str(e),
-                error_type=type(e).__name__,
-                exc_info=True,
+                reason=type(exc).__name__,
             )
             return False
 
-    async def _send_media_group(
-        self,
-        photos: "list[FSInputFile | str]",
-        *,
-        caption: str,
-        keyboard: "InlineKeyboardMarkup",
-        followup_text: str = "",
-    ) -> bool:
-        """Send a media group (album) of images with caption on the first photo.
+    async def deliver_pending(self) -> int:
+        """Resume saved plans, using identical content and only unacknowledged parts."""
+        from home_finder.notifiers.delivery import deliver
 
-        After the album, sends a follow-up message with the full analysis text
-        and inline keyboard (Telegram media groups don't support inline keyboards
-        directly). Falls back to a minimal pointer if no followup_text provided.
-
-        Args:
-            photos: List of FSInputFile or URL strings (up to 10).
-            caption: Caption for the first photo.
-            keyboard: Inline keyboard to send in follow-up message.
-            followup_text: Full analysis text for follow-up (up to 4096 chars).
-
-        Returns:
-            True if the media group was sent successfully.
-        """
-        from aiogram.utils.media_group import MediaGroupBuilder
-
-        builder = MediaGroupBuilder()
-        for i, item in enumerate(photos[:10]):
-            if i == 0:
-                builder.add_photo(media=item, caption=caption, parse_mode="HTML")
-            else:
-                builder.add_photo(media=item)
-
-        bot = self._get_bot()
-        # The Bot also accepts live photos; widen the builder's narrower list
-        # through a fresh list rather than passing an invariant mutable list.
-        await bot.send_media_group(chat_id=self.chat_id, media=list(builder.build()))
-
-        # Media groups don't support inline keyboards, so send a follow-up
-        # message with full analysis + buttons
-        text = followup_text if followup_text else "Tap Details for full analysis 👆"
-        await bot.send_message(
-            chat_id=self.chat_id,
-            text=text,
-            reply_markup=keyboard,
-        )
-        return True
+        if self.delivery_repository is None:
+            raise RuntimeError("Pipeline notifications require a durable repository")
+        count = 0
+        for key in await self.delivery_repository.pending():
+            if await deliver(self, self.delivery_repository, key):
+                count += 1
+                await asyncio.sleep(1)
+        return count
 
     async def send_batch_notifications(
         self,
@@ -1199,8 +1061,7 @@ class TelegramNotifier:
             )
             return False
 
-    @_telegram_retry
-    async def send_price_drop_notification(
+    def price_drop_plan(
         self,
         *,
         title: str,
@@ -1209,11 +1070,7 @@ class TelegramNotifier:
         new_price: int,
         unique_id: str,
         days_listed: int = 0,
-    ) -> bool:
-        """Send a price drop notification for a previously-notified property.
-
-        Returns True if sent successfully.
-        """
+    ) -> DeliveryPlan:
         from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
         drop = old_price - new_price
@@ -1233,13 +1090,46 @@ class TelegramNotifier:
             detail_url = f"{self.web_base_url}/property/{unique_id}"
             buttons.append([InlineKeyboardButton(text="Details", url=detail_url)])
 
+        return DeliveryPlan(
+            parts=(
+                DeliveryPart(
+                    method="message",
+                    payload={
+                        "text": "\n".join(lines),
+                        "reply_markup": InlineKeyboardMarkup(inline_keyboard=buttons).model_dump(
+                            mode="json", exclude_none=True
+                        ),
+                    },
+                ),
+            )
+        )
+
+    @_telegram_retry
+    async def send_price_drop_notification(
+        self,
+        *,
+        title: str,
+        postcode: str,
+        old_price: int,
+        new_price: int,
+        unique_id: str,
+        days_listed: int = 0,
+    ) -> bool:
+        """Standalone single-part send; the pipeline uses the saved price revision."""
+        from home_finder.notifiers.delivery import request_payload
+
+        part = self.price_drop_plan(
+            title=title,
+            postcode=postcode,
+            old_price=old_price,
+            new_price=new_price,
+            unique_id=unique_id,
+            days_listed=days_listed,
+        ).parts[0]
+        drop = old_price - new_price
         try:
             bot = self._get_bot()
-            await bot.send_message(
-                chat_id=self.chat_id,
-                text="\n".join(lines),
-                reply_markup=InlineKeyboardMarkup(inline_keyboard=buttons) if buttons else None,
-            )
+            await bot.send_message(chat_id=self.chat_id, **request_payload(self, part))
             logger.info("price_drop_notification_sent", unique_id=unique_id, drop=drop)
             return True
         except TelegramRetryAfter:

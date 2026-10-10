@@ -817,6 +817,36 @@ async def migrate_011_visual_checkpoints(conn: aiosqlite.Connection) -> None:
     """)
 
 
+async def migrate_012_notification_deliveries(conn: aiosqlite.Connection) -> None:
+    """Bounded current delivery state, with legacy outcomes held for review."""
+    from home_finder.db.delivery import record_legacy_deliveries
+
+    await conn.execute("""CREATE TABLE IF NOT EXISTS notification_deliveries (
+        event_key TEXT PRIMARY KEY,
+        property_id TEXT NOT NULL REFERENCES properties(unique_id),
+        kind TEXT NOT NULL CHECK(kind IN ('discovery','price_drop')),
+        price_history_id INTEGER REFERENCES price_history(id),
+        recipient TEXT,
+        snapshot_json TEXT CHECK(snapshot_json IS NULL OR
+            (json_valid(snapshot_json) AND length(snapshot_json)<=500000)),
+        plan_json TEXT CHECK(plan_json IS NULL OR
+            (json_valid(plan_json) AND length(plan_json)<=100000)),
+        plan_sha256 TEXT,
+        state TEXT NOT NULL DEFAULT 'queued' CHECK(state IN
+            ('queued','ready','sending','waiting','uncertain','blocked','complete','review','suppressed')),
+        next_part INTEGER NOT NULL DEFAULT 0 CHECK(next_part BETWEEN 0 AND 3),
+        receipts_json TEXT NOT NULL DEFAULT '[]' CHECK(json_valid(receipts_json)),
+        reason TEXT,
+        retry_at TEXT,
+        resolution_ref TEXT,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    )""")
+    await conn.execute("""CREATE INDEX IF NOT EXISTS idx_notification_delivery_state
+        ON notification_deliveries(state,recipient)""")
+    await record_legacy_deliveries(conn)
+
+
 _MigrationFn = Callable[[aiosqlite.Connection], Coroutine[Any, Any, None]]
 
 MIGRATIONS: list[_MigrationFn] = [
@@ -831,6 +861,7 @@ MIGRATIONS: list[_MigrationFn] = [
     migrate_009_paid_attempts,
     migrate_010_floorplan_origin,
     migrate_011_visual_checkpoints,
+    migrate_012_notification_deliveries,
 ]
 
 

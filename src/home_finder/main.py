@@ -37,7 +37,6 @@ from home_finder.pipeline.scraping import (
 )
 from home_finder.pipeline.stages import (
     PreAnalysisResult,
-    _days_since,
     _run_pre_analysis_pipeline,
 )
 from home_finder.utils.async_tasks import finish_before_cancelling
@@ -88,14 +87,24 @@ def _make_notify_callback(
         uid = merged.canonical.unique_id
         src = merged.canonical.source.value
         if success:
-            await storage.mark_notified(uid)
             counter[0] += 1
             if recorder is not None:
                 recorder.record(PropertyEvent(uid, src, "notified", "notification"))
         else:
-            await storage.mark_notification_failed(uid)
             if recorder is not None:
-                recorder.record(PropertyEvent(uid, src, "notification_failed", "notification"))
+                delivery = await storage.deliveries.get(f"discovery:{uid}")
+                recorder.record(
+                    PropertyEvent(
+                        uid,
+                        src,
+                        "notification_deferred",
+                        "notification",
+                        {
+                            "delivery_state": delivery["state"] if delivery else "missing_intent",
+                            "reason": delivery["reason"] if delivery else None,
+                        },
+                    )
+                )
 
         await asyncio.sleep(1)  # Telegram rate limit
 
@@ -252,6 +261,7 @@ async def _run_pipeline_with_storage(
                 chat_id=settings.telegram_chat_id,
                 web_base_url=settings.web_base_url,
                 data_dir=settings.data_dir,
+                delivery_repository=storage.deliveries,
             )
 
         # T4: EventRecorder for property audit trail
@@ -264,27 +274,9 @@ async def _run_pipeline_with_storage(
         async with notifier_cm as notifier, recorder_cm as recorder:
             # Step 0: Retry unsent notifications (live mode only)
             if not dry_run and notifier is not None:
-                unsent = await storage.get_unsent_notifications()
-                if unsent:
-                    logger.info("retrying_unsent_notifications", count=len(unsent))
-                    for tracked in unsent:
-                        success = await notifier.send_property_notification(
-                            tracked.property,
-                            commute_minutes=tracked.commute_minutes,
-                            transport_mode=tracked.transport_mode,
-                        )
-                        if success:
-                            await storage.mark_notified(tracked.property.unique_id)
-                            logger.info(
-                                "retry_notification_sent",
-                                unique_id=tracked.property.unique_id,
-                            )
-                        else:
-                            logger.warning(
-                                "retry_notification_failed",
-                                unique_id=tracked.property.unique_id,
-                            )
-                        await asyncio.sleep(1)
+                await storage.deliveries.recover()
+                recovered_count = await notifier.deliver_pending()
+                logger.info("notification_recovery_complete", completed=recovered_count)
 
             progress = PreAnalysisResult()
             try:
@@ -353,23 +345,9 @@ async def _run_pipeline_with_storage(
 
                 # Send price drop notifications
                 t_notify = time.monotonic()
-                price_drops = await storage.get_unsent_price_drops()
-                price_drop_count = 0
-                for drop in price_drops:
-                    success = await notifier.send_price_drop_notification(
-                        title=drop["title"],
-                        postcode=drop.get("postcode") or "",
-                        old_price=drop["old_price"],
-                        new_price=drop["new_price"],
-                        unique_id=drop["unique_id"],
-                        days_listed=_days_since(drop.get("first_seen")),
-                    )
-                    if success:
-                        await storage.mark_price_drop_notified(drop["unique_id"])
-                        price_drop_count += 1
-                        await asyncio.sleep(1)  # Telegram rate limit
-                if price_drop_count:
-                    logger.info("price_drop_notifications_sent", count=price_drop_count)
+                delivery_count = await notifier.deliver_pending()
+                if delivery_count:
+                    logger.info("queued_notifications_sent", count=delivery_count)
                 notification_seconds = time.monotonic() - t_notify
 
                 cost_kwargs: dict[str, int | float] = {}
@@ -398,7 +376,7 @@ async def _run_pipeline_with_storage(
                     "pipeline_complete",
                     notified=notified_count,
                     reanalyzed=reanalyzed_count,
-                    price_drops=price_drop_count,
+                    queued_deliveries=delivery_count,
                 )
 
     except asyncio.CancelledError:

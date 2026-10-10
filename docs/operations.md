@@ -28,8 +28,10 @@ activating collection or moving the authority is a separate operational decision
 
 ## Back up and migrate
 
-The core repairs upgrade schema 7 to schema 9: retained listing text columns and
-the paid-attempt accounting table. Existing property IDs, owner status, notes,
+The core repairs added retained listing text and paid-attempt accounting in
+schemas 8–9. The focused repair stack adds image provenance (10), visual
+checkpoints (11) and bounded delivery records (12). Earlier schemas migrate
+sequentially. Existing property IDs, owner status, notes,
 Telegram update IDs, images and history stay in place. Older binaries refuse a
 newer schema, so rollback requires a verified backup, not an older binary pointed
 at the upgraded file.
@@ -148,6 +150,55 @@ Commute failures remain unknown and advisory. Budget panels show supported costs
 and explicit missing evidence; paid optional bills packages are not rent-inclusive.
 Duplicate staging rows can merge only before user, delivery, analysis or linked
 history exists. Saved owner decisions must not be reassigned automatically.
+
+## Delivery recovery
+
+The live pipeline stores discovery/price-revision intent with the readiness
+transition, then fixes the recipient and intended parts before its first send.
+Each acknowledged photo, album, follow-up or venue is saved before proceeding.
+Recovery uses that saved plan. Rate limits persist a retry time for the recipient;
+timeouts, interruption or a lost receipt stop for review. Telegram has no send
+idempotency parameter that would establish exactly-once delivery after response
+loss. [Bot API receipts and parameters](https://core.telegram.org/bots/api#sendmediagroup).
+
+A completed discovery updates sent state with its final receipt. A price alert
+marks only its own current revision delivered. Reassessment never resets sent
+state. Initial intent without images can pick up newly enriched images before a
+plan exists; after planning, missing/changed cached files require repair and an
+explicit retry. Remote URL media remain dependent on their source host.
+
+Migration holds untracked legacy pending/failed outcomes for review, preserves
+old sent homes, and creates no historical Telegram IDs. Do not bulk-reset these
+records. Owner-only `/diagnostics` and this read-only command expose bounded
+metadata, acknowledged IDs, retry timing and reasons without loading secrets,
+running migrations or sending anything:
+
+```bash
+uv run python -m home_finder.pipeline.delivery_admin --database data/properties.db
+uv run python -m home_finder.pipeline.delivery_admin --help
+```
+
+Stop the runner before reconciling one exact `event_key`. Use `--delivery KEY`
+and a short non-secret `--evidence-ref REF` with exactly one action:
+
+- `--retry-confirmed-undelivered`: only after checking that the current part was
+  not delivered, or correcting a known rejection/asset problem. Earlier receipts
+  remain; only the unfinished part can retry. For legacy records this explicitly
+  accepts starting a new plan after owner review.
+- `--message-ids 123,124,125`: acknowledge the current uncertain part using IDs
+  actually observed in the configured chat (all album IDs are required).
+- `--suppress`: stop the remaining delivery without fabricating message receipts
+  or a successful send. The record remains available for review.
+
+These actions acquire the application runner lock and never themselves send.
+Changing the bot/chat cannot reuse another recipient's receipts. Multi-user
+routing is outside the owner workflow. Logs include `notification_delivery_planned`,
+`notification_part_dispatched`, `notification_part_acknowledged`,
+`notification_part_waiting`, `notification_part_uncertain`,
+`notification_part_blocked`, `notification_delivery_deferred` and
+`notification_delivery_complete`. Correlate their delivery/property keys and part
+indices; acknowledgements include message IDs and elapsed time. No exception
+body, payload, image bytes or bot token is logged by this recovery path.
 
 ## Release
 

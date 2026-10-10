@@ -18,6 +18,7 @@ _PROTECTED_CHILDREN = (
     ("enquiry_log", "property_unique_id"),
     ("source_aliases", "anchor_id"),
     ("paid_attempts", "property_id"),
+    ("notification_deliveries", "property_id"),
 )
 
 

@@ -90,7 +90,7 @@ upgrade expectation follow the current migration count. [Browser evidence](../..
 authored diagrams. Rollback after migration requires the verified pre-upgrade
 database copy; earlier application versions reject schema 10.
 
-### R4 Visual checkpoints for unfinished analysis
+### R4 Visual checkpoints for unfinished analysis — draft #47
 
 - [x] Identify visual inputs by actual ordered image bytes, prompts and relevant configuration.
 - [x] Store one validated result with its settled paid attempt before evaluation starts.
@@ -112,22 +112,49 @@ receipts, exhausted evaluation attempts, budget changes and sent-state refreshes
 367 existing affected tests passed; the final checkpoint, spending and upgrade
 selection passed 64 tests, including 16 fault/identity cases using the real SDK
 with a mock transport. Ruff lint/format and strict mypy passed. No paid calls were
-made. Migration 11 requires the same verified-backup rollback discipline as R3.
+made. A further 72 checkpoint/configuration/spending checks passed after updating
+the older provenance and cancellation test contracts. Migration 11 requires the same verified-backup rollback discipline as R3.
 
 ### R5 Notification recovery
 
-- [ ] Persist a bounded delivery plan for each recipient and logical discovery/price event.
-- [ ] Store intended parts and acknowledged message IDs; use the same format across runs.
-- [ ] Resume known unfinished parts, respect retry delays and expose ambiguous outcomes.
-- [ ] Preserve sent-state reanalysis and require review of untracked legacy delivery outcomes.
-- [ ] Verify partial album/photo delivery, restart, lost acknowledgement and permanent failure.
+- [x] Persist a bounded delivery plan for each recipient and logical discovery/price event.
+- [x] Store intended parts and acknowledged message IDs; use the same format across runs.
+- [x] Resume known unfinished parts, respect retry delays and expose ambiguous outcomes.
+- [x] Preserve sent-state reanalysis and require review of untracked legacy delivery outcomes.
+- [x] Verify partial album/photo delivery, restart, lost acknowledgement and permanent failure.
+
+R5 creates a discovery/price-revision intent in the readiness transaction. Before
+sending it binds the owner recipient and snapshots the intended parts. Every
+Bot API receipt is saved before moving on; the final receipt and property/price
+completion commit together. Known rate delays survive restart. Ambiguous
+responses, interrupted dispatch or missing acknowledgements remain held for
+review, with earlier receipts preserved and no text fallback. A new recipient
+cannot inherit old receipts. Unstarted obsolete price alerts are superseded;
+completion of an older alert cannot consume a newer change, including changes
+recorded within the same second.
+
+Migration 12 quarantines legacy untracked outcomes; it preserves sent homes and
+does not invent receipts. Owner diagnostics and a local command expose metadata
+and permit explicit reconciliation under the runner lock. There are at most three
+parts per event, with no general delivery-event history. Cached media are checked
+against saved hashes and uploaded from those same bytes. No classifier, broker,
+workflow service or multi-user routing was added.
+
+27 new offline fault/backup tests pass. They cover partial photo/album sends,
+restarts, lost receipts, cancellation, concurrency, permanent failures, recipient
+changes, assets, price revisions, legacy state and backup/upgrade preservation of
+spending holds/checkpoints. Existing pipeline tests now exercise the real delivery
+transactions with only the Bot API mocked. The final full-suite result is recorded
+in the [verification review](../reviews/2026-10-10-focused-repair-verification.md).
 
 ## Operational qualification
 
 - [ ] Verify deployed owner access and authenticated mutation boundaries.
-- [ ] Identify the authoritative database, active writer and scheduler.
-- [ ] Verify an isolated backup, restore and migration preserving owner state and spending holds.
-- [ ] Record the release and rollback procedure before production changes.
+- [x] Inspect the deployed dashboard database, serving process and scheduler flags.
+- [ ] Qualify one active writer/scheduler layout before activation.
+- [x] Verify an isolated export backup, restore and migration; test spending-hold preservation.
+- [ ] Verify a fresh production backup including assets before release.
+- [x] Record the release and rollback procedure before production changes.
 - [ ] Obtain a new explicit spending allowance and notification authorization before the live trial.
 
 The October 10 read-only probe returned HTTP 200 for anonymous dashboard access;
@@ -136,6 +163,14 @@ Response bodies were discarded. All 80 offline owner-access and backup/restore
 checks passed with test socket blocking retained. A sandbox-only
 TestClient fixture hang disappeared outside the execution sandbox. These checks
 do not establish current production protection or a production restore.
+
+Read-only Fly inspection found schema 6, 1,016 properties, 1,001 assessments and
+57 runs; integrity passed with no foreign-key violations. The serving process uses
+`--no-pipeline` and the latest recorded run completed February 28. The September 27
+production export passed backup/verification/isolated restore and migration to
+schema 12, preserving every historical column and its original hash. Its assets
+were not included. The default local development database has orphaned images and
+is not the qualified export. See the [full review and release prerequisites](../reviews/2026-10-10-focused-repair-verification.md).
 
 ## Review boundaries
 

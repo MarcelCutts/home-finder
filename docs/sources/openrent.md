@@ -21,7 +21,7 @@ Gallery extracted via PhotoSwipe lightbox links, with fallbacks for legacy light
 ## Known Quirks
 
 - **TLS fingerprint sensitivity**: OpenRent returns 429 on every request when using plain HTTP clients (e.g. `httpx`, `crawlee`). Requires `curl_cffi` with Chrome TLS impersonation.
-- **No dedicated floorplan section**: Floorplans mixed into the general gallery. The PIL heuristic attempts to identify them.
+- **No dedicated floorplan section**: Floorplans mixed into the general gallery. Gallery images retain their original role; the pipeline does not promote heuristic guesses.
 - **Protocol-relative URLs**: All image URLs start with `//` — must prepend `https:`.
 - **Property link parsing is fragile**: Multiple text nodes within each property link require careful filtering to extract the title.
 - **Geocoding bugs**: Some outcodes resolve to wrong locations. Mitigated by `OUTCODE_SLUG_OVERRIDES`.
@@ -32,5 +32,5 @@ Gallery extracted via PhotoSwipe lightbox links, with fallbacks for legacy light
 - **Dedup**: Full postcodes and coordinates available at scrape time from JS arrays.
 - **Image priority**: Lowest (1) — images typically lower resolution than portal CDNs.
 - **Quality analysis**: Images downloaded locally via curl_cffi and sent as base64 (Anthropic can't fetch from `imagescdn.openrent.co.uk`).
-- **Floorplan gate**: **Exempt** — OpenRent-only properties pass the floorplan gate even without a detected floorplan (`_FLOORPLAN_EXEMPT_SOURCES`).
+- **Floorplan gate**: **Exempt** — OpenRent-only properties pass the floorplan gate even without a source-declared floorplan (`_FLOORPLAN_EXEMPT_SOURCES`).
 - **Search radius**: Fixed at `SEARCH_RADIUS_KM`. May return properties outside the target outcode.

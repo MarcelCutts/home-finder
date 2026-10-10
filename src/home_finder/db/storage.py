@@ -16,6 +16,7 @@ from typing import Any, Final
 import aiosqlite
 
 from home_finder.data.area_context import HOSTING_TOLERANCE
+from home_finder.db.delivery import DeliveryRepository
 from home_finder.db.listing_text import (
     apply_source_text,
     persist_merged_text,
@@ -120,6 +121,7 @@ class PropertyStorage:
             self.save_quality_analysis,
             self._transaction,
         )
+        self.deliveries = DeliveryRepository(self._read_connection, self._transaction)
         self._spend = SpendRepository(self._read_connection, self._transaction)
 
     @property
@@ -1607,7 +1609,7 @@ class PropertyStorage:
             # Use attributed retained prices, not an old unattributed range.
             # Freshness/availability eligibility and projection revisions are PR08b.
             prices = [new_price, *(r[0] for r in await prices_cursor.fetchall())]
-            await conn.execute(
+            history_cursor = await conn.execute(
                 """INSERT INTO price_history
                    (property_unique_id, old_price, new_price, change_amount, source)
                    VALUES (?, ?, ?, ?, ?)""",
@@ -1618,6 +1620,32 @@ class PropertyStorage:
                 "price_drop_notified = 0 WHERE unique_id = ?",
                 (new_price, min(prices), max(prices), unique_id),
             )
+
+            # Supersede only price alerts that have never entered dispatch. An
+            # in-flight/uncertain alert retains its receipts and requires review.
+            await conn.execute(
+                """UPDATE notification_deliveries SET state='suppressed',
+                reason='superseded_price',updated_at=CURRENT_TIMESTAMP
+                WHERE property_id=? AND kind='price_drop' AND next_part=0
+                  AND state IN ('queued','ready','waiting')""",
+                (unique_id,),
+            )
+            if change_amount < 0:
+                await conn.execute(
+                    """INSERT INTO notification_deliveries
+                    (event_key,property_id,kind,price_history_id,snapshot_json)
+                    SELECT ?,unique_id,'price_drop',?,
+                        json_object('title',title,'postcode',COALESCE(postcode,''),
+                            'old_price',?,'new_price',?,'unique_id',unique_id,'first_seen',first_seen)
+                    FROM properties WHERE unique_id=? AND notification_status='sent'""",
+                    (
+                        f"price:{history_cursor.lastrowid}",
+                        history_cursor.lastrowid,
+                        old_price,
+                        new_price,
+                        unique_id,
+                    ),
+                )
 
             # Recompute value rating and fit_score for the new price
             qa_cursor = await conn.execute(
@@ -1705,7 +1733,9 @@ class PropertyStorage:
                    WHERE p.price_drop_notified = 0
                      AND ph.change_amount < 0
                      AND p.notification_status = 'sent'
-                   ORDER BY ph.detected_at DESC"""
+                     AND ph.id = (SELECT MAX(id) FROM price_history
+                                  WHERE property_unique_id = p.unique_id)
+                   ORDER BY ph.id DESC"""
             )
             rows = await cursor.fetchall()
             # Deduplicate: only latest drop per property

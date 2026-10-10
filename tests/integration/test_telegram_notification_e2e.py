@@ -164,12 +164,12 @@ class TestTelegramNotificationE2E:
         assert "Concerns" in message
         assert "Damp near bathroom window" in message
 
-    async def test_photo_fallback_to_text(
+    async def test_album_failure_does_not_fallback_to_text(
         self,
         enriched_merged_property: MergedProperty,
         sample_quality_analysis: PropertyQualityAnalysis,
     ):
-        """When send_media_group fails, should fallback to send_message.
+        """An ambiguous album failure must not produce another notification format.
 
         Album path requires high-rated (>=4) quality analysis + 3+ images.
         """
@@ -188,8 +188,9 @@ class TestTelegramNotificationE2E:
                 quality_analysis=sample_quality_analysis,  # rating=4 to trigger album
             )
 
-        assert result is True
-        mock_bot.send_message.assert_called_once()
+        assert result is False
+        mock_bot.send_message.assert_not_called()
+        mock_bot.send_venue.assert_not_called()
 
     async def test_multi_source_listed_on(
         self,

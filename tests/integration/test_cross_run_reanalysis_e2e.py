@@ -36,6 +36,7 @@ from home_finder.pipeline.stages import (
     _run_post_enrichment,
 )
 from home_finder.utils.image_cache import get_cache_dir, save_image_bytes
+from tests.notifier_helpers import mock_durable_notifier
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -278,20 +279,7 @@ def _pipeline_mocks(
             original_storage_init(self, ":memory:")
             _StorageCapture.instance = self
 
-    mock_notifier = MagicMock()
-    mock_notifier.send_property_notification = AsyncMock(return_value=notify_return)
-    mock_notifier.send_merged_property_notification = AsyncMock(return_value=notify_return)
-    mock_notifier.send_price_drop_notification = AsyncMock(return_value=True)
-    mock_notifier.close = AsyncMock()
-
-    async def _notifier_aenter(*a):
-        return mock_notifier
-
-    async def _notifier_aexit(*a):
-        await mock_notifier.close()
-
-    mock_notifier.__aenter__ = _notifier_aenter
-    mock_notifier.__aexit__ = _notifier_aexit
+    mock_notifier, construct_notifier = mock_durable_notifier(notify_return)
 
     mock_fetcher_instance = MagicMock()
     mock_fetcher_instance.close = AsyncMock()
@@ -349,7 +337,7 @@ def _pipeline_mocks(
         ) as mock_quality_cls,
         patch(
             "home_finder.main.TelegramNotifier",
-            return_value=mock_notifier,
+            side_effect=construct_notifier,
         ),
         patch("home_finder.pipeline.analysis._lookup_wards", new_callable=AsyncMock),
         patch("home_finder.main.asyncio.sleep", new_callable=AsyncMock),
