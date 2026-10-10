@@ -60,7 +60,8 @@ async def test_same_portal_members_survive_every_queue_loader(
                 await db.save_merged_property(single)
         targets = [await db.homes.resolve(prop.unique_id) for prop in adverts]
         await db.memberships.apply(
-            await db.memberships.prepare_merge(targets[0].home_id, (targets[1].home_id,), **REVIEW)
+            await db.memberships.prepare_merge(targets[0].home_id, (targets[1].home_id,), **REVIEW),
+            allow_incomplete_projections=True,
         )
         if loader == "analysis":
             loaded = await db.pipeline.get_pending_analysis_properties()
@@ -101,7 +102,7 @@ async def test_departing_member_cannot_leak_text_or_links_from_a_stale_cache(
         merge = await db.memberships.prepare_merge(
             targets[0].home_id, (targets[1].home_id,), **REVIEW
         )
-        await db.memberships.apply(merge)
+        await db.memberships.apply(merge, allow_incomplete_projections=True)
         # A current-read consumer must ignore even a deliberately stale legacy cache.
         async with db._transaction() as conn:
             await conn.execute(
@@ -121,7 +122,7 @@ async def test_departing_member_cannot_leak_text_or_links_from_a_stale_cache(
             if operation == "split"
             else await db.memberships.prepare_reversal(merge.decision_id, **REVIEW)
         )
-        await db.memberships.apply(decision)
+        await db.memberships.apply(decision, allow_incomplete_projections=True)
         loaded = {m.unique_id: m for m in await db.get_recent_properties_for_dedup(days=None)}
         for prop in adverts:
             selected = select_listing_text(loaded[prop.unique_id])
@@ -129,7 +130,7 @@ async def test_departing_member_cannot_leak_text_or_links_from_a_stale_cache(
             assert set(selected.source_urls) == {prop.unique_id}
             assert "Stale donor text" not in selected.description
         before = await snapshot(db)
-        assert (await db.memberships.apply(merge)).replayed
+        assert (await db.memberships.apply(merge, allow_incomplete_projections=True)).replayed
         assert await snapshot(db) == before
 
 
@@ -230,7 +231,7 @@ async def test_cached_fields_and_members_share_one_snapshot_during_a_review(tmp_
 
         async def change_members_after_reading_fields(*args, **kwargs):
             result = await original(*args, **kwargs)
-            await writer.memberships.apply(decision)
+            await writer.memberships.apply(decision, allow_incomplete_projections=True)
             return result
 
         with patch.object(

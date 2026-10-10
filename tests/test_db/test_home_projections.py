@@ -145,7 +145,7 @@ async def test_merge_and_split_or_reversal_rebuild_all_members_and_retain_old_in
     await db.projections.rebuild_pending()
     original = await db.projections.current(targets[0].home_id)
     merge = await db.memberships.prepare_merge(targets[0].home_id, (targets[1].home_id,), **REVIEW)
-    await db.memberships.apply(merge)
+    await db.memberships.apply(merge, allow_incomplete_projections=True)
     pending = await db.projections.status(pending_only=True)
     assert {p.home_id for p in pending} == {t.home_id for t in targets[:2]}
     await db.projections.rebuild_pending()
@@ -160,7 +160,7 @@ async def test_merge_and_split_or_reversal_rebuild_all_members_and_retain_old_in
             targets[0].home_id, {props[1].unique_id: targets[1].home_id}, **REVIEW
         )
     )
-    await db.memberships.apply(decision)
+    await db.memberships.apply(decision, allow_incomplete_projections=True)
     await db.projections.rebuild_pending()
     restored = await db.projections.current(targets[0].home_id)
     assert restored.listing_material_sha256 == original.listing_material_sha256
@@ -168,7 +168,7 @@ async def test_merge_and_split_or_reversal_rebuild_all_members_and_retain_old_in
     assert len(restored.listings) == 1
     assert await db.projections.get(grouped.sha256) == grouped
     before = await snapshot(db)
-    assert (await db.memberships.apply(merge)).replayed
+    assert (await db.memberships.apply(merge, allow_incomplete_projections=True)).replayed
     assert await snapshot(db) == before
     assert not await db.projections.status(pending_only=True)
 
@@ -317,7 +317,7 @@ async def test_cross_home_head_and_stale_invalidation_ack_are_refused(homes):
                 (two.snapshot_id, first.home_id),
             )
     merge = await db.memberships.prepare_merge(first.home_id, (second.home_id,), **REVIEW)
-    await db.memberships.apply(merge)
+    await db.memberships.apply(merge, allow_incomplete_projections=True)
     before = await snapshot(db)
     with pytest.raises(aiosqlite.IntegrityError, match="requires current projection"):
         async with db._transaction() as conn:

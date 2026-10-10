@@ -1,0 +1,120 @@
+{
+  "segment": "corrective queue 1: default reviewed-regrouping gate",
+  "base": "fc7b466971984a15f69a886eadfe3cd621ee8cf7",
+  "schema": 15,
+  "stack_position": 31,
+  "source_and_test_manifest_sha256": "bc1df4e8d2bd3c91839688dec84e9af3d6869b0715547c64d381313ef1b3c37f",
+  "suites": [
+    {
+      "scope": "focused",
+      "python": "3.14.7",
+      "passed": 149,
+      "failures": 0,
+      "seconds": 16.825,
+      "network": "pytest-socket blocked except Unix sockets",
+      "log_sha256": "42b946ef249f930f4a9f81f5adcafca6c5e571ec8aa185f1eab53f5a3aa16150",
+      "junit_sha256": "d74dd8f75c61bc5c521325cd9f0cadd5c8c1f2d8fd48ae7874b1cb5c233485a9"
+    },
+    {
+      "scope": "focused",
+      "python": "3.11.16",
+      "passed": 149,
+      "failures": 0,
+      "seconds": 14.365,
+      "network": "pytest-socket blocked except Unix sockets",
+      "log_sha256": "b785a6106971fc052b90951429ca0faa902f4a768870c3cb7c5c023b24f96a8e",
+      "junit_sha256": "d05a8341df18f1d3f95606f1e439c7f4259e55d50688ea36e437d20baf644565"
+    },
+    {
+      "scope": "ordinary",
+      "python": "3.14.7",
+      "passed": 355,
+      "failures": 0,
+      "seconds": 32.475,
+      "network": "pytest-socket blocked except Unix sockets",
+      "log_sha256": "558887a8f3eae0ba9b9f1667bdecbeb81e9239118744b46a1c4cf83581f1c55f",
+      "junit_sha256": "9b96f8ecdee4f762779a5964dab9a2149ab8347cf1814074c6404a2b363d205a"
+    },
+    {
+      "scope": "ordinary",
+      "python": "3.11.16",
+      "passed": 355,
+      "failures": 0,
+      "seconds": 27.667,
+      "network": "pytest-socket blocked except Unix sockets",
+      "log_sha256": "341e651eb739a5bba20cb8379584673995bb193d730c044455b8961f9ea4117a",
+      "junit_sha256": "0dbf5c78c87ef43e65eeaeaf5caa9b20d38c7f0d6678b2a7e2954f76f973386c"
+    }
+  ],
+  "relevant_tests_per_interpreter": 504,
+  "fresh_full_suite": false,
+  "fresh_global_coverage": false,
+  "fresh_browser_run": false,
+  "base_full_suite_evidence": "docs/plans/2026-10-10-pr07b4b1-verification.json (3406 tests per interpreter before this change)",
+  "static_checks": {
+    "ruff_check": "passed",
+    "ruff_format": "passed (268 Python files)",
+    "mypy": "passed (120 source files)",
+    "diff_check": "passed",
+    "existing_test_ast_equivalence": "63 reviewed calls only add allow_incomplete_projections=True; all prior assertions/control flow unchanged"
+  },
+  "packaging": {
+    "application_files": 154,
+    "all_application_files_byte_exact": true,
+    "wheel_sha256": "cf8f7f1029b8661e2f3dd90415e626334207b6dc798c713db6103e7de5ade7cd",
+    "sdist_sha256": "2375892cabce3560381e4f74eb3a33a9f54882bee2c7b06c7ecc43802e024062",
+    "sdist_checkout_files_byte_exact": 326,
+    "private_artifacts_excluded": true,
+    "generator": "Wheel-Version: 1.0\nGenerator: hatchling 1.32.4\nRoot-Is-Purelib: true\nTag: py3-none-any\n"
+  },
+  "copy_rehearsal": {
+    "network_blocked": true,
+    "source_sha256": "e2bdf0073f39067b85a8f1deb707b828cd369f45c9244a9c0360aed2f0934fa7",
+    "original_unchanged": true,
+    "original_rows_preserved": true,
+    "restart_idempotent": true,
+    "integrity": "ok",
+    "foreign_key_errors": 0,
+    "cases": {
+      "southborough": {
+        "default_merge_split_reversal_refused": true,
+        "explicit_copy_merge_and_reversal": true,
+        "read_only_committed_replay": true,
+        "all_original_rows_preserved": true
+      },
+      "wilmot": {
+        "default_merge_split_reversal_refused": true,
+        "explicit_copy_merge_and_reversal": true,
+        "read_only_committed_replay": true,
+        "all_original_rows_preserved": true
+      }
+    }
+  },
+  "fifty_property_replay": {
+    "input_count": 50,
+    "groups_per_shape": {
+      "same_run": 35,
+      "split_run": 35
+    },
+    "checks": {
+      "same_and_split_match_live_membership": true,
+      "known_replay_produces_no_new_work": true,
+      "no_model_attempts": true,
+      "database_integrity": true,
+      "original_artifacts_unchanged": true
+    },
+    "original_artifacts_unchanged": true,
+    "report_sha256": "15023838d976036c6796bd31d5e7cfdbcaf39d3105df4d8d86007aea9bf70f2b"
+  },
+  "limits": {
+    "existing_stale_assessments_repaired": false,
+    "remaining_projection_consumers_complete": false,
+    "rehearsal_override_validates_copy_path": false,
+    "new_configuration_or_schema": false,
+    "production_changed": false,
+    "paid_model_calls": 0,
+    "portal_fetches": 0,
+    "telegram_sends": 0
+  },
+  "next": "returned-detail identity validation; qualified bills; frozen snapshot validity"
+}

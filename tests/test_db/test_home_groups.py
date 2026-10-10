@@ -23,22 +23,23 @@ async def test_chained_merges_and_representative_change_flatten_every_issued_lin
     db, props, targets = homes
     a, b, c = [t.home_id for t in targets]
     first = await db.memberships.prepare_merge(a, (b,), **REVIEW)
-    await db.memberships.apply(first)
+    await db.memberships.apply(first, allow_incomplete_projections=True)
     second = await db.memberships.prepare_merge(c, (b,), **REVIEW)
     assert second.before.scope_home_ids == tuple(sorted((a, b, c)))
-    await db.memberships.apply(second)
+    await db.memberships.apply(second, allow_incomplete_projections=True)
     for p, t in zip(props, targets, strict=True):
         assert await db.homes.resolve(p.unique_id) == targets[2]
         assert await db.homes.resolve(t.home_id) == targets[2]
     # An existing group may deliberately choose another retained representative.
     reanchor = await db.memberships.prepare_merge(b, (c,), **REVIEW)
-    await db.memberships.apply(reanchor)
+    await db.memberships.apply(reanchor, allow_incomplete_projections=True)
     assert len(await db.get_all_properties()) == 1
     assert await db.homes.resolve(a) == targets[1]
     with pytest.raises(MembershipConflict, match="later_decision"):
         await db.memberships.prepare_reversal(second.decision_id, **REVIEW)
     await db.memberships.apply(
-        await db.memberships.prepare_reversal(reanchor.decision_id, **REVIEW)
+        await db.memberships.prepare_reversal(reanchor.decision_id, **REVIEW),
+        allow_incomplete_projections=True,
     )
     assert await db.homes.resolve(a) == targets[2]
     assert (await db.memberships.audit()).valid
@@ -48,7 +49,8 @@ async def test_personal_actions_never_follow_group_representative(homes):
     db, props, targets = homes
     await db.save_viewing_message(targets[1].home_id, "Original B message")
     await db.memberships.apply(
-        await db.memberships.prepare_merge(targets[0].home_id, (targets[1].home_id,), **REVIEW)
+        await db.memberships.prepare_merge(targets[0].home_id, (targets[1].home_id,), **REVIEW),
+        allow_incomplete_projections=True,
     )
     await db.update_user_status(targets[1].home_id, UserStatus.ARCHIVED)
     assert len(await db.get_status_history(props[1].unique_id)) == 1
@@ -69,7 +71,8 @@ async def test_alias_with_one_display_group_and_two_origins_refuses_mutation(hom
             [(t.home_id,) for t in targets[:2]],
         )
     await db.memberships.apply(
-        await db.memberships.prepare_merge(targets[0].home_id, (targets[1].home_id,), **REVIEW)
+        await db.memberships.prepare_merge(targets[0].home_id, (targets[1].home_id,), **REVIEW),
+        allow_incomplete_projections=True,
     )
     assert await db.homes.resolve("fixture:ambiguous") == targets[0]
     before = await snapshot(db)
@@ -86,13 +89,15 @@ async def test_split_requires_review_when_one_original_home_spans_destinations(
     await db.upsert_source_listings([extra])
     await db.link_source_listings([(extra.unique_id, props[1].unique_id)])
     a, b, c = [t.home_id for t in targets]
-    await db.memberships.apply(await db.memberships.prepare_merge(a, (b,), **REVIEW))
+    await db.memberships.apply(
+        await db.memberships.prepare_merge(a, (b,), **REVIEW), allow_incomplete_projections=True
+    )
     with pytest.raises(MembershipConflict, match="ambiguous_alias_split"):
         await db.memberships.prepare_split(a, {props[1].unique_id: c}, **REVIEW)
     decision = await db.memberships.prepare_split(
         a, {props[1].unique_id: c}, alias_routes={b: c}, **REVIEW
     )
-    await db.memberships.apply(decision)
+    await db.memberships.apply(decision, allow_incomplete_projections=True)
     assert await db.homes.resolve(b) == targets[2]
     # Provenance remains visible in each group containing the original home's members.
     async with db._read_connection() as conn:
@@ -130,14 +135,15 @@ async def test_retirement_keeps_every_original_row_and_reversal_restores_pending
     retained = await rows(db, "properties")
     assert retained[-1] == original_properties[-1]
     reversal = await db.memberships.prepare_reversal(decision_id, **REVIEW)
-    await db.memberships.apply(reversal)
+    await db.memberships.apply(reversal, allow_incomplete_projections=True)
     assert await db.homes.resolve(old.home_id) == old
     assert await rows(db, "source_listings") == original_sources
     assert pending.unique_id in {
         m.canonical.unique_id for m in await db.pipeline.get_unenriched_properties()
     }
     await db.memberships.apply(
-        await db.memberships.prepare_reversal(reversal.decision_id, **REVIEW)
+        await db.memberships.prepare_reversal(reversal.decision_id, **REVIEW),
+        allow_incomplete_projections=True,
     )
     assert await db.get_property(pending.unique_id) is None
     assert (await db.memberships.audit()).valid
@@ -153,9 +159,12 @@ async def test_unpromoted_staging_alias_tracks_reversal_to_unowned(homes, sample
     decision_id = (await rows(db, "membership_decisions"))[-1][1]
     assert await db.homes.resolve(pending.unique_id) == targets[0]
     undo = await db.memberships.prepare_reversal(decision_id, **REVIEW)
-    await db.memberships.apply(undo)
+    await db.memberships.apply(undo, allow_incomplete_projections=True)
     assert await db.homes.resolve(pending.unique_id) is None
-    await db.memberships.apply(await db.memberships.prepare_reversal(undo.decision_id, **REVIEW))
+    await db.memberships.apply(
+        await db.memberships.prepare_reversal(undo.decision_id, **REVIEW),
+        allow_incomplete_projections=True,
+    )
     assert await db.homes.resolve(pending.unique_id) == targets[0]
     assert (await db.memberships.audit()).valid
 
@@ -163,7 +172,8 @@ async def test_unpromoted_staging_alias_tracks_reversal_to_unowned(homes, sample
 async def test_inactive_home_cannot_reserve_model_spend_or_queue_reanalysis(homes):
     db, props, targets = homes
     await db.memberships.apply(
-        await db.memberships.prepare_merge(targets[0].home_id, (targets[1].home_id,), **REVIEW)
+        await db.memberships.prepare_merge(targets[0].home_id, (targets[1].home_id,), **REVIEW),
+        allow_incomplete_projections=True,
     )
     with pytest.raises(SpendDeferred, match="inactive_home"):
         await db.spend.admit(
@@ -192,7 +202,8 @@ async def test_inactive_home_cannot_reserve_model_spend_or_queue_reanalysis(home
 async def test_route_journal_and_projection_cannot_be_silently_rewritten(homes, statement):
     db, _, targets = homes
     await db.memberships.apply(
-        await db.memberships.prepare_merge(targets[0].home_id, (targets[1].home_id,), **REVIEW)
+        await db.memberships.prepare_merge(targets[0].home_id, (targets[1].home_id,), **REVIEW),
+        allow_incomplete_projections=True,
     )
     before = await snapshot(db)
     with pytest.raises(aiosqlite.IntegrityError):
@@ -213,7 +224,7 @@ async def test_route_failure_rolls_back_membership_and_invalidations(homes):
             "BEGIN SELECT RAISE(ABORT, 'route fault'); END"
         )
     with pytest.raises(aiosqlite.IntegrityError, match="route fault"):
-        await db.memberships.apply(decision)
+        await db.memberships.apply(decision, allow_incomplete_projections=True)
     assert await snapshot(db) == before
 
 
@@ -238,10 +249,10 @@ async def test_committed_v1_command_retry_and_reversal_remain_supported(homes):
             changes={props[1].unique_id: (targets[1].home_id, targets[0].home_id)},
         )
     before = await snapshot(db)
-    assert (await db.memberships.apply(legacy)).replayed
+    assert (await db.memberships.apply(legacy, allow_incomplete_projections=True)).replayed
     assert await snapshot(db) == before
     undo = await db.memberships.prepare_reversal(legacy.decision_id, **REVIEW)
-    await db.memberships.apply(undo)
+    await db.memberships.apply(undo, allow_incomplete_projections=True)
     assert await db.homes.resolve(targets[1].home_id) == targets[1]
     assert (await db.memberships.audit()).valid
 
@@ -255,7 +266,9 @@ async def test_unapplied_v1_review_requires_refresh(homes):
     del payload["before"]["routes"]
     del payload["after_routes"]
     with pytest.raises(MembershipConflict, match="requires_refresh"):
-        await db.memberships.apply(MembershipDecision.model_validate(payload))
+        await db.memberships.apply(
+            MembershipDecision.model_validate(payload), allow_incomplete_projections=True
+        )
 
 
 async def test_route_corruption_audit_is_read_only(homes):
@@ -302,7 +315,8 @@ async def test_merge_after_reservation_releases_it_before_dispatch(homes):
         spec().model_copy(update={"property_id": props[1].unique_id}), policy()
     )
     await db.memberships.apply(
-        await db.memberships.prepare_merge(targets[0].home_id, (targets[1].home_id,), **REVIEW)
+        await db.memberships.prepare_merge(targets[0].home_id, (targets[1].home_id,), **REVIEW),
+        allow_incomplete_projections=True,
     )
     with pytest.raises(SpendDeferred, match="inactive_home"):
         await db.spend.mark_dispatched(attempt)
@@ -380,7 +394,7 @@ async def test_all_work_queues_exclude_grouped_donor_and_restore_exact_state(
         await conn.execute("UPDATE quality_analyses SET reanalysis_requested_at = 'fixture'")
     original = {t: await rows(db, t) for t in ("properties", "quality_analyses", "price_history")}
     merge = await db.memberships.prepare_merge(targets[0].home_id, (targets[1].home_id,), **REVIEW)
-    await db.memberships.apply(merge)
+    await db.memberships.apply(merge, allow_incomplete_projections=True)
     assert len(await db.get_pending_notifications()) == 2
     assert len(await db.get_unsent_notifications()) == 2
     assert len(await db.get_recent_properties_for_dedup(days=None)) == 2
@@ -388,7 +402,10 @@ async def test_all_work_queues_exclude_grouped_donor_and_restore_exact_state(
     assert len(await db.get_properties_needing_commute()) == 2
     assert len(await db.get_properties_for_off_market_check()) == 2
     assert len(await db.pipeline.get_reanalysis_queue()) == 2
-    await db.memberships.apply(await db.memberships.prepare_reversal(merge.decision_id, **REVIEW))
+    await db.memberships.apply(
+        await db.memberships.prepare_reversal(merge.decision_id, **REVIEW),
+        allow_incomplete_projections=True,
+    )
     assert len(await db.pipeline.get_reanalysis_queue()) == 3
     for table, expected in original.items():
         assert await rows(db, table) == expected
@@ -401,9 +418,12 @@ async def test_price_alerts_exclude_donors_without_consuming_their_pending_alert
         await db.detect_and_record_price_change(prop.unique_id, prop.price_pcm - 100)
     before = await rows(db, "price_history")
     merge = await db.memberships.prepare_merge(targets[0].home_id, (targets[1].home_id,), **REVIEW)
-    await db.memberships.apply(merge)
+    await db.memberships.apply(merge, allow_incomplete_projections=True)
     assert len(await db.get_unsent_price_drops()) == 2
-    await db.memberships.apply(await db.memberships.prepare_reversal(merge.decision_id, **REVIEW))
+    await db.memberships.apply(
+        await db.memberships.prepare_reversal(merge.decision_id, **REVIEW),
+        allow_incomplete_projections=True,
+    )
     assert len(await db.get_unsent_price_drops()) == 3
     assert await rows(db, "price_history") == before
 

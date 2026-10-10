@@ -28,7 +28,8 @@ async def grouped(storage, sample_property):
     await storage.update_user_status(a.home_id, UserStatus.INTERESTED, note="First note")
     await storage.update_user_status(b.home_id, UserStatus.ARCHIVED, note="Second note")
     await storage.memberships.apply(
-        await storage.memberships.prepare_merge(a.home_id, (b.home_id,), **REVIEW)
+        await storage.memberships.prepare_merge(a.home_id, (b.home_id,), **REVIEW),
+        allow_incomplete_projections=True,
     )
     return first, second, a, b
 

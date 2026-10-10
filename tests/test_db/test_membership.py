@@ -93,7 +93,7 @@ async def test_merge_split_replay_preserves_all_rows_and_original_links(
     review = await review_pair(db, targets)
     assert review.before.has_status_conflict and review.before.has_message_conflict
     assert MembershipDecision.model_validate_json(review.model_dump_json()) == review
-    receipt = await db.memberships.apply(review)
+    receipt = await db.memberships.apply(review, allow_incomplete_projections=True)
     assert receipt.changed == 1 and not receipt.replayed
     combined = await db.memberships.inspect((targets[0].home_id,))
     assert {m.source_unique_id for m in combined.members} == {p.unique_id for p in props[:2]}
@@ -121,14 +121,14 @@ async def test_merge_split_replay_preserves_all_rows_and_original_links(
     split = await db.memberships.prepare_split(
         targets[0].home_id, {props[1].unique_id: targets[1].home_id}, **REVIEW
     )
-    await db.memberships.apply(split)
+    await db.memberships.apply(split, allow_incomplete_projections=True)
     assert await rows(db, "source_listings") == original["source_listings"]
     assert (await db.memberships.inspect((targets[1].home_id,))).personal_states[
         0
     ].user_status == "viewing_booked"
     after_split = await snapshot(db)
     # Retrying the old committed merge acknowledges it; it must not merge again.
-    replayed = await db.memberships.apply(review)
+    replayed = await db.memberships.apply(review, allow_incomplete_projections=True)
     assert replayed.replayed and replayed.revision == receipt.revision
     assert await snapshot(db) == after_split
     audit = await db.memberships.audit()
@@ -140,14 +140,14 @@ async def test_reversal_uses_recorded_map_and_can_itself_be_reversed(homes):
     db, _, targets = homes
     original = await rows(db, "source_listings")
     merge = await review_pair(db, targets)
-    await db.memberships.apply(merge)
+    await db.memberships.apply(merge, allow_incomplete_projections=True)
     reversal = await db.memberships.prepare_reversal(merge.decision_id, **REVIEW)
-    await db.memberships.apply(reversal)
+    await db.memberships.apply(reversal, allow_incomplete_projections=True)
     assert await rows(db, "source_listings") == original
     with pytest.raises(MembershipConflict, match="already_reversed"):
         await db.memberships.prepare_reversal(merge.decision_id, **REVIEW)
     redo = await db.memberships.prepare_reversal(reversal.decision_id, **REVIEW)
-    await db.memberships.apply(redo)
+    await db.memberships.apply(redo, allow_incomplete_projections=True)
     assert len((await db.memberships.inspect((targets[0].home_id,))).members) == 2
 
 
@@ -155,12 +155,12 @@ async def test_intervening_membership_change_and_change_back_invalidate_old_revi
     db, _, targets = homes
     old_review = await review_pair(db, targets)
     applied = await review_pair(db, targets)
-    await db.memberships.apply(applied)
+    await db.memberships.apply(applied, allow_incomplete_projections=True)
     undo = await db.memberships.prepare_reversal(applied.decision_id, **REVIEW)
-    await db.memberships.apply(undo)
+    await db.memberships.apply(undo, allow_incomplete_projections=True)
     before = await snapshot(db)
     with pytest.raises(MembershipConflict, match="stale"):
-        await db.memberships.apply(old_review)
+        await db.memberships.apply(old_review, allow_incomplete_projections=True)
     assert await snapshot(db) == before
 
 
@@ -195,7 +195,7 @@ async def test_review_rejects_changed_state_or_added_members(homes, mutation, sa
         await db.link_source_listings([(extra.unique_id, props[1].unique_id)])
     before = await snapshot(db)
     with pytest.raises(MembershipConflict, match="stale"):
-        await db.memberships.apply(review)
+        await db.memberships.apply(review, allow_incomplete_projections=True)
     assert await snapshot(db) == before
 
 
@@ -206,20 +206,25 @@ async def test_partial_or_forged_review_is_not_accepted(homes):
     tampered["before"]["members"].pop(0)
     tampered["after"].pop(0)
     with pytest.raises(MembershipConflict, match="stale"):
-        await db.memberships.apply(MembershipDecision.model_validate(tampered))
-    await db.memberships.apply(review)
+        await db.memberships.apply(
+            MembershipDecision.model_validate(tampered), allow_incomplete_projections=True
+        )
+    await db.memberships.apply(review, allow_incomplete_projections=True)
     with pytest.raises(MembershipConflict, match="different_payload"):
-        await db.memberships.apply(review.model_copy(update={"reason": "different evidence"}))
+        await db.memberships.apply(
+            review.model_copy(update={"reason": "different evidence"}),
+            allow_incomplete_projections=True,
+        )
 
 
 async def test_later_split_blocks_reversal_of_the_original_merge(homes):
     db, props, targets = homes
     merge = await review_pair(db, targets)
-    await db.memberships.apply(merge)
+    await db.memberships.apply(merge, allow_incomplete_projections=True)
     split = await db.memberships.prepare_split(
         targets[0].home_id, {props[1].unique_id: targets[1].home_id}, **REVIEW
     )
-    await db.memberships.apply(split)
+    await db.memberships.apply(split, allow_incomplete_projections=True)
     with pytest.raises(MembershipConflict, match="later_decision"):
         await db.memberships.prepare_reversal(merge.decision_id, **REVIEW)
 
@@ -232,8 +237,8 @@ async def test_two_independent_connections_cannot_apply_conflicting_reviews(home
             targets[2].home_id, (targets[1].home_id,), **REVIEW
         )
         result = await asyncio.gather(
-            db.memberships.apply(first_review),
-            second.memberships.apply(second_review),
+            db.memberships.apply(first_review, allow_incomplete_projections=True),
+            second.memberships.apply(second_review, allow_incomplete_projections=True),
             return_exceptions=True,
         )
         assert sum(isinstance(item, MembershipConflict) for item in result) == 1
@@ -259,7 +264,9 @@ async def test_failed_or_cancelled_group_rolls_back_every_write(homes, failure):
             await asyncio.Future()
 
         with patch("home_finder.db.membership.write_membership_decision", side_effect=interrupt):
-            task = asyncio.create_task(db.memberships.apply(review))
+            task = asyncio.create_task(
+                db.memberships.apply(review, allow_incomplete_projections=True)
+            )
             await asyncio.wait_for(reached.wait(), 5)
             task.cancel()
             with pytest.raises(asyncio.CancelledError):
@@ -276,7 +283,7 @@ async def test_failed_or_cancelled_group_rolls_back_every_write(homes, failure):
                 "BEGIN SELECT RAISE(ABORT, 'injected failure'); END"
             )
         with pytest.raises(aiosqlite.IntegrityError, match="injected failure"):
-            await db.memberships.apply(review)
+            await db.memberships.apply(review, allow_incomplete_projections=True)
     assert await snapshot(db) == before
 
 
@@ -285,7 +292,7 @@ async def test_failed_or_cancelled_group_rolls_back_every_write(homes, failure):
 )
 async def test_ordinary_save_paths_cannot_undo_a_reviewed_assignment(homes, method):
     db, props, targets = homes
-    await db.memberships.apply(await review_pair(db, targets))
+    await db.memberships.apply(await review_pair(db, targets), allow_incomplete_projections=True)
     before = await snapshot(db)
     prop = props[1].model_copy(update={"price_pcm": 9876})
     with pytest.raises((MergeBlockedError, HomeIdentityConflict)):
@@ -363,7 +370,9 @@ async def test_malformed_review_metadata_is_rejected(homes, field, value):
     db, _, targets = homes
     review = await review_pair(db, targets)
     with pytest.raises(ValidationError):
-        await db.memberships.apply(review.model_copy(update={field: value}))
+        await db.memberships.apply(
+            review.model_copy(update={field: value}), allow_incomplete_projections=True
+        )
 
 
 async def test_migration_preserves_conflicting_owners_and_is_repeatable(tmp_path):
@@ -430,17 +439,19 @@ async def test_partial_migration_rolls_back_schema_and_version(tmp_path):
 async def test_reversal_cannot_invent_an_unrecorded_destination(homes):
     db, _, targets = homes
     review = await review_pair(db, targets)
-    await db.memberships.apply(review)
+    await db.memberships.apply(review, allow_incomplete_projections=True)
     reversal = await db.memberships.prepare_reversal(review.decision_id, **REVIEW)
     forged = reversal.model_dump(mode="json")
     forged["operation"] = "merge"
     forged["reverses"] = None
     with pytest.raises(MembershipConflict, match="merge_requires"):
-        await db.memberships.apply(MembershipDecision.model_validate(forged))
+        await db.memberships.apply(
+            MembershipDecision.model_validate(forged), allow_incomplete_projections=True
+        )
     before = await snapshot(db)
     invalid = reversal.model_copy(update={"reverses": "md_" + uuid4().hex})
     with pytest.raises(MembershipConflict, match="only_reviewed"):
-        await db.memberships.apply(invalid)
+        await db.memberships.apply(invalid, allow_incomplete_projections=True)
     assert await snapshot(db) == before
 
 
@@ -450,7 +461,7 @@ async def test_reviewed_empty_donor_cannot_be_retired_as_staging(homes, sample_p
     await db.pipeline.save_unenriched_property(merged(pending))
     donor = await db.homes.resolve(pending.unique_id)
     decision = await db.memberships.prepare_merge(targets[0].home_id, (donor.home_id,), **REVIEW)
-    await db.memberships.apply(decision)
+    await db.memberships.apply(decision, allow_incomplete_projections=True)
     before = await snapshot(db)
     with pytest.raises(MergeBlockedError) as error:
         await db.delete_property(pending.unique_id)
@@ -464,7 +475,8 @@ async def test_reviewed_empty_donor_cannot_be_retired_as_staging(homes, sample_p
             await conn.execute("DELETE FROM properties WHERE unique_id = ?", (pending.unique_id,))
     assert await snapshot(db) == before
     await db.memberships.apply(
-        await db.memberships.prepare_reversal(decision.decision_id, **REVIEW)
+        await db.memberships.prepare_reversal(decision.decision_id, **REVIEW),
+        allow_incomplete_projections=True,
     )
     assert (await db.memberships.audit()).valid
 
@@ -533,7 +545,7 @@ async def test_url_linkage_uses_the_journal_and_stable_member_queries(homes, mak
 @pytest.mark.parametrize("replace", ["owned_source", "reviewed_empty_home"])
 async def test_replace_cannot_bypass_delete_guards_with_recursive_triggers_off(homes, replace):
     db, props, targets = homes
-    await db.memberships.apply(await review_pair(db, targets))
+    await db.memberships.apply(await review_pair(db, targets), allow_incomplete_projections=True)
     before = await snapshot(db)
     with pytest.raises(aiosqlite.IntegrityError, match="membership decision"):
         async with db._transaction() as conn:

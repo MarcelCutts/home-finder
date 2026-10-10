@@ -487,7 +487,16 @@ class MembershipRepository:
             await _validate_operation(conn, decision)
             return decision
 
-    async def apply(self, decision: MembershipDecision) -> MembershipReceipt:
+    async def apply(
+        self, decision: MembershipDecision, *, allow_incomplete_projections: bool = False
+    ) -> MembershipReceipt:
+        """Refuse new reviewed regrouping until derived consumers are ready.
+
+        The explicit override is for isolated disposable-copy rehearsals only;
+        it does not check the database's location or make its projections safe.
+        An exact committed retry is read-only and remains available without it.
+        No application setting or request payload enables this override.
+        """
         # Revalidate even model_copy/model_construct input; neither is validation.
         decision = MembershipDecision.model_validate_json(decision.model_dump_json())
         payload = decision.model_dump_json()
@@ -509,6 +518,8 @@ class MembershipRepository:
                         replayed=True,
                     )
                 else:
+                    if allow_incomplete_projections is not True:
+                        raise MembershipConflict("reviewed_regrouping_disabled")
                     if decision.version != 2:
                         raise MembershipConflict("old_review_requires_refresh")
                     current = await membership_snapshot(

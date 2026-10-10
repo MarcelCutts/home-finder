@@ -31,7 +31,10 @@ async def test_same_portal_links_text_and_conflicting_cost_claims_survive_split(
         await storage.save_property(prop)
     targets = [await storage.homes.resolve(prop.unique_id) for prop in props]
     await storage.memberships.apply(
-        await storage.memberships.prepare_merge(targets[0].home_id, (targets[1].home_id,), **REVIEW)
+        await storage.memberships.prepare_merge(
+            targets[0].home_id, (targets[1].home_id,), **REVIEW
+        ),
+        allow_incomplete_projections=True,
     )
     page = client.get(f"/property/{targets[0].home_id}")
     assert page.status_code == 200
@@ -52,7 +55,8 @@ async def test_same_portal_links_text_and_conflicting_cost_claims_survive_split(
     await storage.memberships.apply(
         await storage.memberships.prepare_split(
             targets[0].home_id, {props[1].unique_id: targets[1].home_id}, **REVIEW
-        )
+        ),
+        allow_incomplete_projections=True,
     )
     page = client.get(f"/property/{targets[0].home_id}")
     assert escape(props[0].description) in page.text

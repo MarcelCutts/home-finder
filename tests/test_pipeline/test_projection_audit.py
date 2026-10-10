@@ -35,7 +35,7 @@ async def test_audit_preserves_pending_work_and_uses_committed_wal_inputs(homes,
     await db.projections.rebuild_pending()
     # Keep the application connection open: latest changes are in WAL, not the main file.
     merge = await db.memberships.prepare_merge(targets[0].home_id, (targets[1].home_id,), **REVIEW)
-    await db.memberships.apply(merge)
+    await db.memberships.apply(merge, allow_incomplete_projections=True)
     before = await snapshot(db)
     output = tmp_path / "private-audit"
     path = await write_projection_audit(Path(db.db_path), output, home_ids=(targets[0].home_id,))
