@@ -47,6 +47,7 @@ def reconcile_analysis_badges(
         ("yes",),
     )
     kitchen = analysis.kitchen
+    storage = analysis.storage
     for positive, negative, field, value in (
         (
             PropertyHighlight.DISHWASHER,
@@ -59,6 +60,12 @@ def reconcile_analysis_badges(
             PropertyLowlight.NO_WASHING_MACHINE,
             "kitchen.has_washing_machine",
             kitchen.has_washing_machine if kitchen else None,
+        ),
+        (
+            PropertyHighlight.BUILT_IN_WARDROBES,
+            PropertyLowlight.NO_BUILT_IN_WARDROBES,
+            "storage.has_built_in_wardrobes",
+            storage.has_built_in_wardrobes if storage else None,
         ),
     ):
         require(positive, field, value, ("yes",))

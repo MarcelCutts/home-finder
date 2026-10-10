@@ -122,6 +122,18 @@ async def test_hosting_badges_follow_final_layout_without_changing_prose_or_rati
         ("no", "Bills are not included.", "no", False),
         ("no", "Bills included.", "unknown", False),
         ("unknown", "All bills included.", "unknown", False),
+        (
+            "no",
+            "<strong>Summary:</strong><br />- Furnished<br/>"
+            "- Bills not included<br>- Pets considered",
+            "no",
+            False,
+        ),
+        ("yes", "<ul><li>- All bills included</li><li>- Furnished</li></ul>", "yes", True),
+        ("unknown", "<p>- Bills not included</p>", "unknown", False),
+        ("yes", "<p>- Bills included if agreed</p>", "unknown", False),
+        ("yes", "<p>- Some bills included</p>", "unknown", False),
+        ("yes", "<p>- Bills included</p><p>- Bills excluded</p>", "unknown", False),
     ],
 )
 async def test_bills_badge_uses_canonical_correction_not_the_raw_evaluation(
@@ -173,6 +185,29 @@ async def test_appliance_and_glazing_badges_require_matching_tristate_evidence(a
     assert len(logs) == 5 - len(result.highlights) - len(result.lowlights)
 
 
+@pytest.mark.parametrize("state", ["yes", "no", "unknown"])
+async def test_wardrobe_badges_use_explicit_storage_evidence(assemble, state):
+    result, logs = await assemble(
+        visual={
+            "storage": {"has_built_in_wardrobes": state},
+            "bedroom": {"has_built_in_wardrobe": "no" if state == "yes" else "yes"},
+        },
+        highlights=["Built-in wardrobes", "Modern kitchen"],
+        lowlights=["No built-in wardrobes", "Potential traffic noise"],
+    )
+    assert result.highlights == [
+        *(["Built-in wardrobes"] if state == "yes" else []),
+        "Modern kitchen",
+    ]
+    assert result.lowlights == [
+        *(["No built-in wardrobes"] if state == "no" else []),
+        "Potential traffic noise",
+    ]
+    assert result.storage.has_built_in_wardrobes == state
+    assert len(logs) == (2 if state == "unknown" else 1)
+    assert all(log["field"] == "storage.has_built_in_wardrobes" for log in logs)
+
+
 @pytest.mark.parametrize(
     "present", ["has_balcony", "has_garden", "has_terrace", "has_shared_garden", None]
 )
@@ -202,10 +237,11 @@ async def test_supported_facts_do_not_generate_new_badges(assemble):
 
 def test_historical_load_is_unchanged_and_explicit_guard_is_idempotent(make_quality_analysis):
     original = make_quality_analysis(
-        highlights=["Bills included", "Double glazing", "Modern kitchen"],
-        lowlights=["Poor hosting layout"],
+        highlights=["Bills included", "Double glazing", "Built-in wardrobes", "Modern kitchen"],
+        lowlights=["Poor hosting layout", "No built-in wardrobes"],
         listing_extraction=None,
         flooring_noise=None,
+        storage=None,
     )
     saved = original.model_dump_json()
     loaded = PropertyQualityAnalysis.model_validate_json(saved)
@@ -214,7 +250,7 @@ def test_historical_load_is_unchanged_and_explicit_guard_is_idempotent(make_qual
     with structlog.testing.capture_logs() as first_logs:
         checked = reconcile_analysis_badges(loaded)
     assert checked.highlights == ["Modern kitchen"] and checked.lowlights == []
-    assert len(first_logs) == 3
+    assert len(first_logs) == 5
     with structlog.testing.capture_logs() as repeat_logs:
         assert reconcile_analysis_badges(checked) is checked
     assert repeat_logs == [] and loaded.model_dump_json() == loaded_before
