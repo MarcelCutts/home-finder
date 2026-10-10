@@ -391,7 +391,7 @@ Historical research comparator: £1,900/month (rent is £100 below). Effective d
 </unverified_reference>
 
 <rental_guidance>
-England: private assured periodic tenancies; effective 1 May 2026; checked 28 September 2026. For these tenancies, landlords and agents must not invite or accept rent above the advertised amount. Most existing assured shorthold tenancies became periodic on 1 May 2026. Lodgers, social housing and some student accommodation have different rules. Confirm which tenancy applies before relying on this guidance. Source: https://www.gov.uk/assured-periodic-tenancies-tenants/rental-bidding
+England: private assured periodic tenancies; effective 1 May 2026; checked 10 October 2026. For these tenancies, landlords and agents must not invite or accept rent above the advertised amount. Most existing assured shorthold tenancies became periodic on 1 May 2026. Lodgers, social housing and some student accommodation have different rules. Confirm which tenancy applies before relying on this guidance. Source: https://www.gov.uk/assured-periodic-tenancies-tenants/rental-bidding
 </rental_guidance>
 
 Based on the visual analysis observations above, provide your evaluation as JSON matching the output schema.\
@@ -431,7 +431,7 @@ Charming period flat in need of updating.
 </listing_description>
 
 <rental_guidance>
-England: private assured periodic tenancies; effective 1 May 2026; checked 28 September 2026. For these tenancies, landlords and agents must not invite or accept rent above the advertised amount. Most existing assured shorthold tenancies became periodic on 1 May 2026. Lodgers, social housing and some student accommodation have different rules. Confirm which tenancy applies before relying on this guidance. Source: https://www.gov.uk/assured-periodic-tenancies-tenants/rental-bidding
+England: private assured periodic tenancies; effective 1 May 2026; checked 10 October 2026. For these tenancies, landlords and agents must not invite or accept rent above the advertised amount. Most existing assured shorthold tenancies became periodic on 1 May 2026. Lodgers, social housing and some student accommodation have different rules. Confirm which tenancy applies before relying on this guidance. Source: https://www.gov.uk/assured-periodic-tenancies-tenants/rental-bidding
 </rental_guidance>
 
 Based on the visual analysis observations above, provide your evaluation as JSON matching the output schema.\

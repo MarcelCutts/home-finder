@@ -54,7 +54,7 @@ def test_invalid_and_undated_references_do_not_become_current_bills() -> None:
 
 def test_rental_guidance_has_date_scope_and_primary_sources() -> None:
     assert GUIDANCE["effective_from"] == "1 May 2026"
-    assert GUIDANCE["checked_on"] == "28 September 2026"
+    assert GUIDANCE["checked_on"] == "10 October 2026"
     assert "England" in GUIDANCE["scope"]
     assert "assured periodic" in GUIDANCE["scope"]
     assert "must not invite or accept rent above" in GUIDANCE["text"]
