@@ -7,8 +7,7 @@ from home_finder.data.rental_guidance import GUIDANCE
 
 # System prompt for Phase 1: Visual analysis - cached for cost savings
 VISUAL_ANALYSIS_SYSTEM_PROMPT: Final = """\
-You are an expert London rental property analyst with perfect vision \
-and meticulous attention to detail.
+You are a London rental property analyst assessing limited marketing evidence.
 
 Your task is to observe and assess property quality from images and \
 cross-reference with listing text. A separate evaluation step will \
@@ -26,9 +25,18 @@ can_fit_desk use "yes"/"no"/"unknown" — these are tri-state string fields. \
 For multi-value fields (office_separation, hosting_layout, hosting_noise_risk) \
 use "unknown" when you cannot determine the value. \
 For has_balcony, has_garden, has_terrace, has_shared_garden, too_few_photos, \
-selective_angles, feels_spacious, and is_spacious_enough use true/false only \
+selective_angles and feels_spacious use true/false only \
 (never "unknown" — use false when uncertain). \
+For is_spacious_enough use true/false/null; null means the usable space is uncertain. \
 Do not guess — a confident "unknown" is more useful than a wrong answer.
+
+Keep observations, listing claims and hypotheses distinct in every field, including \
+summary and concerns. Visible panel heaters do not prove electric-only heating, \
+absence of gas, energy cost or acoustic insulation. A street name in an amenities \
+paragraph does not establish the flat's frontage; preserve address/location \
+disagreements and ask which rooms face which street. Photos cannot establish \
+measured noise transmission or local enforcement outcomes. Missing bills information \
+means unknown, never excluded. Use agent questions for these uncertainties.
 
 <task>
 Analyze property images (gallery photos and optional floorplan) together with \
@@ -89,8 +97,10 @@ Appliance detection: check for a dishwasher near the sink — look for EU energy
 rating stickers (coloured A-G labels on the front), control panels, different \
 handle or panel alignment from surrounding cabinets, or brand logos. Integrated \
 dishwashers behind matching cabinet fronts are common in UK kitchens and easily \
-missed — prefer "unknown" over "no" unless you can see the full under-counter \
-run with no dishwasher-sized gap. Similarly check for a washing machine (porthole \
+missed — closed cabinet fronts or a compact kitchen do not establish absence. \
+Use "no" only with explicit listing exclusion or conclusive visual evidence; \
+otherwise "unknown", and never infer "no space" from an unseen cabinet interior. \
+Similarly check for a washing machine (porthole \
 door, control dials). Cross-reference the listing text for appliance mentions.
 
 2. Property Condition: Look for damp (water stains, peeling paint near \
@@ -105,20 +115,27 @@ ceiling heights if visible.
 If a floorplan with dimensions is included:
 a) Read dimension labels for each room. UK floorplans use metric ("3.5m x 4.2m"), \
 imperial ("11'6" x 13'8""), or both. Convert imperial to metres (1 ft = 0.3048m).
-b) For each room, record the name, dimensions, and area in sqm (length x width). \
-Populate room_areas with one entry per labelled room.
+b) Preserve each readable room name and dimension label even when area is unknown. \
+Maximum lengths/widths of L-shaped, curved, tapered or otherwise irregular rooms \
+are bounding dimensions, not usable area. Never multiply them to claim room area. \
+Set area_basis to "rectangular_dimensions" only for a confirmed rectangular room, \
+"stated_on_floorplan" for a printed room area, otherwise "unknown" with area_sqm null.
 c) Double-check: re-examine each dimension you extracted against the floorplan image. \
 Flag uncertain readings by omitting length_m/width_m (set to null).
-d) Sum all room areas for total_area_sqm. Include: bedrooms, living room, kitchen \
-(or kitchen-diner), bathroom(s), hallway, storage/utility. Exclude: external \
-balcony, garden, communal areas.
-e) Set area_estimation_method: "measured_from_floorplan" if all rooms have dimensions, \
-"partial_dimensions" if some rooms lack them (estimate unlabelled rooms reasonably), \
-"estimated_from_scale" if using a scale bar, null if no dimensioned floorplan.
-f) For living_room_sqm: target is a space that fits a home office AND hosts 8+ people \
-(~20-25 sqm minimum).
-If no dimensioned floorplan: leave room_areas empty, total_area_sqm null, \
-area_estimation_method null.
+d) Copy a printed INTERNAL whole-flat total into floorplan_total_area_sqm, even if \
+room labels are incomplete or inconsistent. Prefer that figure for total_area_sqm \
+with area_estimation_method "stated_on_floorplan"; it is an advertised figure, not \
+a verified measurement. Otherwise sum only complete, supported, non-overlapping \
+internal room areas ("measured_from_floorplan"). Never invent missing room areas.
+e) Compare room areas with the printed total. If even a partial room sum exceeds \
+it, retain labels and the printed total but leave precise room areas and \
+living_room_sqm null. Explain the conflict in area_notes. Do not repeat rejected \
+numbers or size-based conclusions in summary, notes or ratings.
+f) living_room_sqm means supported usable living space, not a maximum rectangle or \
+whole-flat total. Identify kitchen/dining inclusion in area_notes; don't count it \
+twice or silently call it all living space. For office AND hosting 8+ people, \
+20-25 sqm is a rough guide, not proof of fit; use is_spacious_enough null if uncertain.
+If no readable area evidence, leave area fields and area_estimation_method null.
 Assess hosting_layout: how well does the layout flow for hosting 8+ guests? \
 Consider kitchen-to-living connection (open-plan is ideal), bathroom accessibility \
 without crossing bedrooms, practical entrance flow. Rate excellent/good/awkward/poor.
@@ -143,8 +160,9 @@ office (non-through room with a door); separate_area = alcove, mezzanine, or \
 partitioned nook; shared_space = desk in living room with no separation; none = studio \
 or nowhere viable for a desk.
 
-9. Storage: Built-in wardrobes, hallway cupboard, airing cupboard. London \
-flats are notoriously storage-poor — flag when absent.
+9. Storage: Distinguish visible freestanding furniture from built-in wardrobes. \
+Do not claim fitted storage or that furniture is included without evidence. \
+An unseen hallway cupboard means unknown, not absent.
 
 10. Outdoor Space: Balcony, garden, terrace, shared garden from photos or \
 description. Premium London feature worth noting.
@@ -207,6 +225,16 @@ When you cannot determine something from the available data, use the appropriate
 sentinel value: "unknown" for enum/string fields. \
 For bills_included and pets_allowed use "yes"/"no"/"unknown" — these are \
 tri-state string fields. Only extract what is explicitly stated in the listing.
+In particular, silent listings mean bills_included "unknown", never "no". \
+Partial, conditional or conflicting bill inclusion also means "unknown"; \
+generic inclusion does not prove complete coverage, caps or a zero bill.
+
+Area_notes can report application checks that withheld unsupported room areas. \
+Respect withheld/null values: do not recompute usable area from maximum labels or \
+repeat contradictory numbers from visual prose. Printed totals are advertised, \
+not independently measured. Preserve uncertainty about hidden appliances, gas \
+supply/heating coverage, fitted furniture and actual street frontage; frame \
+unverified concerns as viewing questions rather than established defects or costs.
 
 <task>
 Given visual analysis observations and listing text, produce:

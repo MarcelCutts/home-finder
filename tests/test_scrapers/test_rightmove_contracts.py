@@ -2,7 +2,6 @@
 
 import json
 from pathlib import Path
-from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
 import httpx
@@ -121,21 +120,11 @@ async def test_actual_scrape_to_storage_retains_observations_beyond_selection_ca
         next_payload["props"]["pageProps"]["searchResults"]["properties"][1]["bedrooms"] = None
     seen_urls = []
 
-    def crawler(**kwargs):
-        instance = MagicMock()
-        handlers = []
-        instance.router.default_handler.side_effect = handlers.append
+    async def fetch(self, client, url):
+        seen_urls.append(url)
+        return str(as_soup(next_payload))
 
-        async def run(urls):
-            seen_urls.extend(urls)
-            await handlers[0](
-                SimpleNamespace(soup=as_soup(next_payload), request=SimpleNamespace(url=urls[0]))
-            )
-
-        instance.run.side_effect = run
-        return instance
-
-    monkeypatch.setattr("home_finder.scrapers.rightmove.BeautifulSoupCrawler", crawler)
+    monkeypatch.setattr(RightmoveScraper, "_fetch_page", fetch)
     settings = Settings(
         _env_file=None,
         database_path=":memory:",

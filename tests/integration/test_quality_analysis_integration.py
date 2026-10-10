@@ -5,7 +5,7 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-from anthropic.types import ToolUseBlock
+from anthropic.types import ToolUseBlock, Usage
 from pydantic import HttpUrl
 
 from home_finder.db import PropertyStorage
@@ -150,11 +150,12 @@ def _create_mock_response(
     mock_response = MagicMock()
     mock_response.content = [tool_block]
     mock_response.stop_reason = stop_reason
-    mock_response.usage = MagicMock()
-    mock_response.usage.input_tokens = 100
-    mock_response.usage.output_tokens = 50
-    mock_response.usage.cache_read_input_tokens = 0
-    mock_response.usage.cache_creation_input_tokens = 0
+    mock_response.usage = Usage(
+        input_tokens=100,
+        output_tokens=50,
+        cache_read_input_tokens=0,
+        cache_creation_input_tokens=0,
+    )
     return mock_response
 
 
@@ -168,11 +169,12 @@ def _create_mock_eval_response(eval_data: dict[str, Any]) -> MagicMock:
     text_block.text = json.dumps(eval_data)
     mock_response.content = [text_block]
     mock_response.stop_reason = "end_turn"
-    mock_response.usage = MagicMock()
-    mock_response.usage.input_tokens = 100
-    mock_response.usage.output_tokens = 50
-    mock_response.usage.cache_read_input_tokens = 0
-    mock_response.usage.cache_creation_input_tokens = 0
+    mock_response.usage = Usage(
+        input_tokens=100,
+        output_tokens=50,
+        cache_read_input_tokens=0,
+        cache_creation_input_tokens=0,
+    )
     return mock_response
 
 
