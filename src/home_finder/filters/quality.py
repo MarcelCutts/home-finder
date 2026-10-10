@@ -672,8 +672,10 @@ def _build_tool_schema(
     """Build an Anthropic tool schema from a Pydantic model class.
 
     Schemas are generated from the API response models (``extra="forbid"``,
-    all-required, plain types) rather than the storage models (defaults,
-    coercion validators).  The ``_MODEL_PAIRS`` constant documents the
+    plain types) rather than the storage models (defaults, coercion validators).
+    Strict tools require every property to reduce provider grammar branching,
+    retaining nullable types without changing local model defaults.
+    The ``_MODEL_PAIRS`` constant documents the
     correspondence between each pair, and tests in
     ``TestModelPairConsistency`` mechanically verify they stay in sync.
     """
@@ -685,8 +687,22 @@ def _build_tool_schema(
         "input_schema": schema,
     }
     if strict:
+        _require_wire_properties(schema)
         tool["strict"] = True
     return tool
+
+
+def _require_wire_properties(node: Any) -> None:
+    """Remove optional grammar branches and redundant wire-only defaults."""
+    if isinstance(node, dict):
+        if node.get("type") == "object":
+            node["required"] = list(node.get("properties", {}))
+        node.pop("default", None)
+        for value in node.values():
+            _require_wire_properties(value)
+    elif isinstance(node, list):
+        for value in node:
+            _require_wire_properties(value)
 
 
 VISUAL_ANALYSIS_TOOL: Final[dict[str, Any]] = _build_tool_schema(

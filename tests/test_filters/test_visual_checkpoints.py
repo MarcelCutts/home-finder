@@ -295,13 +295,20 @@ def image_block(colour):
     }
 
 
-async def test_strict_visual_contract_changes_provenance_and_invalidates_legacy_checkpoint(
+@pytest.mark.parametrize("previously_strict", [False, True])
+async def test_required_strict_visual_contract_invalidates_legacy_checkpoint(
     monkeypatch,
+    previously_strict,
 ):
     from home_finder.filters import quality as module
 
-    strict_tool = module.VISUAL_ANALYSIS_TOOL
-    legacy_tool = {key: value for key, value in strict_tool.items() if key != "strict"}
+    legacy_tool = module._build_tool_schema(
+        module.VISUAL_ANALYSIS_TOOL["name"],
+        module.VISUAL_ANALYSIS_TOOL["description"],
+        module._VisualAnalysisResponse,
+    )
+    if previously_strict:
+        legacy_tool["strict"] = True
     calls = []
 
     def respond(request):
@@ -322,7 +329,7 @@ async def test_strict_visual_contract_changes_provenance_and_invalidates_legacy_
         new_checkpoint = (await checkpoint_rows(storage))[0]
 
     assert len(calls) == 2
-    assert "strict" not in calls[0]["tools"][0]
+    assert calls[0]["tools"][0].get("strict", False) is previously_strict
     assert calls[1]["tools"][0]["strict"] is True
     assert old_provenance.visual_output_sha256 != new_provenance.visual_output_sha256
     assert old_provenance.evaluation_output_sha256 == new_provenance.evaluation_output_sha256

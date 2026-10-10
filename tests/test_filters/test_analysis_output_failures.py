@@ -281,6 +281,27 @@ def test_nonfinite_output_cannot_enter_domain_models(number):
     assert caught.value.failure.kind == "malformed_output"
 
 
+@pytest.mark.parametrize("explicit_unknowns", [False, True])
+def test_required_wire_schema_preserves_local_nullable_and_legacy_inputs(explicit_unknowns):
+    raw = copy.deepcopy(PHASE1_VISUAL_RESPONSE["content"][0]["input"])
+    raw["space"]["room_areas"] = [{"name": "Unmeasured room"}]
+    if explicit_unknowns:
+        raw["space"].update(
+            total_area_sqm=None,
+            floorplan_total_area_sqm=None,
+            area_estimation_method=None,
+            area_notes="",
+        )
+        raw["space"]["room_areas"][0].update(
+            length_m=None, width_m=None, area_sqm=None, area_basis="unknown"
+        )
+        raw["floorplan_detected_in_gallery"] = []
+    original = copy.deepcopy(raw)
+
+    assert validate_output(raw, _VisualAnalysisResponse, "visual", None) == original
+    assert raw == original
+
+
 @pytest.mark.parametrize("scenario", ["refusal", "max_tokens", "missing_eval_field"])
 async def test_rejected_evaluation_stays_pending_without_notifying(
     cached_analysis_property, tmp_path, monkeypatch, scenario, native_analysis_spending

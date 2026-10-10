@@ -48,19 +48,20 @@ async def test_native_request_changes_are_limited_to_billing_scope_and_strict_to
         )
     # Native mocked HTTP snapshots intentionally refreshed for supplied-image
     # coverage/access guidance plus the outdoor schema and observation supplied
-    # to evaluation. Do not refresh these
+    # to evaluation, then required visual wire fields without default annotations.
+    # Do not refresh these
     # merely to accommodate a transport upgrade. Billing scope, defaults and
     # timeouts remain pinned below; historical provenance is tested separately.
     payloads = [json.loads(r.content) for r in requests]
     for payload in payloads:
         assert payload.pop("service_tier") == "standard_only"
         assert payload.pop("inference_geo") == "global"
-    # Enabling strict tool decoding must not silently alter prompts or schemas.
+    # Keep the strict flag explicit alongside the pinned request schema.
     assert payloads[0]["tools"][0].pop("strict") is True
     assert [
         hashlib.sha256(json.dumps(body, sort_keys=True).encode()).hexdigest() for body in payloads
     ] == [
-        "82a1672f9f4e8999d0d5d08c633c28f5fdd6c25ea90753f07ec0abe189366e01",
+        "434dfc808cbd481d6422d65d9b8faca9270a8dd4ac086fb729bfb5084af39ef7",
         "6b995745404f48c2aeeb7acde3615b9f34087de8738d64bf236556e4d5e6f2d8",
     ]
     assert [r.extensions["timeout"]["read"] for r in requests] == [240.0, 60.0]
