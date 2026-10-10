@@ -8,7 +8,8 @@ The operating trial uses a separate database and a cumulative US$25 model budget
 It does not activate the deployed scheduler or replace the production authority.
 
 This is the reviewed delivery checkpoint as of 2026-10-10 23:17 UTC, before the
-final stack merge. The delivery PR records subsequent merged-main recovery,
+final stack merge. [Delivery PR #64](https://github.com/MarcelCutts/home-finder/pull/64)
+records subsequent merged-main recovery,
 repeat-run and backup verification; the named historical checkpoints below remain
 unchanged so their counts and costs can be reconciled with retained evidence.
 
