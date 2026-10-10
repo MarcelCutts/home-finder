@@ -84,10 +84,11 @@ historical configuration parsing remains unchanged.
    are not necessary to prioritize collection/assessment; do not claim live
    Telegram delivery has been qualified.
 
-The existing `--dry-run` suppresses Telegram but still collects, saves and spends.
-Its current implementation omits durable pipeline-run/event rows; the trial runner
-therefore records its own run identity, JSON log and snapshots. This observability
-limitation will be assessed against the operating results rather than hidden.
+`--dry-run` suppresses Telegram but still collects, saves and spends. At the start
+of this trial it omitted durable pipeline-run/event rows, so the runner supplied
+its own identity, JSON logs and snapshots. PR #60 repairs that omission for later
+runs while preserving notification suppression. Earlier runs are not backfilled
+as though those application records had existed.
 
 ## Verification before live operation
 
@@ -386,6 +387,10 @@ internal consistency, not correct interpretation of every room or photograph.
 Ten partial-room-sum warnings were the same false alarm repaired in #56. Two
 other warnings concerned genuinely small, source-printed whole-flat totals;
 those numbers remain visible with their uncertainty rather than being altered.
+The recorded 336 write scopes had approximately 2.02 ms p95 lock wait and
+6.37 ms maximum wait; maximum write duration was 16.87 ms. This local,
+two-worker owner trial shows no database bottleneck. It is not a capacity test
+for independent hosted users or evidence for changing database topology.
 
 An independent review then inspected all 50 linked gallery photographs and four
 plans for the five newly assessed examples in the smaller batch. Printed totals
@@ -415,6 +420,56 @@ byte-for-byte unchanged, so client resizing or transparency does not explain tha
 specific error.
 Larger paid runs were held until the outdoor and photo-coverage contract repairs
 passed their review gates.
+
+### Targeted rechecks after the evidence repairs
+
+Four bounded two-request reanalyses used the same isolated authority after #58
+and #59 passed review. They retained actual gallery counts, distinguished source
+area from earlier model estimates, and used the modern runtime profile. All eight
+requests settled successfully, every checkpoint was consumed, and integrity,
+foreign-key, reservation and no-notification checks passed.
+
+| Retained case | Gallery images reviewed / available | Duration | Additional cost | Result and limit |
+| --- | ---: | ---: | ---: | --- |
+| Patio, eight-image allowance | 7 / 8, plus a plan | 23.684 s | $0.0968070 | Patio becomes explicit outdoor access. Partial-review metadata prevents typed missing-room/few-photo penalties; prose describes the subset. Separate-office certainty remains excessive. |
+| Ambiguous bathroom access, twenty-image allowance | 15 / 15, plus a plan | 21.371 s | $0.0721426 | Access becomes unknown with a viewing check instead of a confident hallway assertion. Both the prompts and supplied image count changed; this is not a prompt-only comparison. |
+| Explicit bills, twenty-image allowance | 7 / 7; no plan | 21.828 s | $0.0512186 | Bills remain explicitly excluded and unknown wardrobe evidence no longer creates a negative wardrobe badge. Other source/model judgments remain advisory. |
+| Patio, twenty-image allowance | 8 / 8, plus a plan | 25.911 s | $0.0645166 | The previously omitted bathroom photograph is assessed; patio access remains positive. The office enum still overstates what the cautious access notes establish. |
+
+Cumulative accounted model cost after these checks was $2.265633150 across 70
+settled requests, with no outstanding hold. Full supplied-gallery review means
+all retained gallery inputs were sent successfully; it does not establish that
+the portal exposed every photograph, the model attended to every detail, or its
+interpretation is correct. These examples support the deterministic repairs but
+also show why prompt compliance and spatial ratings need a separate measured
+quality corpus.
+
+### Follow-up PR boundaries and review evidence
+
+| PR | Purpose and final behavior | Verification and explicit limit |
+| --- | --- | --- |
+| #53 | Produce a bounded private duplicate-candidate queue from a closed SQLite snapshot. | Synthetic CLI checks plus immutable 38- and 93-record replays. No network, database writes, automatic identity changes or calibrated probabilities. |
+| #54 | Supply canonical address/postcode context to both analysis phases. | Bounded escaped metadata and rendered-prompt identity checks; the retained canary no longer confuses an amenities street with the address. Source metadata remains unverified. |
+| #55 | Use Sonnet 5.5 for newly created runtime profiles. | Native SDK, minimum-SDK/Python 3.11, frozen-history and all 1–20 image-bound tests. Explicit old configuration retains its meaning; paid policy is still required. |
+| #56 | Remove contradictory badges, retain explicit bills bullets and stop false partial-room-sum alarms. | Structured-value/bills/source-boundary tests and live targeted rechecks. Guards only remove unsupported labels; they do not invent replacement facts. |
+| #57 | Recognize explicit availability in current Rightmove and Zoopla envelopes. | Retained seven-page replay gives two explicit active claims and five proper unknowns. Malformed, conflicting and wrong-listing identities cannot borrow unrelated evidence. |
+| #58 | Preserve yes/no/unknown outdoor access and include patios/courtyards. | Storage/filter/map/fit/UI parity, historical-unknown and positive-badge contradiction tests. Independent review's explicit-negative/positive-badge defect is fixed. Old silent flags remain unknown; raw historical assessments are not rewritten. |
+| #59 | Persist application-owned supplied-gallery coverage and prevent subset omissions becoming advert defects. | Native prompt-identity, checkpoint-reuse and typed-result tests; model-estimated prior area is excluded from source-area context. All 1–20 image bounds pass after prompt compaction. Free-form ratings and misplaced prose are not guaranteed by these typed guards. |
+| #60 | Record dry-run runs/events, correlated phase logs and terminal outcomes. | Combined 3,753 tests pass at 89.68% branch-inclusive coverage; 635 focused checks and static gates pass. Independent review reproduced and verified repairs for both primary-error masking and cancellation arriving during cleanup, on Python 3.11 and 3.14. |
+
+The complete local candidate is `81dd45c392ceb0f1bdf5291cffd5f3aca98f9e73`.
+Its five test warnings were blocked socket/DNS attempts, not successful network
+access. Independent cancellation review covered exact repair `27c8a3c`; the
+reviewed helper, pipeline, recorder and repository code is unchanged by the
+integration merge. Synthetic desktop/mobile screenshots are committed with #58
+and #59; real trial screenshots remain local.
+
+The observability repair deliberately keeps existing storage tables. Durable run
+rows do not identify dry/live mode; logs do. Dry runs can become the latest
+diagnostic run and count toward the next live retention window. Run-level cost
+totals cover returned main-analysis usage, may be incomplete after interruption,
+and exclude reanalysis: the paid ledger remains authoritative. Successful phase
+execution is distinct from every property having a successful assessment.
 
 Anthropic's [vision guidance](https://platform.claude.com/docs/en/build-with-claude/vision-coordinates)
 describes limits to spatial reasoning and recommends visual spot checks; small
@@ -463,41 +518,48 @@ Recommended sequential follow-ups, each with a reviewable completion gate:
    backup/restore including assets. Choose an ongoing spend policy explicitly;
    this trial's $25 is not continuing authorization. Release only after those
    checks, with a small scheduled sample and review of delivery holds.
-2. **Multi-advert identity representation.** Document and test how one home keeps
+2. **Material assessment evaluation corpus.** Freeze original source inputs,
+   supplied-image coverage, prompts/configuration and independently reviewed
+   verdicts for room access, separate office suitability, outdoor access, bills
+   and printed dimensions. Include positive, negative and genuinely unknown
+   cases, plus held-out examples. Report field errors separately from schema,
+   spend and latency success. The office enum/notes contradiction is a concrete
+   starting case; do not treat prompt-only compliance as a deterministic guard or
+   solve it with uncalibrated prose matching. Require measured improvement before
+   another prompt/model-wide change or paid historical refresh.
+3. **Multi-advert identity representation.** Document and test how one home keeps
    several adverts from one platform, including original URLs/text/image provenance.
    Migrate platform-keyed projections without losing history or changing identity
    based solely on a score. Prove old rows and existing sent/price/spend receipts
    survive reconstruction and rollback from a verified backup.
-3. **Reviewed canonical coalescing.** Build a bounded operator action using frozen
+4. **Reviewed canonical coalescing.** Build a bounded operator action using frozen
    candidate evidence and explicit conflict handling. Preserve assessment history,
    owner decisions and every advert; stale evidence must invalidate approval.
    Retain audit-only behavior until transaction, restart and delivery-receipt tests
    demonstrate that coalescing cannot silently resend or discard work.
-4. **Candidate recall evaluation.** Extend the offline adjudicated corpus with the
+5. **Candidate recall evaluation.** Extend the offline adjudicated corpus with the
    five positive clusters, nearby negatives and unresolved exterior-only examples.
    Evaluate within-portal blocking and different-view image signals independently
    of the final merge rule. Report subgroup errors and review workload; do not
    turn a heuristic score or this selected sample into a calibrated probability.
-5. **Reproducible commute scenarios and diagnostics.** Replace request-time arrival
+6. **Reproducible commute scenarios and diagnostics.** Replace request-time arrival
    with an explicit weekday/time scenario and persist its identity with outcomes.
    Log transport mode and per-state counts, including unreachable/invalid/missing
    results. The [TravelTime matrix contract](https://docs.traveltime.com/api/reference/travel-time-distance-matrix)
    ties outcomes to arrival/departure time and a travel-time bound. Saturday-night
    results are useful operational evidence, not a weekday commuting benchmark.
-6. **Evidence review and owner ingestion.** Keep a small versioned assessment corpus
-   for prompt/model changes, with original inputs and material errors. Add manual
-   URL ingestion through the same identity/enrichment/spend path if portal coverage
-   limits the owner workflow. Avoid another model upgrade until measured failures
-   justify it. Expose assessment uncertainty rather than treating ratings as truth.
-7. **Hosted-service expansion.** Introduce user isolation before a second independent
+7. **Owner ingestion.** Add manual URL ingestion through the same
+   identity/enrichment/spend path if portal coverage limits the owner workflow.
+   Repeated submission must find the same advert, respect pending/held work and
+   retain source provenance; it must not create a parallel analysis or delivery
+   path. Expose assessment uncertainty rather than treating ratings as truth.
+8. **Hosted-service expansion.** Introduce user isolation before a second independent
    user. Measure database contention, queue delay and operational needs before
    choosing a different database or worker topology. Tens to hundreds of users
    remain the intended gradual destination, not a reason for a platform rewrite now.
 
-Dry-run currently saves useful work but omits the application's durable run/event
-rows. The trial runner compensates with exact code/config/runner identities, JSON
-logs, cost heartbeats, database snapshots and terminal audits. Later runs separate
-periodic stack diagnostics into `stacks.log` so they do not corrupt JSONL parsing.
-Persisting equivalent bounded run summaries for ordinary dry-runs is a worthwhile
-small observability follow-up; do not describe the current diagnostics page as a
-complete record of these trials.
+The trial runner retains exact code/config/runner identities, JSON logs, cost
+heartbeats, database snapshots and terminal audits alongside the ordinary run
+records introduced by #60. Periodic stack diagnostics use `stacks.log`, keeping
+JSONL events parseable. The diagnostics page does not retroactively cover trials
+performed before the dry-run observability repair.
