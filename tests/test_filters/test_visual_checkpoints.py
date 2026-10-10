@@ -5,16 +5,24 @@ import base64
 import copy
 import json
 from io import BytesIO
+from unittest.mock import AsyncMock, patch
 
 import httpx2
 import pytest
 from PIL import Image
+from pydantic import SecretStr
 
+from home_finder.config import Settings
 from home_finder.db import PropertyStorage
 from home_finder.filters.analysis_spend import visual_input_key
 from home_finder.filters.quality import APIUnavailableError, PropertyQualityFilter
+from home_finder.models import PropertyImage
 from home_finder.models.analysis import AnalysisConfig
-from home_finder.models.spend import SpendDeferred, SpendPolicy
+from home_finder.models.spend import ConfirmedCost, SpendDeferred, SpendPolicy, nanousd, usd_text
+from home_finder.pipeline.analysis import _run_quality_and_save
+from home_finder.pipeline.spend_admin import administer
+from home_finder.pipeline.stages import PreAnalysisResult
+from tests.test_filters.test_quality import _populate_image_cache
 from tests.test_filters.test_quality_respx import (
     PHASE1_VISUAL_RESPONSE,
     PHASE2_EVALUATION_RESPONSE,
@@ -57,10 +65,23 @@ async def checkpoint_rows(storage):
 
 
 @pytest.mark.parametrize("refresh", [False, True])
+@pytest.mark.parametrize("declared_floorplan", [False, True])
 async def test_two_evaluation_outages_then_restart_uses_one_visual_call(
-    tmp_path, cached_analysis_property, make_quality_analysis, refresh
+    tmp_path, cached_analysis_property, make_quality_analysis, refresh, declared_floorplan
 ):
     merged, images = cached_analysis_property
+    if declared_floorplan:
+        merged = merged.model_copy(
+            update={
+                "floorplan": PropertyImage(
+                    url="https://example.com/source-plan.jpg",
+                    source=merged.canonical.source,
+                    image_type="floorplan",
+                    floorplan_origin="source_declared",
+                )
+            }
+        )
+        _populate_image_cache(images, merged)
     database = str(tmp_path / "restart.db")
     calls = {"visual": 0, "evaluation": 0}
 
@@ -81,10 +102,20 @@ async def test_two_evaluation_outages_then_restart_uses_one_visual_call(
             await storage.pipeline.request_reanalysis([merged.unique_id])
     for attempt in range(3):
         async with PropertyStorage(database) as storage:
+            # A real restart reconstructs the queue item; retaining the original
+            # in-memory object would conceal lost image roles or prompt inputs.
+            recovered = merged
+            if attempt:
+                queue = (
+                    await storage.pipeline.get_reanalysis_queue()
+                    if refresh
+                    else await storage.pipeline.get_pending_analysis_properties()
+                )
+                recovered = queue[0]
             async with quality(storage, respond) as model:
                 if attempt < 2:
                     with pytest.raises(APIUnavailableError):
-                        await model.analyze_single_merged(merged, data_dir=images)
+                        await model.analyze_single_merged(recovered, data_dir=images)
                     assert len(await checkpoint_rows(storage)) == 1
                     checkpoint_report = (await storage.spend.report())["visual_checkpoints"]
                     assert len(checkpoint_report) == 1
@@ -95,7 +126,7 @@ async def test_two_evaluation_outages_then_restart_uses_one_visual_call(
                         "created_at",
                     }
                 else:
-                    _, analysis = await model.analyze_single_merged(merged, data_dir=images)
+                    _, analysis = await model.analyze_single_merged(recovered, data_dir=images)
                     assert analysis and analysis.overall_rating == 4
                     assert analysis.analysis_provenance.visual_input_sha256
                     if refresh:
@@ -108,6 +139,84 @@ async def test_two_evaluation_outages_then_restart_uses_one_visual_call(
             report = await storage.spend.report()
     assert calls == {"visual": 1, "evaluation": 3}
     assert report["attempts"] == 4 and report["held_nanousd"] == 0
+
+
+@pytest.mark.parametrize("confirmed_amount", ["unchanged", "0", "0.25"])
+async def test_reconciled_visual_receipt_recovers_pending_analysis_after_restart(
+    tmp_path, cached_analysis_property, confirmed_amount
+):
+    merged, _ = cached_analysis_property
+    database = tmp_path / "reconciled-restart.db"
+    settings = Settings(
+        _env_file=None,
+        database_path=str(database),
+        anthropic_api_key=SecretStr("fixture"),
+        enable_quality_filter=True,
+        analysis_config=config(),
+        analysis_spend_policy=policy(),
+    )
+    calls = {"visual": 0, "evaluation": 0}
+    on_result = AsyncMock()
+
+    def respond(request):
+        phase = "visual" if "tools" in json.loads(request.content) else "evaluation"
+        calls[phase] += 1
+        if phase == "visual":
+            return httpx2.Response(200, json=PHASE1_VISUAL_RESPONSE)
+        if calls[phase] == 1:
+            return unavailable()
+        return httpx2.Response(200, json=PHASE2_EVALUATION_RESPONSE)
+
+    def make_filter(**kwargs):
+        return PropertyQualityFilter(
+            **kwargs, http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(respond))
+        )
+
+    with (
+        patch("home_finder.pipeline.analysis.PropertyQualityFilter", side_effect=make_filter),
+        patch("home_finder.pipeline.analysis._lookup_wards", new_callable=AsyncMock),
+    ):
+        async with PropertyStorage(str(database)) as storage:
+            count, _ = await _run_quality_and_save(
+                PreAnalysisResult(merged_to_process=[merged]), settings, storage, on_result
+            )
+            assert count == 0
+            on_result.assert_not_awaited()
+            checkpoint = (await checkpoint_rows(storage))[0]
+            async with storage._read_connection() as conn:
+                receipt = await storage.spend._attempt(conn, checkpoint["attempt_id"])
+            original_settlement = receipt["settlement_json"]
+            amount = (
+                usd_text(receipt["accounted_nanousd"])
+                if confirmed_amount == "unchanged"
+                else confirmed_amount
+            )
+
+        # Use the supported operator command between database lifetimes, then
+        # let the pipeline reconstruct the pending home and consume its checkpoint.
+        confirmed = ConfirmedCost(amount_usd=amount, evidence_ref="invoice:visual-fixture")
+        await administer(database, checkpoint["attempt_id"], confirmed=confirmed)
+        async with PropertyStorage(str(database)) as storage:
+            count, _ = await _run_quality_and_save(
+                PreAnalysisResult(), settings, storage, on_result
+            )
+            assert count == 1
+            on_result.assert_awaited_once()
+            analysis = await storage.get_quality_analysis(merged.unique_id)
+            assert analysis.overall_rating == 4
+            assert analysis.analysis_provenance.visual_input_sha256 == checkpoint["input_sha256"]
+            assert not await storage.pipeline.get_pending_analysis_properties()
+            assert await checkpoint_rows(storage) == []
+            assert (await storage.get_property(merged.unique_id)).notification_status == "pending"
+            async with storage._read_connection() as conn:
+                receipt = await storage.spend._attempt(conn, checkpoint["attempt_id"])
+            assert receipt["settlement_json"] == original_settlement
+            assert receipt["cost_basis"] == "operator_confirmed"
+            assert receipt["accounted_nanousd"] == nanousd(confirmed.amount_usd)
+            report = await storage.spend.report()
+            assert report["attempts"] == 3 and report["held_nanousd"] == 0
+            assert report["lifetime_confirmed_nanousd"] == nanousd(confirmed.amount_usd)
+    assert calls == {"visual": 1, "evaluation": 2}
 
 
 async def test_billed_evaluation_failure_still_hits_its_attempt_limit(
@@ -228,8 +337,12 @@ async def test_identity_tracks_effective_visual_inputs_only(tmp_path, monkeypatc
         assert len(await checkpoint_rows(storage)) == 1
 
 
-@pytest.mark.parametrize("corrupt", ["payload", "receipt"])
-async def test_corrupt_checkpoint_defers_without_respending(tmp_path, corrupt):
+@pytest.mark.parametrize("reconciled", [False, True])
+@pytest.mark.parametrize(
+    "corrupt",
+    ["payload", "receipt", "property", "phase", "missing_usage", "invalid_usage", "failed_usage"],
+)
+async def test_corrupt_checkpoint_defers_without_respending(tmp_path, corrupt, reconciled):
     calls = []
 
     def respond(request):
@@ -239,15 +352,100 @@ async def test_corrupt_checkpoint_defers_without_respending(tmp_path, corrupt):
     async with PropertyStorage(str(tmp_path / "corrupt.db")) as storage:
         async with quality(storage, respond) as model:
             await model._run_visual_analysis(CONTENT, "fixture:corrupt")
+            if reconciled:
+                attempt = (await checkpoint_rows(storage))[0]["attempt_id"]
+                await storage.spend.reconcile(
+                    attempt, ConfirmedCost(amount_usd="0.01", evidence_ref="invoice:fixture")
+                )
             async with storage._transaction() as conn:
                 if corrupt == "payload":
                     await conn.execute("UPDATE visual_checkpoints SET data_json='{}'")
-                else:
+                elif corrupt == "receipt":
                     await conn.execute("UPDATE paid_attempts SET result='truncated'")
+                elif corrupt == "property":
+                    await conn.execute("UPDATE paid_attempts SET property_id='fixture:other'")
+                elif corrupt == "phase":
+                    await conn.execute("UPDATE paid_attempts SET phase='evaluation'")
+                elif corrupt == "missing_usage":
+                    await conn.execute("UPDATE paid_attempts SET settlement_json=NULL")
+                elif corrupt == "invalid_usage":
+                    await conn.execute("UPDATE paid_attempts SET settlement_json='{}'")
+                else:
+                    await conn.execute(
+                        """UPDATE paid_attempts SET settlement_json=
+                           json_set(settlement_json, '$.result', 'truncated')"""
+                    )
             with pytest.raises(SpendDeferred, match="visual_checkpoint_invalid"):
                 await model._run_visual_analysis(CONTENT, "fixture:corrupt")
         assert len(calls) == 1
         assert (await storage.spend.report())["attempts"] == 1
+
+
+async def test_confirmation_above_reservation_blocks_checkpoint_reuse(tmp_path):
+    calls = []
+
+    def respond(request):
+        calls.append(request)
+        return httpx2.Response(200, json=PHASE1_VISUAL_RESPONSE)
+
+    async with PropertyStorage(str(tmp_path / "over-reservation.db")) as storage:
+        async with quality(storage, respond) as model:
+            await model._run_visual_analysis(CONTENT, "fixture:over-reservation")
+            attempt = (await checkpoint_rows(storage))[0]["attempt_id"]
+            async with storage._read_connection() as conn:
+                receipt = await storage.spend._attempt(conn, attempt)
+            await storage.spend.reconcile(
+                attempt,
+                ConfirmedCost(
+                    amount_usd=usd_text(receipt["reserved_nanousd"] + 1),
+                    evidence_ref="invoice:above-reservation",
+                ),
+            )
+            with pytest.raises(SpendDeferred, match="visual_checkpoint_invalid"):
+                await model._run_visual_analysis(CONTENT, "fixture:over-reservation")
+        assert len(calls) == 1
+        report = await storage.spend.report()
+        assert report["attempts"] == report["over_reservation_count"] == 1
+
+
+@pytest.mark.parametrize("confirmed_amount", ["0", "0.01"])
+async def test_confirmed_unknown_attempt_cannot_back_a_visual_checkpoint(
+    tmp_path, confirmed_amount
+):
+    calls = []
+
+    def respond(request):
+        calls.append(request)
+        if len(calls) == 1:
+            return httpx2.Response(200, json=PHASE1_VISUAL_RESPONSE)
+        raise httpx2.ReadTimeout("fixture", request=request)
+
+    async with PropertyStorage(str(tmp_path / "confirmed-unknown.db")) as storage:
+        async with quality(storage, respond) as model:
+            await model._run_visual_analysis(CONTENT, "fixture:unknown")
+            with pytest.raises(APIUnavailableError):
+                await model._run_visual_analysis(
+                    [{"type": "text", "text": "Changed visual request"}], "fixture:unknown"
+                )
+            attempt = (await storage.spend.report())["unresolved"][0]["attempt_id"]
+            await storage.spend.reconcile(
+                attempt,
+                ConfirmedCost(amount_usd=confirmed_amount, evidence_ref="invoice:unknown"),
+            )
+            async with storage._read_connection() as conn:
+                receipt = await storage.spend._attempt(conn, attempt)
+            assert receipt["state"] == "settled"
+            assert receipt["cost_basis"] == "operator_confirmed"
+            assert receipt["settlement_json"] is None
+            # Even a matching, digest-valid checkpoint cannot borrow an unknown
+            # attempt's billing confirmation as proof of successful visual output.
+            async with storage._transaction() as conn:
+                await conn.execute("UPDATE visual_checkpoints SET attempt_id=?", (attempt,))
+            with pytest.raises(SpendDeferred, match="visual_checkpoint_invalid"):
+                await model._run_visual_analysis(CONTENT, "fixture:unknown")
+        assert len(calls) == 2
+        report = await storage.spend.report()
+        assert report["attempts"] == 2 and report["held_nanousd"] == 0
 
 
 async def test_failed_checkpoint_write_keeps_charge_unresolved_and_blocks_redispatch(tmp_path):
