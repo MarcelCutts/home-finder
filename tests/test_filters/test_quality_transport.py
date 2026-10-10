@@ -47,7 +47,8 @@ async def test_metered_requests_preserve_baseline_except_explicit_billing_scope(
             hosting_tolerance=None,
         )
     # Native mocked HTTP snapshots intentionally refreshed for the evidence
-    # repair's two system prompts and visual area schema. Do not refresh these
+    # repairs' system prompts, visual area/outdoor schema and outdoor observation
+    # supplied to evaluation. Do not refresh these
     # merely to accommodate a transport upgrade. Billing scope, defaults and
     # timeouts remain pinned below; historical provenance is tested separately.
     payloads = [json.loads(r.content) for r in requests]
@@ -57,8 +58,8 @@ async def test_metered_requests_preserve_baseline_except_explicit_billing_scope(
     assert [
         hashlib.sha256(json.dumps(body, sort_keys=True).encode()).hexdigest() for body in payloads
     ] == [
-        "146041cb46895d533a4a25a354b6049372d775bafc8063e0e28a9f079e90edb6",
-        "9e7a194ce1e78ea63eae97f690337cd35a68015c13aef71ded4e057d3a7a10b2",
+        "ca25dae535165520a932319c22b34f78e9b3f13a4899a8924c91e9a9450ddde3",
+        "ec06503461ebad3cca0dddafbf1647fe08c1606bd4eecfc149c9d7d18dc1d759",
     ]
     assert [r.extensions["timeout"]["read"] for r in requests] == [240.0, 60.0]
     assert [r.extensions["timeout"]["connect"] for r in requests] == [5.0, 5.0]

@@ -12,7 +12,7 @@ from home_finder.filters.fit_score import _score_hosting, compute_lifestyle_icon
 from home_finder.filters.quality import VISUAL_ANALYSIS_TOOL, _VisualAnalysisResponse
 from home_finder.models import OutdoorSpaceAnalysis
 from home_finder.models.quality import OUTDOOR_SPACE_FLAGS, outdoor_availability
-from home_finder.notifiers.telegram import _format_outdoor_info
+from home_finder.notifiers.telegram import _format_outdoor_info, _format_quality_block
 from tests.test_filters.test_quality_respx import PHASE1_VISUAL_RESPONSE
 from tests.test_filters.test_sonnet55 import configuration, response
 from tests.test_filters.test_visual_checkpoints import quality
@@ -64,6 +64,8 @@ def test_old_and_new_evidence_has_one_interpretation(data, expected, make_qualit
         "Potential traffic noise",
     ]
     assert analysis.lowlights == ["No outdoor space", "Potential traffic noise"]
+    block = "\n".join(_format_quality_block(analysis))
+    assert ("No outdoor space" in block) == (expected == "no")
     message = _format_outdoor_info(analysis)
     if expected == "unknown":
         assert message == "Unknown"

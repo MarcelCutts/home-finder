@@ -32,7 +32,7 @@ For is_spacious_enough use true/false/null; null means the usable space is uncer
 Do not guess — a confident "unknown" is more useful than a wrong answer.
 
 Outdoor availability is yes/no/unknown: missing photos or all-false type flags \
-mean unknown, not no. Count private patios/courtyards as has_terrace; retain \
+alone mean unknown, not no. Count private patios/courtyards as has_terrace; retain \
 listing claims and visible evidence in notes.
 
 Keep observations, listing claims and hypotheses distinct in every field, including \
