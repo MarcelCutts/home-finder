@@ -48,7 +48,11 @@ def rightmove_html(raw_sizings, *, with_image=False):
 
 def zoopla_html(raw_quantity):
     chunk = '1:{"taxonomy":{"sizeSqft":' + raw_quantity + "}}"
-    return "<html><script>self.__next_f.push([1," + json.dumps(chunk) + "]);</script></html>"
+    return (
+        '<html><head><link rel="canonical" '
+        'href="https://www.zoopla.co.uk/to-rent/details/100001/"></head>'
+        "<script>self.__next_f.push([1," + json.dumps(chunk) + "]);</script></html>"
+    )
 
 
 @pytest.mark.parametrize(

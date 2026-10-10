@@ -335,12 +335,20 @@ The default mutation boundary now rejects new reviewed merge, split, reversal an
 
 **Limit:** the explicit Python override does not validate a file's copy status or certify its projections. Previously committed groups can still carry stale derived results. This guard prevents new default reviewed mutations; it does not complete freshness, admission or reconciliation. No schema or runtime configuration change is added.
 
+## Follow-on layer 32 — Bind returned detail evidence to its advert
+
+All four adapters now require agreement between declared/requested provider identity, final response URL and supported main-record/head markers before releasing details or observations. Supported aliases remain valid; mismatched and unqualified pages are unresolved, including in offline replay. The independent wrong-advert OTM reproduction supplies the concrete reason for this boundary. Immediate base: #34; semantic prerequisites: shared capture/decoder (#13), detail observations (#19), verified replay (#21) and exact provider resolution (#27).
+
+**Author review:** every adapter, final-URL semantics in HTTPX/curl_cffi, main-record versus related-advert IDs, HTML/RSC fallbacks, exact aliases, bounded diagnostics and downstream retention/image boundaries. **Verification:** 3,491 tests on each supported Python version, over 88% coverage, static/type/archive checks and real HTTPX redirect processing through a socket-blocked mock transport. Results are recorded in the [handoff](2026-10-10-detail-response-identity.md) and [verification record](2026-10-10-detail-response-identity-verification.json). Retained OTM/OpenRent pages and the indexed Rightmove fixture preserve extraction; adversarial URL/body variants are refused. Existing fixture assertions are unchanged.
+
+**Limit:** this is prospective page/record qualification, not historical evidence repair, per-image semantic verification or a current source-availability trial. The old retained captures did not record redirect targets; their requested URLs are only simulated final URLs in compatibility probes. Zoopla coverage here is synthetic. CI remains disabled.
+
 ## Next implementation after independent review
 
 The owner-local `opus-ultra-findings.md` prompted a priority correction. Against this branch, three synthetic socket-blocked checks reproduce detail evidence assigned to the wrong OTM advert, paid bill packages shown as included in rent, and historical export accepting uncommitted hot-journal pages. Passing full suites does not invalidate those findings. The review's proportionality concern is also sound: proving useful rental discovery should precede further optional reconciliation.
 
 1. **Implemented in layer 31:** reviewed regrouping is disabled by default; explicit copy rehearsals, committed retries and existing conservative automatic matching remain available.
-2. Fix returned-detail identity, qualified bill inclusion and frozen snapshot validity in separate bounded PRs, including the missing adversarial regressions.
+2. **Implemented in layer 32:** returned-detail identity checks and adversarial ingestion regressions. Next fix qualified bill inclusion and frozen snapshot validity in separate bounded PRs.
 3. Resolve intermediate deployment coupling (particularly #7 with #19), prepare safe CI activation and validate actual merge candidates. Keep the old live/deploy workflow disabled until its replacement is safely installed.
 4. Prove the core collection → assessment → shortlist → notification flow with a small offline scenario, then qualify any live pilot under explicit source, spending and delivery permissions. Prior paid budgets are not renewed.
 

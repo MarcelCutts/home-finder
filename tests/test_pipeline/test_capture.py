@@ -354,12 +354,12 @@ async def test_replay_uses_existing_search_parser_contracts(
 
 
 @pytest.mark.parametrize(
-    "source,host",
+    "source,url",
     [
-        ("rightmove", "www.rightmove.co.uk"),
-        ("zoopla", "www.zoopla.co.uk"),
-        ("openrent", "www.openrent.com"),
-        ("onthemarket", "www.onthemarket.com"),
+        ("rightmove", "https://www.rightmove.co.uk/properties/100001"),
+        ("zoopla", "https://www.zoopla.co.uk/to-rent/details/100001/"),
+        ("openrent", "https://www.openrent.com/property/100001"),
+        ("onthemarket", "https://www.onthemarket.com/details/100001/"),
     ],
 )
 async def test_replay_details_runs_actual_extraction_without_media_requests(
@@ -367,10 +367,10 @@ async def test_replay_details_runs_actual_extraction_without_media_requests(
     fixtures_path: Path,
     sample_property: Any,
     source: str,
-    host: str,
+    url: str,
 ) -> None:
     listing = sample_property.model_dump(mode="json")
-    listing.update(source=source, url=f"https://{host}/properties/12345")
+    listing.update(source=source, source_id="100001", url=url)
     plan = make_plan(
         source=source,
         requests=[

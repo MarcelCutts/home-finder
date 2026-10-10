@@ -1,0 +1,162 @@
+{
+  "segment": "corrective-returned-detail-identity",
+  "status": "implemented, author-reviewed and locally verified; draft publication pending",
+  "base_commit": "d1689642223ab898a4e3a168812a7f0c63215b70",
+  "branch": "codex/stack/32-detail-response-identity",
+  "schema_version": 15,
+  "full_suites": {
+    "3.11.16": {
+      "passed": 3491,
+      "overall_line_and_branch_coverage_percent": 88.69,
+      "qualifier_line_and_branch_coverage_percent": 100.0
+    },
+    "3.14.7": {
+      "passed": 3491,
+      "overall_line_and_branch_coverage_percent": 88.62,
+      "qualifier_line_and_branch_coverage_percent": 100.0
+    }
+  },
+  "test_policy": {
+    "external_sockets_blocked": true,
+    "slow_and_browser_excluded": true,
+    "new_regression_cases": 77,
+    "focused_python314_passed": 373,
+    "corrected_floor_area_file_python314_passed": 50
+  },
+  "fixture_corrections": {
+    "existing_assertions_unchanged": 385,
+    "files": [
+      {
+        "file": "tests/test_scrapers/test_detail_fetcher_parsing.py",
+        "assertions_unchanged": true,
+        "count": 195
+      },
+      {
+        "file": "tests/test_scrapers/test_source_area_evidence.py",
+        "assertions_unchanged": true,
+        "count": 35
+      },
+      {
+        "file": "tests/test_pipeline/test_capture.py",
+        "assertions_unchanged": true,
+        "count": 61
+      },
+      {
+        "file": "tests/test_filters/test_floor_area.py",
+        "assertions_unchanged": true,
+        "count": 94
+      }
+    ],
+    "initial_full_suite_failures": 12,
+    "cause": "Old floor-area tests had test-1 IDs, example.com final URLs or missing final URLs; corrected identity metadata, preserved area assertions. Both final full suites passed."
+  },
+  "static_checks": {
+    "ruff_check": "pass",
+    "ruff_format_python_files": 270,
+    "strict_mypy_source_files": 121,
+    "git_diff_check": "pass"
+  },
+  "packaging": {
+    "application_files": 155,
+    "all_application_files_byte_exact": true,
+    "wheel_sha256": "1b97dd073a278d4ee8bbdcc452e70a136e42957ccd7860f49eccfacc92d88861",
+    "sdist_sha256": "658e69b289e8433446552a06fa41cef859a0ff124ae5725952e4e46f016dc728",
+    "sdist_checkout_files_byte_exact": 328,
+    "private_artifacts_excluded": true,
+    "generator": "Wheel-Version: 1.0\nGenerator: hatchling 1.32.4\nRoot-Is-Purelib: true\nTag: py3-none-any\n"
+  },
+  "wheel_import_and_all_four_parser_fingerprints": "pass on Python 3.11 with wheel placed first on isolated sys.path",
+  "retained_capture_probes": {
+    "network_blocked": true,
+    "new_observations": 0,
+    "cases": [
+      {
+        "file": "06-onthemarket-detail0.html",
+        "source": "onthemarket",
+        "sha256": "b4a5671b58988090672828feb091b474aae942a96e21a39ab59725a973d7d353",
+        "normal_extracted": true,
+        "gallery_count": 10,
+        "wrong_response_url_refused": true,
+        "wrong_body_identity_refused": true,
+        "original_unchanged": true
+      },
+      {
+        "file": "07-onthemarket-detail1.html",
+        "source": "onthemarket",
+        "sha256": "38ecdb921b97e6f8b50acdb5e1ca33799ac8495d90db592d42be60886372b6e7",
+        "normal_extracted": true,
+        "gallery_count": 10,
+        "wrong_response_url_refused": true,
+        "wrong_body_identity_refused": true,
+        "original_unchanged": true
+      },
+      {
+        "file": "09-openrent-detail0.html",
+        "source": "openrent",
+        "sha256": "c6120fa83a5ee18b9ef3ce3df82a9592bad304d4c2add21804bdbd21a5f86b76",
+        "normal_extracted": true,
+        "gallery_count": 9,
+        "wrong_response_url_refused": true,
+        "wrong_body_identity_refused": true,
+        "original_unchanged": true
+      },
+      {
+        "file": "10-openrent-detail1.html",
+        "source": "openrent",
+        "sha256": "0cded871eefb0b773cdc4c4d24bd69b3e279a133730be6a28aff9428965e0a21",
+        "normal_extracted": true,
+        "gallery_count": 10,
+        "wrong_response_url_refused": true,
+        "wrong_body_identity_refused": true,
+        "original_unchanged": true
+      },
+      {
+        "file": "rightmove_indexed_detail.html",
+        "source": "rightmove",
+        "sha256": "1439b1eb121ef75c2b0a834f429ecd900816dd8743e664cfb929c66fa60a2283",
+        "normal_extracted": true,
+        "gallery_count": 9,
+        "wrong_response_url_refused": true
+      }
+    ],
+    "limitation": "Recorded request URLs supplied as simulated final URLs; legacy capture did not retain redirect targets. No historical or current transport qualification is claimed.",
+    "zoopla": "Synthetic contract fixtures only; collection-v1 search was 403 and has no retained successful Zoopla detail."
+  },
+  "httpx_redirect_probe": {
+    "network_blocked": true,
+    "transport": "HTTPX MockTransport with real redirect processing",
+    "cases": [
+      {
+        "same_identity": true,
+        "transport_dispatches": 2,
+        "detail_returned": true
+      },
+      {
+        "same_identity": false,
+        "transport_dispatches": 2,
+        "detail_returned": false
+      }
+    ]
+  },
+  "tested_source_and_test_manifest_sha256": "24c642318616b311a62e241ab990dd201b027bee76ab227a1a78605678449551",
+  "tested_source_and_test_files": 322,
+  "review": "Author review of all adapters, returned URL semantics, main vs related IDs, supported aliases, record-disabled replay, normalization boundaries, logging, parser fingerprints and archive content; not independent approval.",
+  "limits": [
+    "Previously retained observations are not repaired or retrospectively qualified.",
+    "Page/record identity is not per-field or per-image semantic provenance.",
+    "Legacy retained captures did not record redirect targets; request URLs are simulated final URLs in compatibility probes.",
+    "No successful retained Zoopla detail exists in collection-v1; its coverage is synthetic.",
+    "Returned data checks do not add a redirect transport policy.",
+    "Remote CI remains disabled_inactivity and no remote passing checks are claimed."
+  ],
+  "web_sources": [
+    "https://www.python-httpx.org/quickstart/#redirection-and-history",
+    "https://curl-cffi.readthedocs.io/en/stable/api.html",
+    "https://curl.se/libcurl/c/CURLINFO_EFFECTIVE_URL.html"
+  ],
+  "new_live_portal_requests": 0,
+  "new_paid_model_requests": 0,
+  "telegram_sends": 0,
+  "production_mutations": 0,
+  "next_priority": "qualified bill inclusion and uncertain council-tax band wording"
+}

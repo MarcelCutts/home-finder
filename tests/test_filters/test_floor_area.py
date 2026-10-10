@@ -33,13 +33,13 @@ from home_finder.scrapers.detail_fetcher import (
 # ── Helpers ─────────────────────────────────────────────────────────────────
 
 
-def _make_property(source: PropertySource, source_id: str = "test-1") -> Property:
+def _make_property(source: PropertySource, source_id: str = "100001") -> Property:
     """Create minimal Property for detail fetching."""
     urls = {
         PropertySource.RIGHTMOVE: f"https://www.rightmove.co.uk/properties/{source_id}",
         PropertySource.ZOOPLA: f"https://www.zoopla.co.uk/to-rent/details/{source_id}",
         PropertySource.ONTHEMARKET: f"https://www.onthemarket.com/details/{source_id}",
-        PropertySource.OPENRENT: f"https://www.openrent.com/property-to-rent/{source_id}",
+        PropertySource.OPENRENT: f"https://www.openrent.com/property/{source_id}",
     }
     return Property(
         source=source,
@@ -57,7 +57,7 @@ def _mock_httpx_response(html: str) -> MagicMock:
     resp = MagicMock()
     resp.text = html
     resp.status_code = 200
-    resp.url = "https://example.com/property"
+    resp.url = str(_make_property(PropertySource.RIGHTMOVE).url)
     return resp
 
 
@@ -65,6 +65,7 @@ def _mock_curl_response(html: str, status_code: int = 200) -> MagicMock:
     resp = MagicMock()
     resp.text = html
     resp.status_code = status_code
+    resp.url = str(_make_property(PropertySource.ONTHEMARKET).url)
     return resp
 
 
@@ -114,6 +115,7 @@ class TestRightmoveFloorArea:
         """Build minimal Rightmove HTML with PAGE_MODEL containing sizings."""
         page_model = {
             "propertyData": {
+                "id": "100001",
                 "images": [],
                 "floorplans": [],
                 "text": {"description": "A flat."},
@@ -245,6 +247,7 @@ class TestOnTheMarketFloorArea:
     def _otm_html(self, property_data: dict[str, Any]) -> str:
         """Build minimal OTM HTML with __NEXT_DATA__."""
         base = {
+            "id": "100001",
             "floorplans": [],
             "images": [],
             "description": "A flat.",

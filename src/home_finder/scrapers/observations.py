@@ -168,7 +168,9 @@ def search_observations(
 def detail_parser(source: str) -> ObservationParser:
     modules = [
         "scrapers/detail_fetcher.py",
+        "scrapers/detail_identity.py",
         "scrapers/observations.py",
+        "models/identity.py",
         "scrapers/source_area.py",
         "models/source_area.py",
         "utils/http_evidence.py",
