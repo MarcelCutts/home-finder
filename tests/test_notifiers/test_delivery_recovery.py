@@ -110,6 +110,157 @@ async def test_photo_receipt_survives_venue_rate_limit_and_restart(
         bot.send_venue.assert_called_once()
 
 
+@pytest.mark.parametrize("later_prices", [(), (1500,), (1700,), (1900,), (1700, 1650)])
+async def test_price_drop_during_partial_discovery_survives_restart(
+    tmp_path, enriched_merged_property, delivery_analysis, later_prices
+):
+    merged = enriched_merged_property.model_copy(
+        update={"images": enriched_merged_property.images[:1]}
+    )
+    uid = merged.unique_id
+    path = str(tmp_path / "partial-discovery-price.db")
+    now = datetime(2026, 10, 10, tzinfo=UTC)
+    async with PropertyStorage(path) as storage:
+        key = await seed(storage, merged, delivery_analysis)
+        storage.deliveries._clock = lambda: now
+        sender, bot = notifier(storage)
+        bot.send_venue.side_effect = TelegramRetryAfter(
+            method=METHOD, message="flood", retry_after=60
+        )
+        assert not await deliver(sender, storage.deliveries, key)
+        frozen = await storage.deliveries.get(key)
+        assert frozen["state"] == "waiting" and frozen["next_part"] == 1
+        assert json.loads(frozen["receipts_json"]) == [[11]]
+        assert "1,800" in bot.send_photo.call_args.kwargs["caption"]
+
+        assert await storage.detect_and_record_price_change(uid, 1600) == -200
+        assert await storage.detect_and_record_price_change(uid, 1600) is None
+        price_keys = [k for k in await storage.deliveries.pending() if k.startswith("price:")]
+        assert len(price_keys) == 1
+        price_key = price_keys[0]
+        assert (await storage.deliveries.get(price_key))["state"] == "queued"
+        assert await storage.deliveries.get(key) == frozen
+
+        # Expire the flood delay: discovery completion must independently gate price dispatch.
+        storage.deliveries._clock = lambda: now + timedelta(seconds=61)
+        assert not await deliver(sender, storage.deliveries, price_key)
+        bot.send_message.assert_not_called()
+        assert await status(storage, uid) == "pending"
+
+    async with PropertyStorage(path) as storage:
+        storage.deliveries._clock = lambda: now + timedelta(seconds=61)
+        await storage.deliveries.recover()
+        sender, bot = notifier(storage)
+        assert not await deliver(sender, storage.deliveries, price_key)
+        assert not bot.mock_calls
+        assert "review" not in (await storage.deliveries.report())["counts"]
+
+        async def venue_with_new_prices(**kwargs):
+            # New observations can arrive while the final discovery part is in flight.
+            for price in later_prices:
+                await storage.detect_and_record_price_change(uid, price)
+            return receipt(15)
+
+        bot.send_venue.side_effect = venue_with_new_prices
+        assert await deliver(sender, storage.deliveries, key)
+        bot.send_photo.assert_not_called()
+        bot.send_venue.assert_called_once()
+        bot.send_message.assert_not_called()
+        completed = await storage.deliveries.get(key)
+        assert completed["state"] == "complete"
+        assert completed["snapshot_json"] == frozen["snapshot_json"]
+        assert completed["plan_json"] == frozen["plan_json"]
+        assert completed["plan_sha256"] == frozen["plan_sha256"]
+        assert json.loads(completed["receipts_json"]) == [[11], [15]]
+        assert await status(storage, uid) == "sent"
+
+    prices = (1800, 1600, *later_prices)
+    expect_drop = prices[-1] < prices[-2]
+    async with PropertyStorage(path) as storage:
+        storage.deliveries._clock = lambda: now + timedelta(seconds=61)
+        await storage.deliveries.recover()
+        assert "review" not in (await storage.deliveries.report())["counts"]
+        pending = await storage.deliveries.pending()
+        assert len(pending) == int(expect_drop)
+        drops = await storage.get_unsent_price_drops()
+        assert len(drops) == int(expect_drop)
+        if expect_drop:
+            assert drops[0]["new_price"] == prices[-1]
+        if later_prices:
+            old = await storage.deliveries.get(price_key)
+            assert (old["state"], old["reason"]) == ("suppressed", "superseded_price")
+
+        sender, bot = notifier(storage)
+        assert await sender.deliver_pending() == int(expect_drop)
+        assert bot.send_message.call_count == int(expect_drop)
+        if expect_drop:
+            assert (
+                f"£{prices[-2]:,} → £{prices[-1]:,}/mo" in bot.send_message.call_args.kwargs["text"]
+            )
+            assert (await storage.deliveries.get(pending[0]))["state"] == "complete"
+        assert await storage.get_unsent_price_drops() == []
+        await storage.deliveries.recover()
+        assert await sender.deliver_pending() == 0
+        assert bot.send_message.call_count == int(expect_drop)
+        bot.send_photo.assert_not_called()
+        bot.send_venue.assert_not_called()
+
+
+async def test_price_waits_for_reconciliation_of_failed_final_discovery_ack(
+    tmp_path, enriched_merged_property, delivery_analysis
+):
+    merged = enriched_merged_property.model_copy(
+        update={"images": enriched_merged_property.images[:1]}
+    )
+    uid = merged.unique_id
+    path = str(tmp_path / "discovery-ack-price.db")
+    now = datetime(2026, 10, 10, tzinfo=UTC)
+    async with PropertyStorage(path) as storage:
+        key = await seed(storage, merged, delivery_analysis)
+        storage.deliveries._clock = lambda: now
+        sender, bot = notifier(storage)
+        bot.send_venue.side_effect = TelegramRetryAfter(
+            method=METHOD, message="flood", retry_after=60
+        )
+        assert not await deliver(sender, storage.deliveries, key)
+        await storage.detect_and_record_price_change(uid, 1600)
+        async with storage._transaction() as conn:
+            await conn.execute("""CREATE TRIGGER fail_sent BEFORE UPDATE OF notification_status
+                ON properties WHEN NEW.notification_status='sent'
+                BEGIN SELECT RAISE(ABORT,'fixture'); END""")
+        bot.send_venue.side_effect = None
+        storage.deliveries._clock = lambda: now + timedelta(seconds=61)
+        assert not await deliver(sender, storage.deliveries, key)
+        row = await storage.deliveries.get(key)
+        assert row["state"] == "sending" and row["next_part"] == 1
+        assert json.loads(row["receipts_json"]) == [[11]]
+        assert await status(storage, uid) == "pending"
+        await storage.detect_and_record_price_change(uid, 1500)
+
+    async with PropertyStorage(path) as storage:
+        storage.deliveries._clock = lambda: now + timedelta(seconds=61)
+        await storage.deliveries.recover()
+        assert (await storage.deliveries.get(key))["state"] == "uncertain"
+        sender, bot = notifier(storage)
+        assert await sender.deliver_pending() == 0
+        assert not bot.mock_calls
+        assert "review" not in (await storage.deliveries.report())["counts"]
+        async with storage._transaction() as conn:
+            await conn.execute("DROP TRIGGER fail_sent")
+        await storage.deliveries.resolve(
+            key, "acknowledge", "fixture:venue_receipt", message_ids=[15]
+        )
+        assert await status(storage, uid) == "sent"
+        assert await sender.deliver_pending() == 1
+        assert "£1,600 → £1,500/mo" in bot.send_message.call_args.kwargs["text"]
+        assert await storage.get_unsent_price_drops() == []
+        await storage.deliveries.recover()
+        assert await sender.deliver_pending() == 0
+        bot.send_message.assert_called_once()
+        bot.send_photo.assert_not_called()
+        bot.send_venue.assert_not_called()
+
+
 async def test_album_is_not_repeated_after_followup_rejection(
     tmp_path, enriched_merged_property, delivery_analysis
 ):
@@ -291,6 +442,14 @@ async def test_recipient_change_never_inherits_earlier_receipts(
         changed, bot2 = notifier(storage, chat_id=999)
         assert not await deliver(changed, storage.deliveries, key)
         assert not bot2.mock_calls
+        row = await storage.deliveries.get(key)
+        assert (row["state"], row["reason"]) == ("blocked", "recipient_changed")
+        assert json.loads(row["receipts_json"]) == [[11, 12, 13]]
+        await storage.deliveries.resolve(key, "suppress", "fixture:recipient_changed")
+        await storage.deliveries.recover()
+        assert (await storage.deliveries.get(key))["state"] == "suppressed"
+        assert not await deliver(changed, storage.deliveries, key)
+        assert not bot2.mock_calls
 
 
 async def test_atomic_intent_creation_and_sent_reanalysis(
@@ -354,14 +513,26 @@ async def test_latest_price_change_keeps_its_own_delivery_state(
         assert "1,600" in bot.send_message.call_args.kwargs["text"]
 
 
+@pytest.mark.parametrize("price_failure", [None, "rejected", "recipient_changed"])
 async def test_unstarted_price_drop_is_superseded_even_by_a_rise(
-    tmp_path, enriched_merged_property, delivery_analysis
+    tmp_path, enriched_merged_property, delivery_analysis, price_failure
 ):
     async with PropertyStorage(str(tmp_path / "rise.db")) as storage:
         uid = enriched_merged_property.unique_id
         await seed(storage, enriched_merged_property, delivery_analysis)
         await storage.mark_notified(uid)
         await storage.detect_and_record_price_change(uid, 1700)
+        price_key = next(k for k in await storage.deliveries.pending() if k.startswith("price:"))
+        sender, bot = notifier(storage)
+        if price_failure:
+            bot.send_message.side_effect = TelegramForbiddenError(method=METHOD, message="blocked")
+            assert not await deliver(sender, storage.deliveries, price_key)
+            if price_failure == "recipient_changed":
+                await storage.deliveries.resolve(price_key, "retry", "fixture:recipient_check")
+                changed, changed_bot = notifier(storage, chat_id=999)
+                assert not await deliver(changed, storage.deliveries, price_key)
+                changed_bot.send_message.assert_not_called()
+            assert (await storage.deliveries.get(price_key))["state"] == "blocked"
         await storage.detect_and_record_price_change(uid, 1900)
         async with storage._read_connection() as conn:
             cur = await conn.execute(
@@ -372,6 +543,9 @@ async def test_unstarted_price_drop_is_superseded_even_by_a_rise(
         await storage.deliveries.recover()
         report = await storage.deliveries.report()
         assert "review" not in report["counts"]
+        bot.reset_mock()
+        assert not await deliver(sender, storage.deliveries, price_key)
+        assert not bot.mock_calls
 
 
 async def test_legacy_outcomes_require_review_and_report_redacts_content(
@@ -471,13 +645,24 @@ async def test_migration_retains_legacy_sent_and_quarantines_untracked_pending(
         assert await status(storage, uid) == "sent"
 
 
+@pytest.mark.parametrize("discovery_state", ["sent", "waiting", "blocked"])
 async def test_price_intent_failure_rolls_back_the_price_change(
-    tmp_path, enriched_merged_property, delivery_analysis
+    tmp_path, enriched_merged_property, delivery_analysis, discovery_state
 ):
     async with PropertyStorage(str(tmp_path / "price-atomic.db")) as storage:
         uid = enriched_merged_property.unique_id
-        await seed(storage, enriched_merged_property, delivery_analysis)
-        await storage.mark_notified(uid)
+        key = await seed(storage, enriched_merged_property, delivery_analysis)
+        if discovery_state == "sent":
+            await storage.mark_notified(uid)
+        else:
+            sender, bot = notifier(storage)
+            bot.send_message.side_effect = (
+                TelegramRetryAfter(method=METHOD, message="flood", retry_after=60)
+                if discovery_state == "waiting"
+                else TelegramForbiddenError(method=METHOD, message="blocked")
+            )
+            assert not await deliver(sender, storage.deliveries, key)
+        frozen = await storage.deliveries.get(key)
         async with storage._transaction() as conn:
             await conn.execute("""CREATE TRIGGER fail_price BEFORE INSERT ON notification_deliveries
                 WHEN NEW.kind='price_drop' BEGIN SELECT RAISE(ABORT,'fixture'); END""")
@@ -486,6 +671,8 @@ async def test_price_intent_failure_rolls_back_the_price_change(
         assert await storage.get_price_history(uid) == []
         detail = await storage.web.get_property_detail(uid)
         assert detail["price_pcm"] == 1800
+        assert await storage.deliveries.get(key) == frozen
+        assert not [k for k in await storage.deliveries.pending() if k.startswith("price:")]
 
 
 async def test_uncharged_rate_delay_still_applies_to_a_superseding_price(

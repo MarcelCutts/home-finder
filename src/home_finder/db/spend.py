@@ -310,7 +310,7 @@ class SpendRepository:
         """Read a compatible receipt-backed result, without changing any spend hold."""
         async with self._read_connection() as conn:
             cursor = await conn.execute(
-                """SELECT c.*, a.phase, a.state, a.result, a.cost_basis,
+                """SELECT c.*, a.phase, a.state, a.result, a.cost_basis, a.settlement_json,
                           a.property_id as attempt_property_id,
                           a.accounted_nanousd, a.reserved_nanousd
                    FROM visual_checkpoints c LEFT JOIN paid_attempts a USING(attempt_id)
@@ -323,15 +323,18 @@ class SpendRepository:
         if row["input_sha256"] != input_sha256:
             logger.info("visual_checkpoint_input_changed", property_id=property_id)
             return None
-        valid_receipt = (
-            row["state"] == "settled"
-            and row["phase"] == "visual"
-            and row["result"] == "success"
-            and row["cost_basis"] == "provider_usage"
-            and row["attempt_property_id"] == property_id
-            and row["accounted_nanousd"] <= row["reserved_nanousd"]
-        )
         try:
+            # Billing confirmation changes the accounting basis, not the retained
+            # provider receipt. A confirmed charge alone cannot prove usable output.
+            settlement = UsageSettlement.model_validate_json(row["settlement_json"])
+            valid_receipt = (
+                row["state"] == "settled"
+                and row["phase"] == "visual"
+                and row["result"] == settlement.result == "success"
+                and row["cost_basis"] in {"provider_usage", "operator_confirmed"}
+                and row["attempt_property_id"] == property_id
+                and row["accounted_nanousd"] <= row["reserved_nanousd"]
+            )
             if not valid_receipt or (
                 hashlib.sha256(row["data_json"].encode()).hexdigest() != row["data_sha256"]
             ):
