@@ -11,8 +11,11 @@ import re
 from collections.abc import Iterable
 
 
-def plain_listing_text(parts: Iterable[str]) -> str:
-    return re.sub(r"<[^>]*>", " ", html.unescape("\n".join(parts)))
+def plain_listing_text(parts: Iterable[str], *, preserve_line_breaks: bool = False) -> str:
+    text = html.unescape("\n".join(parts))
+    if preserve_line_breaks:
+        text = re.sub(r"<(?:br\b[^>]*|/(?:p|li)\s*)>", "\n", text, flags=re.I)
+    return re.sub(r"<[^>]*>", " ", text)
 
 
 def listing_band(kind: str, description: str | None, features: list[str] | None) -> str:
