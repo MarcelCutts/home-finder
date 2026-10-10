@@ -2,7 +2,8 @@ app = "home-finder"
 primary_region = "lhr"
 
 [build]
-  dockerfile = "Dockerfile.fly"
+  dockerfile = "Dockerfile"
+  build-target = "dashboard"
 
 [mounts]
   source = "home_finder_data"

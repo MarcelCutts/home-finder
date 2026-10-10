@@ -176,7 +176,9 @@ class OpenRentScraper(BaseScraper):
             max_results=max_results,
             page_delay=delay,
         )
-        result.parse_errors = parse_errors
+        result.parse_errors += parse_errors
+        if parse_errors:
+            result.stop_reason = "parse_error"
 
         logger.info(
             "scraped_openrent_complete",

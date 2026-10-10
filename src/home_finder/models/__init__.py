@@ -1,5 +1,6 @@
 """Pydantic models for properties and search criteria."""
 
+from home_finder.models.commute import CommuteResult, CommuteState
 from home_finder.models.core import (
     SOURCE_BADGES,
     SOURCE_NAMES,
@@ -16,6 +17,7 @@ from home_finder.models.core import (
     TransportMode,
     UserStatus,
 )
+from home_finder.models.listing_text import ListingTextEvidence
 from home_finder.models.quality import (
     BathroomAnalysis,
     BedroomAnalysis,
@@ -47,6 +49,8 @@ __all__ = [
     "BathroomAnalysis",
     "BedroomAnalysis",
     "CoercedBool",
+    "CommuteResult",
+    "CommuteState",
     "ConditionAnalysis",
     "FlooringNoiseAnalysis",
     "FurnishType",
@@ -54,6 +58,7 @@ __all__ = [
     "LightSpaceAnalysis",
     "ListingExtraction",
     "ListingRedFlags",
+    "ListingTextEvidence",
     "MergedProperty",
     "NotificationStatus",
     "OutdoorSpaceAnalysis",

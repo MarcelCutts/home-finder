@@ -95,10 +95,10 @@ class TestFullPipelineE2E:
 
         await storage.close()
 
-    async def test_pipeline_commute_filter_excludes(
+    async def test_pipeline_commute_is_advisory(
         self, test_settings: Settings, synthetic_properties: list[Property]
     ):
-        """Commute filter should reduce the number of properties."""
+        """Over-limit and unknown homes remain available; only measurements are saved."""
         storage = PropertyStorage(":memory:")
         await storage.initialize()
 
@@ -119,22 +119,24 @@ class TestFullPipelineE2E:
         )
 
         # Mock CommuteFilter to return only half
-        from home_finder.filters.commute import CommuteResult
+        from home_finder.models import CommuteResult, CommuteState
 
         mock_commute_results = [
             CommuteResult(
                 property_id=synthetic_properties[0].unique_id,
                 destination_postcode="N1 5AA",
-                travel_time_minutes=15,
+                travel_time_seconds=900,
+                limit_seconds=1800,
                 transport_mode=TransportMode.CYCLING,
-                within_limit=True,
+                state=CommuteState.WITHIN_LIMIT,
             ),
             CommuteResult(
                 property_id=synthetic_properties[1].unique_id,
                 destination_postcode="N1 5AA",
-                travel_time_minutes=45,
+                travel_time_seconds=2700,
+                limit_seconds=1800,
                 transport_mode=TransportMode.CYCLING,
-                within_limit=False,
+                state=CommuteState.OVER_LIMIT,
             ),
         ]
 
@@ -167,14 +169,15 @@ class TestFullPipelineE2E:
 
             result = await _run_pre_analysis_pipeline(settings_with_commute, storage)
 
-        # Only the within_limit property should be in the result
         assert result is not None
-        within_ids = {r.property_id for r in mock_commute_results if r.within_limit}
-        # At least the one within limit should be in the results
-        assert len(result.merged_to_process) >= 1
-        # Commute lookup should only contain properties within limit
-        for uid in result.commute_lookup:
-            assert uid in within_ids
+        assert result.commute_within_limit_count == 1
+        assert result.commute_lookup == {
+            synthetic_properties[0].unique_id: (15, TransportMode.CYCLING),
+            synthetic_properties[1].unique_id: (45, TransportMode.CYCLING),
+        }
+        assert {r.property_id for r in mock_commute_results} <= {
+            m.unique_id for m in result.merged_to_process
+        }
 
         await storage.close()
 

@@ -483,16 +483,19 @@ class TestNotificationRetryExcludesPendingAnalysis:
 
 class TestResetFailedAnalyses:
     @pytest.mark.asyncio
+    @pytest.mark.parametrize("delivered", [False, True])
     async def test_resets_fallback_analysis(
         self,
         storage: PropertyStorage,
         make_merged_property: Callable[..., MergedProperty],
+        delivered: bool,
     ) -> None:
         """Properties with fallback analysis should be reset to pending_analysis."""
         merged = make_merged_property()
         await storage.pipeline.save_pre_analysis_properties([merged], {})
         await storage.pipeline.complete_analysis(merged.unique_id, _make_fallback_analysis())
-        await storage.mark_notified(merged.unique_id)
+        if delivered:
+            await storage.mark_notified(merged.unique_id)
 
         count = await storage.pipeline.reset_failed_analyses()
         assert count == 1
@@ -504,11 +507,14 @@ class TestResetFailedAnalyses:
         )
         row = await cursor.fetchone()
         assert row is not None
-        assert row["notification_status"] == NotificationStatus.PENDING_ANALYSIS.value
+        expected = NotificationStatus.SENT if delivered else NotificationStatus.PENDING_ANALYSIS
+        assert row["notification_status"] == expected.value
 
-        # Quality analysis should be deleted
+        # Already-delivered fallback data remain until a successful reanalysis.
         analysis = await storage.get_quality_analysis(merged.unique_id)
-        assert analysis is None
+        assert (analysis is not None) == delivered
+        queue = await storage.pipeline.get_reanalysis_queue()
+        assert [m.unique_id for m in queue] == ([merged.unique_id] if delivered else [])
 
     @pytest.mark.asyncio
     async def test_does_not_reset_real_analysis(
@@ -568,7 +574,6 @@ class TestResetFailedAnalyses:
         merged = make_merged_property()
         await storage.pipeline.save_pre_analysis_properties([merged], {})
         await storage.pipeline.complete_analysis(merged.unique_id, _make_fallback_analysis())
-        await storage.mark_notified(merged.unique_id)
 
         await storage.pipeline.reset_failed_analyses()
 

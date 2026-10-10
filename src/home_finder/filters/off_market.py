@@ -1,23 +1,22 @@
 """Off-market property detection via URL spot-checking.
 
-Visits each active property's listing URL and checks for definitive removal
-signals (404, "no longer available" text, redirect to search) and "let agreed"
-badges (200 OK with status indicator). Only flags on positive confirmation —
-never on 429s, timeouts, or Cloudflare challenges.
+Checks target-bound structured status or primary status headings. Bare 404s,
+redirects, incomplete pages and challenges remain unknown; 410 is a source URL
+removal signal, not evidence that the home has been let.
 """
 
 from __future__ import annotations
 
 import asyncio
-import re
 import time
-from collections.abc import Callable, Mapping
+from collections.abc import Mapping
 from dataclasses import dataclass, field
-from enum import Enum
 from typing import Final, Protocol
 
 import httpx
 
+from home_finder.filters.availability import ListingStatus as ListingStatus
+from home_finder.filters.availability import assess_listing_page
 from home_finder.logging import get_logger
 from home_finder.scrapers.constants import BROWSER_HEADERS
 
@@ -43,15 +42,6 @@ class CheckableResponse(Protocol):
     def headers(self) -> Mapping[str, str]: ...
 
 
-class ListingStatus(Enum):
-    """Result of checking a single listing URL."""
-
-    ACTIVE = "active"
-    REMOVED = "removed"
-    LET_AGREED = "let_agreed"
-    UNKNOWN = "unknown"
-
-
 # Per-source rate limiting (seconds between requests)
 _SOURCE_DELAYS: Final[dict[str, float]] = {
     "zoopla": 2.0,
@@ -64,192 +54,6 @@ _SOURCE_DELAYS: Final[dict[str, float]] = {
 _CIRCUIT_BREAKER_THRESHOLD: Final = 5
 
 from home_finder.utils.circuit_breaker import ConsecutiveFailureBreaker  # noqa: E402
-
-# Cloudflare challenge indicators
-_CLOUDFLARE_PATTERNS: Final = (
-    "checking your browser",
-    "cloudflare",
-    "just a moment",
-    "ray id",
-    "enable javascript and cookies",
-)
-
-# Removal text patterns per source
-_REMOVAL_PATTERNS: Final[dict[str, list[re.Pattern[str]]]] = {
-    "rightmove": [
-        re.compile(r"property has been removed", re.IGNORECASE),
-        re.compile(r"no longer available", re.IGNORECASE),
-        re.compile(r"no longer on the market", re.IGNORECASE),
-    ],
-    "zoopla": [
-        re.compile(r"no longer available", re.IGNORECASE),
-        re.compile(r"this property has been removed", re.IGNORECASE),
-    ],
-    "openrent": [
-        re.compile(r"no longer available", re.IGNORECASE),
-        re.compile(r"property not found", re.IGNORECASE),
-    ],
-    "onthemarket": [
-        re.compile(r"no longer available", re.IGNORECASE),
-        re.compile(r"property has been removed", re.IGNORECASE),
-    ],
-}
-
-# Let-agreed text patterns per source.
-# Patterns use lookaround to avoid false positives from URL query strings
-# (e.g. ?includeLetAgreed=true, ?let-agreed=true).
-_LET_AGREED_PATTERNS: Final[dict[str, list[re.Pattern[str]]]] = {
-    "rightmove": [
-        # High-confidence: PAGE_MODEL JSON tags array
-        re.compile(r'"tags"\s*:\s*\[.*?"LET_AGREED"', re.IGNORECASE),
-        # Body text: "LET AGREED" or "LET_AGREED" but not includeLetAgreed=true
-        re.compile(r"(?<![?&=a-zA-Z])let[\s_]agreed(?![a-zA-Z=&])", re.IGNORECASE),
-    ],
-    "zoopla": [
-        re.compile(r"(?<![?&=a-zA-Z])let(?:ting)?\s+agreed(?![a-zA-Z=&])", re.IGNORECASE),
-    ],
-    # OpenRent: no let-agreed state — removed listings 404/redirect
-    "onthemarket": [
-        # Body text but not ?let-agreed=true in URLs
-        re.compile(r"(?<![?&=a-zA-Z/-])let[\s-]agreed(?![a-zA-Z=&])", re.IGNORECASE),
-        re.compile(r"(?<![?&=a-zA-Z])under\s+offer(?![a-zA-Z=&])", re.IGNORECASE),
-    ],
-}
-
-
-def _is_cloudflare_challenge(html: str, headers: Mapping[str, str] | None = None) -> bool:
-    """Detect Cloudflare challenge pages (should be treated as UNKNOWN, not REMOVED).
-
-    Checks both the ``cf-mitigated`` response header (the officially documented
-    way to detect Cloudflare challenges) and body text patterns as a fallback.
-    """
-    if headers:
-        cf_mitigated = headers.get("cf-mitigated", "").lower()
-        if cf_mitigated == "challenge":
-            return True
-    lower = html.lower()[:3000]
-    return any(p in lower for p in _CLOUDFLARE_PATTERNS)
-
-
-def _check_let_agreed(source: str, html: str) -> bool:
-    """Check if the page body contains let-agreed signals for the given source."""
-    patterns = _LET_AGREED_PATTERNS.get(source)
-    if not patterns:
-        return False
-    return any(pattern.search(html) for pattern in patterns)
-
-
-def _check_rightmove(response: CheckableResponse) -> ListingStatus:
-    """Check Rightmove listing status."""
-    if response.status_code in (404, 410):
-        return ListingStatus.REMOVED
-
-    if response.status_code == 200:
-        html = response.text
-        if _is_cloudflare_challenge(html, response.headers):
-            return ListingStatus.UNKNOWN
-        # Redirect to search results page
-        url_str = str(response.url)
-        if "/property-to-rent/find" in url_str and "/properties/" not in url_str:
-            return ListingStatus.REMOVED
-        for pattern in _REMOVAL_PATTERNS["rightmove"]:
-            if pattern.search(html[:5000]):
-                return ListingStatus.REMOVED
-        if _check_let_agreed("rightmove", html):
-            return ListingStatus.LET_AGREED
-        return ListingStatus.ACTIVE
-
-    if response.status_code == 429 or response.status_code >= 500:
-        return ListingStatus.UNKNOWN
-
-    return ListingStatus.UNKNOWN
-
-
-def _check_zoopla(response: CheckableResponse) -> ListingStatus:
-    """Check Zoopla listing status."""
-    if response.status_code in (404, 410):
-        return ListingStatus.REMOVED
-
-    if response.status_code == 200:
-        html = response.text
-        if _is_cloudflare_challenge(html, response.headers):
-            return ListingStatus.UNKNOWN
-        for pattern in _REMOVAL_PATTERNS["zoopla"]:
-            if pattern.search(html[:5000]):
-                return ListingStatus.REMOVED
-        if _check_let_agreed("zoopla", html):
-            return ListingStatus.LET_AGREED
-        return ListingStatus.ACTIVE
-
-    if response.status_code == 429 or response.status_code >= 500:
-        return ListingStatus.UNKNOWN
-
-    return ListingStatus.UNKNOWN
-
-
-def _check_openrent(response: CheckableResponse) -> ListingStatus:
-    """Check OpenRent listing status.
-
-    OpenRent has no let-agreed state — removed listings 404 or redirect.
-    """
-    if response.status_code in (404, 410):
-        return ListingStatus.REMOVED
-
-    if response.status_code == 200:
-        html = response.text
-        # Redirect to search page (property removed)
-        url_str = str(response.url)
-        if "/properties-to-rent" in url_str or "homepage" in html.lower()[:1000]:
-            return ListingStatus.REMOVED
-        if _is_cloudflare_challenge(html, response.headers):
-            return ListingStatus.UNKNOWN
-        for pattern in _REMOVAL_PATTERNS["openrent"]:
-            if pattern.search(html[:5000]):
-                return ListingStatus.REMOVED
-        return ListingStatus.ACTIVE
-
-    if response.status_code == 429 or response.status_code >= 500:
-        return ListingStatus.UNKNOWN
-
-    return ListingStatus.UNKNOWN
-
-
-def _check_onthemarket(response: CheckableResponse) -> ListingStatus:
-    """Check OnTheMarket listing status."""
-    if response.status_code in (404, 410):
-        return ListingStatus.REMOVED
-
-    if response.status_code == 200:
-        html = response.text
-        if _is_cloudflare_challenge(html, response.headers):
-            return ListingStatus.UNKNOWN
-        # Redirect to search (no /details/ in URL)
-        url_str = str(response.url)
-        if "/details/" not in url_str and "/to-rent/" in url_str:
-            return ListingStatus.REMOVED
-        for pattern in _REMOVAL_PATTERNS["onthemarket"]:
-            if pattern.search(html[:5000]):
-                return ListingStatus.REMOVED
-        if _check_let_agreed("onthemarket", html):
-            return ListingStatus.LET_AGREED
-        return ListingStatus.ACTIVE
-
-    if response.status_code == 429 or response.status_code >= 500:
-        return ListingStatus.UNKNOWN
-
-    return ListingStatus.UNKNOWN
-
-
-# Type alias for checker functions
-_CheckerFn = Callable[[CheckableResponse], ListingStatus]
-
-# Maps source name to checker function
-_SOURCE_CHECKERS: Final[dict[str, _CheckerFn]] = {
-    "rightmove": _check_rightmove,
-    "zoopla": _check_zoopla,
-    "openrent": _check_openrent,
-    "onthemarket": _check_onthemarket,
-}
 
 # Sources that need curl_cffi for TLS fingerprinting
 _CURL_SOURCES: Final = {"zoopla", "onthemarket", "openrent", "rightmove"}
@@ -330,8 +134,7 @@ class OffMarketChecker:
 
     async def check_url(self, source: str, url: str) -> ListingStatus:
         """Check a single listing URL for removal/let-agreed signals."""
-        checker = _SOURCE_CHECKERS.get(source)
-        if checker is None:
+        if source not in _SOURCE_DELAYS:
             return ListingStatus.UNKNOWN
 
         t0 = time.monotonic()
@@ -348,12 +151,21 @@ class OffMarketChecker:
             )
             return ListingStatus.UNKNOWN
 
-        status = checker(response)
+        evidence = assess_listing_page(
+            source,
+            status_code=response.status_code,
+            html=response.text,
+            final_url=str(response.url),
+            requested_url=url,
+            headers=response.headers,
+        )
+        status = evidence.status
 
         log_kwargs: dict[str, object] = {
             "source": source,
             "url": url,
             "status": status.value,
+            "reason": evidence.reason,
             "status_code": response.status_code,
             "response_time_ms": elapsed_ms,
             "final_url": str(response.url),
@@ -361,7 +173,7 @@ class OffMarketChecker:
         logger.debug("off_market_check_result", **log_kwargs)
 
         if status == ListingStatus.UNKNOWN:
-            headers = dict(response.headers)
+            headers = {key.lower(): value for key, value in response.headers.items()}
             logger.warning(
                 "off_market_unknown_response",
                 source=source,
@@ -369,7 +181,7 @@ class OffMarketChecker:
                 status_code=response.status_code,
                 cf_mitigated=headers.get("cf-mitigated", ""),
                 server=headers.get("server", ""),
-                body_preview=response.text[:300],
+                reason=evidence.reason,
                 response_time_ms=elapsed_ms,
             )
 

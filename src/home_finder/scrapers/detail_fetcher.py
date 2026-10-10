@@ -23,7 +23,9 @@ from home_finder.logging import get_logger
 from home_finder.models import SQM_PER_SQFT, Property, PropertySource
 from home_finder.scrapers.constants import BROWSER_HEADERS
 from home_finder.scrapers.retry import RetryableHttpError
+from home_finder.scrapers.rightmove_payloads import detail_property
 from home_finder.utils.circuit_breaker import ConsecutiveFailureBreaker
+from home_finder.utils.http_evidence import is_challenge
 from home_finder.utils.image_cache import is_valid_image_bytes
 
 _MAX_RETRIES = 2  # cross-run retry handles persistent failures
@@ -544,30 +546,14 @@ class DetailFetcher:
         """Extract floorplan and gallery URLs from Rightmove detail page."""
         try:
             response = await self._httpx_get_with_retry(str(prop.url))
-            html = response.text
-
-            # Find PAGE_MODEL JSON start
-            start_match = re.search(r"window\.PAGE_MODEL\s*=\s*", html)
-            if not start_match:
-                logger.debug("no_page_model", property_id=prop.unique_id)
+            if response.status_code != 200:
+                logger.warning("rightmove_http_error", status=response.status_code)
                 return None
-
-            # Extract JSON using brace counting (handles nested objects)
-            start_idx = start_match.end()
-            depth = 0
-            end_idx = start_idx
-            for i, char in enumerate(html[start_idx:]):
-                if char == "{":
-                    depth += 1
-                elif char == "}":
-                    depth -= 1
-                    if depth == 0:
-                        end_idx = start_idx + i + 1
-                        break
-
-            json_str = html[start_idx:end_idx]
-            data = json.loads(json_str)
-            property_data = data.get("propertyData", {})
+            html = response.text
+            if is_challenge(html, response.headers):
+                logger.warning("rightmove_challenge", property_id=prop.unique_id)
+                return None
+            property_data = detail_property(html, prop.source_id)
 
             # Extract floorplan
             floorplan_url: str | None = None

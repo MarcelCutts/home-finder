@@ -62,9 +62,9 @@ class TestReconnectAfterClose:
         assert timeout == 5000
 
         cursor = await conn.execute("PRAGMA synchronous")
-        # NORMAL = 1
+        # FULL = 2: dispatch reservations must survive a host restart.
         sync = (await cursor.fetchone())[0]
-        assert sync == 1
+        assert sync == 2
 
         cursor = await conn.execute("PRAGMA cache_size")
         cache = (await cursor.fetchone())[0]

@@ -25,6 +25,7 @@ from home_finder.models import (
     PropertyQualityAnalysis,
     TransportMode,
 )
+from home_finder.utils.listing_facts import supported_band
 
 if TYPE_CHECKING:
     from aiogram import Bot
@@ -247,12 +248,14 @@ def _format_header_lines(
         location_parts: list[str] = []
         if escaped_postcode:
             location_parts.append(f"📍 {escaped_postcode}")
-        if commute_minutes is not None:
+        if commute_minutes is not None and commute_minutes > 0:
             mode_emoji = TRANSPORT_MODE_EMOJI.get(transport_mode, "") if transport_mode else ""
             if mode_emoji:
-                location_parts.append(f"{mode_emoji} {commute_minutes} min")
+                location_parts.append(f"{mode_emoji} {commute_minutes} min estimate · check route")
             else:
-                location_parts.append(f"{commute_minutes} min")
+                location_parts.append(f"{commute_minutes} min estimate · check route")
+        else:
+            location_parts.append("Commute unknown")
         if location_parts:
             lines.append(" · ".join(location_parts))
     else:
@@ -260,10 +263,12 @@ def _format_header_lines(
         escaped_address = html.escape(address)
         location = f"{escaped_address}, {escaped_postcode}" if postcode else escaped_address
         lines.append(f"📍 {location}")
-        if commute_minutes is not None:
+        if commute_minutes is not None and commute_minutes > 0:
             mode_emoji = TRANSPORT_MODE_EMOJI.get(transport_mode, "") if transport_mode else ""
             prefix = f"{mode_emoji} " if mode_emoji else ""
-            lines.append(f"{prefix}{commute_minutes} min")
+            lines.append(f"{prefix}{commute_minutes} min estimate · check route")
+        else:
+            lines.append("Commute unknown")
 
     return lines
 
@@ -300,6 +305,19 @@ def _format_outdoor_info(analysis: PropertyQualityAnalysis) -> str | None:
     return ", ".join(items) if items else None
 
 
+def _epc_qualifier(analysis: PropertyQualityAnalysis) -> str:
+    inputs = analysis.listing_text_inputs
+    le = analysis.listing_extraction
+    if (
+        inputs
+        and le
+        and supported_band("epc", le.epc_rating, inputs.description, list(inputs.features))
+        == le.epc_rating
+    ):
+        return " (listing claim)"
+    return " (unverified earlier analysis)"
+
+
 def _format_listing_extraction_info(analysis: PropertyQualityAnalysis) -> str | None:
     """Format key listing data for display."""
     if not analysis.listing_extraction:
@@ -307,15 +325,15 @@ def _format_listing_extraction_info(analysis: PropertyQualityAnalysis) -> str | 
     le = analysis.listing_extraction
     parts = []
     if le.epc_rating and le.epc_rating != "unknown":
-        parts.append(f"EPC {le.epc_rating}")
+        parts.append(f"EPC {le.epc_rating}{_epc_qualifier(analysis)}")
     if le.service_charge_pcm:
-        parts.append(f"+£{le.service_charge_pcm}/mo service charge")
+        parts.append("Service charge mentioned: confirm tenant liability; not added to rent")
     if le.pets_allowed == "yes":
         parts.append("Pets OK")
     elif le.pets_allowed == "no":
         parts.append("No pets")
     if le.bills_included == "yes":
-        parts.append("Bills incl.")
+        parts.append("Bills included claim: confirm named bills and limits")
     broadband_labels = {"fttp": "FTTP", "fttc": "FTTC", "cable": "Cable", "standard": "Basic BB"}
     if le.broadband_type and le.broadband_type in broadband_labels:
         parts.append(f"BB: {broadband_labels[le.broadband_type]}")
@@ -580,7 +598,10 @@ def format_merged_property_caption(
             quality_analysis.listing_extraction
             and quality_analysis.listing_extraction.epc_rating in ("E", "F", "G")
         ):
-            alert_lines.append(f"⚠️ EPC {quality_analysis.listing_extraction.epc_rating}")
+            alert_lines.append(
+                f"⚠️ EPC {quality_analysis.listing_extraction.epc_rating}"
+                f"{_epc_qualifier(quality_analysis)}"
+            )
         if (
             quality_analysis.listing_red_flags
             and quality_analysis.listing_red_flags.red_flag_count >= 2
@@ -1087,7 +1108,9 @@ class TelegramNotifier:
                 builder.add_photo(media=item)
 
         bot = self._get_bot()
-        await bot.send_media_group(chat_id=self.chat_id, media=builder.build())
+        # The Bot also accepts live photos; widen the builder's narrower list
+        # through a fresh list rather than passing an invariant mutable list.
+        await bot.send_media_group(chat_id=self.chat_id, media=list(builder.build()))
 
         # Media groups don't support inline keyboards, so send a follow-up
         # message with full analysis + buttons
@@ -1199,7 +1222,7 @@ class TelegramNotifier:
         if postcode:
             lines.append(f"\U0001f4cd {html.escape(postcode)}")
         if days_listed > 0:
-            lines.append(f"Listed {days_listed} days")
+            lines.append(f"First observed by Home Finder {days_listed} days ago")
 
         buttons: list[list[InlineKeyboardButton]] = []
         if self.web_base_url:

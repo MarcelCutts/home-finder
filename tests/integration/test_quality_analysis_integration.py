@@ -48,11 +48,13 @@ def _sample_visual_response() -> dict[str, Any]:
             "window_sizes": "medium",
             "feels_spacious": True,
             "ceiling_height": "standard",
+            "floor_level": "unknown",
             "notes": "South-facing, bright throughout",
         },
         "space": {
             "living_room_sqm": 22,
             "is_spacious_enough": True,
+            "hosting_layout": "unknown",
             "confidence": "high",
         },
         "bathroom": {
@@ -66,6 +68,7 @@ def _sample_visual_response() -> dict[str, Any]:
             "primary_is_double": "yes",
             "has_built_in_wardrobe": "yes",
             "can_fit_desk": "yes",
+            "office_separation": "unknown",
             "notes": "Good-sized double bedroom",
         },
         "outdoor_space": {
@@ -83,6 +86,8 @@ def _sample_visual_response() -> dict[str, Any]:
         "flooring_noise": {
             "primary_flooring": "hardwood",
             "has_double_glazing": "yes",
+            "hosting_noise_risk": "unknown",
+            "building_construction": "unknown",
             "noise_indicators": [],
             "notes": "Quiet street",
         },
@@ -113,6 +118,7 @@ def _sample_evaluation_response() -> dict[str, Any]:
             "council_tax_band": "C",
             "property_type": "victorian",
             "furnished_status": "furnished",
+            "broadband_type": "unknown",
         },
         "value_for_quality": {
             "rating": "good",
@@ -123,8 +129,8 @@ def _sample_evaluation_response() -> dict[str, Any]:
             "questions_for_agent": ["Any upcoming rent increases?"],
             "deal_breaker_tests": ["Test hot water"],
         },
-        "highlights": ["Gas hob", "Modern kitchen", "Good light"],
-        "lowlights": ["No balcony"],
+        "highlights": ["Gas hob", "Modern kitchen"],
+        "lowlights": [],
         "one_line": "Bright Victorian flat with modern kitchen in E8",
     }
 
@@ -144,6 +150,8 @@ def _create_mock_response(
     mock_response.content = [tool_block]
     mock_response.stop_reason = stop_reason
     mock_response.usage = MagicMock()
+    mock_response.usage.input_tokens = 100
+    mock_response.usage.output_tokens = 50
     mock_response.usage.cache_read_input_tokens = 0
     mock_response.usage.cache_creation_input_tokens = 0
     return mock_response
@@ -231,7 +239,8 @@ class TestQualityAnalysisIntegration:
         assert "Bright flat" in analysis.summary
         # Phase 2 fields
         assert analysis.listing_extraction is not None
-        assert analysis.listing_extraction.epc_rating == "C"
+        # A valid model response still cannot substantiate a band without text.
+        assert analysis.listing_extraction.epc_rating == "unknown"
         assert analysis.highlights is not None
         assert "Gas hob" in analysis.highlights
         assert analysis.one_line is not None
@@ -399,10 +408,10 @@ class TestQualityAnalysisIntegration:
         assert len(image_blocks) == 1
         assert image_blocks[0]["source"]["type"] == "base64"
 
-    async def test_phase2_failure_still_returns_analysis(
+    async def test_phase2_failure_returns_incomplete_outcome(
         self, make_merged_property: Callable[..., MergedProperty]
     ) -> None:
-        """Phase 2 failure should still return analysis with visual data."""
+        """A failed required evaluation cannot complete the assessment."""
         merged = make_merged_property(
             images=_GALLERY_IMAGES,
             floorplan=_FLOORPLAN,
@@ -425,10 +434,11 @@ class TestQualityAnalysisIntegration:
 
         assert len(results) == 1
         _, analysis = results[0]
-        # Visual data present
-        assert analysis.kitchen.overall_quality == "modern"
-        assert analysis.overall_rating == 4
-        # Evaluation data absent
+        assert analysis.kitchen.overall_quality == "unknown"
+        assert analysis.overall_rating is None
+        assert analysis.analysis_failure is not None
+        assert analysis.analysis_failure.phase == "evaluation"
+        assert analysis.analysis_failure.kind == "internal_error"
         assert analysis.listing_extraction is None
         assert analysis.highlights is None
 

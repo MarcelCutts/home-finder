@@ -1,0 +1,18 @@
+{
+  "source_url": "https://www.rightmove.co.uk/properties/93161367",
+  "observed_at": "2026-09-28T18:09:49.986563+00:00",
+  "source_status": 200,
+  "source_sha256": "5a8f6defa750357dd9af2e1398cf90e8cec9eb4d5482d9c7fcb784e08bc6cc7f",
+  "source_bytes": 379026,
+  "transport": "curl/8.18.0, one owner-requested public GET, no session, redirects or retry",
+  "original_nodes": 1588,
+  "fixture_nodes": 93,
+  "fixture_sha256": "1439b1eb121ef75c2b0a834f429ecd900816dd8743e664cfb929c66fa60a2283",
+  "transformations": [
+    "Keep propertyData root and selected detail fields; remove metadata, tracking, agent identity, disclaimer and unrelated page markup.",
+    "Retain source container shapes, shared references, null, booleans and numeric literals; remap surviving indexes without expanding the graph.",
+    "Replace listing ID, address, description, feature text, coordinates and media URLs with non-real examples.",
+    "Preserve the observed empty floorplan and sizings arrays. This capture does not establish encoded floorplan extraction."
+  ],
+  "evidence_limit": "One successful terminal curl response. Not a production transport, typeahead, filter or scheduled-collection qualification."
+}

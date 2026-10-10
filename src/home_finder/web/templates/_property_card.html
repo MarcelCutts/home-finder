@@ -83,10 +83,10 @@
                     {% endif %}
                     {% endif %}
                     {% if prop.epc_rating and prop.epc_rating != 'unknown' %}
-                    <span class="highlight-chip highlight-neutral">EPC {{ prop.epc_rating }}</span>
+                    <span class="highlight-chip highlight-neutral">EPC {{ prop.epc_rating }}{% if prop.epc_unverified %} (unverified){% endif %}</span>
                     {% endif %}
                     {% if prop.value_rating and prop.value_rating in ('good', 'excellent') %}
-                    <span class="highlight-chip highlight-value-{{ prop.value_rating }}">{{ prop.value_rating }} value</span>
+                    <span class="highlight-chip highlight-value-{{ prop.value_rating }}">Value: {{ prop.value_rating }} (unverified)</span>
                     {% endif %}
                 </div>
                 {% endif %}
@@ -119,7 +119,7 @@
             </span>
             {% endif %}
             {% if prop.first_seen %}
-            <span class="card-age">{{ prop.first_seen | listing_age }}</span>
+            <span class="card-age" title="First observed by Home Finder; original listing date unknown">Seen {{ prop.first_seen | listing_age }}</span>
             {% endif %}
             {% if prop.last_checked_at %}
             <span class="card-checked" title="Last checked {{ prop.last_checked_at[:10] }}">&#10003;</span>

@@ -494,10 +494,10 @@ class TestBuildPropertyContext:
         with pytest.raises(AttributeError):
             ctx.outcode = "N16"  # type: ignore[misc]
 
-    def test_energy_estimate_populated(self) -> None:
+    def test_undated_energy_estimate_withheld(self) -> None:
         ctx = build_property_context("E8 2LX", 2)
-        assert ctx.energy_estimate is not None
-        assert ctx.energy_estimate > 0
+        assert ctx.energy_estimate is None
+        assert ctx.council_tax_band_c is None
 
 
 class TestWardCoverage:

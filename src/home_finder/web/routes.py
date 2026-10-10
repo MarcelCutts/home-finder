@@ -12,6 +12,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
 from starlette.responses import Response
 
+from home_finder.config import Settings
 from home_finder.data.area_context import (
     ACOUSTIC_PROFILES,
     AREA_CONTEXT,
@@ -23,6 +24,7 @@ from home_finder.data.area_context import (
     get_micro_areas,
     match_micro_area,
 )
+from home_finder.data.rental_guidance import GUIDANCE
 from home_finder.db import PropertyStorage
 from home_finder.filters.fit_score import (
     FIT_TIERS,
@@ -43,6 +45,7 @@ from home_finder.models import (
     UserStatus,
 )
 from home_finder.utils.address import extract_outcode
+from home_finder.utils.cost_calculator import build_monthly_budget
 from home_finder.utils.image_cache import (
     find_cached_file,
     find_thumbnail,
@@ -61,7 +64,16 @@ from home_finder.web.filters import (
 logger = get_logger(__name__)
 
 router = APIRouter()
-templates = Jinja2Templates(directory=Path(__file__).parent / "templates")
+
+
+def _map_context(request: Request) -> dict[str, str]:
+    settings: Settings = request.app.state.settings
+    return {"map_api_key": settings.carto_basemap_api_key.get_secret_value()}
+
+
+templates = Jinja2Templates(
+    directory=Path(__file__).parent / "templates", context_processors=[_map_context]
+)
 
 TAG_CATEGORIES: Final[dict[str, list[str]]] = {
     "Workspace": [
@@ -348,6 +360,7 @@ async def dashboard(
     except Exception:
         logger.error("dashboard_query_failed", exc_info=True)
         return templates.TemplateResponse(
+            request,
             "error.html",
             {"request": request, "message": "Failed to load properties. Please try again."},
             status_code=500,
@@ -399,11 +412,11 @@ async def dashboard(
 
     # HTMX partial rendering
     if request.headers.get("HX-Request"):
-        response = templates.TemplateResponse("_results.html", context)
+        response = templates.TemplateResponse(request, "_results.html", context)
         response.headers["Vary"] = "HX-Request"
         return response
 
-    response = templates.TemplateResponse("dashboard.html", context)
+    response = templates.TemplateResponse(request, "dashboard.html", context)
     response.headers["Vary"] = "HX-Request"
     return response
 
@@ -468,6 +481,7 @@ async def property_card(
         prop["image_url"] = resolved
 
     return templates.TemplateResponse(
+        request,
         "_property_card.html",
         {
             "request": request,
@@ -492,6 +506,7 @@ async def property_detail(
     except Exception:
         logger.error("detail_query_failed", unique_id=unique_id, exc_info=True)
         return templates.TemplateResponse(
+            request,
             "error.html",
             {"request": request, "message": "Failed to load property details. Please try again."},
             status_code=500,
@@ -499,6 +514,7 @@ async def property_detail(
 
     if prop is None:
         return templates.TemplateResponse(
+            request,
             "error.html",
             {"request": request, "message": "Property not found."},
             status_code=404,
@@ -508,6 +524,7 @@ async def property_detail(
     has_images = prop.get("image_url") or prop.get("gallery_images") or prop.get("floorplan_images")
     if not has_images:
         return templates.TemplateResponse(
+            request,
             "error.html",
             {"request": request, "message": "Property not found."},
             status_code=404,
@@ -589,33 +606,13 @@ async def property_detail(
         bedrooms = prop.get("bedrooms", 0) or 0
         fit_score, fit_breakdown = compute_fit_score_and_breakdown(analysis_dict, bedrooms)
 
-    # Compute True Monthly Cost breakdown
-    cost_breakdown = None
-    if qa is not None:
-        le = getattr(qa, "listing_extraction", None)
-        if le:
-            from home_finder.utils.cost_calculator import estimate_true_monthly_cost
-
-            epc_rating = getattr(le, "epc_rating", None)
-            prop_type = getattr(le, "property_type", None)
-            service_charge_pcm = getattr(le, "service_charge_pcm", None)
-            bills_included_raw = getattr(le, "bills_included", "unknown")
-            bills_included = bills_included_raw == "yes"
-            broadband_type = getattr(le, "broadband_type", None)
-            council_tax_band = getattr(le, "council_tax_band", None)
-            borough = area_context.get("borough")
-
-            cost_breakdown = estimate_true_monthly_cost(
-                rent_pcm=prop.get("price_pcm", 0),
-                borough=borough,
-                council_tax_band=council_tax_band,
-                epc_rating=epc_rating,
-                bedrooms=prop.get("bedrooms", 1) or 1,
-                broadband_type=broadband_type,
-                property_type=prop_type,
-                service_charge_pcm=service_charge_pcm,
-                bills_included=bills_included,
-            )
+    # Rebuild from current retained listing evidence and rent, without model work.
+    extraction = qa.listing_extraction if qa else None
+    cost_breakdown = build_monthly_budget(
+        rent_pcm=prop.get("price_pcm", 0),
+        evidence=prop.get("listing_evidence", {}),
+        earlier_service_charge=extraction.service_charge_pcm if extraction else None,
+    )
 
     # Resolve floor area: prefer scraped, fall back to Claude estimate from floorplan
     if not prop.get("floor_area_sqm") and qa is not None:
@@ -635,11 +632,8 @@ async def property_detail(
 
     # Negotiation intelligence (Ticket 10)
     negotiation = generate_negotiation_brief(
-        days_listed=days_since_filter(cast("str | None", prop.get("first_seen"))),
+        days_observed=days_since_filter(cast("str | None", prop.get("first_seen"))),
         price_history=price_history,
-        price_pcm=prop.get("price_pcm", 0) or 0,
-        outcode=outcode,
-        bedrooms=prop.get("bedrooms", 0) or 0,
     )
 
     # OG image: use first gallery image as absolute URL for social previews
@@ -653,6 +647,7 @@ async def property_detail(
                 break
 
     return templates.TemplateResponse(
+        request,
         "detail.html",
         {
             "request": request,
@@ -674,6 +669,7 @@ async def property_detail(
             "status_history": status_history,
             "price_history": price_history,
             "negotiation": negotiation,
+            "rental_guidance": GUIDANCE,
         },
     )
 
@@ -690,6 +686,7 @@ async def area_detail(
 
     if outcode not in AREA_CONTEXT:
         return templates.TemplateResponse(
+            request,
             "error.html",
             {"request": request, "message": f"No area data for {outcode}."},
             status_code=404,
@@ -704,6 +701,7 @@ async def area_detail(
             area_context["noise_enforcement"] = enforcement
 
     return templates.TemplateResponse(
+        request,
         "area.html",
         {
             "request": request,
@@ -728,7 +726,7 @@ async def update_property_status(
     (quick-action buttons on dashboard), or a status badge partial for
     detail-page swaps.
     """
-    form = await request.form()
+    form = await request.form(max_fields=4, max_files=0, max_part_size=1024)
     status_value = str(form.get("status", "")).strip().lower()
 
     try:
@@ -759,6 +757,7 @@ async def update_property_status(
             if resolved:
                 prop["image_url"] = resolved
             return templates.TemplateResponse(
+                request,
                 "_property_card.html",
                 {
                     "request": request,
@@ -770,6 +769,7 @@ async def update_property_status(
 
     # Detail page: return full status selector so active state updates
     return templates.TemplateResponse(
+        request,
         "_status_controls.html",
         {
             "request": request,

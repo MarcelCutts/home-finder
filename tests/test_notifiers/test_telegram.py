@@ -63,6 +63,13 @@ class TestFormatPropertyMessage:
 
         assert "18 min" in message
         assert "🚴" in message
+        assert "estimate · check route" in message
+
+    @pytest.mark.parametrize("minutes", [None, 0])
+    def test_unknown_commute_is_not_zero_minute_success(self, sample_property, minutes):
+        message = format_property_message(sample_property, commute_minutes=minutes)
+        assert "Commute unknown" in message
+        assert "0 min" not in message
 
     def test_format_property_contains_source(self, sample_property: Property) -> None:
         """Test that message contains source name."""

@@ -4,12 +4,20 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Final
 
 from pydantic import HttpUrl
 
 from home_finder.logging import get_logger
-from home_finder.models import MergedProperty, Property, PropertyImage, PropertySource
+from home_finder.models import (
+    ListingTextEvidence,
+    MergedProperty,
+    Property,
+    PropertyImage,
+    PropertySource,
+)
+from home_finder.models.listing_text import merge_listing_text
 from home_finder.scrapers.detail_fetcher import DetailFetcher
 from home_finder.utils.address import is_outcode
 from home_finder.utils.epc_detector import detect_epc
@@ -171,8 +179,7 @@ async def _enrich_single(
         prop = merged.canonical
         all_images: list[PropertyImage] = []
         floorplan_image: PropertyImage | None = None
-        best_description: str | None = None
-        best_features: list[str] | None = None
+        source_text = merged.text_by_source
         floor_area_sqm: float | None = None
         floor_area_source: str | None = None
         canon_updates: dict[str, float | str] = {}
@@ -191,111 +198,122 @@ async def _enrich_single(
                 longitude=prop.longitude,
             )
 
-            detail_data = await detail_fetcher.fetch_detail_page(temp_prop)
+            try:
+                detail_data = await detail_fetcher.fetch_detail_page(temp_prop)
 
-            if detail_data:
-                if detail_data.gallery_urls:
-                    for idx, img_url in enumerate(detail_data.gallery_urls):
-                        normalized_url = str(HttpUrl(img_url))
-                        # Download and cache image bytes first
-                        cached = True  # default when caching disabled (data_dir=None)
-                        if data_dir:
-                            cache_path = get_cached_image_path(
-                                data_dir, merged.unique_id, normalized_url, "gallery", idx
-                            )
-                            if not cache_path.is_file():
-                                img_bytes = await detail_fetcher.download_image_bytes(img_url)
-                                if img_bytes:
-                                    save_image_bytes(cache_path, img_bytes)
-                                else:
-                                    cached = False
-                                    logger.warning(
-                                        "image_download_skipped",
-                                        property_id=merged.unique_id,
-                                        url=img_url,
+                if detail_data:
+                    observed_at = datetime.now(UTC)
+                    source_text[source] = merge_listing_text(
+                        source_text.get(source, ListingTextEvidence()),
+                        ListingTextEvidence.observed(
+                            observed_at=observed_at,
+                            description=detail_data.description,
+                            features=detail_data.features,
+                        ),
+                    )
+
+                    if detail_data.gallery_urls:
+                        for idx, img_url in enumerate(detail_data.gallery_urls):
+                            normalized_url = str(HttpUrl(img_url))
+                            # Download and cache image bytes first
+                            cached = True  # default when caching disabled (data_dir=None)
+                            if data_dir:
+                                cache_path = get_cached_image_path(
+                                    data_dir, merged.unique_id, normalized_url, "gallery", idx
+                                )
+                                if not cache_path.is_file():
+                                    img_bytes = await detail_fetcher.download_image_bytes(img_url)
+                                    if img_bytes:
+                                        save_image_bytes(cache_path, img_bytes)
+                                    else:
+                                        cached = False
+                                        logger.warning(
+                                            "image_download_skipped",
+                                            property_id=merged.unique_id,
+                                            url=img_url,
+                                            image_type="gallery",
+                                            index=idx,
+                                        )
+                            # Only create PropertyImage if file exists on disk
+                            # (or caching disabled — data_dir=None)
+                            if cached:
+                                all_images.append(
+                                    PropertyImage(
+                                        url=HttpUrl(normalized_url),
+                                        source=source,
                                         image_type="gallery",
-                                        index=idx,
                                     )
-                        # Only create PropertyImage if file exists on disk
-                        # (or caching disabled — data_dir=None)
-                        if cached:
-                            all_images.append(
-                                PropertyImage(
-                                    url=HttpUrl(normalized_url),
+                                )
+
+                    if detail_data.floorplan_url and not floorplan_image:
+                        if is_valid_image_url(detail_data.floorplan_url):
+                            normalized_fp_url = str(HttpUrl(detail_data.floorplan_url))
+                            fp_cached = True
+                            if data_dir:
+                                cache_path = get_cached_image_path(
+                                    data_dir,
+                                    merged.unique_id,
+                                    normalized_fp_url,
+                                    "floorplan",
+                                    0,
+                                )
+                                if not cache_path.is_file():
+                                    fp_bytes = await detail_fetcher.download_image_bytes(
+                                        detail_data.floorplan_url
+                                    )
+                                    if fp_bytes:
+                                        save_image_bytes(cache_path, fp_bytes)
+                                    else:
+                                        fp_cached = False
+                                        logger.warning(
+                                            "image_download_skipped",
+                                            property_id=merged.unique_id,
+                                            url=detail_data.floorplan_url,
+                                            image_type="floorplan",
+                                            index=0,
+                                        )
+                            if fp_cached:
+                                floorplan_image = PropertyImage(
+                                    url=HttpUrl(normalized_fp_url),
                                     source=source,
-                                    image_type="gallery",
+                                    image_type="floorplan",
                                 )
+                        else:
+                            logger.warning(
+                                "floorplan_url_rejected",
+                                property_id=merged.unique_id,
+                                url=detail_data.floorplan_url,
+                                reason="failed_image_url_validation",
                             )
 
-                if detail_data.floorplan_url and not floorplan_image:
-                    if is_valid_image_url(detail_data.floorplan_url):
-                        normalized_fp_url = str(HttpUrl(detail_data.floorplan_url))
-                        fp_cached = True
-                        if data_dir:
-                            cache_path = get_cached_image_path(
-                                data_dir,
-                                merged.unique_id,
-                                normalized_fp_url,
-                                "floorplan",
-                                0,
-                            )
-                            if not cache_path.is_file():
-                                fp_bytes = await detail_fetcher.download_image_bytes(
-                                    detail_data.floorplan_url
-                                )
-                                if fp_bytes:
-                                    save_image_bytes(cache_path, fp_bytes)
-                                else:
-                                    fp_cached = False
-                                    logger.warning(
-                                        "image_download_skipped",
-                                        property_id=merged.unique_id,
-                                        url=detail_data.floorplan_url,
-                                        image_type="floorplan",
-                                        index=0,
-                                    )
-                        if fp_cached:
-                            floorplan_image = PropertyImage(
-                                url=HttpUrl(normalized_fp_url),
-                                source=source,
-                                image_type="floorplan",
-                            )
-                    else:
-                        logger.warning(
-                            "floorplan_url_rejected",
-                            property_id=merged.unique_id,
-                            url=detail_data.floorplan_url,
-                            reason="failed_image_url_validation",
-                        )
+                    # Backfill coordinates/postcode from detail page (Rightmove especially)
+                    if (
+                        "latitude" not in canon_updates
+                        and not prop.latitude
+                        and detail_data.latitude
+                        and detail_data.longitude
+                    ):
+                        canon_updates["latitude"] = detail_data.latitude
+                        canon_updates["longitude"] = detail_data.longitude
+                    if "postcode" not in canon_updates and detail_data.postcode:
+                        current_pc = prop.postcode or ""
+                        if not current_pc or is_outcode(current_pc):
+                            canon_updates["postcode"] = detail_data.postcode
 
-                if detail_data.description and (
-                    not best_description or len(detail_data.description) > len(best_description)
-                ):
-                    best_description = detail_data.description
+                    # First non-null floor area wins
+                    if floor_area_sqm is None and detail_data.floor_area_sqm:
+                        floor_area_sqm = detail_data.floor_area_sqm
+                        floor_area_source = detail_data.floor_area_source
 
-                if detail_data.features and (
-                    not best_features or len(detail_data.features) > len(best_features)
-                ):
-                    best_features = detail_data.features
-
-                # Backfill coordinates/postcode from detail page (Rightmove especially)
-                if (
-                    "latitude" not in canon_updates
-                    and not prop.latitude
-                    and detail_data.latitude
-                    and detail_data.longitude
-                ):
-                    canon_updates["latitude"] = detail_data.latitude
-                    canon_updates["longitude"] = detail_data.longitude
-                if "postcode" not in canon_updates and detail_data.postcode:
-                    current_pc = prop.postcode or ""
-                    if not current_pc or is_outcode(current_pc):
-                        canon_updates["postcode"] = detail_data.postcode
-
-                # First non-null floor area wins
-                if floor_area_sqm is None and detail_data.floor_area_sqm:
-                    floor_area_sqm = detail_data.floor_area_sqm
-                    floor_area_source = detail_data.floor_area_source
+            except Exception as exc:
+                # Keep text already received from this source and continue with
+                # the others; image or parser failure must not erase that evidence.
+                logger.warning(
+                    "source_detail_enrichment_failed",
+                    property_id=merged.unique_id,
+                    source=source.value,
+                    error_type=type(exc).__name__,
+                )
 
         # Detect and remove EPC charts from gallery before floorplan detection
         if data_dir and all_images:
@@ -328,6 +346,9 @@ async def _enrich_single(
                 _generate_gallery_thumbnails, all_images, merged.unique_id, data_dir
             )
 
+        canonical_text = source_text.get(prop.source)
+        if canonical_text is not None and canonical_text.description is not None:
+            canon_updates["description"] = canonical_text.description
         canonical = prop.model_copy(update=canon_updates) if canon_updates else prop
 
         updated = MergedProperty(
@@ -338,7 +359,12 @@ async def _enrich_single(
             floorplan=floorplan_image,
             min_price=merged.min_price,
             max_price=merged.max_price,
-            descriptions=merged.descriptions,
+            descriptions={
+                s: text.description
+                for s, text in source_text.items()
+                if text.description is not None
+            },
+            source_text=source_text,
             floor_area_sqm=floor_area_sqm,
             floor_area_source=floor_area_source,
         )
@@ -371,7 +397,12 @@ async def _load_cached_property(
     Uses a single combined storage call to load both images and the property
     row, avoiding two separate DB round-trips.
     """
-    images, db_prop = await storage.get_property_images_and_row(merged.unique_id)
+    images, db_prop, saved_text = await storage.get_property_images_and_row(merged.unique_id)
+    source_text = merged.text_by_source
+    for source, evidence in saved_text.items():
+        source_text[source] = merge_listing_text(
+            source_text.get(source, ListingTextEvidence()), evidence
+        )
     gallery = tuple(img for img in images if img.image_type == "gallery")
     floorplan = next((img for img in images if img.image_type == "floorplan"), None)
 
@@ -391,6 +422,9 @@ async def _load_cached_property(
         if updates:
             canonical = canonical.model_copy(update=updates)
 
+    canonical_text = source_text.get(canonical.source)
+    if canonical_text is not None and canonical_text.description is not None:
+        canonical = canonical.model_copy(update={"description": canonical_text.description})
     return MergedProperty(
         canonical=canonical,
         sources=merged.sources,
@@ -399,7 +433,10 @@ async def _load_cached_property(
         floorplan=floorplan,
         min_price=merged.min_price,
         max_price=merged.max_price,
-        descriptions=merged.descriptions,
+        descriptions={
+            s: text.description for s, text in source_text.items() if text.description is not None
+        },
+        source_text=source_text,
         floor_area_sqm=merged.floor_area_sqm,
         floor_area_source=merged.floor_area_source,
     )

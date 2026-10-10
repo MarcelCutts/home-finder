@@ -5,28 +5,16 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, ClassVar, assert_never
 
-from pydantic import BaseModel, ConfigDict
-
 from home_finder.logging import get_logger
 from home_finder.models import MergedProperty, Property, TransportMode
+from home_finder.models.commute import CommuteResult as CommuteResult
+from home_finder.models.commute import CommuteState
 from home_finder.utils.address import is_outcode
 
 if TYPE_CHECKING:
     from traveltimepy import AsyncClient
 
 logger = get_logger(__name__)
-
-
-class CommuteResult(BaseModel):
-    """Result of a commute time calculation."""
-
-    model_config = ConfigDict(frozen=True)
-
-    property_id: str
-    destination_postcode: str
-    travel_time_minutes: int
-    transport_mode: TransportMode
-    within_limit: bool
 
 
 class CommuteFilter:
@@ -60,61 +48,51 @@ class CommuteFilter:
         max_minutes: int,
         transport_mode: TransportMode,
     ) -> list[CommuteResult]:
-        """Filter properties by commute time.
+        """Return one explicit outcome per input, with no admission decisions.
 
-        Args:
-            properties: List of properties to filter.
-            max_minutes: Maximum commute time in minutes.
-            transport_mode: Mode of transport for commute calculation.
-
-        Returns:
-            List of CommuteResult objects for reachable properties.
+        The API's unreachable list describes this bounded search, not proof of
+        an impossible journey or a measured duration beyond the user's limit.
         """
-        # Filter to only properties with coordinates
-        props_with_coords = [p for p in properties if p.latitude and p.longitude]
 
+        def outcome(
+            prop: Property, state: CommuteState, seconds: int | None = None
+        ) -> CommuteResult:
+            return CommuteResult(
+                property_id=prop.unique_id,
+                destination_postcode=self.destination_postcode,
+                transport_mode=transport_mode,
+                limit_seconds=max_minutes * 60,
+                state=state,
+                travel_time_seconds=seconds,
+            )
+
+        props_with_coords = [
+            p for p in properties if p.latitude is not None and p.longitude is not None
+        ]
+        by_id = {p.unique_id: outcome(p, CommuteState.MISSING_COORDINATES) for p in properties}
         if not props_with_coords:
             logger.info("no_properties_with_coordinates")
-            return []
+            return [by_id[p.unique_id] for p in properties]
 
-        logger.info(
-            "filtering_properties_by_commute",
-            total_properties=len(properties),
-            with_coordinates=len(props_with_coords),
-            max_minutes=max_minutes,
-            transport_mode=transport_mode.value,
+        # Missing response members remain explicit unknowns, not unreachable.
+        by_id.update(
+            {p.unique_id: outcome(p, CommuteState.INVALID_RESPONSE) for p in props_with_coords}
         )
-
-        # Import required types
         from traveltimepy import AsyncClient
-        from traveltimepy.requests.common import (
-            Coordinates,
-            Location,
-        )
-        from traveltimepy.requests.common import (
-            Property as TravelTimeProperty,
-        )
+        from traveltimepy.requests.common import Coordinates, Location
+        from traveltimepy.requests.common import Property as TravelTimeProperty
         from traveltimepy.requests.time_filter import TimeFilterArrivalSearch
-        from traveltimepy.requests.transportation import (
-            Cycling,
-            Driving,
-            PublicTransport,
-            Walking,
-        )
+        from traveltimepy.requests.transportation import Cycling, Driving, PublicTransport, Walking
 
-        # Create departure locations (all the properties we're commuting FROM)
-        departure_locations = []
+        locations = []
         for prop in props_with_coords:
-            # Already filtered above, but assert for type checker
             assert prop.latitude is not None and prop.longitude is not None
-            departure_locations.append(
+            locations.append(
                 Location(
-                    id=prop.unique_id,
-                    coords=Coordinates(lat=prop.latitude, lng=prop.longitude),
+                    id=prop.unique_id, coords=Coordinates(lat=prop.latitude, lng=prop.longitude)
                 )
             )
 
-        # Configure transportation
         transportation: PublicTransport | Cycling | Driving | Walking
         if transport_mode == TransportMode.PUBLIC_TRANSPORT:
             transportation = PublicTransport()
@@ -128,93 +106,99 @@ class CommuteFilter:
             assert_never(transport_mode)
 
         try:
-            # Create fresh client for this operation - don't cache because
-            # the context manager closes the session on exit
             async with AsyncClient(
                 app_id=self.app_id,
                 api_key=self.api_key,
-                max_rpm=50,  # Stay under 60 limit with safety margin
-                retry_attempts=3,  # Retry transient failures
-                timeout=60,  # Reasonable timeout in seconds
+                max_rpm=50,
+                retry_attempts=3,
+                timeout=60,
             ) as client:
-                # Geocode destination within the same context manager
-                dest_coords = await self._geocode_with_client(client, self.destination_postcode)
-                if not dest_coords:
-                    logger.error(
-                        "failed_to_geocode_destination",
-                        postcode=self.destination_postcode,
-                    )
-                    return []
-
-                # Create arrival location (the destination we're commuting TO)
-                arrival_location = Location(
-                    id="destination",
-                    coords=Coordinates(lat=dest_coords[0], lng=dest_coords[1]),
+                dest_coords = await self._geocode_with_client(
+                    client, self.destination_postcode, raise_on_error=True
                 )
+                if not dest_coords:
+                    by_id.update(
+                        {
+                            p.unique_id: outcome(p, CommuteState.DESTINATION_UNRESOLVED)
+                            for p in props_with_coords
+                        }
+                    )
+                    return [by_id[p.unique_id] for p in properties]
 
-                # Create search request (many-to-one: from properties to destination)
-                arrival_search = TimeFilterArrivalSearch(
+                destination = Location(
+                    id="destination", coords=Coordinates(lat=dest_coords[0], lng=dest_coords[1])
+                )
+                search = TimeFilterArrivalSearch(
                     id="property-search",
                     arrival_location_id="destination",
-                    departure_location_ids=[loc.id for loc in departure_locations],
+                    departure_location_ids=[loc.id for loc in locations],
                     arrival_time=datetime.now(UTC),
-                    travel_time=max_minutes * 60,  # Convert to seconds
+                    travel_time=max_minutes * 60,
                     transportation=transportation,
                     properties=[TravelTimeProperty.TRAVEL_TIME],
                 )
-
                 response = await client.time_filter(
-                    locations=[arrival_location, *departure_locations],
+                    locations=[destination, *locations],
                     departure_searches=[],
-                    arrival_searches=[arrival_search],
+                    arrival_searches=[search],
                 )
-        except Exception as e:
-            error_str = str(e).lower()
-            if "rate limit" in error_str or "429" in error_str:
-                logger.warning("rate_limit_hit", error=str(e), exc_info=True)
+        except Exception as exc:
+            # No exception text/traceback: SDK failures can include request data.
+            if "rate limit" in str(exc).lower() or "429" in str(exc):
+                logger.warning("rate_limit_hit", error_type=type(exc).__name__)
             else:
-                logger.error("traveltime_api_error", error=str(e), exc_info=True)
-            # Graceful degradation: skip commute filtering rather than dropping all properties
+                logger.error("traveltime_api_error", error_type=type(exc).__name__)
             logger.warning(
-                "commute_filter_skipped",
-                reason="api_failure",
-                property_count=len(properties),
+                "commute_filter_skipped", reason="api_failure", property_count=len(properties)
             )
-            return [
-                CommuteResult(
-                    property_id=p.unique_id,
-                    destination_postcode=self.destination_postcode,
-                    travel_time_minutes=0,
-                    transport_mode=transport_mode,
-                    within_limit=True,
-                )
-                for p in properties
-            ]
+            by_id.update(
+                {p.unique_id: outcome(p, CommuteState.PROVIDER_ERROR) for p in props_with_coords}
+            )
+            return [by_id[p.unique_id] for p in properties]
 
-        # Process results
-        results: list[CommuteResult] = []
+        requested = {p.unique_id: p for p in props_with_coords}
+        seen: set[str] = set()
+        try:
+            for search_result in response.results:
+                for uid in search_result.unreachable:
+                    if uid in requested:
+                        state = (
+                            CommuteState.INVALID_RESPONSE
+                            if uid in seen
+                            else CommuteState.UNREACHABLE
+                        )
+                        by_id[uid] = outcome(requested[uid], state)
+                        seen.add(uid)
+                for location in search_result.locations:
+                    uid = location.id
+                    if uid not in requested:
+                        continue
+                    seconds = location.properties[0].travel_time if location.properties else None
+                    # Duplicate/conflicting or malformed outcomes are not measurements.
+                    if uid in seen or type(seconds) is not int or seconds < 0:
+                        by_id[uid] = outcome(requested[uid], CommuteState.INVALID_RESPONSE)
+                    else:
+                        state = (
+                            CommuteState.WITHIN_LIMIT
+                            if seconds <= max_minutes * 60
+                            else CommuteState.OVER_LIMIT
+                        )
+                        by_id[uid] = outcome(requested[uid], state, seconds)
+                    seen.add(uid)
+        except (AttributeError, IndexError, TypeError):
+            logger.warning("invalid_commute_response")
+            by_id.update(
+                {p.unique_id: outcome(p, CommuteState.INVALID_RESPONSE) for p in props_with_coords}
+            )
 
-        for search_result in response.results:
-            for location in search_result.locations:
-                travel_time_seconds = location.properties[0].travel_time
-                travel_time_minutes = travel_time_seconds // 60
-
-                results.append(
-                    CommuteResult(
-                        property_id=location.id,
-                        destination_postcode=self.destination_postcode,
-                        travel_time_minutes=travel_time_minutes,
-                        transport_mode=transport_mode,
-                        within_limit=travel_time_minutes <= max_minutes,
-                    )
-                )
-
+        results = [by_id[p.unique_id] for p in properties]
         logger.info(
             "commute_filter_complete",
             total_results=len(results),
-            within_limit=sum(1 for r in results if r.within_limit),
+            within_limit=sum(r.within_limit is True for r in results),
+            over_limit=sum(r.within_limit is False for r in results),
+            unknown=sum(r.within_limit is None for r in results),
         )
-
         return results
 
     async def geocode_properties(self, properties: list[MergedProperty]) -> list[MergedProperty]:
@@ -234,7 +218,7 @@ class CommuteFilter:
         needs_geocoding = [
             m
             for m in properties
-            if not (m.canonical.latitude and m.canonical.longitude)
+            if (m.canonical.latitude is None or m.canonical.longitude is None)
             and m.canonical.postcode
             and not is_outcode(m.canonical.postcode)
         ]
@@ -242,7 +226,7 @@ class CommuteFilter:
         outcode_only_count = sum(
             1
             for m in properties
-            if not (m.canonical.latitude and m.canonical.longitude)
+            if (m.canonical.latitude is None or m.canonical.longitude is None)
             and m.canonical.postcode
             and is_outcode(m.canonical.postcode)
         )
@@ -282,7 +266,7 @@ class CommuteFilter:
         result: list[MergedProperty] = []
         for merged in properties:
             canon = merged.canonical
-            if not (canon.latitude and canon.longitude) and canon.postcode:
+            if (canon.latitude is None or canon.longitude is None) and canon.postcode:
                 coords = coords_lookup.get(canon.postcode)
                 if coords:
                     updated_canon = canon.model_copy(
@@ -300,7 +284,7 @@ class CommuteFilter:
         return result
 
     async def _geocode_with_client(
-        self, client: AsyncClient, postcode: str
+        self, client: AsyncClient, postcode: str, *, raise_on_error: bool = False
     ) -> tuple[float, float] | None:
         """Geocode a UK postcode to coordinates using the provided client.
 
@@ -325,6 +309,8 @@ class CommuteFilter:
                 self._geocoding_cache[postcode] = result
                 return result
         except Exception as e:
-            logger.warning("geocoding_failed", postcode=postcode, error=str(e), exc_info=True)
+            logger.warning("geocoding_failed", error_type=type(e).__name__)
+            if raise_on_error:
+                raise
 
         return None

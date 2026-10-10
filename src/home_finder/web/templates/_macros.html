@@ -45,15 +45,9 @@ quality-item quality-item{% if value in excellent_values %}-excellent{% elif val
 {%- endmacro -%}
 
 {%- macro commute_pill(minutes, transport_mode=None) -%}
-{% if minutes is not none and minutes %}
-{% if minutes <= 15 %}
-<span class="commute-pill commute-green">{{ minutes }} min{% if transport_mode == "cycling" %} &#128692;{% elif transport_mode == "public_transport" %} &#128647;{% endif %}</span>
-{% elif minutes <= 30 %}
-<span class="commute-pill commute-indigo">{{ minutes }} min{% if transport_mode == "cycling" %} &#128692;{% elif transport_mode == "public_transport" %} &#128647;{% endif %}</span>
-{% elif minutes <= 45 %}
-<span class="commute-pill commute-amber">{{ minutes }} min{% if transport_mode == "cycling" %} &#128692;{% elif transport_mode == "public_transport" %} &#128647;{% endif %}</span>
+{% if minutes is not none and minutes > 0 %}
+<span class="commute-pill commute-estimate" title="Saved estimate: destination, journey date/time and location precision are unverified. Check your route.">{{ minutes }} min · estimate{% if transport_mode == "cycling" %} &#128692;{% elif transport_mode == "public_transport" %} &#128647;{% endif %}</span>
 {% else %}
-<span class="commute-pill commute-red">{{ minutes }} min{% if transport_mode == "cycling" %} &#128692;{% elif transport_mode == "public_transport" %} &#128647;{% endif %}</span>
-{% endif %}
+<span class="commute-pill commute-estimate" title="No reliable saved commute estimate. Check your route.">Commute unknown</span>
 {% endif %}
 {%- endmacro -%}

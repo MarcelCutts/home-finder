@@ -72,6 +72,32 @@ def _isolate_settings_from_dotenv(monkeypatch: pytest.MonkeyPatch) -> None:
     )
 
 
+@pytest.fixture
+async def native_analysis_spending(monkeypatch):
+    """Explicit test-only budget for suites exercising the actual SDK transport."""
+    from home_finder.db import PropertyStorage
+    from home_finder.filters.quality import PropertyQualityFilter
+    from home_finder.models.spend import SpendPolicy
+
+    policy = SpendPolicy(
+        per_call_usd="10",
+        daily_usd="1000",
+        monthly_usd="1000",
+        max_in_flight=50,
+        max_attempts_per_operation=3,
+    )
+    original = PropertyQualityFilter.__init__
+    async with PropertyStorage(":memory:") as storage:
+
+        def initialize(self, *args, **kwargs):
+            if "spend_repository" not in kwargs and "spend_policy" not in kwargs:
+                kwargs.update(spend_repository=storage.spend, spend_policy=policy)
+            original(self, *args, **kwargs)
+
+        monkeypatch.setattr(PropertyQualityFilter, "__init__", initialize)
+        yield storage, policy
+
+
 @pytest.fixture(autouse=True)
 def _cleanup_aiosqlite_threads(request: pytest.FixtureRequest):
     """Safety net: detect and stop leaked aiosqlite worker threads.
@@ -463,3 +489,23 @@ def set_crawlee_storage_dir(tmp_path: Path) -> Generator[None, None, None]:
         os.environ["CRAWLEE_STORAGE_DIR"] = old_value
     else:
         os.environ.pop("CRAWLEE_STORAGE_DIR", None)
+
+
+@pytest.fixture
+def cached_analysis_property(make_merged_property, tmp_path):
+    from tests.test_filters.test_quality import _populate_image_cache
+
+    merged = make_merged_property()
+    merged = merged.model_copy(
+        update={
+            "images": (
+                PropertyImage(
+                    url="https://example.com/fixture.jpg",
+                    source=merged.canonical.source,
+                    image_type="gallery",
+                ),
+            )
+        }
+    )
+    _populate_image_cache(str(tmp_path), merged)
+    return merged, str(tmp_path)
