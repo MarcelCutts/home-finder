@@ -107,6 +107,53 @@ async def test_fallback_score_does_not_rank_above_assessments(processing_storage
 
 
 @pytest.mark.parametrize(
+    ("filters", "expected"),
+    [
+        (PropertyFilter(value_rating="excellent"), {"assessed", "refresh"}),
+        (PropertyFilter(natural_light="good"), {"assessed", "refresh"}),
+        (PropertyFilter(min_living_room_sqm=10), {"assessed", "refresh"}),
+        (PropertyFilter(outdoor_space="no"), {"assessed"}),
+    ],
+)
+async def test_explicit_assessment_filters_exclude_fallbacks(processing_storage, filters, expected):
+    # The failed assessment retains plausible defaults, including a cheap rent
+    # rating. Those defaults must not satisfy an explicit owner preference.
+    async with processing_storage._transaction() as conn:
+        await conn.execute(
+            "UPDATE quality_analyses SET has_outdoor_space=0, "
+            "analysis_json=json_set(analysis_json, '$.value', json('{\"rating\":\"excellent\"}'))"
+        )
+        await conn.execute(
+            "UPDATE quality_analyses SET has_outdoor_space=NULL "
+            "WHERE property_unique_id='openrent:refresh'"
+        )
+    rows, count = await processing_storage.web.get_properties_paginated(filters)
+    markers = await processing_storage.web.get_map_markers(filters)
+    ids = {f"openrent:{name}" for name in expected}
+    assert {row["unique_id"] for row in rows} == ids
+    assert {marker["id"] for marker in markers} == ids
+    assert count == len(ids) == await processing_storage.web.get_filter_count(filters)
+
+
+async def test_floor_area_filter_keeps_source_measurements_without_assessment(processing_storage):
+    async with processing_storage._transaction() as conn:
+        await conn.execute(
+            "UPDATE properties SET floor_area_sqm=60 WHERE unique_id='openrent:plain'"
+        )
+        await conn.execute(
+            "UPDATE quality_analyses SET "
+            "analysis_json=json_set(analysis_json, '$.space.total_area_sqm', 65)"
+        )
+    filters = PropertyFilter(min_floor_area_sqm=50)
+    rows, count = await processing_storage.web.get_properties_paginated(filters)
+    markers = await processing_storage.web.get_map_markers(filters)
+    ids = {"openrent:plain", "openrent:assessed", "openrent:refresh"}
+    assert {row["unique_id"] for row in rows} == ids
+    assert {marker["id"] for marker in markers} == ids
+    assert count == len(ids) == await processing_storage.web.get_filter_count(filters)
+
+
+@pytest.mark.parametrize(
     ("name", "label"),
     [
         ("details", "Awaiting listing details"),
