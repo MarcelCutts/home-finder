@@ -581,6 +581,7 @@ def sample_visual_response() -> dict[str, Any]:
             "notes": "Good-sized double bedroom",
         },
         "outdoor_space": {
+            "availability": "yes",
             "has_balcony": False,
             "has_garden": False,
             "has_terrace": False,

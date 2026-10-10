@@ -172,7 +172,8 @@
         <blockquote>{{ qa.summary }}</blockquote>
         <p class="cost-line-note">AI assessment. {% if not qa.listing_text_inputs %}This earlier assessment has no retained listing-text inputs; factual claims need confirmation.{% else %}Check current listing evidence and confirm material claims with the agent.{% endif %}</p>
 
-        {% if qa.highlights or qa.lowlights %}
+        {% set display_lowlights = qa.display_lowlights %}
+        {% if qa.highlights or display_lowlights %}
         <div class="overview-chips">
             {% if qa.highlights %}
             {% for tag in qa.highlights %}
@@ -181,8 +182,8 @@
             {% endif %}
             {% endfor %}
             {% endif %}
-            {% if qa.lowlights %}
-            {% for tag in qa.lowlights %}
+            {% if display_lowlights %}
+            {% for tag in display_lowlights %}
             <span class="highlight-chip highlight-negative">{{ tag }}</span>
             {% endfor %}
             {% endif %}
@@ -348,10 +349,10 @@
         {% if qa.listing_red_flags and qa.listing_red_flags.red_flag_count > 0 %}
         <div class="quality-alert alert-amber">
             <strong>Listing Red Flags ({{ qa.listing_red_flags.red_flag_count }}):</strong>
-            {% if qa.listing_red_flags.too_few_photos %}<p>Too few photos</p>{% endif %}
-            {% if qa.listing_red_flags.selective_angles %}<p>Selective camera angles</p>{% endif %}
+            {% if qa.listing_red_flags.too_few_photos %}<p>Few supplied photos</p>{% endif %}
+            {% if qa.listing_red_flags.selective_angles %}<p>Limited views in supplied photos</p>{% endif %}
             {% if qa.listing_red_flags.missing_room_photos %}
-            <p>No photos of: {{ qa.listing_red_flags.missing_room_photos | join(", ") }}</p>
+            <p>Not seen in supplied photos: {{ qa.listing_red_flags.missing_room_photos | join(", ") }}</p>
             {% endif %}
             {% if qa.listing_red_flags.description_concerns %}
             {% for concern in qa.listing_red_flags.description_concerns %}

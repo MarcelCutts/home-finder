@@ -19,6 +19,7 @@ from home_finder.models import (
     KitchenAnalysis,
     LightSpaceAnalysis,
     ListingExtraction,
+    ListingRedFlags,
     ListingTextEvidence,
     MergedProperty,
     OutdoorSpaceAnalysis,
@@ -30,6 +31,7 @@ from home_finder.models import (
     SpaceAnalysis,
     ValueAnalysis,
 )
+from home_finder.models.analysis import ImageReviewCoverage
 from home_finder.utils.image_cache import (
     get_cache_dir,
     safe_dir_name,
@@ -507,6 +509,47 @@ class TestPropertyCardEndpoint:
 
 class TestDetailQualityCards:
     """Tests that quality cards render with correct content on the detail page."""
+
+    @pytest.mark.parametrize("reviewed", [None, 7, 8])
+    async def test_gallery_review_coverage_is_qualified_and_legacy_remains_unknown(
+        self, client, storage, prop_a, merged_a, base_analysis, reviewed
+    ):
+        coverage = (
+            ImageReviewCoverage(
+                available_gallery_count=8,
+                reviewed_gallery_count=reviewed,
+                rooms_not_seen_in_review=("bathroom",) if reviewed == 7 else (),
+            )
+            if reviewed is not None
+            else None
+        )
+        analysis = base_analysis.model_copy(update={"image_review_coverage": coverage})
+        if reviewed == 8:
+            analysis = analysis.model_copy(
+                update={
+                    "listing_red_flags": ListingRedFlags(
+                        missing_room_photos=["bathroom"], red_flag_count=1
+                    ),
+                    "lowlights": ["No bathroom photos supplied"],
+                }
+            )
+        await storage.save_merged_property(merged_a)
+        await storage.save_quality_analysis(prop_a.unique_id, analysis)
+        response = client.get(f"/property/{merged_a.unique_id}")
+        assert response.status_code == 200
+        if reviewed is None:
+            assert "available gallery photos" not in response.text
+        else:
+            assert f"Reviewed {reviewed} of 8 available gallery photos." in response.text
+        if reviewed == 7:
+            assert "Other photos were not reviewed; photo completeness is unknown." in response.text
+            assert "Not seen in reviewed photos: bathroom." in response.text
+            assert "No bathroom photos" not in response.text
+        else:
+            assert "Other photos were not reviewed" not in response.text
+        if reviewed == 8:
+            assert "Not seen in supplied photos: bathroom" in response.text
+            assert "No bathroom photos supplied" in response.text
 
     @pytest.mark.asyncio
     async def test_quality_cards_render_room_data(

@@ -112,7 +112,12 @@ def validate_output(
         schema = model.model_json_schema()
         canonical: dict[str, Any] = _canonical_values(raw, schema, schema.get("$defs", {}))
         # Metadata describing runtime execution is never accepted from model output.
-        for name in ("analysis_provenance", "analysis_failure", "listing_text_inputs"):
+        for name in (
+            "analysis_provenance",
+            "analysis_failure",
+            "listing_text_inputs",
+            "image_review_coverage",
+        ):
             canonical.pop(name, None)
         model.model_validate(
             canonical, strict=True, extra="ignore" if phase == "visual" else "forbid"

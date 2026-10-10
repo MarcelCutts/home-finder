@@ -161,7 +161,7 @@ class PropertyFilter(BaseModel):
         if not v:
             return None
         cleaned = str(v).strip().lower()
-        return cleaned if cleaned in ("yes", "no") else None
+        return cleaned if cleaned in ("yes", "no", "unknown") else None
 
     @field_validator("natural_light", mode="before")
     @classmethod

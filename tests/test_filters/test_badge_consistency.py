@@ -209,24 +209,78 @@ async def test_wardrobe_badges_use_explicit_storage_evidence(assemble, state):
 
 
 @pytest.mark.parametrize(
-    "present", ["has_balcony", "has_garden", "has_terrace", "has_shared_garden", None]
+    ("availability", "present", "keep"),
+    [
+        ("yes", None, False),
+        ("unknown", None, False),
+        ("no", None, True),
+        *[
+            (availability, present, False)
+            for availability in ("yes", "no", "unknown")
+            for present in ("has_balcony", "has_garden", "has_terrace", "has_shared_garden")
+        ],
+    ],
 )
-async def test_positive_outdoor_evidence_contradicts_no_outdoor_space(assemble, present):
-    outdoor = dict.fromkeys(
-        ["has_balcony", "has_garden", "has_terrace", "has_shared_garden"], False
-    )
+async def test_no_outdoor_badge_requires_explicit_absence(assemble, availability, present, keep):
+    outdoor = {
+        **dict.fromkeys(["has_balcony", "has_garden", "has_terrace", "has_shared_garden"], False),
+        "availability": availability,
+    }
     if present:
         outdoor[present] = True
+    highlights = ["Modern kitchen"] if keep else ["Private balcony"]
     result, logs = await assemble(
         visual={"outdoor_space": outdoor},
-        highlights=["Private balcony"],
+        highlights=highlights,
         lowlights=["No outdoor space", "Potential traffic noise"],
     )
-    assert result.highlights == ["Private balcony"]  # False defaults do not prove absence.
-    assert result.lowlights == (
-        ["Potential traffic noise"] if present else ["No outdoor space", "Potential traffic noise"]
+    assert result.highlights == highlights  # Unknown type flags do not disprove positive badges.
+    assert result.lowlights == [
+        *(["No outdoor space"] if keep else []),
+        "Potential traffic noise",
+    ]
+    assert len(logs) == int(not keep)
+    if logs:
+        assert logs[0]["field"] == "outdoor_space.availability"
+
+
+@pytest.mark.parametrize(
+    ("availability", "positive_flag", "keep_access"),
+    [("no", False, False), ("yes", False, True), ("unknown", False, True), ("no", True, True)],
+)
+async def test_explicit_outdoor_absence_rejects_contradictory_access_badges(
+    assemble, availability, positive_flag, keep_access
+):
+    access_badges = [
+        "Private balcony",
+        "Private garden",
+        "Private terrace",
+        "Shared garden",
+        "Communal gardens",
+        "Roof terrace",
+    ]
+    result, logs = await assemble(
+        visual={
+            "outdoor_space": {
+                "availability": availability,
+                "has_balcony": False,
+                "has_garden": positive_flag,
+                "has_terrace": False,
+                "has_shared_garden": False,
+            }
+        },
+        highlights=[*access_badges, "Modern kitchen"],
+        lowlights=["No outdoor space", "Potential traffic noise"],
     )
-    assert len(logs) == bool(present)
+    assert result.highlights == [*(access_badges if keep_access else []), "Modern kitchen"]
+    assert result.lowlights == [
+        *([] if keep_access else ["No outdoor space"]),
+        "Potential traffic noise",
+    ]
+    assert result.outdoor_space.availability == availability
+    assert result.outdoor_space.has_garden == positive_flag
+    assert len(logs) == (1 if keep_access else len(access_badges))
+    assert all(log["field"] == "outdoor_space.availability" for log in logs)
 
 
 async def test_supported_facts_do_not_generate_new_badges(assemble):
@@ -238,7 +292,7 @@ async def test_supported_facts_do_not_generate_new_badges(assemble):
 def test_historical_load_is_unchanged_and_explicit_guard_is_idempotent(make_quality_analysis):
     original = make_quality_analysis(
         highlights=["Bills included", "Double glazing", "Built-in wardrobes", "Modern kitchen"],
-        lowlights=["Poor hosting layout", "No built-in wardrobes"],
+        lowlights=["Poor hosting layout", "No built-in wardrobes", "No outdoor space"],
         listing_extraction=None,
         flooring_noise=None,
         storage=None,
@@ -250,7 +304,7 @@ def test_historical_load_is_unchanged_and_explicit_guard_is_idempotent(make_qual
     with structlog.testing.capture_logs() as first_logs:
         checked = reconcile_analysis_badges(loaded)
     assert checked.highlights == ["Modern kitchen"] and checked.lowlights == []
-    assert len(first_logs) == 5
+    assert len(first_logs) == 6
     with structlog.testing.capture_logs() as repeat_logs:
         assert reconcile_analysis_badges(checked) is checked
     assert repeat_logs == [] and loaded.model_dump_json() == loaded_before

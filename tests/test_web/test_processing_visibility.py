@@ -122,10 +122,12 @@ async def test_explicit_assessment_filters_exclude_fallbacks(processing_storage,
     async with processing_storage._transaction() as conn:
         await conn.execute(
             "UPDATE quality_analyses SET has_outdoor_space=0, "
-            "analysis_json=json_set(analysis_json, '$.value', json('{\"rating\":\"excellent\"}'))"
+            "analysis_json=json_set(analysis_json, '$.value', json('{\"rating\":\"excellent\"}'), "
+            "'$.outdoor_space', json('{\"availability\":\"no\"}'))"
         )
         await conn.execute(
-            "UPDATE quality_analyses SET has_outdoor_space=NULL "
+            "UPDATE quality_analyses SET has_outdoor_space=NULL, "
+            "analysis_json=json_remove(analysis_json, '$.outdoor_space.availability') "
             "WHERE property_unique_id='openrent:refresh'"
         )
     rows, count = await processing_storage.web.get_properties_paginated(filters)
