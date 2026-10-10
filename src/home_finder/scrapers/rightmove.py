@@ -2,19 +2,20 @@
 
 import asyncio
 import re
+from time import monotonic
 from urllib.parse import urljoin
 
 import httpx
 from bs4 import BeautifulSoup, Tag
-from crawlee.crawlers import BeautifulSoupCrawler, BeautifulSoupCrawlingContext
-from crawlee.storage_clients import MemoryStorageClient
 from pydantic import HttpUrl
+from tenacity import retry, retry_if_exception_type, stop_after_attempt
 
 from home_finder.data.location_mappings import RIGHTMOVE_LOCATIONS, RIGHTMOVE_OUTCODES
 from home_finder.logging import get_logger
 from home_finder.models import FurnishType, Property, PropertySource
-from home_finder.scrapers.base import BaseScraper, ScrapeResult
+from home_finder.scrapers.base import BaseScraper, ScrapeCancelled, ScrapeResult
 from home_finder.scrapers.parsing import extract_bedrooms, extract_postcode, extract_price
+from home_finder.scrapers.retry import SCRAPER_WAIT, RetryableHttpError
 from home_finder.scrapers.rightmove_payloads import SearchPage, parse_structured_search
 from home_finder.utils.address import is_outcode
 from home_finder.utils.http_evidence import is_challenge
@@ -86,6 +87,71 @@ class RightmoveScraper(BaseScraper):
     RESULTS_PER_PAGE = 24
     MAX_PAGES = 20
     PAGE_DELAY_SECONDS = 2.0
+    REQUEST_TIMEOUT_SECONDS = 30.0
+    MAX_FETCH_ATTEMPTS = 3
+
+    async def _fetch_page(self, client: httpx.AsyncClient, url: str) -> str | None:
+        """Fetch with bounded retries, leaving cancellation and signals to the application."""
+        attempt = 0
+
+        @retry(
+            stop=stop_after_attempt(self.MAX_FETCH_ATTEMPTS),
+            wait=SCRAPER_WAIT,
+            retry=retry_if_exception_type((httpx.TransportError, TimeoutError, RetryableHttpError)),
+            reraise=True,
+        )
+        async def fetch() -> str | None:
+            nonlocal attempt
+            attempt += 1
+            started = monotonic()
+            logger.info("rightmove_fetch_started", url=url, attempt=attempt)
+            try:
+                # HTTPX timeouts bound inactivity; also bound a slow, trickling response.
+                async with asyncio.timeout(self.REQUEST_TIMEOUT_SECONDS):
+                    response = await client.get(url)
+            except asyncio.CancelledError:
+                logger.info(
+                    "rightmove_fetch_cancelled",
+                    url=url,
+                    attempt=attempt,
+                    duration_ms=round((monotonic() - started) * 1000, 2),
+                )
+                raise
+            except (httpx.TransportError, TimeoutError) as exc:
+                logger.warning(
+                    "rightmove_fetch_error",
+                    url=url,
+                    attempt=attempt,
+                    error_type=type(exc).__name__,
+                    duration_ms=round((monotonic() - started) * 1000, 2),
+                )
+                raise
+
+            logger.info(
+                "rightmove_fetch_complete",
+                url=url,
+                attempt=attempt,
+                status=response.status_code,
+                response_bytes=len(response.content),
+                duration_ms=round((monotonic() - started) * 1000, 2),
+            )
+            if response.status_code == 429 or response.status_code >= 500:
+                raise RetryableHttpError(response.status_code, url)
+            if response.status_code != 200:
+                logger.warning("rightmove_http_error", url=url, status=response.status_code)
+                return None
+            return response.text
+
+        try:
+            return await fetch()
+        except (httpx.TransportError, TimeoutError, RetryableHttpError) as exc:
+            logger.warning(
+                "rightmove_fetch_exhausted",
+                url=url,
+                attempts=attempt,
+                error_type=type(exc).__name__,
+            )
+            return None
 
     async def scrape(
         self,
@@ -122,51 +188,48 @@ class RightmoveScraper(BaseScraper):
             index = page_idx * self.RESULTS_PER_PAGE
             url = f"{search_url}&index={index}" if page_idx > 0 else search_url
 
-            page_properties: list[Property] = []
-            crawl_failed = False
-
-            async def handle_page(
-                context: BeautifulSoupCrawlingContext,
-                _props: list[Property] = page_properties,
-            ) -> None:
-                nonlocal parse_errors
-                soup = context.soup
-                parsed = self._parse_search_page(soup, requested_index=index)
-                parse_errors += parsed.parse_errors
-                _props.extend(parsed.properties)
-
-            crawler = BeautifulSoupCrawler(
-                max_requests_per_crawl=1,
-                storage_client=MemoryStorageClient(),
-            )
-            crawler.router.default_handler(handle_page)
-            try:
-                await crawler.run([url])
-            except Exception as e:
-                logger.warning("rightmove_crawl_failed", url=url, error=str(e), exc_info=True)
-                crawl_failed = True
-
-            if crawl_failed and not page_properties:
+            started = monotonic()
+            html = await self._fetch_page(client, url)
+            if html is None:
                 return None  # Signals fetch failure to _paginate
 
+            parse_started = monotonic()
+            soup = await asyncio.to_thread(BeautifulSoup, html, "lxml")
+            parsed = self._parse_search_page(soup, requested_index=index)
+            parse_errors += parsed.parse_errors
             logger.info(
                 "scraped_rightmove_page",
                 url=url,
                 page=page_idx + 1,
-                properties_found=len(page_properties),
+                properties_found=len(parsed.properties),
+                parse_errors=parsed.parse_errors,
+                parse_duration_ms=round((monotonic() - parse_started) * 1000, 2),
+                duration_ms=round((monotonic() - started) * 1000, 2),
             )
-            return page_properties
+            return parsed.properties
 
         async def delay() -> None:
             await asyncio.sleep(self.PAGE_DELAY_SECONDS)
 
-        result = await self._paginate(
-            fetch_page,
-            max_pages=self.MAX_PAGES,
-            known_source_ids=known_source_ids,
-            max_results=max_results,
-            page_delay=delay,
-        )
+        async with httpx.AsyncClient(
+            timeout=self.REQUEST_TIMEOUT_SECONDS,
+            follow_redirects=True,
+            headers={
+                "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+            },
+        ) as client:
+            try:
+                result = await self._paginate(
+                    fetch_page,
+                    max_pages=self.MAX_PAGES,
+                    known_source_ids=known_source_ids,
+                    max_results=max_results,
+                    page_delay=delay,
+                )
+            except ScrapeCancelled as exc:
+                exc.result.parse_errors += parse_errors
+                raise
         result.parse_errors += parse_errors
         if parse_errors:
             result.stop_reason = "parse_error"

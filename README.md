@@ -277,7 +277,7 @@ src/home_finder/
 ├── scrapers/              # Platform scrapers
 │   ├── base.py            # Abstract BaseScraper interface
 │   ├── openrent.py        # OpenRent (crawlee)
-│   ├── rightmove.py       # Rightmove (crawlee + typeahead API)
+│   ├── rightmove.py       # Rightmove (HTTPX + typeahead API)
 │   ├── zoopla.py          # Zoopla (curl_cffi for Cloudflare bypass)
 │   ├── onthemarket.py     # OnTheMarket (curl_cffi)
 │   ├── zoopla_models.py   # Pydantic models for Zoopla JSON parsing
