@@ -1,5 +1,7 @@
 """Atomic paid-attempt admission and durable reservations on one SQLite authority."""
 
+import hashlib
+import json
 from collections.abc import Callable
 from contextlib import AbstractAsyncContextManager
 from datetime import UTC, datetime, timedelta
@@ -8,6 +10,7 @@ from uuid import uuid4
 
 import aiosqlite
 
+from home_finder.logging import get_logger
 from home_finder.models.spend import (
     SONNET_STANDARD_RATES,
     AttemptSpec,
@@ -15,6 +18,7 @@ from home_finder.models.spend import (
     ProviderRejection,
     SpendPolicy,
     UsageSettlement,
+    VisualCheckpointWrite,
     nanousd,
     usd_text,
 )
@@ -24,6 +28,7 @@ from home_finder.models.spend import (
 
 ConnectionScope = Callable[[], AbstractAsyncContextManager[aiosqlite.Connection]]
 _HELD = "('reserved', 'dispatched', 'unknown')"
+logger = get_logger(__name__)
 
 
 class AttemptTransitionError(Exception):
@@ -93,6 +98,17 @@ async def spend_report(conn: aiosqlite.Connection, now: datetime) -> dict[str, A
             WHERE state IN {_HELD} ORDER BY admitted_at, attempt_id"""
     ) as cursor:
         report["unresolved"] = [dict(row) for row in await cursor.fetchall()]
+    async with conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='visual_checkpoints'"
+    ) as cursor:
+        checkpoints_available = await cursor.fetchone() is not None
+    report["visual_checkpoints"] = []
+    if checkpoints_available:
+        async with conn.execute(
+            """SELECT property_id, input_sha256, attempt_id, created_at
+               FROM visual_checkpoints ORDER BY created_at, property_id"""
+        ) as cursor:
+            report["visual_checkpoints"] = [dict(row) for row in await cursor.fetchall()]
     return report
 
 
@@ -220,7 +236,13 @@ class SpendRepository:
             if cursor.rowcount != 1:
                 raise AttemptTransitionError("Attempt was not dispatched or is already settled")
 
-    async def settle_usage(self, attempt_id: str, settlement: UsageSettlement) -> None:
+    async def settle_usage(
+        self,
+        attempt_id: str,
+        settlement: UsageSettlement,
+        *,
+        checkpoint: VisualCheckpointWrite | None = None,
+    ) -> None:
         """Persist reported units even for rejected output; cost remains an estimate."""
         async with self._transaction() as conn:
             row = await self._attempt(conn, attempt_id)
@@ -233,6 +255,10 @@ class SpendRepository:
             from home_finder.models.spend import RateCard
 
             cost = RateCard.model_validate_json(row["rates_json"]).cost(settlement.usage)
+            if checkpoint is not None and (
+                row["phase"] != "visual" or settlement.result != "success"
+            ):
+                raise AttemptTransitionError("Only successful visual output can be checkpointed")
             await conn.execute(
                 """UPDATE paid_attempts SET state = 'settled', completed_at = ?, result = ?,
                     request_id = ?, stop_reason = ?, settlement_json = ?, accounted_nanousd = ?,
@@ -247,6 +273,77 @@ class SpendRepository:
                     attempt_id,
                 ),
             )
+            if checkpoint is not None and cost <= row["reserved_nanousd"]:
+                # Keep field order: evaluation renders these observations as
+                # text. Reordering on recovery would change its request key and
+                # accidentally evade an earlier evaluation hold/attempt limit.
+                data_json = json.dumps(checkpoint.data, separators=(",", ":"), allow_nan=False)
+                await conn.execute(
+                    """INSERT INTO visual_checkpoints (
+                        property_id, input_sha256, attempt_id, data_json, data_sha256, created_at
+                    ) VALUES (?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(property_id) DO UPDATE SET
+                        input_sha256=excluded.input_sha256, attempt_id=excluded.attempt_id,
+                        data_json=excluded.data_json, data_sha256=excluded.data_sha256,
+                        created_at=excluded.created_at""",
+                    (
+                        row["property_id"],
+                        checkpoint.input_sha256,
+                        attempt_id,
+                        data_json,
+                        hashlib.sha256(data_json.encode()).hexdigest(),
+                        utc_stamp(self._clock()),
+                    ),
+                )
+
+    async def get_visual_checkpoint(
+        self, property_id: str, input_sha256: str
+    ) -> dict[str, Any] | None:
+        """Read a compatible receipt-backed result, without changing any spend hold."""
+        async with self._read_connection() as conn:
+            cursor = await conn.execute(
+                """SELECT c.*, a.phase, a.state, a.result, a.cost_basis, a.settlement_json,
+                          a.property_id as attempt_property_id,
+                          a.accounted_nanousd, a.reserved_nanousd
+                   FROM visual_checkpoints c LEFT JOIN paid_attempts a USING(attempt_id)
+                   WHERE c.property_id=?""",
+                (property_id,),
+            )
+            row = await cursor.fetchone()
+        if row is None:
+            return None
+        if row["input_sha256"] != input_sha256:
+            logger.info("visual_checkpoint_input_changed", property_id=property_id)
+            return None
+        try:
+            # Billing confirmation changes the accounting basis, not the retained
+            # provider receipt. A confirmed charge alone cannot prove usable output.
+            settlement = UsageSettlement.model_validate_json(row["settlement_json"])
+            valid_receipt = (
+                row["state"] == "settled"
+                and row["phase"] == "visual"
+                and row["result"] == settlement.result == "success"
+                and row["cost_basis"] in {"provider_usage", "operator_confirmed"}
+                and row["attempt_property_id"] == property_id
+                and row["accounted_nanousd"] <= row["reserved_nanousd"]
+            )
+            if not valid_receipt or (
+                hashlib.sha256(row["data_json"].encode()).hexdigest() != row["data_sha256"]
+            ):
+                raise ValueError("Invalid checkpoint receipt or digest")
+            data = json.loads(row["data_json"])
+            if not isinstance(data, dict):
+                raise ValueError("Checkpoint must contain observations")
+        except (TypeError, ValueError):
+            raise SpendDeferred("visual_checkpoint_invalid") from None
+        logger.info(
+            "visual_checkpoint_loaded",
+            property_id=property_id,
+            input_sha256=input_sha256,
+            attempt_id=row["attempt_id"],
+            created_at=row["created_at"],
+        )
+        return data
 
     async def settle_rejection(self, attempt_id: str, rejection: ProviderRejection) -> None:
         """Failed API requests are uncharged; client transport failures are not evidence.

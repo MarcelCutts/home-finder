@@ -1400,8 +1400,8 @@ class TestResolveGalleryPhotos:
         assert result[1] == uncached_url
 
 
-class TestNotificationWithFSInputFile:
-    """Tests that notifications use FSInputFile when data_dir is configured."""
+class TestNotificationWithBufferedInputFile:
+    """Tests that notifications use BufferedInputFile when data_dir is configured."""
 
     @pytest.mark.asyncio
     async def test_send_photo_uses_fsinputfile(
@@ -1410,8 +1410,8 @@ class TestNotificationWithFSInputFile:
         sample_quality_analysis: PropertyQualityAnalysis,
         tmp_path: Path,
     ) -> None:
-        """send_photo should receive FSInputFile when image is cached."""
-        from aiogram.types import FSInputFile
+        """send_photo should receive BufferedInputFile when image is cached."""
+        from aiogram.types import BufferedInputFile
 
         from home_finder.utils.image_cache import get_cache_dir, url_to_filename
 
@@ -1440,7 +1440,7 @@ class TestNotificationWithFSInputFile:
         assert result is True
         mock_bot.send_photo.assert_called_once()
         photo_arg = mock_bot.send_photo.call_args[1]["photo"]
-        assert isinstance(photo_arg, FSInputFile)
+        assert isinstance(photo_arg, BufferedInputFile)
 
     @pytest.mark.asyncio
     async def test_no_data_dir_uses_url_string(
@@ -1473,7 +1473,7 @@ class TestNotificationWithFSInputFile:
         tmp_path: Path,
     ) -> None:
         """Media group should use full-size originals, not thumbnails."""
-        from aiogram.types import FSInputFile
+        from aiogram.types import BufferedInputFile
 
         from home_finder.utils.image_cache import (
             THUMBNAIL_PREFIX,
@@ -1543,8 +1543,8 @@ class TestNotificationWithFSInputFile:
         assert result is True
         mock_bot.send_media_group.assert_called_once()
         media_list = mock_bot.send_media_group.call_args[1]["media"]
-        # All items should be FSInputFile (cached)
+        # All items should be BufferedInputFile (cached)
         for m in media_list:
-            assert isinstance(m.media, FSInputFile)
+            assert isinstance(m.media, BufferedInputFile)
             # None should be thumbnails — albums use full-size
-            assert THUMBNAIL_PREFIX not in str(m.media.path)
+            assert THUMBNAIL_PREFIX not in str(m.media.filename)

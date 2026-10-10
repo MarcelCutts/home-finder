@@ -108,6 +108,7 @@ class PropertyFilter(BaseModel):
     tags: list[str] = []
     added: str | None = None
     status: str | None = None
+    processing: str | None = None
     off_market: str | None = None
 
     # --- validators ---
@@ -254,6 +255,11 @@ class PropertyFilter(BaseModel):
     def validate_status(cls, v: object) -> str | None:
         return _validate_enum_field(v, VALID_USER_STATUSES)
 
+    @field_validator("processing", mode="before")
+    @classmethod
+    def validate_processing(cls, v: object) -> str | None:
+        return _validate_enum_field(v, {"assessed", "unassessed"})
+
     @field_validator("off_market", mode="before")
     @classmethod
     def validate_off_market(cls, v: object) -> str | None:
@@ -368,6 +374,8 @@ class PropertyFilter(BaseModel):
 
             label = USER_STATUS_META.get(self.status, {}).get("label", self.status.title())
             chips.append({"key": "status", "label": label})
+        if self.processing:
+            chips.append({"key": "processing", "label": self.processing.title()})
         if self.off_market == "only":
             chips.append({"key": "off_market", "label": "Off-market only"})
         elif self.off_market == "show":
@@ -451,6 +459,7 @@ def parse_filters(
     tag: list[str] = Query(default=[]),
     added: str | None = None,
     status: str | None = None,
+    processing: str | None = None,
     off_market: str | None = None,
 ) -> PropertyFilter:
     """FastAPI dependency that parses query params into a PropertyFilter."""
@@ -478,6 +487,7 @@ def parse_filters(
             "tags": tag,
             "added": added,
             "status": status,
+            "processing": processing,
             "off_market": off_market,
         }
     )

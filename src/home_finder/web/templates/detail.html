@@ -74,10 +74,19 @@
         <div class="hero-photo-count">{{ gallery|length }} photos</div>
     </div>
     {# All gallery URLs as data for JS gallery (no hidden imgs needed) #}
+    {% elif prop.image_url %}
+    <div class="hero-gallery">
+        <div class="hero-main"><img src="{{ prop.image_url }}" alt="{{ prop.title }}" loading="eager"></div>
+    </div>
+    {% else %}
+    <div class="detail-image-placeholder">Photos not available. You can still review the listing details below.</div>
     {% endif %}
 
     {# Header — Price is dominant (largest element), title secondary, meta tertiary #}
     <div class="detail-header">
+        {% if prop.processing_state != 'assessed' %}
+        <p class="processing-notice">{{ prop.processing_label }}.{% if not prop.is_assessed %} A fit score is not available yet.{% endif %}</p>
+        {% endif %}
         <div class="detail-header-row">
             <h1>{{ prop.title }}</h1>
             <p class="key-price">
@@ -115,10 +124,7 @@
                 </div>
                 {{ commute_pill(prop.commute_minutes, prop.transport_mode) }}
                 {% if prop.first_seen %}
-                {% set dom = prop.first_seen | days_since %}
-                {% if dom > 0 %}
-                <span class="listing-age-pill" title="Collector observation, not time on the market">First observed {{ dom }}d ago</span>
-                {% endif %}
+                <span class="listing-age-pill" title="Collector observation, not time on the market">First seen {{ prop.first_seen | listing_age }}</span>
                 {% endif %}
             </div>
         </div>
@@ -423,7 +429,8 @@
         <div class="floorplan-section">
             {% for img in prop.floorplan_images %}
             <div class="floorplan-frame">
-                <img src="{{ image_url_map.get(img.url|string, img.url) }}" alt="Floorplan" loading="lazy" class="floorplan-image" data-lightbox="floorplan">
+                <p class="processing-notice">{% if img.is_source_floorplan %}Source-declared floorplan. Dimensions may be unreadable.{% else %}Unverified floorplan image. Its original designation was not recorded.{% endif %}</p>
+                <img src="{{ image_url_map.get(img.url|string, img.url) }}" alt="{{ 'Source-declared floorplan' if img.is_source_floorplan else 'Unverified floorplan image' }}" loading="lazy" class="floorplan-image" data-lightbox="floorplan">
             </div>
             {% endfor %}
         </div>
@@ -563,7 +570,8 @@
         <div class="gallery-floorplan-scroll">
             {% for img in floorplan_images %}
             <div class="gallery-floorplan-frame">
-                <img src="{{ image_url_map.get(img.url|string, img.url) }}" alt="Floorplan {{ loop.index }}" loading="lazy" class="gallery-floorplan-img">
+                <p class="processing-notice">{{ 'Source-declared floorplan; dimensions may be unreadable.' if img.is_source_floorplan else 'Unverified floorplan image.' }}</p>
+                <img src="{{ image_url_map.get(img.url|string, img.url) }}" alt="{{ 'Source-declared floorplan' if img.is_source_floorplan else 'Unverified floorplan image' }} {{ loop.index }}" loading="lazy" class="gallery-floorplan-img">
             </div>
             {% endfor %}
         </div>

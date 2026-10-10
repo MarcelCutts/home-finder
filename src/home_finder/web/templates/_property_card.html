@@ -9,7 +9,7 @@
             {% if prop.image_url %}
             <img src="{{ prop.image_url }}" alt="{% if prop.bedrooms == 0 %}Studio{% else %}{{ prop.bedrooms }} bed{% endif %} — {{ prop.postcode or 'Property' }}" loading="lazy" class="card-image">
             {% else %}
-            <div class="card-image card-image-placeholder">No image</div>
+            <div class="card-image card-image-placeholder">Photos not available</div>
             {% endif %}
             {% if prop.is_off_market %}
             <div class="off-market-overlay"><span class="off-market-badge">OFF MARKET</span></div>
@@ -30,6 +30,9 @@
             </div>
         </div>
         <div class="card-body">
+            {% if prop.processing_state != 'assessed' %}
+            <p class="processing-notice">{{ prop.processing_label }}</p>
+            {% endif %}
             {# Meta row: rating | postcode | commute pill #}
             <div class="card-meta">
                 <div class="card-meta-left">
@@ -51,6 +54,8 @@
             {# AI summary text (2-line clamp) #}
             {% if prop.quality_summary %}
             <p class="card-summary">{{ prop.quality_summary }}</p>
+            {% elif not prop.is_assessed %}
+            <p class="card-summary">{{ prop.title }}</p>
             {% endif %}
 
             {# Property type + lifestyle icons row #}
@@ -119,7 +124,7 @@
             </span>
             {% endif %}
             {% if prop.first_seen %}
-            <span class="card-age" title="First observed by Home Finder; original listing date unknown">Seen {{ prop.first_seen | listing_age }}</span>
+            <span class="card-age" title="First observed by Home Finder; original listing date unknown">First seen {{ prop.first_seen | listing_age }}</span>
             {% endif %}
             {% if prop.last_checked_at %}
             <span class="card-checked" title="Last checked {{ prop.last_checked_at[:10] }}">&#10003;</span>

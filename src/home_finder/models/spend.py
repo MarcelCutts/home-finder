@@ -21,6 +21,15 @@ class SpendDeferred(Exception):
         super().__init__(reason)
 
 
+class VisualCheckpointWrite(BaseModel):
+    """One validated visual result to commit with its paid-attempt settlement."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    input_sha256: SHA256
+    data: dict[str, Any]
+
+
 def nanousd(amount: Decimal) -> int:
     """Never round a budget or provider charge into a different monetary value."""
     scaled = amount * NANOUSD_PER_USD

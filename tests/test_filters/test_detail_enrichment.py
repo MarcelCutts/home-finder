@@ -10,7 +10,6 @@ from pydantic import HttpUrl
 
 from home_finder.filters.detail_enrichment import (
     _detect_epc_in_gallery,
-    _detect_floorplan_in_gallery,
     _generate_gallery_thumbnails,
     _load_cached_property,
     enrich_merged_properties,
@@ -199,6 +198,7 @@ class TestEnrichMergedProperties:
             url=HttpUrl("https://example.com/floor.jpg"),
             source=PropertySource.RIGHTMOVE,
             image_type="floorplan",
+            floorplan_origin="source_declared",
         )
         mock_storage = AsyncMock()
         mock_storage.get_property_images_and_row = AsyncMock(
@@ -497,6 +497,7 @@ class TestFilterByFloorplan:
                 url=HttpUrl("https://example.com/floor.jpg"),
                 source=PropertySource.RIGHTMOVE,
                 image_type="floorplan",
+                floorplan_origin="source_declared",
             ),
         )
         without_fp = make_merged_property(sources=(PropertySource.RIGHTMOVE,), source_id="456")
@@ -516,6 +517,7 @@ class TestFilterByFloorplan:
                     url=HttpUrl(f"https://example.com/floor{i}.jpg"),
                     source=PropertySource.RIGHTMOVE,
                     image_type="floorplan",
+                    floorplan_origin="source_declared",
                 ),
             )
             for i in range(3)
@@ -618,6 +620,7 @@ class TestFilterByFloorplan:
                 url=HttpUrl("https://example.com/floor.jpg"),
                 source=PropertySource.RIGHTMOVE,
                 image_type="floorplan",
+                floorplan_origin="source_declared",
             ),
         )
         result = filter_by_floorplan([prop], min_gallery_for_photo_inference=8)
@@ -693,106 +696,13 @@ def _make_photo_bytes(size: int = 400) -> bytes:
     return buf.getvalue()
 
 
-class TestDetectFloorplanInGallery:
-    """Tests for _detect_floorplan_in_gallery()."""
+class TestGalleryRolePreservation:
+    """Gallery appearance never grants source floorplan provenance."""
 
-    def test_detects_floorplan_in_gallery(self, tmp_path: Path) -> None:
-        """Should reclassify a floorplan image from gallery."""
-        unique_id = "openrent:12345"
-        data_dir = str(tmp_path)
-
-        # Create gallery images: 2 photos + 1 floorplan (last)
-        images = [
-            PropertyImage(
-                url=HttpUrl(f"https://example.com/img{i}.jpg"),
-                source=PropertySource.OPENRENT,
-                image_type="gallery",
-            )
-            for i in range(3)
-        ]
-
-        # Cache photo bytes for first two, floorplan for the last
-        for idx, img in enumerate(images):
-            path = get_cached_image_path(data_dir, unique_id, str(img.url), "gallery", idx)
-            if idx < 2:
-                save_image_bytes(path, _make_photo_bytes())
-            else:
-                save_image_bytes(path, _make_floorplan_bytes())
-
-        floorplan, remaining, detected_idx = _detect_floorplan_in_gallery(
-            images, unique_id, data_dir
-        )
-
-        assert floorplan is not None
-        assert floorplan.image_type == "floorplan"
-        assert str(floorplan.url) == "https://example.com/img2.jpg"
-        assert detected_idx == 2
-        assert len(remaining) == 2
-        assert all(img.image_type == "gallery" for img in remaining)
-
-    def test_no_floorplan_in_gallery(self, tmp_path: Path) -> None:
-        """Should return None when no floorplan detected."""
-        unique_id = "openrent:12345"
-        data_dir = str(tmp_path)
-
-        images = [
-            PropertyImage(
-                url=HttpUrl(f"https://example.com/img{i}.jpg"),
-                source=PropertySource.OPENRENT,
-                image_type="gallery",
-            )
-            for i in range(2)
-        ]
-
-        for idx, img in enumerate(images):
-            path = get_cached_image_path(data_dir, unique_id, str(img.url), "gallery", idx)
-            save_image_bytes(path, _make_photo_bytes())
-
-        floorplan, remaining, detected_idx = _detect_floorplan_in_gallery(
-            images, unique_id, data_dir
-        )
-
-        assert floorplan is None
-        assert detected_idx == -1
-        assert len(remaining) == 2
-
-    def test_empty_gallery(self, tmp_path: Path) -> None:
-        """Should handle empty image list."""
-        floorplan, remaining, detected_idx = _detect_floorplan_in_gallery([], "id:1", str(tmp_path))
-        assert floorplan is None
-        assert detected_idx == -1
-        assert remaining == []
-
-    def test_missing_cache_files_skipped(self, tmp_path: Path) -> None:
-        """Should skip images with no cached bytes on disk."""
-        unique_id = "openrent:99999"
-        data_dir = str(tmp_path)
-
-        images = [
-            PropertyImage(
-                url=HttpUrl("https://example.com/img0.jpg"),
-                source=PropertySource.OPENRENT,
-                image_type="gallery",
-            )
-        ]
-        # Don't cache anything — file won't exist
-
-        floorplan, remaining, detected_idx = _detect_floorplan_in_gallery(
-            images, unique_id, data_dir
-        )
-
-        assert floorplan is None
-        assert detected_idx == -1
-        assert len(remaining) == 1
-
-
-class TestEnrichSingleFloorplanDetection:
-    """Integration tests: _enrich_single detects floorplans via PIL heuristic."""
-
-    async def test_detects_floorplan_when_detail_page_has_none(
+    async def test_keeps_floorplan_like_gallery_image_in_gallery(
         self, tmp_path: Path, make_merged_property: Callable[..., MergedProperty]
     ) -> None:
-        """OpenRent property with no structural floorplan -> PIL detects one in gallery."""
+        """A diagram in the gallery remains gallery evidence unless the source declares its role."""
         merged = make_merged_property(sources=(PropertySource.OPENRENT,), source_id="or1")
         data_dir = str(tmp_path)
 
@@ -824,20 +734,16 @@ class TestEnrichSingleFloorplanDetection:
         assert len(result.enriched) == 1
         enriched = result.enriched[0]
 
-        # Floorplan should be detected and separated from gallery
-        assert enriched.floorplan is not None
-        assert enriched.floorplan.image_type == "floorplan"
-        assert "floorplan.jpg" in str(enriched.floorplan.url)
-
-        # Gallery should have only the 2 photos remaining
-        assert len(enriched.images) == 2
+        assert enriched.floorplan is None
+        assert len(enriched.images) == 3
         assert all(img.image_type == "gallery" for img in enriched.images)
+        assert "floorplan.jpg" in str(enriched.images[-1].url)
 
-    async def test_recaches_detected_floorplan(
+    async def test_does_not_create_floorplan_cache_from_gallery(
         self, tmp_path: Path, make_merged_property: Callable[..., MergedProperty]
     ) -> None:
-        """Detected floorplan should be copied to floorplan cache path."""
-        merged = make_merged_property(sources=(PropertySource.OPENRENT,), source_id="or2")
+        """A classifier-like image must not create a floorplan cache or satisfy the gate."""
+        merged = make_merged_property(sources=(PropertySource.RIGHTMOVE,), source_id="rm2")
         data_dir = str(tmp_path)
 
         floorplan_bytes = _make_floorplan_bytes()
@@ -860,19 +766,19 @@ class TestEnrichSingleFloorplanDetection:
             result = await enrich_merged_properties([merged], fetcher, data_dir=data_dir)
 
         enriched = result.enriched[0]
-        assert enriched.floorplan is not None
-
-        # Verify the floorplan cache file exists at the "floorplan" path
-        fp_cache = get_cached_image_path(
-            data_dir, merged.unique_id, str(enriched.floorplan.url), "floorplan", 0
+        assert enriched.floorplan is None
+        assert len(enriched.images) == 1
+        assert filter_by_floorplan([enriched]) == []
+        assert find_cached_file(data_dir, merged.unique_id, detail_data.gallery_urls[0], "gallery")
+        assert (
+            find_cached_file(data_dir, merged.unique_id, detail_data.gallery_urls[0], "floorplan")
+            is None
         )
-        assert fp_cache.is_file()
-        assert fp_cache.read_bytes() == floorplan_bytes
 
-    async def test_skips_detection_when_structural_floorplan_exists(
+    async def test_records_structurally_declared_floorplan(
         self, tmp_path: Path, make_merged_property: Callable[..., MergedProperty]
     ) -> None:
-        """Should not run PIL detection when detail page provides a floorplan."""
+        """Record the source designation without claiming readable dimensions."""
         merged = make_merged_property(sources=(PropertySource.OPENRENT,), source_id="or3")
         data_dir = str(tmp_path)
 
@@ -893,17 +799,14 @@ class TestEnrichSingleFloorplanDetection:
                 new_callable=AsyncMock,
                 return_value=_make_floorplan_bytes(),
             ),
-            patch(
-                "home_finder.filters.detail_enrichment._detect_floorplan_in_gallery"
-            ) as mock_detect,
         ):
             result = await enrich_merged_properties([merged], fetcher, data_dir=data_dir)
 
-        # PIL detection should never be called — structural floorplan was found
-        mock_detect.assert_not_called()
         enriched = result.enriched[0]
         assert enriched.floorplan is not None
         assert "real_floor.jpg" in str(enriched.floorplan.url)
+        assert enriched.floorplan.floorplan_origin == "source_declared"
+        assert len(enriched.images) == 1
 
 
 class TestLoadCachedPropertyBackfillsCoords:
@@ -1189,34 +1092,6 @@ class TestDetectWithMismatchedIndex:
         assert not path.exists()
         epc_name = path.name.replace("gallery_", "epc_", 1)
         assert (path.parent / epc_name).exists()
-
-    def test_detects_floorplan_with_mismatched_index(self, tmp_path: Path) -> None:
-        """Floorplan file saved at index 5 should still be detected at enumerate position 0."""
-        unique_id = "openrent:44444"
-        data_dir = str(tmp_path)
-
-        img_url = "https://example.com/floor.jpg"
-        images = [
-            PropertyImage(
-                url=HttpUrl(img_url),
-                source=PropertySource.OPENRENT,
-                image_type="gallery",
-            )
-        ]
-
-        # Save with index 5 (not 0 as enumerate would produce)
-        path = get_cached_image_path(data_dir, unique_id, img_url, "gallery", 5)
-        save_image_bytes(path, _make_floorplan_bytes())
-
-        floorplan, remaining, detected_idx = _detect_floorplan_in_gallery(
-            images, unique_id, data_dir
-        )
-
-        # Should still find the floorplan despite index mismatch
-        assert floorplan is not None
-        assert floorplan.image_type == "floorplan"
-        assert detected_idx == 0
-        assert len(remaining) == 0
 
 
 class TestEnrichSingleEpcDetection:

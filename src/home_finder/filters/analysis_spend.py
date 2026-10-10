@@ -23,6 +23,7 @@ from home_finder.models.spend import (
     SpendDeferred,
     SpendPolicy,
     UsageSettlement,
+    VisualCheckpointWrite,
     rate_card_for,
     usd_text,
 )
@@ -42,11 +43,30 @@ class _CallContext:
     phase: Phase
     provenance: AnalysisProvenance
     validate: Callable[[Any], dict[str, Any]]
+    visual_input_sha256: str | None = None
 
 
 def _digest(value: Any) -> str:
     body = json.dumps(value, sort_keys=True, separators=(",", ":"), allow_nan=False)
     return hashlib.sha256(body.encode()).hexdigest()
+
+
+def visual_input_key(property_id: str, body: dict[str, Any], provenance: AnalysisProvenance) -> str:
+    """Identity of actual ordered image bytes, rendered prompt and visual request contract.
+
+    Evaluation configuration deliberately does not invalidate reusable observations.
+    Billing defaults match the physical request pinned by the middleware below.
+    """
+    return _digest(
+        [
+            1,
+            property_id,
+            {**body, "service_tier": "standard_only", "inference_geo": "global"},
+            provenance.configuration.visual.output_contract,
+            provenance.visual_output_sha256,
+            provenance.sdk_version,
+        ]
+    )
 
 
 def _default_cache_ttl(value: Any) -> bool:
@@ -175,12 +195,28 @@ class AnalysisSpendMeter:
         phase: Phase,
         provenance: AnalysisProvenance,
         validate: Callable[[Any], dict[str, Any]],
+        *,
+        visual_input_sha256: str | None = None,
     ) -> Iterator[None]:
-        token = self._context.set(_CallContext(property_id, phase, provenance, validate))
+        token = self._context.set(
+            _CallContext(property_id, phase, provenance, validate, visual_input_sha256)
+        )
         try:
             yield
         finally:
             self._context.reset(token)
+
+    async def get_visual_checkpoint(
+        self, property_id: str, input_sha256: str
+    ) -> dict[str, Any] | None:
+        if self._repository is None:
+            return None
+        try:
+            return await self._repository.get_visual_checkpoint(property_id, input_sha256)
+        except SpendDeferred:
+            raise
+        except Exception:
+            raise SpendDeferred("ledger_unavailable") from None
 
     async def __call__(
         self, request: APIRequest, call_next: AsyncCallNext
@@ -232,6 +268,12 @@ class AnalysisSpendMeter:
             raise SpendDeferred("unpriced_request")
         # Pin billing scope independently of account-level priority defaults.
         body = {**body, "service_tier": "standard_only", "inference_geo": "global"}
+        if scope.visual_input_sha256 is not None and (
+            scope.phase != "visual"
+            or visual_input_key(scope.property_id, body, scope.provenance)
+            != scope.visual_input_sha256
+        ):
+            raise SpendDeferred("checkpoint_request_mismatch")
         input_bound = None
         if phase_config.input_token_limit is not None:
             try:
@@ -329,8 +371,13 @@ class AnalysisSpendMeter:
                 cost = rate_card_for(phase_config.model).cost(usage)
                 usage_fields = usage.model_dump()
                 outcome = "success"
+                visual_data = None
                 try:
-                    scope.validate(await response.parse())
+                    validated = scope.validate(await response.parse())
+                    if scope.visual_input_sha256 is not None:
+                        visual_data = VisualCheckpointWrite(
+                            input_sha256=scope.visual_input_sha256, data=validated
+                        )
                 except AnalysisOutputError as exc:
                     outcome = exc.failure.kind
                     output_diagnostics = exc.diagnostics
@@ -345,7 +392,7 @@ class AnalysisSpendMeter:
                         "stop_reason": stop[:80] if isinstance(stop, str) else None,
                     }
                 )
-                action = repo.settle_usage(attempt_id, settlement)
+                action = repo.settle_usage(attempt_id, settlement, checkpoint=visual_data)
         except (TypeError, ValueError):
             await _retain_uncertainty(repo, attempt_id, "invalid_usage", request_id)
             raise SpendDeferred("unpriced_provider_response") from None
@@ -366,6 +413,8 @@ class AnalysisSpendMeter:
             output_diagnostics=output_diagnostics,
             **usage_fields,
         )
+        if scope.visual_input_sha256 is not None and outcome == "success" and cost <= reserved:
+            log.info("visual_checkpoint_saved", input_sha256=scope.visual_input_sha256)
         if cost > reserved:
             log.error("analysis_reservation_exceeded", accounted_usd=usd_text(cost))
             raise SpendDeferred("reservation_exceeded")

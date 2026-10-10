@@ -246,10 +246,10 @@ async def test_cancellation_after_response_finishes_accounting(budget, monkeypat
     entered, release = asyncio.Event(), asyncio.Event()
     original = storage.spend.settle_usage
 
-    async def settle(attempt, usage):
+    async def settle(attempt, usage, *, checkpoint=None):
         entered.set()
         await release.wait()
-        await original(attempt, usage)
+        await original(attempt, usage, checkpoint=checkpoint)
 
     monkeypatch.setattr(storage.spend, "settle_usage", settle)
     async with quality(
@@ -424,8 +424,9 @@ async def test_uncharged_sdk_rejections_do_not_exhaust_future_paid_attempts(budg
         storage, cap, lambda _: httpx2.Response(200, json=PHASE1_VISUAL_RESPONSE)
     ) as q:
         await q._run_visual_analysis(CONTENT, "fixture:retry-cap")
-        with pytest.raises(SpendDeferred, match="attempt_limit"):
-            await q._run_visual_analysis(CONTENT, "fixture:retry-cap")
+        # Successful visual work is reusable even when no further paid attempt
+        # is allowed. The receipt count below proves this did not dispatch again.
+        await q._run_visual_analysis(CONTENT, "fixture:retry-cap")
     assert len(await rows(storage)) == 3
 
 

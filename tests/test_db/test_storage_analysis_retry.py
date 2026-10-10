@@ -436,9 +436,9 @@ class TestCompleteAnalysisAtomicity:
         assert stored is None
 
 
-class TestDashboardExcludesPendingAnalysis:
+class TestDashboardIncludesPendingAnalysis:
     @pytest.mark.asyncio
-    async def test_excludes_pending_analysis_from_paginated(
+    async def test_includes_pending_analysis_from_paginated(
         self,
         storage: PropertyStorage,
         make_merged_property: Callable[..., MergedProperty],
@@ -460,9 +460,9 @@ class TestDashboardExcludesPendingAnalysis:
         results, total = await storage.web.get_properties_paginated(PropertyFilter())
         result_ids = {r["unique_id"] for r in results}
 
-        assert total == 1
+        assert total == 2
         assert enriched.unique_id in result_ids
-        assert pending.unique_id not in result_ids
+        assert pending.unique_id in result_ids
 
 
 class TestNotificationRetryExcludesPendingAnalysis:
@@ -582,15 +582,15 @@ class TestResetFailedAnalyses:
         assert pending[0].unique_id == merged.unique_id
 
 
-class TestDashboardExcludesFallbackAnalysis:
+class TestDashboardIncludesFallbackAnalysis:
     @pytest.mark.asyncio
-    async def test_excludes_fallback_from_paginated(
+    async def test_includes_fallback_from_paginated(
         self,
         storage: PropertyStorage,
         make_merged_property: Callable[..., MergedProperty],
         make_quality_analysis: Callable[..., PropertyQualityAnalysis],
     ) -> None:
-        """Properties with fallback analysis should be hidden from the dashboard."""
+        """Properties with incomplete analysis remain available for owner review."""
         # Save property with fallback analysis
         fallback = make_merged_property(
             source_id="fallback-1", image_url=HttpUrl("https://example.com/img.jpg")
@@ -610,18 +610,18 @@ class TestDashboardExcludesFallbackAnalysis:
         results, total = await storage.web.get_properties_paginated(PropertyFilter())
         result_ids = {r["unique_id"] for r in results}
 
-        assert total == 1
+        assert total == 2
         assert real.unique_id in result_ids
-        assert fallback.unique_id not in result_ids
+        assert fallback.unique_id in result_ids
 
     @pytest.mark.asyncio
-    async def test_excludes_fallback_from_paginated_total(
+    async def test_includes_fallback_from_paginated_total(
         self,
         storage: PropertyStorage,
         make_merged_property: Callable[..., MergedProperty],
         make_quality_analysis: Callable[..., PropertyQualityAnalysis],
     ) -> None:
-        """Paginated total should not count fallback-analysis properties."""
+        """Paginated total includes incomplete assessments."""
         fallback = make_merged_property(
             source_id="fallback-1", image_url=HttpUrl("https://example.com/img.jpg")
         )
@@ -637,4 +637,4 @@ class TestDashboardExcludesFallbackAnalysis:
         await storage.pipeline.complete_analysis(real.unique_id, make_quality_analysis())
 
         _, total = await storage.web.get_properties_paginated(PropertyFilter())
-        assert total == 1
+        assert total == 2

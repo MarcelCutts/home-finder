@@ -64,7 +64,7 @@ async def test_owner_schema_upgrade_preserves_state_and_isolated_rollback(tmp_pa
         assert manifest.inventory.schema_version == 7
         assert verify_backup(package) == manifest
 
-        assert await run_migrations(conn) == 9
+        assert await run_migrations(conn) == len(MIGRATIONS)
         for table in tables:
             names = ", ".join(columns[table])
             cursor = await conn.execute(f"SELECT {names} FROM {table}")
@@ -81,4 +81,5 @@ async def test_owner_schema_upgrade_preserves_state_and_isolated_rollback(tmp_pa
     assert verify_backup(isolated).inventory.schema_version == 7
     async with aiosqlite.connect(database) as conn:
         cursor = await conn.execute("PRAGMA user_version")
-        assert await cursor.fetchone() == (9,)  # Restore never replaces the authority.
+        # Restore never replaces the upgraded authority.
+        assert await cursor.fetchone() == (len(MIGRATIONS),)

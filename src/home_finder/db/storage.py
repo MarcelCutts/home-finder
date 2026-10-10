@@ -16,6 +16,8 @@ from typing import Any, Final
 import aiosqlite
 
 from home_finder.data.area_context import HOSTING_TOLERANCE
+from home_finder.db.delivery import DeliveryRepository
+from home_finder.db.image_ops import upsert_property_images
 from home_finder.db.listing_text import (
     apply_source_text,
     persist_merged_text,
@@ -120,6 +122,7 @@ class PropertyStorage:
             self.save_quality_analysis,
             self._transaction,
         )
+        self.deliveries = DeliveryRepository(self._read_connection, self._transaction)
         self._spend = SpendRepository(self._read_connection, self._transaction)
 
     @property
@@ -957,15 +960,7 @@ class PropertyStorage:
             return
 
         async with self._transaction(conn=_conn) as conn:
-            rows = [(unique_id, img.source.value, str(img.url), img.image_type) for img in images]
-            await conn.executemany(
-                """
-                INSERT OR IGNORE INTO property_images
-                (property_unique_id, source, url, image_type)
-                VALUES (?, ?, ?, ?)
-                """,
-                rows,
-            )
+            await upsert_property_images(conn, unique_id, images)
 
         logger.debug(
             "property_images_saved",
@@ -987,7 +982,7 @@ class PropertyStorage:
         async with self._read_connection(conn=_conn) as conn:
             cursor = await conn.execute(
                 """
-                SELECT source, url, image_type
+                SELECT source, url, image_type, floorplan_origin
                 FROM property_images
                 WHERE property_unique_id = ?
                 ORDER BY image_type, id
@@ -1003,6 +998,7 @@ class PropertyStorage:
                         source=PropertySource(row["source"]),
                         url=row["url"],
                         image_type=row["image_type"],
+                        floorplan_origin=row["floorplan_origin"],
                     )
                 )
             return images
@@ -1025,7 +1021,7 @@ class PropertyStorage:
             # Images
             img_cursor = await conn.execute(
                 """
-                SELECT source, url, image_type
+                SELECT source, url, image_type, floorplan_origin
                 FROM property_images
                 WHERE property_unique_id = ?
                 ORDER BY image_type, id
@@ -1038,6 +1034,7 @@ class PropertyStorage:
                     source=PropertySource(r["source"]),
                     url=r["url"],
                     image_type=r["image_type"],
+                    floorplan_origin=r["floorplan_origin"],
                 )
                 for r in img_rows
             ]
@@ -1389,6 +1386,19 @@ class PropertyStorage:
                     datetime.now(UTC).isoformat(),
                 ),
             )
+            provenance = analysis.analysis_provenance
+            if (
+                analysis.overall_rating is not None
+                and analysis.analysis_failure is None
+                and provenance is not None
+                and provenance.visual_input_sha256 is not None
+            ):
+                # Completion and consumption commit together. A newer checkpoint
+                # created for changed inputs must survive this older completion.
+                await conn.execute(
+                    "DELETE FROM visual_checkpoints WHERE property_id=? AND input_sha256=?",
+                    (unique_id, provenance.visual_input_sha256),
+                )
         logger.debug("quality_analysis_saved", unique_id=unique_id)
 
     async def get_quality_analysis(self, unique_id: str) -> PropertyQualityAnalysis | None:
@@ -1580,7 +1590,7 @@ class PropertyStorage:
             # Use attributed retained prices, not an old unattributed range.
             # Freshness/availability eligibility and projection revisions are PR08b.
             prices = [new_price, *(r[0] for r in await prices_cursor.fetchall())]
-            await conn.execute(
+            history_cursor = await conn.execute(
                 """INSERT INTO price_history
                    (property_unique_id, old_price, new_price, change_amount, source)
                    VALUES (?, ?, ?, ?, ?)""",
@@ -1591,6 +1601,45 @@ class PropertyStorage:
                 "price_drop_notified = 0 WHERE unique_id = ?",
                 (new_price, min(prices), max(prices), unique_id),
             )
+
+            # Supersede only price alerts with known unsent outcomes. An
+            # in-flight/uncertain alert retains its receipts and requires review.
+            await conn.execute(
+                """UPDATE notification_deliveries SET state='suppressed',
+                reason='superseded_price',updated_at=CURRENT_TIMESTAMP
+                WHERE property_id=? AND kind='price_drop' AND next_part=0
+                  AND state IN ('queued','ready','waiting','blocked')""",
+                (unique_id,),
+            )
+            if change_amount < 0:
+                # An unfinished discovery still quotes its frozen price. Save the
+                # newer revision atomically now; delivery.claim gates its dispatch
+                # on discovery's final acknowledgement setting the property to sent.
+                # Untracked or suppressed discoveries do not establish this intent.
+                await conn.execute(
+                    """INSERT INTO notification_deliveries
+                    (event_key,property_id,kind,price_history_id,snapshot_json)
+                    SELECT ?,unique_id,'price_drop',?,
+                        json_object('title',title,'postcode',COALESCE(postcode,''),
+                            'old_price',?,'new_price',?,'unique_id',unique_id,'first_seen',first_seen)
+                    FROM properties WHERE unique_id=? AND (
+                        notification_status='sent' OR (
+                            notification_status IN ('pending','failed') AND EXISTS (
+                                SELECT 1 FROM notification_deliveries d
+                                WHERE d.event_key='discovery:'||properties.unique_id
+                                  AND d.snapshot_json IS NOT NULL
+                                  AND d.state NOT IN ('review','suppressed','complete')
+                            )
+                        )
+                    )""",
+                    (
+                        f"price:{history_cursor.lastrowid}",
+                        history_cursor.lastrowid,
+                        old_price,
+                        new_price,
+                        unique_id,
+                    ),
+                )
 
             # Recompute value rating and fit_score for the new price
             qa_cursor = await conn.execute(
@@ -1678,7 +1727,9 @@ class PropertyStorage:
                    WHERE p.price_drop_notified = 0
                      AND ph.change_amount < 0
                      AND p.notification_status = 'sent'
-                   ORDER BY ph.detected_at DESC"""
+                     AND ph.id = (SELECT MAX(id) FROM price_history
+                                  WHERE property_unique_id = p.unique_id)
+                   ORDER BY ph.id DESC"""
             )
             rows = await cursor.fetchall()
             # Deduplicate: only latest drop per property

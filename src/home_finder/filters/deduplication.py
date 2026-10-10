@@ -588,8 +588,11 @@ def _select_best_floorplan(sorted_mps: list[MergedProperty]) -> PropertyImage | 
         return None
     if len(candidates) == 1:
         return candidates[0]
-    # Sort by source priority descending, pick best
-    return max(candidates, key=lambda fp: SOURCE_IMAGE_PRIORITY.get(fp.source, 0))
+    # Prefer a recorded source declaration to any historical heuristic label.
+    return max(
+        candidates,
+        key=lambda fp: (fp.is_source_floorplan, SOURCE_IMAGE_PRIORITY.get(fp.source, 0)),
+    )
 
 
 def _group_items_greedy(

@@ -41,7 +41,11 @@ accepted for command compatibility and does not remove the normal bounds.
 
 Properties without floorplans are dropped when `require_floorplan=True` (default). Exception: OpenRent-only properties are exempt because OpenRent has no dedicated floorplan section — landlords upload everything into a single gallery. See `_FLOORPLAN_EXEMPT_SOURCES`.
 
-When no structural floorplan is found, a PIL-based heuristic scans cached gallery images to rescue misclassified floorplans.
+Only source-declared floorplans satisfy the dedicated-floorplan requirement.
+Unknown legacy images remain available as unverified input. Gallery images are
+never promoted by the old PIL heuristic; it remains an offline experiment utility.
+Source designation does not prove readable dimensions. The existing OpenRent
+exemption and configured photo-estimate bypass remain available.
 
 ## Coordinate and Postcode Availability
 

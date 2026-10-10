@@ -28,7 +28,7 @@ from home_finder.filters.analysis_contracts import (
 from home_finder.filters.analysis_contracts import (
     failure as output_failure,
 )
-from home_finder.filters.analysis_spend import AnalysisSpendMeter
+from home_finder.filters.analysis_spend import AnalysisSpendMeter, visual_input_key
 from home_finder.filters.listing_text import select_listing_text, supported_council_tax_band
 from home_finder.logging import get_logger
 from home_finder.models import (
@@ -1062,6 +1062,9 @@ class PropertyQualityFilter:
                 merged.unique_id,
                 gallery_urls=gallery_urls[: self._max_images],
                 floorplan_url=floorplan_url,
+                floorplan_source_declared=bool(
+                    merged.floorplan and merged.floorplan.is_source_floorplan
+                ),
                 bedrooms=prop.bedrooms,
                 price_pcm=prop.price_pcm,
                 area_average=value.area_average,
@@ -1117,7 +1120,7 @@ class PropertyQualityFilter:
             )
             analysis = PropertyQualityAnalysis(
                 listing_text_inputs=text_inputs,
-                analysis_provenance=self._analysis_provenance(),
+                analysis_provenance=analysis.analysis_provenance or self._analysis_provenance(),
                 kitchen=analysis.kitchen,
                 condition=analysis.condition,
                 light_space=analysis.light_space,
@@ -1209,6 +1212,41 @@ class PropertyQualityFilter:
             summary="No images available for quality analysis",
         )
 
+    def _visual_request(self, content: list[Any]) -> dict[str, Any]:
+        """Build the exact visual request used both for checkpoint identity and dispatch."""
+        phase = self.analysis_config.visual
+        create_kwargs: dict[str, Any] = {
+            "model": phase.model,
+            # SDK enforces non-streaming cap of ~21333 tokens (10-min timeout estimate).
+            # Streaming would allow 32768+ but requires a larger refactor.
+            "max_tokens": phase.max_output_tokens,
+            "system": [
+                {
+                    "type": "text",
+                    "text": VISUAL_ANALYSIS_SYSTEM_PROMPT,
+                    "cache_control": {"type": "ephemeral"},
+                }
+            ],
+            "messages": [{"role": "user", "content": content}],
+            "tools": [{**VISUAL_ANALYSIS_TOOL, "cache_control": {"type": "ephemeral"}}],
+        }
+
+        if phase.reasoning == "adaptive":
+            create_kwargs["thinking"] = {
+                "type": "adaptive",
+            }
+            create_kwargs["tool_choice"] = {"type": "auto"}
+        else:
+            create_kwargs["tool_choice"] = {
+                "type": "tool",
+                "name": "property_visual_analysis",
+            }
+
+        if phase.effort is not None:
+            create_kwargs["output_config"] = {"effort": phase.effort}
+
+        return create_kwargs
+
     async def _run_visual_analysis(
         self,
         content: list[Any],
@@ -1238,48 +1276,33 @@ class PropertyQualityFilter:
             InternalServerError,
             RateLimitError,
         )
-        from anthropic.types import ToolParam
 
         phase = self.analysis_config.visual
         client = self._phase_client(phase)
 
         try:
-            visual_tool: ToolParam = VISUAL_ANALYSIS_TOOL  # type: ignore[assignment]
-
-            create_kwargs: dict[str, Any] = {
-                "model": phase.model,
-                # SDK enforces non-streaming cap of ~21333 tokens (10-min timeout estimate).
-                # Streaming would allow 32768+ but requires a larger refactor.
-                "max_tokens": phase.max_output_tokens,
-                "system": [
-                    {
-                        "type": "text",
-                        "text": VISUAL_ANALYSIS_SYSTEM_PROMPT,
-                        "cache_control": {"type": "ephemeral"},
-                    }
-                ],
-                "messages": [{"role": "user", "content": content}],
-                "tools": [{**visual_tool, "cache_control": {"type": "ephemeral"}}],
-            }
-
-            if phase.reasoning == "adaptive":
-                create_kwargs["thinking"] = {
-                    "type": "adaptive",
-                }
-                create_kwargs["tool_choice"] = {"type": "auto"}
-            else:
-                create_kwargs["tool_choice"] = {
-                    "type": "tool",
-                    "name": "property_visual_analysis",
-                }
-
-            if phase.effort is not None:
-                create_kwargs["output_config"] = {"effort": phase.effort}
+            create_kwargs = self._visual_request(content)
+            provenance = self._analysis_provenance()
+            input_key = visual_input_key(property_id, create_kwargs, provenance)
+            cached = await self._spend_meter.get_visual_checkpoint(property_id, input_key)
+            if cached is not None:
+                try:
+                    visual_data = validate_output(cached, _VisualAnalysisResponse, "visual", None)
+                except AnalysisOutputError:
+                    raise SpendDeferred("visual_checkpoint_invalid") from None
+                logger.info(
+                    "visual_checkpoint_reused", property_id=property_id, input_sha256=input_key
+                )
+                return visual_data
 
             from anthropic import Timeout
 
             with self._spend_meter.bind(
-                property_id, "visual", self._analysis_provenance(), _visual_output
+                property_id,
+                "visual",
+                provenance,
+                _visual_output,
+                visual_input_sha256=input_key,
             ):
                 response = await client.messages.create(
                     **create_kwargs,
@@ -1664,6 +1687,7 @@ class PropertyQualityFilter:
         floorplan_cached_path: Path | None = None,
         data_dir: str | None = None,
         floor_area_sqm: float | None = None,
+        floorplan_source_declared: bool = False,
     ) -> PropertyQualityAnalysis | None:
         """Analyze a single property using two-phase chained Claude analysis.
 
@@ -1709,8 +1733,9 @@ class PropertyQualityFilter:
         elif floorplan_url:
             logger.debug("skipping_pdf_floorplan", url=floorplan_url)
 
-        has_floorplan = floorplan_block is not None
-        effective_max = self._max_images - (1 if has_floorplan else 0)
+        has_extra_image = floorplan_block is not None
+        has_floorplan = has_extra_image and floorplan_source_declared
+        effective_max = self._max_images - (1 if has_extra_image else 0)
 
         gallery_num = 0
         cached_paths = gallery_cached_paths or [None] * len(gallery_urls)
@@ -1726,13 +1751,17 @@ class PropertyQualityFilter:
             content.append(
                 TextBlockParam(
                     type="text",
-                    text="Floorplan \u2014 read all dimension labels carefully"
-                    " (UK formats: metres or feet/inches):",
+                    text=(
+                        "Source-declared floorplan. Type and readable dimensions are not verified. "
+                        "Read only visible dimension labels (metres or feet/inches):"
+                        if floorplan_source_declared
+                        else f"Gallery image {gallery_num + 1} (historical image role unverified):"
+                    ),
                 )
             )
             content.append(floorplan_block)
 
-        if not gallery_num and not has_floorplan:
+        if not gallery_num and not has_extra_image:
             raise SpendDeferred("missing_usable_images")
 
         effective_average = area_average or DEFAULT_BENCHMARK.get(min(bedrooms, 3), 1800)
@@ -1760,6 +1789,9 @@ class PropertyQualityFilter:
             property_id=property_id,
             gallery_count=len(gallery_urls),
             has_floorplan=has_floorplan,
+            floorplan_origin=(
+                "source_declared" if has_floorplan else "unknown" if has_extra_image else None
+            ),
             image_blocks_sent=len(image_blocks),
             total_content_blocks=len(content),
         )
@@ -1814,6 +1846,16 @@ class PropertyQualityFilter:
                         )
                     }
                 )
+        if analysis is not None:
+            provenance = self._analysis_provenance()
+            input_key = visual_input_key(property_id, self._visual_request(content), provenance)
+            analysis = analysis.model_copy(
+                update={
+                    "analysis_provenance": provenance.model_copy(
+                        update={"visual_input_sha256": input_key}
+                    )
+                }
+            )
         return analysis
 
     async def __aenter__(self) -> "PropertyQualityFilter":

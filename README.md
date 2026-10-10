@@ -309,16 +309,19 @@ src/home_finder/
 │       ├── app.js         # Lightbox, detail map, dashboard map, lazy loading
 │       └── style.css      # All custom styles
 ├── notifiers/
-│   └── telegram.py        # Rich Telegram notifications with quality cards
+│   ├── telegram.py        # Telegram formatting and notifier interface
+│   └── delivery.py        # Saved plans and per-request receipt recovery
 ├── db/
-│   └── storage.py         # SQLite storage with notification tracking
+│   ├── storage.py         # SQLite domain storage and owned transactions
+│   ├── spend.py           # Paid-attempt accounting and visual checkpoints
+│   └── delivery.py        # Bounded durable notification state
 ├── utils/
 │   ├── address.py         # Address normalization for deduplication
 │   ├── image_cache.py     # Disk-based image caching for gallery/floorplan images
 │   ├── image_hash.py      # Perceptual image hashing
 │   ├── epc_detector.py    # EPC chart detection (PIL heuristics)
-│   └── floorplan_detector.py  # Floorplan detection (PIL heuristics)
-├── models.py              # Pydantic models (Property, MergedProperty, SOURCE_NAMES, etc.)
+│   └── floorplan_detector.py  # Offline floorplan heuristic experiments
+├── models/                # Typed property, analysis, spending and delivery models
 ├── config.py              # Settings management (pydantic-settings)
 ├── logging.py             # Structured logging (structlog)
 └── main.py                # Pipeline orchestration and CLI

@@ -22,6 +22,7 @@ from home_finder.models import (
     PropertyQualityAnalysis,
     PropertySource,
 )
+from tests.notifier_helpers import mock_durable_notifier
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -87,20 +88,7 @@ def _pipeline_mocks(
         _StorageCapture.instance = self
 
     # -- Notifier mock --
-    mock_notifier = MagicMock()
-    mock_notifier.send_property_notification = AsyncMock(return_value=notify_return)
-    mock_notifier.send_merged_property_notification = AsyncMock(return_value=notify_return)
-    mock_notifier.send_price_drop_notification = AsyncMock(return_value=True)
-    mock_notifier.close = AsyncMock()
-
-    async def _notifier_aenter(*a):
-        return mock_notifier
-
-    async def _notifier_aexit(*a):
-        await mock_notifier.close()
-
-    mock_notifier.__aenter__ = _notifier_aenter
-    mock_notifier.__aexit__ = _notifier_aexit
+    mock_notifier, construct_notifier = mock_durable_notifier(notify_return)
 
     # -- DetailFetcher mock --
     mock_fetcher_instance = MagicMock()
@@ -159,7 +147,7 @@ def _pipeline_mocks(
         ) as mock_quality_cls,
         patch(
             "home_finder.main.TelegramNotifier",
-            return_value=mock_notifier,
+            side_effect=construct_notifier,
         ) as mock_notifier_cls,
         patch("home_finder.pipeline.analysis._lookup_wards", new_callable=AsyncMock),
         patch("home_finder.main.asyncio.sleep", new_callable=AsyncMock),
@@ -333,12 +321,12 @@ class TestRunPipelineE2E:
 
             await storage.close()
 
-    async def test_retry_unsent_notifications(
+    async def test_legacy_unsent_notifications_require_review(
         self,
         pipeline_settings: Settings,
         make_property: Callable[..., Property],
     ):
-        """Pre-seeded failed notification should be retried on next run."""
+        """An untracked old send must not be repeated without reviewing its outcome."""
         prop = make_property(
             source=PropertySource.OPENRENT,
             source_id="retry-1",
@@ -393,10 +381,11 @@ class TestRunPipelineE2E:
                 storage_inst = storage.instance
                 assert storage_inst is not None
 
-                # Retry should have called send_property_notification for the failed one
-                ctx.notifier.send_property_notification.assert_awaited_once()
+                # The old outcome is unknown; leave it for owner review.
+                ctx.notifier.send_property_notification.assert_not_awaited()
+                assert (await storage_inst.deliveries.report())["counts"]["review"] == 1
 
-                # After successful retry, property should be marked as 'sent'
+                # Review must preserve the previous failed state.
                 conn = await storage_inst._get_connection()
                 cursor = await conn.execute(
                     "SELECT notification_status FROM properties WHERE unique_id = ?",
@@ -404,7 +393,7 @@ class TestRunPipelineE2E:
                 )
                 row = await cursor.fetchone()
                 assert row is not None
-                assert row["notification_status"] == "sent"
+                assert row["notification_status"] == "failed"
 
                 await storage_inst.close()
 

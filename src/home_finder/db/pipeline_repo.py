@@ -14,6 +14,8 @@ if TYPE_CHECKING:
 
 import aiosqlite
 
+from home_finder.db.delivery import enqueue_discovery
+from home_finder.db.image_ops import upsert_property_images
 from home_finder.db.listing_text import persist_merged_text
 from home_finder.db.row_mappers import (
     ImageReader,
@@ -279,19 +281,7 @@ class PipelineRepository:
                 images = list(merged.images)
                 if merged.floorplan:
                     images.append(merged.floorplan)
-                if images:
-                    img_rows = [
-                        (prop.unique_id, img.source.value, str(img.url), img.image_type)
-                        for img in images
-                    ]
-                    await conn.executemany(
-                        """
-                        INSERT OR IGNORE INTO property_images
-                        (property_unique_id, source, url, image_type)
-                        VALUES (?, ?, ?, ?)
-                        """,
-                        img_rows,
-                    )
+                await upsert_property_images(conn, prop.unique_id, images)
 
         logger.info("dropped_properties_saved", count=len(dropped))
 
@@ -426,7 +416,7 @@ class PipelineRepository:
         No-op for genuinely new properties (already 'pending').
         """
         async with self._transaction() as conn:
-            await conn.execute(
+            transition = await conn.execute(
                 """
                 UPDATE properties
                 SET enrichment_status = 'enriched',
@@ -440,6 +430,8 @@ class PipelineRepository:
                     NotificationStatus.PENDING_ENRICHMENT.value,
                 ),
             )
+            if transition.rowcount:
+                await enqueue_discovery(conn, unique_id)
 
     async def expire_unenriched(self, max_attempts: int = 3) -> int:
         """Give up on properties that exceeded max enrichment retries.
@@ -570,19 +562,7 @@ class PipelineRepository:
                 images = list(merged.images)
                 if merged.floorplan:
                     images.append(merged.floorplan)
-                if images:
-                    img_rows = [
-                        (prop.unique_id, img.source.value, str(img.url), img.image_type)
-                        for img in images
-                    ]
-                    await conn.executemany(
-                        """
-                        INSERT OR IGNORE INTO property_images
-                        (property_unique_id, source, url, image_type)
-                        VALUES (?, ?, ?, ?)
-                        """,
-                        img_rows,
-                    )
+                await upsert_property_images(conn, prop.unique_id, images)
 
         logger.info("pre_analysis_properties_saved", count=len(merged_list))
 
@@ -668,7 +648,7 @@ class PipelineRepository:
             if quality_analysis:
                 await self._save_quality_analysis(unique_id, quality_analysis, _conn=conn)
 
-            await conn.execute(
+            transition = await conn.execute(
                 """
                 UPDATE properties
                 SET notification_status = ?,
@@ -682,6 +662,8 @@ class PipelineRepository:
                     NotificationStatus.PENDING_ANALYSIS.value,
                 ),
             )
+            if transition.rowcount:
+                await enqueue_discovery(conn, unique_id)
         logger.debug("analysis_completed", unique_id=unique_id)
 
     async def reset_failed_analyses(self, *, max_analysis_attempts: int = 3) -> int:

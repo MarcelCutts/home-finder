@@ -2521,7 +2521,7 @@ class TestPriceHistoryDetail:
         resp = client.get(f"/property/{merged.unique_id}")
         assert resp.status_code == 200
         assert "listing-age-pill" in resp.text
-        assert "First observed" in resp.text
+        assert "First seen" in resp.text
         assert "May be negotiable" not in resp.text
 
 

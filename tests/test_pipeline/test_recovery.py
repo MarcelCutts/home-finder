@@ -16,6 +16,7 @@ from home_finder.models.spend import SpendDeferred, SpendPolicy
 from home_finder.pipeline.analysis import _run_quality_and_save
 from home_finder.pipeline.stages import PreAnalysisResult, _run_pre_analysis_pipeline
 from home_finder.utils.image_cache import get_cached_image_path, save_image_bytes
+from tests.notifier_helpers import mock_durable_notifier
 
 
 @pytest.fixture
@@ -45,11 +46,7 @@ def settings(tmp_path):
 
 @pytest.fixture
 def boundaries(make_quality_analysis):
-    notifier = AsyncMock()
-    notifier.__aenter__.return_value = notifier
-    notifier.send_property_notification.return_value = True
-    notifier.send_merged_property_notification.return_value = True
-    notifier.send_price_drop_notification.return_value = True
+    notifier, construct_notifier = mock_durable_notifier()
     quality = AsyncMock()
     quality.__aenter__.return_value = quality
     quality.token_usage = TokenUsage()
@@ -58,7 +55,7 @@ def boundaries(make_quality_analysis):
         make_quality_analysis(),
     )
     with (
-        patch("home_finder.main.TelegramNotifier", return_value=notifier),
+        patch("home_finder.main.TelegramNotifier", side_effect=construct_notifier),
         patch("home_finder.pipeline.scraping.scrape_all_platforms", return_value=([], [])),
         patch("home_finder.pipeline.analysis.PropertyQualityFilter", return_value=quality),
         patch("home_finder.pipeline.analysis._lookup_wards", new_callable=AsyncMock),
@@ -147,7 +144,9 @@ async def test_zero_discovery_drains_pending_analysis_reanalysis_and_price_deliv
         reanalysis.unique_id,
     }
     notifier.send_merged_property_notification.assert_awaited_once()
-    notifier.send_price_drop_notification.assert_awaited_once()
+    notifier.send_price_drop_notification.assert_not_awaited()
+    report = await storage.deliveries.report()
+    assert report["counts"]["complete"] == 2
     assert not await storage.pipeline.get_reanalysis_queue()
     assert not await storage.get_unsent_price_drops()
     assert (await storage.get_property(pending.unique_id)).notification_status.value == "sent"
