@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from types import TracebackType
 from typing import TYPE_CHECKING, Any
 
 from home_finder.logging import get_logger
+from home_finder.utils.async_tasks import finish_cleanup
 
 if TYPE_CHECKING:
     from home_finder.db.storage import PropertyStorage
@@ -63,11 +65,24 @@ class EventRecorder:
             return
         to_write = self._buffer
         self._buffer = []
-        await self._storage.pipeline.insert_property_events(self._run_id, to_write)
-        logger.debug("property_events_flushed", count=len(to_write))
+
+        async def insert_batch() -> None:
+            await self._storage.pipeline.insert_property_events(self._run_id, to_write)
+            logger.debug("property_events_flushed", count=len(to_write))
+
+        # Finish this one insertion before propagating cancellation. Retrying a
+        # cancelled insert could duplicate a batch whose commit already settled.
+        await finish_cleanup(
+            insert_batch(), primary_error=None, operation_name="property_event_insert"
+        )
 
     async def __aenter__(self) -> EventRecorder:
         return self
 
-    async def __aexit__(self, *exc: object) -> None:
-        await self.flush()
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        traceback: TracebackType | None,
+    ) -> None:
+        await finish_cleanup(self.flush(), primary_error=exc, operation_name="property_event_flush")

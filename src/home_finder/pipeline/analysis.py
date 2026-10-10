@@ -117,10 +117,11 @@ async def _persist_estimated_floor_area(
                     unique_id=merged.unique_id,
                 )
 
-            # Room sum cross-check (warning only)
+            # Room areas may be partial or withheld. Only an excessive sum
+            # contradicts the total; a smaller sum does not establish an error.
             if space.room_areas:
                 room_sum = sum(r.area_sqm for r in space.room_areas if r.area_sqm)
-                if room_sum > 0 and abs(room_sum - sqm) > max(5.0, sqm * 0.15):
+                if room_sum - sqm > max(5.0, sqm * 0.15):
                     logger.warning(
                         "floor_area_sum_mismatch",
                         total=sqm,

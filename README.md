@@ -78,6 +78,19 @@ uv run home-finder --check-off-market --scrapers zoopla  # Check only specific p
 uv run home-finder --debug              # Enable debug-level logging
 ```
 
+Dry runs save listings, analyses, pipeline runs, scraper metrics and property
+events, and can incur API charges. They leave delivery intents pending without
+constructing a Telegram notifier or recovering/sending notifications. Diagnostics
+report the latest terminal run, including dry runs; the database does not store
+the run mode. Logs identify it with `run_id` and `dry_run`. Add `--debug` for phase
+outcomes and timings. A completed phase means execution returned; individual
+properties may still be deferred or unsuccessful.
+
+Event pruning runs only in live mode, but dry runs count toward the retained run
+window when the next live cleanup occurs. Run token/cost totals cover returned
+main-analysis usage and may be incomplete after interruption; they exclude
+reanalysis usage. The paid spend ledger is authoritative for reconciled spending.
+
 ## Web Dashboard
 
 The `--serve` flag starts a FastAPI web server on port 8000 with a background pipeline scheduler that runs every 55 minutes (configurable via `HOME_FINDER_PIPELINE_INTERVAL_MINUTES`).

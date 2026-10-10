@@ -5,6 +5,7 @@ import json
 from typing import Any, Final
 
 from home_finder.data.rental_guidance import GUIDANCE
+from home_finder.models.analysis import ImageReviewCoverage
 
 # System prompt for Phase 1: Visual analysis - cached for cost savings
 VISUAL_ANALYSIS_SYSTEM_PROMPT: Final = """\
@@ -30,6 +31,10 @@ selective_angles and feels_spacious use true/false only \
 (never "unknown" — use false when uncertain). \
 For is_spacious_enough use true/false/null; null means the usable space is uncertain. \
 Do not guess — a confident "unknown" is more useful than a wrong answer.
+
+Outdoor availability is yes/no/unknown: missing photos or all-false type flags \
+alone mean unknown, not no. Count private patios/courtyards as has_terrace; retain \
+listing claims and visible evidence in notes.
 
 Keep observations, listing claims and hypotheses distinct in every field, including \
 summary and concerns. Visible panel heaters do not prove electric-only heating, \
@@ -152,14 +157,19 @@ cubicle, electric), ensuite. Cross-ref "wet room", "new bathroom", \
 overhead = fixed/rain head over bath or walk-in; separate_cubicle = \
 standalone enclosed shower; electric = wall-mounted heater unit (white box, \
 dial controls — common in older UK flats, signals weak hot water). Note \
-whether bathtub present or shower-only.
+whether bathtub present or shower-only. On a floorplan, trace visible door openings \
+to establish bathroom access; room adjacency does not prove a doorway or hall access. \
+If an opening or route is ambiguous, set is_ensuite to "unknown" and request an \
+access check at viewing instead of guessing.
 
 8. Bedroom & Office Separation: Can primary bedroom fit a double bed + wardrobe + desk? \
 Check floorplan room labels and dimensions. "Double room" claims are often dubious. \
 Assess office_separation quality: dedicated_room = closable second bedroom usable as \
 office (non-through room with a door); separate_area = alcove, mezzanine, or \
 partitioned nook; shared_space = desk in living room with no separation; none = studio \
-or nowhere viable for a desk.
+or nowhere viable for a desk. A second bedroom count alone does not establish \
+dedicated_room: its closable door and non-through layout need visible or explicit \
+listing support; otherwise preserve uncertainty.
 
 9. Storage: Distinguish visible freestanding furniture from built-in wardrobes. \
 Do not claim fitted storage or that furniture is included without evidence. \
@@ -188,9 +198,13 @@ in photos, "ground floor"/"first floor" in description, lift mentions, views \
 from windows. Use: basement, ground, lower (1st-2nd), upper (3rd-4th), top \
 (5th+), or unknown.
 
-13. Red Flags: Missing room photos (no bathroom/kitchen photos), too few \
-photos total (<4), selective angles hiding issues, description gaps or \
-concerning language.
+13. Red Flags: Check image_review_coverage before assessing missing room photos, \
+too few photos (<4), or selective angles. A partial gallery review cannot establish \
+listing-wide photo omissions or selective photography. Missing rooms in that \
+review are unknown, not defects; do not lower ratings or value for review gaps. \
+Even a complete review covers only supplied images, not a verified complete advert. \
+Scope any absence as "not seen in supplied images", never "missing from the advert". \
+Description gaps or concerning language can still be assessed on their evidence.
 </analysis_steps>
 
 <rating_criteria>
@@ -236,6 +250,14 @@ repeat contradictory numbers from visual prose. Printed totals are advertised, \
 not independently measured. Preserve uncertainty about hidden appliances, gas \
 supply/heating coverage, fitted furniture and actual street frontage; frame \
 unverified concerns as viewing questions rather than established defects or costs.
+Respect image_review_coverage: a partial gallery review leaves photo completeness \
+unknown. Do not turn rooms not seen in that review, its image count, or perceived \
+selective angles into missing-photo lowlights, red flags or value penalties. \
+Use qualified viewing checks instead. A complete supplied-gallery review also does \
+not prove advert completeness: scope absences as "not seen in supplied images". \
+Bathroom access and office separation require \
+supported door openings and circulation routes; preserve unknown access rather \
+than inferring it from room adjacency or bedroom count.
 
 <task>
 Given visual analysis observations and listing text, produce:
@@ -377,6 +399,36 @@ def _format_property_context(
     return "".join(parts)
 
 
+def _format_image_review_coverage(coverage: ImageReviewCoverage | None) -> str:
+    """Trusted request counts; no inference about the contents of unseen images."""
+    if coverage is None:
+        return ""
+    prompt = (
+        "\n\n<image_review_coverage>\nApplication count: "
+        f"{coverage.reviewed_gallery_count} of {coverage.available_gallery_count} "
+        "available gallery images reviewed. Source-declared floorplans are excluded. "
+        "Even a complete review cannot establish advert completeness; absences mean "
+        "'not seen in supplied images'.\n"
+    )
+    if coverage.is_partial:
+        prompt += (
+            "Partial review: photo completeness is unknown. Treat missing_room_photos as "
+            "review gaps. Set too_few_photos/selective_angles false; exclude photo gaps "
+            "from red_flag_count, lowlights, summary and all ratings or value penalties. "
+            "Do not infer unseen contents; keep visible condition evidence and qualify "
+            "gaps as viewing checks.\n"
+        )
+        if coverage.rooms_not_seen_in_review:
+            prompt += (
+                "Model-reported rooms not seen in the reviewed images (unknown in the "
+                "unreviewed gallery): "
+                f"{json.dumps(coverage.rooms_not_seen_in_review)}\n"
+            )
+    else:
+        prompt += "All available gallery images were reviewed.\n"
+    return prompt + "</image_review_coverage>"
+
+
 def build_user_prompt(
     price_pcm: int,
     bedrooms: int,
@@ -395,6 +447,7 @@ def build_user_prompt(
     hosting_tolerance: str | None = None,
     has_labeled_floorplan: bool = True,
     floor_area_sqm: float | None = None,
+    image_review_coverage: ImageReviewCoverage | None = None,
 ) -> str:
     """Build the user prompt with property-specific context.
 
@@ -417,6 +470,8 @@ def build_user_prompt(
         energy_estimate=energy_estimate,
         hosting_tolerance=hosting_tolerance,
     )
+
+    prompt += _format_image_review_coverage(image_review_coverage)
 
     if features:
         prompt += "\n\n<listing_features>\n"
@@ -474,11 +529,14 @@ def build_evaluation_prompt(
     energy_estimate: float | None = None,
     hosting_tolerance: str | None = None,
     acoustic_context: str | None = None,
+    image_review_coverage: ImageReviewCoverage | None = None,
 ) -> str:
     """Build the Phase 2 evaluation prompt with Phase 1 output and property context."""
     prompt = "<visual_analysis>\n"
     prompt += json.dumps(visual_data, indent=2)
     prompt += "\n</visual_analysis>\n\n"
+    if image_review_coverage is not None:
+        prompt += _format_image_review_coverage(image_review_coverage) + "\n\n"
 
     prompt += _format_property_context(
         price_pcm=price_pcm,

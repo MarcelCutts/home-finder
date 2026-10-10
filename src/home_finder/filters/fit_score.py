@@ -13,9 +13,11 @@ from __future__ import annotations
 
 from typing import Any, Final, TypedDict
 
+from home_finder.models.quality import outdoor_availability
+
 # Increment when the scoring algorithm changes (weights, signals, dimensions).
 # Triggers automatic recomputation via _backfill_fit_scores().
-FIT_SCORE_VERSION: Final = 1
+FIT_SCORE_VERSION: Final = 2
 
 
 # ── Fit tiers (single source of truth) ────────────────────────────────────────
@@ -279,19 +281,12 @@ def _score_hosting(analysis: dict[str, Any], bedrooms: int) -> _DimensionResult:
         signals += 1
         factors.append({"label": "Feels cramped", "state": "missed"})
 
-    outdoor = analysis.get("outdoor_space") or {}
-    has_any_outdoor = any(
-        outdoor.get(k) is True
-        for k in ("has_balcony", "has_garden", "has_terrace", "has_shared_garden")
-    )
-    has_outdoor_data = any(
-        k in outdoor for k in ("has_balcony", "has_garden", "has_terrace", "has_shared_garden")
-    )
-    if has_any_outdoor:
+    availability = outdoor_availability(analysis.get("outdoor_space"))
+    if availability == "yes":
         score += 15
         signals += 1
         factors.append({"label": "Outdoor space", "state": "earned"})
-    elif has_outdoor_data:
+    elif availability == "no":
         signals += 1
         factors.append({"label": "No outdoor space", "state": "missed"})
 
@@ -981,13 +976,9 @@ def _icon_vibe(analysis: dict[str, Any]) -> LifestyleIcon:
 
 def _icon_space(analysis: dict[str, Any], bedrooms: int = 0) -> LifestyleIcon:
     space = analysis.get("space") or {}
-    outdoor = analysis.get("outdoor_space") or {}
     is_spacious = space.get("is_spacious_enough")
 
-    has_outdoor = any(
-        outdoor.get(k) is True
-        for k in ("has_balcony", "has_garden", "has_terrace", "has_shared_garden")
-    )
+    has_outdoor = outdoor_availability(analysis.get("outdoor_space")) == "yes"
 
     if is_spacious is True and has_outdoor:
         return {"state": "good", "tooltip": "Spacious with outdoor space"}

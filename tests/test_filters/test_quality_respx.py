@@ -101,6 +101,7 @@ PHASE1_VISUAL_RESPONSE: dict[str, Any] = {
                     "notes": "Good-sized double bedroom with built-in storage",
                 },
                 "outdoor_space": {
+                    "availability": "yes",
                     "has_balcony": True,
                     "has_garden": False,
                     "has_terrace": False,
