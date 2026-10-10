@@ -225,7 +225,7 @@ async def _cross_run_deduplicate(
                     if nid is not None and nid in new_id_to_price:
                         new_source_prices.append(new_id_to_price[nid])
                 if new_source_prices:
-                    lowest_new_price = min(new_source_prices)
+                    lowest_new_price = min(original_anchor.canonical.price_pcm, *new_source_prices)
                     change = await storage.detect_and_record_price_change(
                         matched_anchor_id,
                         lowest_new_price,

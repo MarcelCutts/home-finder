@@ -4,6 +4,8 @@ import asyncio
 import hashlib
 import json
 import sqlite3
+import subprocess
+import sys
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -444,13 +446,57 @@ def test_snapshot_export_preserves_copy_and_separates_evidence(
     assert (result / "000.json").stat().st_mode & 0o777 == 0o600
 
 
-def test_snapshot_export_refuses_wal_and_bad_limits(tmp_path: Path, snapshot: Path) -> None:
+@pytest.mark.parametrize("suffix", ["-wal", "-journal"])
+def test_snapshot_export_refuses_sidecars_and_bad_limits(
+    tmp_path: Path, snapshot: Path, suffix: str
+) -> None:
     with pytest.raises(ValueError, match=r"1\.\.100"):
         export_snapshot(snapshot, tmp_path / "out", max_cases=101)
-    snapshot.with_name(snapshot.name + "-wal").write_bytes(b"pending writes")
+    snapshot.with_name(snapshot.name + suffix).write_bytes(b"pending writes")
     with pytest.raises(ValueError, match="WAL"):
         export_snapshot(snapshot, tmp_path / "out")
     assert not (tmp_path / "out").exists()
+
+
+def test_snapshot_export_rejects_crash_created_hot_journal(tmp_path: Path, snapshot: Path) -> None:
+    snapshot.chmod(0o600)
+    subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            """
+import os, sqlite3, sys
+conn = sqlite3.connect(sys.argv[1])
+conn.execute('PRAGMA journal_mode=DELETE')
+conn.execute('CREATE TABLE spill(data BLOB)')
+conn.executemany('INSERT INTO spill VALUES(?)', [(bytes(4096),)] * 20)
+conn.commit()
+conn.execute('PRAGMA cache_size=1')
+conn.execute('BEGIN IMMEDIATE')
+conn.execute("UPDATE properties SET description='uncommitted text' WHERE unique_id='a'")
+conn.execute('UPDATE spill SET data=randomblob(4096)')
+os._exit(0)
+""",
+            str(snapshot),
+        ],
+        check=True,
+    )
+    journal = snapshot.with_name(snapshot.name + "-journal")
+    before = snapshot.read_bytes(), journal.read_bytes()
+    # Prove the crash spilled uncommitted pages: bypassing recovery sees them.
+    with sqlite3.connect(snapshot.as_uri() + "?immutable=1", uri=True) as conn:
+        assert conn.execute(
+            "SELECT description FROM properties WHERE unique_id='a'"
+        ).fetchone() == ("uncommitted text",)
+    with pytest.raises(ValueError, match="journal"):
+        export_snapshot(snapshot, tmp_path / "out")
+    assert (snapshot.read_bytes(), journal.read_bytes()) == before
+    assert not (tmp_path / "out").exists()
+    # A normal open recovers the last committed value, without trusting the exporter.
+    with sqlite3.connect(snapshot) as conn:
+        assert conn.execute(
+            "SELECT description FROM properties WHERE unique_id='a'"
+        ).fetchone() == ("listing text",)
 
 
 def test_cli_returns_failure_for_truncated_capture(

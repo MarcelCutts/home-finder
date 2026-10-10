@@ -11,6 +11,7 @@ from home_finder.config import Settings
 from home_finder.db import PropertyStorage
 from home_finder.main import _run_pipeline_with_storage
 from home_finder.models import PropertySource
+from home_finder.pipeline.scraping import _run_scrape
 from home_finder.scrapers.base import ScrapeResult
 from home_finder.scrapers.observations import search_observations
 from home_finder.scrapers.openrent import OpenRentScraper
@@ -123,6 +124,44 @@ async def test_cap_retains_extra_observations_and_counts_only_attempted_area(
     assert metrics["properties_found"] == 2
     scraper.area_delay.assert_not_awaited()
     quality.assert_not_called()
+
+
+@pytest.mark.parametrize("first_stop", ["page_error", "result_limit"])
+async def test_incomplete_search_does_not_hide_later_pages(
+    settings, storage, boundaries, make_property, first_stop
+):
+    scraper, _, _ = boundaries
+    first, later = make_property(), make_property()
+    scraper.scrape.return_value = ScrapeResult(
+        properties=[first],
+        observations=[first],
+        pages_fetched=1,
+        pages_failed=int(first_stop == "page_error"),
+        stop_reason=first_stop,
+    )
+    await _run_scrape(settings, storage, only_scrapers={"openrent"}, max_per_scraper=1)
+    # Even if the selected prefix was subsequently processed, it cannot certify
+    # that there are no older unseen listings beyond it.
+    if first_stop == "result_limit":
+        await storage.save_property(first)
+
+    async def resume(**kwargs):
+        async def fetch_page(index):
+            return [[first], [later], []][index]
+
+        # Exercise the shared paginator; OpenRent itself disables known-ID stops.
+        return await OpenRentScraper._paginate(
+            scraper,
+            fetch_page,
+            max_pages=3,
+            known_source_ids=kwargs.get("known_source_ids"),
+        )
+
+    scraper.scrape.side_effect = resume
+    result = await _run_scrape(settings, storage, only_scrapers={"openrent"})
+    assert result is not None
+    assert {prop.unique_id for prop in result[0]} == {first.unique_id, later.unique_id}
+    assert result[1][0].pages_fetched == 3
 
 
 async def test_pipeline_retains_revisions_before_selection_and_counts_unique_listings(

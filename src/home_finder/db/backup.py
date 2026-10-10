@@ -113,7 +113,8 @@ def _check_time(deadline: float) -> None:
         raise BackupError("Backup/verification deadline exceeded")
 
 
-def _reject_sidecars(path: Path) -> None:
+def reject_snapshot_sidecars(path: Path) -> None:
+    """Require a standalone snapshot before bypassing SQLite recovery/locking."""
     for suffix in ("-wal", "-journal"):
         sidecar = path.with_name(path.name + suffix)
         if sidecar.is_symlink() or (sidecar.exists() and sidecar.stat().st_size):
@@ -125,7 +126,7 @@ def _open_read_only(path: Path, *, frozen: bool = False) -> sqlite3.Connection:
     if not path.is_file():
         raise BackupError("Database must be an existing regular file")
     if frozen:
-        _reject_sidecars(path)
+        reject_snapshot_sidecars(path)
     conn = sqlite3.connect(
         path.as_uri() + "?mode=ro" + ("&immutable=1" if frozen else ""),
         uri=True,
@@ -330,7 +331,7 @@ def create_backup(
         if destination.resolve().is_relative_to(assets):
             raise BackupError("Backup destination cannot be inside its asset source")
     if frozen:
-        _reject_sidecars(database)
+        reject_snapshot_sidecars(database)
     before = _file_digest(database, deadline, limit=MAX_DATABASE_BYTES) if frozen else None
     with closing(_open_read_only(database, frozen=frozen)) as source:
         page_size = source.execute("PRAGMA page_size").fetchone()[0]
@@ -362,7 +363,7 @@ def create_backup(
                 if _asset_inventory(assets, deadline) != asset_inventory:
                     raise BackupError("Asset tree changed during capture")
             if before is not None:
-                _reject_sidecars(database)
+                reject_snapshot_sidecars(database)
                 if _file_digest(database, deadline, limit=MAX_DATABASE_BYTES) != before:
                     raise BackupError("Frozen source changed during capture")
             manifest = BackupManifest(

@@ -5,8 +5,12 @@ from __future__ import annotations
 import aiosqlite
 from pydantic import HttpUrl
 
+from home_finder.db.home_groups import read_routes
+from home_finder.db.homes import ensure_home
 from home_finder.db.membership_ops import link_memberships
+from home_finder.db.merge_safety import MergeBlockedError, ensure_staging_merge
 from home_finder.models import ListingMember, PropertySource
+from home_finder.models.home_group import HomeRoute
 
 
 async def link_source_listings_by_url(
@@ -15,6 +19,7 @@ async def link_source_listings_by_url(
     source_urls: dict[PropertySource, HttpUrl],
     *,
     members: tuple[ListingMember, ...] | None = None,
+    absorb_pending: bool = False,
 ) -> None:
     """Link unowned URL matches through the ownership journal.
 
@@ -24,6 +29,7 @@ async def link_source_listings_by_url(
     """
     if members is not None:
         ids = []
+        donors: set[str] = set()
         for member in members:
             if member.source_unique_id is None:
                 # A legacy URL is evidence, not authority to claim every matching row.
@@ -42,11 +48,39 @@ async def link_source_listings_by_url(
                 ids.append(member.source_unique_id)
             elif row[0] != merged_id:
                 # Never let a routine save reclaim a reviewed member from another home.
-                from home_finder.db.merge_safety import MergeBlockedError
-
-                raise MergeBlockedError({member.source_unique_id: ["membership_review_required"]})
+                if not absorb_pending:
+                    raise MergeBlockedError(
+                        {member.source_unique_id: ["membership_review_required"]}
+                    )
+                donors.add(row[0])
+                ids.append(member.source_unique_id)
+        routes = {}
+        if donors:
+            # Two enrichment retries may become one new group. Apply the same
+            # preservation gate as cross-run absorption, then retire the donor
+            # routes atomically so they cannot return in the next retry batch.
+            await ensure_staging_merge(conn, merged_id, sorted(donors))
+            member_ids = {m.source_unique_id for m in members}
+            donor_homes = set()
+            for donor in sorted(donors):
+                async with conn.execute(
+                    "SELECT unique_id FROM source_listings WHERE merged_id = ?", (donor,)
+                ) as cursor:
+                    if any(row[0] not in member_ids for row in await cursor.fetchall()):
+                        raise MergeBlockedError({donor: ["incomplete_staging_members"]})
+                donor_homes.add(await ensure_home(conn, donor))
+            target = await ensure_home(conn, merged_id)
+            routes = {
+                home: HomeRoute(home_id=home, target_home_id=target)
+                for home, route in (await read_routes(conn)).items()
+                if home in donor_homes or route.target_home_id in donor_homes
+            }
         await link_memberships(
-            conn, [(uid, merged_id) for uid in ids], reason="exact_member_linkage"
+            conn,
+            [(uid, merged_id) for uid in ids],
+            operation="staging_link" if donors else "initial_link",
+            reason="exact_member_linkage",
+            routes=routes,
         )
         return
     urls = [str(url) for url in source_urls.values()]

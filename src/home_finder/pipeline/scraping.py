@@ -273,15 +273,12 @@ async def _run_scrape(
     criteria = settings.get_search_criteria()
     search_areas = settings.get_search_areas()
 
+    # Receipt of a listing does not prove that the rest of its search was covered:
+    # a prior run may have stopped mid-page, hit a processing cap or been cancelled.
+    # Until we retain completed coverage per query, seen IDs cannot safely stop
+    # pagination. Existing scraper page/rate limits still bound collection.
     if full_scrape:
-        known_ids_by_source = None
-        logger.info("full_scrape_mode", msg="Early-stop disabled — scraping all pages")
-    else:
-        known_ids_by_source = await storage.get_all_known_source_ids()
-        logger.info(
-            "loaded_known_ids",
-            total=sum(len(v) for v in known_ids_by_source.values()),
-        )
+        logger.info("full_scrape_mode", msg="Scraping all pages within scraper limits")
 
     logger.info("pipeline_started", phase="scraping")
 
@@ -304,7 +301,7 @@ async def _run_scrape(
         min_bathrooms=settings.min_bathrooms,
         include_let_agreed=settings.include_let_agreed,
         max_per_scraper=max_per_scraper,
-        known_ids_by_source=known_ids_by_source,
+        known_ids_by_source=None,
         proxy_url=settings.proxy_url,
         only_scrapers=only_scrapers,
         zoopla_max_areas=settings.zoopla_max_areas_per_run,

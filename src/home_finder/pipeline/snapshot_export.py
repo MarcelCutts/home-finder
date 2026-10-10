@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
+from home_finder.db.backup import reject_snapshot_sidecars
 from home_finder.pipeline.capture import _write_json
 from home_finder.pipeline.runner import runner_lock
 
@@ -100,15 +101,13 @@ def export_snapshot(snapshot: Path, output_root: Path, *, max_cases: int = 24) -
     """Export a bounded development sample from a supplied frozen SQLite copy.
 
     This must be a quiescent copy, not the live database. Immutable mode deliberately
-    ignores locking and journals; a nonempty WAL is refused, and before/after hashes
-    detect changes. No storage initialisation, migration or application settings run.
+    ignores locking and recovery; WALs and rollback journals are refused, and
+    before/after hashes detect changes. No storage initialisation or migration runs.
     """
     if not 1 <= max_cases <= 100:
         raise ValueError("Historical exports require 1..100 cases")
     snapshot = snapshot.resolve(strict=True)
-    wal = snapshot.with_name(snapshot.name + "-wal")
-    if wal.exists() and wal.stat().st_size:
-        raise ValueError("Use a frozen, checkpointed snapshot without a nonempty WAL")
+    reject_snapshot_sidecars(snapshot)
     before = _sha256(snapshot)
     root = output_root.resolve()
     root.mkdir(mode=0o700, parents=True, exist_ok=True)
@@ -190,7 +189,8 @@ def export_snapshot(snapshot: Path, output_root: Path, *, max_cases: int = 24) -
                             "sha256": _sha256(run_dir / filename),
                         }
                     )
-                if _sha256(snapshot) != before or (wal.exists() and wal.stat().st_size):
+                reject_snapshot_sidecars(snapshot)
+                if _sha256(snapshot) != before:
                     raise RuntimeError("Snapshot changed during export; discard this sample")
                 manifest["state"] = "completed"
         except BaseException:
