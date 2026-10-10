@@ -17,6 +17,7 @@ from typing import Any
 from bs4 import BeautifulSoup
 
 from home_finder.scrapers.onthemarket_payloads import onthemarket_redux_state
+from home_finder.scrapers.rightmove_payloads import detail_property
 from home_finder.utils.http_evidence import is_challenge as is_challenge
 from home_finder.utils.listing_identity import listing_id as listing_id
 
@@ -42,10 +43,19 @@ def _at(value: object, *keys: str) -> Any:
     return value
 
 
-def _primary_records(source: str, soup: BeautifulSoup) -> list[dict[str, Any]]:
+def _primary_records(source: str, soup: BeautifulSoup, target: str) -> list[dict[str, Any]]:
     records = []
     for script in soup.find_all("script"):
         text = script.string or ""
+        indexed = re.search(r"window\.__PAGE_MODEL\s*=\s*", text) if source == "rightmove" else None
+        if indexed is not None:
+            try:
+                records.append(detail_property(text[indexed.start() :], target))
+            except (ValueError, RecursionError):
+                # A present but untrusted primary model must not borrow a status
+                # from another script, a linked offer, or the page heading.
+                records.append({})
+            continue
         try:
             if source == "rightmove":
                 match = re.search(r"(?:window\.)?PAGE_MODEL\s*=\s*", text)
@@ -116,7 +126,7 @@ def _record_states(record: dict[str, Any]) -> set[ListingStatus]:
 
 def _structured_states(source: str, soup: BeautifulSoup, target: str) -> set[ListingStatus]:
     states: set[ListingStatus] = set()
-    for record in _primary_records(source, soup):
+    for record in _primary_records(source, soup, target):
         ids = {str(record[key]) for key in ("id", "propertyId", "listingId") if key in record}
         if ids == {target}:
             states.update(_record_states(record))
@@ -152,12 +162,37 @@ def _linked_data_states(source: str, soup: BeautifulSoup, target: str) -> set[Li
                 if not isinstance(candidate, dict):
                     continue
                 url = candidate.get("url")
+                zoopla_page_identity = (
+                    source == "zoopla"
+                    and candidate.get("@type") == "RealEstateListing"
+                    and "mainEntityOfPage" in candidate
+                )
+                if zoopla_page_identity:
+                    # Current Zoopla JSON-LD identifies its main listing here,
+                    # with an explicit Offer but no top-level `url` field.
+                    page_url = candidate["mainEntityOfPage"]
+                    if (
+                        not isinstance(page_url, str)
+                        or listing_id(source, page_url) != target
+                        or (
+                            "url" in candidate
+                            and (not isinstance(url, str) or listing_id(source, url) != target)
+                        )
+                    ):
+                        states.add(ListingStatus.UNKNOWN)
+                        continue
+                    url = page_url
                 if not isinstance(url, str) or listing_id(source, url) != target:
                     continue
                 offers = candidate.get("offers", [])
                 offers = offers if isinstance(offers, list) else [offers]
                 for offer in offers:
                     if not isinstance(offer, dict):
+                        if zoopla_page_identity:
+                            states.add(ListingStatus.UNKNOWN)
+                        continue
+                    if zoopla_page_identity and offer.get("@type") != "Offer":
+                        states.add(ListingStatus.UNKNOWN)
                         continue
                     offer_url = offer.get("url", url)
                     if not isinstance(offer_url, str) or listing_id(source, offer_url) != target:
