@@ -6,7 +6,7 @@ import functools
 import hashlib
 import json as _json
 import re as _re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Final, Literal, NoReturn
 
@@ -58,7 +58,14 @@ from home_finder.models.analysis import (
     VisualPhaseConfig,
 )
 from home_finder.models.quality import _QUALITY_SUB_MODEL_FIELDS
-from home_finder.models.spend import SpendDeferred, SpendPolicy
+from home_finder.models.spend import (
+    NANOUSD_PER_USD,
+    SONNET_STANDARD_RATES,
+    BillableUsage,
+    SpendDeferred,
+    SpendPolicy,
+    rate_card_for,
+)
 from home_finder.utils.image_cache import find_cached_file, is_valid_image_url, read_image_bytes
 from home_finder.utils.image_processing import (
     ImageMediaType,
@@ -100,26 +107,45 @@ class TokenUsage:
     cache_read_tokens: int = 0
     cache_creation_tokens: int = 0
     cache_creation_1h_tokens: int = 0
+    _estimated_cost_nanousd: int = field(init=False, repr=False)
 
-    def add_from_response(self, usage: Any) -> None:
-        """Accumulate token counts from an Anthropic response.usage object."""
-        self.input_tokens += getattr(usage, "input_tokens", 0) or 0
-        self.output_tokens += getattr(usage, "output_tokens", 0) or 0
-        self.cache_read_tokens += getattr(usage, "cache_read_input_tokens", 0) or 0
-        self.cache_creation_tokens += getattr(usage, "cache_creation_input_tokens", 0) or 0
+    def __post_init__(self) -> None:
+        # Pre-populated counters historically represent Sonnet 4.6. New calls
+        # are priced individually so mixed-model phases are not repriced.
+        self._estimated_cost_nanousd = SONNET_STANDARD_RATES.cost(
+            BillableUsage(
+                input_tokens=self.input_tokens,
+                output_tokens=self.output_tokens,
+                cache_read_tokens=self.cache_read_tokens,
+                cache_write_5m_tokens=self.cache_creation_tokens - self.cache_creation_1h_tokens,
+                cache_write_1h_tokens=self.cache_creation_1h_tokens,
+            )
+        )
+
+    def add_from_response(self, usage: Any, *, model: str = "claude-sonnet-4-6") -> None:
+        """Accumulate inclusive output tokens at the actual model's rate."""
+        rates = rate_card_for(model)
         breakdown = getattr(usage, "cache_creation", None)
-        self.cache_creation_1h_tokens += getattr(breakdown, "ephemeral_1h_input_tokens", 0) or 0
+        write_1h = getattr(breakdown, "ephemeral_1h_input_tokens", 0) or 0
+        total_written = getattr(usage, "cache_creation_input_tokens", 0) or 0
+        billed = BillableUsage(
+            input_tokens=getattr(usage, "input_tokens", 0) or 0,
+            output_tokens=getattr(usage, "output_tokens", 0) or 0,
+            cache_read_tokens=getattr(usage, "cache_read_input_tokens", 0) or 0,
+            cache_write_5m_tokens=total_written - write_1h,
+            cache_write_1h_tokens=write_1h,
+        )
+        self._estimated_cost_nanousd += rates.cost(billed)
+        self.input_tokens += billed.input_tokens
+        self.output_tokens += billed.output_tokens
+        self.cache_read_tokens += billed.cache_read_tokens
+        self.cache_creation_tokens += total_written
+        self.cache_creation_1h_tokens += write_1h
 
     @property
     def estimated_cost_usd(self) -> float:
         """Estimate successful-response cost; the durable attempt ledger is authoritative."""
-        return (
-            self.input_tokens * 3.0
-            + self.output_tokens * 15.0
-            + self.cache_read_tokens * 0.30
-            + self.cache_creation_tokens * 3.75
-            + self.cache_creation_1h_tokens * 2.25
-        ) / 1_000_000
+        return self._estimated_cost_nanousd / NANOUSD_PER_USD
 
 
 def assess_value(price_pcm: int, postcode: str | None, bedrooms: int) -> ValueAnalysis:
@@ -1231,10 +1257,8 @@ class PropertyQualityFilter:
             "tools": [{**VISUAL_ANALYSIS_TOOL, "cache_control": {"type": "ephemeral"}}],
         }
 
-        if phase.reasoning == "adaptive":
-            create_kwargs["thinking"] = {
-                "type": "adaptive",
-            }
+        if phase.thinking_type is not None:
+            create_kwargs["thinking"] = {"type": phase.thinking_type}
             create_kwargs["tool_choice"] = {"type": "auto"}
         else:
             create_kwargs["tool_choice"] = {
@@ -1313,7 +1337,7 @@ class PropertyQualityFilter:
 
             if hasattr(response, "usage"):
                 usage = response.usage
-                self.token_usage.add_from_response(usage)
+                self.token_usage.add_from_response(usage, model=phase.model)
                 cache_read = getattr(usage, "cache_read_input_tokens", 0)
                 cache_creation = getattr(usage, "cache_creation_input_tokens", 0)
                 if cache_read or cache_creation:
@@ -1532,8 +1556,8 @@ class PropertyQualityFilter:
                 "messages": [{"role": "user", "content": eval_prompt}],
                 "output_config": output_config,
             }
-            if phase.reasoning == "adaptive":
-                create_kwargs["thinking"] = {"type": "adaptive"}
+            if phase.thinking_type is not None:
+                create_kwargs["thinking"] = {"type": phase.thinking_type}
             with self._spend_meter.bind(
                 property_id, "evaluation", self._analysis_provenance(), _evaluation_output
             ):
@@ -1545,7 +1569,7 @@ class PropertyQualityFilter:
                 )
 
             if hasattr(eval_response, "usage"):
-                self.token_usage.add_from_response(eval_response.usage)
+                self.token_usage.add_from_response(eval_response.usage, model=phase.model)
 
             eval_data = _evaluation_output(eval_response)
             self._breaker.record_success()

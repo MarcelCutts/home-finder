@@ -1,11 +1,11 @@
 """Exact, versioned spending contracts for the supported analysis provider."""
 
 from decimal import Decimal
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from home_finder.models.analysis import AnalysisProvenance, PhaseConfig
+from home_finder.models.analysis import AnalysisModel, AnalysisProvenance, PhaseConfig
 
 NANOUSD_PER_USD = 1_000_000_000
 SHA256 = Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")]
@@ -89,18 +89,51 @@ class RateCard(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    version: Literal["anthropic-sonnet-4-6-global-standard-2026-09-28-v1"] = (
-        "anthropic-sonnet-4-6-global-standard-2026-09-28-v1"
-    )
+    version: Literal[
+        "anthropic-sonnet-4-6-global-standard-2026-09-28-v1",
+        "anthropic-sonnet-5-5-global-standard-2026-10-10-v1",
+    ] = "anthropic-sonnet-4-6-global-standard-2026-09-28-v1"
     provider: Literal["anthropic"] = "anthropic"
-    model: Literal["claude-sonnet-4-6"] = "claude-sonnet-4-6"
+    model: AnalysisModel = "claude-sonnet-4-6"
     currency: Literal["USD"] = "USD"
-    input_nanousd: Literal[3000] = 3000
-    output_nanousd: Literal[15000] = 15000
-    cache_write_5m_nanousd: Literal[3750] = 3750
-    cache_write_1h_nanousd: Literal[6000] = 6000
-    cache_read_nanousd: Literal[300] = 300
+    input_nanousd: Literal[3000, 2000] = 3000
+    output_nanousd: Literal[15000, 10000] = 15000
+    cache_write_5m_nanousd: Literal[3750, 2500] = 3750
+    cache_write_1h_nanousd: Literal[6000, 4000] = 6000
+    cache_read_nanousd: Literal[300, 100] = 300
     input_context_bound: Literal[1000000] = 1000000
+
+    @model_validator(mode="after")
+    def validate_card_identity(self) -> Self:
+        """A frozen card must be one complete known tariff, never a hybrid."""
+        identities = {
+            "anthropic-sonnet-4-6-global-standard-2026-09-28-v1": (
+                "claude-sonnet-4-6",
+                3000,
+                15000,
+                3750,
+                6000,
+                300,
+            ),
+            "anthropic-sonnet-5-5-global-standard-2026-10-10-v1": (
+                "claude-sonnet-5-5",
+                2000,
+                10000,
+                2500,
+                4000,
+                100,
+            ),
+        }
+        if (
+            self.model,
+            self.input_nanousd,
+            self.output_nanousd,
+            self.cache_write_5m_nanousd,
+            self.cache_write_1h_nanousd,
+            self.cache_read_nanousd,
+        ) != identities[self.version]:
+            raise ValueError("Rate card does not match its version and model")
+        return self
 
     def cost(self, usage: BillableUsage) -> int:
         return (
@@ -130,11 +163,22 @@ class RateCard(BaseModel):
 
 
 SONNET_STANDARD_RATES = RateCard()
+# https://platform.claude.com/docs/en/models/sonnet-5-5/overview (2026-10-10)
+SONNET_55_STANDARD_RATES = RateCard(
+    version="anthropic-sonnet-5-5-global-standard-2026-10-10-v1",
+    model="claude-sonnet-5-5",
+    input_nanousd=2000,
+    output_nanousd=10000,
+    cache_write_5m_nanousd=2500,
+    cache_write_1h_nanousd=4000,
+    cache_read_nanousd=100,
+)
 
 
 def rate_card_for(model: str) -> RateCard:
-    if model == SONNET_STANDARD_RATES.model:
-        return SONNET_STANDARD_RATES
+    for card in (SONNET_STANDARD_RATES, SONNET_55_STANDARD_RATES):
+        if model == card.model:
+            return card
     raise ValueError("Unpriced model")
 
 

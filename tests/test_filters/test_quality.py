@@ -5,7 +5,7 @@ from typing import Annotated, Any, Literal
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from anthropic.types import ToolUseBlock
+from anthropic.types import ToolUseBlock, Usage
 from pydantic import BaseModel as _BaseModel
 from pydantic import HttpUrl, ValidationError
 
@@ -713,9 +713,7 @@ def create_mock_response(
     mock_response = MagicMock()
     mock_response.content = [tool_block]
     mock_response.stop_reason = stop_reason
-    mock_response.usage = MagicMock()
-    mock_response.usage.cache_read_input_tokens = 0
-    mock_response.usage.cache_creation_input_tokens = 0
+    mock_response.usage = Usage(input_tokens=100, output_tokens=50)
     return mock_response
 
 
@@ -733,11 +731,7 @@ def create_mock_eval_response(eval_data: dict[str, Any]) -> MagicMock:
     text_block.text = json.dumps(eval_data)
     mock_response.content = [text_block]
     mock_response.stop_reason = "end_turn"
-    mock_response.usage = MagicMock()
-    mock_response.usage.input_tokens = 100
-    mock_response.usage.output_tokens = 50
-    mock_response.usage.cache_read_input_tokens = 0
-    mock_response.usage.cache_creation_input_tokens = 0
+    mock_response.usage = Usage(input_tokens=100, output_tokens=50)
     return mock_response
 
 
@@ -923,6 +917,7 @@ class TestPropertyQualityFilter:
         mock_response = MagicMock()
         mock_response.content = []
         mock_response.stop_reason = "max_tokens"  # Unexpected stop reason
+        mock_response.usage = Usage(input_tokens=100, output_tokens=50)
 
         _populate_image_cache(str(tmp_path), sample_merged_property)
 
@@ -3899,11 +3894,7 @@ class TestEvalHelpers:
         text_block.text = json.dumps(eval_data_with_invalid)
         mock_eval_response.content = [text_block]
         mock_eval_response.stop_reason = "end_turn"
-        mock_eval_response.usage = MagicMock()
-        mock_eval_response.usage.input_tokens = 100
-        mock_eval_response.usage.output_tokens = 50
-        mock_eval_response.usage.cache_read_input_tokens = 0
-        mock_eval_response.usage.cache_creation_input_tokens = 0
+        mock_eval_response.usage = Usage(input_tokens=100, output_tokens=50)
 
         # messages.create is called for both Phase 1 and Phase 2.
         # Return Phase 1 visual response first, then Phase 2 eval response.
