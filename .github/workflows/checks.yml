@@ -85,7 +85,7 @@ jobs:
         env:
           PYTHONUNBUFFERED: "1"
           HYPOTHESIS_PROFILE: ci
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: ${{ !cancelled() }}
         with:
           name: coverage
@@ -107,7 +107,7 @@ jobs:
       # A warm cache must not conceal a missing locked artifact.
       - run: uv sync --locked --all-extras --no-cache
       - run: uv build --no-cache
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: distributions
           path: dist/
@@ -152,7 +152,7 @@ jobs:
       - run: uv run pytest -m 'browser and not slow' -v --tracing=retain-on-failure
         env:
           PYTHONUNBUFFERED: "1"
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: ${{ !cancelled() }}
         with:
           name: playwright-traces
