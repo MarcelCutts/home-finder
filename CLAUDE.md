@@ -6,7 +6,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Home Finder began as Marcel's personal rental search in London. The confirmed target is a small hosted service for tens to hundreds of users, introduced gradually after reliability and access-control repairs. Current implementation and stored preferences still belong to one owner's search; do not treat them as a multi-user design.
 
-Follow the execution queue in [the delivery plan](docs/plans/2026-09-28-research-synthesis-and-delivery-plan.md), including its operational and rollout gates. Keep normal production collection paused. After reviewing PR01, the user instructed agents to commit each completed segment and continue through the tasks using goals. This supersedes the earlier pause after every segment: verify, document and commit each step, then continue to the next eligible item. External rollout, source-access and elapsed-evidence gates still apply.
+The implementation queue is paused for review. Follow the current user task and the
+[review decisions](docs/reviews/2026-10-10-review-decisions.md), not the old delivery
+plan's instruction to keep opening implementation PRs. Prioritize a dependable
+collection → assessment → shortlist → notification flow at this app's small scale.
+Keep normal production collection paused. New evidence-ledger, identity-reconciliation
+and multi-user infrastructure need a demonstrated product requirement before expansion.
 
 Marcel runs a small remote software consultancy (WFH full-time) and music events. Key preferences that should inform quality analysis, scoring, and UX decisions:
 
