@@ -5,7 +5,7 @@
 ## Key Decisions
 
 - **HTTP client**: `crawlee.BeautifulSoupCrawler` for search, `httpx.AsyncClient` for detail pages — no TLS fingerprinting needed anywhere.
-- **Sort**: "Newest Listed" — enables early-stop pagination.
+- **Sort**: "Newest Listed" — prioritizes recent adverts; normal collection continues through known pages within its bounds.
 - **Full postcode reconstruction**: Search results only provide outcodes (e.g., `E8`). The detail fetcher combines `outcode` + `incode` from `PAGE_MODEL` to reconstruct the full postcode. This is an architectural decision — without it, Rightmove properties can't cross-platform match.
 
 ## Filter Quirks

@@ -6,7 +6,7 @@
 
 - **HTTP client**: `curl_cffi` with Chrome impersonation — required for both search and detail pages due to TLS fingerprinting detection.
 - **Proxy support**: Only scraper that accepts `proxy_url` config for geo-restricted access. Proxy is also passed to the detail fetcher.
-- **Sort**: "Recent" by update date — enables early-stop pagination.
+- **Sort**: "Recent" by update date — prioritizes updated adverts; normal collection continues through known pages within its bounds.
 
 ## Filter Quirks
 

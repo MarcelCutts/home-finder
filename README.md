@@ -63,7 +63,7 @@ uv run home-finder --dry-run            # Full pipeline, save to DB but no notif
 uv run home-finder --scrape-only        # Just scrape and print (no filtering/storage)
 uv run home-finder --max-per-scraper 5  # Limit results per scraper (for testing)
 uv run home-finder --scrapers openrent,zoopla  # Only run specific scrapers
-uv run home-finder --full-scrape        # Scrape all pages (disable early-stop on seen properties)
+uv run home-finder --full-scrape        # Compatibility flag; normal collection already passes known pages
 uv run home-finder --serve              # Web dashboard + recurring pipeline scheduler
 uv run home-finder --serve --no-pipeline  # Web dashboard only, no background pipeline
 uv run home-finder --reanalyze          # Re-run quality analysis on flagged properties
