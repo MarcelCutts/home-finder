@@ -67,7 +67,7 @@ async def local_http(monkeypatch, fixtures_path):
     server = await asyncio.start_server(serve, "127.0.0.1", 0)
     port = server.sockets[0].getsockname()[1]
     monkeypatch.setattr(RightmoveScraper, "BASE_URL", f"http://127.0.0.1:{port}")
-    monkeypatch.setattr(RightmoveScraper, "MAX_PAGES", 1)
+    monkeypatch.setattr(RightmoveScraper, "MAX_PAGES", 4)
     # Requests to any configured external proxy remain forbidden by pytest-socket.
     monkeypatch.setenv("NO_PROXY", "127.0.0.1")
     try:
@@ -94,6 +94,7 @@ async def test_local_http_error_is_a_failed_page(local_http):
     result = await asyncio.wait_for(RightmoveScraper().scrape(**SEARCH), 3)
     assert len(local_http.requests) == 1
     assert result.pages_failed == 1 and result.pages_fetched == 0
+    assert result.stop_reason == "page_error"
     assert not result.is_healthy
 
 
@@ -106,6 +107,7 @@ async def test_local_slow_response_times_out_and_closes_connection(local_http, m
     await asyncio.wait_for(local_http.disconnected.wait(), 1)
     assert len(local_http.requests) == 1
     assert result.pages_failed == 1 and not result.is_healthy
+    assert result.stop_reason == "page_error"
 
 
 async def test_local_cancel_closes_connection_and_preserves_application_signal_handler(

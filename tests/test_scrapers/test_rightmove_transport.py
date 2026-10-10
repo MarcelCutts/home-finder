@@ -22,7 +22,7 @@ EMPTY = '<div class="l-searchResults"><div class="no-results">No properties foun
 def bounded_scraper(monkeypatch):
     monkeypatch.setattr(rightmove, "SCRAPER_WAIT", wait_none())
     scraper = RightmoveScraper()
-    scraper.MAX_PAGES = 1
+    scraper.MAX_PAGES = 4
     scraper.PAGE_DELAY_SECONDS = 0
     return scraper
 
@@ -51,7 +51,9 @@ async def test_http_failures_are_bounded_and_unhealthy(
     result = await bounded_scraper.scrape(**SEARCH)
     assert len(httpx_mock.get_requests()) == attempts
     assert result.pages_failed == 1 and result.pages_fetched == 0
+    assert result.stop_reason == "page_error"
     assert not result.is_healthy and not result.properties
+    assert bounded_scraper.should_skip_remaining_areas is (status in {403, 429})
     assert len(clients) == 1 and clients[0].is_closed
 
 
@@ -64,6 +66,7 @@ async def test_transport_failure_exhausts_exactly_the_attempt_limit(
     result = await bounded_scraper.scrape(**SEARCH)
     assert len(httpx_mock.get_requests()) == bounded_scraper.MAX_FETCH_ATTEMPTS
     assert result.pages_failed == 1 and not result.is_healthy
+    assert result.stop_reason == "page_error"
 
 
 async def test_transient_errors_recover_without_marking_page_failed(
@@ -75,20 +78,77 @@ async def test_transient_errors_recover_without_marking_page_failed(
     result = await bounded_scraper.scrape(**SEARCH, max_results=1)
     assert len(httpx_mock.get_requests()) == 3
     assert result.is_healthy and len(result.properties) == 1 and len(result.observations) == 2
+    assert not bounded_scraper.should_skip_remaining_areas
 
 
-async def test_later_page_failure_keeps_received_observations(
-    bounded_scraper, httpx_mock, fixtures_path
+@pytest.mark.parametrize("status,attempts", [(403, 1), (429, 3), (503, 3)])
+async def test_later_page_failure_stops_and_keeps_received_observations(
+    bounded_scraper, httpx_mock, fixtures_path, status, attempts
 ):
-    bounded_scraper.MAX_PAGES = 2
     httpx_mock.add_response(text=(fixtures_path / "rightmove_next_search.html").read_text())
-    for _ in range(bounded_scraper.MAX_FETCH_ATTEMPTS):
-        httpx_mock.add_response(status_code=503)
+    for _ in range(attempts):
+        httpx_mock.add_response(status_code=status)
     result = await bounded_scraper.scrape(**SEARCH)
     assert result.pages_fetched == 1 and result.pages_failed == 1
     assert len(result.observations) == 2 and result.properties == result.observations
     assert not result.is_healthy
+    assert result.stop_reason == "page_error"
+    assert len(httpx_mock.get_requests()) == attempts + 1
     assert httpx_mock.get_requests()[-1].url.params["index"] == "24"
+
+
+@pytest.mark.parametrize("status,attempts", [(403, 1), (429, 3)])
+@pytest.mark.parametrize("received_page", [False, True])
+async def test_blocked_source_does_not_retry_other_pages_or_areas(
+    bounded_scraper, monkeypatch, httpx_mock, fixtures_path, status, attempts, received_page
+):
+    from home_finder.pipeline.scraping import scrape_all_platforms
+
+    monkeypatch.setattr("home_finder.pipeline.scraping.RightmoveScraper", lambda: bounded_scraper)
+    monkeypatch.setattr("home_finder.pipeline.scraping.random.shuffle", lambda areas: None)
+    area_delay = AsyncMock()
+    monkeypatch.setattr(bounded_scraper, "area_delay", area_delay)
+    if received_page:
+        httpx_mock.add_response(text=(fixtures_path / "rightmove_next_search.html").read_text())
+    for _ in range(attempts):
+        httpx_mock.add_response(status_code=status)
+    observations = []
+
+    async def retain(properties):
+        observations.extend(properties)
+
+    properties, metrics = await scrape_all_platforms(
+        **{key: value for key, value in SEARCH.items() if key != "area"},
+        search_areas=["E8", "E9", "N15"],
+        only_scrapers={"rightmove"},
+        on_observations=retain,
+    )
+    assert len(httpx_mock.get_requests()) == attempts + int(received_page)
+    assert bounded_scraper.should_skip_remaining_areas
+    assert len(metrics) == 1 and metrics[0].areas_attempted == 1
+    assert metrics[0].pages_failed == 1 and not metrics[0].is_healthy
+    assert len(properties) == len(observations) == (2 if received_page else 0)
+
+
+async def test_transient_rate_limit_does_not_skip_the_next_area(
+    bounded_scraper, monkeypatch, httpx_mock
+):
+    from home_finder.pipeline.scraping import scrape_all_platforms
+
+    monkeypatch.setattr("home_finder.pipeline.scraping.RightmoveScraper", lambda: bounded_scraper)
+    monkeypatch.setattr("home_finder.pipeline.scraping.random.shuffle", lambda areas: None)
+    monkeypatch.setattr(bounded_scraper, "area_delay", AsyncMock())
+    httpx_mock.add_response(status_code=429)
+    httpx_mock.add_response(text=EMPTY)
+    httpx_mock.add_response(text=EMPTY)
+    _, metrics = await scrape_all_platforms(
+        **{key: value for key, value in SEARCH.items() if key != "area"},
+        search_areas=["E8", "E9"],
+        only_scrapers={"rightmove"},
+    )
+    assert len(httpx_mock.get_requests()) == 3
+    assert not bounded_scraper.should_skip_remaining_areas
+    assert metrics[0].areas_attempted == 2 and metrics[0].is_healthy
 
 
 @pytest.mark.parametrize("html,errors", [(EMPTY, 0), ("<title>Verify you are human</title>", 1)])

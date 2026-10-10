@@ -74,14 +74,25 @@ async def get_rightmove_outcode_id(outcode: str) -> str | None:
     return None
 
 
+class _RightmoveFetchError(Exception):
+    """Terminal page failure: stop this area's pagination without losing earlier observations."""
+
+
 class RightmoveScraper(BaseScraper):
     """Scraper for Rightmove.co.uk listings."""
 
     BASE_URL = "https://www.rightmove.co.uk"
 
+    def __init__(self) -> None:
+        self._skip_remaining_areas = False
+
     @property
     def source(self) -> PropertySource:
         return PropertySource.RIGHTMOVE
+
+    @property
+    def should_skip_remaining_areas(self) -> bool:
+        return self._skip_remaining_areas
 
     # Pagination constants
     RESULTS_PER_PAGE = 24
@@ -90,9 +101,10 @@ class RightmoveScraper(BaseScraper):
     REQUEST_TIMEOUT_SECONDS = 30.0
     MAX_FETCH_ATTEMPTS = 3
 
-    async def _fetch_page(self, client: httpx.AsyncClient, url: str) -> str | None:
+    async def _fetch_page(self, client: httpx.AsyncClient, url: str) -> str:
         """Fetch with bounded retries, leaving cancellation and signals to the application."""
         attempt = 0
+        rate_limited = False
 
         @retry(
             stop=stop_after_attempt(self.MAX_FETCH_ATTEMPTS),
@@ -100,8 +112,8 @@ class RightmoveScraper(BaseScraper):
             retry=retry_if_exception_type((httpx.TransportError, TimeoutError, RetryableHttpError)),
             reraise=True,
         )
-        async def fetch() -> str | None:
-            nonlocal attempt
+        async def fetch() -> str:
+            nonlocal attempt, rate_limited
             attempt += 1
             started = monotonic()
             logger.info("rightmove_fetch_started", url=url, attempt=attempt)
@@ -136,22 +148,28 @@ class RightmoveScraper(BaseScraper):
                 duration_ms=round((monotonic() - started) * 1000, 2),
             )
             if response.status_code == 429 or response.status_code >= 500:
+                rate_limited = rate_limited or response.status_code == 429
                 raise RetryableHttpError(response.status_code, url)
             if response.status_code != 200:
                 logger.warning("rightmove_http_error", url=url, status=response.status_code)
-                return None
+                if response.status_code == 403:
+                    self._skip_remaining_areas = True
+                raise _RightmoveFetchError(f"HTTP {response.status_code}")
             return response.text
 
         try:
             return await fetch()
         except (httpx.TransportError, TimeoutError, RetryableHttpError) as exc:
+            if rate_limited:
+                self._skip_remaining_areas = True
             logger.warning(
                 "rightmove_fetch_exhausted",
                 url=url,
                 attempts=attempt,
                 error_type=type(exc).__name__,
+                skip_remaining_areas=self.should_skip_remaining_areas,
             )
-            return None
+            raise _RightmoveFetchError(type(exc).__name__) from exc
 
     async def scrape(
         self,
@@ -190,9 +208,6 @@ class RightmoveScraper(BaseScraper):
 
             started = monotonic()
             html = await self._fetch_page(client, url)
-            if html is None:
-                return None  # Signals fetch failure to _paginate
-
             parse_started = monotonic()
             soup = await asyncio.to_thread(BeautifulSoup, html, "lxml")
             parsed = self._parse_search_page(soup, requested_index=index)
