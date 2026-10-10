@@ -4,13 +4,14 @@ import json
 import math
 import re
 from dataclasses import dataclass, field
+from decimal import Decimal
 from typing import Any
 from urllib.parse import urljoin
 
 from bs4 import BeautifulSoup
 from pydantic import HttpUrl
 
-from home_finder.models import Property, PropertySource
+from home_finder.models import ListingTextEvidence, Property, PropertySource
 from home_finder.scrapers.parsing import extract_postcode
 
 MAX_PAYLOAD_CHARACTERS = 4_000_000
@@ -24,9 +25,42 @@ MAX_DETAIL_DEPTH = 64
 class SearchPage:
     properties: list[Property] = field(default_factory=list)
     parse_errors: int = 0
+    end_of_results: bool = False
 
 
-def parse_structured_search(soup: BeautifulSoup) -> SearchPage | None:
+def _search_integer(raw: Any) -> int:
+    """The portal encodes counts and pagination values as decimal strings."""
+    if isinstance(raw, str) and re.fullmatch(r"[0-9]{1,7}", raw):
+        raw = int(raw)
+    if type(raw) is not int or not 0 <= raw <= 1_000_000:
+        raise ValueError("invalid_search_integer")
+    return raw
+
+
+def _empty_search_is_exhausted(payload: dict[str, Any], requested_index: int) -> bool:
+    count = _search_integer(payload.get("resultCount"))
+    if count == 0:
+        return True
+    # A positive total describes the entire search, not this page. Accept an
+    # empty page beyond that inventory only when the echoed request and every
+    # relevant pagination field agree; never turn a missing first page into zero.
+    params, pagination = payload["searchParameters"], payload["pagination"]
+    index = _search_integer(params["index"])
+    size = _search_integer(params["numberOfPropertiesPerPage"])
+    if not 1 <= size <= MAX_SEARCH_LISTINGS:
+        return False
+    total_pages = (count + size - 1) // size
+    return (
+        index == requested_index
+        and index >= count
+        and index % size == 0
+        and _search_integer(pagination["total"]) == total_pages
+        and _search_integer(pagination["page"]) == index // size + 1 > total_pages
+        and _search_integer(pagination["last"]) == (total_pages - 1) * size
+    )
+
+
+def parse_structured_search(soup: BeautifulSoup, *, requested_index: int = 0) -> SearchPage | None:
     """None means no structured script; malformed/present data is an error page."""
     script = soup.find("script", id="__NEXT_DATA__")
     if script is None:
@@ -39,14 +73,11 @@ def parse_structured_search(soup: BeautifulSoup) -> SearchPage | None:
         listings = payload["properties"]
         if not isinstance(listings, list) or len(listings) > MAX_SEARCH_LISTINGS:
             raise ValueError("invalid_search_properties")
-        # A missing, positive or malformed count cannot establish empty inventory.
-        if not listings and (
-            type(payload.get("resultCount")) is not int or payload["resultCount"] != 0
-        ):
+        if not listings and not _empty_search_is_exhausted(payload, requested_index):
             raise ValueError("ambiguous_empty_search")
     except (ValueError, KeyError, TypeError, RecursionError):
         return SearchPage(parse_errors=1)
-    result = SearchPage()
+    result = SearchPage(end_of_results=not listings)
     for listing in listings:
         try:
             result.properties.append(_search_listing(listing))
@@ -89,6 +120,13 @@ def _search_listing(listing: dict[str, Any]) -> Property:
     description = (
         BeautifulSoup(summary, "html.parser").get_text(" ", strip=True) if summary else None
     )
+    features = listing.get("keyFeatures")
+    if isinstance(features, list) and all(isinstance(item, dict) for item in features):
+        features = [item.get("description") for item in features]
+    if features is not None and (
+        not isinstance(features, list) or not all(isinstance(item, str) for item in features)
+    ):
+        raise ValueError("invalid_search_features")
     location = listing.get("location") or {}
     latitude, longitude = location.get("latitude"), location.get("longitude")
     if latitude is None or longitude is None:
@@ -106,18 +144,26 @@ def _search_listing(listing: dict[str, Any]) -> Property:
         latitude=latitude,
         longitude=longitude,
         description=description,
+        search_text=ListingTextEvidence(
+            description=description,
+            description_origin="search",
+            features=tuple(features) if features is not None else None,
+            features_origin="search",
+        ),
         image_url=images.get("mainImageSrc") or None,
     )
 
 
-def detail_property(html: str, expected_id: str) -> dict[str, Any]:
+def detail_property(html: str, expected_id: str, *, exact_numbers: bool = False) -> dict[str, Any]:
     """Decode retained plain JSON and indexed-array forms without executing JS."""
     if len(html) > MAX_PAYLOAD_CHARACTERS:
         raise ValueError("page_model_size_limit")
     match = re.search(r"window\.(?:__)?PAGE_MODEL\s*=\s*", html)
     if match is None:
         raise ValueError("missing_page_model")
-    decoder = json.JSONDecoder(parse_constant=_reject_constant)
+    decoder = json.JSONDecoder(
+        parse_constant=_reject_constant, parse_float=Decimal if exact_numbers else float
+    )
     data, _ = decoder.raw_decode(html, match.end())
     indexed = "__PAGE_MODEL" in match.group()
     if not isinstance(data, dict):

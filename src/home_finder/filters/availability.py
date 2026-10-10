@@ -13,11 +13,11 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import Enum
 from typing import Any
-from urllib.parse import urlsplit
 
 from bs4 import BeautifulSoup
 
 from home_finder.utils.http_evidence import is_challenge as is_challenge
+from home_finder.utils.listing_identity import listing_id as listing_id
 
 
 class ListingStatus(Enum):
@@ -31,33 +31,6 @@ class ListingStatus(Enum):
 class AvailabilityEvidence:
     status: ListingStatus
     reason: str
-
-
-_HOSTS = {
-    "rightmove": {"rightmove.co.uk", "www.rightmove.co.uk"},
-    "zoopla": {"zoopla.co.uk", "www.zoopla.co.uk"},
-    "openrent": {"openrent.com", "www.openrent.com", "openrent.co.uk", "www.openrent.co.uk"},
-    "onthemarket": {"onthemarket.com", "www.onthemarket.com"},
-}
-_PATHS = {
-    "rightmove": re.compile(r"/properties/(\d+)/?"),
-    "zoopla": re.compile(r"/(?:to-rent/)?details/(\d+)/?"),
-    "onthemarket": re.compile(r"/details/(\d+)/?"),
-    "openrent": re.compile(r"/(?:property-to-rent/.+/|property/)?(\d+)/?"),
-}
-
-
-def listing_id(source: str, url: str) -> str | None:
-    """Match an explicit listing path on the expected provider host."""
-    try:
-        parsed = urlsplit(url)
-    except ValueError:
-        return None
-    if parsed.scheme not in {"http", "https"} or parsed.hostname not in _HOSTS.get(source, set()):
-        return None
-    pattern = _PATHS.get(source)
-    match = pattern.fullmatch(parsed.path) if pattern else None
-    return match[1] if match else None
 
 
 def _at(value: object, *keys: str) -> Any:

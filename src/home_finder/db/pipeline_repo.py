@@ -270,7 +270,9 @@ class PipelineRepository:
                 )
 
                 # Link non-canonical source_listings by URL (in-run dedup absorbed sources)
-                await link_source_listings_by_url(conn, prop.unique_id, merged.source_urls)
+                await link_source_listings_by_url(
+                    conn, prop.unique_id, merged.source_urls, absorb_pending=True
+                )
                 await persist_merged_text(conn, merged)
 
                 # Save images (important for cross-run dedup image matching)
@@ -559,7 +561,9 @@ class PipelineRepository:
                 )
 
                 # Link non-canonical source_listings by URL (in-run dedup absorbed sources)
-                await link_source_listings_by_url(conn, prop.unique_id, merged.source_urls)
+                await link_source_listings_by_url(
+                    conn, prop.unique_id, merged.source_urls, absorb_pending=True
+                )
                 await persist_merged_text(conn, merged)
 
                 # Save images

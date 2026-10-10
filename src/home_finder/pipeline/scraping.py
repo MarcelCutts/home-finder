@@ -271,15 +271,9 @@ async def _run_scrape(
     criteria = settings.get_search_criteria()
     search_areas = settings.get_search_areas()
 
-    if full_scrape:
-        known_ids_by_source = None
-        logger.info("full_scrape_mode", msg="Early-stop disabled — scraping all pages")
-    else:
-        known_ids_by_source = await storage.get_all_known_source_ids()
-        logger.info(
-            "loaded_known_ids",
-            total=sum(len(v) for v in known_ids_by_source.values()),
-        )
+    # A known prefix does not prove that earlier collection finished. Continue
+    # within the normal page/rate limits so crashes and caps cannot hide later homes.
+    known_ids_by_source = None
 
     logger.info("pipeline_started", phase="scraping")
 

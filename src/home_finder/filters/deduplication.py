@@ -446,6 +446,7 @@ class Deduplicator:
             min_price=prop.price_pcm,
             max_price=prop.price_pcm,
             descriptions=descriptions,
+            source_text={prop.source: prop.search_text} if prop.search_text else {},
         )
 
 

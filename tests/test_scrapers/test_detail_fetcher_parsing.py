@@ -30,7 +30,7 @@ from home_finder.scrapers.detail_fetcher import (
 # ---------------------------------------------------------------------------
 
 
-def _make_property(source: PropertySource, source_id: str = "test-1") -> Property:
+def _make_property(source: PropertySource, source_id: str = "100001") -> Property:
     """Create a minimal Property for detail fetching."""
     urls = {
         PropertySource.RIGHTMOVE: f"https://www.rightmove.co.uk/properties/{source_id}",
@@ -54,15 +54,16 @@ def _mock_httpx_response(html: str) -> MagicMock:
     resp = MagicMock()
     resp.text = html
     resp.status_code = 200
-    resp.url = "https://example.com/property"
+    resp.url = str(_make_property(PropertySource.RIGHTMOVE).url)
     return resp
 
 
-def _mock_curl_response(html: str, status_code: int = 200) -> MagicMock:
+def _mock_curl_response(source: PropertySource, html: str, status_code: int = 200) -> MagicMock:
     """Create a mock curl_cffi response."""
     resp = MagicMock()
     resp.text = html
     resp.status_code = status_code
+    resp.url = str(_make_property(source).url)
     return resp
 
 
@@ -224,6 +225,7 @@ class TestRightmoveParsing:
         html = """<!DOCTYPE html><html><body><script>
         window.PAGE_MODEL = {
             "propertyData": {
+                "id": "100001",
                 "floorplans": [],
                 "images": [{"url": "https://example.com/img.jpg"}],
                 "text": {"description": "A flat."},
@@ -274,6 +276,7 @@ class TestRightmoveParsing:
         html = """<!DOCTYPE html><html><body><script>
         window.PAGE_MODEL = {
             "propertyData": {
+                "id": "100001",
                 "floorplans": [],
                 "images": [
                     {"url": "https://media.rightmove.co.uk/img/123_01.jpg"},
@@ -317,7 +320,7 @@ class TestZooplaParsing:
 
     async def test_extracts_floorplan(self, fetcher: DetailFetcher, with_floorplan: str) -> None:
         fetcher._curl_get_with_retry = AsyncMock(  # type: ignore[method-assign]
-            return_value=_mock_curl_response(with_floorplan)
+            return_value=_mock_curl_response(PropertySource.ZOOPLA, with_floorplan)
         )
         prop = _make_property(PropertySource.ZOOPLA)
         result = await fetcher.fetch_detail_page(prop)
@@ -326,7 +329,7 @@ class TestZooplaParsing:
 
     async def test_extracts_gallery(self, fetcher: DetailFetcher, with_floorplan: str) -> None:
         fetcher._curl_get_with_retry = AsyncMock(  # type: ignore[method-assign]
-            return_value=_mock_curl_response(with_floorplan)
+            return_value=_mock_curl_response(PropertySource.ZOOPLA, with_floorplan)
         )
         prop = _make_property(PropertySource.ZOOPLA)
         result = await fetcher.fetch_detail_page(prop)
@@ -336,7 +339,7 @@ class TestZooplaParsing:
 
     async def test_extracts_description(self, fetcher: DetailFetcher, with_floorplan: str) -> None:
         fetcher._curl_get_with_retry = AsyncMock(  # type: ignore[method-assign]
-            return_value=_mock_curl_response(with_floorplan)
+            return_value=_mock_curl_response(PropertySource.ZOOPLA, with_floorplan)
         )
         prop = _make_property(PropertySource.ZOOPLA)
         result = await fetcher.fetch_detail_page(prop)
@@ -346,7 +349,7 @@ class TestZooplaParsing:
 
     async def test_extracts_features(self, fetcher: DetailFetcher, with_floorplan: str) -> None:
         fetcher._curl_get_with_retry = AsyncMock(  # type: ignore[method-assign]
-            return_value=_mock_curl_response(with_floorplan)
+            return_value=_mock_curl_response(PropertySource.ZOOPLA, with_floorplan)
         )
         prop = _make_property(PropertySource.ZOOPLA)
         result = await fetcher.fetch_detail_page(prop)
@@ -356,7 +359,7 @@ class TestZooplaParsing:
 
     async def test_no_floorplan(self, fetcher: DetailFetcher, no_floorplan: str) -> None:
         fetcher._curl_get_with_retry = AsyncMock(  # type: ignore[method-assign]
-            return_value=_mock_curl_response(no_floorplan)
+            return_value=_mock_curl_response(PropertySource.ZOOPLA, no_floorplan)
         )
         prop = _make_property(PropertySource.ZOOPLA)
         result = await fetcher.fetch_detail_page(prop)
@@ -367,7 +370,7 @@ class TestZooplaParsing:
 
     async def test_http_error_status_returns_none(self, fetcher: DetailFetcher) -> None:
         fetcher._curl_get_with_retry = AsyncMock(  # type: ignore[method-assign]
-            return_value=_mock_curl_response("", status_code=403)
+            return_value=_mock_curl_response(PropertySource.ZOOPLA, "", status_code=403)
         )
         prop = _make_property(PropertySource.ZOOPLA)
         result = await fetcher.fetch_detail_page(prop)
@@ -383,14 +386,16 @@ class TestZooplaParsing:
 
     async def test_rsc_caption_filters_epc(self, fetcher: DetailFetcher) -> None:
         """RSC path skips images with 'epc' in caption, keeps null-caption and normal."""
-        html = """<!DOCTYPE html><html><body>
+        html = """<!DOCTYPE html><html>
+        <head><link rel="canonical" href="https://www.zoopla.co.uk/to-rent/details/100001/"></head>
+        <body>
         \\"caption\\":\\"Living room\\",\\"filename\\":\\"aaa111.jpg\\"
         \\"caption\\":\\"EPC Rating\\",\\"filename\\":\\"epc222.jpg\\"
         \\"caption\\":null,\\"filename\\":\\"ccc444.jpg\\"
         \\"caption\\":\\"Bedroom\\",\\"filename\\":\\"bbb333.jpg\\"
         </body></html>"""
         fetcher._curl_get_with_retry = AsyncMock(  # type: ignore[method-assign]
-            return_value=_mock_curl_response(html)
+            return_value=_mock_curl_response(PropertySource.ZOOPLA, html)
         )
         prop = _make_property(PropertySource.ZOOPLA)
         result = await fetcher.fetch_detail_page(prop)
@@ -405,13 +410,15 @@ class TestZooplaParsing:
 
     async def test_rsc_null_caption_gallery_images(self, fetcher: DetailFetcher) -> None:
         """Null-caption images are extracted as gallery photos."""
-        html = """<!DOCTYPE html><html><body>
+        html = """<!DOCTYPE html><html>
+        <head><link rel="canonical" href="https://www.zoopla.co.uk/to-rent/details/100001/"></head>
+        <body>
         \\"caption\\":null,\\"filename\\":\\"aa00aa01.jpg\\"
         \\"caption\\":null,\\"filename\\":\\"bb00bb02.jpg\\"
         \\"caption\\":null,\\"filename\\":\\"cc00cc03.jpg\\"
         </body></html>"""
         fetcher._curl_get_with_retry = AsyncMock(  # type: ignore[method-assign]
-            return_value=_mock_curl_response(html)
+            return_value=_mock_curl_response(PropertySource.ZOOPLA, html)
         )
         prop = _make_property(PropertySource.ZOOPLA)
         result = await fetcher.fetch_detail_page(prop)
@@ -423,13 +430,15 @@ class TestZooplaParsing:
 
     async def test_rsc_filters_ee_rating_epc(self, fetcher: DetailFetcher) -> None:
         """'EE Rating' caption (Zoopla's EPC chart label) is filtered out."""
-        html = """<!DOCTYPE html><html><body>
+        html = """<!DOCTYPE html><html>
+        <head><link rel="canonical" href="https://www.zoopla.co.uk/to-rent/details/100001/"></head>
+        <body>
         \\"caption\\":null,\\"filename\\":\\"aa00aa01.jpg\\"
         \\"caption\\":\\"EE Rating\\",\\"filename\\":\\"ee00ee01.png\\"
         \\"caption\\":null,\\"filename\\":\\"bb00bb02.jpg\\"
         </body></html>"""
         fetcher._curl_get_with_retry = AsyncMock(  # type: ignore[method-assign]
-            return_value=_mock_curl_response(html)
+            return_value=_mock_curl_response(PropertySource.ZOOPLA, html)
         )
         prop = _make_property(PropertySource.ZOOPLA)
         result = await fetcher.fetch_detail_page(prop)
@@ -443,14 +452,16 @@ class TestZooplaParsing:
 
     async def test_rsc_excludes_floorplan_hashes(self, fetcher: DetailFetcher) -> None:
         """lc.zoocdn.com floorplan hashes are excluded from gallery results."""
-        html = """<!DOCTYPE html><html><body>
+        html = """<!DOCTYPE html><html>
+        <head><link rel="canonical" href="https://www.zoopla.co.uk/to-rent/details/100001/"></head>
+        <body>
         https://lc.zoocdn.com/8eb377a8.jpg
         \\"caption\\":null,\\"filename\\":\\"aaa11111.jpg\\"
         \\"caption\\":null,\\"filename\\":\\"8eb377a8.jpg\\"
         \\"caption\\":null,\\"filename\\":\\"bbb22222.jpg\\"
         </body></html>"""
         fetcher._curl_get_with_retry = AsyncMock(  # type: ignore[method-assign]
-            return_value=_mock_curl_response(html)
+            return_value=_mock_curl_response(PropertySource.ZOOPLA, html)
         )
         prop = _make_property(PropertySource.ZOOPLA)
         result = await fetcher.fetch_detail_page(prop)
@@ -465,14 +476,16 @@ class TestZooplaParsing:
         """HTML fallback inherits seen_hashes from RSC pass so EPC hashes don't reappear."""
         # RSC pass finds 1 normal + 1 EPC (skipped) → only 1 gallery image → triggers fallback
         # HTML fallback sees the EPC hash in full URL form — should still skip it
-        html = """<!DOCTYPE html><html><body>
+        html = """<!DOCTYPE html><html>
+        <head><link rel="canonical" href="https://www.zoopla.co.uk/to-rent/details/100001/"></head>
+        <body>
         \\"caption\\":\\"Kitchen\\",\\"filename\\":\\"aaa111.jpg\\"
         \\"caption\\":\\"EPC Rating\\",\\"filename\\":\\"epc222.jpg\\"
         https://lid.zoocdn.com/u/1024/768/epc222.jpg
         https://lid.zoocdn.com/u/1024/768/ccc333.jpg
         </body></html>"""
         fetcher._curl_get_with_retry = AsyncMock(  # type: ignore[method-assign]
-            return_value=_mock_curl_response(html)
+            return_value=_mock_curl_response(PropertySource.ZOOPLA, html)
         )
         prop = _make_property(PropertySource.ZOOPLA)
         result = await fetcher.fetch_detail_page(prop)
@@ -486,12 +499,14 @@ class TestZooplaParsing:
     async def test_zoopla_hash_epc_not_filterable_by_url(self, fetcher: DetailFetcher) -> None:
         """Zoopla EPC images with opaque hash filenames can't be detected by URL.
         Only the RSC caption check catches these — the HTML-only path has no signal."""
-        html = """<!DOCTYPE html><html><body>
+        html = """<!DOCTYPE html><html>
+        <head><link rel="canonical" href="https://www.zoopla.co.uk/to-rent/details/100001/"></head>
+        <body>
         https://lid.zoocdn.com/u/1024/768/5e2020de.jpg
         https://lid.zoocdn.com/u/1024/768/abc12345.jpg
         </body></html>"""
         fetcher._curl_get_with_retry = AsyncMock(  # type: ignore[method-assign]
-            return_value=_mock_curl_response(html)
+            return_value=_mock_curl_response(PropertySource.ZOOPLA, html)
         )
         prop = _make_property(PropertySource.ZOOPLA)
         result = await fetcher.fetch_detail_page(prop)
@@ -545,7 +560,7 @@ class TestOpenRentParsing:
 
     async def test_extracts_floorplan(self, fetcher: DetailFetcher, with_floorplan: str) -> None:
         fetcher._curl_get_with_retry = AsyncMock(  # type: ignore[method-assign]
-            return_value=_mock_curl_response(with_floorplan)
+            return_value=_mock_curl_response(PropertySource.OPENRENT, with_floorplan)
         )
         prop = _make_property(PropertySource.OPENRENT)
         result = await fetcher.fetch_detail_page(prop)
@@ -557,7 +572,7 @@ class TestOpenRentParsing:
         self, fetcher: DetailFetcher, with_floorplan: str
     ) -> None:
         fetcher._curl_get_with_retry = AsyncMock(  # type: ignore[method-assign]
-            return_value=_mock_curl_response(with_floorplan)
+            return_value=_mock_curl_response(PropertySource.OPENRENT, with_floorplan)
         )
         prop = _make_property(PropertySource.OPENRENT)
         result = await fetcher.fetch_detail_page(prop)
@@ -569,7 +584,7 @@ class TestOpenRentParsing:
 
     async def test_gallery_has_full_urls(self, fetcher: DetailFetcher, with_floorplan: str) -> None:
         fetcher._curl_get_with_retry = AsyncMock(  # type: ignore[method-assign]
-            return_value=_mock_curl_response(with_floorplan)
+            return_value=_mock_curl_response(PropertySource.OPENRENT, with_floorplan)
         )
         prop = _make_property(PropertySource.OPENRENT)
         result = await fetcher.fetch_detail_page(prop)
@@ -580,7 +595,7 @@ class TestOpenRentParsing:
 
     async def test_no_floorplan(self, fetcher: DetailFetcher, no_floorplan: str) -> None:
         fetcher._curl_get_with_retry = AsyncMock(  # type: ignore[method-assign]
-            return_value=_mock_curl_response(no_floorplan)
+            return_value=_mock_curl_response(PropertySource.OPENRENT, no_floorplan)
         )
         prop = _make_property(PropertySource.OPENRENT)
         result = await fetcher.fetch_detail_page(prop)
@@ -590,7 +605,7 @@ class TestOpenRentParsing:
         assert len(result.gallery_urls) == 2
 
     async def test_redirect_to_homepage_returns_none(self, fetcher: DetailFetcher) -> None:
-        resp = _mock_curl_response("<html>Homepage</html>")
+        resp = _mock_curl_response(PropertySource.OPENRENT, "<html>Homepage</html>")
         resp.url = "https://www.openrent.com/properties-to-rent/london"
         fetcher._curl_get_with_retry = AsyncMock(return_value=resp)  # type: ignore[method-assign]
         prop = _make_property(PropertySource.OPENRENT)
@@ -607,7 +622,9 @@ class TestOpenRentParsing:
 
     async def test_gallery_excludes_epc_lightbox(self, fetcher: DetailFetcher) -> None:
         """PhotoSwipe lightbox items with 'epc' in URL are filtered."""
-        html = """<!DOCTYPE html><html><body>
+        html = """<!DOCTYPE html><html>
+        <head><link rel="canonical" href="https://www.openrent.co.uk/property-to-rent/london/flat/100001"></head>
+        <body>
         <a href="//imagescdn.openrent.co.uk/listings/999/o_photo1.JPG"
            class="lightbox_item"></a>
         <a href="//imagescdn.openrent.co.uk/listings/999/o_epc_chart.JPG"
@@ -616,7 +633,7 @@ class TestOpenRentParsing:
            class="lightbox_item"></a>
         </body></html>"""
         fetcher._curl_get_with_retry = AsyncMock(  # type: ignore[method-assign]
-            return_value=_mock_curl_response(html)
+            return_value=_mock_curl_response(PropertySource.OPENRENT, html)
         )
         prop = _make_property(PropertySource.OPENRENT)
         result = await fetcher.fetch_detail_page(prop)
@@ -628,14 +645,16 @@ class TestOpenRentParsing:
 
     async def test_gallery_excludes_epc_legacy_lightbox(self, fetcher: DetailFetcher) -> None:
         """Legacy data-lightbox="gallery" items with 'epc' in URL are filtered."""
-        html = """<!DOCTYPE html><html><body>
+        html = """<!DOCTYPE html><html>
+        <head><link rel="canonical" href="https://www.openrent.co.uk/property-to-rent/london/flat/100001"></head>
+        <body>
         <a href="//imagescdn.openrent.co.uk/listings/999/o_photo1.JPG"
            data-lightbox="gallery"></a>
         <a href="//imagescdn.openrent.co.uk/listings/999/o_epc_graph.JPG"
            data-lightbox="gallery"></a>
         </body></html>"""
         fetcher._curl_get_with_retry = AsyncMock(  # type: ignore[method-assign]
-            return_value=_mock_curl_response(html)
+            return_value=_mock_curl_response(PropertySource.OPENRENT, html)
         )
         prop = _make_property(PropertySource.OPENRENT)
         result = await fetcher.fetch_detail_page(prop)
@@ -646,12 +665,14 @@ class TestOpenRentParsing:
 
     async def test_gallery_excludes_epc_cdn_fallback(self, fetcher: DetailFetcher) -> None:
         """CDN URL pattern fallback also filters EPC images."""
-        html = """<!DOCTYPE html><html><body>
+        html = """<!DOCTYPE html><html>
+        <head><link rel="canonical" href="https://www.openrent.co.uk/property-to-rent/london/flat/100001"></head>
+        <body>
         <img src="//imagescdn.openrent.co.uk/listings/999/o_bedroom.jpg" />
         <img src="//imagescdn.openrent.co.uk/listings/999/o_epc_rating.jpg" />
         </body></html>"""
         fetcher._curl_get_with_retry = AsyncMock(  # type: ignore[method-assign]
-            return_value=_mock_curl_response(html)
+            return_value=_mock_curl_response(PropertySource.OPENRENT, html)
         )
         prop = _make_property(PropertySource.OPENRENT)
         result = await fetcher.fetch_detail_page(prop)
@@ -681,7 +702,7 @@ class TestOnTheMarketParsing:
 
     async def test_extracts_floorplan(self, fetcher: DetailFetcher, with_floorplan: str) -> None:
         fetcher._curl_get_with_retry = AsyncMock(  # type: ignore[method-assign]
-            return_value=_mock_curl_response(with_floorplan)
+            return_value=_mock_curl_response(PropertySource.ONTHEMARKET, with_floorplan)
         )
         prop = _make_property(PropertySource.ONTHEMARKET)
         result = await fetcher.fetch_detail_page(prop)
@@ -690,7 +711,7 @@ class TestOnTheMarketParsing:
 
     async def test_extracts_gallery(self, fetcher: DetailFetcher, with_floorplan: str) -> None:
         fetcher._curl_get_with_retry = AsyncMock(  # type: ignore[method-assign]
-            return_value=_mock_curl_response(with_floorplan)
+            return_value=_mock_curl_response(PropertySource.ONTHEMARKET, with_floorplan)
         )
         prop = _make_property(PropertySource.ONTHEMARKET)
         result = await fetcher.fetch_detail_page(prop)
@@ -700,7 +721,7 @@ class TestOnTheMarketParsing:
 
     async def test_extracts_description(self, fetcher: DetailFetcher, with_floorplan: str) -> None:
         fetcher._curl_get_with_retry = AsyncMock(  # type: ignore[method-assign]
-            return_value=_mock_curl_response(with_floorplan)
+            return_value=_mock_curl_response(PropertySource.ONTHEMARKET, with_floorplan)
         )
         prop = _make_property(PropertySource.ONTHEMARKET)
         result = await fetcher.fetch_detail_page(prop)
@@ -710,7 +731,7 @@ class TestOnTheMarketParsing:
 
     async def test_extracts_features(self, fetcher: DetailFetcher, with_floorplan: str) -> None:
         fetcher._curl_get_with_retry = AsyncMock(  # type: ignore[method-assign]
-            return_value=_mock_curl_response(with_floorplan)
+            return_value=_mock_curl_response(PropertySource.ONTHEMARKET, with_floorplan)
         )
         prop = _make_property(PropertySource.ONTHEMARKET)
         result = await fetcher.fetch_detail_page(prop)
@@ -723,6 +744,7 @@ class TestOnTheMarketParsing:
         html = """<!DOCTYPE html><html><body>
         <script id="__NEXT_DATA__" type="application/json">
         {"props":{"initialReduxState":{"property":{
+            "id":"100001",
             "floorplans":[],
             "images":[{"original":"https://media.onthemarket.com/img/1.jpg"}],
             "description":"A nice flat.",
@@ -736,7 +758,7 @@ class TestOnTheMarketParsing:
         }}}}
         </script></body></html>"""
         fetcher._curl_get_with_retry = AsyncMock(  # type: ignore[method-assign]
-            return_value=_mock_curl_response(html)
+            return_value=_mock_curl_response(PropertySource.ONTHEMARKET, html)
         )
         prop = _make_property(PropertySource.ONTHEMARKET)
         result = await fetcher.fetch_detail_page(prop)
@@ -755,6 +777,7 @@ class TestOnTheMarketParsing:
         html = """<!DOCTYPE html><html><body>
         <script id="__NEXT_DATA__" type="application/json">
         {"props":{"initialReduxState":{"property":{
+            "id":"100001",
             "floorplans":[],
             "images":[{"original":"https://media.onthemarket.com/img/1.jpg"}],
             "description":"A nice flat.",
@@ -763,7 +786,7 @@ class TestOnTheMarketParsing:
         }}}}
         </script></body></html>"""
         fetcher._curl_get_with_retry = AsyncMock(  # type: ignore[method-assign]
-            return_value=_mock_curl_response(html)
+            return_value=_mock_curl_response(PropertySource.ONTHEMARKET, html)
         )
         prop = _make_property(PropertySource.ONTHEMARKET)
         result = await fetcher.fetch_detail_page(prop)
@@ -775,7 +798,7 @@ class TestOnTheMarketParsing:
 
     async def test_no_floorplan(self, fetcher: DetailFetcher, no_floorplan: str) -> None:
         fetcher._curl_get_with_retry = AsyncMock(  # type: ignore[method-assign]
-            return_value=_mock_curl_response(no_floorplan)
+            return_value=_mock_curl_response(PropertySource.ONTHEMARKET, no_floorplan)
         )
         prop = _make_property(PropertySource.ONTHEMARKET)
         result = await fetcher.fetch_detail_page(prop)
@@ -786,7 +809,9 @@ class TestOnTheMarketParsing:
 
     async def test_no_next_data_returns_none(self, fetcher: DetailFetcher) -> None:
         fetcher._curl_get_with_retry = AsyncMock(  # type: ignore[method-assign]
-            return_value=_mock_curl_response("<html><body>No data</body></html>")
+            return_value=_mock_curl_response(
+                PropertySource.ONTHEMARKET, "<html><body>No data</body></html>"
+            )
         )
         prop = _make_property(PropertySource.ONTHEMARKET)
         result = await fetcher.fetch_detail_page(prop)
@@ -794,7 +819,7 @@ class TestOnTheMarketParsing:
 
     async def test_http_error_returns_none(self, fetcher: DetailFetcher) -> None:
         fetcher._curl_get_with_retry = AsyncMock(  # type: ignore[method-assign]
-            return_value=_mock_curl_response("", status_code=403)
+            return_value=_mock_curl_response(PropertySource.ONTHEMARKET, "", status_code=403)
         )
         prop = _make_property(PropertySource.ONTHEMARKET)
         result = await fetcher.fetch_detail_page(prop)
@@ -804,6 +829,7 @@ class TestOnTheMarketParsing:
         html = """<!DOCTYPE html><html><body>
         <script id="__NEXT_DATA__" type="application/json">
         {"props":{"initialReduxState":{"property":{
+            "id":"100001",
             "floorplans":[],
             "images":[
                 {"original":"https://media.onthemarket.com/img/photo1.jpg"},
@@ -814,7 +840,7 @@ class TestOnTheMarketParsing:
         }}}}
         </script></body></html>"""
         fetcher._curl_get_with_retry = AsyncMock(  # type: ignore[method-assign]
-            return_value=_mock_curl_response(html)
+            return_value=_mock_curl_response(PropertySource.ONTHEMARKET, html)
         )
         prop = _make_property(PropertySource.ONTHEMARKET)
         result = await fetcher.fetch_detail_page(prop)

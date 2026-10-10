@@ -5,9 +5,10 @@ import random
 from abc import ABC, abstractmethod
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 
 from home_finder.logging import get_logger
-from home_finder.models import FurnishType, Property, PropertySource
+from home_finder.models import FurnishType, ListingTextEvidence, Property, PropertySource
 
 logger = get_logger(__name__)
 
@@ -139,6 +140,24 @@ class BaseScraper(ABC):
                     result.stop_reason = "empty_page"
                     break
 
+                # Date text at the real receipt boundary, never when reloading
+                # a persisted Property or when a retry is promoted.
+                received_at = datetime.now(UTC)
+                properties = [
+                    prop.model_copy(
+                        update={
+                            "search_text": ListingTextEvidence.observed(
+                                observed_at=received_at,
+                                description=prop.description,
+                                features=prop.search_text.features if prop.search_text else None,
+                                origin="search",
+                            )
+                        }
+                    )
+                    if prop.description is not None or prop.search_text is not None
+                    else prop
+                    for prop in properties
+                ]
                 previous_ids = set(observed)
                 observed.update((p.source_id, p) for p in properties)
                 # Retain the fetched page before applying any stop/cap policy.

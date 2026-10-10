@@ -12,8 +12,8 @@ from bs4 import BeautifulSoup
 from home_finder.config import Settings
 from home_finder.db import PropertyStorage
 from home_finder.models import Property
-from home_finder.pipeline.capture_replay import _ReplayDetailFetcher
 from home_finder.pipeline.scraping import _run_scrape
+from home_finder.scrapers.detail_fetcher import DetailFetcher
 from home_finder.scrapers.rightmove import RightmoveScraper
 from home_finder.scrapers.rightmove_payloads import (
     MAX_PAYLOAD_CHARACTERS,
@@ -77,7 +77,7 @@ def test_explicit_weekly_rent_and_studio_are_supported(next_payload) -> None:
     assert result.properties[0].price_pcm == 1300 and result.properties[0].bedrooms == 0
 
 
-@pytest.mark.parametrize("count,errors", [(0, 0), (None, 1), (5, 1), (False, 1), ("0", 1)])
+@pytest.mark.parametrize("count,errors", [(0, 0), (None, 1), (5, 1), (False, 1), ("0", 0)])
 def test_only_explicit_zero_can_establish_empty_structured_search(next_payload, count, errors):
     payload = next_payload["props"]["pageProps"]["searchResults"]
     payload.update(properties=[], resultCount=count)
@@ -202,7 +202,8 @@ async def test_retained_http_error_does_not_reach_detail_parser(monkeypatch):
         content=b'window.PAGE_MODEL = {"propertyData":{"id":123}}',
         request=httpx.Request("GET", "https://www.rightmove.co.uk/properties/123"),
     )
-    fetcher = _ReplayDetailFetcher(response)
+    fetcher = DetailFetcher()
+    monkeypatch.setattr(fetcher, "_httpx_get_with_retry", AsyncMock(return_value=response))
     parser = MagicMock(side_effect=AssertionError("must not parse an HTTP error"))
     monkeypatch.setattr("home_finder.scrapers.detail_fetcher.detail_property", parser)
     prop = Property(
@@ -254,7 +255,8 @@ async def test_challenge_precedes_otherwise_parseable_detail(headers, prefix, mo
         text=prefix + 'window.PAGE_MODEL = {"propertyData":{"id":123,"text":{"description":"x"}}}',
         request=httpx.Request("GET", url),
     )
-    fetcher = _ReplayDetailFetcher(response)
+    fetcher = DetailFetcher()
+    monkeypatch.setattr(fetcher, "_httpx_get_with_retry", AsyncMock(return_value=response))
     logger = MagicMock()
     monkeypatch.setattr("home_finder.scrapers.detail_fetcher.logger", logger)
     prop = Property(
@@ -268,3 +270,40 @@ async def test_challenge_precedes_otherwise_parseable_detail(headers, prefix, mo
     )
     assert await fetcher.fetch_detail_page(prop) is None
     assert logger.warning.call_args.args[0] == "rightmove_challenge"
+
+
+@pytest.mark.parametrize(
+    "features",
+    [
+        ["Garden", "Council tax band C"],
+        [
+            {"description": "Garden", "htmlDescription": "<b>Garden</b>"},
+            {"description": "Council tax band C"},
+        ],
+    ],
+)
+def test_search_features_preserved_as_text_before_receipt(next_payload, features):
+    next_payload["props"]["pageProps"]["searchResults"]["properties"][0]["keyFeatures"] = features
+    result = parse_structured_search(as_soup(next_payload))
+    assert result is not None and result.parse_errors == 0
+    assert result.properties[0].search_text.features == ("Garden", "Council tax band C")
+    assert result.properties[0].search_text.features_observed_at is None
+
+
+@pytest.mark.parametrize(
+    "requested_index, echo_index, page, expected_errors",
+    [(24, "24", "2", 0), (0, "24", "2", 1), (24, "0", "2", 1), (24, "24", "1", 1)],
+)
+def test_exhausted_page_requires_consistent_pagination(
+    next_payload, requested_index, echo_index, page, expected_errors
+):
+    payload = next_payload["props"]["pageProps"]["searchResults"]
+    payload.update(
+        properties=[],
+        resultCount="15",
+        searchParameters={"index": echo_index, "numberOfPropertiesPerPage": "24"},
+        pagination={"total": "1", "page": page, "last": "0"},
+    )
+    result = parse_structured_search(as_soup(next_payload), requested_index=requested_index)
+    assert result is not None and result.parse_errors == expected_errors
+    assert result.end_of_results is (expected_errors == 0)

@@ -33,6 +33,7 @@ from home_finder.utils.image_cache import (
     read_image_bytes,
     save_image_bytes,
 )
+from home_finder.utils.listing_identity import listing_id
 
 if TYPE_CHECKING:
     from home_finder.db import PropertyStorage
@@ -173,6 +174,7 @@ async def _enrich_single(
     detail_fetcher: DetailFetcher,
     semaphore: asyncio.Semaphore,
     data_dir: str | None = None,
+    storage: PropertyStorage | None = None,
 ) -> MergedProperty:
     """Enrich a single merged property with detail page data."""
     async with semaphore:
@@ -185,9 +187,14 @@ async def _enrich_single(
         canon_updates: dict[str, float | str] = {}
 
         for source, url in merged.source_urls.items():
+            provider_id = (
+                prop.source_id
+                if source == prop.source and url == prop.url
+                else listing_id(source.value, str(url)) or ""
+            )
             temp_prop = Property(
                 source=source,
-                source_id=prop.source_id,
+                source_id=provider_id,
                 url=url,
                 title=prop.title,
                 price_pcm=prop.price_pcm,
@@ -203,14 +210,18 @@ async def _enrich_single(
 
                 if detail_data:
                     observed_at = datetime.now(UTC)
-                    source_text[source] = merge_listing_text(
-                        source_text.get(source, ListingTextEvidence()),
-                        ListingTextEvidence.observed(
-                            observed_at=observed_at,
-                            description=detail_data.description,
-                            features=detail_data.features,
-                        ),
+                    evidence = ListingTextEvidence.observed(
+                        observed_at=observed_at,
+                        description=detail_data.description,
+                        features=detail_data.features,
                     )
+                    source_text[source] = merge_listing_text(
+                        source_text.get(source, ListingTextEvidence()), evidence
+                    )
+                    # Preserve accepted current text before image downloads can
+                    # fail or cancellation can discard the in-memory enrichment.
+                    if storage is not None:
+                        await storage.update_source_text(temp_prop.unique_id, evidence)
 
                     if detail_data.gallery_urls:
                         for idx, img_url in enumerate(detail_data.gallery_urls):
@@ -488,7 +499,9 @@ async def enrich_merged_properties(
             to_enrich.append(merged)
 
     semaphore = asyncio.Semaphore(_ENRICHMENT_CONCURRENCY)
-    tasks = [_enrich_single(merged, detail_fetcher, semaphore, data_dir) for merged in to_enrich]
+    tasks = [
+        _enrich_single(merged, detail_fetcher, semaphore, data_dir, storage) for merged in to_enrich
+    ]
     enriched_list = list(await asyncio.gather(*tasks, return_exceptions=True))
 
     for i, item in enumerate(enriched_list):

@@ -115,7 +115,7 @@ async def persist_merged_text(
 
     Never invent the non-canonical provider ID or move another home's rows.
     Missing source rows retain the evidence in the canonical projection until
-    provider identity is resolved by the later observation/identity work.
+    a matching provider row is available.
     """
     canonical_id = unique_id or merged.unique_id
     incoming = merged.text_by_source

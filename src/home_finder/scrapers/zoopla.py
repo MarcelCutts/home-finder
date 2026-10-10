@@ -261,7 +261,7 @@ class ZooplaScraper(BaseScraper):
             target = self._pick_impersonate_target()
             await session.get(
                 f"{self.BASE_URL}/",
-                impersonate=target,  # type: ignore[arg-type]
+                impersonate=target,
                 headers=BROWSER_HEADERS,
                 timeout=15,
             )

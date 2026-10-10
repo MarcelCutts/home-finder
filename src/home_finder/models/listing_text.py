@@ -1,7 +1,7 @@
 """Current source text, with explicit missing/correction and freshness rules.
 
-This is a small current-value contract. Immutable source revisions belong to
-the later observation system; legacy text has no invented observation date.
+This is a small current-value contract. Legacy text has no invented
+observation date; only actual search/detail receipts carry freshness.
 """
 
 from __future__ import annotations
@@ -18,7 +18,7 @@ class ListingTextInputs(BaseModel):
     """Application-selected listing text sent to both model phases.
 
     Hashes refer to the full normalized source evidence. These bounded inputs
-    survive later source refreshes; complete immutable revisions come later.
+    survive later source refreshes without requiring a full revision journal.
     """
 
     model_config = ConfigDict(frozen=True)
@@ -91,9 +91,12 @@ def _accept(
     empty = not incoming or (isinstance(incoming, str) and not incoming.strip())
     if empty and (origin != "correction" or observed_at is None):
         return False
+    # Authority comes before receipt time: search summaries never overwrite
+    # detail text, and a delayed detail receipt can enrich a newer summary.
+    authority = {"legacy": 0, "search": 1, "detail": 2, "correction": 2}
+    if previous is not None and authority[origin] != authority[previous_origin]:
+        return authority[origin] > authority[previous_origin] and observed_at is not None
     if previous_at is not None and (observed_at is None or observed_at <= previous_at):
-        return False
-    if previous_origin in {"detail", "correction"} and origin in {"legacy", "search"}:
         return False
     # Undated input can fill a gap, but cannot claim to be a newer correction.
     return not (observed_at is None and previous)

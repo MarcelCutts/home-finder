@@ -155,3 +155,88 @@ async def test_legacy_projection_survives_a_source_row_with_missing_text(
         assert reloaded.descriptions[source] == "Retained historical text"
         assert reloaded.source_text[source].description_observed_at is None
         assert reloaded.source_text[source].features is None
+
+
+async def test_search_receipts_refresh_current_text_but_cannot_overwrite_detail(make_property):
+    from home_finder.scrapers.openrent import OpenRentScraper
+
+    prop = make_property(description="First summary")
+    async with PropertyStorage(":memory:") as db:
+
+        async def receive(item):
+            async def page(index):
+                return [item] if index == 0 else []
+
+            return (await OpenRentScraper()._paginate(page, max_pages=2)).properties[0]
+
+        first = await receive(prop)
+        assert first.search_text.description_observed_at is not None
+        await db.save_property(first)
+        fresh = await receive(prop.model_copy(update={"description": "Changed summary"}))
+        await db.upsert_source_listings([fresh])
+        current = await db.get_property_images_and_row(prop.unique_id)
+        assert current[2][prop.source].description == "Changed summary"
+
+        # A detail request that started earlier still outranks a later summary.
+        detail = ListingTextEvidence.observed(
+            observed_at=OBSERVED, description="Complete detail text", features=["Garden"]
+        )
+        assert await db.update_source_text(prop.unique_id, detail)
+        await db.upsert_source_listings([await receive(prop)])
+        current = await db.get_property_images_and_row(prop.unique_id)
+        assert current[2][prop.source] == detail
+
+        # Reloading legacy objects must not turn an old undated summary into a new receipt.
+        await db.upsert_source_listings([prop])
+        current = await db.get_property_images_and_row(prop.unique_id)
+        assert current[2][prop.source] == detail
+
+
+async def test_detail_text_survives_cancelled_image_work_for_each_provider(make_property, tmp_path):
+    import asyncio
+    from unittest.mock import AsyncMock
+
+    from home_finder.filters.detail_enrichment import _enrich_single
+    from home_finder.models import PropertySource
+    from home_finder.scrapers.detail_fetcher import DetailFetcher, DetailPageData
+    from home_finder.scrapers.detail_identity import requested_identity
+
+    first = make_property(
+        source=PropertySource.RIGHTMOVE,
+        source_id="100001",
+        url="https://www.rightmove.co.uk/properties/100001",
+    )
+    second = make_property(
+        source=PropertySource.ZOOPLA,
+        source_id="100002",
+        url="https://www.zoopla.co.uk/to-rent/details/100002/",
+    )
+    merged = MergedProperty(
+        canonical=first,
+        sources=(first.source, second.source),
+        source_urls={first.source: first.url, second.source: second.url},
+        min_price=first.price_pcm,
+        max_price=first.price_pcm,
+    )
+    async with PropertyStorage(":memory:") as db, DetailFetcher() as fetcher:
+        await db.upsert_source_listings([first, second])
+        await db.pipeline.save_unenriched_property(merged)
+        seen = []
+
+        async def fetch(prop):
+            seen.append(requested_identity(prop))
+            return DetailPageData(
+                description=f"Detail for {prop.source_id}",
+                gallery_urls=["https://example.com/image.jpg"]
+                if prop.source == second.source
+                else None,
+            )
+
+        fetcher.fetch_detail_page = AsyncMock(side_effect=fetch)
+        fetcher.download_image_bytes = AsyncMock(side_effect=asyncio.CancelledError)
+        with pytest.raises(asyncio.CancelledError):
+            await _enrich_single(merged, fetcher, asyncio.Semaphore(1), str(tmp_path), db)
+        assert seen == ["100001", "100002"]
+        _, _, retained = await db.get_property_images_and_row(merged.unique_id)
+        assert retained[first.source].description == "Detail for 100001"
+        assert retained[second.source].description == "Detail for 100002"

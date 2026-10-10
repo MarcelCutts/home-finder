@@ -1,6 +1,7 @@
 """Real storage and orchestration; external effects are replaced at their boundaries."""
 
 import asyncio
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -9,7 +10,8 @@ from pydantic import SecretStr
 from home_finder.config import Settings
 from home_finder.db import PropertyStorage
 from home_finder.main import _run_pipeline_with_storage
-from home_finder.models import PropertySource
+from home_finder.models import ListingTextEvidence, PropertySource
+from home_finder.pipeline.scraping import _run_scrape
 from home_finder.scrapers.base import ScrapeResult
 from home_finder.scrapers.openrent import OpenRentScraper
 
@@ -75,7 +77,15 @@ async def test_known_quote_refreshes_before_criteria_without_analysis(
     old = make_property(price_pcm=1800)
     await storage.save_property(old)
     await storage.mark_notified(old.unique_id)
-    changed = old.model_copy(update={"price_pcm": price, "description": "New listing text"})
+    changed = old.model_copy(
+        update={
+            "price_pcm": price,
+            "description": "New listing text",
+            "search_text": ListingTextEvidence.observed(
+                observed_at=datetime.now(UTC), description="New listing text", origin="search"
+            ),
+        }
+    )
     scraper.scrape.return_value = ScrapeResult(
         properties=[changed], observations=[changed], pages_fetched=1, stop_reason="known_page"
     )
@@ -318,3 +328,41 @@ async def test_notifier_setup_failure_finalizes_created_run(
     with pytest.raises(RuntimeError, match="notifier setup failed"):
         await run(settings, storage)
     assert (await storage.pipeline.get_last_pipeline_run())["status"] == "failed"
+
+
+@pytest.mark.parametrize("first_stop", ["page_error", "result_limit"])
+async def test_incomplete_search_does_not_hide_later_pages(
+    settings, storage, boundaries, make_property, first_stop
+):
+    scraper, _, _ = boundaries
+    first, later = make_property(), make_property()
+    scraper.scrape.return_value = ScrapeResult(
+        properties=[first],
+        observations=[first],
+        pages_fetched=1,
+        pages_failed=int(first_stop == "page_error"),
+        stop_reason=first_stop,
+    )
+    await _run_scrape(settings, storage, only_scrapers={"openrent"}, max_per_scraper=1)
+    # Even if the selected prefix was subsequently processed, it cannot certify
+    # that there are no older unseen listings beyond it.
+    if first_stop == "result_limit":
+        await storage.save_property(first)
+
+    async def resume(**kwargs):
+        async def fetch_page(index):
+            return [[first], [later], []][index]
+
+        # Exercise the shared paginator; OpenRent itself disables known-ID stops.
+        return await OpenRentScraper._paginate(
+            scraper,
+            fetch_page,
+            max_pages=3,
+            known_source_ids=kwargs.get("known_source_ids"),
+        )
+
+    scraper.scrape.side_effect = resume
+    result = await _run_scrape(settings, storage, only_scrapers={"openrent"})
+    assert result is not None
+    assert {prop.unique_id for prop in result[0]} == {first.unique_id, later.unique_id}
+    assert result[1][0].pages_fetched == 3

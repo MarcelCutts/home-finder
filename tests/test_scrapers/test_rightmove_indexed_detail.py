@@ -2,13 +2,14 @@
 
 import json
 from pathlib import Path
+from unittest.mock import AsyncMock
 
 import httpx
 import pytest
 
 from home_finder.models import Property
-from home_finder.pipeline.capture_replay import _ReplayDetailFetcher
 from home_finder.scrapers import rightmove_payloads
+from home_finder.scrapers.detail_fetcher import DetailFetcher
 from home_finder.scrapers.rightmove_payloads import MAX_DETAIL_DEPTH, detail_property
 
 
@@ -33,11 +34,11 @@ def test_retained_graph_preserves_literals_null_and_empty_collections(indexed_fi
     assert "buildingId" not in prop  # Missing remains distinct from a retained null.
 
 
-async def test_actual_detail_path_extracts_retained_indexed_fields(indexed_fixture):
+async def test_actual_detail_path_extracts_retained_indexed_fields(indexed_fixture, monkeypatch):
     url = "https://www.rightmove.co.uk/properties/100001"
-    fetcher = _ReplayDetailFetcher(
-        httpx.Response(200, text=indexed_fixture, request=httpx.Request("GET", url))
-    )
+    fetcher = DetailFetcher()
+    response = httpx.Response(200, text=indexed_fixture, request=httpx.Request("GET", url))
+    monkeypatch.setattr(fetcher, "_httpx_get_with_retry", AsyncMock(return_value=response))
     prop = Property(
         source="rightmove",
         source_id="100001",
