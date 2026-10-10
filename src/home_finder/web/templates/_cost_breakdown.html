@@ -28,6 +28,9 @@
     </p>
     {% if qa and qa.listing_extraction %}
     {% set old = qa.listing_extraction %}
+    {% if old.bills_included in ['yes', 'no'] %}
+    <p class="cost-line-note">Earlier analysis records bills as {{ 'included' if old.bills_included == 'yes' else 'not included' }} (unverified). Confirm the named bills, coverage and any additional charges with the agent.</p>
+    {% endif %}
     {% if (old.epc_rating and old.epc_rating != 'unknown' and old.epc_rating != cost_breakdown.epc_rating) or (old.council_tax_band and old.council_tax_band != 'unknown' and old.council_tax_band != cost_breakdown.council_tax_band) %}
     <p class="cost-line-note">Earlier analysis claims EPC {{ old.epc_rating or 'unknown' }} and council-tax band {{ old.council_tax_band or 'unknown' }}; these claims are unverified against the retained advert and are not used as facts.</p>
     {% endif %}

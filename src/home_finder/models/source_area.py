@@ -68,11 +68,24 @@ def display_area_square_metres(readings: tuple[SourceAreaReading, ...] | None) -
     """
     if not readings or any(item.kind != "point" for item in readings):
         return None
-    values: set[Decimal] = set()
+    values: list[tuple[Decimal, Decimal]] = []
     for item in readings:
         area = item.lower_square_metres
         assert area is not None
         if not 100 * SQUARE_METRES_PER_SQUARE_FOOT <= area <= 5000 * SQUARE_METRES_PER_SQUARE_FOOT:
             return None
-        values.add(area.quantize(Decimal("0.1"), rounding=ROUND_HALF_UP))
-    return float(values.pop()) if len(values) == 1 else None
+        assert item.lower is not None
+        # Converted values may differ simply because the advert rounds each
+        # unit independently (650 sq ft and 60 sq m). Allow half a last reported
+        # decimal place in each unit, rather than an arbitrary percentage.
+        quantum = Decimal(1).scaleb(min(int(item.lower.as_tuple().exponent), 0))
+        rounding = quantum * item.conversion_factor / 2
+        values.append((area, rounding))
+    if max(area - rounding for area, rounding in values) >= min(
+        area + rounding for area, rounding in values
+    ):
+        return None
+    # Retain the more precise reported reading for the existing rounded display;
+    # the original quantities and unspecified measurement basis remain evidence.
+    selected, _rounding = min(values, key=lambda value: (value[1], value[0]))
+    return float(selected.quantize(Decimal("0.1"), rounding=ROUND_HALF_UP))

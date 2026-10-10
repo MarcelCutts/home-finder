@@ -1706,6 +1706,48 @@ class TestReanalysisEndpoint:
 class TestCostBreakdown:
     """Tests for the True Monthly Cost card on detail page."""
 
+    async def test_earlier_bills_claim_remains_visible_as_unverified(
+        self, client, storage, merged_a, base_analysis
+    ) -> None:
+        from bs4 import BeautifulSoup
+
+        await storage.save_merged_property(merged_a)
+        await storage.save_quality_analysis(
+            merged_a.unique_id,
+            base_analysis.model_copy(
+                update={"listing_extraction": ListingExtraction(bills_included="yes")}
+            ),
+        )
+        detail = BeautifulSoup(client.get(f"/property/{merged_a.unique_id}").text, "html.parser")
+        card = detail.select_one(".cost-breakdown-card").get_text(" ", strip=True)
+        assert "Earlier analysis records bills as included (unverified)" in card
+        assert "In rent" not in card
+
+    @pytest.mark.parametrize(
+        "description",
+        [
+            "Water included in the optional bills package.",
+            "Water included in service charge, payable separately.",
+            "Water included for an extra £50 per month.",
+        ],
+    )
+    async def test_paid_package_is_not_shown_as_included_in_rent(
+        self, client, storage, merged_a, description
+    ) -> None:
+        from bs4 import BeautifulSoup
+
+        await storage.save_merged_property(merged_a)
+        await storage.update_source_text(
+            merged_a.unique_id,
+            ListingTextEvidence.observed(observed_at=datetime.now(UTC), description=description),
+        )
+        detail = BeautifulSoup(client.get(f"/property/{merged_a.unique_id}").text, "html.parser")
+        card = detail.select_one(".cost-breakdown-card")
+        assert "In rent" not in card.get_text()
+        water = next(line for line in card.select(".cost-line") if "Water" in line.get_text())
+        assert "Unpriced" in water.get_text()
+        assert "Coverage and amount unknown" in water.get_text()
+
     @pytest.mark.asyncio
     async def test_current_text_and_rent_rebuild_budget_without_reanalysis(
         self,

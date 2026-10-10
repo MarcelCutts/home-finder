@@ -103,6 +103,30 @@ def test_disagreeing_units_or_a_mixed_bound_are_not_arbitrarily_selected():
     assert display_area_square_metres((point, compatible)) == 46.5
     assert display_area_square_metres((point, disagreement)) is None
     assert display_area_square_metres((point, reading(upper=None))) is None
+    assert display_area_square_metres((point, reading(lower="501", upper="501"))) is None
+
+
+@pytest.mark.parametrize(
+    ("square_feet", "square_metres", "expected"),
+    [
+        ("650", "60", 60.4),
+        ("650", "60.4", 60.4),
+        ("650", "60.0", None),
+        ("650", "61", None),
+        ("750", "70", 69.7),
+        ("650.125", "60.3986", 60.4),
+        ("650.125", "60.40", 60.4),
+        ("650.125", "60.4000", None),
+    ],
+)
+def test_dual_units_allow_reported_rounding_but_not_real_disagreement(
+    square_feet, square_metres, expected
+):
+    feet = reading(lower=square_feet, upper=square_feet)
+    metres = reading(unit="sq_m", source_unit="sqm", lower=square_metres, upper=square_metres)
+    assert display_area_square_metres((feet, metres)) == expected
+    assert display_area_square_metres((metres, feet)) == expected
+    assert feet.lower == Decimal(square_feet) and metres.lower == Decimal(square_metres)
 
 
 @pytest.mark.parametrize(
