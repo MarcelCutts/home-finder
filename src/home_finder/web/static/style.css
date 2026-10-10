@@ -631,6 +631,10 @@ nav.container-fluid li {
     content-visibility: auto;
     contain-intrinsic-size: auto 380px;
 }
+.card-entrance > .property-card {
+    width: 100%;
+    min-width: 0;
+}
 @keyframes cardFadeIn {
     from {
         opacity: 0;
@@ -775,6 +779,19 @@ nav.container-fluid li {
     justify-content: center;
     color: var(--text-dim);
     aspect-ratio: 16 / 10;
+}
+.processing-notice {
+    color: var(--text-dim);
+    font-size: 0.85rem;
+    margin: 0 0 0.6rem;
+}
+.detail-image-placeholder {
+    background: var(--border);
+    color: var(--text-dim);
+    padding: 3rem 1.5rem;
+    text-align: center;
+    border-radius: 10px;
+    margin-bottom: 1rem;
 }
 
 /* Price overlay on image */

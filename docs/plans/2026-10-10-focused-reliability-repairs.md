@@ -7,7 +7,7 @@ within the current one-owner application.
 
 ## Delivery tasks
 
-### R1 CI allowance and pagination documentation
+### R1 CI allowance and pagination documentation — draft #44
 
 - [x] Allow 25 minutes for the hosted test job and report its 20 slowest tests.
 - [x] Preserve coverage, socket blocking, the CI Hypothesis profile and manual release.
@@ -26,11 +26,33 @@ verification is recorded on the draft PR after publication.
 
 ### R2 Accessible listings during incomplete processing
 
-- [ ] Show pending, failed-assessment and image-less listings without reviving dropped listings.
-- [ ] Keep existing detail URLs accessible with placeholders; unknown IDs still return 404.
-- [ ] Add consistent assessed/unassessed filtering, badges, counts and map behavior.
-- [ ] Exclude unknown assessments from explicit score filters; show first-seen age only.
-- [ ] Verify query contracts, mobile/desktop behavior and status persistence.
+- [x] Show pending, failed-assessment and image-less listings without reviving dropped listings.
+- [x] Keep existing detail URLs accessible with placeholders; unknown IDs still return 404.
+- [x] Add consistent assessed/unassessed filtering, badges, counts and map behavior.
+- [x] Exclude unknown assessments from explicit score filters; show first-seen age only.
+- [x] Verify query contracts, mobile/desktop behavior and status persistence.
+
+R2 treats the existing non-null overall rating as the assessment contract, matching
+the pipeline's distinction between completed and fallback analysis. A stored fit
+score on a fallback cannot satisfy even `min_fit_score=0`, appear on the map, or
+rank ahead of assessed homes. A requested refresh retains the previous assessment
+and sent status. Dropped records remain excluded from dashboard queries; existing
+direct URLs identify them as excluded. Off-market and owner triage filters retain
+their existing semantics. Diagnostics count current recorded processing states,
+including excluded and off-market records, without inventing wait durations or
+unrecorded failure causes.
+
+R2 review and verification: the affected web/storage selection passed 441 tests.
+The final presentation review corrected image-less card sizing and verified
+pagination (including a minimum score of zero), HTMX counts, map data, direct
+detail URLs and owner status changes. Ruff lint/format and strict mypy passed.
+Browser review used fictional in-memory listings with no provider clients at
+1440×1000 and 390×844; the mobile page had no horizontal overflow. Screenshots:
+[desktop](../../output/playwright/r2-desktop.jpg),
+[mobile](../../output/playwright/r2-mobile.jpg),
+[image-less detail](../../output/playwright/r2-detail-mobile.jpg).
+No schema or pipeline mutation behavior changes in this PR. Its parent is #44 so
+the fresh hosted run uses the corrected test allowance.
 
 ### R3 Conservative floorplan handling
 
@@ -65,8 +87,8 @@ verification is recorded on the draft PR after publication.
 
 The October 10 read-only probe returned HTTP 200 for anonymous dashboard access;
 deployed protection is therefore not qualified by the merged access-control code.
-Response bodies were discarded. Eleven targeted offline owner-access/liveness and
-WAL restore checks passed with test socket blocking retained. A sandbox-only
+Response bodies were discarded. All 80 offline owner-access and backup/restore
+checks passed with test socket blocking retained. A sandbox-only
 TestClient fixture hang disappeared outside the execution sandbox. These checks
 do not establish current production protection or a production restore.
 

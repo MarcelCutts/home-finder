@@ -238,10 +238,10 @@ def _enrich_fit_scores(properties: list[Any]) -> None:
     """
     for prop in properties:
         analysis_json = prop.get("analysis_json")
-        if not analysis_json:
-            prop.setdefault("fit_score", None)
-            prop.setdefault("fit_breakdown", None)
-            prop.setdefault("lifestyle_icons", None)
+        if not prop.get("is_assessed") or not analysis_json:
+            prop["fit_score"] = None
+            prop["fit_breakdown"] = None
+            prop["lifestyle_icons"] = None
             continue
         try:
             analysis = json.loads(analysis_json)
@@ -289,6 +289,7 @@ async def diagnostics(request: Request) -> JSONResponse:
             "last_run_at": last_run["completed_at"] if last_run else None,
             "last_run_status": last_run["status"] if last_run else None,
             "last_run_notified": last_run["notified_count"] if last_run else None,
+            "processing_counts": await storage.web.get_processing_counts(),
         }
     )
 
@@ -513,16 +514,6 @@ async def property_detail(
         )
 
     if prop is None:
-        return templates.TemplateResponse(
-            request,
-            "error.html",
-            {"request": request, "message": "Property not found."},
-            status_code=404,
-        )
-
-    # Hide properties with no images — not worth viewing without photos
-    has_images = prop.get("image_url") or prop.get("gallery_images") or prop.get("floorplan_images")
-    if not has_images:
         return templates.TemplateResponse(
             request,
             "error.html",

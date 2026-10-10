@@ -9,6 +9,7 @@ from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any, cast
 
 import aiosqlite
+from pydantic import ValidationError
 
 from home_finder.db.listing_text import text_from_property_row
 from home_finder.db.row_mappers import (
@@ -29,8 +30,14 @@ logger = get_logger(__name__)
 
 # ── Shared SQL fragments for card-format queries ──────────────────────
 
-_CARD_COLUMNS = """
+# A fallback analysis has no overall rating. It must never acquire a fit score
+# merely because the scoring formula supplies defaults for missing observations.
+_ASSESSED_SQL = "(q.overall_rating IS NOT NULL)"
+
+_CARD_COLUMNS = f"""
     p.*, q.overall_rating as quality_rating,
+    {_ASSESSED_SQL} as is_assessed,
+    q.reanalysis_requested_at,
     q.condition_concerns as quality_concerns,
     q.concern_severity as quality_severity,
     q.analysis_json,
@@ -67,16 +74,41 @@ _QUALITY_FIELD_DEFAULTS: dict[str, Any] = {
 }
 
 
+def _add_processing_state(prop: dict[str, Any]) -> None:
+    """Describe recorded processing state, independently of the owner's triage status."""
+    prop["is_assessed"] = bool(prop["is_assessed"])
+    if prop.get("notification_status") == "dropped":
+        state, label = "excluded", "Excluded from search"
+    elif prop.get("reanalysis_requested_at") and prop["is_assessed"]:
+        state, label = "refresh_requested", "Assessment refresh requested"
+    elif prop["is_assessed"]:
+        state, label = "assessed", "Assessed"
+    elif prop.get("enrichment_status") == "pending":
+        state, label = "awaiting_details", "Awaiting listing details"
+    elif prop.get("enrichment_status") == "failed":
+        state, label = "details_incomplete", "Listing details incomplete"
+    elif prop.get("analysis_attempts") or prop.get("analysis_json"):
+        state, label = "assessment_incomplete", "Assessment incomplete"
+    elif prop.get("notification_status") == "pending_analysis":
+        state, label = "awaiting_assessment", "Awaiting assessment"
+    else:
+        state, label = "unassessed", "Not assessed"
+    prop["processing_state"] = state
+    prop["processing_label"] = label
+
+
 def _row_to_card_dict(row: aiosqlite.Row) -> PropertyListItem:
     """Convert a raw DB row (with card columns) into a PropertyListItem dict."""
     prop_dict = dict(row)
     parse_json_fields(prop_dict)
+    _add_processing_state(prop_dict)
 
     if prop_dict.get("first_gallery_url"):
         prop_dict["image_url"] = prop_dict["first_gallery_url"]
 
-    if not prop_dict.get("analysis_json"):
+    if not prop_dict["is_assessed"] or not prop_dict.get("analysis_json"):
         prop_dict.update(_QUALITY_FIELD_DEFAULTS)
+        prop_dict["quality_concerns"] = None
         return cast(PropertyListItem, prop_dict)
 
     try:
@@ -138,19 +170,7 @@ def build_filter_clauses(
     Returns:
         Tuple of (where_sql, params).
     """
-    where_clauses: list[str] = [
-        "COALESCE(p.enrichment_status, 'enriched') != 'pending'",
-        "p.notification_status NOT IN ('pending_analysis', 'dropped')",
-        # Hide properties with fallback analysis (API failed, no real quality data).
-        # A fallback has a quality_analyses row but NULL overall_rating.
-        # Properties with no analysis row at all (q.property_unique_id IS NULL) are fine.
-        "(q.overall_rating IS NOT NULL OR q.property_unique_id IS NULL)",
-        # Hide properties with no images — not worth viewing without photos
-        """(p.image_url IS NOT NULL OR EXISTS (
-            SELECT 1 FROM property_images pi
-            WHERE pi.property_unique_id = p.unique_id
-            AND pi.image_type = 'gallery'))""",
-    ]
+    where_clauses: list[str] = ["p.notification_status != 'dropped'"]
     params: list[Any] = []
 
     if filters.min_price is not None:
@@ -163,8 +183,13 @@ def build_filter_clauses(
         where_clauses.append("p.bedrooms = ?")
         params.append(filters.bedrooms)
     if filters.min_fit_score is not None:
+        where_clauses.append(_ASSESSED_SQL)
         where_clauses.append("q.fit_score >= ?")
         params.append(filters.min_fit_score)
+    if filters.processing == "assessed":
+        where_clauses.append(_ASSESSED_SQL)
+    elif filters.processing == "unassessed":
+        where_clauses.append(f"NOT {_ASSESSED_SQL}")
     if filters.area:
         where_clauses.append("UPPER(p.postcode) LIKE ?")
         params.append(f"{filters.area.upper()} %")
@@ -320,7 +345,7 @@ class WebQueryService:
                        p.commute_minutes, p.image_url,
                        p.is_off_market,
                        q.overall_rating as quality_rating,
-                       q.fit_score,
+                       CASE WHEN {_ASSESSED_SQL} THEN q.fit_score END as fit_score,
                        json_extract(q.analysis_json, '$.value.quality_adjusted_rating')
                            as value_rating,
                        json_extract(q.analysis_json, '$.one_line') as one_line
@@ -346,8 +371,11 @@ class WebQueryService:
                     "image_url": row["image_url"],
                     "postcode": row["postcode"],
                     "commute_minutes": row["commute_minutes"],
-                    "value_rating": row["value_rating"],
-                    "one_line": row["one_line"],
+                    "value_rating": (
+                        row["value_rating"] if row["quality_rating"] is not None else None
+                    ),
+                    "one_line": row["one_line"] if row["quality_rating"] is not None else None,
+                    "is_assessed": row["quality_rating"] is not None,
                     "is_off_market": bool(row["is_off_market"]),
                 }
                 for row in rows
@@ -379,7 +407,10 @@ class WebQueryService:
                 "newest": "p.first_seen DESC",
                 "price_asc": "p.price_pcm ASC",
                 "price_desc": "p.price_pcm DESC",
-                "fit_desc": "COALESCE(q.fit_score, -1) DESC, p.first_seen DESC",
+                "fit_desc": (
+                    f"CASE WHEN {_ASSESSED_SQL} THEN COALESCE(q.fit_score, -1) "
+                    "ELSE -1 END DESC, p.first_seen DESC"
+                ),
                 "longest_listed": "p.first_seen ASC",
             }
             order_sql = order_map.get(sort, "p.first_seen DESC")
@@ -431,8 +462,9 @@ class WebQueryService:
         """
         async with self._read_connection() as conn:
             cursor = await conn.execute(
-                """
-                SELECT p.*, q.analysis_json, q.overall_rating as quality_rating
+                f"""
+                SELECT p.*, q.analysis_json, q.overall_rating as quality_rating,
+                       {_ASSESSED_SQL} as is_assessed, q.reanalysis_requested_at
                 FROM properties p
                 LEFT JOIN quality_analyses q ON p.unique_id = q.property_unique_id
                 WHERE p.unique_id = ?
@@ -445,15 +477,18 @@ class WebQueryService:
 
             prop_dict = dict(row)
             parse_json_fields(prop_dict)
+            _add_processing_state(prop_dict)
             prop_dict["listing_evidence"] = text_from_property_row(row)
 
             # Parse quality analysis
-            if prop_dict.get("analysis_json"):
-                prop_dict["quality_analysis"] = PropertyQualityAnalysis.model_validate_json(
-                    prop_dict["analysis_json"]
-                )
-            else:
-                prop_dict["quality_analysis"] = None
+            prop_dict["quality_analysis"] = None
+            if prop_dict["is_assessed"] and prop_dict.get("analysis_json"):
+                try:
+                    prop_dict["quality_analysis"] = PropertyQualityAnalysis.model_validate_json(
+                        prop_dict["analysis_json"]
+                    )
+                except ValidationError:
+                    logger.warning("stored_assessment_invalid", property_id=unique_id)
 
             # Get images
             images = await self._get_property_images(unique_id, _conn=conn)
@@ -461,6 +496,23 @@ class WebQueryService:
             prop_dict["floorplan_images"] = [img for img in images if img.image_type == "floorplan"]
 
             return cast(PropertyDetailItem, prop_dict)
+
+    async def get_processing_counts(self) -> dict[str, int]:
+        """Count current recorded states, including excluded and off-market records."""
+        async with self._read_connection() as conn:
+            cursor = await conn.execute(
+                f"SELECT p.notification_status, p.enrichment_status, p.analysis_attempts, "
+                f"q.reanalysis_requested_at, q.analysis_json IS NOT NULL as analysis_json, "
+                f"{_ASSESSED_SQL} as is_assessed "
+                f"{_CARD_JOINS}"
+            )
+            counts: dict[str, int] = {}
+            for row in await cursor.fetchall():
+                prop = dict(row)
+                _add_processing_state(prop)
+                state = prop["processing_state"]
+                counts[state] = counts.get(state, 0) + 1
+            return counts
 
     async def get_property_count(self) -> int:
         """Get total number of tracked properties.

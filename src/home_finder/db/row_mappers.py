@@ -57,6 +57,9 @@ class PropertyListItem(TypedDict, total=False):
     quality_concerns: bool | None
     quality_severity: str | None
     quality_summary: str
+    is_assessed: bool
+    processing_state: str
+    processing_label: str
     # Parsed JSON fields
     sources_list: list[str]
     source_urls_dict: dict[str, str]

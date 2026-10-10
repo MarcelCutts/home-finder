@@ -49,6 +49,12 @@
                     {% endfor %}
                 </select>
 
+                <select name="processing" aria-label="Assessment">
+                    <option value="">All assessments</option>
+                    <option value="assessed" {% if processing == 'assessed' %}selected{% endif %}>Assessed</option>
+                    <option value="unassessed" {% if processing == 'unassessed' %}selected{% endif %}>Unassessed</option>
+                </select>
+
                 <div class="status-filter" id="status-filter">
                     <button type="button" class="status-filter-trigger"
                             style="--status-color: {{ status_meta[status].color if status else '#888' }}; anchor-name: --status-filter-trigger"

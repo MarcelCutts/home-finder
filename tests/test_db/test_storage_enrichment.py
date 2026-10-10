@@ -362,21 +362,21 @@ class TestDedupAnchorExclusion:
         assert unenriched.unique_id not in anchor_ids
 
 
-class TestDashboardExclusion:
-    """Unenriched properties should be excluded from the dashboard."""
+class TestDashboardVisibility:
+    """Unenriched properties remain accessible on the dashboard."""
 
     @pytest.mark.asyncio
-    async def test_excludes_pending_from_paginated(
+    async def test_includes_pending_from_paginated(
         self,
         storage: PropertyStorage,
         make_merged_property: Callable[..., MergedProperty],
     ) -> None:
-        """Pending enrichment properties should not appear on the dashboard."""
+        """Pending enrichment properties can still be reviewed."""
         # Save unenriched
         unenriched = make_merged_property(source_id="unenriched-1")
         await storage.pipeline.save_unenriched_property(unenriched)
 
-        # Save enriched (needs image_url to appear on dashboard)
+        # Save enriched with an image, alongside the image-less pending property.
         enriched = make_merged_property(
             sources=(PropertySource.RIGHTMOVE,),
             source_id="enriched-1",
@@ -387,6 +387,6 @@ class TestDashboardExclusion:
         results, total = await storage.web.get_properties_paginated(PropertyFilter())
         result_ids = {r["unique_id"] for r in results}
 
-        assert total == 1
+        assert total == 2
         assert enriched.unique_id in result_ids
-        assert unenriched.unique_id not in result_ids
+        assert unenriched.unique_id in result_ids
