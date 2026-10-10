@@ -20,6 +20,7 @@ No significant quirks — Rightmove's server-side filters (bedrooms, price, furn
 
 ## Known Quirks
 
+- **Availability envelopes**: The availability reader shares the bounded detail decoder for current indexed `window.__PAGE_MODEL` data and retains legacy `PAGE_MODEL` support. Only explicit status words, tags or flags on the matching main record establish lifecycle status. A malformed or mismatched indexed model remains unknown even if another page element supplies a status. Publication metadata (`published`/`archived`) is not mapped to rental availability; neither HTTP 200 nor a move-in date proves that a listing is available.
 - **Outcode-only postcodes at scrape time**: Full postcodes only available from detail pages. Rightmove properties can't cross-platform dedup match until after detail enrichment.
 - **Dual price display**: Shows both PCM and PW in a single element (e.g., `£2,400 pcm £554 pw`). The shared `extract_price()` prefers the explicit PCM match to avoid double-conversion.
 - **Card format changes**: Rightmove periodically updates card HTML structure. The scraper has multiple fallback selectors for each field.

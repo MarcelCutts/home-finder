@@ -78,6 +78,19 @@ uv run home-finder --check-off-market --scrapers zoopla  # Check only specific p
 uv run home-finder --debug              # Enable debug-level logging
 ```
 
+Dry runs save listings, analyses, pipeline runs, scraper metrics and property
+events, and can incur API charges. They leave delivery intents pending without
+constructing a Telegram notifier or recovering/sending notifications. Diagnostics
+report the latest terminal run, including dry runs; the database does not store
+the run mode. Logs identify it with `run_id` and `dry_run`. Add `--debug` for phase
+outcomes and timings. A completed phase means execution returned; individual
+properties may still be deferred or unsuccessful.
+
+Event pruning runs only in live mode, but dry runs count toward the retained run
+window when the next live cleanup occurs. Run token/cost totals cover returned
+main-analysis usage and may be incomplete after interruption; they exclude
+reanalysis usage. The paid spend ledger is authoritative for reconciled spending.
+
 ## Web Dashboard
 
 The `--serve` flag starts a FastAPI web server on port 8000 with a background pipeline scheduler that runs every 55 minutes (configurable via `HOME_FINDER_PIPELINE_INTERVAL_MINUTES`).
@@ -173,6 +186,7 @@ Create a `.env` file with these settings (all use `HOME_FINDER_` prefix):
 - `HOME_FINDER_QUALITY_FILTER_MAX_IMAGES`: Max gallery images to analyze per property (default: 20, max: 20)
 - `HOME_FINDER_MIN_GALLERY_FOR_PHOTO_INFERENCE`: Minimum gallery images to bypass floorplan gate via photo inference; 0 disables (default: 5)
 - `HOME_FINDER_ENABLE_EXTENDED_THINKING`: Enable extended thinking for deeper quality analysis (default: true)
+- `HOME_FINDER_ANALYSIS_CONFIG`: Optional phase overrides. When absent, new runs use bounded Sonnet 5.5 at low effort with 8,192 output tokens and no SDK retries. Explicit JSON retains historical parsing defaults; see [paid analysis](docs/operations.md#runtime-model-defaults). Spend caps remain required.
 - `HOME_FINDER_ENABLE_IMAGE_HASH_MATCHING`: Enable perceptual image hashing for deduplication (default: true)
 - `HOME_FINDER_MAX_ENRICHMENT_ATTEMPTS`: Max enrichment retry attempts before giving up on a property, 1-10 (default: 3)
 

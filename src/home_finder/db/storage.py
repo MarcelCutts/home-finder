@@ -365,8 +365,7 @@ class PropertyStorage:
                     analysis["_area_hosting_tolerance"] = ht.get("rating")
             bedrooms = row["bedrooms"] or 0
             score = compute_fit_score(analysis, bedrooms)
-            if score is not None:
-                updates.append((score, FIT_SCORE_VERSION, row["property_unique_id"]))
+            updates.append((score, FIT_SCORE_VERSION, row["property_unique_id"]))
 
         if updates:
             await conn.executemany(
@@ -1322,14 +1321,9 @@ class PropertyStorage:
             )
             has_outdoor_space = None
             if analysis.outdoor_space:
-                has_outdoor_space = any(
-                    [
-                        analysis.outdoor_space.has_balcony,
-                        analysis.outdoor_space.has_garden,
-                        analysis.outdoor_space.has_terrace,
-                        analysis.outdoor_space.has_shared_garden,
-                    ]
-                )
+                availability = analysis.outdoor_space.effective_availability
+                if availability != "unknown":
+                    has_outdoor_space = availability == "yes"
             red_flag_count = (
                 analysis.listing_red_flags.red_flag_count if analysis.listing_red_flags else None
             )

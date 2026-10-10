@@ -628,6 +628,7 @@ nav.container-fluid li {
     animation: cardFadeIn 0.4s ease-out both;
     animation-delay: calc(var(--card-index, 0) * 50ms);
     display: flex;
+    min-width: 0;
     content-visibility: auto;
     contain-intrinsic-size: auto 380px;
 }
@@ -2134,6 +2135,7 @@ nav.container-fluid li {
 
 /* ===== Quality section ===== */
 .quality-section { margin-top: 0; }
+.image-review-coverage { color: var(--text-muted); font-size: 0.85rem; }
 .quality-grid {
     columns: 4 220px;
     column-gap: 0.75rem;

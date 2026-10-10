@@ -145,7 +145,7 @@ class PipelineRepository:
         """Persist per-scraper performance metrics for a pipeline run.
 
         Args:
-            pipeline_run_id: The pipeline run ID (may be None for dry runs).
+            pipeline_run_id: The pipeline run ID, or None for unattributed metrics.
             metrics_list: List of dicts with scraper metric fields.
         """
         if not metrics_list:

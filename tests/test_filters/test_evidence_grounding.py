@@ -38,6 +38,7 @@ def floorplan_response(*, reception_basis="rectangular_dimensions", reception_ar
                 "width_m": 6.53,
                 "area_sqm": reception_area,
                 "area_basis": reception_basis,
+                "area_scope": "internal",
             },
             {
                 "name": "Bedroom",
@@ -45,6 +46,7 @@ def floorplan_response(*, reception_basis="rectangular_dimensions", reception_ar
                 "width_m": 3.30,
                 "area_sqm": 16.3,
                 "area_basis": "rectangular_dimensions",
+                "area_scope": "internal",
             },
         ],
     )
@@ -207,10 +209,12 @@ def test_old_analysis_remains_readable_without_retroactive_area_changes():
     old["space"].pop("floorplan_total_area_sqm")
     for room in old["space"]["room_areas"]:
         room.pop("area_basis")
+        room.pop("area_scope")
     result = PropertyQualityAnalysis.model_validate(old)
     assert result.space.living_room_sqm == 43.8
     assert result.space.room_areas[0].area_sqm == 43.8
     assert result.space.floorplan_total_area_sqm is None
+    assert all(room.area_scope == "unknown" for room in result.space.room_areas)
 
 
 @pytest.mark.parametrize(
@@ -222,6 +226,7 @@ def test_old_analysis_remains_readable_without_retroactive_area_changes():
         ("yes", None, ["[Rightmove] Bills included"], "yes"),
         ("no", "Bills are not included.", None, "no"),
         ("no", None, ["Bills excluded"], "no"),
+        ("no", None, ["[OpenRent] - Bills not included"], "no"),
         ("yes", "Bills included.", ["Bills excluded"], "unknown"),
         ("no", "Bills included.", None, "unknown"),
         ("yes", "Some bills included.", None, "unknown"),
@@ -234,6 +239,34 @@ def test_old_analysis_remains_readable_without_retroactive_area_changes():
 )
 def test_bills_flag_requires_explicit_unambiguous_text(claimed, description, features, expected):
     assert supported_bills_included(claimed, description, features) == expected
+
+
+@pytest.mark.parametrize("marker", ["-", "*", "\u2022", "\u2013", "\u2014"])
+@pytest.mark.parametrize(
+    ("claimed", "declaration", "expected"),
+    [
+        ("no", "Bills not included", "no"),
+        ("yes", "All bills included", "yes"),
+        ("unknown", "All bills included", "unknown"),
+        ("yes", "Some bills included", "unknown"),
+        ("yes", "Bills included if agreed", "unknown"),
+        ("yes", "Bills included except electricity", "unknown"),
+        ("no", "Assume bills not included", "unknown"),
+        ("yes", "Bills included? Ask the agent", "unknown"),
+    ],
+)
+def test_html_bills_bullets_only_remove_leading_markers(marker, claimed, declaration, expected):
+    description = (
+        f"<strong>Summary:</strong><br />{marker} Furnished<br/>"
+        f"{marker} {declaration}<br>{marker} Pets considered"
+    )
+    assert supported_bills_included(claimed, description, None) == expected
+
+
+@pytest.mark.parametrize("claimed", ["yes", "no"])
+def test_conflicting_html_bills_bullets_remain_unknown(claimed):
+    description = "<ul><li>- Bills included</li><li>- Bills not included</li></ul>"
+    assert supported_bills_included(claimed, description, None) == "unknown"
 
 
 @pytest.mark.parametrize("price", [1800, 1900, 2200])

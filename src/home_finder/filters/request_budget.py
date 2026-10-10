@@ -56,7 +56,7 @@ def input_reservation_tokens(body: dict[str, Any]) -> int:
             not isinstance(source, dict)
             or set(source) != {"type", "media_type", "data"}
             or source["type"] != "base64"
-            or source["media_type"] not in {"image/jpeg", "image/png", "image/webp"}
+            or source["media_type"] not in {"image/jpeg", "image/png", "image/gif", "image/webp"}
             or not isinstance(source["data"], str)
             or not 1 <= len(source["data"]) <= 8_000_000
         ):

@@ -1,13 +1,21 @@
 # Focused reliability repairs
 
-The owner workflow needs five bounded repairs after the consolidation at
-`7fa12c6`. This checklist replaces the former automatic implementation queue.
-It preserves the eventual small hosted-service target while keeping this series
-within the current one-owner application.
+The consolidation at `7fa12c6` left five bounded owner-workflow repairs. This
+checklist records that completed series and replaces the former automatic
+implementation queue. It preserves the eventual small hosted-service target
+while keeping this series within the current one-owner application.
+
+The original repair PRs #44–48 have now merged after fresh review and additional
+boundary fixes. The subsequent operating round has an explicit US$25 cumulative
+model allowance and keeps Telegram suppressed. Follow the
+[merge and operating review](../reviews/2026-10-10-merge-and-operating-trial.md)
+for the current evidence, follow-up repairs and remaining rollout tasks. Earlier
+verification counts below describe their original checkpoints, not the final
+combined tree.
 
 ## Delivery tasks
 
-### R1 CI allowance and pagination documentation — draft #44
+### R1 CI allowance and pagination documentation — merged #44
 
 - [x] Allow 25 minutes for the hosted test job and report its 20 slowest tests.
 - [x] Preserve coverage, socket blocking, the CI Hypothesis profile and manual release.
@@ -25,7 +33,7 @@ manual release, live-test opt-in and required checks remain intact. Hosted
 verification passed on `7bceffc`: [run 38074935433](https://github.com/MarcelCutts/home-finder/actions/runs/38074935433)
 finished its test job in 15m29s. Lint, typing and build also passed.
 
-### R2 Accessible listings during incomplete processing — draft #45
+### R2 Accessible listings during incomplete processing — merged #45
 
 - [x] Show pending, failed-assessment and image-less listings without reviving dropped listings.
 - [x] Keep existing detail URLs accessible with placeholders; unknown IDs still return 404.
@@ -56,7 +64,7 @@ Hosted checks passed on `c923079` ([run 38075891565](https://github.com/MarcelCu
 No schema or pipeline mutation behavior changes in this PR. Its parent is #44 so
 the fresh hosted run uses the corrected test allowance.
 
-### R3 Conservative floorplan handling — draft #46
+### R3 Conservative floorplan handling — merged #46
 
 - [x] Stop promoting heuristic gallery guesses into authoritative floorplans.
 - [x] Preserve gallery membership and persist source-declared versus unknown legacy provenance.
@@ -90,7 +98,7 @@ upgrade expectation follow the current migration count. [Browser evidence](../..
 authored diagrams. Rollback after migration requires the verified pre-upgrade
 database copy; earlier application versions reject schema 10.
 
-### R4 Visual checkpoints for unfinished analysis — draft #47
+### R4 Visual checkpoints for unfinished analysis — merged #47
 
 - [x] Identify visual inputs by actual ordered image bytes, prompts and relevant configuration.
 - [x] Store one validated result with its settled paid attempt before evaluation starts.
@@ -115,7 +123,7 @@ with a mock transport. Ruff lint/format and strict mypy passed. No paid calls we
 made. A further 72 checkpoint/configuration/spending checks passed after updating
 the older provenance and cancellation test contracts. Migration 11 requires the same verified-backup rollback discipline as R3.
 
-### R5 Notification recovery
+### R5 Notification recovery — merged #48
 
 - [x] Persist a bounded delivery plan for each recipient and logical discovery/price event.
 - [x] Store intended parts and acknowledged message IDs; use the same format across runs.
@@ -144,8 +152,11 @@ workflow service or multi-user routing was added.
 restarts, lost receipts, cancellation, concurrency, permanent failures, recipient
 changes, assets, price revisions, legacy state and backup/upgrade preservation of
 spending holds/checkpoints. Existing pipeline tests now exercise the real delivery
-transactions with only the Bot API mocked. The final full-suite result is recorded
-in the [verification review](../reviews/2026-10-10-focused-repair-verification.md).
+transactions with only the Bot API mocked. The original 3,090-test verification
+checkpoint is recorded in the
+[verification review](../reviews/2026-10-10-focused-repair-verification.md). Later
+integrated checks are recorded in the
+[operating review](../reviews/2026-10-10-merge-and-operating-trial.md).
 
 ## Operational qualification
 
@@ -155,7 +166,8 @@ in the [verification review](../reviews/2026-10-10-focused-repair-verification.m
 - [x] Verify an isolated export backup, restore and migration; test spending-hold preservation.
 - [ ] Verify a fresh production backup including assets before release.
 - [x] Record the release and rollback procedure before production changes.
-- [ ] Obtain a new explicit spending allowance and notification authorization before the live trial.
+- [x] Obtain a new explicit spending allowance before the live trial: US$25 cumulative.
+- [ ] Obtain separate notification authorization if a live Telegram trial becomes necessary; this round suppresses sends.
 
 The October 10 read-only probe returned HTTP 200 for anonymous dashboard access;
 deployed protection is therefore not qualified by the merged access-control code.
@@ -172,17 +184,22 @@ schema 12, preserving every historical column and its original hash. Its assets
 were not included. The default local development database has orphaned images and
 is not the qualified export. See the [full review and release prerequisites](../reviews/2026-10-10-focused-repair-verification.md).
 
-## Review boundaries
+## Original implementation and review boundaries
 
-Create fresh draft PRs and commit coherent tasks. Keep CI and visibility changes
+The original series used fresh draft PRs and coherent task commits. Keep CI and visibility changes
 independent where possible; order schema changes through provenance, checkpoints
 and delivery. Each PR records its own verification and review against its actual
 parent. Do not mix the unrelated dependency update into these repairs.
 
 Structured diagnostics contain identifiers, states, reasons and timing rather
 than prompts, image bytes, credentials or model response bodies. Keep collection,
-paid analysis, real notifications and deployment disabled during implementation.
-The previous experiment budgets are not continuing authorization.
+paid analysis, real notifications and deployment disabled during the original
+implementation stage. The later user-authorized operating round permits bounded
+collection and paid analysis in one isolated database; production deployment and
+live Telegram remain outside it. The previous experiment budgets and this round's
+allowance are not continuing authorization for later scheduled operation.
 
-Model upgrades, manual ingestion, multi-user isolation, observation journals,
-reversible grouping and distributed workers remain outside this series.
+The later request to use the modern Sonnet authorizes its separately reviewed
+adapter/default change. Manual ingestion, multi-user isolation, observation
+journals, canonical coalescing and distributed workers remain separate roadmap
+decisions. The duplicate audit added during the trial is read-only.

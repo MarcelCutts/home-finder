@@ -302,10 +302,16 @@ def _format_outdoor_info(analysis: PropertyQualityAnalysis) -> str | None:
     if os.has_garden:
         items.append("Garden")
     if os.has_terrace:
-        items.append("Terrace")
+        items.append("Terrace / patio / courtyard")
     if os.has_shared_garden:
         items.append("Shared garden")
-    return ", ".join(items) if items else None
+    if items:
+        return ", ".join(items)
+    return {
+        "yes": "Outdoor space available",
+        "no": "No outdoor space",
+        "unknown": "Unknown",
+    }[os.effective_availability]
 
 
 def _epc_qualifier(analysis: PropertyQualityAnalysis) -> str:
@@ -382,8 +388,9 @@ def _format_quality_block(
     if analysis.highlights:
         chips = " · ".join(html.escape(h) for h in analysis.highlights[:5])
         lines.append(f"✅ {chips}")
-    if analysis.lowlights:
-        chips = " · ".join(html.escape(lo) for lo in analysis.lowlights[:5])
+    lowlights = analysis.display_lowlights
+    if lowlights:
+        chips = " · ".join(html.escape(lo) for lo in lowlights[:5])
         lines.append(f"⛔ {chips}")
 
     lines.append(f"Kitchen: {_format_kitchen_info(analysis)}")
@@ -408,9 +415,9 @@ def _format_quality_block(
         rf = analysis.listing_red_flags
         rf_parts = []
         if rf.missing_room_photos:
-            rf_parts.append(f"No photos of: {', '.join(rf.missing_room_photos)}")
+            rf_parts.append(f"Not seen in supplied photos: {', '.join(rf.missing_room_photos)}")
         if rf.too_few_photos:
-            rf_parts.append("Too few photos")
+            rf_parts.append("Few supplied photos")
         if rf_parts:
             lines.append(f"⚠️ {' · '.join(rf_parts)}")
 

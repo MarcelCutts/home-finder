@@ -1,11 +1,34 @@
 """Shared Playwright fixtures and helpers for browser E2E tests."""
 
+import logging
 import os
 import re
 from collections.abc import Generator
 
 import pytest
+import structlog
 from playwright.sync_api import Page, expect
+
+from home_finder.web import app as web_app
+
+
+@pytest.fixture(autouse=True)
+def _isolate_app_logging(monkeypatch: pytest.MonkeyPatch) -> Generator[None]:
+    """App creation must not retain a captured stream or change later test logging."""
+    previous = structlog.get_config().copy()
+    configure = web_app.configure_logging
+
+    def configure_for_test(*, json_output: bool = False, level: int = logging.INFO) -> None:
+        configure(json_output=json_output, level=level)
+        # Keep real app setup, but do not cache loggers bound to pytest's
+        # temporary stderr; restoring global configuration cannot unbind them.
+        structlog.configure(cache_logger_on_first_use=False)
+
+    monkeypatch.setattr(web_app, "configure_logging", configure_for_test)
+    try:
+        yield
+    finally:
+        structlog.configure(**previous)
 
 
 def _is_xdist_active(config: pytest.Config) -> bool:

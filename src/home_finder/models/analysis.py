@@ -73,6 +73,32 @@ class AnalysisConfig(BaseModel):
     evaluation: EvaluationPhaseConfig = Field(default_factory=EvaluationPhaseConfig)
 
 
+class ImageReviewCoverage(BaseModel):
+    """Application-counted gallery coverage, separate from model observations.
+
+    Counts refer to the supplied gallery and usable image blocks in the visual
+    request, excluding source-declared floorplans. They do not claim to count
+    every photograph on the original portal listing.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    available_gallery_count: int = Field(ge=0, strict=True)
+    reviewed_gallery_count: int = Field(ge=0, strict=True)
+    # Retain model-reported absences only as observations about a partial review.
+    rooms_not_seen_in_review: tuple[str, ...] = ()
+
+    @model_validator(mode="after")
+    def validate_counts(self) -> Self:
+        if self.reviewed_gallery_count > self.available_gallery_count:
+            raise ValueError("Reviewed gallery count cannot exceed available gallery count")
+        return self
+
+    @property
+    def is_partial(self) -> bool:
+        return self.reviewed_gallery_count < self.available_gallery_count
+
+
 class AnalysisProvenance(BaseModel):
     """Configuration identity, not a complete retained-input or attempt ledger."""
 

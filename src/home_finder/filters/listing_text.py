@@ -83,12 +83,15 @@ def supported_bills_included(
     """
     if claimed == "unknown":
         return claimed
-    text = plain_listing_text([description or "", *(features or [])])
+    # Preserve HTML list/line boundaries so one bullet cannot swallow the next.
+    text = plain_listing_text([description or "", *(features or [])], preserve_line_breaks=True)
     text = re.sub(r"\[(?:Rightmove|Zoopla|OpenRent|OnTheMarket)\]", "", text, flags=re.I)
     states: set[str] = set()
     subject = r"(?:all\s+)?(?:utility\s+)?bills"
     for clause in re.split(r"[.;\n]", text):
         clause = clause.strip().lower()
+        # Strip a leading list marker only, never qualifications within the text.
+        clause = re.sub(r"^[-*\u2022\u2013\u2014]\s+", "", clause)
         if not re.search(r"\bbills\b", clause):
             if re.search(
                 r"\b(?:gas|electricity|water|broadband|council tax)\b.*"

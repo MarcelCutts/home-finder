@@ -34,6 +34,7 @@ from home_finder.filters.fit_score import (
     fit_tier_class,
     fit_tier_label,
 )
+from home_finder.filters.image_review import SUPPLIED_PHOTO_LOWLIGHT_LABELS
 from home_finder.logging import get_logger
 from home_finder.models import (
     SOURCE_BADGES,
@@ -130,6 +131,7 @@ TAG_CATEGORIES: Final[dict[str, list[str]]] = {
         PropertyLowlight.NO_INTERIOR_PHOTOS.value,
         PropertyLowlight.NO_BATHROOM_PHOTOS.value,
         PropertyLowlight.MISSING_KEY_PHOTOS.value,
+        *SUPPLIED_PHOTO_LOWLIGHT_LABELS.values(),
     ],
     "Practical": [
         PropertyHighlight.PETS_ALLOWED.value,

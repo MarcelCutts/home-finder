@@ -29,6 +29,8 @@ from home_finder.filters.analysis_contracts import (
     failure as output_failure,
 )
 from home_finder.filters.analysis_spend import AnalysisSpendMeter, visual_input_key
+from home_finder.filters.badge_consistency import reconcile_analysis_badges
+from home_finder.filters.image_review import apply_image_review_coverage, reconcile_image_review
 from home_finder.filters.listing_text import (
     select_listing_text,
     supported_bills_included,
@@ -59,6 +61,7 @@ from home_finder.models import (
 from home_finder.models.analysis import (
     AnalysisConfig,
     AnalysisProvenance,
+    ImageReviewCoverage,
     PhaseConfig,
     VisualPhaseConfig,
 )
@@ -316,10 +319,14 @@ class _VisualAnalysisResponse(BaseModel):
         area_basis: Literal["stated_on_floorplan", "rectangular_dimensions", "unknown"] = Field(
             default="unknown",
             description=(
-                "Evidence for area_sqm: a printed room area or confirmed rectangular dimensions. "
-                "Use unknown for maximum dimensions, irregular outlines or uncertain geometry; "
-                "retain readable length/width labels but leave area_sqm null."
+                "Printed room area or confirmed rectangular dimensions; otherwise unknown "
+                "with area_sqm null."
             ),
+        )
+        area_scope: Literal["internal", "external", "unknown"] = Field(
+            description=(
+                "Internal dwelling area, external space (balcony/terrace/garden), or unclear."
+            )
         )
 
     class Space(BaseModel):
@@ -449,9 +456,13 @@ class _VisualAnalysisResponse(BaseModel):
 
     class OutdoorSpace(BaseModel):
         model_config = _Forbid
+        availability: Literal["yes", "no", "unknown"] = Field(
+            description="Overall outdoor access: yes if evidenced, no only if explicitly absent; "
+            "otherwise unknown. All false type flags do not establish absence."
+        )
         has_balcony: bool
         has_garden: bool
-        has_terrace: bool
+        has_terrace: bool = Field(description="Includes private patios and courtyards.")
         has_shared_garden: bool
         notes: str
 
@@ -686,8 +697,8 @@ VISUAL_ANALYSIS_TOOL: Final[dict[str, Any]] = _build_tool_schema(
     "property_visual_analysis",
     "Return visual property quality analysis results from images",
     _VisualAnalysisResponse,
-    # No strict=True — schema exceeds Anthropic grammar compilation limits
-    # (55 properties across 10 nested objects, ~7.8KB)
+    # No strict=True: the provider rejected the preceding schema and an all-required wire
+    # variant in the 2026-10-10 trial. Responses remain locally validated.
 )
 
 
@@ -1117,7 +1128,7 @@ class PropertyQualityFilter:
         try:
             analysis = await self._analyze_property(
                 merged.unique_id,
-                gallery_urls=gallery_urls[: self._max_images],
+                gallery_urls=gallery_urls,
                 floorplan_url=floorplan_url,
                 floorplan_source_declared=bool(
                     merged.floorplan and merged.floorplan.is_source_floorplan
@@ -1127,6 +1138,8 @@ class PropertyQualityFilter:
                 area_average=value.area_average,
                 description=text_inputs.description,
                 features=list(text_inputs.features) or None,
+                listing_address=prop.address,
+                listing_postcode=prop.postcode,
                 area_context=ctx.area_overview,
                 outcode=ctx.outcode,
                 council_tax_band_c=ctx.council_tax_band_c,
@@ -1134,10 +1147,12 @@ class PropertyQualityFilter:
                 crime_summary=ctx.crime_summary,
                 rent_trend=ctx.rent_trend,
                 hosting_tolerance=ctx.hosting_tolerance,
-                gallery_cached_paths=gallery_cached[: self._max_images],
+                gallery_cached_paths=gallery_cached,
                 floorplan_cached_path=floorplan_cached,
                 data_dir=data_dir,
-                floor_area_sqm=merged.floor_area_sqm,
+                floor_area_sqm=(
+                    None if merged.floor_area_source == "estimated" else merged.floor_area_sqm
+                ),
             )
         except SpendDeferred as exc:
             logger.info("analysis_spend_deferred", property_id=merged.unique_id, reason=exc.reason)
@@ -1177,6 +1192,7 @@ class PropertyQualityFilter:
             )
             analysis = PropertyQualityAnalysis(
                 listing_text_inputs=text_inputs,
+                image_review_coverage=analysis.image_review_coverage,
                 analysis_provenance=analysis.analysis_provenance or self._analysis_provenance(),
                 kitchen=analysis.kitchen,
                 condition=analysis.condition,
@@ -1472,6 +1488,8 @@ class PropertyQualityFilter:
         *,
         description: str | None,
         features: list[str] | None = None,
+        listing_address: str | None = None,
+        listing_postcode: str | None = None,
         price_pcm: int,
         bedrooms: int,
         effective_average: int,
@@ -1482,6 +1500,7 @@ class PropertyQualityFilter:
         rent_trend: str | None,
         energy_estimate: float | None,
         hosting_tolerance: str | None,
+        image_review_coverage: ImageReviewCoverage | None = None,
     ) -> dict[str, Any]:
         """Run Phase 2 evaluation API call using structured JSON output.
 
@@ -1494,6 +1513,8 @@ class PropertyQualityFilter:
             visual_data: Phase 1 visual analysis output.
             property_id: Property ID for logging.
             description: Listing description text.
+            listing_address: Unverified address from the canonical listing.
+            listing_postcode: Unverified postcode from the canonical listing.
             price_pcm: Monthly rent price.
             bedrooms: Number of bedrooms.
             effective_average: Area average rent for comparison.
@@ -1554,6 +1575,8 @@ class PropertyQualityFilter:
                 visual_data=visual_data,
                 description=description,
                 features=features,
+                listing_address=listing_address,
+                listing_postcode=listing_postcode,
                 price_pcm=price_pcm,
                 bedrooms=bedrooms,
                 area_average=effective_average,
@@ -1565,6 +1588,7 @@ class PropertyQualityFilter:
                 energy_estimate=energy_estimate,
                 hosting_tolerance=hosting_tolerance,
                 acoustic_context=acoustic_context,
+                image_review_coverage=image_review_coverage,
             )
 
             from anthropic import Timeout
@@ -1695,6 +1719,7 @@ class PropertyQualityFilter:
             merged_data.pop("analysis_provenance", None)
             merged_data.pop("analysis_failure", None)
             merged_data.pop("listing_text_inputs", None)
+            merged_data.pop("image_review_coverage", None)
             merged_data.setdefault("summary", "Analysis completed")
 
             # Warn if _clean_dict failed to parse any sub-model JSON strings.
@@ -1731,6 +1756,8 @@ class PropertyQualityFilter:
         area_average: int | None,
         description: str | None = None,
         features: list[str] | None = None,
+        listing_address: str | None = None,
+        listing_postcode: str | None = None,
         area_context: str | None = None,
         outcode: str | None = None,
         council_tax_band_c: float | None = None,
@@ -1758,6 +1785,8 @@ class PropertyQualityFilter:
             area_average: Average rent for this area and bedroom count.
             description: Listing description text for cross-reference.
             features: Listed features for cross-reference.
+            listing_address: Unverified address from the canonical listing.
+            listing_postcode: Unverified postcode from the canonical listing.
             area_context: Area context string for the outcode.
             outcode: Property outcode (e.g., "E8").
             council_tax_band_c: Estimated monthly council tax (Band C).
@@ -1819,6 +1848,15 @@ class PropertyQualityFilter:
         if not gallery_num and not has_extra_image:
             raise SpendDeferred("missing_usable_images")
 
+        # Match the actual gallery-labelled blocks, including a historical image
+        # whose source never declared it to be a floorplan. Count failed/capped
+        # gallery images as available but unreviewed.
+        coverage = ImageReviewCoverage(
+            available_gallery_count=len(gallery_urls)
+            + int(bool(floorplan_url) and not floorplan_source_declared),
+            reviewed_gallery_count=gallery_num
+            + int(has_extra_image and not floorplan_source_declared),
+        )
         effective_average = area_average or DEFAULT_BENCHMARK.get(min(bedrooms, 3), 1800)
         user_prompt = build_user_prompt(
             price_pcm,
@@ -1826,6 +1864,8 @@ class PropertyQualityFilter:
             effective_average,
             description,
             features,
+            listing_address=listing_address,
+            listing_postcode=listing_postcode,
             area_context=area_context,
             outcode=outcode,
             council_tax_band_c=council_tax_band_c,
@@ -1835,6 +1875,7 @@ class PropertyQualityFilter:
             hosting_tolerance=hosting_tolerance,
             has_labeled_floorplan=has_floorplan,
             floor_area_sqm=floor_area_sqm,
+            image_review_coverage=coverage,
         )
         content.append(TextBlockParam(type="text", text=user_prompt))
 
@@ -1859,6 +1900,7 @@ class PropertyQualityFilter:
         # Apply equally to fresh output and reused raw visual checkpoints. Never
         # alter the paid observation receipt or rewrite historical assessments.
         visual_data = reconcile_floorplan_areas(visual_data)
+        visual_data, coverage = reconcile_image_review(visual_data, coverage)
 
         logger.info("visual_analysis_complete", property_id=property_id)
 
@@ -1876,6 +1918,8 @@ class PropertyQualityFilter:
             property_id,
             description=description,
             features=features,
+            listing_address=listing_address,
+            listing_postcode=listing_postcode,
             price_pcm=price_pcm,
             bedrooms=bedrooms,
             effective_average=effective_average,
@@ -1886,6 +1930,7 @@ class PropertyQualityFilter:
             rent_trend=rent_trend,
             energy_estimate=energy_estimate,
             hosting_tolerance=hosting_tolerance,
+            image_review_coverage=coverage,
         )
 
         if not eval_data:
@@ -1915,6 +1960,8 @@ class PropertyQualityFilter:
                     }
                 )
         if analysis is not None:
+            analysis = apply_image_review_coverage(analysis, coverage)
+            analysis = reconcile_analysis_badges(analysis, property_id=property_id)
             provenance = self._analysis_provenance()
             input_key = visual_input_key(property_id, self._visual_request(content), provenance)
             analysis = analysis.model_copy(
