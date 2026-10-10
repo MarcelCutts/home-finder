@@ -93,7 +93,7 @@ def test_sonnet_rates_and_invalid_request_modes():
     )
     for changes in [
         {"reasoning": "between_tools"},
-        {"model": "claude-sonnet-5-5"},
+        {"model": "claude-sonnet-5"},
         {"input_token_limit": True},
     ]:
         with pytest.raises(ValidationError):

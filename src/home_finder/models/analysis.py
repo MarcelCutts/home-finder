@@ -4,7 +4,10 @@ import hashlib
 import json
 from typing import Literal, Self
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, field_validator, model_validator
+
+AnalysisModel = Literal["claude-sonnet-4-6", "claude-sonnet-5-5"]
+AnalysisEffort = Literal["low", "medium", "high"]
 
 
 class PhaseConfig(BaseModel):
@@ -13,18 +16,34 @@ class PhaseConfig(BaseModel):
     # Expand supported models/providers together with their price accounting and
     # evaluated request capabilities, not through an unpriced arbitrary string.
     provider: Literal["anthropic"] = "anthropic"
-    model: Literal["claude-sonnet-4-6"] = "claude-sonnet-4-6"
+    model: AnalysisModel = "claude-sonnet-4-6"
     reasoning: Literal["adaptive", "disabled"] = "disabled"
     input_token_limit: int | None = Field(
         default=None, ge=1, le=1_000_000, strict=True, exclude_if=lambda value: value is None
     )
-    effort: Literal["low", "medium", "high"] | None = None
+    effort: AnalysisEffort | None = Field(default=None, validate_default=True)
     max_output_tokens: int = Field(default=4096, ge=1, le=21_000, strict=True)
     request_timeout_seconds: float = Field(
         default=60, gt=0, le=600, allow_inf_nan=False, strict=True
     )
     connect_timeout_seconds: float = Field(default=5, gt=0, le=60, allow_inf_nan=False, strict=True)
     sdk_retries: int = Field(default=1, ge=0, le=1, strict=True)
+
+    @property
+    def thinking_type(self) -> Literal["adaptive", "between_tools"] | None:
+        """Translate the application policy without changing legacy request identity."""
+        if self.reasoning == "adaptive":
+            return "adaptive"
+        # Sonnet 5.5 rejects disabled; its lowest mode skips up-front thinking.
+        return "between_tools" if self.model == "claude-sonnet-5-5" else None
+
+    @field_validator("effort")
+    @classmethod
+    def pin_model_effort(
+        cls, value: AnalysisEffort | None, info: ValidationInfo
+    ) -> AnalysisEffort | None:
+        """Record the new model's effective default, retaining legacy provenance."""
+        return value or ("high" if info.data.get("model") == "claude-sonnet-5-5" else None)
 
     @model_validator(mode="after")
     def validate_timeouts(self) -> Self:

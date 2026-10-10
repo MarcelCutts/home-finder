@@ -70,7 +70,7 @@ An API key alone does not authorize paid work. Set exact decimal-string caps in
 `HOME_FINDER_ANALYSIS_SPEND_POLICY`; the commented `.env.example` authorizes zero.
 Choose per-call, daily and monthly amounts and a concurrency limit. Optional
 `lifetime_usd` and `max_total_attempts` bound a one-off exercise. USD caps describe
-provider usage for the supported global standard Sonnet 4.6 request path; they do
+provider usage for the supported global standard Sonnet 4.6 and optional Sonnet 5.5 paths; they do
 not cover other billing accounts or independently issued requests.
 
 By default the reservation covers the full input context and can exceed $6 per
@@ -82,6 +82,54 @@ complete property fits a $1 daily cap. There are two phases and potentially a
 retry. Unsupported/oversized payloads are deferred. These are local admission
 bounds, not a provider-enforced dollar cap. Actual settled usage releases unused
 reservation; a bound violation stops new dispatch for reconciliation.
+
+### Optional Sonnet 5.5
+
+Existing defaults remain Sonnet 4.6. Select `claude-sonnet-5-5` independently for
+either phase through `HOME_FINDER_ANALYSIS_CONFIG`, for example:
+
+```dotenv
+HOME_FINDER_ANALYSIS_CONFIG={"version":1,"visual":{"model":"claude-sonnet-5-5","reasoning":"adaptive","effort":"low","input_token_limit":140000,"max_output_tokens":8192},"evaluation":{"model":"claude-sonnet-5-5","reasoning":"disabled","effort":"low","input_token_limit":140000,"max_output_tokens":8192}}
+```
+
+This configuration still needs explicit spend-policy caps. Each example request
+reserves $0.64192, including the highest cache-write rate and all possible output
+tokens. With no input limit, the new model's default visual/evaluation reservations
+are $4.21/$4.04096. Legacy reservations and stored rate-card versions are unchanged;
+each attempt stores its own model and complete frozen tariff.
+
+Published global standard prices, checked 10 October 2026, in USD per million tokens:
+
+| Model | Input | Output (including thinking) | 5m cache write | 1h cache write | Cache read |
+|---|---:|---:|---:|---:|---:|
+| Sonnet 4.6 | 3 | 15 | 3.75 | 6 | 0.30 |
+| Sonnet 5.5 | 2 | 10 | 2.50 | 4 | 0.10 |
+
+Source: [Claude pricing](https://platform.claude.com/docs/en/about-claude/pricing).
+Lower token prices do not guarantee a cheaper assessment: Sonnet 5.5's tokenizer
+can produce about 30% more text tokens and uses the higher-resolution image tier.
+The existing input policy reserves twice the serialized text byte count plus
+framing, and 5,000 tokens per static image, covering the documented 4,784-token
+maximum. [Vision limits](https://platform.claude.com/docs/en/build-with-claude/vision).
+
+On Sonnet 5.5, the application setting `reasoning: "disabled"` sends
+`thinking: {"type": "between_tools"}` (no up-front thinking); adaptive reasoning
+remains available. Visual requests always use `tool_choice: {"type": "auto"}`.
+An omitted effort is explicitly pinned to `high`; supported overrides are `low`,
+`medium`, and `high`. No thinking blocks are replayed between these independent
+single-turn phases. [Migration guide](https://platform.claude.com/docs/en/models/sonnet-5-5/migration-guide).
+
+The visual phase retains its existing non-strict tool schema and validates the
+returned fields locally. Missing, duplicate or invalid tool output is a billed
+failure, not a completed assessment or reusable checkpoint. Evaluation retains
+its JSON schema and local validation. A visual model change invalidates its
+checkpoint; changing only the evaluation model can reuse validated observations.
+The optional path has offline SDK coverage; evaluate output quality and schema
+acceptance in a separately budgeted canary before adopting it. Regional/priority
+pricing, batch, fast mode, server tools, fallback models, and unknown billing
+units remain unsupported and fail closed.
+
+### Accounting and recovery
 
 Provider/account errors leave homes pending rather than spending their output
 failure allowances. Proven uncharged rejections remain in the audit but do not

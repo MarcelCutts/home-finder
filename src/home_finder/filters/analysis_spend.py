@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING, Any
 from home_finder.filters.analysis_contracts import AnalysisOutputError, Phase
 from home_finder.filters.request_budget import input_reservation_tokens
 from home_finder.logging import get_logger
-from home_finder.models.analysis import AnalysisProvenance
+from home_finder.models.analysis import AnalysisProvenance, PhaseConfig
 from home_finder.models.spend import (
     AttemptSpec,
     BillableUsage,
@@ -88,9 +88,23 @@ def reported_usage(
     body: dict[str, Any], *, expected_model: str = "claude-sonnet-4-6"
 ) -> BillableUsage:
     """Price only the known model, billing modes and complete non-overlapping units."""
+    rate_card_for(expected_model)
     usage = body.get("usage")
     if not isinstance(usage, dict) or body.get("model") != expected_model:
         raise ValueError("Missing usage or unpriced response model")
+    if set(usage) - {
+        "input_tokens",
+        "output_tokens",
+        "cache_creation_input_tokens",
+        "cache_creation",
+        "cache_read_input_tokens",
+        "service_tier",
+        "inference_geo",
+        "server_tool_use",
+        # This is a decomposition of output_tokens, not an additional charge.
+        "output_tokens_details",
+    }:
+        raise ValueError("Unsupported provider usage fields")
     if usage.get("service_tier") not in {None, "standard"} or usage.get("inference_geo") not in {
         None,
         "global",
@@ -111,6 +125,8 @@ def reported_usage(
         # These requests use the default five-minute cache TTL only.
         write_5m, write_1h = total_written, 0
     elif isinstance(breakdown, dict):
+        if set(breakdown) != {"ephemeral_5m_input_tokens", "ephemeral_1h_input_tokens"}:
+            raise ValueError("Unsupported cache breakdown")
         write_5m = breakdown.get("ephemeral_5m_input_tokens")
         write_1h = breakdown.get("ephemeral_1h_input_tokens")
     else:
@@ -131,6 +147,28 @@ def reported_usage(
     ):
         raise ValueError("Cache breakdown does not match total")
     return result
+
+
+def _supported_phase_options(body: dict[str, Any], config: PhaseConfig, phase: Phase) -> bool:
+    """Do not let native SDK overrides bypass the configured request contract."""
+    thinking = {"type": config.thinking_type} if config.thinking_type is not None else None
+    if body.get("thinking") != thinking:
+        return False
+    output = body.get("output_config", {})
+    if (
+        not isinstance(output, dict)
+        or set(output) - {"effort", "format"}
+        or output.get("effort") != config.effort
+    ):
+        return False
+    if phase == "evaluation":
+        return "tools" not in body and "tool_choice" not in body
+    choice = (
+        {"type": "auto"}
+        if config.thinking_type is not None
+        else {"type": "tool", "name": "property_visual_analysis"}
+    )
+    return body.get("tool_choice") == choice
 
 
 def provider_rejection(status: int, body: Any, request_id: str | None) -> ProviderRejection:
@@ -221,7 +259,7 @@ class AnalysisSpendMeter:
     async def __call__(
         self, request: APIRequest, call_next: AsyncCallNext
     ) -> AsyncAPIResponse[Any]:
-        from anthropic import APIConnectionError, APITimeoutError
+        from anthropic import APIConnectionError, APITimeoutError, omit
 
         scope = self._context.get()
         repo, policy = self._repository, self._policy
@@ -250,14 +288,17 @@ class AnalysisSpendMeter:
             request.method.lower() != "post"
             or request.url != "/v1/messages"
             or request.stream
+            or any(key.lower() == "anthropic-beta" for key in request.headers)
             or not isinstance(body, dict)
             or set(body) - allowed
             or body.get("model") != phase_config.model
             or body.get("max_tokens") != phase_config.max_output_tokens
+            or type(body.get("max_tokens")) is not int
             or body.get("service_tier", "standard_only") != "standard_only"
             or body.get("inference_geo", "global") != "global"
             or not isinstance(body.get("tools", []), list)
             or not _default_cache_ttl(body)
+            or not _supported_phase_options(body, phase_config, scope.phase)
             or any(
                 not isinstance(tool, dict)
                 or tool.get("type", "custom") != "custom"
@@ -290,7 +331,9 @@ class AnalysisSpendMeter:
                     input_limit=phase_config.input_token_limit,
                 )
                 raise
-        request = request.copy(body=body)
+        # SDK default headers (including ANTHROPIC_CUSTOM_HEADERS) are merged
+        # below middleware, so explicitly suppress inherited beta opt-ins too.
+        request = request.copy(body=body, headers={**request.headers, "anthropic-beta": omit})
         request_digest = _digest(body)
         spec = AttemptSpec(
             operation_key=_digest(
