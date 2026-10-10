@@ -1127,6 +1127,8 @@ class PropertyQualityFilter:
                 area_average=value.area_average,
                 description=text_inputs.description,
                 features=list(text_inputs.features) or None,
+                listing_address=prop.address,
+                listing_postcode=prop.postcode,
                 area_context=ctx.area_overview,
                 outcode=ctx.outcode,
                 council_tax_band_c=ctx.council_tax_band_c,
@@ -1472,6 +1474,8 @@ class PropertyQualityFilter:
         *,
         description: str | None,
         features: list[str] | None = None,
+        listing_address: str | None = None,
+        listing_postcode: str | None = None,
         price_pcm: int,
         bedrooms: int,
         effective_average: int,
@@ -1494,6 +1498,8 @@ class PropertyQualityFilter:
             visual_data: Phase 1 visual analysis output.
             property_id: Property ID for logging.
             description: Listing description text.
+            listing_address: Unverified address from the canonical listing.
+            listing_postcode: Unverified postcode from the canonical listing.
             price_pcm: Monthly rent price.
             bedrooms: Number of bedrooms.
             effective_average: Area average rent for comparison.
@@ -1554,6 +1560,8 @@ class PropertyQualityFilter:
                 visual_data=visual_data,
                 description=description,
                 features=features,
+                listing_address=listing_address,
+                listing_postcode=listing_postcode,
                 price_pcm=price_pcm,
                 bedrooms=bedrooms,
                 area_average=effective_average,
@@ -1731,6 +1739,8 @@ class PropertyQualityFilter:
         area_average: int | None,
         description: str | None = None,
         features: list[str] | None = None,
+        listing_address: str | None = None,
+        listing_postcode: str | None = None,
         area_context: str | None = None,
         outcode: str | None = None,
         council_tax_band_c: float | None = None,
@@ -1758,6 +1768,8 @@ class PropertyQualityFilter:
             area_average: Average rent for this area and bedroom count.
             description: Listing description text for cross-reference.
             features: Listed features for cross-reference.
+            listing_address: Unverified address from the canonical listing.
+            listing_postcode: Unverified postcode from the canonical listing.
             area_context: Area context string for the outcode.
             outcode: Property outcode (e.g., "E8").
             council_tax_band_c: Estimated monthly council tax (Band C).
@@ -1826,6 +1838,8 @@ class PropertyQualityFilter:
             effective_average,
             description,
             features,
+            listing_address=listing_address,
+            listing_postcode=listing_postcode,
             area_context=area_context,
             outcode=outcode,
             council_tax_band_c=council_tax_band_c,
@@ -1876,6 +1890,8 @@ class PropertyQualityFilter:
             property_id,
             description=description,
             features=features,
+            listing_address=listing_address,
+            listing_postcode=listing_postcode,
             price_pcm=price_pcm,
             bedrooms=bedrooms,
             effective_average=effective_average,
