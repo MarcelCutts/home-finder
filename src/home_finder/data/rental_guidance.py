@@ -1,7 +1,7 @@
 """Small dated England guidance slice; not advice about an individual contract."""
 
 GUIDANCE = {
-    "checked_on": "28 September 2026",
+    "checked_on": "10 October 2026",
     "effective_from": "1 May 2026",
     "scope": "England: private assured periodic tenancies",
     "text": (

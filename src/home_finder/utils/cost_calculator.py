@@ -27,6 +27,12 @@ _TREATMENT = re.compile(
 _RENT_INCLUDES = re.compile(
     rf"\brent\s+(?P<state>includes|excludes)\s+(?P<names>{_NAMES})\b", re.IGNORECASE
 )
+_IN_RENT = re.compile(r"\s+(?:in|within)\s+(?:the\s+)?rent\b", re.IGNORECASE)
+_PAID_QUALIFIER = re.compile(
+    r"\b(?:optional|package|extra|additional\s+(?:fee|charge|cost)|"
+    r"payable\s+separately|service\s+charge|at\s+(?:a\s+)?(?:cost|charge))\b",
+    re.IGNORECASE,
+)
 _AMOUNT = re.compile(
     rf"\b(?P<names>{_NAME})\s*:\s*£(?P<low>\d{{1,4}}(?:\.\d{{1,2}})?)"
     r"(?:\s*[-\u2013]\s*£?(?P<high>\d{1,4}(?:\.\d{1,2})?))?"
@@ -45,7 +51,7 @@ def _bill_keys(names: str) -> list[str]:
 def build_monthly_budget(
     *,
     rent_pcm: int,
-    evidence: Mapping[PropertySource, ListingTextEvidence],
+    evidence: Mapping[PropertySource, ListingTextEvidence] | Mapping[str, ListingTextEvidence],
     earlier_service_charge: int | None = None,
 ) -> dict[str, Any]:
     """Use explicit named-bill claims; preserve unknowns and source conflicts.
@@ -66,9 +72,16 @@ def build_monthly_budget(
     general_bills_claim = False
     service_mentioned = earlier_service_charge is not None
     for source, value in evidence.items():
+        label = source.display_name if isinstance(source, PropertySource) else source
         text = plain_listing_text([value.description or "", *(value.features or ())])
         parts.append(text)
-        general_bills_claim |= bool(re.search(r"\bbills?\s+(?:not\s+)?included\b", text, re.I))
+        general_bills_claim |= bool(
+            re.search(
+                r"\bbills?\s+(?:not\s+)?included\b|\binclusive\s+of\s+(?:all\s+)?bills\b",
+                text,
+                re.I,
+            )
+        )
         service_mentioned |= bool(re.search(r"\b(?:service\s+charge|ground\s+rent)\b", text, re.I))
         # Keep clauses separate: a nearby question/assumption cannot establish a
         # payment. Do not split decimal amounts.
@@ -88,9 +101,14 @@ def build_monthly_budget(
                         if match["state"].lower() in {"included", "includes"}
                         else "excluded"
                     )
+                    if state == "included" and (
+                        _PAID_QUALIFIER.search(clause)
+                        or (pattern is _TREATMENT and not _IN_RENT.match(clause[match.end() :]))
+                    ):
+                        continue
                     for key in _bill_keys(match["names"]):
                         claims[key].add(state)
-                        quotes[key].append(f"{source.display_name}: {clause.strip()[:240]}")
+                        quotes[key].append(f"{label}: {clause.strip()[:240]}")
             for match in _AMOUNT.finditer(clause):
                 if re.search(r"\b(?:not|no)\s*$", clause[: match.start()], re.I):
                     continue
@@ -101,7 +119,7 @@ def build_monthly_budget(
                 for key in _bill_keys(match["names"]):
                     claims[key].add("excluded")
                     amounts[key].add((quote_low, quote_high))
-                    quotes[key].append(f"{source.display_name}: {clause.strip()[:240]}")
+                    quotes[key].append(f"{label}: {clause.strip()[:240]}")
 
     items = []
     subtotal_low = subtotal_high = Decimal(rent_pcm)

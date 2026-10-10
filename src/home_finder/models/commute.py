@@ -22,7 +22,7 @@ class CommuteState(StrEnum):
 
 
 class CommuteResult(BaseModel):
-    """One mode's result for a property; precision/profile persistence is PR16b."""
+    """One mode's result for a property, compared to the exact limit in seconds."""
 
     model_config = ConfigDict(frozen=True)
 

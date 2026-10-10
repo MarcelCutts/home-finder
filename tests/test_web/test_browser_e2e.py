@@ -367,6 +367,27 @@ class TestMapProvider:
         finally:
             server_settings.carto_basemap_api_key = configured
 
+    def test_one_missing_tile_does_not_disable_a_usable_map(self, page):
+        requests = 0
+
+        def serve(route):
+            nonlocal requests
+            requests += 1
+            if requests == 1:
+                route.fulfill(status=404)
+            else:
+                route.fallback()
+
+        page.route("https://basemaps.cartocdn.com/**", serve)
+        page.goto("/")
+        page.get_by_role("button", name="Map view", exact=True).click()
+        expect(page.locator("#dashboard-map .leaflet-tile-loaded").first).to_be_visible()
+        expect(page.get_by_role("button", name="Map view", exact=True)).to_have_attribute(
+            "aria-pressed", "true"
+        )
+        expect(page.locator("#map-status")).not_to_be_visible()
+        assert requests > 1
+
     def test_provider_rejection_falls_back_to_listings(self, page):
         page.route("https://basemaps.cartocdn.com/**", lambda route: route.fulfill(status=403))
         page.goto("/")

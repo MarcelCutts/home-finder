@@ -12,11 +12,12 @@ export function addBasemap(map, element, onUnavailable) {
       maxZoom: 20,
     },
   );
-  let failed = false;
-  layer.on("tileerror", function () {
-    if (failed) return;
-    failed = true;
-    onUnavailable();
+  // A single missing tile does not make the whole map unusable. Leaflet fires
+  // load after the initial visible tiles have either loaded or failed.
+  let hasLoadedTile = false;
+  layer.on("tileload", function () { hasLoadedTile = true; });
+  layer.once("load", function () {
+    if (!hasLoadedTile) onUnavailable();
   });
   layer.addTo(map);
 }

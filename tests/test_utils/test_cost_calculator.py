@@ -25,6 +25,12 @@ def test_unknown_costs_are_unpriced_not_zero_or_epc_d() -> None:
     assert "deposits" in budget["assumptions"].lower()
 
 
+def test_inclusive_bills_wording_is_retained_without_guessing_named_coverage() -> None:
+    budget = build_monthly_budget(rent_pcm=1800, evidence=evidence("Inclusive of all bills."))
+    assert budget["general_bills_claim"] is True
+    assert all(item["state"] == "unknown" for item in budget["line_items"])
+
+
 @pytest.mark.parametrize(
     ("text", "expected"),
     [
@@ -42,6 +48,11 @@ def test_unknown_costs_are_unpriced_not_zero_or_epc_d() -> None:
         ("If water included, the rent may change.", ["unknown"] * 5),
         ("Estimated water included.", ["unknown"] * 5),
         ("Not water included.", ["unknown"] * 5),
+        ("Water included.", ["unknown"] * 5),
+        ("Water included in the optional bills package.", ["unknown"] * 5),
+        ("Water included in service charge, payable separately.", ["unknown"] * 5),
+        ("Water included for an extra £50 per month.", ["unknown"] * 5),
+        ("Rent includes water for an extra £50 per month.", ["unknown"] * 5),
     ],
 )
 def test_named_bill_coverage_and_ambiguous_wording(text: str, expected: list[str]) -> None:
@@ -85,8 +96,8 @@ def test_uncertain_nonmonthly_or_invalid_amount_not_added(text: str) -> None:
 @pytest.mark.parametrize(
     ("first", "second"),
     [
-        ("Water included", "Water excluded"),
-        ("Water included", "Water: £30 pcm payable separately"),
+        ("Water included in rent", "Water excluded"),
+        ("Water included in rent", "Water: £30 pcm payable separately"),
         ("Water: £30 pcm payable separately", "Water: £40 pcm payable separately"),
     ],
 )
@@ -122,10 +133,23 @@ def test_no_service_charge_or_undated_reference_numbers_enter_budget(monkeypatch
     [
         ("EPC B. Council tax band C.", "B", "C"),
         ("<p>EPC rating: F</p>", "F", "unknown"),
+        ("Energy Rating: C", "C", "unknown"),
+        ("EPC Rating: D (potential B)", "D", "unknown"),
+        ("EPC rated C", "C", "unknown"),
+        ("EPC rating is C", "C", "unknown"),
+        ("EPC rating: C. Budget friendly flat.", "C", "unknown"),
+        ("EPC rating C. Target move in date 1 June.", "C", "unknown"),
         ("Council tax C", "unknown", "C"),
+        ("Council Tax: Band C", "unknown", "C"),
+        ("Council tax band: D. Budget-conscious tenants welcome.", "unknown", "D"),
         ("EPC B\nEPC D", "unknown", "unknown"),
         ("EPC B/C", "unknown", "unknown"),
         ("Council tax band C or D", "unknown", "unknown"),
+        ("Council tax band C or possibly D", "unknown", "unknown"),
+        ("Council tax band C subject to confirmation", "unknown", "unknown"),
+        ("Council tax band C?", "unknown", "unknown"),
+        ("EPC - a copy is available on request", "unknown", "unknown"),
+        ("Council tax - a tenant responsibility", "unknown", "unknown"),
         ("Potential EPC B", "unknown", "unknown"),
         ("EPC D estimated", "unknown", "unknown"),
         ("Not EPC B", "unknown", "unknown"),
