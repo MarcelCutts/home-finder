@@ -208,5 +208,9 @@
     "portals_fetched": false,
     "paid_model_calls": 0,
     "telegram_messages": 0
-  }
+  },
+  "draft_url": "https://github.com/MarcelCutts/home-finder/pull/33",
+  "application_commit": "1c6f27ed8117e7b1a5b27f131e32343cc4715862",
+  "native_stack": 29,
+  "stack_size_at_publication": 30
 }

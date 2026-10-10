@@ -1,6 +1,6 @@
 # PR07b-4b-1 — durable listing input generations and rebuild receipts
 
-Status: implementation, author review and local verification complete; draft publication in progress. Base: `859228467031a609721a3ad86adf119e3dbd2d2a`, [draft #32](https://github.com/MarcelCutts/home-finder/pull/32). Branch: `codex/stack/30-projection-lifecycle`; intended position 30 in native stack #29. Schema advances from 014 to 015. The delivery goal remains active under the instruction to commit each segment and continue.
+Status: implementation, author review and local verification complete; published as [draft #33](https://github.com/MarcelCutts/home-finder/pull/33). Application commit: `1c6f27ed8117e7b1a5b27f131e32343cc4715862`; the publication follow-up changes documentation only. Base: `859228467031a609721a3ad86adf119e3dbd2d2a`, [draft #32](https://github.com/MarcelCutts/home-finder/pull/32). Branch: `codex/stack/30-projection-lifecycle`; position 30 in native stack #29. Schema advances from 014 to 015. The delivery goal remains active under the instruction to commit each segment and continue.
 
 ## Outcome and reason for this boundary
 
