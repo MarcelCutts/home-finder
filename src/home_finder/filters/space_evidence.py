@@ -1,5 +1,6 @@
 """Withhold unsupported floorplan arithmetic before evaluating a new assessment."""
 
+import re
 from copy import deepcopy
 from typing import Any
 
@@ -36,7 +37,14 @@ def reconcile_floorplan_areas(visual_data: dict[str, Any]) -> dict[str, Any]:
             )
         if unsupported:
             if scope != "external":
-                withheld = withheld or area is not None or living is not None
+                withheld = (
+                    withheld
+                    or area is not None
+                    or (
+                        living is not None
+                        and bool(re.search(r"living|reception|lounge", room["name"], re.I))
+                    )
+                )
             room["area_sqm"] = None
             room["area_basis"] = "unknown"
 

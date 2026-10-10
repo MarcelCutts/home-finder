@@ -125,6 +125,45 @@ def test_unsupported_external_geometry_does_not_withhold_internal_claims():
     assert reconciled["light_space"] == visual["light_space"]
 
 
+@pytest.mark.parametrize("scope", ["internal", "unknown"])
+@pytest.mark.parametrize("missing_room", ["Bathroom", "Living room"])
+def test_unmeasured_room_only_withholds_existing_living_claim_when_it_is_the_living_room(
+    scope, missing_room
+):
+    visual = scoped_floorplan_response()["content"][-1]["input"]
+    visual["space"].update(
+        living_room_sqm=20,
+        total_area_sqm=60,
+        floorplan_total_area_sqm=60,
+        room_areas=[
+            {
+                "name": "Living room" if missing_room == "Bathroom" else "Bedroom",
+                "length_m": 4,
+                "width_m": 5,
+                "area_sqm": 20,
+                "area_basis": "rectangular_dimensions",
+                "area_scope": "internal",
+            },
+            {
+                "name": missing_room,
+                "length_m": None,
+                "width_m": None,
+                "area_sqm": None,
+                "area_basis": "unknown",
+                "area_scope": scope,
+            },
+        ],
+    )
+    before = copy.deepcopy(visual)
+    reconciled = reconcile_floorplan_areas(visual)
+    assert visual == before
+    if missing_room == "Bathroom":
+        assert reconciled == before
+    else:
+        assert reconciled["space"]["living_room_sqm"] is None
+        assert "geometry" in reconciled["space"]["area_notes"]
+
+
 def test_unsupported_internal_area_is_not_used_to_claim_an_arithmetic_conflict():
     visual = scoped_floorplan_response()["content"][-1]["input"]
     visual["space"]["room_areas"][0]["area_sqm"] = 100
