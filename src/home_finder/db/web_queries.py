@@ -3,19 +3,21 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Callable, Coroutine
+from collections.abc import Callable
+from contextlib import AbstractAsyncContextManager
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any, cast
 
 import aiosqlite
 
 from home_finder.db.row_mappers import (
+    ImageReader,
     PropertyDetailItem,
     PropertyListItem,
     parse_json_fields,
 )
 from home_finder.logging import get_logger
-from home_finder.models import PropertyImage, PropertyQualityAnalysis
+from home_finder.models import PropertyQualityAnalysis
 from home_finder.web.filters import ADDED_OPTIONS
 
 if TYPE_CHECKING:
@@ -252,10 +254,10 @@ class WebQueryService:
 
     def __init__(
         self,
-        get_connection: Callable[[], Coroutine[Any, Any, aiosqlite.Connection]],
-        get_property_images: Callable[[str], Coroutine[Any, Any, list[PropertyImage]]],
+        read_connection: Callable[[], AbstractAsyncContextManager[aiosqlite.Connection]],
+        get_property_images: ImageReader,
     ) -> None:
-        self._get_connection = get_connection
+        self._read_connection = read_connection
         self._get_property_images = get_property_images
 
     async def get_filter_count(
@@ -270,18 +272,18 @@ class WebQueryService:
         Returns:
             Total count of matching properties.
         """
-        conn = await self._get_connection()
-        where_sql, params = build_filter_clauses(filters)
-        cursor = await conn.execute(
-            f"""
-            SELECT COUNT(*) FROM properties p
-            LEFT JOIN quality_analyses q ON p.unique_id = q.property_unique_id
-            WHERE {where_sql}
-            """,
-            params,
-        )
-        row = await cursor.fetchone()
-        return row[0] if row else 0
+        async with self._read_connection() as conn:
+            where_sql, params = build_filter_clauses(filters)
+            cursor = await conn.execute(
+                f"""
+                SELECT COUNT(*) FROM properties p
+                LEFT JOIN quality_analyses q ON p.unique_id = q.property_unique_id
+                WHERE {where_sql}
+                """,
+                params,
+            )
+            row = await cursor.fetchone()
+            return row[0] if row else 0
 
     async def get_map_markers(
         self,
@@ -298,46 +300,47 @@ class WebQueryService:
         Returns:
             List of dicts with map marker fields.
         """
-        conn = await self._get_connection()
-        where_sql, params = build_filter_clauses(filters)
-        cursor = await conn.execute(
-            f"""
-            SELECT p.unique_id, p.latitude, p.longitude, p.price_pcm,
-                   p.bedrooms, p.title, p.postcode,
-                   p.commute_minutes, p.image_url,
-                   p.is_off_market,
-                   q.overall_rating as quality_rating,
-                   q.fit_score,
-                   json_extract(q.analysis_json, '$.value.quality_adjusted_rating') as value_rating,
-                   json_extract(q.analysis_json, '$.one_line') as one_line
-            FROM properties p
-            LEFT JOIN quality_analyses q ON p.unique_id = q.property_unique_id
-            WHERE {where_sql}
-              AND p.latitude IS NOT NULL AND p.longitude IS NOT NULL
-            """,
-            params,
-        )
-        rows = await cursor.fetchall()
-        return [
-            {
-                "id": row["unique_id"],
-                "lat": row["latitude"],
-                "lon": row["longitude"],
-                "price": row["price_pcm"],
-                "bedrooms": row["bedrooms"],
-                "rating": row["quality_rating"],
-                "fit_score": row["fit_score"],
-                "title": row["title"],
-                "url": f"/property/{row['unique_id']}",
-                "image_url": row["image_url"],
-                "postcode": row["postcode"],
-                "commute_minutes": row["commute_minutes"],
-                "value_rating": row["value_rating"],
-                "one_line": row["one_line"],
-                "is_off_market": bool(row["is_off_market"]),
-            }
-            for row in rows
-        ]
+        async with self._read_connection() as conn:
+            where_sql, params = build_filter_clauses(filters)
+            cursor = await conn.execute(
+                f"""
+                SELECT p.unique_id, p.latitude, p.longitude, p.price_pcm,
+                       p.bedrooms, p.title, p.postcode,
+                       p.commute_minutes, p.image_url,
+                       p.is_off_market,
+                       q.overall_rating as quality_rating,
+                       q.fit_score,
+                       json_extract(q.analysis_json, '$.value.quality_adjusted_rating')
+                           as value_rating,
+                       json_extract(q.analysis_json, '$.one_line') as one_line
+                FROM properties p
+                LEFT JOIN quality_analyses q ON p.unique_id = q.property_unique_id
+                WHERE {where_sql}
+                  AND p.latitude IS NOT NULL AND p.longitude IS NOT NULL
+                """,
+                params,
+            )
+            rows = await cursor.fetchall()
+            return [
+                {
+                    "id": row["unique_id"],
+                    "lat": row["latitude"],
+                    "lon": row["longitude"],
+                    "price": row["price_pcm"],
+                    "bedrooms": row["bedrooms"],
+                    "rating": row["quality_rating"],
+                    "fit_score": row["fit_score"],
+                    "title": row["title"],
+                    "url": f"/property/{row['unique_id']}",
+                    "image_url": row["image_url"],
+                    "postcode": row["postcode"],
+                    "commute_minutes": row["commute_minutes"],
+                    "value_rating": row["value_rating"],
+                    "one_line": row["one_line"],
+                    "is_off_market": bool(row["is_off_market"]),
+                }
+                for row in rows
+            ]
 
     async def get_properties_paginated(
         self,
@@ -358,40 +361,39 @@ class WebQueryService:
         Returns:
             Tuple of (property dicts, total count).
         """
-        conn = await self._get_connection()
+        async with self._read_connection() as conn:
+            where_sql, params = build_filter_clauses(filters)
 
-        where_sql, params = build_filter_clauses(filters)
+            order_map = {
+                "newest": "p.first_seen DESC",
+                "price_asc": "p.price_pcm ASC",
+                "price_desc": "p.price_pcm DESC",
+                "fit_desc": "COALESCE(q.fit_score, -1) DESC, p.first_seen DESC",
+                "longest_listed": "p.first_seen ASC",
+            }
+            order_sql = order_map.get(sort, "p.first_seen DESC")
 
-        order_map = {
-            "newest": "p.first_seen DESC",
-            "price_asc": "p.price_pcm ASC",
-            "price_desc": "p.price_pcm DESC",
-            "fit_desc": "COALESCE(q.fit_score, -1) DESC, p.first_seen DESC",
-            "longest_listed": "p.first_seen ASC",
-        }
-        order_sql = order_map.get(sort, "p.first_seen DESC")
+            # Count total
+            count_cursor = await conn.execute(
+                f"""
+                SELECT COUNT(*) FROM properties p
+                LEFT JOIN quality_analyses q ON p.unique_id = q.property_unique_id
+                WHERE {where_sql}
+                """,
+                params,
+            )
+            count_row = await count_cursor.fetchone()
+            total = count_row[0] if count_row else 0
 
-        # Count total
-        count_cursor = await conn.execute(
-            f"""
-            SELECT COUNT(*) FROM properties p
-            LEFT JOIN quality_analyses q ON p.unique_id = q.property_unique_id
-            WHERE {where_sql}
-            """,
-            params,
-        )
-        count_row = await count_cursor.fetchone()
-        total = count_row[0] if count_row else 0
+            offset = (page - 1) * per_page
+            cursor = await conn.execute(
+                f"SELECT {_CARD_COLUMNS} {_CARD_JOINS}"
+                f" WHERE {where_sql} ORDER BY {order_sql} LIMIT ? OFFSET ?",
+                [*params, per_page, offset],
+            )
+            rows = await cursor.fetchall()
 
-        offset = (page - 1) * per_page
-        cursor = await conn.execute(
-            f"SELECT {_CARD_COLUMNS} {_CARD_JOINS}"
-            f" WHERE {where_sql} ORDER BY {order_sql} LIMIT ? OFFSET ?",
-            [*params, per_page, offset],
-        )
-        rows = await cursor.fetchall()
-
-        return [_row_to_card_dict(row) for row in rows], total
+            return [_row_to_card_dict(row) for row in rows], total
 
     async def get_property_card(self, unique_id: str) -> PropertyListItem | None:
         """Get a single property in card-list format (same shape as get_properties_paginated).
@@ -399,13 +401,13 @@ class WebQueryService:
         Used by the card endpoint to render a single property card partial
         when the card isn't on the current paginated page.
         """
-        conn = await self._get_connection()
-        cursor = await conn.execute(
-            f"SELECT {_CARD_COLUMNS} {_CARD_JOINS} WHERE p.unique_id = ? LIMIT 1",
-            [unique_id],
-        )
-        row = await cursor.fetchone()
-        return _row_to_card_dict(row) if row else None
+        async with self._read_connection() as conn:
+            cursor = await conn.execute(
+                f"SELECT {_CARD_COLUMNS} {_CARD_JOINS} WHERE p.unique_id = ? LIMIT 1",
+                [unique_id],
+            )
+            row = await cursor.fetchone()
+            return _row_to_card_dict(row) if row else None
 
     async def get_property_detail(self, unique_id: str) -> PropertyDetailItem | None:
         """Get full property detail including quality analysis and images.
@@ -416,38 +418,37 @@ class WebQueryService:
         Returns:
             Dict with property data, quality analysis, and images, or None.
         """
-        conn = await self._get_connection()
-
-        cursor = await conn.execute(
-            """
-            SELECT p.*, q.analysis_json, q.overall_rating as quality_rating
-            FROM properties p
-            LEFT JOIN quality_analyses q ON p.unique_id = q.property_unique_id
-            WHERE p.unique_id = ?
-            """,
-            (unique_id,),
-        )
-        row = await cursor.fetchone()
-        if row is None:
-            return None
-
-        prop_dict = dict(row)
-        parse_json_fields(prop_dict)
-
-        # Parse quality analysis
-        if prop_dict.get("analysis_json"):
-            prop_dict["quality_analysis"] = PropertyQualityAnalysis.model_validate_json(
-                prop_dict["analysis_json"]
+        async with self._read_connection() as conn:
+            cursor = await conn.execute(
+                """
+                SELECT p.*, q.analysis_json, q.overall_rating as quality_rating
+                FROM properties p
+                LEFT JOIN quality_analyses q ON p.unique_id = q.property_unique_id
+                WHERE p.unique_id = ?
+                """,
+                (unique_id,),
             )
-        else:
-            prop_dict["quality_analysis"] = None
+            row = await cursor.fetchone()
+            if row is None:
+                return None
 
-        # Get images
-        images = await self._get_property_images(unique_id)
-        prop_dict["gallery_images"] = [img for img in images if img.image_type == "gallery"]
-        prop_dict["floorplan_images"] = [img for img in images if img.image_type == "floorplan"]
+            prop_dict = dict(row)
+            parse_json_fields(prop_dict)
 
-        return cast(PropertyDetailItem, prop_dict)
+            # Parse quality analysis
+            if prop_dict.get("analysis_json"):
+                prop_dict["quality_analysis"] = PropertyQualityAnalysis.model_validate_json(
+                    prop_dict["analysis_json"]
+                )
+            else:
+                prop_dict["quality_analysis"] = None
+
+            # Get images
+            images = await self._get_property_images(unique_id, _conn=conn)
+            prop_dict["gallery_images"] = [img for img in images if img.image_type == "gallery"]
+            prop_dict["floorplan_images"] = [img for img in images if img.image_type == "floorplan"]
+
+            return cast(PropertyDetailItem, prop_dict)
 
     async def get_property_count(self) -> int:
         """Get total number of tracked properties.
@@ -455,7 +456,7 @@ class WebQueryService:
         Returns:
             Count of properties in database.
         """
-        conn = await self._get_connection()
-        cursor = await conn.execute("SELECT COUNT(*) FROM properties")
-        row = await cursor.fetchone()
-        return row[0] if row else 0
+        async with self._read_connection() as conn:
+            cursor = await conn.execute("SELECT COUNT(*) FROM properties")
+            row = await cursor.fetchone()
+            return row[0] if row else 0

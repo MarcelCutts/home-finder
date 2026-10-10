@@ -40,6 +40,8 @@ from home_finder.models import (
 
 from .conftest import wait_for_htmx_settle
 
+_OWNER_PASSWORD = "browser-test-owner-password-32-characters"
+
 
 def _find_free_port() -> int:
     """Find an available port by binding to port 0."""
@@ -226,6 +228,7 @@ def server_url(tmp_path_factory):
         telegram_bot_token=SecretStr("fake:test-token"),
         telegram_chat_id=0,
         database_path=db_path,
+        web_owner_password=SecretStr(_OWNER_PASSWORD),
         search_areas="e5,e8,e9,n16",
         min_price=1500,
         max_price=2500,
@@ -278,9 +281,38 @@ def base_url(server_url):
     return server_url
 
 
+@pytest.fixture(scope="session")
+def browser_context_args(browser_context_args, server_url):
+    return {
+        **browser_context_args,
+        "http_credentials": {
+            "username": "owner",
+            "password": _OWNER_PASSWORD,
+            "origin": server_url,
+        },
+    }
+
+
 @pytest.mark.browser
 class TestDashboardBrowser:
     """Test dashboard page in real browser."""
+
+    def test_owner_can_change_status_and_reload(self, page):
+        page.goto("/property/openrent:1001")
+        page.locator(".status-selector-trigger").click()
+        with page.expect_response(
+            lambda response: response.request.method == "PATCH" and "/status" in response.url
+        ) as changed:
+            page.get_by_role("menuitem", name="Interested", exact=True).click()
+        assert changed.value.status == 200
+        expect(page.locator(".status-selector-trigger")).to_contain_text("Interested")
+        page.reload()
+        expect(page.locator(".status-selector-trigger")).to_contain_text("Interested")
+
+        # Restore the shared fixture so other browser scenarios keep their baseline.
+        page.locator(".status-selector-trigger").click()
+        page.get_by_role("menuitem", name="New", exact=True).click()
+        expect(page.locator(".status-selector-trigger")).to_contain_text("New")
 
     def test_loads_property_cards(self, page):
         page.goto("/")

@@ -188,7 +188,10 @@ class TestHealthCheck:
         resp = client.get("/health")
         assert resp.status_code == 200
         data = resp.json()
-        assert data["status"] == "ok"
+        assert data == {"status": "ok"}
+
+    def test_diagnostics_returns_pipeline_state(self, client: TestClient) -> None:
+        data = client.get("/diagnostics").json()
         assert data["pipeline_running"] is False
         assert data["last_run_at"] is None
         assert data["last_run_status"] is None

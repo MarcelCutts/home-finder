@@ -259,8 +259,14 @@ async def filter_count(storage: StorageDep, filters: FilterDep) -> Response:
 
 
 @router.get("/health")
-async def health_check(request: Request) -> JSONResponse:
-    """Health check endpoint for Fly.io with pipeline status."""
+async def health_check() -> JSONResponse:
+    """Minimal public liveness endpoint for Fly.io."""
+    return JSONResponse({"status": "ok"})
+
+
+@router.get("/diagnostics")
+async def diagnostics(request: Request) -> JSONResponse:
+    """Owner-only operational detail, protected by the application access boundary."""
     storage: PropertyStorage = request.app.state.storage
     last_run = await storage.pipeline.get_last_pipeline_run()
     pipeline_lock = getattr(request.app.state, "pipeline_lock", None)
@@ -435,7 +441,7 @@ async def serve_cached_image(unique_id: str, filename: str, data_dir: DataDirDep
     return FileResponse(
         image_path,
         media_type=media_type,
-        headers={"Cache-Control": "public, max-age=31536000, immutable"},
+        headers={"Cache-Control": "private, max-age=31536000, immutable"},
     )
 
 

@@ -11,7 +11,7 @@ from pydantic import HttpUrl, SecretStr
 
 from home_finder.config import Settings
 from home_finder.db.storage import PropertyStorage
-from home_finder.models import MergedProperty, Property, PropertySource
+from home_finder.models import MergedProperty, Property, PropertySource, UserStatus
 from home_finder.web.telegram_webhook import router
 
 
@@ -19,7 +19,7 @@ from home_finder.web.telegram_webhook import router
 def settings() -> Settings:
     return Settings(
         telegram_bot_token=SecretStr("fake:token"),
-        telegram_chat_id=0,
+        telegram_chat_id=123,
         telegram_webhook_secret="test-secret-123",
         search_areas="e8",
         database_path=":memory:",
@@ -81,6 +81,7 @@ def _callback_update(callback_data: str, callback_id: str = "cb-123") -> dict:
             "id": callback_id,
             "data": callback_data,
             "from": {"id": 123, "is_bot": False, "first_name": "Marcel"},
+            "message": {"chat": {"id": 123}},
         },
     }
 
@@ -128,6 +129,124 @@ class TestWebhookSecurity:
 
 
 class TestCallbackHandler:
+    @pytest.mark.parametrize(
+        "field,value",
+        [
+            ("sender", 999),
+            ("chat", 999),
+            ("sender", "123"),
+            ("chat", True),
+            ("sender", None),
+            ("chat", None),
+        ],
+    )
+    async def test_wrong_owner_or_chat_has_no_effect(
+        self,
+        client,
+        storage,
+        merged_a,
+        field,
+        value,
+    ):
+        await storage.save_merged_property(merged_a)
+        update = _callback_update(f"st:{merged_a.unique_id}:interested")
+        if field == "sender":
+            update["callback_query"]["from"]["id"] = value
+        else:
+            update["callback_query"]["message"]["chat"]["id"] = value
+        with patch(
+            "home_finder.web.telegram_webhook._answer_callback", new_callable=AsyncMock
+        ) as answer:
+            assert (
+                client.post("/telegram/webhook", json=update, headers=VALID_HEADERS).status_code
+                == 200
+            )
+            answer.assert_not_called()
+        assert await storage.get_status_history(merged_a.unique_id) == []
+
+    async def test_group_requires_explicit_owner(self, client, storage, settings, merged_a):
+        await storage.save_merged_property(merged_a)
+        settings.telegram_chat_id = -456
+        update = _callback_update(f"st:{merged_a.unique_id}:interested")
+        update["callback_query"]["message"]["chat"]["id"] = -456
+        with patch(
+            "home_finder.web.telegram_webhook._answer_callback", new_callable=AsyncMock
+        ) as answer:
+            assert (
+                client.post("/telegram/webhook", json=update, headers=VALID_HEADERS).status_code
+                == 200
+            )
+            answer.assert_not_called()
+            assert await storage.get_status_history(merged_a.unique_id) == []
+            settings.telegram_owner_user_id = 123
+            assert (
+                client.post("/telegram/webhook", json=update, headers=VALID_HEADERS).status_code
+                == 200
+            )
+        assert len(await storage.get_status_history(merged_a.unique_id)) == 1
+
+    async def test_replay_cannot_undo_later_owner_decision(self, client, storage, merged_a):
+        await storage.save_merged_property(merged_a)
+        update = _callback_update(f"st:{merged_a.unique_id}:interested")
+        with patch(
+            "home_finder.web.telegram_webhook._answer_callback", new_callable=AsyncMock
+        ) as answer:
+            assert (
+                client.post("/telegram/webhook", json=update, headers=VALID_HEADERS).status_code
+                == 200
+            )
+            await storage.update_user_status(merged_a.unique_id, UserStatus.ARCHIVED)
+            assert (
+                client.post("/telegram/webhook", json=update, headers=VALID_HEADERS).status_code
+                == 200
+            )
+            answer.assert_awaited_once()
+        history = await storage.get_status_history(merged_a.unique_id)
+        assert [event["to_status"] for event in history] == ["interested", "archived"]
+
+    @pytest.mark.parametrize("value", [None, True, "1", -1, 2**63])
+    async def test_invalid_update_id_has_no_effect(self, client, storage, merged_a, value):
+        await storage.save_merged_property(merged_a)
+        update = _callback_update(f"st:{merged_a.unique_id}:interested")
+        update["update_id"] = value
+        with patch(
+            "home_finder.web.telegram_webhook._answer_callback", new_callable=AsyncMock
+        ) as answer:
+            assert (
+                client.post("/telegram/webhook", json=update, headers=VALID_HEADERS).status_code
+                == 200
+            )
+            answer.assert_not_called()
+        assert await storage.get_status_history(merged_a.unique_id) == []
+
+    @pytest.mark.parametrize("value", [None, [], 1, "x" * 65, "st:../path:interested", "\ud800"])
+    async def test_invalid_callback_data_has_no_effect(self, client, storage, merged_a, value):
+        import json
+
+        await storage.save_merged_property(merged_a)
+        update = _callback_update(value)
+        with patch("home_finder.web.telegram_webhook._answer_callback", new_callable=AsyncMock):
+            assert (
+                client.post(
+                    "/telegram/webhook",
+                    content=json.dumps(update),
+                    headers=VALID_HEADERS,
+                ).status_code
+                == 200
+            )
+        assert await storage.get_status_history(merged_a.unique_id) == []
+
+    @pytest.mark.parametrize("body", ["{broken", "[]", '"string"', "null", "[" * 2000])
+    def test_malformed_json_is_rejected(self, client, body):
+        assert (
+            client.post(
+                "/telegram/webhook",
+                content=body,
+                headers=VALID_HEADERS,
+            ).status_code
+            == 400
+        )
+
     @pytest.mark.asyncio
     async def test_interested_updates_status(
         self,
