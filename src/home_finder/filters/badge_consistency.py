@@ -77,14 +77,25 @@ def reconcile_analysis_badges(
         ("yes",),
     )
     outdoor = analysis.outdoor_space
+    outdoor_state = outdoor.effective_availability if outdoor else "unknown"
     require(
         PropertyLowlight.NO_OUTDOOR_SPACE,
         "outdoor_space.availability",
-        outdoor.effective_availability if outdoor else "unknown",
+        outdoor_state,
         ("no",),
     )
     # False type flags remain unobserved; known positive flags establish access.
     # Do not use unknown type flags to reject positive outdoor badges.
+    if outdoor_state == "no":
+        for badge in (
+            PropertyHighlight.PRIVATE_BALCONY,
+            PropertyHighlight.PRIVATE_GARDEN,
+            PropertyHighlight.PRIVATE_TERRACE,
+            PropertyHighlight.SHARED_GARDEN,
+            PropertyHighlight.COMMUNAL_GARDENS,
+            PropertyHighlight.ROOF_TERRACE,
+        ):
+            require(badge, "outdoor_space.availability", outdoor_state, ("yes",))
 
     def retain(badges: list[str] | None) -> list[str] | None:
         if badges is None:
