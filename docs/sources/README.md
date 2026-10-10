@@ -25,16 +25,17 @@ See [CLAUDE.md — HTTP Client Selection](../../CLAUDE.md#http-client-selection)
 
 When cross-platform duplicates are merged, higher-priority source images are kept. Zoopla (4) > Rightmove (3) > OnTheMarket (2) > OpenRent (1). Defined in `SOURCE_IMAGE_PRIORITY`.
 
-## Early-Stop Pagination
+## Bounded pagination
 
-The `BaseScraper._paginate()` method supports early-stop: if all results on a page are already in the DB, pagination stops. Only works when results are sorted newest-first.
+Normal collection continues through pages of known listings. A known page does
+not prove that an earlier run reached the remaining pages: that run may have
+stopped at a processing cap or been interrupted. The pipeline therefore passes
+`known_source_ids=None` for every source. Existing page, result and rate limits,
+terminal pages and duplicate-page detection still bound each collection.
 
-| Source | Supports Early-Stop | Why |
-|--------|-------------------|-----|
-| Zoopla | Yes | Sorted newest-first |
-| Rightmove | Yes | Sorted newest-first |
-| OnTheMarket | Yes | Sorted by update date |
-| OpenRent | **No** | No newest sort available; `known_source_ids` passed as `None` |
+`BaseScraper._paginate()` retains an optional known-ID stop for direct callers;
+the production pipeline does not enable it. The `--full-scrape` flag remains
+accepted for command compatibility and does not remove the normal bounds.
 
 ## Floorplan Gate
 

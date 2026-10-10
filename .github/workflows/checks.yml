@@ -70,8 +70,9 @@ jobs:
 
   test:
     runs-on: ubuntu-24.04
-    # The hosted baseline takes nine minutes; leave room for the expanded suite.
-    timeout-minutes: 15
+    # The expanded suite passed in ~14 minutes; main hit 15 minutes at 97%.
+    # Keep a bounded allowance for runner variance and report the slowest tests.
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -82,7 +83,7 @@ jobs:
           python-version: ${{ env.PYTHON_VERSION }}
           enable-cache: true
       - run: uv sync --locked --all-extras
-      - run: uv run pytest --cov --cov-report=xml --cov-report=term
+      - run: uv run pytest --cov --cov-report=xml --cov-report=term --durations=20
         env:
           PYTHONUNBUFFERED: "1"
           HYPOTHESIS_PROFILE: ci
