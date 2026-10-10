@@ -1,7 +1,9 @@
 """Integration tests for the --dedup-existing CLI command."""
 
 import json
+from contextlib import asynccontextmanager
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 import structlog.testing
@@ -89,39 +91,14 @@ def merged_rm(prop_rm: Property) -> MergedProperty:
 
 
 async def _run_with_storage(storage: PropertyStorage, settings: Settings) -> None:
-    """Run run_dedup_existing sharing the given storage's in-memory DB connection."""
-    original_init = PropertyStorage.__init__
+    """Inject the fixture's storage, preserving its ownership boundary."""
 
-    def patched_init(self_storage: PropertyStorage, db_path: str) -> None:
-        self_storage.db_path = db_path
-        self_storage._conn = storage._conn
-        self_storage._last_health_check = 0.0
-        self_storage._ensure_directory()
-        from home_finder.db.pipeline_repo import PipelineRepository
-        from home_finder.db.web_queries import WebQueryService
+    @asynccontextmanager
+    async def existing_storage(db_path: str):  # type: ignore[no-untyped-def]
+        yield storage
 
-        self_storage._web = WebQueryService(
-            self_storage._get_connection, self_storage.get_property_images
-        )
-        self_storage._pipeline = PipelineRepository(
-            self_storage._get_connection,
-            self_storage.get_property_images,
-            self_storage.save_quality_analysis,
-            self_storage._transaction,
-        )
-
-    original_close = PropertyStorage.close
-
-    async def patched_close(self_storage: PropertyStorage) -> None:
-        pass
-
-    PropertyStorage.__init__ = patched_init  # type: ignore[assignment]
-    PropertyStorage.close = patched_close  # type: ignore[assignment]
-    try:
+    with patch("home_finder.pipeline.commands.PropertyStorage", existing_storage):
         await run_dedup_existing(settings)
-    finally:
-        PropertyStorage.__init__ = original_init  # type: ignore[method-assign]
-        PropertyStorage.close = original_close  # type: ignore[method-assign]
 
 
 class TestRunDedupExisting:

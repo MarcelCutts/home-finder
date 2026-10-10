@@ -115,9 +115,17 @@ Mutations require a same-origin `Origin` or `Referer` header, including requests
 
 Telegram callbacks require the webhook secret, configured chat and owner user. `HOME_FINDER_TELEGRAM_OWNER_USER_ID` defaults to a positive private chat ID; set it explicitly for group chats. Update IDs are stored atomically with status history to prevent replay across restarts. This adds schema migration 7 (one nullable column and unique index); back up the database before first startup because the previous application refuses newer schema versions.
 
-Serve with `--no-pipeline` until the separate database transaction-ownership repair
-lands; the current middleware serializes HTTP mutations, not concurrent pipeline
-writes on the shared connection. Merging this change does not deploy it.
+Database operations serialize access to the shared SQLite connection through all
+reads, writes and transaction cleanup. This prevents a pipeline commit from
+committing an unfinished owner action. Nested helpers explicitly join their
+caller's transaction; network requests run outside database ownership. This adds
+no schema migration or connection pool. SQLite does not isolate operations on the
+[same connection](https://www.sqlite.org/isolation.html).
+
+Cancellation before commit rolls back the operation. Once commit starts, cleanup
+finishes before the connection is reused and the whole operation may have committed;
+do not automatically replay a cancelled write. Keep one application worker during
+initial operation. Merging code does not deploy it or resume collection.
 
 Additional protections include:
 
