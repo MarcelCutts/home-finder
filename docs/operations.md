@@ -21,10 +21,10 @@ Verify that anonymous dashboard/assets/diagnostics requests are rejected, valid
 owner credentials work, and cross-origin mutations are rejected. `/health` is
 liveness only. Never put a password in a URL or commit a filled `.env`.
 
-The `dashboard` Docker target excludes collector/browser dependencies. The
-`collector` target includes those extras. Both run as an unprivileged user.
-The Fly configuration selects the dashboard target; installing collector
-capabilities or moving the authority is a separate operational decision.
+The `dashboard` and `collector` Docker targets share the locked runtime and run
+as an unprivileged user. They differ in their startup commands: the dashboard
+disables the pipeline. The Fly configuration selects that dashboard command;
+activating collection or moving the authority is a separate operational decision.
 
 ## Back up and migrate
 
@@ -107,8 +107,8 @@ text is saved before optional media work. Historical text has no invented fetch
 date. Page/rate caps still bound collection; a page of known IDs does not end the
 normal scrape because unseen work may follow it.
 
-One supported active layout is a single Linux host with the locked collector
-extras (`uv sync --locked --all-extras`), the owner dashboard and one database:
+One supported active layout is a single Linux host with the locked runtime
+(`uv sync --locked --no-dev`), the owner dashboard and one database:
 
 ```bash
 HOME_FINDER_DATABASE_PATH=/srv/home-finder/data/properties.db \
