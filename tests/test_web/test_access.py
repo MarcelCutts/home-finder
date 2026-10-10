@@ -7,6 +7,8 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from fastapi.testclient import TestClient
 from pydantic import SecretStr
+from starlette.datastructures import URL
+from starlette.requests import Request
 
 from home_finder.config import Settings
 from home_finder.web.access import MAX_BODY_BYTES
@@ -60,6 +62,18 @@ def test_unconfigured_access_fails_closed(tmp_path: Path, password: str) -> None
 
 def test_health_does_not_expose_pipeline_state(client: TestClient) -> None:
     assert client.get("/health").json() == {"status": "ok"}
+
+
+@pytest.mark.parametrize("path", ["/", "/diagnostics", "/static/style.css"])
+def test_host_cannot_select_the_health_exemption(client: TestClient, path: str) -> None:
+    assert client.get(path, headers={"Host": "attacker/health?"}).status_code == 401
+
+
+def test_route_exemption_does_not_depend_on_url_reconstruction(client, monkeypatch):
+    # Reproduce the old Starlette Host-derived path regardless of which
+    # Starlette version is installed. Authentication follows the ASGI target.
+    monkeypatch.setattr(Request, "url", property(lambda _: URL("http://attacker/health?")))
+    assert client.get("/diagnostics").status_code == 401
 
 
 def test_owner_can_read_the_dashboard(client: TestClient) -> None:
@@ -167,12 +181,32 @@ def test_failed_authentication_is_rate_limited_and_recovers(client, monkeypatch)
     monkeypatch.setattr("home_finder.web.access.monotonic", lambda: now[0])
     for _ in range(10):
         assert client.get("/", auth=("owner", "wrong")).status_code == 401
-    response = client.get("/", auth=("owner", PASSWORD))
+    response = client.get("/", auth=("owner", "wrong"))
     assert response.status_code == 429
     assert response.headers["retry-after"] == "60"
+    assert client.get("/", auth=("owner", PASSWORD)).status_code == 200
+    assert client.get("/", auth=("owner", "wrong")).status_code == 429
     assert client.get("/health").status_code == 200
     now[0] += 61
+    assert client.get("/", auth=("owner", "wrong")).status_code == 401
+
+
+@pytest.mark.parametrize("failed_path", ["/", "/telegram/webhook"])
+def test_anonymous_peer_limit_cannot_lock_out_owner_or_telegram(client, failed_path):
+    client.app.state.settings.telegram_webhook_secret = "test-secret"
+    for _ in range(10):
+        response = client.request("POST" if "webhook" in failed_path else "GET", failed_path)
+        assert response.status_code in {401, 403}
+    assert client.get("/").status_code == 429
     assert client.get("/", auth=("owner", PASSWORD)).status_code == 200
+    assert (
+        client.post(
+            "/telegram/webhook",
+            headers={"X-Telegram-Bot-Api-Secret-Token": "test-secret"},
+            json={"update_id": 1},
+        ).status_code
+        == 200
+    )
 
 
 def test_mutations_are_rate_limited_and_coalesce(client, property_id, monkeypatch):

@@ -136,16 +136,14 @@ class OwnerAccessMiddleware:
                 scope, receive, private_send
             )
 
-        if request.url.path == "/health" and request.method in {"GET", "HEAD"}:
+        # Route exemptions must use the server-parsed target, never a URL
+        # reconstructed from the client-controlled Host header.
+        if scope["path"] == "/health" and request.method in {"GET", "HEAD"}:
             await self.app(scope, receive, private_send)
             return
 
-        webhook = request.url.path == "/telegram/webhook" and request.method == "POST"
+        webhook = scope["path"] == "/telegram/webhook" and request.method == "POST"
         client_key = request.client.host if request.client else "unknown"
-        retry = self._failed_auth.retry_after(client_key)
-        if retry:
-            await reject(429, "Too many authentication attempts", retry=retry)
-            return
         if webhook:
             if not self.settings.telegram_webhook_secret:
                 await reject(404, "Webhook not configured")
@@ -158,10 +156,14 @@ class OwnerAccessMiddleware:
                 return
             authorized = await self._owner_authorized(request)
         if not authorized:
-            self._failed_auth.consume(client_key)
+            # A peer may be a shared reverse proxy. Anonymous traffic must not
+            # lock out valid owner credentials or authenticated Telegram hooks.
+            retry = self._failed_auth.consume(client_key)
+            if retry:
+                await reject(429, "Too many authentication attempts", retry=retry)
+                return
             await reject(403 if webhook else 401, "Authentication required")
             return
-        self._failed_auth.events.pop(client_key, None)
 
         if request.method in _SAFE_METHODS:
             await self.app(scope, receive, private_send)
