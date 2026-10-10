@@ -32,6 +32,10 @@ selective_angles and feels_spacious use true/false only \
 For is_spacious_enough use true/false/null; null means the usable space is uncertain. \
 Do not guess — a confident "unknown" is more useful than a wrong answer.
 
+Outdoor availability is yes/no/unknown: missing photos or all-false type flags \
+alone mean unknown, not no. Count private patios/courtyards as has_terrace; retain \
+listing claims and visible evidence in notes.
+
 Keep observations, listing claims and hypotheses distinct in every field, including \
 summary and concerns. Visible panel heaters do not prove electric-only heating, \
 absence of gas, energy cost or acoustic insulation. A street name in an amenities \
@@ -400,22 +404,19 @@ def _format_image_review_coverage(coverage: ImageReviewCoverage | None) -> str:
     if coverage is None:
         return ""
     prompt = (
-        "\n\n<image_review_coverage>\nApplication-counted gallery coverage: "
+        "\n\n<image_review_coverage>\nApplication count: "
         f"{coverage.reviewed_gallery_count} of {coverage.available_gallery_count} "
-        "available gallery images reviewed. Source-declared floorplans are excluded "
-        "from these counts; this is the supplied gallery, not a verified portal total. "
-        "Even a complete review cannot establish advert completeness. Scope absences "
-        "as 'not seen in supplied images', never 'missing from the advert'.\n"
+        "available gallery images reviewed. Source-declared floorplans are excluded. "
+        "Even a complete review cannot establish advert completeness; absences mean "
+        "'not seen in supplied images'.\n"
     )
     if coverage.is_partial:
         prompt += (
-            "Partial review: the remaining gallery images were not reviewed. Listing-wide "
-            "photo completeness is unknown. missing_room_photos may name rooms not seen "
-            "in this review only; never claim they are absent from the listing. Set "
-            "too_few_photos and selective_angles false and exclude photo-completeness "
-            "concerns from red_flag_count, lowlights, summary accusations and all ratings "
-            "or value penalties. Do not infer the contents of unreviewed images. Keep "
-            "actual visible condition observations and qualify gaps as viewing checks.\n"
+            "Partial review: photo completeness is unknown. Treat missing_room_photos as "
+            "review gaps. Set too_few_photos/selective_angles false; exclude photo gaps "
+            "from red_flag_count, lowlights, summary and all ratings or value penalties. "
+            "Do not infer unseen contents; keep visible condition evidence and qualify "
+            "gaps as viewing checks.\n"
         )
         if coverage.rooms_not_seen_in_review:
             prompt += (

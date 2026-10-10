@@ -814,12 +814,12 @@ class TestPersistEstimatedFloorArea:
         make_quality_analysis: Callable[..., PropertyQualityAnalysis],
         capsys: pytest.CaptureFixture[str],
     ) -> None:
-        """Warns when room area sum diverges significantly from total."""
+        """Warns when room area sum significantly exceeds the total."""
         rooms = [
-            RoomArea(name="Living Room", area_sqm=20.0),
-            RoomArea(name="Bedroom", area_sqm=12.0),
+            RoomArea(name="Living Room", area_sqm=50.0),
+            RoomArea(name="Bedroom", area_sqm=22.0),
         ]
-        # room_sum=32, total=60 — diff of 28, exceeds max(5, 60*0.15)=9
+        # room_sum=72, total=60 — excess of 12, exceeds max(5, 60*0.15)=9
         merged = make_merged_property(bedrooms=1)
         analysis = make_quality_analysis(space=SpaceAnalysis(total_area_sqm=60.0, room_areas=rooms))
         await storage.pipeline.save_pre_analysis_properties([merged], {})
@@ -837,6 +837,33 @@ class TestPersistEstimatedFloorArea:
         row = await cursor.fetchone()
         assert row is not None
         assert row["floor_area_sqm"] == 60.0
+
+    @pytest.mark.parametrize(
+        ("total", "known_area"), [(49.69, 13.8), (35.1, 3.56), (70.05, 20.15), (52.6, None)]
+    )
+    async def test_partial_or_withheld_room_areas_do_not_warn(
+        self, storage, make_merged_property, make_quality_analysis, capsys, total, known_area
+    ):
+        merged = make_merged_property(bedrooms=1)
+        analysis = make_quality_analysis(
+            space=SpaceAnalysis(
+                total_area_sqm=total,
+                floorplan_total_area_sqm=total,
+                room_areas=[
+                    RoomArea(name="Measured room", area_sqm=known_area),
+                    RoomArea(name="Withheld room", area_sqm=None),
+                ],
+            )
+        )
+        await storage.pipeline.save_pre_analysis_properties([merged], {})
+        await _persist_estimated_floor_area(merged, analysis, storage)
+        captured = capsys.readouterr()
+        assert "floor_area_sum_mismatch" not in captured.out + captured.err
+        conn = await storage._get_connection()
+        cursor = await conn.execute(
+            "SELECT floor_area_sqm FROM properties WHERE unique_id = ?", (merged.unique_id,)
+        )
+        assert (await cursor.fetchone())["floor_area_sqm"] == total
 
     async def test_no_room_sum_mismatch_when_close(
         self,

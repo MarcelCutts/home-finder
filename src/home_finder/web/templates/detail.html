@@ -172,7 +172,8 @@
         <blockquote>{{ qa.summary }}</blockquote>
         <p class="cost-line-note">AI assessment. {% if not qa.listing_text_inputs %}This earlier assessment has no retained listing-text inputs; factual claims need confirmation.{% else %}Check current listing evidence and confirm material claims with the agent.{% endif %}</p>
 
-        {% if qa.highlights or qa.lowlights %}
+        {% set display_lowlights = qa.display_lowlights %}
+        {% if qa.highlights or display_lowlights %}
         <div class="overview-chips">
             {% if qa.highlights %}
             {% for tag in qa.highlights %}
@@ -181,8 +182,8 @@
             {% endif %}
             {% endfor %}
             {% endif %}
-            {% if qa.lowlights %}
-            {% for tag in qa.lowlights %}
+            {% if display_lowlights %}
+            {% for tag in display_lowlights %}
             <span class="highlight-chip highlight-negative">{{ tag }}</span>
             {% endfor %}
             {% endif %}

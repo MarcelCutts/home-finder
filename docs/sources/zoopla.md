@@ -21,6 +21,7 @@ Three extraction methods tried in order: `__NEXT_DATA__` JSON, RSC taxonomy payl
 
 ## Known Quirks
 
+- **Availability JSON-LD**: Current detail pages use a `RealEstateListing` with a string `mainEntityOfPage` identifying the advert and an explicit `Offer.availability`. The availability reader accepts that source-bound identity when it matches the requested listing; conflicting main, top-level or offer URLs remain unknown. `listingStatus=to_rent`, move-in dates and HTTP 200 do not establish availability by themselves.
 - **RSC format instability**: Zoopla periodically changes RSC payload structure. The scraper uses recursive search rather than fixed paths to handle this.
 - **Protocol-relative image URLs**: Image `src` values may lack `https:` prefix — code prepends it.
 - **Soft Cloudflare challenges**: 200 status but challenge HTML — treated as a block.

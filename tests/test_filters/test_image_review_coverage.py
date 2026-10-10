@@ -218,6 +218,40 @@ async def test_partial_review_preserves_observation_prose_without_photo_accusati
     assert analysis.kitchen.notes == raw["kitchen"]["notes"]
 
 
+async def test_partial_coverage_and_structured_badge_guards_survive_combined_assembly(
+    make_merged_property, tmp_path
+):
+    merged = gallery_property(make_merged_property, tmp_path)
+    visual, evaluation = responses_with_photo_accusations()
+    outdoor = visual["content"][0]["input"]["outdoor_space"]
+    outdoor.update(
+        availability="unknown",
+        has_balcony=False,
+        has_garden=False,
+        has_terrace=False,
+        has_shared_garden=False,
+        notes="Outdoor access not established by supplied photos",
+    )
+    evaluated = json.loads(evaluation["content"][0]["text"])
+    evaluated["lowlights"].extend(["No outdoor space", "No dishwasher"])
+    evaluation["content"][0]["text"] = json.dumps(evaluated)
+
+    def respond(request):
+        return httpx2.Response(
+            200, json=visual if "tools" in json.loads(request.content) else evaluation
+        )
+
+    async with model_for(respond) as model:
+        _, analysis = await model.analyze_single_merged(merged, data_dir=str(tmp_path))
+    assert analysis.image_review_coverage.reviewed_gallery_count == 7
+    assert analysis.image_review_coverage.available_gallery_count == 8
+    assert analysis.outdoor_space.effective_availability == "unknown"
+    assert analysis.kitchen.has_dishwasher == "yes"
+    assert analysis.lowlights == analysis.display_lowlights == ["Needs updating"]
+    assert analysis.listing_red_flags.missing_room_photos == []
+    assert analysis.listing_red_flags.red_flag_count == 1
+
+
 @pytest.mark.parametrize("floor_area_source", ["estimated", "rightmove"])
 async def test_checkpoint_restart_retains_raw_observations_and_persists_coverage(
     make_merged_property, tmp_path, native_analysis_spending, floor_area_source

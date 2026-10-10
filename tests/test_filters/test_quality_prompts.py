@@ -58,6 +58,8 @@ Your task is to observe and assess property quality from images and cross-refere
 
 When you cannot determine something from the images, use the appropriate sentinel value: "unknown" for enum/string fields, false for boolean fields, "none" for concern_severity when there are no concerns. For has_visible_damp, has_visible_mold, has_double_glazing, has_dishwasher, has_washing_machine, has_worn_fixtures, has_bathtub, has_built_in_wardrobe, has_built_in_wardrobes, has_hallway_cupboard, is_ensuite, primary_is_double, and can_fit_desk use "yes"/"no"/"unknown" — these are tri-state string fields. For multi-value fields (office_separation, hosting_layout, hosting_noise_risk) use "unknown" when you cannot determine the value. For has_balcony, has_garden, has_terrace, has_shared_garden, too_few_photos, selective_angles and feels_spacious use true/false only (never "unknown" — use false when uncertain). For is_spacious_enough use true/false/null; null means the usable space is uncertain. Do not guess — a confident "unknown" is more useful than a wrong answer.
 
+Outdoor availability is yes/no/unknown: missing photos or all-false type flags alone mean unknown, not no. Count private patios/courtyards as has_terrace; retain listing claims and visible evidence in notes.
+
 Keep observations, listing claims and hypotheses distinct in every field, including summary and concerns. Visible panel heaters do not prove electric-only heating, absence of gas, energy cost or acoustic insulation. A street name in an amenities paragraph does not establish the flat's frontage; preserve address/location disagreements and ask which rooms face which street. Photos cannot establish measured noise transmission or local enforcement outcomes. Missing bills information means unknown, never excluded. Use agent questions for these uncertainties.
 
 <task>
@@ -793,13 +795,22 @@ class TestToolSchemaSnapshots:
                             "outdoor_space": {
                                 "additionalProperties": False,
                                 "properties": {
+                                    "availability": {
+                                        "description": "Overall outdoor access: yes if evidenced, no only if explicitly absent; otherwise unknown. All false type flags do not establish absence.",
+                                        "enum": ["yes", "no", "unknown"],
+                                        "type": "string",
+                                    },
                                     "has_balcony": {"type": "boolean"},
                                     "has_garden": {"type": "boolean"},
-                                    "has_terrace": {"type": "boolean"},
+                                    "has_terrace": {
+                                        "description": "Includes private patios and courtyards.",
+                                        "type": "boolean",
+                                    },
                                     "has_shared_garden": {"type": "boolean"},
                                     "notes": {"type": "string"},
                                 },
                                 "required": [
+                                    "availability",
                                     "has_balcony",
                                     "has_garden",
                                     "has_terrace",

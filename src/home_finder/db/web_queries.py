@@ -19,7 +19,12 @@ from home_finder.db.row_mappers import (
     parse_json_fields,
 )
 from home_finder.logging import get_logger
-from home_finder.models import PropertyQualityAnalysis
+from home_finder.models import PropertyLowlight, PropertyQualityAnalysis
+from home_finder.models.quality import (
+    OUTDOOR_SPACE_FLAGS,
+    filter_outdoor_absence_badge,
+    outdoor_availability,
+)
 from home_finder.utils.listing_facts import supported_band
 from home_finder.web.filters import ADDED_OPTIONS
 
@@ -33,6 +38,17 @@ logger = get_logger(__name__)
 # A fallback analysis has no overall rating. It must never acquire a fit score
 # merely because the scoring formula supplies defaults for missing observations.
 _ASSESSED_SQL = "(q.overall_rating IS NOT NULL)"
+
+# Old denormalized zeros mean all type flags were false, which also represented
+# unknown. Derive filters from retained evidence; never relabel historical JSON.
+_OUTDOOR_POSITIVE_SQL = " OR ".join(
+    f"json_extract(q.analysis_json, '$.outdoor_space.{name}') = 1" for name in OUTDOOR_SPACE_FLAGS
+)
+_OUTDOOR_AVAILABILITY_SQL = f"""(CASE
+    WHEN {_OUTDOOR_POSITIVE_SQL}
+        OR json_extract(q.analysis_json, '$.outdoor_space.availability') = 'yes' THEN 'yes'
+    WHEN json_extract(q.analysis_json, '$.outdoor_space.availability') = 'no' THEN 'no'
+    ELSE 'unknown' END)"""
 
 _CARD_COLUMNS = f"""
     p.*, q.overall_rating as quality_rating,
@@ -128,10 +144,11 @@ def _row_to_card_dict(row: aiosqlite.Row) -> PropertyListItem:
         if isinstance(raw_hl, list)
         else None
     )
-    prop_dict["lowlights"] = (
+    prop_dict["lowlights"] = filter_outdoor_absence_badge(
         [t for t in raw_ll if isinstance(t, str) and t.strip() not in ("", ",")]
         if isinstance(raw_ll, list)
-        else None
+        else None,
+        outdoor_availability(analysis.get("outdoor_space")),
     )
     prop_dict["one_line"] = analysis.get("one_line")
     listing_ext = analysis.get("listing_extraction") or {}
@@ -230,10 +247,9 @@ def build_filter_clauses(
             "json_extract(q.analysis_json, '$.listing_extraction.property_type') = ?"
         )
         params.append(filters.property_type)
-    if filters.outdoor_space == "yes":
-        where_clauses.append("q.has_outdoor_space = 1")
-    elif filters.outdoor_space == "no":
-        where_clauses.append("q.has_outdoor_space = 0")
+    if filters.outdoor_space:
+        where_clauses.append(f"{_OUTDOOR_AVAILABILITY_SQL} = ?")
+        params.append(filters.outdoor_space)
     if filters.natural_light:
         where_clauses.append("json_extract(q.analysis_json, '$.light_space.natural_light') = ?")
         params.append(filters.natural_light)
@@ -290,6 +306,8 @@ def build_filter_clauses(
         params.append(filters.min_floor_area_sqm)
     if filters.tags:
         for t in filters.tags:
+            if t == PropertyLowlight.NO_OUTDOOR_SPACE:
+                where_clauses.append(f"{_OUTDOOR_AVAILABILITY_SQL} = 'no'")
             where_clauses.append(
                 "(json_extract(q.analysis_json, '$.highlights') LIKE ?"
                 " OR json_extract(q.analysis_json, '$.lowlights') LIKE ?)"

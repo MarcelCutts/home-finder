@@ -29,6 +29,7 @@ from home_finder.filters.analysis_contracts import (
     failure as output_failure,
 )
 from home_finder.filters.analysis_spend import AnalysisSpendMeter, visual_input_key
+from home_finder.filters.badge_consistency import reconcile_analysis_badges
 from home_finder.filters.image_review import apply_image_review_coverage, reconcile_image_review
 from home_finder.filters.listing_text import (
     select_listing_text,
@@ -451,9 +452,13 @@ class _VisualAnalysisResponse(BaseModel):
 
     class OutdoorSpace(BaseModel):
         model_config = _Forbid
+        availability: Literal["yes", "no", "unknown"] = Field(
+            description="Overall outdoor access: yes if evidenced, no only if explicitly absent; "
+            "otherwise unknown. All false type flags do not establish absence."
+        )
         has_balcony: bool
         has_garden: bool
-        has_terrace: bool
+        has_terrace: bool = Field(description="Includes private patios and courtyards.")
         has_shared_garden: bool
         notes: str
 
@@ -1952,6 +1957,7 @@ class PropertyQualityFilter:
                 )
         if analysis is not None:
             analysis = apply_image_review_coverage(analysis, coverage)
+            analysis = reconcile_analysis_badges(analysis, property_id=property_id)
             provenance = self._analysis_provenance()
             input_key = visual_input_key(property_id, self._visual_request(content), provenance)
             analysis = analysis.model_copy(
