@@ -115,6 +115,10 @@ Mutations require a same-origin `Origin` or `Referer` header, including requests
 
 Telegram callbacks require the webhook secret, configured chat and owner user. `HOME_FINDER_TELEGRAM_OWNER_USER_ID` defaults to a positive private chat ID; set it explicitly for group chats. Update IDs are stored atomically with status history to prevent replay across restarts. This adds schema migration 7 (one nullable column and unique index); back up the database before first startup because the previous application refuses newer schema versions.
 
+Serve with `--no-pipeline` until the separate database transaction-ownership repair
+lands; the current middleware serializes HTTP mutations, not concurrent pipeline
+writes on the shared connection. Merging this change does not deploy it.
+
 Additional protections include:
 
 - **XSS prevention**: All user-controlled content is escaped. Scraped descriptions use `| e | safe` in Jinja2. Leaflet popups use `textContent` instead of HTML injection.
