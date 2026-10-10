@@ -7,6 +7,7 @@ import sqlite3
 import subprocess
 import sys
 from collections.abc import AsyncIterator
+from contextlib import closing
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -484,7 +485,7 @@ os._exit(0)
     journal = snapshot.with_name(snapshot.name + "-journal")
     before = snapshot.read_bytes(), journal.read_bytes()
     # Prove the crash spilled uncommitted pages: bypassing recovery sees them.
-    with sqlite3.connect(snapshot.as_uri() + "?immutable=1", uri=True) as conn:
+    with closing(sqlite3.connect(snapshot.as_uri() + "?immutable=1", uri=True)) as conn:
         assert conn.execute(
             "SELECT description FROM properties WHERE unique_id='a'"
         ).fetchone() == ("uncommitted text",)
@@ -493,7 +494,7 @@ os._exit(0)
     assert (snapshot.read_bytes(), journal.read_bytes()) == before
     assert not (tmp_path / "out").exists()
     # A normal open recovers the last committed value, without trusting the exporter.
-    with sqlite3.connect(snapshot) as conn:
+    with closing(sqlite3.connect(snapshot)) as conn:
         assert conn.execute(
             "SELECT description FROM properties WHERE unique_id='a'"
         ).fetchone() == ("listing text",)

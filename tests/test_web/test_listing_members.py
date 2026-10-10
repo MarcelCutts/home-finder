@@ -23,7 +23,7 @@ async def test_same_portal_links_text_and_conflicting_cost_claims_survive_split(
             image_url="https://fixture.test/gallery.jpg",
         )
         for identifier, description in (
-            (100001, "First description: electricity included\n<script>alert(1)</script>"),
+            (100001, "First description: electricity included in rent\n<script>alert(1)</script>"),
             (100002, "Second description: electricity excluded"),
         )
     ]
