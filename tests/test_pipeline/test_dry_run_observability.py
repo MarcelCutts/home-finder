@@ -497,3 +497,119 @@ async def test_internally_cancelled_terminal_write_does_not_claim_finalization(
     ]
     assert len(terminal) == 1
     assert terminal[0]["finalized"] is False
+
+
+@pytest.mark.parametrize("primary_type", [asyncio.CancelledError, ValueError, None])
+@pytest.mark.parametrize(
+    ("phase", "operation"),
+    [
+        ("pre_analysis", "pre_analysis_accounting"),
+        ("quality_analysis_and_save", "quality_analysis_accounting"),
+        ("reanalysis", "reanalysis_accounting"),
+        ("notification_delivery", "notification_accounting"),
+    ],
+)
+async def test_phase_accounting_failure_preserves_primary_exception(
+    settings, storage, boundaries, logs, primary_type, phase, operation
+):
+    primary = primary_type("original phase failure") if primary_type is not None else None
+    audit_error = RuntimeError("secondary accounting failure")
+    original_update = storage.pipeline.update_pipeline_run
+
+    async def update(run_id, **counts):
+        target = (
+            (phase == "pre_analysis" and "scraped_count" in counts)
+            or (phase == "quality_analysis_and_save" and "notified_count" in counts)
+            or (phase == "reanalysis" and set(counts) == {"analysis_seconds"})
+            or (phase == "notification_delivery" and "notification_seconds" in counts)
+        )
+        if target:
+            raise audit_error
+        await original_update(run_id, **counts)
+
+    if phase == "pre_analysis":
+        boundaries.pre.side_effect = primary
+    elif phase == "reanalysis":
+        boundaries.reanalysis.side_effect = primary
+    elif phase == "notification_delivery":
+        boundaries.notifier.deliver_pending.side_effect = [0, primary if primary else 0]
+    dry_run = phase != "notification_delivery"
+    expected = primary if primary is not None else audit_error
+    with (
+        structlog.contextvars.bound_contextvars(trial_id="accounting-trial", run_id=916),
+        patch(
+            "home_finder.main._run_quality_and_save",
+            return_value=(0, None),
+            side_effect=primary if phase == "quality_analysis_and_save" else None,
+        ),
+        patch.object(storage.pipeline, "update_pipeline_run", side_effect=update),
+    ):
+        before = structlog.contextvars.get_contextvars()
+        with pytest.raises(type(expected)) as raised:
+            await _run_pipeline_with_storage(settings, storage, dry_run=dry_run)
+        assert raised.value is expected
+        assert structlog.contextvars.get_contextvars() == before
+
+    status = "cancelled" if primary_type is asyncio.CancelledError else "failed"
+    run = await storage.pipeline.get_last_pipeline_run()
+    assert run["status"] == status
+    assert run["error_message"] == (None if status == "cancelled" else str(expected))
+    assert phase_outcomes(logs)[phase] == status
+    secondary_logs = [entry for entry in logs if entry["event"] == "cleanup_failed"]
+    if primary is not None:
+        assert len(secondary_logs) == 1
+        assert secondary_logs[0]["operation"] == operation
+        assert secondary_logs[0]["error_type"] == "RuntimeError"
+        assert secondary_logs[0]["primary_error_type"] == primary_type.__name__
+    else:
+        assert secondary_logs == []
+    assert not any(entry["event"] == "pipeline_complete" for entry in logs)
+    if dry_run:
+        assert_no_telegram(boundaries)
+
+
+@pytest.mark.parametrize("primary_type", [asyncio.CancelledError, ValueError, None])
+@pytest.mark.parametrize("resource", ["event_flush", "notifier_exit"])
+async def test_resource_cleanup_failure_preserves_primary_exception(
+    settings, storage, boundaries, logs, primary_type, resource
+):
+    primary = primary_type("original body failure") if primary_type is not None else None
+    cleanup_error = RuntimeError("secondary resource cleanup failure")
+
+    async def pre(*args, recorder, progress, **kwargs):
+        recorder.record(
+            PropertyEvent("openrent:synthetic", "openrent", "criteria_passed", "criteria")
+        )
+        if primary is not None:
+            raise primary
+        return progress
+
+    boundaries.pre.side_effect = pre
+    if resource == "notifier_exit":
+        boundaries.notifier.__aexit__.side_effect = cleanup_error
+    expected = primary if primary is not None else cleanup_error
+    with patch.object(
+        storage.pipeline,
+        "insert_property_events",
+        wraps=storage.pipeline.insert_property_events,
+        side_effect=cleanup_error if resource == "event_flush" else None,
+    ) as insert:
+        with pytest.raises(type(expected)) as raised:
+            await _run_pipeline_with_storage(settings, storage, dry_run=resource == "event_flush")
+        assert raised.value is expected
+    insert.assert_awaited_once()
+    status = "cancelled" if primary_type is asyncio.CancelledError else "failed"
+    run = await storage.pipeline.get_last_pipeline_run()
+    assert run["status"] == status
+    assert run["error_message"] == (None if status == "cancelled" else str(expected))
+    secondary_logs = [entry for entry in logs if entry["event"] == "cleanup_failed"]
+    if primary is not None:
+        assert len(secondary_logs) == 1
+        assert secondary_logs[0]["operation"] == (
+            "property_event_flush" if resource == "event_flush" else "pipeline_resources"
+        )
+        assert secondary_logs[0]["error_type"] == "RuntimeError"
+        assert secondary_logs[0]["primary_error_type"] == primary_type.__name__
+    else:
+        assert secondary_logs == []
+    assert not any(entry["event"] == "pipeline_complete" for entry in logs)

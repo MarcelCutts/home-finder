@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from types import TracebackType
 from typing import TYPE_CHECKING, Any
 
 from home_finder.logging import get_logger
-from home_finder.utils.async_tasks import finish_before_cancelling
+from home_finder.utils.async_tasks import finish_before_cancelling, finish_cleanup
 
 if TYPE_CHECKING:
     from home_finder.db.storage import PropertyStorage
@@ -76,5 +77,10 @@ class EventRecorder:
     async def __aenter__(self) -> EventRecorder:
         return self
 
-    async def __aexit__(self, *exc: object) -> None:
-        await self.flush()
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        traceback: TracebackType | None,
+    ) -> None:
+        await finish_cleanup(self.flush(), primary_error=exc, operation_name="property_event_flush")

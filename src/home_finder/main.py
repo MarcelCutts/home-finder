@@ -5,7 +5,7 @@ import asyncio
 import contextlib
 import sys
 import time
-from collections.abc import Iterator
+from collections.abc import AsyncIterator, Iterator
 from dataclasses import asdict
 
 import structlog
@@ -40,7 +40,7 @@ from home_finder.pipeline.stages import (
     PreAnalysisResult,
     _run_pre_analysis_pipeline,
 )
-from home_finder.utils.async_tasks import finish_before_cancelling
+from home_finder.utils.async_tasks import finish_before_cancelling, finish_cleanup
 from home_finder.utils.image_cache import backfill_thumbnails
 
 logger = get_logger(__name__)
@@ -257,6 +257,28 @@ def _pipeline_phase(phase: str) -> Iterator[dict[str, int | float | str]]:
         )
 
 
+@contextlib.asynccontextmanager
+async def _pipeline_resources() -> AsyncIterator[contextlib.AsyncExitStack]:
+    """Close all pipeline resources without masking a body failure/cancellation."""
+    stack = contextlib.AsyncExitStack()
+    primary_error: BaseException | None = None
+    try:
+        yield stack
+    except BaseException as exc:
+        primary_error = exc
+        raise
+    finally:
+        await finish_cleanup(
+            stack.__aexit__(
+                type(primary_error) if primary_error is not None else None,
+                primary_error,
+                primary_error.__traceback__ if primary_error is not None else None,
+            ),
+            primary_error=primary_error,
+            operation_name="pipeline_resources",
+        )
+
+
 async def _run_pipeline_with_storage(
     settings: Settings,
     storage: PropertyStorage,
@@ -277,7 +299,7 @@ async def _run_pipeline_with_storage(
         logger.info("pipeline_run_created", run_id=run_id)
 
     try:
-        async with contextlib.AsyncExitStack() as stack:
+        async with _pipeline_resources() as stack:
             with _pipeline_phase("setup"):
                 try:
                     await finish_before_cancelling(create_run())
@@ -309,6 +331,7 @@ async def _run_pipeline_with_storage(
 
             progress = PreAnalysisResult()
             with _pipeline_phase("pre_analysis") as phase:
+                primary_error: BaseException | None = None
                 try:
                     pre = await _run_pre_analysis_pipeline(
                         settings,
@@ -322,9 +345,14 @@ async def _run_pipeline_with_storage(
                     if pre is not None:
                         progress = pre
                     phase.update(outcome=progress.collection_status, scraped=progress.scraped_count)
+                except BaseException as exc:
+                    primary_error = exc
+                    raise
                 finally:
-                    await finish_before_cancelling(
-                        _record_pre_analysis_progress(storage, run_id, progress)
+                    await finish_cleanup(
+                        _record_pre_analysis_progress(storage, run_id, progress),
+                        primary_error=primary_error,
+                        operation_name="pre_analysis_accounting",
                     )
             if pre is None:
                 # Discovery is one producer of work. Existing pending analysis,
@@ -355,6 +383,7 @@ async def _run_pipeline_with_storage(
             t_analysis = time.monotonic()
             analysis_counts: dict[str, int | float] = {}
             with _pipeline_phase("quality_analysis_and_save") as phase:
+                primary_error = None
                 try:
                     analyzed_count, token_usage = await _run_quality_and_save(
                         pre, settings, storage, on_result, recorder=recorder
@@ -369,28 +398,39 @@ async def _run_pipeline_with_storage(
                             total_cache_creation_tokens=token_usage.cache_creation_tokens,
                             estimated_cost_usd=token_usage.estimated_cost_usd,
                         )
+                except BaseException as exc:
+                    primary_error = exc
+                    raise
                 finally:
                     # Save known totals before reanalysis or delivery can fail.
                     # Interrupted/reanalysis spend is reconciled in the ledger.
-                    await finish_before_cancelling(
+                    await finish_cleanup(
                         storage.pipeline.update_pipeline_run(
                             run_id,
                             analysis_seconds=time.monotonic() - t_analysis,
                             notified_count=notified_counter[0],
                             **analysis_counts,
-                        )
+                        ),
+                        primary_error=primary_error,
+                        operation_name="quality_analysis_accounting",
                     )
 
             # Re-analyze cross-run merges that gained new source data
             with _pipeline_phase("reanalysis") as phase:
+                primary_error = None
                 try:
                     reanalyzed_count = await _drain_reanalysis_queue(settings, storage)
                     phase["processed"] = reanalyzed_count
+                except BaseException as exc:
+                    primary_error = exc
+                    raise
                 finally:
-                    await finish_before_cancelling(
+                    await finish_cleanup(
                         storage.pipeline.update_pipeline_run(
                             run_id, analysis_seconds=time.monotonic() - t_analysis
-                        )
+                        ),
+                        primary_error=primary_error,
+                        operation_name="reanalysis_accounting",
                     )
 
             delivery_count = 0
@@ -400,16 +440,22 @@ async def _run_pipeline_with_storage(
                 else:
                     assert notifier is not None
                     t_notify = time.monotonic()
+                    primary_error = None
                     try:
                         delivery_count = await notifier.deliver_pending()
                         phase["completed"] = delivery_count
                         if delivery_count:
                             logger.info("queued_notifications_sent", count=delivery_count)
+                    except BaseException as exc:
+                        primary_error = exc
+                        raise
                     finally:
-                        await finish_before_cancelling(
+                        await finish_cleanup(
                             storage.pipeline.update_pipeline_run(
                                 run_id, notification_seconds=time.monotonic() - t_notify
-                            )
+                            ),
+                            primary_error=primary_error,
+                            operation_name="notification_accounting",
                         )
 
             if dry_run:
