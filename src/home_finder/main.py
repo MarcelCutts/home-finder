@@ -302,7 +302,9 @@ async def _run_pipeline_with_storage(
         async with _pipeline_resources() as stack:
             with _pipeline_phase("setup"):
                 try:
-                    await finish_before_cancelling(create_run())
+                    await finish_cleanup(
+                        create_run(), primary_error=None, operation_name="pipeline_run_creation"
+                    )
                 finally:
                     structlog.contextvars.bind_contextvars(run_id=run_id)
                 assert run_id is not None
@@ -465,8 +467,10 @@ async def _run_pipeline_with_storage(
         with _pipeline_phase("finalization"):
             if not dry_run:
                 await storage.pipeline.cleanup_old_events(settings.event_retention_runs)
-            await finish_before_cancelling(
-                storage.pipeline.complete_pipeline_run(run_id, progress.collection_status)
+            await finish_cleanup(
+                storage.pipeline.complete_pipeline_run(run_id, progress.collection_status),
+                primary_error=None,
+                operation_name="pipeline_run_completion",
             )
 
         logger.info(

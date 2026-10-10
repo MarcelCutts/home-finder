@@ -7,7 +7,7 @@ from types import TracebackType
 from typing import TYPE_CHECKING, Any
 
 from home_finder.logging import get_logger
-from home_finder.utils.async_tasks import finish_before_cancelling, finish_cleanup
+from home_finder.utils.async_tasks import finish_cleanup
 
 if TYPE_CHECKING:
     from home_finder.db.storage import PropertyStorage
@@ -72,7 +72,9 @@ class EventRecorder:
 
         # Finish this one insertion before propagating cancellation. Retrying a
         # cancelled insert could duplicate a batch whose commit already settled.
-        await finish_before_cancelling(insert_batch())
+        await finish_cleanup(
+            insert_batch(), primary_error=None, operation_name="property_event_insert"
+        )
 
     async def __aenter__(self) -> EventRecorder:
         return self

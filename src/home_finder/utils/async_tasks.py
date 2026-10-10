@@ -32,24 +32,29 @@ async def finish_before_cancelling(operation: Awaitable[_T]) -> _T:
 async def finish_cleanup(
     operation: Awaitable[object], *, primary_error: BaseException | None, operation_name: str
 ) -> None:
-    """Settle bounded cleanup without replacing an already propagating error."""
-    completed = False
-
-    async def settle() -> None:
-        nonlocal completed
-        await operation
-        completed = True
-
+    """Settle cleanup, preserving prior errors and cancellation during the wait."""
+    future = asyncio.ensure_future(operation)
+    cancelled: asyncio.CancelledError | None = None
     try:
-        await finish_before_cancelling(settle())
+        while not future.done():
+            try:
+                await asyncio.shield(future)
+            except asyncio.CancelledError as exc:
+                # An internally cancelled cleanup is handled by result() below.
+                # Retain caller cancellation even if the write subsequently fails.
+                if cancelled is None and not future.cancelled():
+                    cancelled = exc
+        future.result()
     except (asyncio.CancelledError, Exception) as exc:
-        if primary_error is None:
+        original = primary_error if primary_error is not None else cancelled
+        if original is None:
             raise
-        if not completed:
-            logger.error(
-                "cleanup_failed",
-                operation=operation_name,
-                error_type=type(exc).__name__,
-                primary_error_type=type(primary_error).__name__,
-                exc_info=True,
-            )
+        logger.error(
+            "cleanup_failed",
+            operation=operation_name,
+            error_type=type(exc).__name__,
+            primary_error_type=type(original).__name__,
+            exc_info=True,
+        )
+    if primary_error is None and cancelled is not None:
+        raise cancelled

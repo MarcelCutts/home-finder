@@ -613,3 +613,132 @@ async def test_resource_cleanup_failure_preserves_primary_exception(
     else:
         assert secondary_logs == []
     assert not any(entry["event"] == "pipeline_complete" for entry in logs)
+
+
+@pytest.mark.parametrize("cancel, cleanup_fails", [(True, False), (False, True), (True, True)])
+@pytest.mark.parametrize(
+    "boundary",
+    [
+        "pre_analysis",
+        "quality_analysis",
+        "reanalysis",
+        "notification",
+        "event_insert",
+        "event_exit",
+        "notifier_exit",
+        "run_creation",
+        "run_completion",
+    ],
+)
+async def test_first_cancellation_during_cleanup_survives_later_write_failure(
+    settings, storage, boundaries, logs, boundary, cancel, cleanup_fails
+):
+    entered, release = asyncio.Event(), asyncio.Event()
+    cleanup_calls = 0
+    audit_error = RuntimeError("later cleanup failure")
+
+    async def cleanup():
+        nonlocal cleanup_calls
+        cleanup_calls += 1
+        entered.set()
+        await release.wait()
+        if cleanup_fails:
+            raise audit_error
+
+    original_update = storage.pipeline.update_pipeline_run
+    original_insert = storage.pipeline.insert_property_events
+    original_create = storage.pipeline.create_pipeline_run
+    original_complete = storage.pipeline.complete_pipeline_run
+
+    async def update(run_id, **counts):
+        if (
+            (boundary == "pre_analysis" and "scraped_count" in counts)
+            or (boundary == "quality_analysis" and "notified_count" in counts)
+            or (boundary == "reanalysis" and set(counts) == {"analysis_seconds"})
+            or (boundary == "notification" and "notification_seconds" in counts)
+        ):
+            await cleanup()
+        await original_update(run_id, **counts)
+
+    async def insert(*args, **kwargs):
+        if boundary in {"event_insert", "event_exit"}:
+            await cleanup()
+        await original_insert(*args, **kwargs)
+
+    async def create():
+        if boundary == "run_creation":
+            await cleanup()
+        return await original_create()
+
+    async def complete(run_id, status, **kwargs):
+        if boundary == "run_completion" and status == "completed":
+            await cleanup()
+        await original_complete(run_id, status, **kwargs)
+
+    async def pre(*args, recorder, progress, **kwargs):
+        if boundary in {"event_insert", "event_exit"}:
+            recorder.record(
+                PropertyEvent("openrent:synthetic", "openrent", "criteria_passed", "criteria")
+            )
+        if boundary == "event_insert":
+            await recorder.flush()
+        return progress
+
+    async def exit_notifier(*args):
+        await cleanup()
+
+    boundaries.pre.side_effect = pre
+    if boundary == "notifier_exit":
+        boundaries.notifier.__aexit__.side_effect = exit_notifier
+    dry_run = boundary not in {"notification", "notifier_exit"}
+
+    async def run():
+        with structlog.contextvars.bound_contextvars(trial_id="cleanup-race", run_id=917):
+            before = structlog.contextvars.get_contextvars()
+            try:
+                await _run_pipeline_with_storage(settings, storage, dry_run=dry_run)
+            finally:
+                assert structlog.contextvars.get_contextvars() == before
+
+    with (
+        patch("home_finder.main._run_quality_and_save", return_value=(0, None)),
+        patch.object(storage.pipeline, "update_pipeline_run", side_effect=update),
+        patch.object(storage.pipeline, "insert_property_events", side_effect=insert),
+        patch.object(storage.pipeline, "create_pipeline_run", side_effect=create),
+        patch.object(storage.pipeline, "complete_pipeline_run", side_effect=complete),
+    ):
+        task = asyncio.create_task(run())
+        try:
+            await asyncio.wait_for(entered.wait(), 2)
+            if cancel:
+                task.cancel("first cancellation during cleanup")
+                await asyncio.sleep(0)
+                task.cancel("repeated cancellation")
+                await asyncio.sleep(0)
+                assert not task.done()
+        finally:
+            release.set()
+        if cancel:
+            with pytest.raises(asyncio.CancelledError, match="first cancellation during cleanup"):
+                await asyncio.wait_for(task, 2)
+        else:
+            with pytest.raises(RuntimeError) as raised:
+                await asyncio.wait_for(task, 2)
+            assert raised.value is audit_error
+
+    assert task.cancelled() is cancel
+    assert cleanup_calls == 1
+    run_row = await storage.pipeline.get_last_pipeline_run()
+    if boundary == "run_creation" and cleanup_fails:
+        assert run_row is None
+        assert await rows(storage, "pipeline_runs") == []
+    else:
+        assert run_row["status"] == ("cancelled" if cancel else "failed")
+    secondary_logs = [entry for entry in logs if entry["event"] == "cleanup_failed"]
+    assert len(secondary_logs) == int(cancel and cleanup_fails)
+    if secondary_logs:
+        assert secondary_logs[0]["error_type"] == "RuntimeError"
+        assert secondary_logs[0]["primary_error_type"] == "CancelledError"
+    assert not any(entry["event"] == "pipeline_complete" for entry in logs)
+    if dry_run:
+        assert_no_telegram(boundaries)
