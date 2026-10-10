@@ -135,12 +135,13 @@ constraint-dependencies = [
     "click>=8.3.3",
     "idna>=3.15",
     "lxml>=6.1.0",
+    "multidict>=6.9.1",  # GHSA-54p9-h82j-f925: items-view reference leak
     "protego>=0.6.2",
     "pygments>=2.20.0",
     "python-dotenv>=1.2.2",
     "requests>=2.33.0",
     "soupsieve>=2.9.0",
-    "urllib3>=2.7.0",
+    "urllib3>=2.8.0",  # September 2026 streaming/deflate/proxy TLS advisories
 ]
 
 [build-system]
