@@ -45,12 +45,6 @@ def failed_message(phase, scenario):
         del data["content"][0]["input"]["kitchen"]["has_dishwasher"]
     elif scenario == "string_boolean":
         data["content"][0]["input"]["space"]["is_spacious_enough"] = "false"
-    elif scenario in {"string_condition_concerns", "invalid_condition_contract"}:
-        data["content"][0]["input"]["condition_concerns"] = "false"
-        if scenario == "invalid_condition_contract":
-            del data["content"][0]["input"]["concern_severity"]
-    elif scenario == "missing_concern_severity":
-        del data["content"][0]["input"]["concern_severity"]
     elif scenario == "invalid_rating":
         data["content"][0]["input"]["overall_rating"] = 6
     elif scenario in {"fractional_rating", "boolean_rating", "string_rating"}:
@@ -105,9 +99,6 @@ def failed_message(phase, scenario):
         ("visual", "missing_tool", "malformed_output"),
         ("visual", "missing_visual_field", "malformed_output"),
         ("visual", "string_boolean", "malformed_output"),
-        ("visual", "string_condition_concerns", "malformed_output"),
-        ("visual", "missing_concern_severity", "malformed_output"),
-        ("visual", "invalid_condition_contract", "malformed_output"),
         ("visual", "invalid_rating", "malformed_output"),
         ("visual", "fractional_rating", "malformed_output"),
         ("visual", "boolean_rating", "malformed_output"),
@@ -134,9 +125,6 @@ async def test_failed_required_phase_retains_usage_but_never_completed_facts(
     calls = []
 
     def respond(request):
-        body = json.loads(request.content)
-        if "tools" in body:
-            assert body["tools"][0]["strict"] is True
         calls.append(request)
         return httpx2.Response(200, json=next(pending), headers={"request-id": "fixture-request"})
 

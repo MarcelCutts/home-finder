@@ -295,41 +295,6 @@ def image_block(colour):
     }
 
 
-async def test_strict_visual_contract_changes_provenance_and_invalidates_legacy_checkpoint(
-    monkeypatch,
-):
-    from home_finder.filters import quality as module
-
-    strict_tool = module.VISUAL_ANALYSIS_TOOL
-    legacy_tool = {key: value for key, value in strict_tool.items() if key != "strict"}
-    calls = []
-
-    def respond(request):
-        calls.append(json.loads(request.content))
-        return httpx2.Response(200, json=PHASE1_VISUAL_RESPONSE)
-
-    async with PropertyStorage(":memory:") as storage:
-        with monkeypatch.context() as legacy:
-            legacy.setattr(module, "VISUAL_ANALYSIS_TOOL", legacy_tool)
-            async with quality(storage, respond) as model:
-                old_provenance = model._analysis_provenance()
-                first = await model._run_visual_analysis(CONTENT, "fixture:strict")
-            old_checkpoint = (await checkpoint_rows(storage))[0]
-        async with quality(storage, respond) as model:
-            new_provenance = model._analysis_provenance()
-            assert await model._run_visual_analysis(CONTENT, "fixture:strict") == first
-            assert await model._run_visual_analysis(CONTENT, "fixture:strict") == first
-        new_checkpoint = (await checkpoint_rows(storage))[0]
-
-    assert len(calls) == 2
-    assert "strict" not in calls[0]["tools"][0]
-    assert calls[1]["tools"][0]["strict"] is True
-    assert old_provenance.visual_output_sha256 != new_provenance.visual_output_sha256
-    assert old_provenance.evaluation_output_sha256 == new_provenance.evaluation_output_sha256
-    assert old_checkpoint["input_sha256"] != new_checkpoint["input_sha256"]
-    assert old_checkpoint["attempt_id"] != new_checkpoint["attempt_id"]
-
-
 @pytest.mark.parametrize(
     "change", ["bytes", "order", "prompt", "visual_config", "schema", "evaluation_config"]
 )

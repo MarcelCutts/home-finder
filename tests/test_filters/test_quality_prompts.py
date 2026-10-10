@@ -492,7 +492,6 @@ class TestToolSchemaSnapshots:
                 {
                     "name": "property_visual_analysis",
                     "description": "Return visual property quality analysis results from images",
-                    "strict": True,
                     "input_schema": {
                         "additionalProperties": False,
                         "properties": {
@@ -1193,9 +1192,9 @@ class TestToolSchemaSnapshots:
         """Visual tool should have the correct name."""
         assert VISUAL_ANALYSIS_TOOL["name"] == "property_visual_analysis"
 
-    def test_visual_tool_is_strict(self) -> None:
-        """Visual tool requests provider schema enforcement."""
-        assert VISUAL_ANALYSIS_TOOL["strict"] is True
+    def test_visual_tool_is_not_strict(self) -> None:
+        """Visual tool should NOT have strict mode — schema exceeds grammar limits."""
+        assert "strict" not in VISUAL_ANALYSIS_TOOL
 
     def test_visual_tool_has_floorplan_detected_field(self) -> None:
         """Visual tool schema should include floorplan_detected_in_gallery."""

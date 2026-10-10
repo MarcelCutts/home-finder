@@ -157,7 +157,6 @@ async def test_native_two_phase_sonnet_run_settles_under_one_dollar(cached_analy
         assert payload["output_config"]["effort"] == "low"
         if not requests:
             assert payload["tool_choice"] == {"type": "auto"}
-            assert payload["tools"][0]["strict"] is True
         requests.append(payload)
         return httpx2.Response(200, json=outputs[len(requests) - 1])
 
