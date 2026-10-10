@@ -29,6 +29,7 @@ from home_finder.filters.analysis_contracts import (
     failure as output_failure,
 )
 from home_finder.filters.analysis_spend import AnalysisSpendMeter, visual_input_key
+from home_finder.filters.badge_consistency import reconcile_analysis_badges
 from home_finder.filters.listing_text import (
     select_listing_text,
     supported_bills_included,
@@ -1935,6 +1936,7 @@ class PropertyQualityFilter:
                     }
                 )
         if analysis is not None:
+            analysis = reconcile_analysis_badges(analysis, property_id=property_id)
             provenance = self._analysis_provenance()
             input_key = visual_input_key(property_id, self._visual_request(content), provenance)
             analysis = analysis.model_copy(
