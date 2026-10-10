@@ -239,6 +239,9 @@ def test_asyncio_runner_interrupt_callback_is_not_replaced_or_swallowed(monkeypa
     factory = httpx.AsyncClient
     created = []
     later_stage = Mock()
+    real_signal = signal.signal
+    real_getsignal = signal.getsignal
+    virtual_handler = signal.default_int_handler
 
     async def request(_request):
         # Runner installs its application handler before starting the coroutine.
@@ -252,10 +255,18 @@ def test_asyncio_runner_interrupt_callback_is_not_replaced_or_swallowed(monkeypa
         return instance
 
     def capture_signal(sig, handler):
-        assert sig == signal.SIGINT
+        nonlocal virtual_handler
+        if sig != signal.SIGINT:
+            return real_signal(sig, handler)
+        previous = virtual_handler
+        virtual_handler = handler
         callbacks.append(handler)
+        return previous
 
-    monkeypatch.setattr(signal, "getsignal", lambda _: signal.default_int_handler)
+    def read_signal(sig):
+        return virtual_handler if sig == signal.SIGINT else real_getsignal(sig)
+
+    monkeypatch.setattr(signal, "getsignal", read_signal)
     monkeypatch.setattr(signal, "signal", capture_signal)
     monkeypatch.setattr(rightmove.httpx, "AsyncClient", client)
 
