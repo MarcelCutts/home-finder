@@ -5,6 +5,7 @@ import asyncio
 import contextlib
 import sys
 import time
+from collections.abc import Iterator
 from dataclasses import asdict
 
 import structlog
@@ -233,6 +234,29 @@ async def _record_pre_analysis_progress(
     await storage.pipeline.save_scraper_runs(run_id, [asdict(m) for m in progress.scraper_metrics])
 
 
+@contextlib.contextmanager
+def _pipeline_phase(phase: str) -> Iterator[dict[str, int | float | str]]:
+    """Log execution outcomes; completed does not mean every property succeeded."""
+    started = time.monotonic()
+    summary: dict[str, int | float | str] = {"outcome": "completed"}
+    logger.debug("pipeline_phase_started", phase=phase)
+    try:
+        yield summary
+    except asyncio.CancelledError:
+        summary["outcome"] = "cancelled"
+        raise
+    except Exception as exc:
+        summary.update(outcome="failed", error_type=type(exc).__name__)
+        raise
+    finally:
+        logger.debug(
+            "pipeline_phase_finished",
+            phase=phase,
+            elapsed_seconds=time.monotonic() - started,
+            **summary,
+        )
+
+
 async def _run_pipeline_with_storage(
     settings: Settings,
     storage: PropertyStorage,
@@ -243,56 +267,62 @@ async def _run_pipeline_with_storage(
     dry_run: bool = False,
 ) -> None:
     """Pipeline body that operates on a provided storage instance."""
-    # Pipeline run tracking — only in live mode
     run_id: int | None = None
-    if not dry_run:
+    context_tokens = structlog.contextvars.bind_contextvars(run_id=None, dry_run=dry_run)
+
+    async def create_run() -> None:
+        nonlocal run_id
+        # Retain the ID even if cancellation arrives while creation commits.
         run_id = await storage.pipeline.create_pipeline_run()
-        structlog.contextvars.bind_contextvars(run_id=run_id)
         logger.info("pipeline_run_created", run_id=run_id)
 
     try:
-        # Notifier context — real TelegramNotifier in live mode, nullcontext for dry run
-        notifier_cm: contextlib.AbstractAsyncContextManager[TelegramNotifier | None]
-        if dry_run:
-            notifier_cm = contextlib.nullcontext(None)
-        else:
-            notifier_cm = TelegramNotifier(
-                bot_token=settings.telegram_bot_token.get_secret_value(),
-                chat_id=settings.telegram_chat_id,
-                web_base_url=settings.web_base_url,
-                data_dir=settings.data_dir,
-                delivery_repository=storage.deliveries,
-            )
+        async with contextlib.AsyncExitStack() as stack:
+            with _pipeline_phase("setup"):
+                try:
+                    await finish_before_cancelling(create_run())
+                finally:
+                    structlog.contextvars.bind_contextvars(run_id=run_id)
+                assert run_id is not None
+                notifier = None
+                if not dry_run:
+                    notifier = await stack.enter_async_context(
+                        TelegramNotifier(
+                            bot_token=settings.telegram_bot_token.get_secret_value(),
+                            chat_id=settings.telegram_chat_id,
+                            web_base_url=settings.web_base_url,
+                            data_dir=settings.data_dir,
+                            delivery_repository=storage.deliveries,
+                        )
+                    )
+                recorder = await stack.enter_async_context(EventRecorder(storage, run_id))
 
-        # T4: EventRecorder for property audit trail
-        recorder_cm: contextlib.AbstractAsyncContextManager[EventRecorder | None]
-        if run_id is not None:
-            recorder_cm = EventRecorder(storage, run_id)
-        else:
-            recorder_cm = contextlib.nullcontext(None)
-
-        async with notifier_cm as notifier, recorder_cm as recorder:
-            # Step 0: Retry unsent notifications (live mode only)
-            if not dry_run and notifier is not None:
-                await storage.deliveries.recover()
-                recovered_count = await notifier.deliver_pending()
-                logger.info("notification_recovery_complete", completed=recovered_count)
+            with _pipeline_phase("notification_recovery") as phase:
+                if dry_run:
+                    phase.update(outcome="skipped", reason="dry_run")
+                else:
+                    assert notifier is not None
+                    await storage.deliveries.recover()
+                    recovered_count = await notifier.deliver_pending()
+                    phase["completed"] = recovered_count
+                    logger.info("notification_recovery_complete", completed=recovered_count)
 
             progress = PreAnalysisResult()
-            try:
-                pre = await _run_pre_analysis_pipeline(
-                    settings,
-                    storage,
-                    max_per_scraper=max_per_scraper,
-                    only_scrapers=only_scrapers,
-                    full_scrape=full_scrape,
-                    recorder=recorder,
-                    progress=progress,
-                )
-                if pre is not None:
-                    progress = pre
-            finally:
-                if run_id is not None:
+            with _pipeline_phase("pre_analysis") as phase:
+                try:
+                    pre = await _run_pre_analysis_pipeline(
+                        settings,
+                        storage,
+                        max_per_scraper=max_per_scraper,
+                        only_scrapers=only_scrapers,
+                        full_scrape=full_scrape,
+                        recorder=recorder,
+                        progress=progress,
+                    )
+                    if pre is not None:
+                        progress = pre
+                    phase.update(outcome=progress.collection_status, scraped=progress.scraped_count)
+                finally:
                     await finish_before_cancelling(
                         _record_pre_analysis_progress(storage, run_id, progress)
                     )
@@ -323,76 +353,114 @@ async def _run_pipeline_with_storage(
                 )
 
             t_analysis = time.monotonic()
-            analyzed_count, token_usage = await _run_quality_and_save(
-                pre, settings, storage, on_result, recorder=recorder
-            )
+            analysis_counts: dict[str, int | float] = {}
+            with _pipeline_phase("quality_analysis_and_save") as phase:
+                try:
+                    analyzed_count, token_usage = await _run_quality_and_save(
+                        pre, settings, storage, on_result, recorder=recorder
+                    )
+                    analysis_counts["analyzed_count"] = analyzed_count
+                    phase["processed"] = analyzed_count
+                    if token_usage is not None:
+                        analysis_counts.update(
+                            total_input_tokens=token_usage.input_tokens,
+                            total_output_tokens=token_usage.output_tokens,
+                            total_cache_read_tokens=token_usage.cache_read_tokens,
+                            total_cache_creation_tokens=token_usage.cache_creation_tokens,
+                            estimated_cost_usd=token_usage.estimated_cost_usd,
+                        )
+                finally:
+                    # Save known totals before reanalysis or delivery can fail.
+                    # Interrupted/reanalysis spend is reconciled in the ledger.
+                    await finish_before_cancelling(
+                        storage.pipeline.update_pipeline_run(
+                            run_id,
+                            analysis_seconds=time.monotonic() - t_analysis,
+                            notified_count=notified_counter[0],
+                            **analysis_counts,
+                        )
+                    )
 
             # Re-analyze cross-run merges that gained new source data
-            reanalyzed_count = await _drain_reanalysis_queue(settings, storage)
-            analysis_seconds = time.monotonic() - t_analysis
+            with _pipeline_phase("reanalysis") as phase:
+                try:
+                    reanalyzed_count = await _drain_reanalysis_queue(settings, storage)
+                    phase["processed"] = reanalyzed_count
+                finally:
+                    await finish_before_cancelling(
+                        storage.pipeline.update_pipeline_run(
+                            run_id, analysis_seconds=time.monotonic() - t_analysis
+                        )
+                    )
+
+            delivery_count = 0
+            with _pipeline_phase("notification_delivery") as phase:
+                if dry_run:
+                    phase.update(outcome="skipped", reason="dry_run")
+                else:
+                    assert notifier is not None
+                    t_notify = time.monotonic()
+                    try:
+                        delivery_count = await notifier.deliver_pending()
+                        phase["completed"] = delivery_count
+                        if delivery_count:
+                            logger.info("queued_notifications_sent", count=delivery_count)
+                    finally:
+                        await finish_before_cancelling(
+                            storage.pipeline.update_pipeline_run(
+                                run_id, notification_seconds=time.monotonic() - t_notify
+                            )
+                        )
 
             if dry_run:
                 _log_dry_run_summary(dry_run_results)
-                logger.info(
-                    "dry_run_complete",
-                    saved=analyzed_count,
-                    reanalyzed=reanalyzed_count,
-                )
-            else:
-                assert notifier is not None
-                assert run_id is not None
-                notified_count = notified_counter[0]
 
-                # Send price drop notifications
-                t_notify = time.monotonic()
-                delivery_count = await notifier.deliver_pending()
-                if delivery_count:
-                    logger.info("queued_notifications_sent", count=delivery_count)
-                notification_seconds = time.monotonic() - t_notify
-
-                cost_kwargs: dict[str, int | float] = {}
-                if token_usage is not None:
-                    cost_kwargs = {
-                        "total_input_tokens": token_usage.input_tokens,
-                        "total_output_tokens": token_usage.output_tokens,
-                        "total_cache_read_tokens": token_usage.cache_read_tokens,
-                        "total_cache_creation_tokens": token_usage.cache_creation_tokens,
-                        "estimated_cost_usd": token_usage.estimated_cost_usd,
-                    }
-                await storage.pipeline.update_pipeline_run(
-                    run_id,
-                    analyzed_count=analyzed_count,
-                    notified_count=notified_count,
-                    analysis_seconds=analysis_seconds,
-                    notification_seconds=notification_seconds,
-                    **cost_kwargs,
-                )
-                await storage.pipeline.complete_pipeline_run(run_id, progress.collection_status)
-
-                # T4: prune old property events
+        # Finalize only after recorder flushing and notifier cleanup succeed.
+        with _pipeline_phase("finalization"):
+            if not dry_run:
                 await storage.pipeline.cleanup_old_events(settings.event_retention_runs)
-
-                logger.info(
-                    "pipeline_complete",
-                    notified=notified_count,
-                    reanalyzed=reanalyzed_count,
-                    queued_deliveries=delivery_count,
-                )
-
-    except asyncio.CancelledError:
-        if run_id is not None:
-            logger.warning("pipeline_cancelled", run_id=run_id)
             await finish_before_cancelling(
-                storage.pipeline.complete_pipeline_run(run_id, "cancelled")
+                storage.pipeline.complete_pipeline_run(run_id, progress.collection_status)
             )
-        raise
-    except Exception as exc:
+
+        logger.info(
+            "pipeline_complete",
+            status=progress.collection_status,
+            analyzed=analyzed_count,
+            notified=notified_counter[0],
+            reanalyzed=reanalyzed_count,
+            queued_deliveries=delivery_count,
+        )
+    except (asyncio.CancelledError, Exception) as exc:
+        cancelled = isinstance(exc, asyncio.CancelledError)
+        status = "cancelled" if cancelled else "failed"
+        error_message = None if cancelled else str(exc)
+        finalized = False
         if run_id is not None:
-            await storage.pipeline.complete_pipeline_run(run_id, "failed", error_message=str(exc))
+
+            async def finalize_failure() -> None:
+                nonlocal finalized
+                assert run_id is not None
+                await storage.pipeline.complete_pipeline_run(
+                    run_id, status, error_message=error_message
+                )
+                finalized = True
+
+            try:
+                await finish_before_cancelling(finalize_failure())
+            except asyncio.CancelledError:
+                # Preserve the original exception after repeated cancellation.
+                if not finalized:
+                    logger.warning("pipeline_finalization_cancelled", status=status)
+            except Exception:
+                logger.exception("pipeline_finalization_failed", status=status)
+        if cancelled:
+            logger.warning("pipeline_cancelled", status=status, finalized=finalized)
+        else:
+            logger.exception("pipeline_failed", status=status, finalized=finalized)
         raise
     finally:
-        if not dry_run:
-            structlog.contextvars.clear_contextvars()
+        structlog.contextvars.reset_contextvars(**context_tokens)
 
 
 async def run_dry_run(
