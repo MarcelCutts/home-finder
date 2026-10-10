@@ -16,11 +16,13 @@ from home_finder.config import Settings
 from home_finder.db import PropertyStorage
 from home_finder.filters.analysis_spend import visual_input_key
 from home_finder.filters.quality import APIUnavailableError, PropertyQualityFilter
+from home_finder.models import PropertyImage
 from home_finder.models.analysis import AnalysisConfig
 from home_finder.models.spend import ConfirmedCost, SpendDeferred, SpendPolicy, nanousd, usd_text
 from home_finder.pipeline.analysis import _run_quality_and_save
 from home_finder.pipeline.spend_admin import administer
 from home_finder.pipeline.stages import PreAnalysisResult
+from tests.test_filters.test_quality import _populate_image_cache
 from tests.test_filters.test_quality_respx import (
     PHASE1_VISUAL_RESPONSE,
     PHASE2_EVALUATION_RESPONSE,
@@ -63,10 +65,23 @@ async def checkpoint_rows(storage):
 
 
 @pytest.mark.parametrize("refresh", [False, True])
+@pytest.mark.parametrize("declared_floorplan", [False, True])
 async def test_two_evaluation_outages_then_restart_uses_one_visual_call(
-    tmp_path, cached_analysis_property, make_quality_analysis, refresh
+    tmp_path, cached_analysis_property, make_quality_analysis, refresh, declared_floorplan
 ):
     merged, images = cached_analysis_property
+    if declared_floorplan:
+        merged = merged.model_copy(
+            update={
+                "floorplan": PropertyImage(
+                    url="https://example.com/source-plan.jpg",
+                    source=merged.canonical.source,
+                    image_type="floorplan",
+                    floorplan_origin="source_declared",
+                )
+            }
+        )
+        _populate_image_cache(images, merged)
     database = str(tmp_path / "restart.db")
     calls = {"visual": 0, "evaluation": 0}
 
@@ -87,10 +102,20 @@ async def test_two_evaluation_outages_then_restart_uses_one_visual_call(
             await storage.pipeline.request_reanalysis([merged.unique_id])
     for attempt in range(3):
         async with PropertyStorage(database) as storage:
+            # A real restart reconstructs the queue item; retaining the original
+            # in-memory object would conceal lost image roles or prompt inputs.
+            recovered = merged
+            if attempt:
+                queue = (
+                    await storage.pipeline.get_reanalysis_queue()
+                    if refresh
+                    else await storage.pipeline.get_pending_analysis_properties()
+                )
+                recovered = queue[0]
             async with quality(storage, respond) as model:
                 if attempt < 2:
                     with pytest.raises(APIUnavailableError):
-                        await model.analyze_single_merged(merged, data_dir=images)
+                        await model.analyze_single_merged(recovered, data_dir=images)
                     assert len(await checkpoint_rows(storage)) == 1
                     checkpoint_report = (await storage.spend.report())["visual_checkpoints"]
                     assert len(checkpoint_report) == 1
@@ -101,7 +126,7 @@ async def test_two_evaluation_outages_then_restart_uses_one_visual_call(
                         "created_at",
                     }
                 else:
-                    _, analysis = await model.analyze_single_merged(merged, data_dir=images)
+                    _, analysis = await model.analyze_single_merged(recovered, data_dir=images)
                     assert analysis and analysis.overall_rating == 4
                     assert analysis.analysis_provenance.visual_input_sha256
                     if refresh:
