@@ -1602,23 +1602,36 @@ class PropertyStorage:
                 (new_price, min(prices), max(prices), unique_id),
             )
 
-            # Supersede only price alerts that have never entered dispatch. An
+            # Supersede only price alerts with known unsent outcomes. An
             # in-flight/uncertain alert retains its receipts and requires review.
             await conn.execute(
                 """UPDATE notification_deliveries SET state='suppressed',
                 reason='superseded_price',updated_at=CURRENT_TIMESTAMP
                 WHERE property_id=? AND kind='price_drop' AND next_part=0
-                  AND state IN ('queued','ready','waiting')""",
+                  AND state IN ('queued','ready','waiting','blocked')""",
                 (unique_id,),
             )
             if change_amount < 0:
+                # An unfinished discovery still quotes its frozen price. Save the
+                # newer revision atomically now; delivery.claim gates its dispatch
+                # on discovery's final acknowledgement setting the property to sent.
+                # Untracked or suppressed discoveries do not establish this intent.
                 await conn.execute(
                     """INSERT INTO notification_deliveries
                     (event_key,property_id,kind,price_history_id,snapshot_json)
                     SELECT ?,unique_id,'price_drop',?,
                         json_object('title',title,'postcode',COALESCE(postcode,''),
                             'old_price',?,'new_price',?,'unique_id',unique_id,'first_seen',first_seen)
-                    FROM properties WHERE unique_id=? AND notification_status='sent'""",
+                    FROM properties WHERE unique_id=? AND (
+                        notification_status='sent' OR (
+                            notification_status IN ('pending','failed') AND EXISTS (
+                                SELECT 1 FROM notification_deliveries d
+                                WHERE d.event_key='discovery:'||properties.unique_id
+                                  AND d.snapshot_json IS NOT NULL
+                                  AND d.state NOT IN ('review','suppressed','complete')
+                            )
+                        )
+                    )""",
                     (
                         f"price:{history_cursor.lastrowid}",
                         history_cursor.lastrowid,

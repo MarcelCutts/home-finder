@@ -207,7 +207,7 @@ async def deliver(notifier: "TelegramNotifier", repo: DeliveryRepository, key: s
             assert row is not None
             log.info("notification_delivery_planned", parts=len(plan.parts))
         if row["recipient"] != recipient:
-            await repo.defer(key, "recipient_changed")
+            await repo.defer(key, "recipient_changed", blocked=True)
             log.warning("notification_delivery_deferred", reason="recipient_changed")
             return False
         plan = repo.plan(row)
