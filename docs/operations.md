@@ -70,11 +70,11 @@ An API key alone does not authorize paid work. Set exact decimal-string caps in
 `HOME_FINDER_ANALYSIS_SPEND_POLICY`; the commented `.env.example` authorizes zero.
 Choose per-call, daily and monthly amounts and a concurrency limit. Optional
 `lifetime_usd` and `max_total_attempts` bound a one-off exercise. USD caps describe
-provider usage for the supported global standard Sonnet 4.6 and optional Sonnet 5.5 paths; they do
-not cover other billing accounts or independently issued requests.
+provider usage for the supported global standard Sonnet 4.6 and Sonnet 5.5 paths;
+they do not cover other billing accounts or independently issued requests.
 
-By default the reservation covers the full input context and can exceed $6 per
-attempt. A $1 per-call cap will defer such a request. Explicit per-phase
+Historical or explicit profiles without an input limit reserve the full context
+and can exceed $6 per attempt. A $1 per-call cap defers such a request. Per-phase
 `input_token_limit` values enable conservative admission of supported text/static
 image payloads. For example, setting both phases to 140,000 input tokens and 8,192
 maximum output tokens reserves $0.96288 **per attempt**; it does not guarantee a
@@ -83,20 +83,41 @@ retry. Unsupported/oversized payloads are deferred. These are local admission
 bounds, not a provider-enforced dollar cap. Actual settled usage releases unused
 reservation; a bound violation stops new dispatch for reconciliation.
 
-### Optional Sonnet 5.5
+### Runtime model defaults
 
-Existing defaults remain Sonnet 4.6. Select `claude-sonnet-5-5` independently for
-either phase through `HOME_FINDER_ANALYSIS_CONFIG`, for example:
+When `HOME_FINDER_ANALYSIS_CONFIG` is absent, new Settings use Sonnet 5.5 in both
+phases at low effort, 8,192 maximum output tokens and zero SDK retries. Visual
+reasoning follows `HOME_FINDER_ENABLE_EXTENDED_THINKING` (adaptive by default);
+evaluation uses the lowest thinking mode. The existing gallery setting remains
+20 by default and still controls image selection.
+
+The new runtime factory sets the visual input allowance to 110,000 tokens plus
+5,500 for each configured image and one spare floorplan slot. This covers the
+current text/schema/framing and image payloads in offline fixtures across all
+supported image counts. The actual serialized request must still fit the bound;
+unusually large text, including Unicode-heavy payloads, can defer before dispatch.
+Evaluation has a 140,000-token input allowance. At 20 images the reservations
+are **$0.98392 visual** and **$0.64192 evaluation per attempt**. At 8 images the
+visual reservation is $0.71992. These reservations are not predicted charges or
+new spend authorization. Explicit caps are still required; repeated application
+attempts remain subject to the existing durable attempt and budget limits.
+
+The runtime factory is separate from versioned `AnalysisConfig` parsing. Existing
+JSON, saved provenance and operation/checkpoint identities are not rewritten.
+Explicit phase JSON retains its historical field defaults: an omitted model is
+still Sonnet 4.6. `HOME_FINDER_ANALYSIS_CONFIG={}` selects the original complete
+profile; JSON `null` retains the original filter fallback and thinking flag.
+An explicit configuration overrides the runtime factory, including its image-based
+allowance, so supply models and bounds deliberately. For example, to pin the
+new 20-image runtime profile independently of later runtime-default changes:
 
 ```dotenv
-HOME_FINDER_ANALYSIS_CONFIG={"version":1,"visual":{"model":"claude-sonnet-5-5","reasoning":"adaptive","effort":"low","input_token_limit":140000,"max_output_tokens":8192},"evaluation":{"model":"claude-sonnet-5-5","reasoning":"disabled","effort":"low","input_token_limit":140000,"max_output_tokens":8192}}
+HOME_FINDER_ANALYSIS_CONFIG={"version":1,"visual":{"model":"claude-sonnet-5-5","reasoning":"adaptive","effort":"low","input_token_limit":225500,"max_output_tokens":8192,"sdk_retries":0},"evaluation":{"model":"claude-sonnet-5-5","reasoning":"disabled","effort":"low","input_token_limit":140000,"max_output_tokens":8192,"sdk_retries":0}}
 ```
 
-This configuration still needs explicit spend-policy caps. Each example request
-reserves $0.64192, including the highest cache-write rate and all possible output
-tokens. With no input limit, the new model's default visual/evaluation reservations
-are $4.21/$4.04096. Legacy reservations and stored rate-card versions are unchanged;
-each attempt stores its own model and complete frozen tariff.
+Legacy reservations and stored rate-card versions are unchanged; each attempt
+stores its own model and complete frozen tariff. Reservations include the highest
+cache-write rate and all possible output tokens.
 
 Published global standard prices, checked 10 October 2026, in USD per million tokens:
 
@@ -115,8 +136,9 @@ maximum. [Vision limits](https://platform.claude.com/docs/en/build-with-claude/v
 On Sonnet 5.5, the application setting `reasoning: "disabled"` sends
 `thinking: {"type": "between_tools"}` (no up-front thinking); adaptive reasoning
 remains available. Visual requests always use `tool_choice: {"type": "auto"}`.
-An omitted effort is explicitly pinned to `high`; supported overrides are `low`,
-`medium`, and `high`. No thinking blocks are replayed between these independent
+In explicit phase JSON, omitted effort is still pinned to `high` for Sonnet 5.5;
+the runtime factory supplies `low`. Supported overrides are `low`, `medium`, and
+`high`. No thinking blocks are replayed between these independent
 single-turn phases. [Migration guide](https://platform.claude.com/docs/en/models/sonnet-5-5/migration-guide).
 
 The visual phase retains its existing non-strict tool schema and validates the
@@ -124,8 +146,9 @@ returned fields locally. Missing, duplicate or invalid tool output is a billed
 failure, not a completed assessment or reusable checkpoint. Evaluation retains
 its JSON schema and local validation. A visual model change invalidates its
 checkpoint; changing only the evaluation model can reuse validated observations.
-The optional path has offline SDK coverage; evaluate output quality and schema
-acceptance in a separately budgeted canary before adopting it. Regional/priority
+The runtime profile has offline SDK coverage; operating compatibility does not
+establish better assessment quality. Larger quality checks still gate rollout.
+Regional/priority
 pricing, batch, fast mode, server tools, fallback models, and unknown billing
 units remain unsupported and fail closed.
 
