@@ -8,6 +8,7 @@ from typing import Final
 from home_finder.filters.scoring import MatchScore, calculate_match_score, is_full_postcode
 from home_finder.logging import get_logger
 from home_finder.models import MergedProperty, Property, PropertyImage, PropertySource
+from home_finder.models.listing_text import ListingTextEvidence, merge_listing_text
 from home_finder.utils.address import extract_outcode
 from home_finder.utils.image_cache import copy_cached_images, find_cached_file
 from home_finder.utils.image_hash import (
@@ -338,10 +339,22 @@ class Deduplicator:
                     all_sources.append(src)
                     all_source_urls[src] = mp.source_urls[src]
 
-        # Combine descriptions
+        # Combine text without allowing older/sparse records to erase evidence.
+        all_source_text: dict[PropertySource, ListingTextEvidence] = {}
         all_descriptions: dict[PropertySource, str] = {}
         for mp in sorted_mps:
             all_descriptions.update(mp.descriptions)
+            for source, evidence in mp.text_by_source.items():
+                all_source_text[source] = merge_listing_text(
+                    all_source_text.get(source, ListingTextEvidence()), evidence
+                )
+        all_descriptions.update(
+            {
+                s: text.description
+                for s, text in all_source_text.items()
+                if text.description is not None
+            }
+        )
 
         # Combine images (dedup by URL)
         seen_image_urls: set[str] = set()
@@ -383,6 +396,10 @@ class Deduplicator:
                     best_floor_source = mp.floor_area_source
                     best_priority = priority
 
+        canonical_text = all_source_text.get(canonical.source)
+        if canonical_text is not None and canonical_text.description is not None:
+            canonical = canonical.model_copy(update={"description": canonical_text.description})
+
         result = MergedProperty(
             canonical=canonical,
             sources=tuple(all_sources),
@@ -392,6 +409,7 @@ class Deduplicator:
             min_price=min(prices),
             max_price=max(prices),
             descriptions=all_descriptions,
+            source_text=all_source_text,
             floor_area_sqm=best_floor_area,
             floor_area_source=best_floor_source,
         )
@@ -428,6 +446,7 @@ class Deduplicator:
             min_price=prop.price_pcm,
             max_price=prop.price_pcm,
             descriptions=descriptions,
+            source_text={prop.source: prop.search_text} if prop.search_text else {},
         )
 
 

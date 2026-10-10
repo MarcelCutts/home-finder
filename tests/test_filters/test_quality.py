@@ -1,5 +1,6 @@
 """Tests for property quality analysis filter."""
 
+import copy
 from typing import Annotated, Any, Literal
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -45,6 +46,7 @@ from home_finder.models import (
     SpaceAnalysis,
     ValueAnalysis,
 )
+from home_finder.models.spend import SpendDeferred
 from home_finder.utils.image_cache import is_valid_image_url
 
 
@@ -554,6 +556,7 @@ def sample_visual_response() -> dict[str, Any]:
             "window_sizes": "large",
             "feels_spacious": True,
             "ceiling_height": "standard",
+            "floor_level": "unknown",
             "notes": "South-facing with good light",
         },
         "space": {
@@ -592,6 +595,7 @@ def sample_visual_response() -> dict[str, Any]:
             "has_double_glazing": "yes",
             "noise_indicators": [],
             "hosting_noise_risk": "moderate",
+            "building_construction": "unknown",
             "notes": "Quiet street",
         },
         "listing_red_flags": {
@@ -633,8 +637,8 @@ def sample_evaluation_response() -> dict[str, Any]:
             "questions_for_agent": ["Any upcoming rent increases?"],
             "deal_breaker_tests": ["Test hot water"],
         },
-        "highlights": ["Gas hob", "Modern kitchen", "Good light"],
-        "lowlights": ["No balcony"],
+        "highlights": ["Gas hob", "Modern kitchen"],
+        "lowlights": [],
         "one_line": "Well-maintained flat with modern kitchen and good natural light",
     }
 
@@ -773,8 +777,8 @@ class TestPropertyQualityFilter:
         for url in pdf_urls:
             assert not is_valid_image_url(url), f"Should reject {url}"
 
-    async def test_creates_minimal_analysis_when_no_images(self, sample_property: Property) -> None:
-        """Should create minimal analysis when no images available."""
+    async def test_defers_analysis_when_no_images(self, sample_property: Property) -> None:
+        """Should defer analysis when no images are available."""
         # Merged property with no images and no floorplan
         merged = MergedProperty(
             canonical=sample_property,
@@ -791,23 +795,27 @@ class TestPropertyQualityFilter:
 
         assert len(results) == 1
         _, analysis = results[0]
-        assert "No images available" in analysis.summary
-        assert analysis.space.is_spacious_enough is None
+        assert analysis is None
 
     async def test_analyzes_property_with_images(
         self,
         sample_merged_property: MergedProperty,
         sample_visual_response: dict[str, Any],
         sample_evaluation_response: dict[str, Any],
+        tmp_path: Any,
     ) -> None:
         """Should analyze property with gallery images using two-phase structured outputs."""
+        _populate_image_cache(str(tmp_path), sample_merged_property)
+
         quality_filter = PropertyQualityFilter(api_key="test-key")
         quality_filter._client = MagicMock()
         _setup_two_phase_mocks(
             quality_filter._client, sample_visual_response, sample_evaluation_response
         )
 
-        results = await quality_filter.analyze_merged_properties([sample_merged_property])
+        results = await quality_filter.analyze_merged_properties(
+            [sample_merged_property], data_dir=str(tmp_path)
+        )
 
         assert len(results) == 1
         _, analysis = results[0]
@@ -817,57 +825,40 @@ class TestPropertyQualityFilter:
         assert analysis.light_space.natural_light == "excellent"
         assert analysis.space.living_room_sqm == 22
 
-    async def test_unwraps_one_line_wrapped_in_object(
+    def test_historical_one_line_wrapped_in_object(
         self,
-        sample_merged_property: MergedProperty,
         sample_visual_response: dict[str, Any],
         sample_evaluation_response: dict[str, Any],
     ) -> None:
-        """Pydantic validator unwraps one_line stored as dict (DB backward compat)."""
-        # Simulate old DB data where one_line was stored as {"one_line": "text"}
+        """Historical stored output retains bounded one_line unwrapping."""
         sample_evaluation_response["one_line"] = {"one_line": "Bright flat with balcony"}
-
-        quality_filter = PropertyQualityFilter(api_key="test-key")
-        quality_filter._client = MagicMock()
-        _setup_two_phase_mocks(
-            quality_filter._client, sample_visual_response, sample_evaluation_response
+        analysis = PropertyQualityFilter._merge_analysis_results(
+            sample_visual_response, sample_evaluation_response, 2, "fixture:legacy"
         )
-
-        results = await quality_filter.analyze_merged_properties([sample_merged_property])
-
-        _, analysis = results[0]
-        assert analysis.one_line == "Bright flat with balcony"
+        assert analysis is not None and analysis.one_line == "Bright flat with balcony"
 
     async def test_overrides_space_for_two_plus_beds(
         self,
         sample_merged_property: MergedProperty,
+        sample_visual_response: dict[str, Any],
         sample_evaluation_response: dict[str, Any],
+        tmp_path: Any,
     ) -> None:
         """Should override space assessment for 2+ bedroom properties."""
         # Response says not spacious enough, but 2-bed should override
-        visual_response = {
-            "kitchen": {"notes": ""},
-            "condition": {
-                "overall_condition": "good",
-                "has_visible_damp": "no",
-                "has_visible_mold": "no",
-                "has_worn_fixtures": "no",
-                "maintenance_concerns": [],
-                "confidence": "high",
-            },
-            "light_space": {"natural_light": "good", "feels_spacious": True, "notes": ""},
-            "space": {"living_room_sqm": 15, "is_spacious_enough": False},
-            "overall_rating": 3,
-            "condition_concerns": False,
-            "concern_severity": "none",
-            "summary": "Compact living room",
-        }
+        visual_response = copy.deepcopy(sample_visual_response)
+        visual_response["space"].update(living_room_sqm=15, is_spacious_enough=False)
+        visual_response.update(overall_rating=3, summary="Compact living room")
+
+        _populate_image_cache(str(tmp_path), sample_merged_property)
 
         quality_filter = PropertyQualityFilter(api_key="test-key")
         quality_filter._client = MagicMock()
         _setup_two_phase_mocks(quality_filter._client, visual_response, sample_evaluation_response)
 
-        results = await quality_filter.analyze_merged_properties([sample_merged_property])
+        results = await quality_filter.analyze_merged_properties(
+            [sample_merged_property], data_dir=str(tmp_path)
+        )
 
         _, analysis = results[0]
         # No override in analysis layer — Claude's raw assessment preserved
@@ -876,32 +867,24 @@ class TestPropertyQualityFilter:
     async def test_does_not_override_space_for_one_bed(
         self,
         one_bed_merged_property: MergedProperty,
+        sample_visual_response: dict[str, Any],
         sample_evaluation_response: dict[str, Any],
+        tmp_path: Any,
     ) -> None:
         """Should NOT override space assessment for 1-bed properties."""
-        visual_response = {
-            "kitchen": {"notes": ""},
-            "condition": {
-                "overall_condition": "good",
-                "has_visible_damp": "no",
-                "has_visible_mold": "no",
-                "has_worn_fixtures": "no",
-                "maintenance_concerns": [],
-                "confidence": "high",
-            },
-            "light_space": {"natural_light": "good", "feels_spacious": True, "notes": ""},
-            "space": {"living_room_sqm": 15, "is_spacious_enough": False},
-            "overall_rating": 3,
-            "condition_concerns": False,
-            "concern_severity": "none",
-            "summary": "Compact living room",
-        }
+        visual_response = copy.deepcopy(sample_visual_response)
+        visual_response["space"].update(living_room_sqm=15, is_spacious_enough=False)
+        visual_response.update(overall_rating=3, summary="Compact living room")
+
+        _populate_image_cache(str(tmp_path), one_bed_merged_property)
 
         quality_filter = PropertyQualityFilter(api_key="test-key")
         quality_filter._client = MagicMock()
         _setup_two_phase_mocks(quality_filter._client, visual_response, sample_evaluation_response)
 
-        results = await quality_filter.analyze_merged_properties([one_bed_merged_property])
+        results = await quality_filter.analyze_merged_properties(
+            [one_bed_merged_property], data_dir=str(tmp_path)
+        )
 
         _, analysis = results[0]
         # Should keep original assessment
@@ -910,36 +893,50 @@ class TestPropertyQualityFilter:
     async def test_handles_llm_failure_gracefully(
         self,
         sample_merged_property: MergedProperty,
+        tmp_path: Any,
     ) -> None:
         """Should return minimal analysis on Phase 1 LLM failure."""
+        _populate_image_cache(str(tmp_path), sample_merged_property)
+
         quality_filter = PropertyQualityFilter(api_key="test-key")
         quality_filter._client = MagicMock()
         quality_filter._client.messages.create = AsyncMock(side_effect=Exception("API error"))
 
-        results = await quality_filter.analyze_merged_properties([sample_merged_property])
+        results = await quality_filter.analyze_merged_properties(
+            [sample_merged_property], data_dir=str(tmp_path)
+        )
 
         assert len(results) == 1
         _, analysis = results[0]
-        assert "No images available" in analysis.summary
+        assert "Quality analysis incomplete" in analysis.summary
+        assert analysis.overall_rating is None
+        assert analysis.analysis_failure.kind == "internal_error"
 
     async def test_handles_unexpected_stop_reason(
         self,
         sample_merged_property: MergedProperty,
+        tmp_path: Any,
     ) -> None:
         """Should return minimal analysis on unexpected stop reason (e.g., max_tokens)."""
         mock_response = MagicMock()
         mock_response.content = []
         mock_response.stop_reason = "max_tokens"  # Unexpected stop reason
 
+        _populate_image_cache(str(tmp_path), sample_merged_property)
+
         quality_filter = PropertyQualityFilter(api_key="test-key")
         quality_filter._client = MagicMock()
         quality_filter._client.messages.create = AsyncMock(return_value=mock_response)
 
-        results = await quality_filter.analyze_merged_properties([sample_merged_property])
+        results = await quality_filter.analyze_merged_properties(
+            [sample_merged_property], data_dir=str(tmp_path)
+        )
 
         assert len(results) == 1
         _, analysis = results[0]
-        assert "No images available" in analysis.summary
+        assert "Quality analysis incomplete" in analysis.summary
+        assert analysis.overall_rating is None
+        assert analysis.analysis_failure.kind == "truncated"
 
     async def test_includes_all_images_in_phase1_call(
         self,
@@ -1033,15 +1030,20 @@ class TestPropertyQualityFilter:
         sample_merged_property: MergedProperty,
         sample_visual_response: dict[str, Any],
         sample_evaluation_response: dict[str, Any],
+        tmp_path: Any,
     ) -> None:
         """Phase 1 uses auto tool_choice with thinking; Phase 2 uses output_format."""
+        _populate_image_cache(str(tmp_path), sample_merged_property)
+
         quality_filter = PropertyQualityFilter(api_key="test-key")
         quality_filter._client = MagicMock()
         _setup_two_phase_mocks(
             quality_filter._client, sample_visual_response, sample_evaluation_response
         )
 
-        await quality_filter.analyze_merged_properties([sample_merged_property])
+        await quality_filter.analyze_merged_properties(
+            [sample_merged_property], data_dir=str(tmp_path)
+        )
 
         # Phase 1: auto tool_choice with extended thinking (messages.create)
         create_calls = quality_filter._client.messages.create.call_args_list
@@ -1067,15 +1069,20 @@ class TestPropertyQualityFilter:
         sample_merged_property: MergedProperty,
         sample_visual_response: dict[str, Any],
         sample_evaluation_response: dict[str, Any],
+        tmp_path: Any,
     ) -> None:
         """Should use system prompt with cache_control for cost savings."""
+        _populate_image_cache(str(tmp_path), sample_merged_property)
+
         quality_filter = PropertyQualityFilter(api_key="test-key")
         quality_filter._client = MagicMock()
         _setup_two_phase_mocks(
             quality_filter._client, sample_visual_response, sample_evaluation_response
         )
 
-        await quality_filter.analyze_merged_properties([sample_merged_property])
+        await quality_filter.analyze_merged_properties(
+            [sample_merged_property], data_dir=str(tmp_path)
+        )
 
         # Phase 1 system prompt (messages.create)
         create_calls = quality_filter._client.messages.create.call_args_list
@@ -1098,15 +1105,20 @@ class TestPropertyQualityFilter:
         sample_merged_property: MergedProperty,
         sample_visual_response: dict[str, Any],
         sample_evaluation_response: dict[str, Any],
+        tmp_path: Any,
     ) -> None:
         """Should extract quality-adjusted value rating from Phase 2 response."""
+        _populate_image_cache(str(tmp_path), sample_merged_property)
+
         quality_filter = PropertyQualityFilter(api_key="test-key")
         quality_filter._client = MagicMock()
         _setup_two_phase_mocks(
             quality_filter._client, sample_visual_response, sample_evaluation_response
         )
 
-        results = await quality_filter.analyze_merged_properties([sample_merged_property])
+        results = await quality_filter.analyze_merged_properties(
+            [sample_merged_property], data_dir=str(tmp_path)
+        )
 
         _, analysis = results[0]
         # value.quality_adjusted_rating comes from Phase 2
@@ -1119,6 +1131,7 @@ class TestPropertyQualityFilter:
         sample_merged_property: MergedProperty,
         sample_visual_response: dict[str, Any],
         sample_evaluation_response: dict[str, Any],
+        tmp_path: Any,
     ) -> None:
         """Should handle end_turn stop_reason when tool_use block is present."""
         mock_visual = create_mock_response(
@@ -1127,11 +1140,15 @@ class TestPropertyQualityFilter:
 
         mock_eval = create_mock_eval_response(sample_evaluation_response)
 
+        _populate_image_cache(str(tmp_path), sample_merged_property)
+
         quality_filter = PropertyQualityFilter(api_key="test-key")
         quality_filter._client = MagicMock()
         quality_filter._client.messages.create = AsyncMock(side_effect=[mock_visual, mock_eval])
 
-        results = await quality_filter.analyze_merged_properties([sample_merged_property])
+        results = await quality_filter.analyze_merged_properties(
+            [sample_merged_property], data_dir=str(tmp_path)
+        )
 
         assert len(results) == 1
         _, analysis = results[0]
@@ -1143,6 +1160,7 @@ class TestPropertyQualityFilter:
         sample_property: Property,
         sample_visual_response: dict[str, Any],
         sample_evaluation_response: dict[str, Any],
+        tmp_path: Any,
     ) -> None:
         """Should include listing description in the user prompt."""
         # Create merged property with description populated
@@ -1169,13 +1187,15 @@ class TestPropertyQualityFilter:
             },
         )
 
+        _populate_image_cache(str(tmp_path), merged)
+
         quality_filter = PropertyQualityFilter(api_key="test-key")
         quality_filter._client = MagicMock()
         _setup_two_phase_mocks(
             quality_filter._client, sample_visual_response, sample_evaluation_response
         )
 
-        await quality_filter.analyze_merged_properties([merged])
+        await quality_filter.analyze_merged_properties([merged], data_dir=str(tmp_path))
 
         call_args = quality_filter._client.messages.create.call_args_list[0]
         content = call_args.kwargs["messages"][0]["content"]
@@ -1188,26 +1208,19 @@ class TestPropertyQualityFilter:
         assert "<listing_description>" in prompt_text
         assert "gas hob" in prompt_text
 
-    async def test_handles_nullable_fields_in_response(
+    def test_historical_nullable_fields_remain_readable(
         self,
-        one_bed_merged_property: MergedProperty,
         sample_visual_response_with_nulls: dict[str, Any],
         sample_evaluation_response_with_nulls: dict[str, Any],
     ) -> None:
-        """Should handle null values for optional fields in tool response."""
-        # Use 1-bed property to avoid space override for 2+ beds
-        quality_filter = PropertyQualityFilter(api_key="test-key")
-        quality_filter._client = MagicMock()
-        _setup_two_phase_mocks(
-            quality_filter._client,
+        """Nullable legacy output remains readable outside the live API boundary."""
+        analysis = PropertyQualityFilter._merge_analysis_results(
             sample_visual_response_with_nulls,
             sample_evaluation_response_with_nulls,
+            1,
+            "fixture:legacy",
         )
-
-        results = await quality_filter.analyze_merged_properties([one_bed_merged_property])
-
-        assert len(results) == 1
-        _, analysis = results[0]
+        assert analysis is not None
 
         # Verify null values are handled correctly
         assert analysis.kitchen.overall_quality == "unknown"
@@ -1229,15 +1242,20 @@ class TestPropertyQualityFilter:
         sample_merged_property: MergedProperty,
         sample_visual_response: dict[str, Any],
         sample_evaluation_response: dict[str, Any],
+        tmp_path: Any,
     ) -> None:
         """Phase 1 JSON output should appear in Phase 2 prompt."""
+        _populate_image_cache(str(tmp_path), sample_merged_property)
+
         quality_filter = PropertyQualityFilter(api_key="test-key")
         quality_filter._client = MagicMock()
         _setup_two_phase_mocks(
             quality_filter._client, sample_visual_response, sample_evaluation_response
         )
 
-        await quality_filter.analyze_merged_properties([sample_merged_property])
+        await quality_filter.analyze_merged_properties(
+            [sample_merged_property], data_dir=str(tmp_path)
+        )
 
         # Both phases via messages.create
         create_calls = quality_filter._client.messages.create.call_args_list
@@ -1249,15 +1267,18 @@ class TestPropertyQualityFilter:
         assert '"overall_quality": "modern"' in phase2_content
         assert "</visual_analysis>" in phase2_content
 
-    async def test_phase2_failure_returns_partial_analysis(
+    async def test_phase2_failure_cannot_complete_analysis(
         self,
         sample_merged_property: MergedProperty,
         sample_visual_response: dict[str, Any],
+        tmp_path: Any,
     ) -> None:
-        """Phase 2 failure should return partial analysis with visual data only."""
+        """A failed required evaluation never becomes a completed visual assessment."""
         mock_visual = create_mock_response(
             sample_visual_response, tool_name="property_visual_analysis"
         )
+
+        _populate_image_cache(str(tmp_path), sample_merged_property)
 
         quality_filter = PropertyQualityFilter(api_key="test-key")
         quality_filter._client = MagicMock()
@@ -1266,16 +1287,18 @@ class TestPropertyQualityFilter:
             side_effect=[mock_visual, Exception("Phase 2 API error")]
         )
 
-        results = await quality_filter.analyze_merged_properties([sample_merged_property])
+        results = await quality_filter.analyze_merged_properties(
+            [sample_merged_property], data_dir=str(tmp_path)
+        )
 
         assert len(results) == 1
         _, analysis = results[0]
-        # Visual data should be present
-        assert analysis.kitchen.overall_quality == "modern"
-        assert analysis.condition.overall_condition == "good"
-        assert analysis.summary == (
-            "Well-maintained flat with modern kitchen. Living room suits home office."
-        )
+        assert analysis.overall_rating is None
+        assert analysis.analysis_failure.phase == "evaluation"
+        assert analysis.analysis_failure.kind == "internal_error"
+        assert analysis.kitchen.overall_quality == "unknown"
+        assert analysis.condition.overall_condition == "unknown"
+        assert "Quality analysis incomplete" in analysis.summary
         # Evaluation data should be absent/default
         assert analysis.listing_extraction is None
         assert analysis.viewing_notes is None
@@ -1288,15 +1311,20 @@ class TestPropertyQualityFilter:
         sample_merged_property: MergedProperty,
         sample_visual_response: dict[str, Any],
         sample_evaluation_response: dict[str, Any],
+        tmp_path: Any,
     ) -> None:
         """Phase 2 should be text-only (no images)."""
+        _populate_image_cache(str(tmp_path), sample_merged_property)
+
         quality_filter = PropertyQualityFilter(api_key="test-key")
         quality_filter._client = MagicMock()
         _setup_two_phase_mocks(
             quality_filter._client, sample_visual_response, sample_evaluation_response
         )
 
-        await quality_filter.analyze_merged_properties([sample_merged_property])
+        await quality_filter.analyze_merged_properties(
+            [sample_merged_property], data_dir=str(tmp_path)
+        )
 
         # Phase 2 uses messages.create — content is a string (text-only)
         create_calls = quality_filter._client.messages.create.call_args_list
@@ -1308,11 +1336,47 @@ class TestPropertyQualityFilter:
 class TestFloorplanNoteWiring:
     """Tests that has_labeled_floorplan flows from _analyze_property to the prompt."""
 
+    async def test_missing_cached_floorplan_uses_gallery_slot_and_includes_note(
+        self,
+        sample_merged_property: MergedProperty,
+        sample_visual_response: dict[str, Any],
+        sample_evaluation_response: dict[str, Any],
+        tmp_path: Any,
+    ) -> None:
+        from home_finder.utils.image_cache import find_cached_file
+
+        data_dir = str(tmp_path)
+        _populate_image_cache(data_dir, sample_merged_property)
+        floorplan_path = find_cached_file(
+            data_dir,
+            sample_merged_property.unique_id,
+            str(sample_merged_property.floorplan.url),
+            "floorplan",
+        )
+        assert floorplan_path is not None
+        floorplan_path.unlink()
+        quality_filter = PropertyQualityFilter(api_key="test-key", max_images=3)
+        quality_filter._client = MagicMock()
+        _setup_two_phase_mocks(
+            quality_filter._client, sample_visual_response, sample_evaluation_response
+        )
+
+        _, analysis = await quality_filter.analyze_single_merged(
+            sample_merged_property, data_dir=data_dir
+        )
+
+        assert analysis is not None and analysis.overall_rating == 4
+        call = quality_filter._client.messages.create.call_args_list[0]
+        content = call.kwargs["messages"][0]["content"]
+        assert sum(block["type"] == "image" for block in content) == 3
+        assert "<floorplan_note>" in content[-1]["text"]
+
     async def test_no_floorplan_includes_note_in_api_call(
         self,
         sample_property: Property,
         sample_visual_response: dict[str, Any],
         sample_evaluation_response: dict[str, Any],
+        tmp_path: Any,
     ) -> None:
         """Property with no floorplan → Phase 1 prompt contains <floorplan_note>."""
         merged = MergedProperty(
@@ -1331,13 +1395,15 @@ class TestFloorplanNoteWiring:
             max_price=sample_property.price_pcm,
         )
 
+        _populate_image_cache(str(tmp_path), merged)
+
         quality_filter = PropertyQualityFilter(api_key="test-key")
         quality_filter._client = MagicMock()
         _setup_two_phase_mocks(
             quality_filter._client, sample_visual_response, sample_evaluation_response
         )
 
-        await quality_filter.analyze_merged_properties([merged])
+        await quality_filter.analyze_merged_properties([merged], data_dir=str(tmp_path))
 
         # Inspect the Phase 1 API call's user prompt (last text block)
         call_args = quality_filter._client.messages.create.call_args_list[0]
@@ -1353,15 +1419,20 @@ class TestFloorplanNoteWiring:
         sample_merged_property: MergedProperty,
         sample_visual_response: dict[str, Any],
         sample_evaluation_response: dict[str, Any],
+        tmp_path: Any,
     ) -> None:
         """Property with floorplan → Phase 1 prompt does NOT contain <floorplan_note>."""
+        _populate_image_cache(str(tmp_path), sample_merged_property)
+
         quality_filter = PropertyQualityFilter(api_key="test-key")
         quality_filter._client = MagicMock()
         _setup_two_phase_mocks(
             quality_filter._client, sample_visual_response, sample_evaluation_response
         )
 
-        await quality_filter.analyze_merged_properties([sample_merged_property])
+        await quality_filter.analyze_merged_properties(
+            [sample_merged_property], data_dir=str(tmp_path)
+        )
 
         call_args = quality_filter._client.messages.create.call_args_list[0]
         content = call_args.kwargs["messages"][0]["content"]
@@ -1438,20 +1509,124 @@ class TestBuildEvaluationPrompt:
 class TestAnalyzeSingleMerged:
     """Tests for analyze_single_merged method."""
 
+    async def test_detail_text_survives_save_reload_and_reaches_both_requests(
+        self, tmp_path, make_property, sample_visual_response, sample_evaluation_response
+    ) -> None:
+        from home_finder.db import PropertyStorage
+        from home_finder.filters.detail_enrichment import enrich_merged_properties
+        from home_finder.scrapers.detail_fetcher import DetailFetcher, DetailPageData
+
+        rm = make_property(source=PropertySource.RIGHTMOVE, source_id="rm-text", description=None)
+        otm = make_property(
+            source=PropertySource.ONTHEMARKET, source_id="otm-text", description=None
+        )
+        merged = MergedProperty(
+            canonical=rm,
+            sources=(rm.source, otm.source),
+            source_urls={rm.source: rm.url, otm.source: otm.url},
+            min_price=rm.price_pcm,
+            max_price=rm.price_pcm,
+        )
+        details = {
+            rm.source: DetailPageData(
+                description="East-facing café-style kitchen <script>fixture</script>",
+                features=["Gas hob", "Private balcony"],
+                gallery_urls=["https://example.com/rm-fixture.jpg"],
+            ),
+            otm.source: DetailPageData(
+                description="West-facing kitchen; verify the conflicting orientation",
+                features=["Induction hob", "Shared garden"],
+                gallery_urls=["https://example.com/otm-fixture.jpg"],
+            ),
+        }
+
+        async def fetch(prop):
+            return details[prop.source]
+
+        async with PropertyStorage(str(tmp_path / "text.db")) as storage:
+            await storage.upsert_source_listings([rm, otm])
+            async with DetailFetcher() as fetcher:
+                with patch.object(fetcher, "fetch_detail_page", side_effect=fetch):
+                    result = await enrich_merged_properties([merged], fetcher)
+            enriched = result.enriched[0]
+            await storage.pipeline.save_pre_analysis_properties([enriched], {})
+
+            # Both the next sparse search and aggregate rebuild must retain text.
+            await storage.upsert_source_listings([rm, otm])
+            await storage.update_merged_sources(merged.unique_id, merged)
+            reloaded = (await storage.pipeline.get_pending_analysis_properties())[0]
+            assert reloaded.source_text[rm.source].features == ("Gas hob", "Private balcony")
+            assert reloaded.source_text[otm.source].description == details[otm.source].description
+            async with storage._read_connection() as conn:
+                rows = await (
+                    await conn.execute("SELECT source, description, text_json FROM source_listings")
+                ).fetchall()
+            assert {row["description"] for row in rows} == {d.description for d in details.values()}
+            assert all(row["text_json"] for row in rows)
+
+            quality_filter = PropertyQualityFilter(api_key="fixture-no-live-calls")
+            quality_filter._client = MagicMock()
+            _setup_two_phase_mocks(
+                quality_filter._client, sample_visual_response, sample_evaluation_response
+            )
+            with patch.object(
+                quality_filter,
+                "_build_image_block",
+                new_callable=AsyncMock,
+                return_value={
+                    "type": "image",
+                    "source": {
+                        "type": "base64",
+                        "media_type": "image/jpeg",
+                        "data": "Zml4dHVyZQ==",
+                    },
+                },
+            ):
+                _, analysis = await quality_filter.analyze_single_merged(reloaded)
+            assert analysis is not None and analysis.listing_text_inputs is not None
+            requests = quality_filter._client.messages.create.call_args_list
+            assert len(requests) == 2
+            for request in requests:
+                content = request.kwargs["messages"][0]["content"]
+                prompt = (
+                    content
+                    if isinstance(content, str)
+                    else "\n".join(block["text"] for block in content if block["type"] == "text")
+                )
+                assert "East-facing café-style" in prompt
+                assert "West-facing kitchen" in prompt
+                assert "Gas hob" in prompt and "Induction hob" in prompt
+                assert "[Rightmove]" in prompt and "[OnTheMarket]" in prompt
+                assert "Band C est." not in prompt
+                assert "True monthly cost" not in prompt
+                assert "<script>fixture</script>" not in prompt
+                assert analysis.listing_text_inputs.description in prompt
+            # The fixture model returns Band C, but neither listing states a band.
+            assert analysis.listing_extraction.council_tax_band == "unknown"
+            assert analysis.listing_extraction.epc_rating == "unknown"
+            await storage.pipeline.complete_analysis(reloaded.unique_id, analysis)
+            saved = await storage.get_quality_analysis(reloaded.unique_id)
+            assert saved.listing_text_inputs == analysis.listing_text_inputs
+
     async def test_with_images_returns_analysis(
         self,
         sample_merged_property: MergedProperty,
         sample_visual_response: dict[str, Any],
         sample_evaluation_response: dict[str, Any],
+        tmp_path: Any,
     ) -> None:
         """Should return (merged, analysis) when images are present."""
+        _populate_image_cache(str(tmp_path), sample_merged_property)
+
         quality_filter = PropertyQualityFilter(api_key="test-key")
         quality_filter._client = MagicMock()
         _setup_two_phase_mocks(
             quality_filter._client, sample_visual_response, sample_evaluation_response
         )
 
-        merged, analysis = await quality_filter.analyze_single_merged(sample_merged_property)
+        merged, analysis = await quality_filter.analyze_single_merged(
+            sample_merged_property, data_dir=str(tmp_path)
+        )
 
         assert merged is sample_merged_property
         assert analysis.kitchen.overall_quality == "modern"
@@ -1460,11 +1635,11 @@ class TestAnalyzeSingleMerged:
             "Well-maintained flat with modern kitchen. Living room suits home office."
         )
 
-    async def test_without_images_returns_minimal(
+    async def test_without_images_defers(
         self,
         sample_property: Property,
     ) -> None:
-        """Should return minimal analysis when no images available."""
+        """Should defer when no images are available."""
         merged = MergedProperty(
             canonical=sample_property,
             sources=(sample_property.source,),
@@ -1479,22 +1654,28 @@ class TestAnalyzeSingleMerged:
         result_merged, analysis = await quality_filter.analyze_single_merged(merged)
 
         assert result_merged is merged
-        assert "No images available" in analysis.summary
-        assert analysis.space.is_spacious_enough is None
+        assert analysis is None
 
     async def test_api_failure_returns_minimal(
         self,
         sample_merged_property: MergedProperty,
+        tmp_path: Any,
     ) -> None:
         """Should return minimal analysis on API failure (no raise)."""
+        _populate_image_cache(str(tmp_path), sample_merged_property)
+
         quality_filter = PropertyQualityFilter(api_key="test-key")
         quality_filter._client = MagicMock()
         quality_filter._client.messages.create = AsyncMock(side_effect=Exception("API error"))
 
-        merged, analysis = await quality_filter.analyze_single_merged(sample_merged_property)
+        merged, analysis = await quality_filter.analyze_single_merged(
+            sample_merged_property, data_dir=str(tmp_path)
+        )
 
         assert merged is sample_merged_property
-        assert "No images available" in analysis.summary
+        assert "Quality analysis incomplete" in analysis.summary
+        assert analysis.overall_rating is None
+        assert analysis.analysis_failure.kind == "internal_error"
         assert analysis.space.is_spacious_enough is None
 
 
@@ -1543,24 +1724,22 @@ class TestInsufficientImageSkip:
         assert analysis is not None
         assert analysis.kitchen.overall_quality == "modern"
 
-    async def test_no_skip_when_data_dir_not_set(
+    async def test_defers_when_data_dir_not_set(
         self,
         sample_merged_property: MergedProperty,
         sample_visual_response: dict[str, Any],
         sample_evaluation_response: dict[str, Any],
     ) -> None:
-        """Should not skip analysis when data_dir is not set (no cache mode)."""
+        """An unset cache directory cannot justify a paid text-only visual call."""
         quality_filter = PropertyQualityFilter(api_key="test-key")
         quality_filter._client = MagicMock()
         _setup_two_phase_mocks(
             quality_filter._client, sample_visual_response, sample_evaluation_response
         )
 
-        # No data_dir — should proceed (cache paths all None, but check is skipped)
-        merged, analysis = await quality_filter.analyze_single_merged(sample_merged_property)
-
-        assert merged is sample_merged_property
-        assert analysis is not None
+        with pytest.raises(SpendDeferred, match="missing_usable_images"):
+            await quality_filter.analyze_single_merged(sample_merged_property)
+        quality_filter._client.messages.create.assert_not_called()
 
     async def test_skips_when_partial_cache(
         self,
@@ -1816,82 +1995,26 @@ class TestNewFieldsPipelineFlow:
     async def test_new_fields_flow_through_two_phase_pipeline(
         self,
         sample_merged_property: MergedProperty,
+        sample_visual_response: dict[str, Any],
+        sample_evaluation_response: dict[str, Any],
+        tmp_path: Any,
     ) -> None:
         """New Marcel fields pass from API response to PropertyQualityAnalysis."""
-        visual = {
-            "kitchen": {
-                "overall_quality": "modern",
-                "hob_type": "gas",
-                "has_dishwasher": "yes",
-                "has_washing_machine": "yes",
-                "notes": "",
-            },
-            "condition": {
-                "overall_condition": "good",
-                "has_visible_damp": "no",
-                "has_visible_mold": "no",
-                "has_worn_fixtures": "no",
-                "maintenance_concerns": [],
-                "confidence": "high",
-            },
-            "light_space": {
-                "natural_light": "good",
-                "feels_spacious": True,
-                "notes": "",
-            },
-            "space": {
-                "living_room_sqm": 22,
-                "is_spacious_enough": True,
-                "hosting_layout": "excellent",
-            },
-            "bedroom": {
-                "primary_is_double": "yes",
-                "has_built_in_wardrobe": "yes",
-                "can_fit_desk": "yes",
-                "office_separation": "dedicated_room",
-                "notes": "",
-            },
-            "flooring_noise": {
-                "primary_flooring": "hardwood",
-                "has_double_glazing": "yes",
-                "noise_indicators": [],
-                "hosting_noise_risk": "low",
-                "notes": "",
-            },
-            "overall_rating": 4,
-            "condition_concerns": False,
-            "concern_severity": "none",
-            "summary": "Great flat",
-        }
-        eval_resp = {
-            "listing_extraction": {
-                "epc_rating": "C",
-                "service_charge_pcm": None,
-                "deposit_weeks": 5,
-                "bills_included": "no",
-                "pets_allowed": "unknown",
-                "parking": "street",
-                "council_tax_band": "C",
-                "property_type": "victorian",
-                "furnished_status": "furnished",
-                "broadband_type": "fttp",
-            },
-            "value_for_quality": {"rating": "good", "reasoning": "Fair price"},
-            "viewing_notes": {
-                "check_items": [],
-                "questions_for_agent": [],
-                "deal_breaker_tests": [],
-            },
-            "highlights": ["Gas hob"],
-            "lowlights": [],
-            "one_line": "Great flat for WFH",
-        }
+        visual = copy.deepcopy(sample_visual_response)
+        visual["space"]["hosting_layout"] = "excellent"
+        visual["flooring_noise"]["hosting_noise_risk"] = "low"
+        eval_resp = copy.deepcopy(sample_evaluation_response)
+        eval_resp["listing_extraction"]["broadband_type"] = "fttp"
+
+        _populate_image_cache(str(tmp_path), sample_merged_property)
 
         quality_filter = PropertyQualityFilter(api_key="test-key")
         quality_filter._client = MagicMock()
         _setup_two_phase_mocks(quality_filter._client, visual, eval_resp)
 
-        results = await quality_filter.analyze_merged_properties([sample_merged_property])
+        results = await quality_filter.analyze_merged_properties(
+            [sample_merged_property], data_dir=str(tmp_path)
+        )
         _, analysis = results[0]
 
         assert analysis.bedroom is not None
@@ -1910,6 +2033,7 @@ class TestPhase2CircuitBreakerRaise:
         self,
         sample_merged_property: MergedProperty,
         sample_visual_response: dict[str, Any],
+        tmp_path: Any,
     ) -> None:
         """AuthenticationError in Phase 2 should raise APIUnavailableError."""
         from anthropic import AuthenticationError
@@ -1917,6 +2041,8 @@ class TestPhase2CircuitBreakerRaise:
         mock_visual = create_mock_response(
             sample_visual_response, tool_name="property_visual_analysis"
         )
+        _populate_image_cache(str(tmp_path), sample_merged_property)
+
         quality_filter = PropertyQualityFilter(api_key="test-key")
         quality_filter._client = MagicMock()
         quality_filter._client.messages.create = AsyncMock(
@@ -1931,12 +2057,15 @@ class TestPhase2CircuitBreakerRaise:
         )
 
         with pytest.raises(APIUnavailableError, match="Authentication failed"):
-            await quality_filter.analyze_single_merged(sample_merged_property)
+            await quality_filter.analyze_single_merged(
+                sample_merged_property, data_dir=str(tmp_path)
+            )
 
     async def test_phase2_transient_error_raises_api_unavailable(
         self,
         sample_merged_property: MergedProperty,
         sample_visual_response: dict[str, Any],
+        tmp_path: Any,
     ) -> None:
         """Transient API errors in Phase 2 should raise APIUnavailableError."""
         from anthropic import APIConnectionError
@@ -1944,6 +2073,8 @@ class TestPhase2CircuitBreakerRaise:
         mock_visual = create_mock_response(
             sample_visual_response, tool_name="property_visual_analysis"
         )
+        _populate_image_cache(str(tmp_path), sample_merged_property)
+
         quality_filter = PropertyQualityFilter(api_key="test-key")
         quality_filter._client = MagicMock()
         quality_filter._client.messages.create = AsyncMock(
@@ -1951,7 +2082,9 @@ class TestPhase2CircuitBreakerRaise:
         )
 
         with pytest.raises(APIUnavailableError):
-            await quality_filter.analyze_single_merged(sample_merged_property)
+            await quality_filter.analyze_single_merged(
+                sample_merged_property, data_dir=str(tmp_path)
+            )
 
 
 class TestCircuitBreaker:
@@ -1960,9 +2093,12 @@ class TestCircuitBreaker:
     async def test_circuit_opens_after_consecutive_failures(
         self,
         sample_merged_property: MergedProperty,
+        tmp_path: Any,
     ) -> None:
         """Circuit should open after _CIRCUIT_BREAKER_THRESHOLD consecutive API failures."""
         from anthropic import APIConnectionError
+
+        _populate_image_cache(str(tmp_path), sample_merged_property)
 
         quality_filter = PropertyQualityFilter(api_key="test-key")
         quality_filter._client = MagicMock()
@@ -1974,7 +2110,9 @@ class TestCircuitBreaker:
 
         for _ in range(_CIRCUIT_BREAKER_THRESHOLD):
             with pytest.raises(APIUnavailableError):
-                await quality_filter.analyze_single_merged(sample_merged_property)
+                await quality_filter.analyze_single_merged(
+                    sample_merged_property, data_dir=str(tmp_path)
+                )
 
         assert quality_filter._breaker.is_open()
         assert quality_filter._breaker.failure_count == _CIRCUIT_BREAKER_THRESHOLD
@@ -2003,9 +2141,12 @@ class TestCircuitBreaker:
         sample_merged_property: MergedProperty,
         sample_visual_response: dict[str, Any],
         sample_evaluation_response: dict[str, Any],
+        tmp_path: Any,
     ) -> None:
         """Successful API call should reset the consecutive failure counter."""
         from anthropic import APIConnectionError
+
+        _populate_image_cache(str(tmp_path), sample_merged_property)
 
         quality_filter = PropertyQualityFilter(api_key="test-key")
         quality_filter._client = MagicMock()
@@ -2016,7 +2157,9 @@ class TestCircuitBreaker:
         )
         for _ in range(_CIRCUIT_BREAKER_THRESHOLD - 1):
             with pytest.raises(APIUnavailableError):
-                await quality_filter.analyze_single_merged(sample_merged_property)
+                await quality_filter.analyze_single_merged(
+                    sample_merged_property, data_dir=str(tmp_path)
+                )
 
         assert quality_filter._breaker.failure_count == _CIRCUIT_BREAKER_THRESHOLD - 1
         assert not quality_filter._breaker.is_open()
@@ -2025,7 +2168,7 @@ class TestCircuitBreaker:
         _setup_two_phase_mocks(
             quality_filter._client, sample_visual_response, sample_evaluation_response
         )
-        await quality_filter.analyze_single_merged(sample_merged_property)
+        await quality_filter.analyze_single_merged(sample_merged_property, data_dir=str(tmp_path))
 
         assert quality_filter._breaker.failure_count == 0
         assert not quality_filter._breaker.is_open()
@@ -2033,6 +2176,7 @@ class TestCircuitBreaker:
     async def test_rate_limit_error_trips_circuit(
         self,
         sample_merged_property: MergedProperty,
+        tmp_path: Any,
     ) -> None:
         """RateLimitError should count toward circuit breaker."""
         from anthropic import RateLimitError
@@ -2040,6 +2184,8 @@ class TestCircuitBreaker:
         mock_response = MagicMock()
         mock_response.status_code = 429
         mock_response.headers = {}
+        _populate_image_cache(str(tmp_path), sample_merged_property)
+
         quality_filter = PropertyQualityFilter(api_key="test-key")
         quality_filter._client = MagicMock()
         quality_filter._client.messages.create = AsyncMock(
@@ -2052,13 +2198,16 @@ class TestCircuitBreaker:
 
         for _ in range(_CIRCUIT_BREAKER_THRESHOLD):
             with pytest.raises(APIUnavailableError):
-                await quality_filter.analyze_single_merged(sample_merged_property)
+                await quality_filter.analyze_single_merged(
+                    sample_merged_property, data_dir=str(tmp_path)
+                )
 
         assert quality_filter._breaker.is_open()
 
     async def test_internal_server_error_trips_circuit(
         self,
         sample_merged_property: MergedProperty,
+        tmp_path: Any,
     ) -> None:
         """InternalServerError should count toward circuit breaker."""
         from anthropic import InternalServerError
@@ -2066,6 +2215,8 @@ class TestCircuitBreaker:
         mock_response = MagicMock()
         mock_response.status_code = 500
         mock_response.headers = {}
+        _populate_image_cache(str(tmp_path), sample_merged_property)
+
         quality_filter = PropertyQualityFilter(api_key="test-key")
         quality_filter._client = MagicMock()
         quality_filter._client.messages.create = AsyncMock(
@@ -2078,16 +2229,21 @@ class TestCircuitBreaker:
 
         for _ in range(_CIRCUIT_BREAKER_THRESHOLD):
             with pytest.raises(APIUnavailableError):
-                await quality_filter.analyze_single_merged(sample_merged_property)
+                await quality_filter.analyze_single_merged(
+                    sample_merged_property, data_dir=str(tmp_path)
+                )
 
         assert quality_filter._breaker.is_open()
 
     async def test_api_timeout_error_trips_circuit(
         self,
         sample_merged_property: MergedProperty,
+        tmp_path: Any,
     ) -> None:
         """APITimeoutError (subclass of APIConnectionError) should trip circuit breaker."""
         from anthropic import APITimeoutError
+
+        _populate_image_cache(str(tmp_path), sample_merged_property)
 
         quality_filter = PropertyQualityFilter(api_key="test-key")
         quality_filter._client = MagicMock()
@@ -2097,13 +2253,16 @@ class TestCircuitBreaker:
 
         for _ in range(_CIRCUIT_BREAKER_THRESHOLD):
             with pytest.raises(APIUnavailableError):
-                await quality_filter.analyze_single_merged(sample_merged_property)
+                await quality_filter.analyze_single_merged(
+                    sample_merged_property, data_dir=str(tmp_path)
+                )
 
         assert quality_filter._breaker.is_open()
 
     async def test_bad_request_does_not_trip_circuit(
         self,
         sample_merged_property: MergedProperty,
+        tmp_path: Any,
     ) -> None:
         """BadRequestError should NOT count toward circuit breaker."""
         from anthropic import BadRequestError
@@ -2111,6 +2270,8 @@ class TestCircuitBreaker:
         mock_response = MagicMock()
         mock_response.status_code = 400
         mock_response.headers = {}
+        _populate_image_cache(str(tmp_path), sample_merged_property)
+
         quality_filter = PropertyQualityFilter(api_key="test-key")
         quality_filter._client = MagicMock()
         quality_filter._client.messages.create = AsyncMock(
@@ -2123,8 +2284,12 @@ class TestCircuitBreaker:
 
         # Exceed threshold — circuit should NOT open (BadRequestError is request-specific)
         for _ in range(_CIRCUIT_BREAKER_THRESHOLD + 1):
-            _merged, analysis = await quality_filter.analyze_single_merged(sample_merged_property)
-            assert "No images available" in analysis.summary
+            _merged, analysis = await quality_filter.analyze_single_merged(
+                sample_merged_property, data_dir=str(tmp_path)
+            )
+            assert "Quality analysis incomplete" in analysis.summary
+            assert analysis.overall_rating is None
+            assert analysis.analysis_failure.kind == "request_rejected"
 
         assert not quality_filter._breaker.is_open()
         assert quality_filter._breaker.failure_count == 0
@@ -2164,8 +2329,11 @@ class TestCircuitBreaker:
     async def test_generic_exception_does_not_trip_circuit(
         self,
         sample_merged_property: MergedProperty,
+        tmp_path: Any,
     ) -> None:
         """Generic exceptions should NOT count toward circuit breaker."""
+        _populate_image_cache(str(tmp_path), sample_merged_property)
+
         quality_filter = PropertyQualityFilter(api_key="test-key")
         quality_filter._client = MagicMock()
         quality_filter._client.messages.create = AsyncMock(
@@ -2173,8 +2341,12 @@ class TestCircuitBreaker:
         )
 
         for _ in range(_CIRCUIT_BREAKER_THRESHOLD + 1):
-            _merged, analysis = await quality_filter.analyze_single_merged(sample_merged_property)
-            assert "No images available" in analysis.summary
+            _merged, analysis = await quality_filter.analyze_single_merged(
+                sample_merged_property, data_dir=str(tmp_path)
+            )
+            assert "Quality analysis incomplete" in analysis.summary
+            assert analysis.overall_rating is None
+            assert analysis.analysis_failure.kind == "internal_error"
 
         assert not quality_filter._breaker.is_open()
 
@@ -2200,9 +2372,12 @@ class TestCircuitBreaker:
         sample_merged_property: MergedProperty,
         sample_visual_response: dict[str, Any],
         sample_evaluation_response: dict[str, Any],
+        tmp_path: Any,
     ) -> None:
         """After cooldown, circuit should allow one retry (half-open)."""
         import time
+
+        _populate_image_cache(str(tmp_path), sample_merged_property)
 
         quality_filter = PropertyQualityFilter(api_key="test-key")
         quality_filter._breaker._open = True
@@ -2213,7 +2388,7 @@ class TestCircuitBreaker:
         )
 
         # Should NOT raise — half-open allows retry
-        await quality_filter.analyze_single_merged(sample_merged_property)
+        await quality_filter.analyze_single_merged(sample_merged_property, data_dir=str(tmp_path))
         quality_filter._client.messages.create.assert_called()
 
     async def test_circuit_closes_on_success_after_halfopen(
@@ -2221,9 +2396,12 @@ class TestCircuitBreaker:
         sample_merged_property: MergedProperty,
         sample_visual_response: dict[str, Any],
         sample_evaluation_response: dict[str, Any],
+        tmp_path: Any,
     ) -> None:
         """Successful retry after half-open should fully close circuit."""
         import time
+
+        _populate_image_cache(str(tmp_path), sample_merged_property)
 
         quality_filter = PropertyQualityFilter(api_key="test-key")
         quality_filter._breaker._open = True
@@ -2233,7 +2411,7 @@ class TestCircuitBreaker:
             quality_filter._client, sample_visual_response, sample_evaluation_response
         )
 
-        await quality_filter.analyze_single_merged(sample_merged_property)
+        await quality_filter.analyze_single_merged(sample_merged_property, data_dir=str(tmp_path))
         assert not quality_filter._breaker.is_open()
         assert quality_filter._breaker._opened_at is None
         assert quality_filter._breaker.failure_count == 0
@@ -2241,11 +2419,14 @@ class TestCircuitBreaker:
     async def test_circuit_reopens_on_failure_after_halfopen(
         self,
         sample_merged_property: MergedProperty,
+        tmp_path: Any,
     ) -> None:
         """Failed retry after half-open should re-open with fresh timestamp."""
         import time
 
         from anthropic import APIConnectionError
+
+        _populate_image_cache(str(tmp_path), sample_merged_property)
 
         quality_filter = PropertyQualityFilter(api_key="test-key")
         quality_filter._breaker._open = True
@@ -2258,7 +2439,9 @@ class TestCircuitBreaker:
         )
 
         with pytest.raises(APIUnavailableError):
-            await quality_filter.analyze_single_merged(sample_merged_property)
+            await quality_filter.analyze_single_merged(
+                sample_merged_property, data_dir=str(tmp_path)
+            )
         assert quality_filter._breaker.is_open()
         assert quality_filter._breaker._opened_at > old_time  # fresh timestamp
 
@@ -3639,12 +3822,13 @@ class TestEvalHelpers:
         _sanitize_eval_enums(raw)
         assert raw == {"one_line": "Nice flat"}
 
-    async def test_evaluation_coercion_in_pipeline(
+    async def test_invalid_live_evaluation_is_rejected(
         self,
         sample_merged_property: MergedProperty,
         sample_visual_response: dict[str, Any],
+        tmp_path: Any,
     ) -> None:
-        """Phase 2 with invalid lowlight should be coerced, not lost."""
+        """A fresh invalid category fails instead of being silently removed."""
         import json
 
         eval_data_with_invalid = {
@@ -3692,19 +3876,22 @@ class TestEvalHelpers:
 
         # messages.create is called for both Phase 1 and Phase 2.
         # Return Phase 1 visual response first, then Phase 2 eval response.
+        _populate_image_cache(str(tmp_path), sample_merged_property)
+
         quality_filter = PropertyQualityFilter(api_key="test-key")
         quality_filter._client = MagicMock()
         quality_filter._client.messages.create = AsyncMock(
             side_effect=[mock_visual, mock_eval_response]
         )
 
-        results = await quality_filter.analyze_merged_properties([sample_merged_property])
+        results = await quality_filter.analyze_merged_properties(
+            [sample_merged_property], data_dir=str(tmp_path)
+        )
 
         assert len(results) == 1
         _, analysis = results[0]
         assert analysis is not None
-        # The coerced evaluation should preserve valid data
-        assert analysis.one_line == "Nice flat"
-        assert analysis.lowlights is not None
-        assert "No dishwasher" in analysis.lowlights
-        assert "Completely made up lowlight" not in analysis.lowlights
+        assert analysis.overall_rating is None
+        assert analysis.analysis_failure.phase == "evaluation"
+        assert analysis.analysis_failure.kind == "malformed_output"
+        assert analysis.one_line is None and analysis.lowlights is None

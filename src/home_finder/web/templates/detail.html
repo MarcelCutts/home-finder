@@ -117,7 +117,7 @@
                 {% if prop.first_seen %}
                 {% set dom = prop.first_seen | days_since %}
                 {% if dom > 0 %}
-                <span class="listing-age-pill">Listed {{ dom }}d ago{% if dom >= 14 %} &middot; May be negotiable{% endif %}</span>
+                <span class="listing-age-pill" title="Collector observation, not time on the market">First observed {{ dom }}d ago</span>
                 {% endif %}
                 {% endif %}
             </div>
@@ -164,6 +164,7 @@
         {% endif %}
 
         <blockquote>{{ qa.summary }}</blockquote>
+        <p class="cost-line-note">AI assessment. {% if not qa.listing_text_inputs %}This earlier assessment has no retained listing-text inputs; factual claims need confirmation.{% else %}Check current listing evidence and confirm material claims with the agent.{% endif %}</p>
 
         {% if qa.highlights or qa.lowlights %}
         <div class="overview-chips">
@@ -187,7 +188,7 @@
             <h4>Value Assessment</h4>
             {% if qa.value.rating %}
             <div class="value-row">
-                <span class="value-row-label">Market value</span>
+                <span class="value-row-label">Research comparison (unverified)</span>
                 <span class="badge
                     {% if qa.value.rating in ('excellent', 'good') %}badge-green
                     {% elif qa.value.rating == 'fair' %}badge-amber
@@ -241,22 +242,15 @@
         {% if negotiation %}
         <details class="overview-card negotiation-card">
             <summary>
-                Negotiation Intel
-                <span class="badge {% if negotiation.strength == 'strong' %}badge-green{% elif negotiation.strength == 'moderate' %}badge-amber{% elif negotiation.strength == 'balanced' %}badge-amber{% else %}badge-red{% endif %}">
-                    {{ negotiation.strength | capitalize }}
-                </span>
+                Offer preparation
+                <span class="badge badge-amber">Limited evidence</span>
             </summary>
             <ul class="negotiation-points">
                 {% for signal in negotiation.signals %}
-                {% if signal.weight > 0 or signal.direction != 'neutral' %}
-                <li class="signal-{{ signal.direction }}">{{ signal.text }}</li>
-                {% endif %}
+                <li>{{ signal.text }}</li>
                 {% endfor %}
             </ul>
             <p class="negotiation-approach">{{ negotiation.suggested_approach }}</p>
-            {% if negotiation.benchmark_source %}
-            <p class="negotiation-source">Benchmark: {{ negotiation.benchmark_source }}</p>
-            {% endif %}
         </details>
         {% endif %}
 
@@ -271,19 +265,8 @@
                 {% if le.property_type and le.property_type != 'unknown' %}
                 <div class="listing-kv-item"><span class="listing-kv-label">Type</span><span class="listing-kv-value">{{ le.property_type | replace("_", " ") | title }}</span></div>
                 {% endif %}
-                {% if le.epc_rating and le.epc_rating != 'unknown' %}
-                <div class="listing-kv-item"><span class="listing-kv-label">EPC</span><span class="listing-kv-value">Band {{ le.epc_rating }}</span></div>
-                {% endif %}
-                {% if le.service_charge_pcm %}
-                <div class="listing-kv-item"><span class="listing-kv-label">Service Charge</span><span class="listing-kv-value">&pound;{{ le.service_charge_pcm }}/mo</span></div>
-                {% endif %}
                 {% if le.deposit_weeks is not none %}
                 <div class="listing-kv-item"><span class="listing-kv-label">Deposit</span><span class="listing-kv-value">{{ le.deposit_weeks }} weeks</span></div>
-                {% endif %}
-                {% if le.bills_included == 'yes' %}
-                <div class="listing-kv-item"><span class="listing-kv-label">Bills</span><span class="listing-kv-value">Included</span></div>
-                {% elif le.bills_included == 'no' %}
-                <div class="listing-kv-item"><span class="listing-kv-label">Bills</span><span class="listing-kv-value">Not included</span></div>
                 {% endif %}
                 {% if le.pets_allowed == 'yes' %}
                 <div class="listing-kv-item"><span class="listing-kv-label">Pets</span><span class="listing-kv-value">Allowed</span></div>
@@ -292,9 +275,6 @@
                 {% endif %}
                 {% if le.parking and le.parking != 'unknown' %}
                 <div class="listing-kv-item"><span class="listing-kv-label">Parking</span><span class="listing-kv-value">{{ le.parking | capitalize }}</span></div>
-                {% endif %}
-                {% if le.council_tax_band and le.council_tax_band != 'unknown' %}
-                <div class="listing-kv-item"><span class="listing-kv-label">Council Tax</span><span class="listing-kv-value">Band {{ le.council_tax_band }}</span></div>
                 {% endif %}
                 {% if le.furnished_status and le.furnished_status != 'unknown' %}
                 <div class="listing-kv-item"><span class="listing-kv-label">Furnished</span><span class="listing-kv-value">{{ le.furnished_status | replace("_", " ") | capitalize }}</span></div>
@@ -310,35 +290,7 @@
         {% if cost_breakdown or (fit_score is not none and fit_breakdown) %}
         <div class="overview-pair">
         {% if cost_breakdown %}
-        <div class="overview-card cost-breakdown-card">
-            <div class="cost-header">
-                <h4>True Monthly Cost</h4>
-                {% if cost_breakdown.extras > 0 %}
-                <span class="cost-extras-badge">+&pound;{{ "{:,}".format(cost_breakdown.extras) }}{% if cost_breakdown.extras_high %}&ndash;{{ "{:,}".format(cost_breakdown.extras_high) }}{% endif %} beyond rent</span>
-                {% endif %}
-            </div>
-            <div class="cost-receipt">
-                {% for item in cost_breakdown.line_items %}
-                {% if item.label != 'Bills' %}
-                <div class="cost-line{% if item.label == 'Rent' %} cost-line-rent{% endif %}">
-                    <span class="cost-line-label">{{ item.label }}{% if item.note %} <span class="cost-line-note">{{ item.note }}</span>{% endif %}</span>
-                    <span class="cost-line-amount">
-                        {% if item.amount is not none %}&pound;{{ "{:,}".format(item.amount) }}{% elif item.range_low is defined %}&pound;{{ item.range_low }}&ndash;{{ item.range_high }}{% endif %}
-                    </span>
-                </div>
-                {% else %}
-                <div class="cost-line cost-line-bills">
-                    <span class="cost-line-label">Bills <span class="cost-line-note">included in rent</span></span>
-                    <span class="cost-line-amount">&pound;0</span>
-                </div>
-                {% endif %}
-                {% endfor %}
-                <div class="cost-line cost-line-total">
-                    <span class="cost-line-label">Total</span>
-                    <span class="cost-line-amount">&pound;{{ "{:,}".format(cost_breakdown.total) }}{% if cost_breakdown.total_high %}<span class="cost-line-range">&ndash;{{ "{:,}".format(cost_breakdown.total_high) }}</span>{% endif %}<span class="cost-line-per">/mo</span></span>
-                </div>
-            </div>
-        </div>
+        {% include "_cost_breakdown.html" %}
         {% endif %}
 
         {% if fit_score is not none and fit_breakdown %}
@@ -406,6 +358,7 @@
     {% endif %}
 
     {# 2. Quality Analysis — room-by-room breakdown #}
+    {% if not qa %}<section class="detail-section">{% include "_cost_breakdown.html" %}</section>{% endif %}
     {% include "_quality_card.html" %}
 
     {# 2b. Viewing Prep — actionable checklist promoted to top-level section #}
@@ -492,13 +445,17 @@
     {% if prop.latitude and prop.longitude %}
     <section id="section-location" class="detail-section">
         <h3>Location</h3>
-        <div id="map" data-lat="{{ prop.latitude }}" data-lon="{{ prop.longitude }}" data-title="{{ prop.address }}" role="application" aria-label="Map showing property location at {{ prop.address }}"></div>
+        <p id="map-status" role="status" {% if map_api_key %}hidden{% endif %}>Map unavailable. <a href="https://www.google.com/maps?q={{ prop.latitude }},{{ prop.longitude }}" target="_blank" rel="noopener noreferrer">View this location in Maps</a>.</p>
+        {% if map_api_key %}
+        <div id="map" data-map-key="{{ map_api_key }}" data-lat="{{ prop.latitude }}" data-lon="{{ prop.longitude }}" data-title="{{ prop.address }}" role="application" aria-label="Map showing property location at {{ prop.address }}"></div>
+        {% endif %}
     </section>
     {% endif %}
 
     {# 6. Area Context — compact summary card (full details on /area/{outcode}) #}
     {% if area_context and area_context.description %}
     <section id="section-area" class="detail-section">
+        <p class="cost-line-note">{{ area_context.reference_note }}</p>
         <h3>Area: {{ outcode }}</h3>
         <div class="area-summary-card">
             {% if area_context.matched_micro_area %}
@@ -532,7 +489,7 @@
 
                 {% if area_context.benchmarks and prop.bedrooms in area_context.benchmarks %}
                 <div class="area-summary-stat">
-                    <span class="area-summary-stat-label">{{ prop.bedrooms }}-bed avg</span>
+                    <span class="area-summary-stat-label">{{ prop.bedrooms }}-bed research (undated)</span>
                     <span class="area-summary-stat-detail">&pound;{{ "{:,}".format(area_context.benchmarks[prop.bedrooms]) }}/mo</span>
                 </div>
                 {% endif %}

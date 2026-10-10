@@ -7,17 +7,11 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import httpx
 import structlog.testing
 
+from home_finder.filters.availability import is_challenge as _is_cloudflare_challenge
 from home_finder.filters.off_market import (
-    _LET_AGREED_PATTERNS,
     ListingStatus,
     OffMarketChecker,
-    _check_let_agreed,
-    _check_onthemarket,
-    _check_openrent,
-    _check_rightmove,
-    _check_zoopla,
     _CurlResponseAdapter,
-    _is_cloudflare_challenge,
 )
 
 # ---------------------------------------------------------------------------
@@ -28,7 +22,7 @@ from home_finder.filters.off_market import (
 def _make_response(
     status_code: int = 200,
     text: str = "",
-    url: str = "https://example.com/property/123",
+    url: str = "https://www.rightmove.co.uk/properties/123",
     headers: dict[str, str] | None = None,
 ) -> httpx.Response:
     """Build a minimal httpx.Response for checker tests."""
@@ -40,243 +34,6 @@ def _make_response(
     )
     # httpx.Response tracks the final URL via the request
     return resp
-
-
-# ---------------------------------------------------------------------------
-# Rightmove checker
-# ---------------------------------------------------------------------------
-
-
-class TestCheckRightmove:
-    def test_404_is_removed(self):
-        resp = _make_response(status_code=404)
-        assert _check_rightmove(resp) == ListingStatus.REMOVED
-
-    def test_410_is_removed(self):
-        resp = _make_response(status_code=410)
-        assert _check_rightmove(resp) == ListingStatus.REMOVED
-
-    def test_200_with_removal_text_is_removed(self):
-        resp = _make_response(text="Sorry, this property has been removed from Rightmove.")
-        assert _check_rightmove(resp) == ListingStatus.REMOVED
-
-    def test_200_with_no_longer_available_text(self):
-        resp = _make_response(text="This property is no longer available on the market.")
-        assert _check_rightmove(resp) == ListingStatus.REMOVED
-
-    def test_200_normal_listing_is_active(self):
-        resp = _make_response(text="<html>Nice 2-bed flat in Hackney</html>")
-        assert _check_rightmove(resp) == ListingStatus.ACTIVE
-
-    def test_200_redirect_to_search_is_removed(self):
-        resp = _make_response(
-            url="https://www.rightmove.co.uk/property-to-rent/find.html?searchType=RENT"
-        )
-        assert _check_rightmove(resp) == ListingStatus.REMOVED
-
-    def test_429_is_unknown(self):
-        resp = _make_response(status_code=429)
-        assert _check_rightmove(resp) == ListingStatus.UNKNOWN
-
-    def test_500_is_unknown(self):
-        resp = _make_response(status_code=500)
-        assert _check_rightmove(resp) == ListingStatus.UNKNOWN
-
-    def test_cloudflare_challenge_is_unknown(self):
-        html = "<html>Checking your browser before accessing rightmove.co.uk</html>"
-        resp = _make_response(text=html)
-        assert _check_rightmove(resp) == ListingStatus.UNKNOWN
-
-    def test_let_agreed_json_tag(self):
-        html = '<script>window.PAGE_MODEL = {"tags":["LET_AGREED"]}</script>'
-        resp = _make_response(text=html)
-        assert _check_rightmove(resp) == ListingStatus.LET_AGREED
-
-    def test_let_agreed_heading_text(self):
-        html = "<html><h1>LET AGREED</h1><p>Nice flat</p></html>"
-        resp = _make_response(text=html)
-        assert _check_rightmove(resp) == ListingStatus.LET_AGREED
-
-    def test_let_agreed_false_positive_url_param(self):
-        """includeLetAgreed=true in agent URLs should NOT match."""
-        html = '<a href="/agent?includeLetAgreed=true">Agent link</a><p>Nice active flat</p>'
-        resp = _make_response(text=html)
-        assert _check_rightmove(resp) == ListingStatus.ACTIVE
-
-
-# ---------------------------------------------------------------------------
-# Zoopla checker
-# ---------------------------------------------------------------------------
-
-
-class TestCheckZoopla:
-    def test_404_is_removed(self):
-        resp = _make_response(status_code=404)
-        assert _check_zoopla(resp) == ListingStatus.REMOVED
-
-    def test_200_with_no_longer_available(self):
-        resp = _make_response(text="This property is no longer available.")
-        assert _check_zoopla(resp) == ListingStatus.REMOVED
-
-    def test_200_normal_is_active(self):
-        resp = _make_response(text="<html>Beautiful apartment</html>")
-        assert _check_zoopla(resp) == ListingStatus.ACTIVE
-
-    def test_cloudflare_challenge_is_unknown(self):
-        html = "<html>Checking your browser before accessing zoopla.co.uk</html>"
-        resp = _make_response(text=html)
-        assert _check_zoopla(resp) == ListingStatus.UNKNOWN
-
-    def test_429_is_unknown(self):
-        resp = _make_response(status_code=429)
-        assert _check_zoopla(resp) == ListingStatus.UNKNOWN
-
-    def test_let_agreed_text(self):
-        html = "<html><div class='status'>Let agreed</div><p>Nice flat</p></html>"
-        resp = _make_response(text=html)
-        assert _check_zoopla(resp) == ListingStatus.LET_AGREED
-
-    def test_letting_agreed_text(self):
-        html = "<html><span>Letting agreed</span></html>"
-        resp = _make_response(text=html)
-        assert _check_zoopla(resp) == ListingStatus.LET_AGREED
-
-
-# ---------------------------------------------------------------------------
-# OpenRent checker
-# ---------------------------------------------------------------------------
-
-
-class TestCheckOpenrent:
-    def test_404_is_removed(self):
-        resp = _make_response(status_code=404)
-        assert _check_openrent(resp) == ListingStatus.REMOVED
-
-    def test_redirect_to_search_is_removed(self):
-        resp = _make_response(
-            url="https://www.openrent.com/properties-to-rent/london",
-            text="<html>Browse properties</html>",
-        )
-        assert _check_openrent(resp) == ListingStatus.REMOVED
-
-    def test_homepage_in_html_is_removed(self):
-        resp = _make_response(text="<html>homepage browse our listings</html>")
-        assert _check_openrent(resp) == ListingStatus.REMOVED
-
-    def test_200_normal_is_active(self):
-        resp = _make_response(
-            url="https://www.openrent.com/property/12345",
-            text="<html>1 bed flat in E8</html>",
-        )
-        assert _check_openrent(resp) == ListingStatus.ACTIVE
-
-    def test_cloudflare_challenge_is_unknown(self):
-        resp = _make_response(text="<html>Just a moment... Cloudflare Ray ID: abc</html>")
-        assert _check_openrent(resp) == ListingStatus.UNKNOWN
-
-    def test_429_is_unknown(self):
-        resp = _make_response(status_code=429)
-        assert _check_openrent(resp) == ListingStatus.UNKNOWN
-
-    def test_no_let_agreed_patterns(self):
-        """OpenRent has no let-agreed state — always ACTIVE or REMOVED."""
-        assert "openrent" not in _LET_AGREED_PATTERNS
-
-
-# ---------------------------------------------------------------------------
-# OnTheMarket checker
-# ---------------------------------------------------------------------------
-
-
-class TestCheckOnthemarket:
-    def test_404_is_removed(self):
-        resp = _make_response(status_code=404)
-        assert _check_onthemarket(resp) == ListingStatus.REMOVED
-
-    def test_200_with_no_longer_available(self):
-        resp = _make_response(text="This property is no longer available.")
-        assert _check_onthemarket(resp) == ListingStatus.REMOVED
-
-    def test_redirect_to_search_is_removed(self):
-        resp = _make_response(
-            url="https://www.onthemarket.com/to-rent/property/london/",
-            text="<html>Search results</html>",
-        )
-        assert _check_onthemarket(resp) == ListingStatus.REMOVED
-
-    def test_200_with_details_in_url_is_active(self):
-        resp = _make_response(
-            url="https://www.onthemarket.com/details/12345/",
-            text="<html>Nice flat</html>",
-        )
-        assert _check_onthemarket(resp) == ListingStatus.ACTIVE
-
-    def test_cloudflare_challenge_is_unknown(self):
-        resp = _make_response(
-            text="<html>Checking your browser before accessing onthemarket.com</html>"
-        )
-        assert _check_onthemarket(resp) == ListingStatus.UNKNOWN
-
-    def test_let_agreed_text(self):
-        html = '<html><div class="badge">Let agreed</div></html>'
-        resp = _make_response(
-            url="https://www.onthemarket.com/details/12345/",
-            text=html,
-        )
-        assert _check_onthemarket(resp) == ListingStatus.LET_AGREED
-
-    def test_under_offer_text(self):
-        html = '<html><div class="badge">Under offer</div></html>'
-        resp = _make_response(
-            url="https://www.onthemarket.com/details/12345/",
-            text=html,
-        )
-        assert _check_onthemarket(resp) == ListingStatus.LET_AGREED
-
-    def test_let_agreed_false_positive_url_param(self):
-        """?let-agreed=true in agent filter URLs should NOT match."""
-        html = '<a href="/search?let-agreed=true">Filter</a><p>Active listing</p>'
-        resp = _make_response(
-            url="https://www.onthemarket.com/details/12345/",
-            text=html,
-        )
-        assert _check_onthemarket(resp) == ListingStatus.ACTIVE
-
-
-# ---------------------------------------------------------------------------
-# Let-agreed pattern tests
-# ---------------------------------------------------------------------------
-
-
-class TestLetAgreedPatterns:
-    def test_rightmove_json_tags(self):
-        assert _check_let_agreed("rightmove", '"tags": ["LET_AGREED"]')
-        assert _check_let_agreed("rightmove", '"tags":["LET_AGREED","FEATURED"]')
-
-    def test_rightmove_heading(self):
-        assert _check_let_agreed("rightmove", "<h1>LET AGREED</h1>")
-        assert _check_let_agreed("rightmove", "<h1>LET_AGREED</h1>")
-
-    def test_rightmove_no_false_positive_url(self):
-        assert not _check_let_agreed("rightmove", "?includeLetAgreed=true")
-        assert not _check_let_agreed("rightmove", "&includeLetAgreed=true")
-
-    def test_zoopla_let_agreed(self):
-        assert _check_let_agreed("zoopla", "Let agreed")
-        assert _check_let_agreed("zoopla", "Letting agreed")
-
-    def test_onthemarket_let_agreed(self):
-        assert _check_let_agreed("onthemarket", "Let agreed")
-        assert _check_let_agreed("onthemarket", "Let-agreed")
-
-    def test_onthemarket_under_offer(self):
-        assert _check_let_agreed("onthemarket", "Under offer")
-
-    def test_onthemarket_no_false_positive_url(self):
-        assert not _check_let_agreed("onthemarket", "?let-agreed=true")
-
-    def test_openrent_no_patterns(self):
-        assert not _check_let_agreed("openrent", "Let agreed")
 
 
 # ---------------------------------------------------------------------------
@@ -342,14 +99,14 @@ class TestCloudflareHeaderDetection:
             text="<html>Normal looking page</html>",
             headers={"cf-mitigated": "challenge"},
         )
-        assert _check_rightmove(resp) == ListingStatus.UNKNOWN
+        assert _is_cloudflare_challenge(resp.text, resp.headers)
 
     def test_zoopla_cf_mitigated_header(self):
         resp = _make_response(
             text="<html>Normal page</html>",
             headers={"cf-mitigated": "challenge"},
         )
-        assert _check_zoopla(resp) == ListingStatus.UNKNOWN
+        assert _is_cloudflare_challenge(resp.text, resp.headers)
 
 
 # ---------------------------------------------------------------------------
@@ -362,19 +119,28 @@ class TestCheckUrl:
         checker = OffMarketChecker()
 
         with patch.object(checker, "_fetch", new_callable=AsyncMock) as mock_fetch:
-            mock_fetch.return_value = _make_response(status_code=404)
-            status = await checker.check_url("rightmove", "https://rightmove.co.uk/1")
+            mock_fetch.return_value = _make_response(status_code=410)
+            status = await checker.check_url(
+                "rightmove", "https://www.rightmove.co.uk/properties/123"
+            )
 
         assert status == ListingStatus.REMOVED
-        mock_fetch.assert_called_once_with("rightmove", "https://rightmove.co.uk/1")
+        mock_fetch.assert_called_once_with(
+            "rightmove", "https://www.rightmove.co.uk/properties/123"
+        )
         await checker.close()
 
     async def test_get_200_active(self):
         checker = OffMarketChecker()
 
         with patch.object(checker, "_fetch", new_callable=AsyncMock) as mock_fetch:
-            mock_fetch.return_value = _make_response(text="<html>Nice flat</html>")
-            status = await checker.check_url("rightmove", "https://rightmove.co.uk/1")
+            mock_fetch.return_value = _make_response(
+                text="<script>window.PAGE_MODEL = "
+                '{"propertyData":{"id":123,"status":"available"}}</script>'
+            )
+            status = await checker.check_url(
+                "rightmove", "https://www.rightmove.co.uk/properties/123"
+            )
 
         assert status == ListingStatus.ACTIVE
         mock_fetch.assert_called_once()
@@ -385,7 +151,9 @@ class TestCheckUrl:
 
         with patch.object(checker, "_fetch", new_callable=AsyncMock) as mock_fetch:
             mock_fetch.return_value = None
-            status = await checker.check_url("rightmove", "https://rightmove.co.uk/1")
+            status = await checker.check_url(
+                "rightmove", "https://www.rightmove.co.uk/properties/123"
+            )
 
         assert status == ListingStatus.UNKNOWN
         await checker.close()
@@ -465,7 +233,7 @@ class TestCheckBatchBasic:
             mock_check.return_value = ListingStatus.ACTIVE
 
             checks = [
-                ("prop-1", "rightmove", "https://rightmove.co.uk/1"),
+                ("prop-1", "rightmove", "https://www.rightmove.co.uk/properties/123"),
                 ("prop-2", "openrent", "https://openrent.com/2"),
             ]
             batch = await checker.check_batch(checks)
@@ -483,7 +251,7 @@ class TestCheckBatchBasic:
             mock_check.return_value = ListingStatus.ACTIVE
 
             checks = [
-                ("p1", "rightmove", "https://rightmove.co.uk/1"),
+                ("p1", "rightmove", "https://www.rightmove.co.uk/properties/123"),
                 ("p2", "rightmove", "https://rightmove.co.uk/2"),
                 ("p3", "zoopla", "https://zoopla.co.uk/1"),
             ]
@@ -501,7 +269,7 @@ class TestCheckBatchBasic:
         with patch.object(checker, "check_url", new_callable=AsyncMock) as mock_check:
             mock_check.return_value = ListingStatus.LET_AGREED
 
-            checks = [("p1", "rightmove", "https://rightmove.co.uk/1")]
+            checks = [("p1", "rightmove", "https://www.rightmove.co.uk/properties/123")]
             batch = await checker.check_batch(checks)
 
         assert len(batch.results) == 1
@@ -517,7 +285,7 @@ class TestCheckBatchBasic:
             mock_check.side_effect = [ListingStatus.ACTIVE, ListingStatus.REMOVED]
 
             checks = [
-                ("p1", "rightmove", "https://rightmove.co.uk/1"),
+                ("p1", "rightmove", "https://www.rightmove.co.uk/properties/123"),
                 ("p2", "rightmove", "https://rightmove.co.uk/2"),
             ]
             batch = await checker.check_batch(checks)
@@ -540,9 +308,12 @@ class TestCheckUrlLogging:
         checker = OffMarketChecker()
 
         with patch.object(checker, "_fetch", new_callable=AsyncMock) as mock_fetch:
-            mock_fetch.return_value = _make_response(text="<html>Nice flat</html>")
+            mock_fetch.return_value = _make_response(
+                text="<script>window.PAGE_MODEL = "
+                '{"propertyData":{"id":123,"status":"available"}}</script>'
+            )
             with structlog.testing.capture_logs() as captured:
-                await checker.check_url("rightmove", "https://rightmove.co.uk/1")
+                await checker.check_url("rightmove", "https://www.rightmove.co.uk/properties/123")
 
         debug_logs = [e for e in captured if e.get("event") == "off_market_check_result"]
         assert len(debug_logs) == 1
@@ -561,14 +332,17 @@ class TestCheckUrlLogging:
         with patch.object(checker, "_fetch", new_callable=AsyncMock) as mock_fetch:
             mock_fetch.return_value = _make_response(status_code=429, text="Rate limited")
             with structlog.testing.capture_logs() as captured:
-                status = await checker.check_url("rightmove", "https://rightmove.co.uk/1")
+                status = await checker.check_url(
+                    "rightmove", "https://www.rightmove.co.uk/properties/123"
+                )
 
         assert status == ListingStatus.UNKNOWN
         unknown_logs = [e for e in captured if e.get("event") == "off_market_unknown_response"]
         assert len(unknown_logs) == 1
         log = unknown_logs[0]
         assert log["status_code"] == 429
-        assert "body_preview" in log
+        assert "reason" in log
+        assert "body_preview" not in log
         await checker.close()
 
     async def test_warning_log_on_fetch_failure(self):
@@ -578,7 +352,9 @@ class TestCheckUrlLogging:
         with patch.object(checker, "_fetch", new_callable=AsyncMock) as mock_fetch:
             mock_fetch.return_value = None
             with structlog.testing.capture_logs() as captured:
-                status = await checker.check_url("rightmove", "https://rightmove.co.uk/1")
+                status = await checker.check_url(
+                    "rightmove", "https://www.rightmove.co.uk/properties/123"
+                )
 
         assert status == ListingStatus.UNKNOWN
         unknown_logs = [e for e in captured if e.get("event") == "off_market_unknown_response"]

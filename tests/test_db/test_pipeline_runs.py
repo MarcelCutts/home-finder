@@ -98,6 +98,18 @@ class TestCompletePipelineRun:
 
 
 class TestGetLastPipelineRun:
+    @pytest.mark.parametrize("status", ["partial", "cancelled"])
+    async def test_latest_incomplete_run_is_not_hidden(
+        self, storage: PropertyStorage, status: str
+    ) -> None:
+        previous = await storage.pipeline.create_pipeline_run()
+        await storage.pipeline.complete_pipeline_run(previous, "completed")
+        latest = await storage.pipeline.create_pipeline_run()
+        await storage.pipeline.complete_pipeline_run(latest, status)
+        result = await storage.pipeline.get_last_pipeline_run()
+        assert result is not None
+        assert (result["id"], result["status"]) == (latest, status)
+
     @pytest.mark.asyncio
     async def test_returns_none_when_no_runs(self, storage: PropertyStorage) -> None:
         result = await storage.pipeline.get_last_pipeline_run()

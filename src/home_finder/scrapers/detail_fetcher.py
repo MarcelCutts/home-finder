@@ -1,11 +1,13 @@
 """Detail page fetcher for extracting gallery and floorplan URLs."""
 
 import asyncio
+import hashlib
 import io
 import json
 import re
 from dataclasses import dataclass
-from typing import Any, NamedTuple, assert_never
+from decimal import Decimal
+from typing import Any, Literal, NamedTuple, assert_never
 
 import httpx
 from curl_cffi import CurlError
@@ -20,10 +22,21 @@ from tenacity import (
 )
 
 from home_finder.logging import get_logger
-from home_finder.models import SQM_PER_SQFT, Property, PropertySource
+from home_finder.models import Property, PropertySource
+from home_finder.models.source_area import SourceAreaReading, display_area_square_metres
 from home_finder.scrapers.constants import BROWSER_HEADERS
+from home_finder.scrapers.detail_identity import (
+    DetailIdentityError,
+    requested_identity,
+    validate_embedded_identity,
+    validate_page_identity,
+    validate_response_url,
+)
 from home_finder.scrapers.retry import RetryableHttpError
+from home_finder.scrapers.rightmove_payloads import detail_property
+from home_finder.scrapers.source_area import AreaResult, rightmove_areas, single_area
 from home_finder.utils.circuit_breaker import ConsecutiveFailureBreaker
+from home_finder.utils.http_evidence import is_challenge
 from home_finder.utils.image_cache import is_valid_image_bytes
 
 _MAX_RETRIES = 2  # cross-run retry handles persistent failures
@@ -111,8 +124,8 @@ class _NextDataResult(NamedTuple):
     features: list[str]
 
 
-def _zoopla_from_next_data(html: str, max_gallery_images: int) -> _NextDataResult | None:
-    """Extract gallery, floorplan, description, features from __NEXT_DATA__."""
+def _zoopla_listing(html: str) -> dict[str, Any] | None:
+    """Select the main listing; related listings are not identity evidence."""
     match = re.search(
         r'<script id="__NEXT_DATA__"[^>]*>(.*?)</script>',
         html,
@@ -123,6 +136,17 @@ def _zoopla_from_next_data(html: str, max_gallery_images: int) -> _NextDataResul
 
     data = json.loads(match.group(1))
     listing = data.get("props", {}).get("pageProps", {}).get("listing", {})
+    if not isinstance(listing, dict):
+        raise DetailIdentityError("invalid_main_listing")
+    return listing
+
+
+def _zoopla_from_next_data(
+    listing: dict[str, Any] | None, max_gallery_images: int
+) -> _NextDataResult | None:
+    """Extract gallery, floorplan, description, features from a qualified listing."""
+    if not listing:
+        return None
     media = listing.get("propertyMedia", [])
 
     gallery_urls: list[str] = []
@@ -155,7 +179,9 @@ def _zoopla_from_next_data(html: str, max_gallery_images: int) -> _NextDataResul
     return _NextDataResult(gallery_urls, floorplan_url, description, features)
 
 
-def _zoopla_desc_from_rsc(html: str) -> tuple[str | None, list[str]]:
+def _zoopla_desc_from_rsc(
+    html: str, *, expected_id: str | None = None
+) -> tuple[str | None, list[str]]:
     """Extract description and features from RSC taxonomy payload.
 
     Returns (description, features).
@@ -174,6 +200,8 @@ def _zoopla_desc_from_rsc(html: str) -> tuple[str | None, list[str]]:
                     parsed = json.loads(payload[colon_idx + 1 :])
                     taxonomy = _find_dict_with_key(parsed, "epcRating")
                     if taxonomy:
+                        if expected_id is not None:
+                            validate_embedded_identity("zoopla", expected_id, taxonomy)
                         desc = taxonomy.get("detailedDescription", "")
                         description: str | None = None
                         if desc and not desc.startswith("$"):
@@ -290,11 +318,8 @@ def _zoopla_images_from_full_urls(
     return [url for _, url in sorted_imgs[:remaining]]
 
 
-def _zoopla_size_from_rsc(html: str) -> int | None:
-    """Extract sizeSqft from RSC taxonomy payload.
-
-    Returns floor area in sqft, or None if not found/invalid.
-    """
+def _zoopla_area_from_rsc(html: str, *, expected_id: str | None = None) -> AreaResult:
+    """Keep a structured sizeSqft quantity before conversion or display rounding."""
     rsc_pattern = r"self\.__next_f\.push\(\s*\[(.*?)\]\s*\)"
     for m in re.finditer(rsc_pattern, html, re.DOTALL):
         match_text = m.group(1)
@@ -306,17 +331,26 @@ def _zoopla_size_from_rsc(html: str) -> int | None:
                 payload = arr[1]
                 colon_idx = payload.find(":")
                 if colon_idx >= 0:
-                    parsed = json.loads(payload[colon_idx + 1 :])
+                    parsed = json.loads(payload[colon_idx + 1 :], parse_float=Decimal)
                     taxonomy = _find_dict_with_key(parsed, "sizeSqft")
                     if taxonomy:
-                        raw = taxonomy.get("sizeSqft")
-                        if (
-                            isinstance(raw, (int, float))
-                            and _FLOOR_AREA_MIN_SQFT <= raw <= _FLOOR_AREA_MAX_SQFT
-                        ):
-                            return int(raw)
+                        if expected_id is not None:
+                            validate_embedded_identity("zoopla", expected_id, taxonomy)
+                        return single_area(
+                            taxonomy.get("sizeSqft"), source_field="taxonomy.sizeSqft"
+                        )
         except (json.JSONDecodeError, TypeError):
             continue
+    return None, None
+
+
+def _zoopla_size_from_rsc(html: str) -> Decimal | None:
+    """Legacy bounded scalar helper; fractions are no longer truncated."""
+    readings, _omission = _zoopla_area_from_rsc(html)
+    if readings:
+        amount = readings[0].lower
+        if amount is not None and _FLOOR_AREA_MIN_SQFT <= amount <= _FLOOR_AREA_MAX_SQFT:
+            return amount
     return None
 
 
@@ -352,6 +386,8 @@ class DetailPageData:
     postcode: str | None = None
     floor_area_sqm: float | None = None
     floor_area_source: str | None = None  # "rightmove" | "zoopla" | "onthemarket"
+    floor_area_readings: tuple[SourceAreaReading, ...] | None = None
+    floor_area_omission: Literal["unsupported_quantity"] | None = None
 
 
 class DetailFetcher:
@@ -528,46 +564,67 @@ class DetailFetcher:
         Returns:
             DetailPageData with floorplan and gallery URLs, or None on failure.
         """
-        match prop.source:
-            case PropertySource.RIGHTMOVE:
-                return await self._fetch_rightmove(prop)
-            case PropertySource.ZOOPLA:
-                return await self._fetch_zoopla(prop)
-            case PropertySource.OPENRENT:
-                return await self._fetch_openrent(prop)
-            case PropertySource.ONTHEMARKET:
-                return await self._fetch_onthemarket(prop)
-            case _ as unreachable:
-                assert_never(unreachable)
+        try:
+            requested_identity(prop)  # Refuse inconsistent input before making a request.
+            match prop.source:
+                case PropertySource.RIGHTMOVE:
+                    return await self._fetch_rightmove(prop)
+                case PropertySource.ZOOPLA:
+                    return await self._fetch_zoopla(prop)
+                case PropertySource.OPENRENT:
+                    return await self._fetch_openrent(prop)
+                case PropertySource.ONTHEMARKET:
+                    return await self._fetch_onthemarket(prop)
+                case _ as unreachable:
+                    assert_never(unreachable)
+        except DetailIdentityError as exc:
+            logger.warning(
+                "detail_identity_refused",
+                source=prop.source.value,
+                requested_url_sha256=hashlib.sha256(str(prop.url).encode()).hexdigest(),
+                reason=str(exc),
+            )
+            return None
+
+    def _qualify_page(
+        self,
+        prop: Property,
+        response_url: str,
+        html: str,
+        *,
+        listing: dict[str, Any] | None = None,
+    ) -> None:
+        expected = validate_response_url(prop, response_url)
+        markers = validate_page_identity(
+            prop.source.value, expected, response_url, html, listing=listing
+        )
+        logger.info(
+            "detail_identity_verified",
+            source=prop.source.value,
+            provider_id=expected,
+            response_url_sha256=hashlib.sha256(response_url.encode()).hexdigest(),
+            markers=markers,
+        )
 
     async def _fetch_rightmove(self, prop: Property) -> DetailPageData | None:
         """Extract floorplan and gallery URLs from Rightmove detail page."""
         try:
             response = await self._httpx_get_with_retry(str(prop.url))
-            html = response.text
-
-            # Find PAGE_MODEL JSON start
-            start_match = re.search(r"window\.PAGE_MODEL\s*=\s*", html)
-            if not start_match:
-                logger.debug("no_page_model", property_id=prop.unique_id)
+            if response.status_code != 200:
+                logger.warning("rightmove_http_error", status=response.status_code)
                 return None
-
-            # Extract JSON using brace counting (handles nested objects)
-            start_idx = start_match.end()
-            depth = 0
-            end_idx = start_idx
-            for i, char in enumerate(html[start_idx:]):
-                if char == "{":
-                    depth += 1
-                elif char == "}":
-                    depth -= 1
-                    if depth == 0:
-                        end_idx = start_idx + i + 1
-                        break
-
-            json_str = html[start_idx:end_idx]
-            data = json.loads(json_str)
-            property_data = data.get("propertyData", {})
+            html = response.text
+            if is_challenge(html, response.headers):
+                logger.warning("rightmove_challenge", property_id=prop.unique_id)
+                return None
+            expected = validate_response_url(prop, str(response.url))
+            try:
+                property_data = detail_property(html, expected, exact_numbers=True)
+            except ValueError as exc:
+                if str(exc) in {"mismatched_property_id", "missing_property_id"}:
+                    raise DetailIdentityError(str(exc)) from exc
+                raise
+            self._qualify_page(prop, str(response.url), html, listing=property_data)
 
             # Extract floorplan
             floorplan_url: str | None = None
@@ -610,18 +667,9 @@ class DetailFetcher:
             if outcode and incode:
                 postcode = f"{outcode} {incode}"
 
-            # Extract floor area from sizings (validate in sqft, convert to sqm)
-            floor_area_sqm: float | None = None
-            sizings = property_data.get("sizings", [])
-            for sizing in sizings:
-                if sizing.get("unit") == "sqft":
-                    raw = sizing.get("maximumSize") or sizing.get("minimumSize")
-                    if (
-                        isinstance(raw, (int, float))
-                        and _FLOOR_AREA_MIN_SQFT <= raw <= _FLOOR_AREA_MAX_SQFT
-                    ):
-                        floor_area_sqm = round(raw * SQM_PER_SQFT, 1)
-                        break
+            # A range or lower bound must not become an exact total.
+            areas, area_omission = rightmove_areas(property_data.get("sizings"))
+            floor_area_sqm = display_area_square_metres(areas)
 
             return DetailPageData(
                 floorplan_url=floorplan_url,
@@ -633,8 +681,12 @@ class DetailFetcher:
                 postcode=postcode,
                 floor_area_sqm=floor_area_sqm,
                 floor_area_source="rightmove" if floor_area_sqm else None,
+                floor_area_readings=areas,
+                floor_area_omission=area_omission,
             )
 
+        except DetailIdentityError:
+            raise
         except Exception as e:
             logger.warning(
                 "rightmove_fetch_failed",
@@ -659,6 +711,11 @@ class DetailFetcher:
                 )
                 return None
             html: str = response.text
+            if is_challenge(html, response.headers):
+                return None
+            expected = validate_response_url(prop, str(response.url))
+            listing = _zoopla_listing(html)
+            self._qualify_page(prop, str(response.url), html, listing=listing)
             max_imgs = self._max_gallery_images
 
             floorplan_url: str | None = None
@@ -667,12 +724,12 @@ class DetailFetcher:
             features: list[str] = []
             seen_hashes: set[str] = set()
 
-            next_data = _zoopla_from_next_data(html, max_imgs)
+            next_data = _zoopla_from_next_data(listing, max_imgs)
             if next_data:
                 gallery_urls, floorplan_url, description, features = next_data
 
             if not description:
-                rsc_desc, rsc_feats = _zoopla_desc_from_rsc(html)
+                rsc_desc, rsc_feats = _zoopla_desc_from_rsc(html, expected_id=expected)
                 description = rsc_desc
                 if rsc_feats and not features:
                     features = rsc_feats
@@ -691,9 +748,8 @@ class DetailFetcher:
             if not floorplan_url:
                 floorplan_url = _zoopla_floorplan_from_html(html)
 
-            # Extract floor area from RSC payload (sqft), convert to sqm
-            raw_sqft = _zoopla_size_from_rsc(html)
-            floor_area_sqm = round(raw_sqft * SQM_PER_SQFT, 1) if raw_sqft else None
+            areas, area_omission = _zoopla_area_from_rsc(html, expected_id=expected)
+            floor_area_sqm = display_area_square_metres(areas)
 
             return DetailPageData(
                 floorplan_url=floorplan_url,
@@ -702,8 +758,12 @@ class DetailFetcher:
                 features=features if features else None,
                 floor_area_sqm=floor_area_sqm,
                 floor_area_source="zoopla" if floor_area_sqm else None,
+                floor_area_readings=areas,
+                floor_area_omission=area_omission,
             )
 
+        except DetailIdentityError:
+            raise
         except Exception as e:
             logger.warning("zoopla_fetch_failed", property_id=prop.unique_id, error=str(e))
             return None
@@ -725,10 +785,9 @@ class DetailFetcher:
                 return None
             html: str = response.text
 
-            # Check if we got redirected to homepage (property no longer available)
-            if "/properties-to-rent" in str(response.url) or "homepage" in html.lower()[:1000]:
-                logger.debug("openrent_property_unavailable", property_id=prop.unique_id)
+            if is_challenge(html, response.headers):
                 return None
+            self._qualify_page(prop, str(response.url), html)
 
             # Extract floorplan - look for floorplan images in the carousel
             floorplan_url: str | None = None
@@ -826,6 +885,8 @@ class DetailFetcher:
                 features=features if features else None,
             )
 
+        except DetailIdentityError:
+            raise
         except Exception as e:
             logger.warning("openrent_fetch_failed", property_id=prop.unique_id, error=str(e))
             return None
@@ -849,6 +910,9 @@ class DetailFetcher:
                 return None
             html: str = response.text
 
+            if is_challenge(html, response.headers):
+                return None
+            validate_response_url(prop, str(response.url))
             # OnTheMarket uses Next.js with Redux state in __NEXT_DATA__
             match = re.search(
                 r'<script id="__NEXT_DATA__"[^>]*>(.*?)</script>',
@@ -858,9 +922,12 @@ class DetailFetcher:
             if not match:
                 return None
 
-            data = json.loads(match.group(1))
+            data = json.loads(match.group(1), parse_float=Decimal)
             redux_state = data.get("props", {}).get("initialReduxState", {})
             property_data = redux_state.get("property", {})
+            if not isinstance(property_data, dict):
+                raise DetailIdentityError("invalid_main_listing")
+            self._qualify_page(prop, str(response.url), html, listing=property_data)
 
             # Extract floorplan
             floorplan_url: str | None = None
@@ -903,14 +970,12 @@ class DetailFetcher:
                 if isinstance(feat, dict) and feat.get("feature"):
                     features.append(feat["feature"])
 
-            # Extract floor area (validate in sqft, convert to sqm)
-            floor_area_sqm: float | None = None
-            raw_sqft = property_data.get("minimumAreaSqFt")
-            if (
-                isinstance(raw_sqft, (int, float))
-                and _FLOOR_AREA_MIN_SQFT <= raw_sqft <= _FLOOR_AREA_MAX_SQFT
-            ):
-                floor_area_sqm = round(raw_sqft * SQM_PER_SQFT, 1)
+            areas, area_omission = single_area(
+                property_data.get("minimumAreaSqFt"),
+                source_field="minimumAreaSqFt",
+                minimum_only=True,
+            )
+            floor_area_sqm = display_area_square_metres(areas)
 
             return DetailPageData(
                 floorplan_url=floorplan_url,
@@ -919,8 +984,12 @@ class DetailFetcher:
                 features=features if features else None,
                 floor_area_sqm=floor_area_sqm,
                 floor_area_source="onthemarket" if floor_area_sqm else None,
+                floor_area_readings=areas,
+                floor_area_omission=area_omission,
             )
 
+        except DetailIdentityError:
+            raise
         except Exception as e:
             logger.warning("onthemarket_fetch_failed", property_id=prop.unique_id, error=str(e))
             return None

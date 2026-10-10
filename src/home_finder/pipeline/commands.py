@@ -6,14 +6,18 @@ import time
 
 from home_finder.config import Settings
 from home_finder.db import PropertyStorage
+from home_finder.db.merge_safety import MergeBlockedError
 from home_finder.filters import CommuteFilter, Deduplicator
 from home_finder.logging import get_logger
-from home_finder.models import TransportMode
-from home_finder.utils.image_cache import clear_image_cache, copy_cached_images
+from home_finder.models import CommuteResult
+from home_finder.models.commute import commute_minutes_projection
+from home_finder.pipeline.runner import exclusive_runner
+from home_finder.utils.image_cache import copy_cached_images
 
 logger = get_logger(__name__)
 
 
+@exclusive_runner
 async def run_backfill_commute(settings: Settings) -> None:
     """Backfill commute data for properties that have coordinates but no commute_minutes.
 
@@ -42,31 +46,25 @@ async def run_backfill_commute(settings: Settings) -> None:
             destination_postcode=criteria.destination_postcode,
         )
 
-        commute_lookup: dict[str, tuple[int, TransportMode]] = {}
+        commute_results: list[CommuteResult] = []
         for mode in criteria.transport_modes:
             results = await commute_filter.filter_properties(
                 properties,
                 max_minutes=criteria.max_commute_minutes,
                 transport_mode=mode,
             )
-            for result in results:
-                if result.within_limit and (
-                    result.property_id not in commute_lookup
-                    or result.travel_time_minutes < commute_lookup[result.property_id][0]
-                ):
-                    commute_lookup[result.property_id] = (
-                        result.travel_time_minutes,
-                        result.transport_mode,
-                    )
+            commute_results.extend(results)
 
+        commute_lookup = commute_minutes_projection(commute_results)
         if not commute_lookup:
-            logger.info("no_properties_within_commute_limit")
+            logger.info("no_measured_commute_results", unknown=len(properties))
             return
 
         updated = await storage.update_commute_data(commute_lookup)
         logger.info("backfill_commute_complete", updated=updated, total=len(properties))
 
 
+@exclusive_runner
 async def run_check_off_market(
     settings: Settings,
     *,
@@ -114,8 +112,6 @@ async def run_check_off_market(
                     url = str(sl["url"])
                     sl_uid = str(sl["unique_id"])
                     covered_urls.add(url)
-                    if only_scrapers and source not in only_scrapers:
-                        continue
                     key = (prop["unique_id"], source, url)
                     checks.append(key)
                     sl_lookup[key] = sl_uid
@@ -132,15 +128,20 @@ async def run_check_off_market(
                 for source, url in source_urls.items():
                     if url in covered_urls:
                         continue
-                    if only_scrapers and source not in only_scrapers:
-                        continue
                     checks.append((prop["unique_id"], source, url))
             elif not linked_sls:
                 # No source_listings and no source_urls — use primary source/url
                 source = prop["source"]
-                if only_scrapers and source not in only_scrapers:
-                    continue
                 checks.append((prop["unique_id"], source, prop["url"]))
+
+        # Removal requires evidence for every known URL, including URLs outside
+        # a selected source subset. Multiple listings on one portal are distinct.
+        checks = list(dict.fromkeys(checks))
+        expected: dict[str, set[tuple[str, str]]] = {}
+        for uid, source, url in checks:
+            expected.setdefault(uid, set()).add((source, url))
+        if only_scrapers:
+            checks = [check for check in checks if check[1] in only_scrapers]
 
         if not checks:
             logger.info("no_urls_to_check", reason="source filter may have excluded all")
@@ -153,7 +154,8 @@ async def run_check_off_market(
             batch = await checker.check_batch(checks)
         check_elapsed = round(time.monotonic() - check_t0, 1)
 
-        results = batch.results
+        requested = set(checks)
+        results = [r for r in batch.results if (r.property_id, r.source, r.url) in requested]
 
         # --- Persist per-source results on source_listings ---
         for r in results:
@@ -176,32 +178,33 @@ async def run_check_off_market(
         def _is_inactive(s: ListingStatus) -> bool:
             return s in (ListingStatus.REMOVED, ListingStatus.LET_AGREED)
 
-        per_property: dict[str, dict[str, ListingStatus]] = {}
+        per_property: dict[str, dict[tuple[str, str], ListingStatus]] = {}
         for r in results:
-            per_property.setdefault(r.property_id, {})[r.source] = r.status
+            per_property.setdefault(r.property_id, {})[(r.source, r.url)] = r.status
 
         marked_off = 0
         marked_returned = 0
         for prop in db_props:
             uid = prop["unique_id"]
-            source_statuses = per_property.get(uid, {})
-            if not source_statuses:
+            observed_statuses = per_property.get(uid, {})
+            if not observed_statuses:
                 continue
+            source_statuses = {
+                key: observed_statuses.get(key, ListingStatus.UNKNOWN) for key in expected[uid]
+            }
 
             has_active = any(s == ListingStatus.ACTIVE for s in source_statuses.values())
             all_inactive = all(_is_inactive(s) for s in source_statuses.values())
             was_off_market = bool(prop.get("is_off_market"))
 
-            # Determine reason from the first inactive source
+            # Prefer an explicit let-agreed observation over a missing URL.
             reason: str | None = None
             if all_inactive:
-                for _s, st in source_statuses.items():
-                    if st == ListingStatus.LET_AGREED:
-                        reason = "let_agreed"
-                        break
-                    if st == ListingStatus.REMOVED:
-                        reason = "removed"
-                        break
+                reason = (
+                    "let_agreed"
+                    if ListingStatus.LET_AGREED in source_statuses.values()
+                    else "removed"
+                )
 
             if all_inactive:
                 if not was_off_market:
@@ -211,7 +214,7 @@ async def run_check_off_market(
                         "property_confirmed_off_market",
                         unique_id=uid,
                         reason=reason,
-                        sources=list(source_statuses.keys()),
+                        sources=sorted({source for source, _ in source_statuses}),
                     )
             elif has_active and was_off_market:
                 await storage.mark_returned_to_market(uid)
@@ -220,7 +223,9 @@ async def run_check_off_market(
                     "property_returned_to_market",
                     unique_id=uid,
                     active_sources=[
-                        s for s, st in source_statuses.items() if st == ListingStatus.ACTIVE
+                        source
+                        for (source, _), st in source_statuses.items()
+                        if st == ListingStatus.ACTIVE
                     ],
                 )
 
@@ -243,63 +248,60 @@ async def run_check_off_market(
         )
 
 
+@exclusive_runner
 async def run_dedup_existing(settings: Settings) -> None:
-    """Retroactively merge duplicate properties already in the database.
+    """Report established duplicate groups and preserve their histories.
 
-    Loads all stored properties, runs the deduplicator, and merges any
-    cross-platform duplicates that were ingested before image hashing was enabled.
+    Only unused pending staging rows can be retired automatically. Established
+    records keep their identity and history; ambiguous groups are reported.
     """
     async with PropertyStorage(settings.database_path) as storage:
-        # Load all properties from DB
-        all_properties = await storage.get_recent_properties_for_dedup(days=None)
+        established = await storage.get_recent_properties_for_dedup(days=None)
+        established_ids = {merged.unique_id for merged in established}
+        # Reuse the retry queue: these are the pending rows this command can
+        # safely retire, subject to the transaction's live history checks.
+        all_properties = [*established, *await storage.pipeline.get_unenriched_properties()]
         if not all_properties:
             logger.info("dedup_no_properties_in_database")
             return
 
         logger.info("dedup_started", count=len(all_properties))
 
-        # Build lookup of input IDs
-        input_ids = {m.canonical.unique_id for m in all_properties}
-
-        # Run deduplication
         deduplicator = Deduplicator(
             enable_cross_platform=True,
             enable_image_hashing=settings.enable_image_hash_matching,
             data_dir=settings.data_dir,
         )
         dedup_results = await deduplicator.deduplicate_merged_async(all_properties)
-
-        # Determine which IDs survived and which were absorbed
-        output_ids = {m.canonical.unique_id for m in dedup_results}
-        absorbed_ids = input_ids - output_ids
-
-        if not absorbed_ids:
-            logger.info("dedup_no_duplicates_found")
-            return
-
-        # For each merged result that absorbed other properties, update the DB
         merged_count = 0
+        retired_count = 0
+        deferred_count = 0
+        proposed_count = 0
         for merged in dedup_results:
-            # Find which input properties were absorbed into this result
-            merged_source_urls = {str(u) for u in merged.source_urls.values()}
-            absorbed_into_this: list[str] = []
-            for aid in absorbed_ids:
-                # Check if any of the absorbed property's URLs appear in this merged result
-                for orig in all_properties:
-                    if orig.canonical.unique_id == aid:
-                        orig_urls = {str(u) for u in orig.source_urls.values()}
-                        if orig_urls & merged_source_urls:
-                            absorbed_into_this.append(aid)
-                        break
-
-            if not absorbed_into_this:
+            merged_urls = {str(url) for url in merged.source_urls.values()}
+            group_ids = {
+                original.unique_id
+                for original in all_properties
+                if merged_urls & {str(url) for url in original.source_urls.values()}
+            }
+            if len(group_ids) < 2:
+                continue
+            proposed_count += len(group_ids) - 1
+            anchors = group_ids & established_ids
+            # Preserve an established anchor even if a staging listing happened
+            # to be observed earlier and won the in-memory canonical selection.
+            anchor_id = next(iter(anchors)) if len(anchors) == 1 else merged.unique_id
+            absorbed_into_this = sorted(group_ids - {anchor_id})
+            try:
+                retired = await storage.absorb_staging_properties(
+                    anchor_id, merged, absorbed_ids=absorbed_into_this
+                )
+            except MergeBlockedError:
+                deferred_count += len(absorbed_into_this)
                 continue
 
-            anchor_id = merged.canonical.unique_id
-            # Update DB anchor with merged sources
-            await storage.update_merged_sources(anchor_id, merged, absorbed_ids=absorbed_into_this)
-
-            # Copy cached images and delete absorbed properties
+            # Cache copies happen after the atomic database change.
+            # Retain the original files for recovery; never delete merge inputs.
             for absorbed_id in absorbed_into_this:
                 if settings.data_dir:
                     copied = copy_cached_images(settings.data_dir, absorbed_id, anchor_id)
@@ -310,9 +312,6 @@ async def run_dedup_existing(settings: Settings) -> None:
                             to_id=anchor_id,
                             count=copied,
                         )
-                await storage.delete_property(absorbed_id)
-                if settings.data_dir:
-                    clear_image_cache(settings.data_dir, absorbed_id)
                 logger.info(
                     "dedup_property_absorbed",
                     absorbed_id=absorbed_id,
@@ -320,11 +319,17 @@ async def run_dedup_existing(settings: Settings) -> None:
                 )
 
             merged_count += 1
+            retired_count += len(retired)
 
-        remaining = len(all_properties) - len(absorbed_ids)
+        if proposed_count == 0:
+            logger.info("dedup_no_duplicates_found")
+            return
+        remaining = len(all_properties) - retired_count
         logger.info(
             "dedup_complete",
             merged_groups=merged_count,
-            absorbed=len(absorbed_ids),
+            proposed_absorptions=proposed_count,
+            absorbed=retired_count,
+            deferred=deferred_count,
             remaining=remaining,
         )

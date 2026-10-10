@@ -96,7 +96,7 @@
                     <option value="price_asc" {% if sort == "price_asc" %}selected{% endif %}>Price: Low</option>
                     <option value="price_desc" {% if sort == "price_desc" %}selected{% endif %}>Price: High</option>
                     <option value="fit_desc" {% if sort == "fit_desc" %}selected{% endif %}>Best Fit</option>
-                    <option value="longest_listed" {% if sort == "longest_listed" %}selected{% endif %}>Longest Listed</option>
+                    <option value="longest_listed" {% if sort == "longest_listed" %}selected{% endif %}>First observed: oldest</option>
                 </select>
 
                 <button type="button" id="open-filters-btn" class="filter-modal-btn">Filters{% if secondary_filter_count %} <span class="filter-badge">{{ secondary_filter_count }}</span>{% endif %}</button>
@@ -114,15 +114,16 @@
                     <svg width="13" height="13" viewBox="0 0 16 16" fill="currentColor"><rect x="1" y="1" width="6" height="6" rx="1"/><rect x="9" y="1" width="6" height="6" rx="1"/><rect x="1" y="9" width="6" height="6" rx="1"/><rect x="9" y="9" width="6" height="6" rx="1"/></svg>
                     <span class="view-toggle-label">Grid</span>
                 </button>
-                <button type="button" class="view-toggle-btn" data-view="split" aria-label="Split view" aria-pressed="false">
+                <button type="button" class="view-toggle-btn" data-view="split" aria-label="Split view" aria-pressed="false" {% if not map_api_key %}disabled{% endif %}>
                     <svg width="13" height="13" viewBox="0 0 16 16" fill="currentColor"><rect x="1" y="1" width="6" height="14" rx="1"/><rect x="9" y="1" width="6" height="14" rx="1"/></svg>
                     <span class="view-toggle-label">Split</span>
                 </button>
-                <button type="button" class="view-toggle-btn" data-view="map" aria-label="Map view" aria-pressed="false">
+                <button type="button" class="view-toggle-btn" data-view="map" aria-label="Map view" aria-pressed="false" {% if not map_api_key %}disabled{% endif %}>
                     <svg width="13" height="13" viewBox="0 0 16 16" fill="currentColor"><path d="M8 1C5.2 1 3 3.2 3 6c0 3.5 5 9 5 9s5-5.5 5-9c0-2.8-2.2-5-5-5zm0 7a2 2 0 110-4 2 2 0 010 4z"/></svg>
                     <span class="view-toggle-label">Map</span>
                 </button>
             </div>
+            <small id="map-status" role="status" {% if map_api_key %}hidden{% endif %}>Map unavailable. Browse homes in the grid.</small>
         </div>
         <dialog id="filter-modal" class="filter-modal">
             <button type="button" class="filter-modal-close" aria-label="Close filters"></button>
@@ -270,7 +271,7 @@
     <div id="results" role="region" aria-label="Property results" aria-busy="false">
         {% include "_results.html" %}
     </div>
-    <div id="dashboard-map" hx-preserve hidden></div>
+    <div id="dashboard-map" data-map-key="{{ map_api_key }}" hx-preserve hidden></div>
 </div>
 {% endblock %}
 

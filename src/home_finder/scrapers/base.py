@@ -5,9 +5,10 @@ import random
 from abc import ABC, abstractmethod
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 
 from home_finder.logging import get_logger
-from home_finder.models import FurnishType, Property, PropertySource
+from home_finder.models import FurnishType, ListingTextEvidence, Property, PropertySource
 
 logger = get_logger(__name__)
 
@@ -20,11 +21,26 @@ class ScrapeResult:
     pages_fetched: int = 0
     pages_failed: int = 0
     parse_errors: int = 0
+    observations: list[Property] = field(default_factory=list)
+    stop_reason: str = "unspecified"
 
     @property
     def is_healthy(self) -> bool:
-        """True if scrape succeeded at least partially (pages fetched, no parse errors)."""
-        return self.pages_fetched > 0 and self.parse_errors == 0
+        """No recorded request/parse failure; this does not imply full coverage."""
+        return (
+            self.pages_fetched > 0
+            and self.pages_failed == 0
+            and self.parse_errors == 0
+            and self.stop_reason != "cancelled"
+        )
+
+
+class ScrapeCancelled(asyncio.CancelledError):
+    """Cancellation carrying only facts already received, for durable recording."""
+
+    def __init__(self, result: ScrapeResult) -> None:
+        super().__init__("scrape cancelled")
+        self.result = result
 
 
 class BaseScraper(ABC):
@@ -93,60 +109,90 @@ class BaseScraper(ABC):
         Returns:
             ScrapeResult with deduplicated properties and health metadata.
         """
-        all_properties: list[Property] = []
-        seen_ids: set[str] = set()
-        pages_fetched = 0
-        pages_failed = 0
+        result = ScrapeResult(stop_reason="page_limit")
+        observed: dict[str, Property] = {}
+        if max_results is not None and max_results <= 0:
+            result.stop_reason = "result_limit"
+            return result
 
-        for page_idx in range(max_pages):
-            properties = await fetch_page(page_idx)
+        try:
+            for page_idx in range(max_pages):
+                try:
+                    properties = await fetch_page(page_idx)
+                except Exception as exc:
+                    result.pages_failed += 1
+                    result.stop_reason = "page_error"
+                    logger.warning(
+                        "scrape_page_error",
+                        source=self.source.value,
+                        page=page_idx + 1,
+                        error_type=type(exc).__name__,
+                    )
+                    break
 
-            if properties is None:
-                pages_failed += 1
-                # Don't break — try next page
+                if properties is None:
+                    result.pages_failed += 1
+                    if page_delay is not None and page_idx < max_pages - 1:
+                        await page_delay()
+                    continue
+                result.pages_fetched += 1
+                if not properties:
+                    result.stop_reason = "empty_page"
+                    break
+
+                # Date text at the real receipt boundary, never when reloading
+                # a persisted Property or when a retry is promoted.
+                received_at = datetime.now(UTC)
+                properties = [
+                    prop.model_copy(
+                        update={
+                            "search_text": ListingTextEvidence.observed(
+                                observed_at=received_at,
+                                description=prop.description,
+                                features=prop.search_text.features if prop.search_text else None,
+                                origin="search",
+                            )
+                        }
+                    )
+                    if prop.description is not None or prop.search_text is not None
+                    else prop
+                    for prop in properties
+                ]
+                previous_ids = set(observed)
+                observed.update((p.source_id, p) for p in properties)
+                # Retain the fetched page before applying any stop/cap policy.
+                # Last received data wins within this scrape's current projection.
+                result.observations = list(observed.values())
+                result.properties = result.observations[:max_results]
+
+                if known_source_ids is not None and all(
+                    p.source_id in known_source_ids for p in properties
+                ):
+                    result.stop_reason = "known_page"
+                    logger.info("early_stop_all_known", source=self.source.value, page=page_idx + 1)
+                    break
+                if max_results is not None and len(result.properties) >= max_results:
+                    result.stop_reason = "result_limit"
+                    break
+                if set(observed) == previous_ids:
+                    result.stop_reason = "duplicate_page"
+                    break
                 if page_delay is not None and page_idx < max_pages - 1:
                     await page_delay()
-                continue
+        except asyncio.CancelledError:
+            result.stop_reason = "cancelled"
+            raise ScrapeCancelled(result) from None
 
-            pages_fetched += 1
-
-            if not properties:
-                break
-
-            # Early-stop: all results on this page are already in DB
-            if known_source_ids is not None and all(
-                p.source_id in known_source_ids for p in properties
-            ):
-                logger.info(
-                    "early_stop_all_known",
-                    source=self.source.value,
-                    page=page_idx + 1,
-                )
-                break
-
-            # Deduplicate across pages
-            new_properties = [p for p in properties if p.source_id not in seen_ids]
-            for p in new_properties:
-                seen_ids.add(p.source_id)
-
-            if not new_properties:
-                break
-
-            all_properties.extend(new_properties)
-
-            if max_results is not None and len(all_properties) >= max_results:
-                all_properties = all_properties[:max_results]
-                break
-
-            # Delay between pages (not after last page)
-            if page_delay is not None and page_idx < max_pages - 1:
-                await page_delay()
-
-        return ScrapeResult(
-            properties=all_properties,
-            pages_fetched=pages_fetched,
-            pages_failed=pages_failed,
+        logger.info(
+            "scrape_pagination_complete",
+            source=self.source.value,
+            stop_reason=result.stop_reason,
+            observed=len(result.observations),
+            selected=len(result.properties),
+            pages_fetched=result.pages_fetched,
+            pages_failed=result.pages_failed,
         )
+        return result
 
     async def area_delay(self) -> None:
         """Delay between area searches. Override for scraper-specific pacing."""

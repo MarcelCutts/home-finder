@@ -19,6 +19,7 @@ from home_finder.models import (
     KitchenAnalysis,
     LightSpaceAnalysis,
     ListingExtraction,
+    ListingTextEvidence,
     MergedProperty,
     OutdoorSpaceAnalysis,
     Property,
@@ -760,6 +761,17 @@ class TestCardRendering:
         resp = client.get("/")
         assert resp.status_code == 200
         assert "25 min" in resp.text
+        assert "25 min · estimate" in resp.text
+        assert "journey date/time and location precision are unverified" in resp.text
+
+    @pytest.mark.parametrize("minutes", [None, 0])
+    async def test_unknown_commute_is_not_zero_minute_success(
+        self, client: TestClient, storage: PropertyStorage, merged_a: MergedProperty, minutes
+    ) -> None:
+        await storage.save_merged_property(merged_a, commute_minutes=minutes)
+        resp = client.get("/")
+        assert "Commute unknown" in resp.text
+        assert ">0 min" not in resp.text
 
     @pytest.mark.asyncio
     async def test_fit_tier_pill_rendered(
@@ -799,7 +811,7 @@ class TestCardRendering:
         await storage.save_quality_analysis(prop_a.unique_id, analysis)
         resp = client.get("/")
         assert resp.status_code == 200
-        assert "excellent value" in resp.text
+        assert "Value: excellent (unverified)" in resp.text
 
 
 # ---------------------------------------------------------------------------
@@ -1647,6 +1659,127 @@ class TestReanalysisEndpoint:
 class TestCostBreakdown:
     """Tests for the True Monthly Cost card on detail page."""
 
+    async def test_earlier_bills_claim_remains_visible_as_unverified(
+        self, client, storage, merged_a, base_analysis
+    ) -> None:
+        from bs4 import BeautifulSoup
+
+        await storage.save_merged_property(merged_a)
+        await storage.save_quality_analysis(
+            merged_a.unique_id,
+            base_analysis.model_copy(
+                update={"listing_extraction": ListingExtraction(bills_included="yes")}
+            ),
+        )
+        detail = BeautifulSoup(client.get(f"/property/{merged_a.unique_id}").text, "html.parser")
+        card = detail.select_one(".cost-breakdown-card").get_text(" ", strip=True)
+        assert "Earlier analysis records bills as included (unverified)" in card
+        assert "In rent" not in card
+
+    @pytest.mark.parametrize(
+        "description",
+        [
+            "Water included in the optional bills package.",
+            "Water included in service charge, payable separately.",
+            "Water included for an extra £50 per month.",
+        ],
+    )
+    async def test_paid_package_is_not_shown_as_included_in_rent(
+        self, client, storage, merged_a, description
+    ) -> None:
+        from bs4 import BeautifulSoup
+
+        await storage.save_merged_property(merged_a)
+        await storage.update_source_text(
+            merged_a.unique_id,
+            ListingTextEvidence.observed(observed_at=datetime.now(UTC), description=description),
+        )
+        detail = BeautifulSoup(client.get(f"/property/{merged_a.unique_id}").text, "html.parser")
+        card = detail.select_one(".cost-breakdown-card")
+        assert "In rent" not in card.get_text()
+        water = next(line for line in card.select(".cost-line") if "Water" in line.get_text())
+        assert "Unpriced" in water.get_text()
+        assert "Coverage and amount unknown" in water.get_text()
+
+    @pytest.mark.asyncio
+    async def test_current_text_and_rent_rebuild_budget_without_reanalysis(
+        self,
+        client: TestClient,
+        storage: PropertyStorage,
+        merged_a: MergedProperty,
+        base_analysis: PropertyQualityAnalysis,
+    ) -> None:
+        from bs4 import BeautifulSoup
+
+        await storage.save_merged_property(merged_a)
+        legacy = base_analysis.model_copy(
+            update={
+                "listing_extraction": ListingExtraction(
+                    epc_rating="D",
+                    council_tax_band="C",
+                    service_charge_pcm=450,
+                )
+            }
+        )
+        await storage.save_quality_analysis(merged_a.unique_id, legacy)
+        before = await storage.get_quality_analysis(merged_a.unique_id)
+        stamp = datetime.now(UTC)
+        await storage.update_source_text(
+            merged_a.unique_id,
+            ListingTextEvidence.observed(
+                observed_at=stamp,
+                description="EPC B. Council tax band D. Water: £30 pcm payable separately.",
+                features=["Gas and electricity included in rent"],
+            ),
+        )
+        first = BeautifulSoup(client.get(f"/property/{merged_a.unique_id}").text, "html.parser")
+        budget = first.select_one(".cost-breakdown-card").get_text(" ", strip=True)
+        assert "£1,930.00/mo" in budget
+        assert "Listing EPC: B" in budget
+        assert "Council-tax band: D" in budget
+        assert "earlier analysis: £450/mo, unverified" in budget
+        assert "unverified against the retained advert" in budget
+        assert "From 1 May 2026" in budget
+        assert "private assured periodic tenancies" in budget
+        assert "England fee guidance" in budget
+        assert await storage.get_quality_analysis(merged_a.unique_id) == before
+
+        await storage.detect_and_record_price_change(merged_a.unique_id, 1800)
+        second = BeautifulSoup(client.get(f"/property/{merged_a.unique_id}").text, "html.parser")
+        assert "£1,830.00/mo" in second.select_one(".cost-breakdown-card").get_text()
+        await storage.update_source_text(
+            merged_a.unique_id,
+            ListingTextEvidence.observed(
+                observed_at=stamp + timedelta(seconds=1),
+                description="",
+                features=[],
+                origin="correction",
+            ),
+        )
+        third = BeautifulSoup(client.get(f"/property/{merged_a.unique_id}").text, "html.parser")
+        cleared = third.select_one(".cost-breakdown-card").get_text(" ", strip=True)
+        assert "£1,800.00/mo" in cleared
+        assert "Listing EPC: Unknown" in cleared
+        assert "Water: £30" not in cleared
+        after = await storage.get_quality_analysis(merged_a.unique_id)
+        # Existing price updates recompute ValueAnalysis deterministically; the
+        # saved extraction/visual observations and retained legacy claims survive.
+        assert after.value != before.value
+        assert after.model_dump(exclude={"value"}) == before.model_dump(exclude={"value"})
+
+    @pytest.mark.asyncio
+    async def test_unanalysed_property_still_has_budget(
+        self,
+        client: TestClient,
+        storage: PropertyStorage,
+        merged_a: MergedProperty,
+    ) -> None:
+        await storage.save_merged_property(merged_a)
+        response = client.get(f"/property/{merged_a.unique_id}")
+        assert "Rent and bills" in response.text
+        assert "Incomplete budget" in response.text
+        assert "Listing EPC: Unknown" in response.text
+
     @pytest.mark.asyncio
     async def test_cost_breakdown_renders(
         self,
@@ -1670,7 +1803,10 @@ class TestCostBreakdown:
 
         resp = client.get(f"/property/{merged_a.unique_id}")
         assert resp.status_code == 200
-        assert "True Monthly Cost" in resp.text
+        assert "Rent and bills" in resp.text
+        assert "Incomplete budget" in resp.text
+        assert "Earlier analysis claims EPC D and council-tax band C" in resp.text
+        assert "True Monthly Cost" not in resp.text
 
     @pytest.mark.asyncio
     async def test_cost_breakdown_shows_rent(
@@ -1692,7 +1828,7 @@ class TestCostBreakdown:
         resp = client.get(f"/property/{merged_a.unique_id}")
         assert resp.status_code == 200
         assert "Rent" in resp.text
-        assert "Total" in resp.text
+        assert "Advertised subtotal" in resp.text
 
 
 # ---------------------------------------------------------------------------
@@ -1819,7 +1955,8 @@ class TestAreaRoute:
     def test_area_page_has_benchmarks(self, client: TestClient) -> None:
         resp = client.get("/area/E8")
         assert resp.status_code == 200
-        assert "Rental Benchmarks" in resp.text
+        assert "Historical research comparisons" in resp.text
+        assert "not current market medians" in resp.text
 
 
 # ---------------------------------------------------------------------------
@@ -2384,7 +2521,8 @@ class TestPriceHistoryDetail:
         resp = client.get(f"/property/{merged.unique_id}")
         assert resp.status_code == 200
         assert "listing-age-pill" in resp.text
-        assert "May be negotiable" in resp.text
+        assert "First observed" in resp.text
+        assert "May be negotiable" not in resp.text
 
 
 # ---------------------------------------------------------------------------

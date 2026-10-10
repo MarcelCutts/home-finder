@@ -501,10 +501,12 @@ class TestRunPipelineE2E:
         self,
         pipeline_settings: Settings,
         pipeline_properties: list[Property],
+        make_quality_analysis: Callable[..., PropertyQualityAnalysis],
     ):
         """Failed notification should mark property as 'failed' in DB."""
         with _pipeline_mocks(
             scrape_return=pipeline_properties,
+            quality_side_effect=lambda merged, **kw: (merged, make_quality_analysis()),
             notify_return=False,  # All notifications fail
         ) as ctx:
 

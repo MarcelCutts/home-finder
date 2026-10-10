@@ -33,9 +33,8 @@ class TestCreateApp:
 
     def test_has_routes(self, settings: Settings) -> None:
         app = create_app(settings)
-        paths = [route.path for route in app.routes]  # type: ignore[attr-defined]
-        assert "/" in paths
-        assert "/health" in paths
+        assert app.url_path_for("dashboard") == "/"
+        assert app.url_path_for("health_check") == "/health"
 
     def test_has_static_mount(self, settings: Settings) -> None:
         app = create_app(settings)

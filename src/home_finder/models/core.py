@@ -6,6 +6,8 @@ from typing import Final, Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, HttpUrl, field_validator, model_validator
 
+from home_finder.models.listing_text import ListingTextEvidence, merge_listing_text
+
 
 class PropertySource(StrEnum):
     """Supported property listing platforms."""
@@ -69,6 +71,7 @@ class Property(BaseModel):
     latitude: float | None = Field(default=None, ge=-90, le=90)
     longitude: float | None = Field(default=None, ge=-180, le=180)
     description: str | None = None
+    search_text: ListingTextEvidence | None = None
     image_url: HttpUrl | None = None
     image_hash: str | None = None  # Perceptual hash of main listing image
     available_from: datetime | None = None
@@ -226,6 +229,28 @@ class MergedProperty(BaseModel):
 
     # Combined descriptions (keyed by source)
     descriptions: dict[PropertySource, str] = Field(default_factory=dict)
+
+    # Current source evidence, including features and per-field freshness.
+    source_text: dict[PropertySource, ListingTextEvidence] = Field(default_factory=dict)
+
+    @property
+    def text_by_source(self) -> dict[PropertySource, ListingTextEvidence]:
+        """Include legacy descriptions without overriding newer evidence/clears."""
+        result = dict(self.source_text)
+        if self.canonical.search_text is not None:
+            source = self.canonical.source
+            result[source] = merge_listing_text(
+                result.get(source, ListingTextEvidence()), self.canonical.search_text
+            )
+        legacy = dict(self.descriptions)
+        if self.canonical.description and self.canonical.source not in legacy:
+            legacy[self.canonical.source] = self.canonical.description
+        for source, description in legacy.items():
+            result[source] = merge_listing_text(
+                result.get(source, ListingTextEvidence()),
+                ListingTextEvidence(description=description),
+            )
+        return result
 
     # Total floor area in square metres (converted at scraper boundary or estimated by Claude)
     floor_area_sqm: float | None = None

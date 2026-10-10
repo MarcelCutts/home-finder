@@ -147,6 +147,7 @@ playwright-report/
 test-results/
 playwright/.cache/
 .playwright-mcp/
+.playwright-cli/
 
 # Crawlee storage
 storage/

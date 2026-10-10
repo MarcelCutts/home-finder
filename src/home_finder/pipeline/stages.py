@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 
 from home_finder.config import Settings
 from home_finder.db import PropertyStorage
+from home_finder.db.merge_safety import MergeBlockedError
 from home_finder.filters import (
     CommuteFilter,
     CriteriaFilter,
@@ -16,11 +17,14 @@ from home_finder.filters import (
 from home_finder.filters.detail_enrichment import is_floorplan_exempt
 from home_finder.logging import get_logger
 from home_finder.models import (
+    CommuteResult,
+    CommuteState,
     MergedProperty,
     Property,
     SearchCriteria,
     TransportMode,
 )
+from home_finder.models.commute import best_measured_commutes, commute_minutes_projection
 from home_finder.pipeline.event_recorder import EventRecorder, PropertyEvent
 from home_finder.pipeline.scraping import ScraperMetrics, _run_scrape, _source_counts
 from home_finder.scrapers.detail_fetcher import DetailFetcher
@@ -59,6 +63,16 @@ class PreAnalysisResult:
     commute_within_limit_count: int = 0
     post_dedup_count: int = 0
     post_floorplan_count: int = 0
+
+    @property
+    def collection_status(self) -> str:
+        """Separate a partial/failed acquisition from a healthy empty result."""
+        attempted = [m for m in self.scraper_metrics if m.areas_attempted > 0]
+        if all(m.is_healthy for m in attempted):
+            return "completed"
+        if any(m.properties_found or m.is_healthy for m in attempted):
+            return "partial"
+        return "failed"
 
 
 async def _cross_run_deduplicate(
@@ -100,12 +114,12 @@ async def _cross_run_deduplicate(
 
     # Map each anchor's source URLs to its DB unique_id so we can detect
     # merges even when the deduplicator picks a different canonical.
-    anchor_url_to_id: dict[str, str] = {}
+    anchor_url_to_ids: dict[str, set[str]] = {}
     anchor_by_id: dict[str, MergedProperty] = {}
     for anchor in db_anchors:
         anchor_by_id[anchor.canonical.unique_id] = anchor
         for url in anchor.source_urls.values():
-            anchor_url_to_id[str(url)] = anchor.canonical.unique_id
+            anchor_url_to_ids.setdefault(str(url), set()).add(anchor.canonical.unique_id)
 
     # Map source URLs from new properties to their original unique_id so we
     # can copy cached images from the new source to the anchor after merge.
@@ -125,14 +139,30 @@ async def _cross_run_deduplicate(
     anchors_updated = 0
     seen_anchor_ids: set[str] = set()
     absorbed_to_anchor: dict[str, str] = {}  # new_id -> anchor_id
+    retired_staging_ids: set[str] = set()
+    represented_new_ids: set[str] = set()
+    deferred_ids: set[str] = set()
+    new_by_id = {mp.unique_id: mp for mp in merged_to_notify}
     for merged in dedup_results:
         # Check if this result involves any DB anchor (by URL match)
-        matched_anchor_id: str | None = None
+        matched_anchor_ids: set[str] = set()
         for url in merged.source_urls.values():
-            aid = anchor_url_to_id.get(str(url))
-            if aid is not None:
-                matched_anchor_id = aid
-                break
+            matched_anchor_ids.update(anchor_url_to_ids.get(str(url), set()))
+        candidate_ids = {
+            new_url_to_unique_id[str(url)]
+            for url in merged.source_urls.values()
+            if str(url) in new_url_to_unique_id
+        }
+        if len(matched_anchor_ids) > 1:
+            deferred_ids.update(candidate_ids)
+            logger.warning(
+                "canonical_merge_deferred",
+                anchor_ids=sorted(matched_anchor_ids),
+                absorbed_ids=sorted(candidate_ids),
+                reason="multiple_established_anchors",
+            )
+            continue
+        matched_anchor_id = next(iter(matched_anchor_ids), None)
 
         if matched_anchor_id is not None:
             if matched_anchor_id in seen_anchor_ids:
@@ -150,18 +180,21 @@ async def _cross_run_deduplicate(
             original_anchor = anchor_by_id[matched_anchor_id]
 
             # Track which new IDs were absorbed into this anchor
-            absorbed_ids = [
-                new_url_to_unique_id[str(url)]
-                for url in merged.source_urls.values()
-                if str(url) in new_url_to_unique_id
-            ]
+            absorbed_ids = sorted(candidate_ids - {matched_anchor_id})
+
+            # Check history, move all source memberships and retire pending rows
+            # under one write lock. A refused group leaves every identity intact.
+            try:
+                retired = await storage.absorb_staging_properties(
+                    matched_anchor_id, merged, absorbed_ids=absorbed_ids
+                )
+            except MergeBlockedError:
+                deferred_ids.update(candidate_ids)
+                continue
+            represented_new_ids.update(candidate_ids)
+            retired_staging_ids.update(retired)
             for aid in absorbed_ids:
                 absorbed_to_anchor[aid] = matched_anchor_id
-
-            # Link absorbed source_listings and rebuild denormalized caches
-            await storage.update_merged_sources(
-                matched_anchor_id, merged, absorbed_ids=absorbed_ids
-            )
             anchors_updated += 1
 
             new_sources_added = [
@@ -192,7 +225,7 @@ async def _cross_run_deduplicate(
                     if nid is not None and nid in new_id_to_price:
                         new_source_prices.append(new_id_to_price[nid])
                 if new_source_prices:
-                    lowest_new_price = min(new_source_prices)
+                    lowest_new_price = min(original_anchor.canonical.price_pcm, *new_source_prices)
                     change = await storage.detect_and_record_price_change(
                         matched_anchor_id,
                         lowest_new_price,
@@ -215,8 +248,8 @@ async def _cross_run_deduplicate(
                             new_source_id = new_url_to_unique_id[url_str]
                             copy_cached_images(data_dir, new_source_id, matched_anchor_id)
 
-                # Flag for quality re-analysis — new source brings new images/descriptions
-                await storage.pipeline.request_reanalysis([matched_anchor_id])
+                # The merge transaction already queued assessed anchors before
+                # any fallible filesystem copy or price follow-up.
                 logger.info(
                     "cross_run_reanalysis_flagged",
                     anchor_id=matched_anchor_id,
@@ -225,33 +258,15 @@ async def _cross_run_deduplicate(
                 )
         else:
             genuinely_new.append(merged)
+            represented_new_ids.update(candidate_ids)
 
-    # Clean up unenriched DB rows consumed by anchor merges.
-    # When a re-enriched property merges into an existing anchor,
-    # update_merged_sources adds data to the anchor but the old
-    # unenriched row still exists — delete it.
+    # A refused or ambiguous group remains independently processable. Never infer
+    # deletion from absence in a deduplicator result (including a missing retry).
+    unrepresented_ids = new_by_id.keys() - represented_new_ids
+    genuinely_new.extend(new_by_id[uid] for uid in sorted(unrepresented_ids))
+    deferred_ids.update(unrepresented_ids)
     genuinely_new_ids = {m.unique_id for m in genuinely_new}
-    consumed_retries = re_enrichment_ids - genuinely_new_ids
-    for uid in consumed_retries:
-        await storage.delete_property(uid)
-        if data_dir:
-            clear_image_cache(data_dir, uid)
-        logger.debug("consumed_retry_cleaned", unique_id=uid)
-
-    # Safety net: re-link absorbed source_listings after the loop.
-    # update_merged_sources() already links inside the loop, but this
-    # second pass covers any edge case where an absorbed ID wasn't
-    # included in an update_merged_sources() call (e.g. if absorbed_ids
-    # calculation diverges from absorbed_to_anchor tracking).  Both calls
-    # are idempotent UPDATEs so the duplicate is harmless.
-    link_tuples: list[tuple[str, str]] = []
-    for new_uid, anchor_id in absorbed_to_anchor.items():
-        if new_uid in consumed_retries:
-            continue
-        link_tuples.append((new_uid, anchor_id))
-    if link_tuples:
-        await storage.link_source_listings(link_tuples)
-        logger.info("source_listings_linked", count=len(link_tuples))
+    consumed_retries = re_enrichment_ids & retired_staging_ids
 
     # Build per-property fates for observability
     fates: list[dict[str, str | int]] = []
@@ -263,7 +278,9 @@ async def _cross_run_deduplicate(
             "price": mp.canonical.price_pcm,
             "postcode": mp.canonical.postcode or "",
         }
-        if uid in genuinely_new_ids:
+        if uid in deferred_ids:
+            entry["fate"] = "retained_for_review"
+        elif uid in genuinely_new_ids:
             entry["fate"] = "genuinely_new"
         elif uid in consumed_retries:
             entry["fate"] = "consumed_retry"
@@ -272,7 +289,7 @@ async def _cross_run_deduplicate(
             entry["fate"] = "merged_into_anchor"
             entry["anchor"] = absorbed_to_anchor[uid]
         else:
-            entry["fate"] = "merged_into_anchor"
+            entry["fate"] = "represented_in_new_group"
         fates.append(entry)
 
     merged_into_anchor_count = sum(1 for f in fates if f["fate"] == "merged_into_anchor")
@@ -282,6 +299,7 @@ async def _cross_run_deduplicate(
         genuinely_new=len(genuinely_new_ids),
         merged_into_anchor=merged_into_anchor_count,
         consumed_retry=len(consumed_retries),
+        retained_for_review=len(deferred_ids),
         fates=fates,
     )
 
@@ -327,6 +345,10 @@ async def _cross_run_deduplicate(
                         },
                     )
                 )
+            elif fate == "retained_for_review":
+                recorder.record(
+                    PropertyEvent(uid, src, "dedup_deferred", "dedup", {"reason": fate})
+                )
         await recorder.flush()
 
     return CrossRunDedupResult(genuinely_new=genuinely_new, anchors_updated=anchors_updated)
@@ -338,6 +360,7 @@ def _run_criteria_and_location_filters(
     search_areas: list[str],
     *,
     recorder: EventRecorder | None = None,
+    progress: PreAnalysisResult | None = None,
 ) -> tuple[list[Property], int, int] | None:
     """Apply criteria and location filters.
 
@@ -347,6 +370,8 @@ def _run_criteria_and_location_filters(
     criteria_filter = CriteriaFilter(criteria)
     filtered = criteria_filter.filter_properties(properties)
     criteria_count = len(filtered)
+    if progress is not None:
+        progress.criteria_filtered_count = criteria_count
     logger.info(
         "criteria_filter_summary", matched=len(filtered), by_source=_source_counts(filtered)
     )
@@ -379,6 +404,8 @@ def _run_criteria_and_location_filters(
     pre_location = filtered
     filtered = location_filter.filter_properties(filtered)
     location_count = len(filtered)
+    if progress is not None:
+        progress.location_filtered_count = location_count
     logger.info(
         "location_filter_summary", matched=len(filtered), by_source=_source_counts(filtered)
     )
@@ -416,6 +443,7 @@ async def _load_unenriched(
     """Load unenriched properties for retry, clearing stale image caches."""
     max_attempts = settings.max_enrichment_attempts
     unenriched = await storage.pipeline.get_unenriched_properties(max_attempts=max_attempts)
+    unenriched = unenriched[: settings.max_analysis_per_run]
     re_enrichment_ids: set[str] = set()
     if unenriched:
         retry_stats = await storage.pipeline.get_unenriched_retry_stats(max_attempts=max_attempts)
@@ -443,114 +471,102 @@ async def _geocode_and_compute_commute(
     *,
     recorder: EventRecorder | None = None,
 ) -> tuple[list[MergedProperty], dict[str, tuple[int, TransportMode]], int]:
-    """Geocode properties and compute commute times via TravelTime API.
+    """Annotate an advisory commute decision, retaining every input property.
 
-    This is NOT a hard filter — it returns all properties (geocoded) plus a
-    lookup of commute times for those within the configured limit.  Properties
-    without coordinates or beyond the commute limit are still returned so that
-    downstream steps receive geocoded data.  The only filtering is an early-exit
-    gate: if TravelTime is configured and zero properties are reachable, the
-    caller can abort the pipeline.
-
-    Returns:
-        Tuple of (all properties with geocoded coordinates, commute lookup
-        mapping unique_id -> (minutes, transport_mode) for reachable properties,
-        count of properties within commute limit).
+    The count is measured journeys within the limit, not properties admitted or
+    a monotonic funnel stage. Missing/error/unreachable results are unknown.
+    Known over-limit measurements remain useful, but never remove a home.
     """
-    commute_lookup: dict[str, tuple[int, TransportMode]] = {}
-    if settings.traveltime_app_id and settings.traveltime_api_key:
-        logger.info("pipeline_started", phase="commute_filtering")
+    results: list[CommuteResult] = []
+    configured = bool(settings.traveltime_app_id and settings.traveltime_api_key)
+    if configured:
+        assert settings.traveltime_api_key is not None
         commute_filter = CommuteFilter(
             app_id=settings.traveltime_app_id,
             api_key=settings.traveltime_api_key.get_secret_value(),
             destination_postcode=criteria.destination_postcode,
         )
-
         merged = await commute_filter.geocode_properties(merged)
-
-        merged_with_coords = [m for m in merged if m.canonical.latitude and m.canonical.longitude]
-        merged_without_coords = [
-            m for m in merged if not (m.canonical.latitude and m.canonical.longitude)
-        ]
-
-        props_with_coords = [m.canonical for m in merged_with_coords]
-
-        commute_results = []
-        if props_with_coords:
-            for mode in criteria.transport_modes:
-                results = await commute_filter.filter_properties(
-                    props_with_coords,
-                    max_minutes=criteria.max_commute_minutes,
-                    transport_mode=mode,
-                )
-                commute_results.extend(results)
-
-        for result in commute_results:
-            if result.within_limit and (
-                result.property_id not in commute_lookup
-                or result.travel_time_minutes < commute_lookup[result.property_id][0]
-            ):
-                commute_lookup[result.property_id] = (
-                    result.travel_time_minutes,
-                    result.transport_mode,
-                )
-
-        within_limit = [m for m in merged_with_coords if m.canonical.unique_id in commute_lookup]
-        notify_count = len(within_limit) + len(merged_without_coords)
-
-        logger.info(
-            "commute_filter_summary",
-            within_limit=notify_count,
-            total_checked=len(merged_with_coords),
-            without_coords=len(merged_without_coords),
-            by_source=_source_counts(merged),
-        )
-
-        # T4: record commute events
-        if recorder is not None:
-            for m in merged_with_coords:
-                uid = m.canonical.unique_id
-                src = m.canonical.source.value
-                if uid in commute_lookup:
-                    mins, mode = commute_lookup[uid]
-                    recorder.record(
-                        PropertyEvent(
-                            uid,
-                            src,
-                            "commute_passed",
-                            "commute",
-                            {"minutes": mins, "mode": mode.value},
-                        )
-                    )
-                else:
-                    recorder.record(
-                        PropertyEvent(
-                            uid,
-                            src,
-                            "commute_dropped",
-                            "commute",
-                            {"reason": "beyond_limit"},
-                        )
-                    )
-            for m in merged_without_coords:
-                recorder.record(
-                    PropertyEvent(
-                        m.canonical.unique_id,
-                        m.canonical.source.value,
-                        "commute_passed",
-                        "commute",
-                        {"reason": "no_coords_included"},
+        for mode in criteria.transport_modes:
+            mode_results = await commute_filter.filter_properties(
+                [m.canonical for m in merged],
+                max_minutes=criteria.max_commute_minutes,
+                transport_mode=mode,
+            )
+            by_id = {r.property_id: r for r in mode_results if r.transport_mode == mode}
+            for m in merged:
+                # Defensive completeness when an adapter omits an input.
+                results.append(
+                    by_id.get(m.unique_id)
+                    or CommuteResult(
+                        property_id=m.unique_id,
+                        destination_postcode=criteria.destination_postcode,
+                        transport_mode=mode,
+                        limit_seconds=criteria.max_commute_minutes * 60,
+                        state=CommuteState.INVALID_RESPONSE,
                     )
                 )
-            await recorder.flush()
-
-        if not within_limit and not merged_without_coords:
-            return [], commute_lookup, 0
     else:
-        notify_count = len(merged)
-        logger.info("skipping_commute_filter", reason="no_traveltime_credentials")
+        logger.info("skipping_commute_filter", reason="not_configured")
 
-    return merged, commute_lookup, notify_count
+    selected = best_measured_commutes(results)
+    commute_lookup = commute_minutes_projection(results)
+    within_count = sum(r.within_limit is True for r in selected.values())
+    over_count = sum(r.within_limit is False for r in selected.values())
+    unknown_count = len(merged) - len(selected)
+    logger.info(
+        "commute_filter_summary",
+        policy="advisory",
+        within_limit=within_count,
+        over_limit=over_count,
+        unknown=unknown_count,
+        retained=len(merged),
+        dropped=0,
+        by_source=_source_counts(merged),
+    )
+
+    if recorder is not None:
+        for m in merged:
+            chosen = selected.get(m.unique_id)
+            states = {
+                r.transport_mode.value: r.state.value
+                for r in results
+                if r.property_id == m.unique_id
+            }
+            event_type = (
+                "commute_passed"
+                if chosen and chosen.within_limit is True
+                else "commute_over_limit"
+                if chosen
+                else "commute_unknown"
+            )
+            metadata: dict[str, object] = {
+                "policy": "advisory",
+                "retained": True,
+                "mode_states": states,
+                "within_limit": chosen.within_limit if chosen else None,
+            }
+            if chosen:
+                metadata.update(
+                    {
+                        "minutes": chosen.travel_time_minutes,
+                        "mode": chosen.transport_mode.value,
+                    }
+                )
+            elif not configured or not criteria.transport_modes:
+                metadata["reason"] = "not_configured"
+            recorder.record(
+                PropertyEvent(
+                    m.unique_id,
+                    m.canonical.source.value,
+                    event_type,
+                    "commute",
+                    metadata,
+                )
+            )
+        await recorder.flush()
+
+    return merged, commute_lookup, within_count
 
 
 async def _run_enrichment(
@@ -630,6 +646,7 @@ async def _run_post_enrichment(
     *,
     recorder: EventRecorder | None = None,
     commute_lookup: dict[str, tuple[int, TransportMode]] | None = None,
+    progress: PreAnalysisResult | None = None,
 ) -> tuple[list[MergedProperty], int, int, int] | None:
     """Cross-run dedup and floorplan gate. Returns None if nothing remains.
 
@@ -654,6 +671,10 @@ async def _run_post_enrichment(
     )
     merged_to_notify = dedup_result.genuinely_new
     anchors_updated = dedup_result.anchors_updated
+    if progress is not None:
+        progress.anchors_updated = anchors_updated
+        progress.post_dedup_count = len(merged_to_notify)
+        progress.post_floorplan_count = len(merged_to_notify)
 
     if not merged_to_notify:
         logger.info("no_new_properties_after_cross_run_dedup")
@@ -668,6 +689,8 @@ async def _run_post_enrichment(
             merged_to_notify,
             min_gallery_for_photo_inference=settings.min_gallery_for_photo_inference,
         )
+        if progress is not None:
+            progress.post_floorplan_count = len(merged_to_notify)
         photo_inference_eligible = sum(
             1
             for m in merged_to_notify
@@ -776,144 +799,158 @@ async def _run_pre_analysis_pipeline(
     only_scrapers: set[str] | None = None,
     full_scrape: bool = False,
     recorder: EventRecorder | None = None,
+    progress: PreAnalysisResult | None = None,
 ) -> PreAnalysisResult | None:
     """Run the pre-analysis pipeline: scrape, filter, deduplicate, enrich.
 
     Returns None if pipeline ends early (no properties at any stage).
     Quality analysis is handled separately by the caller for concurrency.
     """
-    timings: dict[str, float] = {}
-    scraper_metrics: list[ScraperMetrics] = []
+    progress = progress if progress is not None else PreAnalysisResult()
+    timings = progress.stage_timings
+    active_phase = "scraping_seconds"
 
-    # Step 1: Scrape all platforms
     t0 = time.monotonic()
-    scrape_result = await _run_scrape(
-        settings,
-        storage,
-        max_per_scraper=max_per_scraper,
-        only_scrapers=only_scrapers,
-        full_scrape=full_scrape,
-    )
-    timings["scraping_seconds"] = time.monotonic() - t0
-    if scrape_result is None:
-        return None
-    all_properties, scraper_metrics = scrape_result
+    try:
+        # Step 1: Scrape all platforms
+        t0 = time.monotonic()
+        scrape_result = await _run_scrape(
+            settings,
+            storage,
+            max_per_scraper=max_per_scraper,
+            only_scrapers=only_scrapers,
+            full_scrape=full_scrape,
+            metrics_out=progress.scraper_metrics,
+        )
+        timings["scraping_seconds"] = time.monotonic() - t0
+        if scrape_result is None:
+            all_properties: list[Property] = []
+        else:
+            all_properties, scraper_metrics = scrape_result
+            progress.scraper_metrics = scraper_metrics
+        progress.scraped_count = max(
+            len(all_properties), sum(m.properties_found for m in progress.scraper_metrics)
+        )
 
-    # Step 1b: Record all scraped listings in source_listings
-    sl_count = await storage.upsert_source_listings(all_properties)
-    logger.info("source_listings_upserted", count=sl_count)
+        # Step 1b: Record all scraped listings in source_listings
+        sl_count = await storage.upsert_source_listings(all_properties)
+        logger.info("source_listings_upserted", count=sl_count)
 
-    # Step 2: Criteria + location filters
-    t0 = time.monotonic()
-    criteria = settings.get_search_criteria()
-    search_areas = settings.get_search_areas()
-    filter_result = _run_criteria_and_location_filters(
-        all_properties, criteria, search_areas, recorder=recorder
-    )
-    if filter_result is None:
+        # Step 2: Criteria + location filters
+        active_phase = "filtering_seconds"
+        t0 = time.monotonic()
+        criteria = settings.get_search_criteria()
+        search_areas = settings.get_search_areas()
+        filter_result = _run_criteria_and_location_filters(
+            all_properties, criteria, search_areas, recorder=recorder, progress=progress
+        )
+        if filter_result is None:
+            filtered: list[Property] = []
+            criteria_filtered_count = progress.criteria_filtered_count
+            location_filtered_count = progress.location_filtered_count
+        else:
+            filtered, criteria_filtered_count, location_filtered_count = filter_result
         if recorder is not None:
             await recorder.flush()
-        timings["filtering_seconds"] = time.monotonic() - t0
-        return None
-    filtered, criteria_filtered_count, location_filtered_count = filter_result
-    if recorder is not None:
-        await recorder.flush()
 
-    # Step 3: Wrap as single-source MergedProperties + filter to new only
-    logger.info("pipeline_started", phase="wrap_merged")
-    deduplicator = Deduplicator(
-        enable_cross_platform=True,
-        enable_image_hashing=settings.enable_image_hash_matching,
-        data_dir=settings.data_dir,
-    )
-    merged_properties = deduplicator.properties_to_merged(filtered)
-    logger.info(
-        "wrap_merged_summary",
-        count=len(merged_properties),
-        by_source=_source_counts(merged_properties),
-    )
+        # Step 3: Wrap as single-source MergedProperties + filter to new only
+        logger.info("pipeline_started", phase="wrap_merged")
+        deduplicator = Deduplicator(
+            enable_cross_platform=True,
+            enable_image_hashing=settings.enable_image_hash_matching,
+            data_dir=settings.data_dir,
+        )
+        merged_properties = deduplicator.properties_to_merged(filtered)
+        logger.info(
+            "wrap_merged_summary",
+            count=len(merged_properties),
+            by_source=_source_counts(merged_properties),
+        )
 
-    # Step 3b: Detect price changes for already-known properties
-    await _detect_price_changes(merged_properties, storage)
+        # Step 3b: Detect price changes for already-known properties
+        await _detect_price_changes(merged_properties, storage)
 
-    logger.info("pipeline_started", phase="new_property_filter")
-    new_merged = await storage.filter_new_merged(merged_properties)
-    new_property_count = len(new_merged)
-    logger.info(
-        "new_property_summary", new_count=len(new_merged), by_source=_source_counts(new_merged)
-    )
+        logger.info("pipeline_started", phase="new_property_filter")
+        new_merged = await storage.filter_new_merged(merged_properties)
+        new_property_count = len(new_merged)
+        progress.new_property_count = new_property_count
+        logger.info(
+            "new_property_summary", new_count=len(new_merged), by_source=_source_counts(new_merged)
+        )
 
-    # T4: record new property filter events
-    if recorder is not None:
-        new_ids = {m.canonical.unique_id for m in new_merged}
-        for m in merged_properties:
-            uid = m.canonical.unique_id
-            src = m.canonical.source.value
-            if uid in new_ids:
-                recorder.record(PropertyEvent(uid, src, "new_property_passed", "new_property"))
-            else:
-                recorder.record(
-                    PropertyEvent(
-                        uid,
-                        src,
-                        "duplicate_known",
-                        "new_property",
-                        {"reason": "already_seen"},
+        # T4: record new property filter events
+        if recorder is not None:
+            new_ids = {m.canonical.unique_id for m in new_merged}
+            for m in merged_properties:
+                uid = m.canonical.unique_id
+                src = m.canonical.source.value
+                if uid in new_ids:
+                    recorder.record(PropertyEvent(uid, src, "new_property_passed", "new_property"))
+                else:
+                    recorder.record(
+                        PropertyEvent(
+                            uid,
+                            src,
+                            "duplicate_known",
+                            "new_property",
+                            {"reason": "already_seen"},
+                        )
                     )
-                )
-        await recorder.flush()
+            await recorder.flush()
 
-    # Step 4: Load unenriched retries
-    unenriched, re_enrichment_ids = await _load_unenriched(storage, settings)
-    timings["filtering_seconds"] = time.monotonic() - t0
-    if not new_merged and not unenriched:
-        logger.info("no_new_properties")
-        return None
+        # Step 4: Load unenriched retries
+        unenriched, re_enrichment_ids = await _load_unenriched(storage, settings)
+        timings["filtering_seconds"] = time.monotonic() - t0
+        if not new_merged and not unenriched:
+            logger.info("no_new_properties")
+            return None
 
-    # Step 5: Enrichment
-    t0 = time.monotonic()
-    merged_to_enrich = list(new_merged) + list(unenriched)
-    enriched = await _run_enrichment(merged_to_enrich, settings, storage, recorder=recorder)
-    if enriched is None:
+        # Step 5: Enrichment
+        active_phase = "enrichment_seconds"
+        t0 = time.monotonic()
+        merged_to_enrich = list(new_merged) + list(unenriched)
+        enriched = await _run_enrichment(merged_to_enrich, settings, storage, recorder=recorder)
+        if enriched is None:
+            timings["enrichment_seconds"] = time.monotonic() - t0
+            return None
+        progress.enriched_count = len(enriched)
+
+        # Step 6: Geocode + commute (after enrichment so all properties have full coords)
+        geocoded, commute_lookup, commute_within_limit_count = await _geocode_and_compute_commute(
+            enriched, criteria, settings, recorder=recorder
+        )
+        progress.commute_lookup = commute_lookup
+        progress.commute_within_limit_count = commute_within_limit_count
+        if not geocoded:
+            logger.info("no_properties_after_enrichment")
+            timings["enrichment_seconds"] = time.monotonic() - t0
+            return None
+
+        # Step 7: Post-enrichment dedup + floorplan gate
+        # Use geocoded list (not enriched) so coordinates from geocoding are preserved
+        post_result = await _run_post_enrichment(
+            geocoded,
+            storage,
+            settings,
+            re_enrichment_ids,
+            recorder=recorder,
+            commute_lookup=commute_lookup,
+            progress=progress,
+        )
         timings["enrichment_seconds"] = time.monotonic() - t0
-        return None
+        if post_result is None:
+            return None
 
-    # Step 6: Geocode + commute (after enrichment so all properties have full coords)
-    geocoded, commute_lookup, commute_within_limit_count = await _geocode_and_compute_commute(
-        enriched, criteria, settings, recorder=recorder
-    )
-    if not geocoded:
-        logger.info("no_properties_within_commute_limit")
-        timings["enrichment_seconds"] = time.monotonic() - t0
-        return None
-
-    # Step 7: Post-enrichment dedup + floorplan gate
-    # Use geocoded list (not enriched) so coordinates from geocoding are preserved
-    post_result = await _run_post_enrichment(
-        geocoded,
-        storage,
-        settings,
-        re_enrichment_ids,
-        recorder=recorder,
-        commute_lookup=commute_lookup,
-    )
-    timings["enrichment_seconds"] = time.monotonic() - t0
-    if post_result is None:
-        return None
-
-    final_merged, anchors_updated, post_dedup_count, post_floorplan_count = post_result
-    return PreAnalysisResult(
-        merged_to_process=final_merged,
-        commute_lookup=commute_lookup,
-        scraped_count=len(all_properties),
-        enriched_count=len(enriched),
-        anchors_updated=anchors_updated,
-        stage_timings=timings,
-        scraper_metrics=scraper_metrics,
-        criteria_filtered_count=criteria_filtered_count,
-        location_filtered_count=location_filtered_count,
-        new_property_count=new_property_count,
-        commute_within_limit_count=commute_within_limit_count,
-        post_dedup_count=post_dedup_count,
-        post_floorplan_count=post_floorplan_count,
-    )
+        final_merged, anchors_updated, post_dedup_count, post_floorplan_count = post_result
+        progress.merged_to_process = final_merged
+        progress.anchors_updated = anchors_updated
+        progress.criteria_filtered_count = criteria_filtered_count
+        progress.location_filtered_count = location_filtered_count
+        progress.post_dedup_count = post_dedup_count
+        progress.post_floorplan_count = post_floorplan_count
+        return progress
+    finally:
+        timings[active_phase] = time.monotonic() - t0
+        progress.scraped_count = max(
+            progress.scraped_count, sum(m.properties_found for m in progress.scraper_metrics)
+        )

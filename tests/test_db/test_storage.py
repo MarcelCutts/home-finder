@@ -1084,7 +1084,7 @@ class TestGetPropertyImagesAndRow:
         ]
         await storage.save_property_images(storage_sample_property.unique_id, images)
 
-        result_images, result_prop = await storage.get_property_images_and_row(
+        result_images, result_prop, _text = await storage.get_property_images_and_row(
             storage_sample_property.unique_id
         )
         assert len(result_images) == 1
@@ -1095,7 +1095,9 @@ class TestGetPropertyImagesAndRow:
     @pytest.mark.asyncio
     async def test_returns_none_for_missing_property(self, storage: PropertyStorage) -> None:
         """Should return empty images and None property for non-existent ID."""
-        result_images, result_prop = await storage.get_property_images_and_row("nonexistent:999")
+        result_images, result_prop, _text = await storage.get_property_images_and_row(
+            "nonexistent:999"
+        )
         assert result_images == []
         assert result_prop is None
 

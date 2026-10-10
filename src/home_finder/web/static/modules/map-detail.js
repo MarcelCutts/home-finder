@@ -1,7 +1,8 @@
 // Detail page Leaflet map (single property)
+const { addBasemap } = await import("./map-basemap.js" + new URL(import.meta.url).search);
 
 const el = document.getElementById("map");
-if (el) {
+if (el && typeof L !== "undefined") {
   const lat = parseFloat(el.dataset.lat);
   const lon = parseFloat(el.dataset.lon);
   const title = el.dataset.title || "Property";
@@ -13,11 +14,11 @@ if (el) {
       boxZoom: false,
     }).setView([lat, lon], 15);
 
-    L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png", {
-      attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/">CARTO</a>',
-      subdomains: "abcd",
-      maxZoom: 20,
-    }).addTo(map);
+    addBasemap(map, el, function () {
+      map.remove();
+      el.hidden = true;
+      document.getElementById("map-status").hidden = false;
+    });
 
     L.control.zoom({ position: "bottomright" }).addTo(map);
 
@@ -58,4 +59,7 @@ if (el) {
         className: "detail-tooltip",
       });
   }
+} else if (el) {
+  el.hidden = true;
+  document.getElementById("map-status").hidden = false;
 }

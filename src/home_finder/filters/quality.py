@@ -3,13 +3,14 @@
 import asyncio
 import base64
 import functools
+import hashlib
 import json as _json
 import re as _re
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Final, Literal
+from typing import TYPE_CHECKING, Any, Final, Literal, NoReturn
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import BaseModel, ConfigDict, Field
 
 from home_finder.data.area_context import (
     ACOUSTIC_PROFILES,
@@ -17,6 +18,18 @@ from home_finder.data.area_context import (
     RENTAL_BENCHMARKS,
     build_property_context,
 )
+from home_finder.filters.analysis_contracts import (
+    AnalysisOutputError,
+    check_stop_reason,
+    evaluation_json,
+    rejected_request,
+    validate_output,
+)
+from home_finder.filters.analysis_contracts import (
+    failure as output_failure,
+)
+from home_finder.filters.analysis_spend import AnalysisSpendMeter
+from home_finder.filters.listing_text import select_listing_text, supported_council_tax_band
 from home_finder.logging import get_logger
 from home_finder.models import (
     BathroomAnalysis,
@@ -38,7 +51,14 @@ from home_finder.models import (
     ValueAnalysis,
     ViewingNotes,
 )
+from home_finder.models.analysis import (
+    AnalysisConfig,
+    AnalysisProvenance,
+    PhaseConfig,
+    VisualPhaseConfig,
+)
 from home_finder.models.quality import _QUALITY_SUB_MODEL_FIELDS
+from home_finder.models.spend import SpendDeferred, SpendPolicy
 from home_finder.utils.image_cache import find_cached_file, is_valid_image_url, read_image_bytes
 from home_finder.utils.image_processing import (
     ImageMediaType,
@@ -47,21 +67,20 @@ from home_finder.utils.image_processing import (
 from home_finder.utils.image_processing import (
     resize_image_bytes as _resize_image_bytes,
 )
+from home_finder.utils.listing_facts import supported_band
 
 if TYPE_CHECKING:
     import anthropic
+    import httpx2
     from anthropic.types import ImageBlockParam
+
+    from home_finder.db.spend import SpendRepository
 
 logger = get_logger(__name__)
 
 # Rate limit settings for Tier 2 (1,000 RPM)
 # SDK handles retry automatically, we just need a small delay to avoid bursts
 DELAY_BETWEEN_CALLS: Final = 0.2  # seconds (1000 RPM = 0.06s minimum, add buffer)
-
-# SDK retry configuration
-MAX_RETRIES: Final = 1  # 2 total attempts (down from 3)
-PHASE1_REQUEST_TIMEOUT: Final = 240.0  # 4 min: vision + thinking can take 120-260s
-PHASE2_REQUEST_TIMEOUT: Final = 60.0  # 1 min: text-only evaluation
 
 # Circuit breaker: stop hammering the API after consecutive outage-indicating errors
 _CIRCUIT_BREAKER_THRESHOLD: Final = 3
@@ -80,6 +99,7 @@ class TokenUsage:
     output_tokens: int = 0
     cache_read_tokens: int = 0
     cache_creation_tokens: int = 0
+    cache_creation_1h_tokens: int = 0
 
     def add_from_response(self, usage: Any) -> None:
         """Accumulate token counts from an Anthropic response.usage object."""
@@ -87,16 +107,18 @@ class TokenUsage:
         self.output_tokens += getattr(usage, "output_tokens", 0) or 0
         self.cache_read_tokens += getattr(usage, "cache_read_input_tokens", 0) or 0
         self.cache_creation_tokens += getattr(usage, "cache_creation_input_tokens", 0) or 0
+        breakdown = getattr(usage, "cache_creation", None)
+        self.cache_creation_1h_tokens += getattr(breakdown, "ephemeral_1h_input_tokens", 0) or 0
 
     @property
     def estimated_cost_usd(self) -> float:
-        """Estimate cost using Sonnet pricing (per million tokens)."""
-        # Sonnet: $3/MTok input, $15/MTok output, $0.30/MTok cache read, $3.75/MTok cache write
+        """Estimate successful-response cost; the durable attempt ledger is authoritative."""
         return (
             self.input_tokens * 3.0
             + self.output_tokens * 15.0
             + self.cache_read_tokens * 0.30
             + self.cache_creation_tokens * 3.75
+            + self.cache_creation_1h_tokens * 2.25
         ) / 1_000_000
 
 
@@ -511,12 +533,10 @@ class _EvaluationResponse(BaseModel):
         )
         reasoning: str = Field(
             description=(
-                "Value justification: why this price is or isn't fair for "
-                "what you get. Focus on price factors: stock type "
-                "premium/discount, true monthly cost, area rent trajectory, "
-                "service charges, incentives. Reference condition only as "
-                "'condition justifies/doesn't justify price' — don't "
-                "restate specific issues."
+                "Discuss advertised rent and observed trade-offs. Separate supported "
+                "tenant payments from estimates and unknown bills. Do not infer service "
+                "charges, fixed stock premiums, a complete monthly total or an offer "
+                "discount from undated research. Acknowledge missing comparable evidence."
             ),
         )
 
@@ -726,6 +746,26 @@ def _sanitize_eval_enums(raw: dict[str, Any]) -> None:
         raw["lowlights"] = [lo for lo in raw["lowlights"] if lo in valid_lowlights]
 
 
+def _visual_output(response: Any) -> dict[str, Any]:
+    from anthropic.types import ToolUseBlock
+
+    check_stop_reason(response, "visual")
+    tools = [block for block in response.content if isinstance(block, ToolUseBlock)]
+    if len(tools) != 1 or tools[0].name != "property_visual_analysis":
+        raise output_failure(
+            "visual",
+            "malformed_output",
+            response,
+            diagnostics={"reason": "expected_one_visual_tool", "tool_block_count": len(tools)},
+        )
+    return validate_output(tools[0].input, _VisualAnalysisResponse, "visual", response)
+
+
+def _evaluation_output(response: Any) -> dict[str, Any]:
+    check_stop_reason(response, "evaluation")
+    return validate_output(evaluation_json(response), _EvaluationResponse, "evaluation", response)
+
+
 class PropertyQualityFilter:
     """Analyze property quality using Claude vision API."""
 
@@ -735,6 +775,10 @@ class PropertyQualityFilter:
         max_images: int = 20,
         *,
         enable_extended_thinking: bool = True,
+        http_client: "httpx2.AsyncClient | None" = None,
+        analysis_config: AnalysisConfig | None = None,
+        spend_repository: "SpendRepository | None" = None,
+        spend_policy: SpendPolicy | None = None,
     ) -> None:
         """Initialize the quality filter.
 
@@ -742,12 +786,22 @@ class PropertyQualityFilter:
             api_key: Anthropic API key.
             max_images: Maximum number of gallery images to analyze.
             enable_extended_thinking: Enable extended thinking for deeper analysis.
+            http_client: Optional native SDK transport client, closed with this filter.
+            analysis_config: Explicit phase settings; overrides the legacy thinking flag.
+            spend_repository: Authoritative durable ledger; required for real SDK requests.
+            spend_policy: Explicit caps; absent caps defer every real SDK request.
         """
         self._api_key = api_key
         self._max_images = max_images
-        self._enable_extended_thinking = enable_extended_thinking
+        self._analysis_config = analysis_config or AnalysisConfig(
+            visual=VisualPhaseConfig(
+                reasoning="adaptive" if enable_extended_thinking else "disabled"
+            )
+        )
         self._client: anthropic.AsyncAnthropic | None = None
+        self._http_client = http_client
         self.token_usage = TokenUsage()
+        self._spend_meter = AnalysisSpendMeter(spend_repository, spend_policy)
         # Circuit breaker (asyncio is single-threaded, no lock needed)
         from home_finder.utils.circuit_breaker import CircuitBreaker
 
@@ -757,20 +811,81 @@ class PropertyQualityFilter:
             name="anthropic_api",
         )
 
+    @property
+    def analysis_config(self) -> AnalysisConfig:
+        """One immutable effective configuration for this filter's lifetime."""
+        return self._analysis_config
+
     def _get_client(self) -> "anthropic.AsyncAnthropic":
         """Get or create the Anthropic client with optimized settings."""
         if self._client is None:
             import anthropic as _anthropic
-            import httpx
 
+            if self._http_client is None:
+                self._http_client = _anthropic.DefaultAsyncHttpxClient(follow_redirects=False)
+            else:
+                # A redirected POST must not create an unmetered second send
+                # inside the HTTP client beneath the SDK middleware.
+                self._http_client.follow_redirects = False
             self._client = _anthropic.AsyncAnthropic(
                 api_key=self._api_key,
-                max_retries=MAX_RETRIES,  # SDK handles retry with exponential backoff
-                timeout=httpx.Timeout(
-                    PHASE1_REQUEST_TIMEOUT, connect=5.0
-                ),  # Default to Phase 1 timeout
+                base_url="https://api.anthropic.com",
+                middleware=[self._spend_meter],
+                max_retries=self.analysis_config.visual.sdk_retries,
+                http_client=self._http_client,
+                timeout=_anthropic.Timeout(
+                    self.analysis_config.visual.request_timeout_seconds,
+                    connect=self.analysis_config.visual.connect_timeout_seconds,
+                ),
             )
         return self._client
+
+    def _phase_client(self, phase: PhaseConfig) -> "anthropic.AsyncAnthropic":
+        client = self._get_client()
+        if phase.sdk_retries != self.analysis_config.visual.sdk_retries:
+            # SDK options copies share the base client's owned HTTP connection
+            # pool. Closing the filter still closes that single transport.
+            return client.with_options(max_retries=phase.sdk_retries)
+        return client
+
+    def _analysis_provenance(self) -> AnalysisProvenance:
+        from anthropic import __version__ as sdk_version
+
+        from home_finder.filters.request_budget import POLICY
+
+        def digest(value: Any) -> str:
+            text = value if isinstance(value, str) else _json.dumps(value, sort_keys=True)
+            return hashlib.sha256(text.encode()).hexdigest()
+
+        return AnalysisProvenance(
+            version=3,
+            configuration=self.analysis_config,
+            sdk_version=sdk_version,
+            max_images=self._max_images,
+            visual_system_sha256=digest(VISUAL_ANALYSIS_SYSTEM_PROMPT),
+            evaluation_system_sha256=digest(EVALUATION_SYSTEM_PROMPT),
+            visual_output_sha256=digest(VISUAL_ANALYSIS_TOOL),
+            evaluation_output_sha256=digest(_eval_json_schema()),
+            input_budget_policy=POLICY
+            if any(
+                phase.input_token_limit is not None
+                for phase in (self.analysis_config.visual, self.analysis_config.evaluation)
+            )
+            else None,
+        )
+
+    def _raise_spend_deferral(self, error: SpendDeferred) -> NoReturn:
+        if error.reason in {
+            "uncertain_provider_outcome",
+            "unpriced_provider_response",
+            "ledger_unavailable",
+        }:
+            self._breaker.record_failure()
+            # Stop the current batch on provider/accounting uncertainty. The
+            # middleware has already kept the durable reservation and stopped
+            # the SDK's own retry loop.
+            raise APIUnavailableError(error.reason) from None
+        raise error
 
     @staticmethod
     def _get_media_type(url: str) -> ImageMediaType:
@@ -879,7 +994,8 @@ class PropertyQualityFilter:
         """Analyze quality for a single pre-enriched merged property.
 
         Does NOT sleep between calls — caller controls pacing.
-        Handles errors internally (returns minimal analysis on failure).
+        Invalid required output returns an unrated, typed failure.
+        Provider outages propagate to the caller's circuit-breaker handling.
         Returns ``None`` analysis when images are incomplete (missing cache).
 
         Args:
@@ -937,13 +1053,9 @@ class PropertyQualityFilter:
                 property_id=merged.unique_id,
                 sources=[s.value for s in merged.sources],
             )
-            return merged, self._create_minimal_analysis(value=value)
+            return merged, None
 
-        # Use best description from descriptions dict
-        best_description: str | None = None
-        for desc in merged.descriptions.values():
-            if desc and (not best_description or len(desc) > len(best_description)):
-                best_description = desc
+        text_inputs = select_listing_text(merged)
 
         try:
             analysis = await self._analyze_property(
@@ -953,8 +1065,8 @@ class PropertyQualityFilter:
                 bedrooms=prop.bedrooms,
                 price_pcm=prop.price_pcm,
                 area_average=value.area_average,
-                description=best_description,
-                features=None,
+                description=text_inputs.description,
+                features=list(text_inputs.features) or None,
                 area_context=ctx.area_overview,
                 outcode=ctx.outcode,
                 council_tax_band_c=ctx.council_tax_band_c,
@@ -967,15 +1079,28 @@ class PropertyQualityFilter:
                 data_dir=data_dir,
                 floor_area_sqm=merged.floor_area_sqm,
             )
+        except SpendDeferred as exc:
+            logger.info("analysis_spend_deferred", property_id=merged.unique_id, reason=exc.reason)
+            raise
         except APIUnavailableError:
             raise  # Propagate to caller for circuit breaker handling
+        except AnalysisOutputError as exc:
+            logger.warning(
+                "analysis_output_failed",
+                property_id=merged.unique_id,
+                output_diagnostics=exc.diagnostics,
+                **exc.failure.model_dump(),
+            )
+            return merged, self._create_failed_analysis(value, exc)
         except Exception:
             logger.error(
                 "analyze_single_merged_failed",
                 property_id=merged.unique_id,
                 exc_info=True,
             )
-            return merged, self._create_minimal_analysis(value=value)
+            return merged, self._create_failed_analysis(
+                value, output_failure("assembly", "internal_error")
+            )
 
         if analysis:
             merged_value = ValueAnalysis(
@@ -991,6 +1116,8 @@ class PropertyQualityFilter:
                 else "",
             )
             analysis = PropertyQualityAnalysis(
+                listing_text_inputs=text_inputs,
+                analysis_provenance=self._analysis_provenance(),
                 kitchen=analysis.kitchen,
                 condition=analysis.condition,
                 light_space=analysis.light_space,
@@ -1014,7 +1141,23 @@ class PropertyQualityFilter:
             )
             return merged, analysis
         else:
-            return merged, self._create_minimal_analysis(value=value)
+            return merged, self._create_failed_analysis(
+                value, output_failure("assembly", "malformed_output")
+            )
+
+    def _create_failed_analysis(
+        self, value: ValueAnalysis | None, error: AnalysisOutputError
+    ) -> PropertyQualityAnalysis:
+        incomplete = self._create_minimal_analysis(value)
+        return incomplete.model_copy(
+            update={
+                "kitchen": KitchenAnalysis(notes="Quality analysis incomplete"),
+                "light_space": LightSpaceAnalysis(notes="Quality analysis incomplete"),
+                "summary": f"Quality analysis incomplete ({error})",
+                "analysis_failure": error.failure,
+                "analysis_provenance": self._analysis_provenance(),
+            }
+        )
 
     async def analyze_merged_properties(
         self,
@@ -1081,9 +1224,10 @@ class PropertyQualityFilter:
             data_dir: Data directory for image cache (used to clear cache on bad request).
 
         Returns:
-            Raw visual analysis dict, or None if the call failed.
+            Validated visual analysis dict.
 
         Raises:
+            AnalysisOutputError: If the request or required output is invalid.
             APIUnavailableError: If circuit breaker trips (outage-indicating errors).
         """
         from anthropic import (
@@ -1094,18 +1238,19 @@ class PropertyQualityFilter:
             InternalServerError,
             RateLimitError,
         )
-        from anthropic.types import ToolParam, ToolUseBlock
+        from anthropic.types import ToolParam
 
-        client = self._get_client()
+        phase = self.analysis_config.visual
+        client = self._phase_client(phase)
 
         try:
             visual_tool: ToolParam = VISUAL_ANALYSIS_TOOL  # type: ignore[assignment]
 
             create_kwargs: dict[str, Any] = {
-                "model": "claude-sonnet-4-6",
+                "model": phase.model,
                 # SDK enforces non-streaming cap of ~21333 tokens (10-min timeout estimate).
                 # Streaming would allow 32768+ but requires a larger refactor.
-                "max_tokens": 21000,
+                "max_tokens": phase.max_output_tokens,
                 "system": [
                     {
                         "type": "text",
@@ -1117,7 +1262,7 @@ class PropertyQualityFilter:
                 "tools": [{**visual_tool, "cache_control": {"type": "ephemeral"}}],
             }
 
-            if self._enable_extended_thinking:
+            if phase.reasoning == "adaptive":
                 create_kwargs["thinking"] = {
                     "type": "adaptive",
                 }
@@ -1128,12 +1273,20 @@ class PropertyQualityFilter:
                     "name": "property_visual_analysis",
                 }
 
-            import httpx as _httpx
+            if phase.effort is not None:
+                create_kwargs["output_config"] = {"effort": phase.effort}
 
-            response = await client.messages.create(
-                **create_kwargs,
-                timeout=_httpx.Timeout(PHASE1_REQUEST_TIMEOUT, connect=5.0),
-            )
+            from anthropic import Timeout
+
+            with self._spend_meter.bind(
+                property_id, "visual", self._analysis_provenance(), _visual_output
+            ):
+                response = await client.messages.create(
+                    **create_kwargs,
+                    timeout=Timeout(
+                        phase.request_timeout_seconds, connect=phase.connect_timeout_seconds
+                    ),
+                )
 
             if hasattr(response, "usage"):
                 usage = response.usage
@@ -1149,21 +1302,14 @@ class PropertyQualityFilter:
                         cache_creation_tokens=cache_creation,
                     )
 
-            tool_use_block = next(
-                (block for block in response.content if isinstance(block, ToolUseBlock)),
-                None,
-            )
-            if not tool_use_block:
-                logger.warning(
-                    "no_tool_use_in_response",
-                    property_id=property_id,
-                    phase="visual",
-                    stop_reason=response.stop_reason,
-                )
-                return None
-
+            visual_data = _visual_output(response)
             self._breaker.record_success()
-            return tool_use_block.input
+            return visual_data
+
+        except SpendDeferred as exc:
+            self._raise_spend_deferral(exc)
+        except AnalysisOutputError:
+            raise
 
         except BadRequestError as e:
             logger.warning(
@@ -1187,7 +1333,7 @@ class PropertyQualityFilter:
                     "image_cache_cleared_on_bad_request",
                     property_id=property_id,
                 )
-            return None
+            raise rejected_request("visual", e) from e
 
         except AuthenticationError as e:
             self._breaker.record_failure()
@@ -1229,7 +1375,7 @@ class PropertyQualityFilter:
                 error=str(e),
                 request_id=getattr(e, "_request_id", None),
             )
-            return None
+            raise rejected_request("visual", e) from e
 
         except Exception as e:
             logger.warning(
@@ -1239,7 +1385,7 @@ class PropertyQualityFilter:
                 error_type=type(e).__name__,
                 exc_info=True,
             )
-            return None
+            raise output_failure("visual", "internal_error") from e
 
     async def _run_evaluation(
         self,
@@ -1247,6 +1393,7 @@ class PropertyQualityFilter:
         property_id: str,
         *,
         description: str | None,
+        features: list[str] | None = None,
         price_pcm: int,
         bedrooms: int,
         effective_average: int,
@@ -1261,10 +1408,9 @@ class PropertyQualityFilter:
         """Run Phase 2 evaluation API call using structured JSON output.
 
         Uses ``messages.create()`` with ``output_config`` for JSON schema
-        output, then manually extracts and validates the response. This
-        approach gives us access to the raw JSON even when Pydantic
-        validation fails (e.g. Claude invents a lowlight value), allowing
-        graceful coercion instead of losing the entire evaluation.
+        output, then validates required response fields before any lenient
+        historical-record loading. Invalid responses retain their usage and
+        redacted diagnostics without completing an assessment.
 
         Args:
             visual_data: Phase 1 visual analysis output.
@@ -1282,17 +1428,19 @@ class PropertyQualityFilter:
             hosting_tolerance: Hosting tolerance string.
 
         Returns:
-            Evaluation data dict (empty if Phase 2 failed).
+            Validated evaluation data dict.
 
         Raises:
+            AnalysisOutputError: If the request or required output is invalid.
             APIUnavailableError: On authentication, rate-limit, server, or
                 connection errors (mirrors Phase 1 contract).
         """
         if self._breaker.is_open():
             logger.info("circuit_breaker_open_skipping_evaluation", property_id=property_id)
-            return {}
+            raise APIUnavailableError("Circuit breaker opened before evaluation")
 
-        client = self._get_client()
+        phase = self.analysis_config.evaluation
+        client = self._phase_client(phase)
 
         # Map building_construction from Phase 1 to acoustic profile for Phase 2
         acoustic_context: str | None = None
@@ -1315,7 +1463,9 @@ class PropertyQualityFilter:
 
         from anthropic import (
             APIConnectionError,
+            APIStatusError,
             AuthenticationError,
+            BadRequestError,
             InternalServerError,
             RateLimitError,
         )
@@ -1325,6 +1475,7 @@ class PropertyQualityFilter:
             eval_prompt = build_evaluation_prompt(
                 visual_data=visual_data,
                 description=description,
+                features=features,
                 price_pcm=price_pcm,
                 bedrooms=bedrooms,
                 area_average=effective_average,
@@ -1338,56 +1489,50 @@ class PropertyQualityFilter:
                 acoustic_context=acoustic_context,
             )
 
-            import httpx as _httpx
+            from anthropic import Timeout
 
-            eval_response = await client.messages.create(
-                model="claude-sonnet-4-6",
-                max_tokens=4096,
-                system=[
+            output_config: dict[str, Any] = {
+                "format": {"type": "json_schema", "schema": _eval_json_schema()}
+            }
+            if phase.effort is not None:
+                output_config["effort"] = phase.effort
+            create_kwargs: dict[str, Any] = {
+                "model": phase.model,
+                "max_tokens": phase.max_output_tokens,
+                "system": [
                     {
                         "type": "text",
                         "text": EVALUATION_SYSTEM_PROMPT,
                         "cache_control": {"type": "ephemeral"},
                     }
                 ],
-                messages=[{"role": "user", "content": eval_prompt}],
-                output_config={
-                    "format": {
-                        "type": "json_schema",
-                        "schema": _eval_json_schema(),
-                    }
-                },
-                timeout=_httpx.Timeout(PHASE2_REQUEST_TIMEOUT, connect=5.0),
-            )
+                "messages": [{"role": "user", "content": eval_prompt}],
+                "output_config": output_config,
+            }
+            if phase.reasoning == "adaptive":
+                create_kwargs["thinking"] = {"type": "adaptive"}
+            with self._spend_meter.bind(
+                property_id, "evaluation", self._analysis_provenance(), _evaluation_output
+            ):
+                eval_response = await client.messages.create(
+                    **create_kwargs,
+                    timeout=Timeout(
+                        phase.request_timeout_seconds, connect=phase.connect_timeout_seconds
+                    ),
+                )
 
             if hasattr(eval_response, "usage"):
                 self.token_usage.add_from_response(eval_response.usage)
 
-            # Extract raw JSON from text content block
-            raw_json = _extract_eval_json(eval_response)
-            if raw_json is not None:
-                # Filter any invalid enum values before Pydantic validation
-                _sanitize_eval_enums(raw_json)
-                try:
-                    validated = _EvaluationResponse.model_validate(raw_json)
-                    eval_data = validated.model_dump()
-                    self._breaker.record_success()
-                except ValidationError as ve:
-                    # Enum filtering wasn't enough; use raw dict
-                    eval_data = raw_json
-                    self._breaker.record_success()
-                    logger.warning(
-                        "evaluation_coerced_invalid_fields",
-                        property_id=property_id,
-                        error=str(ve),
-                    )
-            else:
-                logger.warning(
-                    "no_json_in_evaluation_response",
-                    property_id=property_id,
-                    phase="evaluation",
-                    stop_reason=getattr(eval_response, "stop_reason", None),
-                )
+            eval_data = _evaluation_output(eval_response)
+            self._breaker.record_success()
+
+        except SpendDeferred as exc:
+            self._raise_spend_deferral(exc)
+        except AnalysisOutputError:
+            raise
+        except BadRequestError as e:
+            raise rejected_request("evaluation", e) from e
 
         except AuthenticationError as e:
             self._breaker.record_failure()
@@ -1410,6 +1555,9 @@ class PropertyQualityFilter:
             )
             raise APIUnavailableError(str(e)) from e
 
+        except APIStatusError as e:
+            raise rejected_request("evaluation", e) from e
+
         except Exception as e:
             logger.warning(
                 "evaluation_phase_failed",
@@ -1418,6 +1566,7 @@ class PropertyQualityFilter:
                 error_type=type(e).__name__,
                 exc_info=True,
             )
+            raise output_failure("evaluation", "internal_error") from e
 
         logger.info(
             "evaluation_complete",
@@ -1436,8 +1585,8 @@ class PropertyQualityFilter:
     ) -> PropertyQualityAnalysis | None:
         """Merge Phase 1 + Phase 2 results into a PropertyQualityAnalysis.
 
-        Cleans response data, validates with Pydantic, and applies post-processing
-        (e.g. 2+ bed space override).
+        Live callers validate both response contracts first. Historical data
+        can still use the storage model's bounded repairs here.
 
         Args:
             visual_data: Phase 1 visual analysis output.
@@ -1463,6 +1612,11 @@ class PropertyQualityFilter:
 
         try:
             merged_data = {**visual_data, **eval_data, "value": value}
+            # These fields describe the application's actual execution. Ignore
+            # any model-supplied attempt to supply or invalidate that provenance.
+            merged_data.pop("analysis_provenance", None)
+            merged_data.pop("analysis_failure", None)
+            merged_data.pop("listing_text_inputs", None)
             merged_data.setdefault("summary", "Analysis completed")
 
             # Warn if _clean_dict failed to parse any sub-model JSON strings.
@@ -1547,7 +1701,15 @@ class PropertyQualityFilter:
         # Build image content blocks
         content: list[ImageBlockParam | TextBlockParam] = []
 
-        has_floorplan = floorplan_url is not None and is_valid_image_url(floorplan_url)
+        floorplan_block = None
+        if floorplan_url and is_valid_image_url(floorplan_url):
+            floorplan_block = await self._build_image_block(
+                floorplan_url, cached_path=floorplan_cached_path
+            )
+        elif floorplan_url:
+            logger.debug("skipping_pdf_floorplan", url=floorplan_url)
+
+        has_floorplan = floorplan_block is not None
         effective_max = self._max_images - (1 if has_floorplan else 0)
 
         gallery_num = 0
@@ -1560,21 +1722,18 @@ class PropertyQualityFilter:
                 content.append(TextBlockParam(type="text", text=f"Gallery image {gallery_num}:"))
                 content.append(image_block)
 
-        if floorplan_url and is_valid_image_url(floorplan_url):
-            floorplan_block = await self._build_image_block(
-                floorplan_url, cached_path=floorplan_cached_path
-            )
-            if floorplan_block:
-                content.append(
-                    TextBlockParam(
-                        type="text",
-                        text="Floorplan \u2014 read all dimension labels carefully"
-                        " (UK formats: metres or feet/inches):",
-                    )
+        if floorplan_block:
+            content.append(
+                TextBlockParam(
+                    type="text",
+                    text="Floorplan \u2014 read all dimension labels carefully"
+                    " (UK formats: metres or feet/inches):",
                 )
-                content.append(floorplan_block)
-        elif floorplan_url:
-            logger.debug("skipping_pdf_floorplan", url=floorplan_url)
+            )
+            content.append(floorplan_block)
+
+        if not gallery_num and not has_floorplan:
+            raise SpendDeferred("missing_usable_images")
 
         effective_average = area_average or DEFAULT_BENCHMARK.get(min(bedrooms, 3), 1800)
         user_prompt = build_user_prompt(
@@ -1595,13 +1754,12 @@ class PropertyQualityFilter:
         )
         content.append(TextBlockParam(type="text", text=user_prompt))
 
-        has_usable_floorplan = floorplan_url is not None and is_valid_image_url(floorplan_url)
         image_blocks = [c for c in content if hasattr(c, "get") and c.get("type") == "image"]
         logger.info(
             "analyzing_property",
             property_id=property_id,
             gallery_count=len(gallery_urls),
-            has_floorplan=has_usable_floorplan,
+            has_floorplan=has_floorplan,
             image_blocks_sent=len(image_blocks),
             total_content_blocks=len(content),
         )
@@ -1609,7 +1767,7 @@ class PropertyQualityFilter:
         # Phase 1: Visual Analysis
         visual_data = await self._run_visual_analysis(content, property_id, data_dir=data_dir)
         if visual_data is None:
-            return None
+            raise output_failure("visual", "malformed_output")
 
         logger.info("visual_analysis_complete", property_id=property_id)
 
@@ -1626,6 +1784,7 @@ class PropertyQualityFilter:
             visual_data,
             property_id,
             description=description,
+            features=features,
             price_pcm=price_pcm,
             bedrooms=bedrooms,
             effective_average=effective_average,
@@ -1638,8 +1797,24 @@ class PropertyQualityFilter:
             hosting_tolerance=hosting_tolerance,
         )
 
+        if not eval_data:
+            raise output_failure("evaluation", "malformed_output")
+
         # Phase 3: Merge and validate
-        return self._merge_analysis_results(visual_data, eval_data, bedrooms, property_id)
+        analysis = self._merge_analysis_results(visual_data, eval_data, bedrooms, property_id)
+        if analysis is not None and analysis.listing_extraction is not None:
+            extraction = analysis.listing_extraction
+            band = supported_council_tax_band(extraction.council_tax_band, description, features)
+            epc = supported_band("epc", extraction.epc_rating, description, features)
+            if band != extraction.council_tax_band or epc != extraction.epc_rating:
+                analysis = analysis.model_copy(
+                    update={
+                        "listing_extraction": extraction.model_copy(
+                            update={"council_tax_band": band, "epc_rating": epc}
+                        )
+                    }
+                )
+        return analysis
 
     async def __aenter__(self) -> "PropertyQualityFilter":
         return self
@@ -1652,3 +1827,6 @@ class PropertyQualityFilter:
         if self._client is not None:
             await self._client.close()
             self._client = None
+        elif self._http_client is not None:
+            await self._http_client.aclose()
+        self._http_client = None

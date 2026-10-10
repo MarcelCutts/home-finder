@@ -158,7 +158,10 @@ class OwnerAccessMiddleware:
         if not authorized:
             # A peer may be a shared reverse proxy. Anonymous traffic must not
             # lock out valid owner credentials or authenticated Telegram hooks.
-            retry = self._failed_auth.consume(client_key)
+            # Browsers first need a 401 challenge before sending Basic auth.
+            # Missing credentials are not guesses and must remain challengeable.
+            attempted_credentials = webhook or "authorization" in request.headers
+            retry = self._failed_auth.consume(client_key) if attempted_credentials else 0
             if retry:
                 await reject(429, "Too many authentication attempts", retry=retry)
                 return

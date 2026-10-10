@@ -15,7 +15,9 @@ from home_finder.logging import get_logger
 from home_finder.models import FurnishType, Property, PropertySource
 from home_finder.scrapers.base import BaseScraper, ScrapeResult
 from home_finder.scrapers.parsing import extract_bedrooms, extract_postcode, extract_price
+from home_finder.scrapers.rightmove_payloads import SearchPage, parse_structured_search
 from home_finder.utils.address import is_outcode
+from home_finder.utils.http_evidence import is_challenge
 
 logger = get_logger(__name__)
 
@@ -122,18 +124,16 @@ class RightmoveScraper(BaseScraper):
 
             page_properties: list[Property] = []
             crawl_failed = False
-            page_parse_failed = [False]  # mutable container for nested closure
 
             async def handle_page(
                 context: BeautifulSoupCrawlingContext,
                 _props: list[Property] = page_properties,
             ) -> None:
+                nonlocal parse_errors
                 soup = context.soup
-                parsed = self._parse_search_results(soup, str(context.request.url))
-                if parsed is None:
-                    page_parse_failed[0] = True
-                else:
-                    _props.extend(parsed)
+                parsed = self._parse_search_page(soup, requested_index=index)
+                parse_errors += parsed.parse_errors
+                _props.extend(parsed.properties)
 
             crawler = BeautifulSoupCrawler(
                 max_requests_per_crawl=1,
@@ -145,10 +145,6 @@ class RightmoveScraper(BaseScraper):
             except Exception as e:
                 logger.warning("rightmove_crawl_failed", url=url, error=str(e), exc_info=True)
                 crawl_failed = True
-
-            if page_parse_failed[0]:
-                parse_errors += 1
-                return []
 
             if crawl_failed and not page_properties:
                 return None  # Signals fetch failure to _paginate
@@ -171,7 +167,9 @@ class RightmoveScraper(BaseScraper):
             max_results=max_results,
             page_delay=delay,
         )
-        result.parse_errors = parse_errors
+        result.parse_errors += parse_errors
+        if parse_errors:
+            result.stop_reason = "parse_error"
 
         logger.info(
             "scraped_rightmove_complete",
@@ -255,12 +253,22 @@ class RightmoveScraper(BaseScraper):
         return f"{self.BASE_URL}/property-to-rent/find.html?{'&'.join(params)}"
 
     def _parse_search_results(self, soup: BeautifulSoup, base_url: str) -> list[Property] | None:
-        """Parse property listings from search results page.
+        """Compatibility view; the collector also records partial parse failures."""
+        result = self._parse_search_page(soup)
+        if result.parse_errors and not result.properties:
+            return None
+        return result.properties
 
-        Returns None when property cards are found but all fail to parse,
-        indicating a possible site layout change.
-        """
-        properties: list[Property] = []
+    def _parse_search_page(self, soup: BeautifulSoup, *, requested_index: int = 0) -> SearchPage:
+        if is_challenge(str(soup)):
+            logger.warning("rightmove_search_challenge")
+            return SearchPage(parse_errors=1)
+        structured = parse_structured_search(soup, requested_index=requested_index)
+        if structured is not None:
+            if structured.parse_errors:
+                logger.warning("rightmove_search_parse_failed", errors=structured.parse_errors)
+            return structured
+        result = SearchPage()
 
         # Find all property cards - try new data-testid format first, then old format
         property_cards = soup.find_all(attrs={"data-testid": re.compile(r"^propertyCard-\d+$")})
@@ -270,27 +278,33 @@ class RightmoveScraper(BaseScraper):
             property_cards = soup.find_all("div", {"data-test": "propertyCard"})
 
         if not property_cards:
-            return []  # No cards — end of results
+            empty = soup.select_one(".l-searchResults .no-results")
+            if (
+                empty is not None
+                and "no properties found" in empty.get_text(" ", strip=True).lower()
+            ):
+                return result
+            logger.warning("rightmove_search_unrecognised")
+            return SearchPage(parse_errors=1)
 
-        card_errors = 0
         for card in property_cards:
             try:
                 prop = self._parse_property_card(card)
                 if prop:
-                    properties.append(prop)
+                    result.properties.append(prop)
+                else:
+                    result.parse_errors += 1
             except Exception as e:
-                card_errors += 1
+                result.parse_errors += 1
                 logger.warning("failed_to_parse_property_card", error=str(e))
 
-        if not properties and card_errors > 0:
+        if result.parse_errors:
             logger.warning(
-                "rightmove_all_cards_unparseable",
+                "rightmove_cards_unparseable",
                 card_count=len(property_cards),
-                card_errors=card_errors,
+                card_errors=result.parse_errors,
             )
-            return None
-
-        return properties
+        return result
 
     def _parse_property_card(self, card: Tag) -> Property | None:
         """Parse a single property card element."""

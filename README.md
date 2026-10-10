@@ -22,7 +22,7 @@ Multi-platform London rental property scraper with commute filtering, AI quality
 
 - **Multi-platform scraping**: OpenRent, Rightmove, Zoopla, OnTheMarket
 - **Cross-platform deduplication**: Graduated multi-signal scoring merges the same property listed on different platforms (two-phase: pre- and post-enrichment)
-- **Commute filtering**: Filter properties within X minutes of your destination using TravelTime API
+- **Commute guidance**: TravelTime measurements distinguish reachable, outside-limit and unknown outcomes; API failures never become zero-minute commutes
 - **AI quality analysis**: Two-phase Claude vision analysis — Phase 1 observes images (kitchen, condition, space, light), Phase 2 evaluates value, generates viewing notes, and curates highlights
 - **Web dashboard**: FastAPI-powered dashboard with HTMX live filtering, map view with MarkerCluster, property detail pages with area context, and lightbox gallery
 - **Rich Telegram notifications**: Property cards with photos, star ratings, commute times, quality summaries, and direct links (including web dashboard deep links)
@@ -36,7 +36,7 @@ Multi-platform London rental property scraper with commute filtering, AI quality
 1. **Install dependencies**:
 
    ```bash
-   uv sync --all-extras
+   uv sync --locked --all-extras
    ```
 
 2. **Configure environment**:
@@ -51,8 +51,8 @@ Multi-platform London rental property scraper with commute filtering, AI quality
    # One-shot pipeline (scrape + filter + notify)
    uv run home-finder
 
-   # Web dashboard with background pipeline
-   uv run home-finder --serve
+   # Inspect the owner dashboard before enabling collection
+   uv run home-finder --serve --no-pipeline
    ```
 
 ### Run Modes
@@ -111,9 +111,9 @@ The dashboard writes status changes and queues reanalysis, which can incur API c
 
 Generate a password with `python -c 'import secrets; print(secrets.token_urlsafe(32))'` and set `HOME_FINDER_WEB_OWNER_PASSWORD` in your local configuration or hosting secret store. Hosted access requires HTTPS and `HOME_FINDER_WEB_BASE_URL` set to its canonical origin. For local-only use, bind to `127.0.0.1`. Never put credentials in URLs; Basic authentication uses browser-managed credentials, so close the private browsing session and rotate the password to revoke access.
 
-Mutations require a same-origin `Origin` or `Referer` header, including requests from scripts. Bodies are limited to 64 KiB and 10 seconds. Per-process limits allow 30 mutations/minute separately for the owner and Telegram, and throttle failed authentication after 10 attempts/minute per connection peer. Valid credentials remain accepted when anonymous traffic exhausts that peer's limit. HTTP 429 includes `Retry-After`; repeated reanalysis requests coalesce. Use one app worker with trusted ingress connection limits.
+Mutations require a same-origin `Origin` or `Referer` header, including requests from scripts. Bodies are limited to 64 KiB and 10 seconds. Per-process limits allow 30 mutations/minute separately for the owner and Telegram, and throttle failed credential attempts after 10 attempts/minute per connection peer. Anonymous browser requests retain their HTTP Basic challenge so a fresh owner browser can log in. Valid credentials remain accepted when anonymous traffic exhausts that peer's limit. HTTP 429 includes `Retry-After`; repeated reanalysis requests coalesce. Use one app worker with trusted ingress connection limits.
 
-Telegram callbacks require the webhook secret, configured chat and owner user. `HOME_FINDER_TELEGRAM_OWNER_USER_ID` defaults to a positive private chat ID; set it explicitly for group chats. Update IDs are stored atomically with status history to prevent replay across restarts. This adds schema migration 7 (one nullable column and unique index); back up the database before first startup because the previous application refuses newer schema versions.
+Telegram callbacks require the webhook secret, configured chat and owner user. `HOME_FINDER_TELEGRAM_OWNER_USER_ID` defaults to a positive private chat ID; set it explicitly for group chats. Update IDs are stored atomically with status history to prevent replay across restarts. Schema migration 7 adds one nullable column and unique index. The core also adds migrations 8–9 for listing text and spend accounting; [back up and rehearse the upgrade](docs/operations.md#back-up-and-migrate) before activation because older binaries refuse newer schemas.
 
 Database operations serialize access to the shared SQLite connection through all
 reads, writes and transaction cleanup. This prevents a pipeline commit from
@@ -164,7 +164,7 @@ Create a `.env` file with these settings (all use `HOME_FINDER_` prefix):
 
 - `HOME_FINDER_TRAVELTIME_APP_ID`: TravelTime API app ID (enables commute filtering)
 - `HOME_FINDER_TRAVELTIME_API_KEY`: TravelTime API key
-- `HOME_FINDER_ANTHROPIC_API_KEY`: Anthropic API key (enables AI quality analysis)
+- `HOME_FINDER_ANTHROPIC_API_KEY`: Anthropic API key; paid analysis also requires explicit `HOME_FINDER_ANALYSIS_SPEND_POLICY` caps (see [operations](docs/operations.md))
 
 ### Feature Flags
 
@@ -247,13 +247,13 @@ The full pipeline (`uv run home-finder`) executes these steps in order:
 3. **Criteria Filter** — Apply price/bedroom filters
 4. **Location Filter** — Validate postcodes match search areas (catches scraper leakage)
 5. **Wrap as MergedProperty** — Wrap each property as a single-source `MergedProperty`
-6. **New Property Filter** — Check SQLite DB to only process unseen properties
-7. **Commute Filter** — TravelTime API filters by travel time (if configured)
+6. **Persist & Recover** — Retain fetched listings before filtering and recover pending enrichment without waiting for another search receipt
+7. **Commute Guidance** — Preserve measured results and explicit unknown outcomes (if configured)
 8. **Detail Enrichment** — Fetch gallery images, floorplans, descriptions; cache images to disk
 9. **Post-Enrichment Dedup** — Cross-platform deduplication using enriched data (images, postcodes, coordinates)
 10. **Floorplan Gate** — Drop properties without floorplans (if enabled)
 11. **Quality Analysis** — Two-phase Claude vision analysis: Phase 1 (visual observations from images), Phase 2 (evaluation using Phase 1 output + listing text)
-12. **Save & Notify** — Store in DB, send Telegram notifications
+12. **Save & Notify** — Store validated results and send Telegram notifications; provider failures leave work pending, and uncertain charges remain held for reconciliation
 
 ### Deduplication
 
@@ -341,102 +341,26 @@ tests/
 
 ## Deployment
 
-### Architecture
+Use one authoritative SQLite database for collection, dashboard decisions and
+notifications. File replacement between a local collector and a running dashboard
+is disabled because it can erase owner decisions or omit WAL writes.
 
-The deployment is split into two parts:
+The Fly configuration builds the `dashboard` target of `Dockerfile` and starts
+`--serve --no-pipeline`. Set a strong owner password, canonical HTTPS origin and
+Telegram owner settings before activation. `/health` is a liveness check; it does
+not establish that owner access or the pipeline is correctly configured.
 
-- **Fly.io** hosts the **web dashboard only** (`--serve --no-pipeline`). It serves the property database and cached images but does not run scrapers.
-- **Pipeline runs locally** on your machine (cron, systemd timer, or manual `uv run home-finder`). It scrapes, filters, enriches, analyzes, and writes to the local SQLite DB + image cache.
-- **`scripts/sync-to-fly.sh`** pushes the local DB and image cache to Fly.io after each pipeline run.
+The GitHub **Release dashboard** workflow is manual, runs all offline checks,
+and uses the main-only `production` environment and its
+`FLY_PRODUCTION_API_TOKEN` secret. Merging a PR does not deploy or start scraping.
 
-### Fly.io setup
-
-Deploys to London (`lhr`) for UK IP:
-
-```bash
-fly apps create home-finder
-fly volumes create home_finder_data --region lhr --size 1
-fly secrets set \
-  HOME_FINDER_TELEGRAM_BOT_TOKEN=xxx \
-  HOME_FINDER_TELEGRAM_CHAT_ID=xxx \
-  HOME_FINDER_ANTHROPIC_API_KEY=xxx \
-  HOME_FINDER_TELEGRAM_WEBHOOK_SECRET=xxx
-# Optional:
-# fly secrets set HOME_FINDER_TRAVELTIME_APP_ID=xxx HOME_FINDER_TRAVELTIME_API_KEY=xxx
-# fly secrets set HOME_FINDER_PROXY_URL=socks5://user:pass@host:port
-fly deploy
-```
-
-The `fly.toml` includes a health check on `/health` with a 30-second grace period. The `Dockerfile.fly` runs `home-finder --serve --no-pipeline` — dashboard only, no scraping.
-
-### Syncing data to Fly.io
-
-After running the pipeline locally, push data to the dashboard:
+See [operations](docs/operations.md) for backup, migration, isolated restore,
+spend reconciliation, and the single-runner collection configuration. Source
+access and model quality require separate qualification before live activation.
 
 ```bash
-# Incremental sync (new property image dirs only)
-./scripts/sync-to-fly.sh
-
-# Full sync (replaces all images — use after re-enrichment or cache changes)
-./scripts/sync-to-fly.sh --full
-```
-
-The sync script: checkpoints the local WAL, replaces the DB on the remote (rm + sftp put to work around flyctl's no-overwrite policy), syncs images as tarballs, restarts the machine, and runs a health check.
-
-### Docker (local)
-
-```bash
-docker build -f Dockerfile.fly -t home-finder .
-docker run --env-file .env -p 8000:8000 -v ./data:/app/data home-finder
-```
-
-### Local pipeline (cron/systemd)
-
-Run the pipeline on a schedule to keep the database fresh:
-
-**systemd timer:**
-
-Create `/etc/systemd/system/home-finder.service`:
-
-```ini
-[Unit]
-Description=Home Finder Property Scraper
-After=network.target
-
-[Service]
-Type=oneshot
-WorkingDirectory=/path/to/home-finder
-ExecStart=/path/to/uv run home-finder
-User=your-user
-
-[Install]
-WantedBy=multi-user.target
-```
-
-Create `/etc/systemd/system/home-finder.timer`:
-
-```ini
-[Unit]
-Description=Run Home Finder every 55 minutes
-
-[Timer]
-OnBootSec=1min
-OnUnitActiveSec=55min
-
-[Install]
-WantedBy=timers.target
-```
-
-Enable:
-
-```bash
-sudo systemctl enable --now home-finder.timer
-```
-
-**cron:**
-
-```bash
-*/55 * * * * cd /path/to/home-finder && /path/to/uv run home-finder >> /var/log/home-finder.log 2>&1
+docker build --target dashboard -t home-finder .
+docker run --env-file .env -p 127.0.0.1:8000:8000 -v ./data:/app/data home-finder
 ```
 
 ## License

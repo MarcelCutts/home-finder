@@ -7,7 +7,14 @@ import pytest
 from pydantic import HttpUrl
 
 from home_finder.filters.commute import CommuteFilter
-from home_finder.models import MergedProperty, Property, PropertySource, TransportMode
+from home_finder.models import CommuteState, MergedProperty, Property, PropertySource, TransportMode
+
+
+@pytest.fixture(autouse=True)
+def isolated_geocoding_cache():
+    CommuteFilter._geocoding_cache.clear()
+    yield
+    CommuteFilter._geocoding_cache.clear()
 
 
 def _make_property(
@@ -57,6 +64,7 @@ def _mock_time_filter_response(location_results: list[dict[str, Any]]):
 
     search_result = MagicMock()
     search_result.locations = locations
+    search_result.unreachable = []
     response = MagicMock()
     response.results = [search_result]
     return response
@@ -253,8 +261,8 @@ class TestCommuteFilterIntegration:
         # Geocoding API should only be called once (for the full postcode)
         assert client_instance.geocoding.call_count == 1
 
-    async def test_api_failure_returns_empty(self):
-        """API errors should return empty results."""
+    async def test_destination_geocoding_error_is_unknown(self):
+        """A failed geocoder must not impersonate a successful empty response."""
         props = [_make_property("40", "E8 3RH", 51.5465, -0.0553)]
 
         commute_filter = CommuteFilter(
@@ -273,4 +281,7 @@ class TestCommuteFilterIntegration:
                 props, max_minutes=30, transport_mode=TransportMode.CYCLING
             )
 
-        assert results == []
+        assert len(results) == 1
+        assert results[0].state == CommuteState.PROVIDER_ERROR
+        assert results[0].within_limit is None
+        assert results[0].travel_time_minutes is None

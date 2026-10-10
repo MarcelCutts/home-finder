@@ -1,0 +1,15 @@
+{
+  "source": "rightmove",
+  "evidence": "supplied 27 September research capture; no new acquisition",
+  "original_body_sha256": "afcc377a5dd7939e15e47974b865de8a4b15bc42598fc221cb8aefc8cd2b26b9",
+  "original_fixture": "experiments/modernization/data/collection-v1/01-rightmove-search.html",
+  "recorded_status": 200,
+  "transport": "research direct-httpx probe; not production-adapter qualification",
+  "transformations": [
+    "first two searchResults.properties only",
+    "irrelevant page configuration/tracking fields removed",
+    "IDs, address, summary, coordinates, media and agent identity replaced with non-real examples",
+    "price/bedroom/date/floorplan values and consumed field shape retained"
+  ],
+  "fixture_sha256": "d922dbe46c64e5e4b0ee2c6cfc7a0023acf51200549442613c1c8d68a2411751"
+}

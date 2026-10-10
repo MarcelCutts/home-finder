@@ -1,1 +1,5 @@
-*/55 * * * * cd /app && uv run home-finder 2>&1
+# No cron jobs are installed by this repository.
+# Choose ONE scheduler only after source access and model settings are qualified.
+# The serve loop waits at least 55 minutes after completion, plus 0-5 minutes jitter.
+# Keep the Fly dashboard on --no-pipeline until collection is explicitly activated.
+# Collection must write to the same authoritative database as owner actions.

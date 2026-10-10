@@ -305,12 +305,14 @@ class TestDeleteProperty:
     """Tests for delete_property."""
 
     @pytest.mark.asyncio
-    async def test_deletes_property_and_images(
+    async def test_preserves_property_and_images(
         self,
         storage: PropertyStorage,
         make_merged_property: Callable[..., MergedProperty],
     ) -> None:
-        """Should delete the property row and its images."""
+        """Established property data cannot be discarded by staging cleanup."""
+        from home_finder.db.merge_safety import MergeBlockedError
+
         merged = make_merged_property()
         await storage.save_merged_property(merged)
         images = [
@@ -322,11 +324,12 @@ class TestDeleteProperty:
         ]
         await storage.save_property_images(merged.unique_id, images)
 
-        await storage.delete_property(merged.unique_id)
+        with pytest.raises(MergeBlockedError):
+            await storage.delete_property(merged.unique_id)
 
-        assert await storage.get_property(merged.unique_id) is None
+        assert await storage.get_property(merged.unique_id) is not None
         stored_images = await storage.get_property_images(merged.unique_id)
-        assert len(stored_images) == 0
+        assert len(stored_images) == 1
 
     @pytest.mark.asyncio
     async def test_noop_for_nonexistent(self, storage: PropertyStorage) -> None:

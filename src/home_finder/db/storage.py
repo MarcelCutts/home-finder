@@ -6,16 +6,24 @@ import asyncio
 import contextlib
 import json
 import time
-from collections.abc import AsyncIterator, Awaitable
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from functools import partial
 from pathlib import Path
-from typing import Any, Final, TypeVar
+from typing import Any, Final
 
 import aiosqlite
 
 from home_finder.data.area_context import HOSTING_TOLERANCE
+from home_finder.db.listing_text import (
+    apply_source_text,
+    persist_merged_text,
+    refresh_merged_text,
+    text_from_property_row,
+    text_from_source_row,
+)
+from home_finder.db.merge_safety import MergeBlockedError, ensure_staging_merge, staging_blockers
 from home_finder.db.migrations import run_migrations
 from home_finder.db.pipeline_repo import PipelineRepository
 from home_finder.db.row_mappers import (
@@ -25,10 +33,12 @@ from home_finder.db.row_mappers import (
     row_to_property,
 )
 from home_finder.db.source_listing_ops import link_source_listings_by_url
+from home_finder.db.spend import SpendRepository
 from home_finder.db.web_queries import WebQueryService
 from home_finder.filters.fit_score import compute_fit_score
 from home_finder.logging import get_logger
 from home_finder.models import (
+    ListingTextEvidence,
     MergedProperty,
     NotificationStatus,
     Property,
@@ -39,6 +49,8 @@ from home_finder.models import (
     TransportMode,
     UserStatus,
 )
+from home_finder.models.listing_text import merge_listing_text
+from home_finder.utils.async_tasks import finish_before_cancelling as _settle
 
 # Default lookback window for cross-platform dedup anchors
 _DEDUP_LOOKBACK_DAYS: Final = 30
@@ -48,33 +60,11 @@ __all__ = ["PropertyStorage"]
 
 logger = get_logger(__name__)
 
-_T = TypeVar("_T")
-
 
 async def _execute_control(conn: aiosqlite.Connection, sql: str) -> None:
     """Finish a transaction/PRAGMA statement without leaving an open cursor."""
     cursor = await conn.execute(sql)
     await cursor.close()
-
-
-async def _settle(operation: Awaitable[_T]) -> _T:
-    """Finish SQLite cleanup/commit before releasing ownership on cancellation.
-
-    Cancelling an aiosqlite await does not remove work from its worker queue.
-    Shield alone is insufficient: the caller must also wait for that work to
-    finish. Repeated cancellations are deferred, then delivered to the caller.
-    """
-    future = asyncio.ensure_future(operation)
-    cancelled = False
-    while not future.done():
-        try:
-            await asyncio.shield(future)
-        except asyncio.CancelledError:
-            cancelled = True
-    result = future.result()
-    if cancelled:
-        raise asyncio.CancelledError
-    return result
 
 
 class DuplicateTelegramUpdateError(Exception):
@@ -84,7 +74,8 @@ class DuplicateTelegramUpdateError(Exception):
 _CONNECTION_PRAGMAS: Final[tuple[str, ...]] = (
     "PRAGMA journal_mode=WAL",
     "PRAGMA busy_timeout=5000",
-    "PRAGMA synchronous=NORMAL",
+    # Paid-attempt reservations must reach durable storage before dispatch.
+    "PRAGMA synchronous=FULL",
     "PRAGMA foreign_keys=ON",
     "PRAGMA cache_size=-32000",
     "PRAGMA temp_store=MEMORY",
@@ -129,6 +120,12 @@ class PropertyStorage:
             self.save_quality_analysis,
             self._transaction,
         )
+        self._spend = SpendRepository(self._read_connection, self._transaction)
+
+    @property
+    def spend(self) -> SpendRepository:
+        """Durable paid-attempt reservations and accounting."""
+        return self._spend
 
     @property
     def pipeline(self) -> PipelineRepository:
@@ -408,7 +405,6 @@ class PropertyStorage:
                 ON CONFLICT(unique_id) DO UPDATE SET
                     price_pcm = excluded.price_pcm,
                     title = excluded.title,
-                    description = excluded.description,
                     image_url = excluded.image_url,
                     commute_minutes = COALESCE(excluded.commute_minutes, commute_minutes),
                     transport_mode = COALESCE(excluded.transport_mode, transport_mode)
@@ -606,25 +602,16 @@ class PropertyStorage:
         return [m for m in properties if m.canonical.unique_id not in seen]
 
     async def delete_property(self, unique_id: str) -> None:
-        """Delete a property and all related rows from the database.
+        """Retire only an unused pending staging row; preserve established history.
 
-        Used to clean up unenriched rows consumed by cross-platform anchor merges.
-        Linked source_listings have their ``merged_id`` set to NULL automatically
-        via the FK ``ON DELETE SET NULL``, so they can re-enter the pipeline.
+        Canonical merges use absorb_staging_properties so source reassociation
+        and retirement share one transaction. This standalone cleanup leaves
+        source evidence intact and unlinked. It is not an erase-history API.
         """
         async with self._transaction() as conn:
-            for table in (
-                "property_images",
-                "quality_analyses",
-                "status_events",
-                "viewing_messages",
-                "price_history",
-                "enquiry_log",
-            ):
-                await conn.execute(
-                    f"DELETE FROM {table} WHERE property_unique_id = ?",
-                    (unique_id,),
-                )
+            blockers = await staging_blockers(conn, [unique_id])
+            if blockers:
+                raise MergeBlockedError(blockers)
             await conn.execute(
                 "DELETE FROM properties WHERE unique_id = ?",
                 (unique_id,),
@@ -708,6 +695,7 @@ class PropertyStorage:
         merged: MergedProperty,
         *,
         absorbed_ids: list[str] | None = None,
+        _conn: aiosqlite.Connection | None = None,
     ) -> None:
         """Update golden record's denormalized caches from source_listings.
 
@@ -717,22 +705,30 @@ class PropertyStorage:
         Args:
             existing_unique_id: The unique_id of the existing DB record.
             merged: The MergedProperty containing combined source data
-                (used only for saving new images).
-            absorbed_ids: unique_ids of source_listings to link to this
-                golden record before rebuilding.  When provided, sets
-                ``merged_id`` on matching source_listings rows.
+                (used for saving new images and source text).
+            absorbed_ids: Pending or unpromoted source identities to link. All
+                source rows owned by an absorbed staging property move together.
+                Established properties and protected histories require review.
+            _conn: Explicitly join an owning merge transaction.
         """
-        async with self._transaction() as conn:
+        absorbed_ids = sorted(set(absorbed_ids or []) - {existing_unique_id})
+        async with self._transaction(conn=_conn) as conn:
+            cursor = await conn.execute(
+                "SELECT unique_id FROM source_listings WHERE merged_id = ?",
+                (existing_unique_id,),
+            )
+            previous_members = {row[0] for row in await cursor.fetchall()}
             # Link absorbed source listings to this golden record
             if absorbed_ids:
+                await ensure_staging_merge(conn, existing_unique_id, absorbed_ids)
                 await conn.executemany(
-                    "UPDATE source_listings SET merged_id = ? WHERE unique_id = ?",
-                    [(existing_unique_id, uid) for uid in absorbed_ids],
+                    "UPDATE source_listings SET merged_id = ? WHERE unique_id = ? OR merged_id = ?",
+                    [(existing_unique_id, uid, uid) for uid in absorbed_ids],
                 )
 
             # Rebuild denormalized caches from source_listings
             cursor = await conn.execute(
-                """SELECT source, url, description, price_pcm
+                """SELECT unique_id, source, url, description, price_pcm
                    FROM source_listings WHERE merged_id = ?
                    ORDER BY last_seen ASC""",
                 (existing_unique_id,),
@@ -743,10 +739,9 @@ class PropertyStorage:
                 return
 
             # Deduplicate sources (same platform may appear via multiple listings)
-            # ORDER BY last_seen ASC ensures last-write-wins for URLs/descriptions
+            # ORDER BY last_seen ASC retains the existing URL selection policy.
             sources = list(dict.fromkeys(r["source"] for r in rows))
             source_urls = {r["source"]: r["url"] for r in rows}
-            descriptions = {r["source"]: r["description"] for r in rows if r["description"]}
             prices = [r["price_pcm"] for r in rows]
 
             await conn.execute(
@@ -754,7 +749,6 @@ class PropertyStorage:
                 UPDATE properties SET
                     sources = ?,
                     source_urls = ?,
-                    descriptions_json = ?,
                     min_price = ?,
                     max_price = ?,
                     sources_updated_at = ?
@@ -763,13 +757,24 @@ class PropertyStorage:
                 (
                     json.dumps(sources),
                     json.dumps(source_urls),
-                    json.dumps(descriptions) if descriptions else None,
                     min(prices),
                     max(prices),
                     datetime.now(UTC).isoformat(),
                     existing_unique_id,
                 ),
             )
+
+            await persist_merged_text(conn, merged, unique_id=existing_unique_id)
+            if {row["unique_id"] for row in rows} - previous_members:
+                # A committed source merge must survive a crash before cache
+                # copies. The existing queue repairs images and revisits assessed
+                # anchors; no request is created for a home never analyzed.
+                await conn.execute(
+                    "UPDATE quality_analyses "
+                    "SET reanalysis_requested_at = COALESCE(reanalysis_requested_at, ?) "
+                    "WHERE property_unique_id = ?",
+                    (datetime.now(UTC).isoformat(), existing_unique_id),
+                )
 
             # Save any new images from the merged property
             new_images = list(merged.images)
@@ -779,12 +784,65 @@ class PropertyStorage:
                 await self.save_property_images(existing_unique_id, new_images, _conn=conn)
 
         logger.info(
-            "merged_sources_updated",
+            "merged_sources_updated" if _conn is None else "merge_projection_prepared",
             unique_id=existing_unique_id,
             sources=sources,
             min_price=min(prices),
             max_price=max(prices),
         )
+
+    async def absorb_staging_properties(
+        self, anchor_id: str, merged: MergedProperty, *, absorbed_ids: list[str]
+    ) -> list[str]:
+        """Atomically move source membership and retire only unprotected staging rows.
+
+        Images on disk are deliberately retained. A failed group leaves both
+        sides and their source memberships intact; no partial merge is applied.
+        Returns the IDs of property rows actually retired (sources may have no
+        promoted property row yet). Established identity merge/split is separate.
+        """
+        ids = sorted(set(absorbed_ids) - {anchor_id})
+        retired: list[str] = []
+        try:
+            async with self._transaction() as conn:
+                if not ids:
+                    await ensure_staging_merge(conn, anchor_id, ids)
+                await self.update_merged_sources(anchor_id, merged, absorbed_ids=ids, _conn=conn)
+                for uid in ids:
+                    async with conn.execute(
+                        "DELETE FROM properties WHERE unique_id = ?", (uid,)
+                    ) as cur:
+                        if cur.rowcount:
+                            retired.append(uid)
+        except MergeBlockedError as exc:
+            logger.warning(
+                "canonical_merge_deferred",
+                anchor_id=anchor_id,
+                absorbed_ids=ids,
+                reason="protected_or_unresolved_identity",
+                blockers=exc.blockers,
+            )
+            raise
+        except BaseException as exc:
+            # Cancellation can arrive while COMMIT is being acknowledged. Do
+            # not log a guessed rollback outcome or automatically replay writes.
+            logger.error(
+                "canonical_merge_interrupted",
+                anchor_id=anchor_id,
+                absorbed_ids=ids,
+                error_type=type(exc).__name__,
+                recovery="inspect_membership_before_retry",
+                exc_info=True,
+            )
+            raise
+        logger.info(
+            "canonical_merge_committed",
+            anchor_id=anchor_id,
+            absorbed_ids=ids,
+            retired_staging_ids=retired,
+            source_cache_cleanup="retained",
+        )
+        return retired
 
     async def save_merged_property(
         self,
@@ -820,7 +878,6 @@ class PropertyStorage:
                 ON CONFLICT(unique_id) DO UPDATE SET
                     price_pcm = excluded.price_pcm,
                     title = excluded.title,
-                    description = excluded.description,
                     image_url = excluded.image_url,
                     commute_minutes = COALESCE(excluded.commute_minutes, commute_minutes),
                     transport_mode = COALESCE(excluded.transport_mode, transport_mode),
@@ -828,7 +885,6 @@ class PropertyStorage:
                     source_urls = excluded.source_urls,
                     min_price = excluded.min_price,
                     max_price = excluded.max_price,
-                    descriptions_json = COALESCE(excluded.descriptions_json, descriptions_json),
                     ward = COALESCE(excluded.ward, ward)
             """,
                 values,
@@ -839,6 +895,7 @@ class PropertyStorage:
             )
             # Link non-canonical source_listings by URL (in-run dedup absorbed sources)
             await link_source_listings_by_url(conn, merged.canonical.unique_id, merged.source_urls)
+            await persist_merged_text(conn, merged)
 
         logger.debug(
             "merged_property_saved",
@@ -952,7 +1009,7 @@ class PropertyStorage:
 
     async def get_property_images_and_row(
         self, unique_id: str
-    ) -> tuple[list[PropertyImage], Property | None]:
+    ) -> tuple[list[PropertyImage], Property | None, dict[PropertySource, ListingTextEvidence]]:
         """Load property images and the property row in a single call.
 
         Combines get_property_images() and row_to_property() to avoid two
@@ -962,7 +1019,7 @@ class PropertyStorage:
             unique_id: Property unique ID.
 
         Returns:
-            Tuple of (images, property_or_none).
+            Tuple of (images, property_or_none, source_text).
         """
         async with self._read_connection() as conn:
             # Images
@@ -993,7 +1050,7 @@ class PropertyStorage:
             prop_row = await prop_cursor.fetchone()
             prop = row_to_property(prop_row) if prop_row is not None else None
 
-            return images, prop
+            return images, prop, text_from_property_row(prop_row) if prop_row else {}
 
     async def get_properties_needing_commute(self) -> list[Property]:
         """Get properties with coordinates but no commute data.
@@ -1072,7 +1129,6 @@ class PropertyStorage:
             ON CONFLICT(unique_id) DO UPDATE SET
                 price_pcm = excluded.price_pcm,
                 title = excluded.title,
-                description = excluded.description,
                 image_url = excluded.image_url,
                 last_seen = excluded.last_seen,
                 latitude = COALESCE(excluded.latitude, latitude),
@@ -1104,6 +1160,13 @@ class PropertyStorage:
             if "no such table" in str(e).lower():
                 return
             raise
+        linked_id = await apply_source_text(
+            conn,
+            prop.unique_id,
+            prop.search_text or ListingTextEvidence(description=prop.description),
+        )
+        if linked_id:
+            await refresh_merged_text(conn, linked_id)
 
     async def upsert_source_listings(self, properties: list[Property]) -> int:
         """Record scraped properties in source_listings (Layer 1).
@@ -1148,7 +1211,6 @@ class PropertyStorage:
                 ON CONFLICT(unique_id) DO UPDATE SET
                     price_pcm = excluded.price_pcm,
                     title = excluded.title,
-                    description = excluded.description,
                     image_url = excluded.image_url,
                     last_seen = excluded.last_seen,
                     latitude = COALESCE(excluded.latitude, latitude),
@@ -1157,6 +1219,17 @@ class PropertyStorage:
                 """,
                 rows,
             )
+            linked_ids = set()
+            for prop in properties:
+                linked_id = await apply_source_text(
+                    conn,
+                    prop.unique_id,
+                    prop.search_text or ListingTextEvidence(description=prop.description),
+                )
+                if linked_id:
+                    linked_ids.add(linked_id)
+            for linked_id in linked_ids:
+                await refresh_merged_text(conn, linked_id)
         return len(rows)
 
     async def link_source_listings(self, links: list[tuple[str, str]]) -> None:
@@ -1171,13 +1244,35 @@ class PropertyStorage:
                 "UPDATE source_listings SET merged_id = ? WHERE unique_id = ?",
                 [(merged_id, uid) for uid, merged_id in links],
             )
+            for merged_id in {merged_id for _, merged_id in links}:
+                await refresh_merged_text(conn, merged_id)
+
+    async def update_source_text(
+        self, source_unique_id: str, evidence: ListingTextEvidence
+    ) -> bool:
+        """Apply dated text/corrections without touching prices or personal state."""
+        async with self._transaction() as conn:
+            cursor = await conn.execute(
+                "SELECT description, text_json FROM source_listings WHERE unique_id = ?",
+                (source_unique_id,),
+            )
+            row = await cursor.fetchone()
+            if row is None:
+                return False
+            previous = text_from_source_row(row)
+            if merge_listing_text(previous, evidence) == previous:
+                return False
+            linked_id = await apply_source_text(conn, source_unique_id, evidence)
+            if linked_id:
+                await refresh_merged_text(conn, linked_id)
+        return True
 
     async def get_all_known_source_ids(self) -> dict[str, set[str]]:
         """Get all source_ids grouped by property source.
 
-        Queries ``source_listings`` — the single authority for every
-        source ID ever seen — so scraper early-stop correctly skips
-        previously-seen listings.
+        Queries the retained source inventory. Presence here does not prove
+        that a previous search completed, so routine scraping must not use
+        this set as a pagination completion marker.
 
         Returns:
             Dict mapping source name to set of source_ids.
@@ -1453,17 +1548,38 @@ class PropertyStorage:
         """
         async with self._transaction() as conn:
             cursor = await conn.execute(
-                "SELECT price_pcm FROM properties WHERE unique_id = ?",
+                "SELECT price_pcm, source FROM properties WHERE unique_id = ?",
                 (unique_id,),
             )
             row = await cursor.fetchone()
             if row is None:
+                return None
+            if source is not None and source not in {row["source"], "cross_platform"}:
+                # A cheaper quote from a different portal is not a reduction
+                # by this listing. Cross-source selection is a separate policy.
+                logger.warning("price_observation_source_mismatch", unique_id=unique_id)
                 return None
             old_price = row["price_pcm"]
             if old_price == new_price:
                 return None
 
             change_amount = new_price - old_price
+            # Keep the actual canonical source observation in sync. Never
+            # rewrite a source listing owned by a different golden record.
+            if source != "cross_platform":
+                await conn.execute(
+                    "UPDATE source_listings SET price_pcm = ? "
+                    "WHERE unique_id = ? AND (merged_id = ? OR merged_id IS NULL)",
+                    (new_price, unique_id, unique_id),
+                )
+            prices_cursor = await conn.execute(
+                "SELECT price_pcm FROM source_listings WHERE merged_id = ? "
+                "AND (? OR unique_id != ?)",
+                (unique_id, source == "cross_platform", unique_id),
+            )
+            # Use attributed retained prices, not an old unattributed range.
+            # Freshness/availability eligibility and projection revisions are PR08b.
+            prices = [new_price, *(r[0] for r in await prices_cursor.fetchall())]
             await conn.execute(
                 """INSERT INTO price_history
                    (property_unique_id, old_price, new_price, change_amount, source)
@@ -1471,8 +1587,9 @@ class PropertyStorage:
                 (unique_id, old_price, new_price, change_amount, source),
             )
             await conn.execute(
-                "UPDATE properties SET price_pcm = ?, price_drop_notified = 0 WHERE unique_id = ?",
-                (new_price, unique_id),
+                "UPDATE properties SET price_pcm = ?, min_price = ?, max_price = ?, "
+                "price_drop_notified = 0 WHERE unique_id = ?",
+                (new_price, min(prices), max(prices), unique_id),
             )
 
             # Recompute value rating and fit_score for the new price

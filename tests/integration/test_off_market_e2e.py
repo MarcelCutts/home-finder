@@ -16,6 +16,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest_asyncio
 from pydantic import HttpUrl
 
+from home_finder.config import Settings
 from home_finder.db.storage import PropertyStorage
 from home_finder.filters.off_market import BatchResult, CheckResult, ListingStatus
 from home_finder.models import MergedProperty, Property, PropertySource
@@ -70,11 +71,8 @@ def _make_merged(
     )
 
 
-def _mock_settings(proxy_url: str = "") -> MagicMock:
-    settings = MagicMock()
-    settings.proxy_url = proxy_url
-    settings.database_path = ":memory:"  # not used — we patch PropertyStorage
-    return settings
+def _mock_settings(proxy_url: str = "") -> Settings:
+    return Settings(_env_file=None, proxy_url=proxy_url, database_path=":memory:")
 
 
 class TestRunCheckOffMarketIntegration:
@@ -264,6 +262,68 @@ class TestRunCheckOffMarketIntegration:
         row = await cursor.fetchone()
         assert row["is_off_market"] == 1
         assert row["off_market_reason"] == "let_agreed"
+
+    async def test_source_subset_cannot_remove_unchecked_source(self, storage):
+        merged = _make_merged(
+            PropertySource.RIGHTMOVE,
+            "901",
+            extra_sources={PropertySource.ZOOPLA: "https://zoopla.co.uk/to-rent/901"},
+        )
+        await storage.save_merged_property(merged)
+        await storage.mark_notified(merged.unique_id)
+        await self._run(
+            storage,
+            [
+                CheckResult(
+                    source="rightmove",
+                    url=str(merged.canonical.url),
+                    status=ListingStatus.REMOVED,
+                    property_id=merged.unique_id,
+                )
+            ],
+            only_scrapers={"rightmove"},
+        )
+        async with storage._read_connection() as conn:
+            row = await (
+                await conn.execute(
+                    "SELECT is_off_market FROM properties WHERE unique_id = ?", (merged.unique_id,)
+                )
+            ).fetchone()
+        assert row[0] == 0
+
+    async def test_second_listing_on_same_portal_does_not_overwrite_active_result(self, storage):
+        merged = _make_merged(PropertySource.RIGHTMOVE, "902")
+        await storage.save_merged_property(merged)
+        await storage.mark_notified(merged.unique_id)
+        other = merged.canonical.model_copy(
+            update={"source_id": "903", "url": HttpUrl("https://rightmove.co.uk/903")}
+        )
+        await storage.upsert_source_listings([other])
+        await storage.link_source_listings([(other.unique_id, merged.unique_id)])
+        await self._run(
+            storage,
+            [
+                CheckResult(
+                    source="rightmove",
+                    url=str(merged.canonical.url),
+                    status=ListingStatus.ACTIVE,
+                    property_id=merged.unique_id,
+                ),
+                CheckResult(
+                    source="rightmove",
+                    url=str(other.url),
+                    status=ListingStatus.REMOVED,
+                    property_id=merged.unique_id,
+                ),
+            ],
+        )
+        async with storage._read_connection() as conn:
+            row = await (
+                await conn.execute(
+                    "SELECT is_off_market FROM properties WHERE unique_id = ?", (merged.unique_id,)
+                )
+            ).fetchone()
+        assert row[0] == 0
 
     async def test_stamps_last_checked_at_on_golden_record(self, storage: PropertyStorage):
         """last_checked_at should be stamped on the golden record."""

@@ -1,0 +1,43 @@
+<div class="overview-card cost-breakdown-card">
+    <div class="cost-header"><h4>Rent and bills</h4><span class="badge badge-amber">Incomplete budget</span></div>
+    <div class="cost-receipt">
+        <div class="cost-line cost-line-rent">
+            <span class="cost-line-label">Advertised rent</span>
+            <span class="cost-line-amount">&pound;{{ "{:,}".format(cost_breakdown.rent) }}/mo</span>
+        </div>
+        {% for item in cost_breakdown.line_items %}
+        <div class="cost-line">
+            <span class="cost-line-label">{{ item.label }}
+                <span class="cost-line-note">{% if item.state == 'included' %}Advert says included; confirm limits{% elif item.state == 'excluded' %}Advert says separate{% elif item.state == 'conflicting' %}Conflicting advert claims{% else %}Coverage and amount unknown{% endif %}</span>
+            </span>
+            <span class="cost-line-amount">{% if item.low is not none %}&pound;{{ "{:,.2f}".format(item.low) }}{% if item.high != item.low %}&ndash;{{ "{:,.2f}".format(item.high) }}{% endif %}{% elif item.state == 'included' %}In rent{% else %}Unpriced{% endif %}</span>
+        </div>
+        {% endfor %}
+        <div class="cost-line cost-line-total">
+            <span class="cost-line-label">Advertised subtotal</span>
+            <span class="cost-line-amount">&pound;{{ "{:,.2f}".format(cost_breakdown.subtotal_low) }}{% if cost_breakdown.subtotal_high != cost_breakdown.subtotal_low %}&ndash;{{ "{:,.2f}".format(cost_breakdown.subtotal_high) }}{% endif %}/mo</span>
+        </div>
+    </div>
+    <p class="cost-line-note">{{ cost_breakdown.assumptions }}</p>
+    {% if cost_breakdown.general_bills_claim %}<p class="cost-line-note">The advert mentions bills included or excluded. Ask for a written list; that phrase alone does not establish each bill's treatment.</p>{% endif %}
+    {% if cost_breakdown.service_charge_review %}
+    <p class="cost-line-note">Service charge or ground rent mentioned{% if cost_breakdown.earlier_service_charge is not none %} (earlier analysis: &pound;{{ cost_breakdown.earlier_service_charge }}/mo, unverified){% endif %}. Confirm whether this is a landlord cost, already in rent, or a permitted tenant payment. It is excluded from the subtotal. <a href="{{ rental_guidance.fees_url }}" target="_blank" rel="noopener">England fee guidance</a>.</p>
+    {% endif %}
+    <p class="cost-line-note">Listing EPC: {{ cost_breakdown.epc_rating | capitalize }} · Council-tax band: {{ cost_breakdown.council_tax_band | capitalize }}. Stated bands are advert claims, not register checks.
+        <a href="https://www.gov.uk/find-energy-certificate" target="_blank" rel="noopener">Check EPC</a> · <a href="https://www.gov.uk/council-tax-bands" target="_blank" rel="noopener">Check council-tax band</a>.
+    </p>
+    {% if qa and qa.listing_extraction %}
+    {% set old = qa.listing_extraction %}
+    {% if old.bills_included in ['yes', 'no'] %}
+    <p class="cost-line-note">Earlier analysis records bills as {{ 'included' if old.bills_included == 'yes' else 'not included' }} (unverified). Confirm the named bills, coverage and any additional charges with the agent.</p>
+    {% endif %}
+    {% if (old.epc_rating and old.epc_rating != 'unknown' and old.epc_rating != cost_breakdown.epc_rating) or (old.council_tax_band and old.council_tax_band != 'unknown' and old.council_tax_band != cost_breakdown.council_tax_band) %}
+    <p class="cost-line-note">Earlier analysis claims EPC {{ old.epc_rating or 'unknown' }} and council-tax band {{ old.council_tax_band or 'unknown' }}; these claims are unverified against the retained advert and are not used as facts.</p>
+    {% endif %}
+    {% endif %}
+    <details class="cost-line-note"><summary>Advert wording and tenancy guidance</summary>
+        {% for item in cost_breakdown.line_items %}{% for quote in item.evidence %}<p>{{ quote }}</p>{% endfor %}{% endfor %}
+        <p>{{ rental_guidance.scope }} · From {{ rental_guidance.effective_from }} · Checked {{ rental_guidance.checked_on }}.</p>
+        <p>{{ rental_guidance.text }} <a href="{{ rental_guidance.bidding_url }}" target="_blank" rel="noopener">Rental bidding rules</a> · <a href="{{ rental_guidance.overview_url }}" target="_blank" rel="noopener">Tenancy overview</a>.</p>
+    </details>
+</div>

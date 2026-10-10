@@ -1,0 +1,143 @@
+# Operating Home Finder
+
+This is a small rental-search service with one owner's preferences, shortlist and
+Telegram identity. It is not a multi-tenant service. Collection, assessment,
+dashboard actions and delivery share one authoritative SQLite database and image
+cache. Do not replace a live database with a file from another collector.
+
+## Start with the dashboard
+
+Install the locked dependencies with `uv sync --locked --all-extras`. Configure a
+random ASCII `HOME_FINDER_WEB_OWNER_PASSWORD` of at least 24 characters. Hosted
+access requires HTTPS and the canonical `HOME_FINDER_WEB_BASE_URL`. Configure the
+webhook secret, Telegram chat and owner user before accepting callbacks; group
+chats require an explicit owner user ID. Start with:
+
+```bash
+uv run home-finder --serve --no-pipeline
+```
+
+Verify that anonymous dashboard/assets/diagnostics requests are rejected, valid
+owner credentials work, and cross-origin mutations are rejected. `/health` is
+liveness only. Never put a password in a URL or commit a filled `.env`.
+
+The `dashboard` and `collector` Docker targets share the locked runtime and run
+as an unprivileged user. They differ in their startup commands: the dashboard
+disables the pipeline. The Fly configuration selects that dashboard command;
+activating collection or moving the authority is a separate operational decision.
+
+## Back up and migrate
+
+The core repairs upgrade schema 7 to schema 9: retained listing text columns and
+the paid-attempt accounting table. Existing property IDs, owner status, notes,
+Telegram update IDs, images and history stay in place. Older binaries refuse a
+newer schema, so rollback requires a verified backup, not an older binary pointed
+at the upgraded file.
+
+Before activation, use the new version's backup command against the old database.
+It opens the source read-only and uses SQLite's backup API, including live WAL
+contents. Choose a new private destination each time:
+
+```bash
+uv run python -m home_finder.pipeline.backup create \
+  --database data/properties.db --assets data/image_cache \
+  --destination /tmp/home-finder-backup
+uv run python -m home_finder.pipeline.backup verify \
+  --package /tmp/home-finder-backup
+uv run python -m home_finder.pipeline.backup restore \
+  --package /tmp/home-finder-backup --destination /tmp/home-finder-restored
+```
+
+Omit `--assets` only when intentionally excluding the image cache. A database
+snapshot is consistent; assets are copied across a time window and are not an
+atomic database/filesystem snapshot. `--frozen` is only for an offline immutable
+file with no nonempty WAL or rollback journal. Never delete sidecars to make a
+check pass. Backups refuse overwritten destinations, unsafe asset paths, invalid
+inventories and excessive size/time bounds. Restore writes a new isolated
+location and does not switch production. Rehearse the upgrade there, inspect
+owner state, history and images, then stop writers before an authority switch.
+A pre-upgrade backup does not contain owner decisions made afterward; fence writes
+during cutover, and reconcile any later writes before choosing a rollback copy.
+
+`scripts/sync-to-fly.sh` intentionally fails: its former file replacement could
+erase remote owner decisions and lose live journal contents.
+
+## Paid analysis
+
+An API key alone does not authorize paid work. Set exact decimal-string caps in
+`HOME_FINDER_ANALYSIS_SPEND_POLICY`; the commented `.env.example` authorizes zero.
+Choose per-call, daily and monthly amounts and a concurrency limit. Optional
+`lifetime_usd` and `max_total_attempts` bound a one-off exercise. USD caps describe
+provider usage for the supported global standard Sonnet 4.6 request path; they do
+not cover other billing accounts or independently issued requests.
+
+By default the reservation covers the full input context and can exceed $6 per
+attempt. A $1 per-call cap will defer such a request. Explicit per-phase
+`input_token_limit` values enable conservative admission of supported text/static
+image payloads. For example, setting both phases to 140,000 input tokens and 8,192
+maximum output tokens reserves $0.96288 **per attempt**; it does not guarantee a
+complete property fits a $1 daily cap. There are two phases and potentially a
+retry. Unsupported/oversized payloads are deferred. These are local admission
+bounds, not a provider-enforced dollar cap. Actual settled usage releases unused
+reservation; a bound violation stops new dispatch for reconciliation.
+
+Provider/account errors leave homes pending rather than spending their output
+failure allowances. Proven uncharged rejections remain in the audit but do not
+consume the paid-operation retry cap. Timeouts/disconnects may have been billed,
+so unknown attempts continue holding capacity. Inspect without loading secrets
+or running migrations:
+
+```bash
+uv run python -m home_finder.pipeline.spend_report --database data/properties.db
+uv run python -m home_finder.pipeline.spend_admin --help
+```
+
+Reconcile uncertain charges only against provider billing evidence. Only a
+reservation that was never dispatched can be released without that evidence.
+Stop the runner before operator reconciliation. Do not erase accounting rows to
+re-enable calls. Offline tests establish code contracts, not live model quality.
+
+## Collection and delivery
+
+Qualify permitted source access before live collection. A challenge, parser
+failure or unknown availability never means an available advert or a successful
+empty search. Each accepted detail page must match the requested portal advert.
+Fresh search receipts are persisted before downstream filtering; current detail
+text is saved before optional media work. Historical text has no invented fetch
+date. Page/rate caps still bound collection; a page of known IDs does not end the
+normal scrape because unseen work may follow it.
+
+One supported active layout is a single Linux host with the locked runtime
+(`uv sync --locked --no-dev`), the owner dashboard and one database:
+
+```bash
+HOME_FINDER_DATABASE_PATH=/srv/home-finder/data/properties.db \
+HOME_FINDER_WEB_HOST=127.0.0.1 uv run home-finder --serve
+```
+
+Only run that command after source, notification and paid-analysis settings have
+been qualified. The serve process owns both the dashboard and its scheduled
+pipeline; a configured HTTPS reverse proxy can expose the authenticated dashboard.
+The current Fly dashboard stays collection-inactive until an operator deliberately
+chooses and verifies a co-located collector layout or moves the authority. Running
+a separate local collector and copying its DB to Fly is not a supported layout.
+
+Use one application worker and one scheduler for an authority. The runner lock
+excludes overlapping local processes. The serve loop waits from completion,
+with configured jitter; do not combine it with cron. Running `--dry-run` suppresses
+Telegram delivery, but can still fetch portals and spend on enabled analysis.
+For offline verification use the test suite, not a dry run with real credentials.
+
+Commute failures remain unknown and advisory. Budget panels show supported costs
+and explicit missing evidence; paid optional bills packages are not rent-inclusive.
+Duplicate staging rows can merge only before user, delivery, analysis or linked
+history exists. Saved owner decisions must not be reassigned automatically.
+
+## Release
+
+Main requires current lint, formatting, type, test/coverage and build checks;
+administrators are subject to the gate. The manual **Release dashboard** workflow
+checks the selected main revision and uses the main-only `production` environment.
+An operator must configure its `FLY_PRODUCTION_API_TOKEN` before releasing.
+No release, source qualification or paid model exercise is triggered by a PR
+merge. Verify owner access and the migrated state after any authorized deployment.

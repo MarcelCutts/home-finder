@@ -2,6 +2,8 @@
 
 import asyncio
 from collections.abc import Awaitable, Callable
+from enum import StrEnum
+from itertools import zip_longest
 
 import httpx
 
@@ -15,7 +17,9 @@ from home_finder.models import (
     PropertyQualityAnalysis,
     TransportMode,
 )
+from home_finder.models.spend import SpendDeferred
 from home_finder.pipeline.event_recorder import EventRecorder, PropertyEvent
+from home_finder.pipeline.runner import exclusive_runner
 from home_finder.pipeline.stages import PreAnalysisResult
 from home_finder.scrapers.detail_fetcher import DetailFetcher
 from home_finder.utils.image_cache import (
@@ -51,10 +55,34 @@ _AnalyzeFn = Callable[
     [MergedProperty],
     Awaitable[tuple[MergedProperty, PropertyQualityAnalysis | None]],
 ]
+
+
+class AnalysisDisposition(StrEnum):
+    COMPLETED = "completed"
+    DEFERRED = "deferred"
+    FAILED = "failed"
+
+
 _OnAnalysisResult = Callable[
     [MergedProperty, PropertyQualityAnalysis | None],
-    Awaitable[None],
+    Awaitable[AnalysisDisposition | None],
 ]
+
+
+def _analysis_concurrency(settings: Settings) -> int:
+    """Queue work behind local slots instead of rejecting it at spend admission."""
+    policy = settings.analysis_spend_policy
+    if policy is None:
+        return settings.quality_concurrency
+    return min(settings.quality_concurrency, policy.max_in_flight)
+
+
+def _warn_if_spending_unconfigured(settings: Settings) -> None:
+    if settings.analysis_spend_policy is None:
+        logger.warning(
+            "analysis_spending_not_configured",
+            hint="Set HOME_FINDER_ANALYSIS_SPEND_POLICY; queued homes will remain unanalysed",
+        )
 
 
 _BEDROOM_SQM_RANGES: dict[int, tuple[float, float]] = {
@@ -176,13 +204,16 @@ async def _run_concurrent_analysis(
     concurrency: int = 15,
     per_property_timeout: float | None = None,
     on_error: Callable[[], None] | None = None,
+    on_deferred: Callable[[], None] | None = None,
+    on_timeout: Callable[[str], Awaitable[None]] | None = None,
     breaker_log_event: str = "api_circuit_breaker_activated",
     error_log_event: str = "analysis_failed",
 ) -> int:
     """Run quality analysis concurrently with circuit breaker protection.
 
     Executes analyze_fn for each item under a semaphore, using as_completed
-    for streaming results. On APIUnavailableError, cancels remaining tasks.
+    for streaming results. Provider failures stop queued work while already
+    running requests finish accounting, without cancellation-created holds.
 
     Args:
         items: Properties to analyze.
@@ -198,12 +229,15 @@ async def _run_concurrent_analysis(
         Number of properties successfully processed.
     """
     semaphore = asyncio.Semaphore(concurrency)
+    provider_unavailable = asyncio.Event()
     count = 0
 
     async def _bounded(
         merged: MergedProperty,
     ) -> tuple[MergedProperty, PropertyQualityAnalysis | None]:
         async with semaphore:
+            if provider_unavailable.is_set():
+                raise SpendDeferred("provider_unavailable")
             t0 = asyncio.get_running_loop().time()
             try:
                 if per_property_timeout is not None:
@@ -212,6 +246,15 @@ async def _run_concurrent_analysis(
                     )
                 else:
                     result = await analyze_fn(merged)
+                analysis = result[1]
+                if analysis is not None and analysis.analysis_failure is not None:
+                    if analysis.analysis_failure.kind == "unsupported_schema":
+                        raise APIUnavailableError("unsupported_schema")
+                    if analysis.analysis_failure.kind == "request_rejected":
+                        # Generic 400s can describe account configuration or
+                        # one listing's image. Preserve retry eligibility and
+                        # let other homes run rather than starving the queue.
+                        raise SpendDeferred("request_rejected")
                 elapsed = asyncio.get_running_loop().time() - t0
                 logger.info(
                     "property_analysis_duration",
@@ -219,6 +262,11 @@ async def _run_concurrent_analysis(
                     duration_s=round(elapsed, 1),
                 )
                 return result
+            except APIUnavailableError:
+                # Set before releasing the semaphore so no waiting property
+                # starts while the result collector notices the failure.
+                provider_unavailable.set()
+                raise
             except TimeoutError:
                 elapsed = asyncio.get_running_loop().time() - t0
                 logger.warning(
@@ -236,6 +284,8 @@ async def _run_concurrent_analysis(
             try:
                 merged, quality_analysis = await coro
             except _PropertyTimeoutError as e:
+                if on_timeout:
+                    await on_timeout(e.property_id)
                 logger.warning(
                     "property_skipped_wall_clock_timeout",
                     property_id=e.property_id,
@@ -243,25 +293,29 @@ async def _run_concurrent_analysis(
                 if on_error:
                     on_error()
                 continue
+            except SpendDeferred as exc:
+                logger.info("analysis_admission_deferred", reason=exc.reason)
+                if on_deferred:
+                    on_deferred()
+                continue
             except APIUnavailableError:
-                remaining = [t for t in tasks if not t.done()]
-                for t in remaining:
-                    t.cancel()
-                await asyncio.gather(*remaining, return_exceptions=True)
                 logger.warning(
                     breaker_log_event,
-                    deferred_properties=len(remaining),
+                    remaining_properties=sum(not task.done() for task in tasks),
                     processed=count,
                 )
-                break
+                if on_deferred:
+                    on_deferred()
+                continue
             except Exception:
                 logger.error(error_log_event, exc_info=True)
                 if on_error:
                     on_error()
                 continue
 
-            await on_result(merged, quality_analysis)
-            count += 1
+            disposition = await on_result(merged, quality_analysis)
+            if disposition in (None, AnalysisDisposition.COMPLETED):
+                count += 1
     finally:
         # Ensure all child tasks are cleaned up on cancellation or any exit
         remaining = [t for t in tasks if not t.done()]
@@ -299,12 +353,10 @@ async def _run_quality_and_save(
     # Save all properties to DB before analysis (crash recovery checkpoint)
     await storage.pipeline.save_pre_analysis_properties(pre.merged_to_process, pre.commute_lookup)
 
-    # Ward lookup: populate ward column for properties with coordinates
-    await _lookup_wards(storage)
-
     # Reset properties with fallback analysis (API failed previously)
     # so they get re-analyzed this run
-    reset_count = await storage.pipeline.reset_failed_analyses()
+    use_quality = settings.anthropic_api_key.get_secret_value() and settings.enable_quality_filter
+    reset_count = await storage.pipeline.reset_failed_analyses() if use_quality else 0
     if reset_count:
         logger.info("reset_failed_analyses_for_retry", count=reset_count)
 
@@ -317,7 +369,14 @@ async def _run_quality_and_save(
     if retried:
         logger.info("retrying_pending_analysis_from_previous_run", count=len(retried))
 
-    all_to_analyze = list(pre.merged_to_process) + retried
+    # Alternate recovery and discovery, taking older pending work first. Fresh
+    # arrivals cannot consume every slot while retries wait indefinitely.
+    all_to_analyze = [
+        item
+        for pair in zip_longest(retried, pre.merged_to_process)
+        for item in pair
+        if item is not None
+    ]
 
     max_per_run = settings.max_analysis_per_run
     if len(all_to_analyze) > max_per_run:
@@ -329,21 +388,91 @@ async def _run_quality_and_save(
         )
         all_to_analyze = all_to_analyze[:max_per_run]
 
-    use_quality = settings.anthropic_api_key.get_secret_value() and settings.enable_quality_filter
+    if not all_to_analyze:
+        return 0, None
+
+    if use_quality:
+        _warn_if_spending_unconfigured(settings)
+
+    # Ward lookup and evidence recovery need no work on a completely empty drain.
+    await _lookup_wards(storage)
+
     if not use_quality:
         logger.info("skipping_quality_analysis", reason="not_configured")
+    else:
+        retry_ids = {m.unique_id for m in retried}
+        await _re_enrich_incomplete(
+            [m for m in all_to_analyze if m.unique_id in retry_ids], settings, storage
+        )
 
     async def _do_analysis(qf: PropertyQualityFilter | None) -> int:
         async def _analyze(
             merged: MergedProperty,
         ) -> tuple[MergedProperty, PropertyQualityAnalysis | None]:
             if qf:
-                return await qf.analyze_single_merged(merged, data_dir=settings.data_dir)
+                try:
+                    return await qf.analyze_single_merged(merged, data_dir=settings.data_dir)
+                except SpendDeferred as exc:
+                    if recorder is not None:
+                        recorder.record(
+                            PropertyEvent(
+                                merged.unique_id,
+                                merged.canonical.source.value,
+                                "analysis_deferred",
+                                "analysis",
+                                {"reason": "spend_" + exc.reason},
+                            )
+                        )
+                    raise
+                except APIUnavailableError:
+                    # Account/provider failure does not demonstrate a bad home.
+                    raise
+                except Exception:
+                    await storage.pipeline.record_analysis_failure(merged.unique_id)
+                    raise
             return merged, None
 
         async def _handle_result(
             merged: MergedProperty, quality_analysis: PropertyQualityAnalysis | None
-        ) -> None:
+        ) -> AnalysisDisposition:
+            if qf is not None and (
+                quality_analysis is None or quality_analysis.overall_rating is None
+            ):
+                reason = (
+                    "missing_cached_images" if quality_analysis is None else "analysis_incomplete"
+                )
+                failure_meta = (
+                    quality_analysis.analysis_failure.model_dump(mode="json")
+                    if quality_analysis is not None
+                    and quality_analysis.analysis_failure is not None
+                    else None
+                )
+                if quality_analysis is not None:
+                    await storage.pipeline.record_analysis_failure(merged.unique_id)
+                logger.info(
+                    "analysis_deferred",
+                    property_id=merged.unique_id,
+                    reason=reason,
+                    failure=failure_meta,
+                )
+                if recorder is not None:
+                    recorder.record(
+                        PropertyEvent(
+                            merged.unique_id,
+                            merged.canonical.source.value,
+                            "analysis_deferred",
+                            "analysis",
+                            {
+                                "reason": reason,
+                                **({"failure": failure_meta} if failure_meta else {}),
+                            },
+                        )
+                    )
+                return (
+                    AnalysisDisposition.DEFERRED
+                    if quality_analysis is None
+                    else AnalysisDisposition.FAILED
+                )
             commute_info = pre.commute_lookup.get(merged.canonical.unique_id)
             await _save_one(merged, commute_info, quality_analysis, storage)
             await _persist_estimated_floor_area(merged, quality_analysis, storage)
@@ -365,15 +494,17 @@ async def _run_quality_and_save(
                         meta,
                     )
                 )
+            return AnalysisDisposition.COMPLETED
 
         return await _run_concurrent_analysis(
             all_to_analyze,
             _analyze,
             _handle_result,
-            concurrency=settings.quality_concurrency,
+            concurrency=_analysis_concurrency(settings),
             per_property_timeout=settings.property_analysis_timeout,
             breaker_log_event="api_circuit_breaker_activated",
             error_log_event="property_processing_failed",
+            on_timeout=storage.pipeline.record_analysis_failure if qf is not None else None,
         )
 
     token_usage: TokenUsage | None = None
@@ -382,6 +513,9 @@ async def _run_quality_and_save(
             api_key=settings.anthropic_api_key.get_secret_value(),
             max_images=settings.quality_filter_max_images,
             enable_extended_thinking=settings.enable_extended_thinking,
+            analysis_config=settings.analysis_config,
+            spend_repository=storage.spend,
+            spend_policy=settings.analysis_spend_policy,
         ) as quality_filter:
             count = await _do_analysis(quality_filter)
             token_usage = quality_filter.token_usage
@@ -400,7 +534,7 @@ async def _download_missing_images(
     data_dir: str,
     max_images: int,
 ) -> int:
-    """Download gallery images that are in the DB but missing from disk cache.
+    """Download gallery images and the floorplan missing from disk cache.
 
     Uses URLs already on the MergedProperty (loaded from DB by the reanalysis
     queue) — no detail-page fetching required.
@@ -412,15 +546,18 @@ async def _download_missing_images(
     effective_max = max_images - (1 if has_fp else 0)
     gallery = [img for img in merged.images if img.image_type == "gallery"]
     to_check = gallery[:effective_max]
+    if has_fp and merged.floorplan is not None:
+        to_check.append(merged.floorplan)
 
     downloaded = 0
     for idx, img in enumerate(to_check):
         url_str = str(img.url)
-        if find_cached_file(data_dir, merged.unique_id, url_str, "gallery"):
+        image_type = img.image_type
+        if find_cached_file(data_dir, merged.unique_id, url_str, image_type):
             continue
         img_bytes = await detail_fetcher.download_image_bytes(url_str)
         if img_bytes:
-            path = get_cached_image_path(data_dir, merged.unique_id, url_str, "gallery", idx)
+            path = get_cached_image_path(data_dir, merged.unique_id, url_str, image_type, idx)
             save_image_bytes(path, img_bytes)
             downloaded += 1
         else:
@@ -439,7 +576,7 @@ async def _re_enrich_incomplete(
 ) -> list[MergedProperty]:
     """Download missing cached images for reanalysis queue properties.
 
-    Checks each property's gallery images against the disk cache. For any
+    Checks each property's gallery images and floorplan against the disk cache. For any
     with gaps, downloads the missing files directly from the image URLs
     already stored on the MergedProperty (no detail-page re-scraping).
 
@@ -461,7 +598,15 @@ async def _re_enrich_incomplete(
             has_valid_floorplan=has_fp,
             max_images=settings.quality_filter_max_images,
         )
-        if cached < expected:
+        missing_floorplan = (
+            has_fp
+            and merged.floorplan is not None
+            and find_cached_file(
+                settings.data_dir, merged.unique_id, str(merged.floorplan.url), "floorplan"
+            )
+            is None
+        )
+        if cached < expected or missing_floorplan:
             incomplete.append(merged)
 
     if not incomplete:
@@ -511,10 +656,11 @@ async def _drain_reanalysis_queue(
     if not settings.enable_quality_filter or not settings.anthropic_api_key.get_secret_value():
         return 0
 
-    queue = await storage.pipeline.get_reanalysis_queue()
+    queue = (await storage.pipeline.get_reanalysis_queue())[: settings.max_analysis_per_run]
     if not queue:
         return 0
 
+    _warn_if_spending_unconfigured(settings)
     queue = await _re_enrich_incomplete(queue, settings, storage)
 
     logger.info("reanalysis_queue_drain_started", count=len(queue))
@@ -525,6 +671,9 @@ async def _drain_reanalysis_queue(
         api_key=settings.anthropic_api_key.get_secret_value(),
         max_images=settings.quality_filter_max_images,
         enable_extended_thinking=settings.enable_extended_thinking,
+        analysis_config=settings.analysis_config,
+        spend_repository=storage.spend,
+        spend_policy=settings.analysis_spend_policy,
     ) as quality_filter:
 
         async def _analyze(
@@ -535,18 +684,31 @@ async def _drain_reanalysis_queue(
         async def _handle_result(
             merged: MergedProperty,
             quality_analysis: PropertyQualityAnalysis | None,
-        ) -> None:
+        ) -> AnalysisDisposition:
             nonlocal completed
-            if quality_analysis:
+            if quality_analysis is not None and quality_analysis.overall_rating is not None:
                 await storage.pipeline.complete_reanalysis(merged.unique_id, quality_analysis)
                 await _persist_estimated_floor_area(merged, quality_analysis, storage)
                 completed += 1
+                return AnalysisDisposition.COMPLETED
+            logger.info(
+                "reanalysis_deferred",
+                property_id=merged.unique_id,
+                reason="missing_cached_images"
+                if quality_analysis is None
+                else "analysis_incomplete",
+            )
+            return (
+                AnalysisDisposition.DEFERRED
+                if quality_analysis is None
+                else AnalysisDisposition.FAILED
+            )
 
         await _run_concurrent_analysis(
             queue,
             _analyze,
             _handle_result,
-            concurrency=settings.quality_concurrency,
+            concurrency=_analysis_concurrency(settings),
             per_property_timeout=settings.property_analysis_timeout,
             breaker_log_event="reanalysis_api_circuit_breaker",
             error_log_event="reanalysis_failed",
@@ -556,6 +718,7 @@ async def _drain_reanalysis_queue(
     return completed
 
 
+@exclusive_runner
 async def run_reanalysis(
     settings: Settings,
     *,
@@ -584,19 +747,13 @@ async def run_reanalysis(
             return
 
         # Step 2: Load queue and re-enrich incomplete caches
-        queue = await storage.pipeline.get_reanalysis_queue()
+        queue = (await storage.pipeline.get_reanalysis_queue())[: settings.max_analysis_per_run]
 
         if not queue:
             logger.info("reanalysis_queue_empty")
             return
 
-        queue = await _re_enrich_incomplete(queue, settings, storage)
-
-        # Step 3: Cost estimate
-        est_cost = len(queue) * 0.06
-        logger.info("reanalysis_started", count=len(queue), est_cost=f"${est_cost:.2f}")
-
-        # Step 4: Run quality analysis
+        # Check configuration before any evidence download.
         use_quality = (
             settings.anthropic_api_key.get_secret_value() and settings.enable_quality_filter
         )
@@ -604,13 +761,21 @@ async def run_reanalysis(
             logger.error("quality_analysis_not_configured", hint="need ANTHROPIC_API_KEY")
             return
 
+        _warn_if_spending_unconfigured(settings)
+        queue = await _re_enrich_incomplete(queue, settings, storage)
+        logger.info("reanalysis_started", count=len(queue))
+
         completed = 0
         failed = 0
+        deferred = 0
 
         async with PropertyQualityFilter(
             api_key=settings.anthropic_api_key.get_secret_value(),
             max_images=settings.quality_filter_max_images,
             enable_extended_thinking=settings.enable_extended_thinking,
+            analysis_config=settings.analysis_config,
+            spend_repository=storage.spend,
+            spend_policy=settings.analysis_spend_policy,
         ) as quality_filter:
 
             async def _analyze(
@@ -623,28 +788,38 @@ async def run_reanalysis(
             async def _handle_result(
                 merged: MergedProperty,
                 quality_analysis: PropertyQualityAnalysis | None,
-            ) -> None:
-                nonlocal completed, failed
-                if quality_analysis:
+            ) -> AnalysisDisposition:
+                nonlocal completed, failed, deferred
+                if quality_analysis is not None and quality_analysis.overall_rating is not None:
                     await storage.pipeline.complete_reanalysis(merged.unique_id, quality_analysis)
                     await _persist_estimated_floor_area(merged, quality_analysis, storage)
                     completed += 1
+                    return AnalysisDisposition.COMPLETED
+                elif quality_analysis is None:
+                    deferred += 1
+                    return AnalysisDisposition.DEFERRED
                 else:
                     failed += 1
+                    return AnalysisDisposition.FAILED
 
             def _count_error() -> None:
                 nonlocal failed
                 failed += 1
 
+            def _count_deferred() -> None:
+                nonlocal deferred
+                deferred += 1
+
             await _run_concurrent_analysis(
                 queue,
                 _analyze,
                 _handle_result,
-                concurrency=settings.quality_concurrency,
+                concurrency=_analysis_concurrency(settings),
                 per_property_timeout=settings.property_analysis_timeout,
                 on_error=_count_error,
+                on_deferred=_count_deferred,
                 breaker_log_event="reanalysis_api_circuit_breaker",
                 error_log_event="reanalysis_failed",
             )
 
-        logger.info("reanalysis_complete", completed=completed, failed=failed)
+        logger.info("reanalysis_complete", completed=completed, failed=failed, deferred=deferred)

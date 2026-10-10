@@ -1,12 +1,21 @@
 """Tests for commute filtering with TravelTime API."""
 
+import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from pydantic import HttpUrl
+from pydantic import HttpUrl, ValidationError
 
 from home_finder.filters.commute import CommuteFilter, CommuteResult
-from home_finder.models import Property, PropertySource, TransportMode
+from home_finder.models import CommuteState, Property, PropertySource, TransportMode
+from home_finder.models.commute import best_measured_commutes
+
+
+@pytest.fixture(autouse=True)
+def isolated_geocoding_cache():
+    CommuteFilter._geocoding_cache.clear()
+    yield
+    CommuteFilter._geocoding_cache.clear()
 
 
 @pytest.fixture
@@ -108,7 +117,9 @@ def create_geocoding_response(lat: float, lon: float) -> MagicMock:
     return mock_response
 
 
-def create_time_filter_response(locations: list[tuple[str, int]]) -> MagicMock:
+def create_time_filter_response(
+    locations: list[tuple[str, int]], *, unreachable: list[str] | None = None
+) -> MagicMock:
     """Create a mock time_filter response.
 
     Args:
@@ -123,6 +134,7 @@ def create_time_filter_response(locations: list[tuple[str, int]]) -> MagicMock:
 
     mock_search_result = MagicMock()
     mock_search_result.locations = mock_locations
+    mock_search_result.unreachable = unreachable or []
 
     mock_response = MagicMock()
     mock_response.results = [mock_search_result]
@@ -193,10 +205,10 @@ class TestCommuteFilter:
         assert result_by_id["zoopla:3"].within_limit is True
 
     @pytest.mark.asyncio
-    async def test_filter_properties_skips_without_coords(
+    async def test_filter_properties_reports_missing_coords(
         self, properties_without_coords: list[Property]
     ) -> None:
-        """Test that properties without coordinates are skipped."""
+        """No provider request is possible, but the input still has an outcome."""
         commute_filter = CommuteFilter(
             app_id="test-app-id",
             api_key="test-api-key",
@@ -210,8 +222,10 @@ class TestCommuteFilter:
             transport_mode=TransportMode.CYCLING,
         )
 
-        # No properties should be filtered (all lack coordinates)
-        assert len(results) == 0
+        assert len(results) == 1
+        assert results[0].state == CommuteState.MISSING_COORDINATES
+        assert results[0].within_limit is None
+        assert results[0].travel_time_minutes is None
 
     @pytest.mark.asyncio
     async def test_filter_properties_handles_unreachable(
@@ -229,7 +243,8 @@ class TestCommuteFilter:
         time_filter_response = create_time_filter_response(
             [
                 ("openrent:1", 1200),  # Only one reachable
-            ]
+            ],
+            unreachable=["rightmove:2", "zoopla:3"],
         )
 
         mock_client = create_mock_client(
@@ -244,9 +259,10 @@ class TestCommuteFilter:
                 transport_mode=TransportMode.PUBLIC_TRANSPORT,
             )
 
-        # Only reachable property should have result
-        assert len(results) == 1
+        assert len(results) == 3
         assert results[0].property_id == "openrent:1"
+        assert all(r.state == CommuteState.UNREACHABLE for r in results[1:])
+        assert all(r.within_limit is None for r in results[1:])
 
     @pytest.mark.asyncio
     async def test_filter_properties_handles_geocoding_failure(
@@ -272,8 +288,10 @@ class TestCommuteFilter:
                 transport_mode=TransportMode.CYCLING,
             )
 
-        # Should return empty results on geocoding failure
-        assert len(results) == 0
+        assert len(results) == len(sample_properties)
+        assert all(r.state == CommuteState.DESTINATION_UNRESOLVED for r in results)
+        assert all(r.travel_time_minutes is None for r in results)
+        mock_client.time_filter.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_client_configured_with_rate_limiting(
@@ -404,10 +422,11 @@ class TestCommuteFilter:
                 transport_mode=TransportMode.CYCLING,
             )
 
-        # Graceful degradation: all properties pass through with within_limit=True
+        # Fail open for admission, but never claim the journey met the limit.
         assert len(results) == len(sample_properties)
-        assert all(r.within_limit for r in results)
-        assert all(r.travel_time_minutes == 0 for r in results)
+        assert all(r.within_limit is None for r in results)
+        assert all(r.travel_time_minutes is None for r in results)
+        assert all(r.state == CommuteState.PROVIDER_ERROR for r in results)
         # Rate limit logged as warning, then commute_filter_skipped also logged
         warning_events = [call[0][0] for call in mock_logger.warning.call_args_list]
         assert "rate_limit_hit" in warning_events
@@ -440,10 +459,11 @@ class TestCommuteFilter:
                 transport_mode=TransportMode.CYCLING,
             )
 
-        # Graceful degradation: all properties pass through with within_limit=True
+        # Fail open for admission, but never claim the journey met the limit.
         assert len(results) == len(sample_properties)
-        assert all(r.within_limit for r in results)
-        assert all(r.travel_time_minutes == 0 for r in results)
+        assert all(r.within_limit is None for r in results)
+        assert all(r.travel_time_minutes is None for r in results)
+        assert all(r.state == CommuteState.PROVIDER_ERROR for r in results)
         mock_logger.error.assert_called_once()
         call_args = mock_logger.error.call_args
         assert call_args[0][0] == "traveltime_api_error"
@@ -460,9 +480,10 @@ class TestCommuteResult:
         result = CommuteResult(
             property_id="test:1",
             destination_postcode="N1 5AA",
-            travel_time_minutes=20,
+            travel_time_seconds=1200,
+            limit_seconds=1800,
             transport_mode=TransportMode.CYCLING,
-            within_limit=True,
+            state=CommuteState.WITHIN_LIMIT,
         )
         assert result.within_limit is True
 
@@ -471,8 +492,155 @@ class TestCommuteResult:
         result = CommuteResult(
             property_id="test:1",
             destination_postcode="N1 5AA",
-            travel_time_minutes=45,
+            travel_time_seconds=2700,
+            limit_seconds=1800,
             transport_mode=TransportMode.CYCLING,
-            within_limit=False,
+            state=CommuteState.OVER_LIMIT,
         )
         assert result.within_limit is False
+
+
+@pytest.mark.parametrize(
+    "seconds,minutes,within", [(0, 0, True), (1799, 30, True), (1800, 30, True), (1801, 31, False)]
+)
+async def test_exact_second_boundary(sample_properties, seconds, minutes, within):
+    """1,801s is a defensive over-cap response, not a normal provider incident."""
+    client = create_mock_client(
+        geocoding_response=create_geocoding_response(51.54, -0.09),
+        time_filter_response=create_time_filter_response([("openrent:1", seconds)]),
+    )
+    commute = CommuteFilter(app_id="test", api_key="test", destination_postcode="N1 5AA")
+    with patch("traveltimepy.AsyncClient", return_value=client):
+        result = (
+            await commute.filter_properties(
+                sample_properties[:1], max_minutes=30, transport_mode=TransportMode.CYCLING
+            )
+        )[0]
+    assert result.travel_time_seconds == seconds
+    assert result.travel_time_minutes == minutes
+    assert result.within_limit is within
+    assert client.time_filter.call_args.kwargs["arrival_searches"][0].travel_time == 1800
+
+
+@pytest.mark.parametrize("bad_seconds", [-1, None, True, 1.5, "1200"])
+async def test_malformed_measurement_is_unknown(sample_properties, bad_seconds):
+    response = create_time_filter_response([("openrent:1", bad_seconds)])
+    client = create_mock_client(
+        geocoding_response=create_geocoding_response(51.54, -0.09), time_filter_response=response
+    )
+    commute = CommuteFilter(app_id="test", api_key="test", destination_postcode="N1 5AA")
+    with patch("traveltimepy.AsyncClient", return_value=client):
+        results = await commute.filter_properties(
+            sample_properties, max_minutes=30, transport_mode=TransportMode.CYCLING
+        )
+    assert all(r.state == CommuteState.INVALID_RESPONSE for r in results)
+    assert all(r.within_limit is None and r.travel_time_seconds is None for r in results)
+
+
+@pytest.mark.parametrize("shape", ["missing", "duplicate", "conflict", "malformed"])
+async def test_incomplete_or_conflicting_response_is_unknown(sample_properties, shape):
+    response = create_time_filter_response([("unrequested:99", 0)])
+    if shape == "duplicate":
+        response = create_time_filter_response([("openrent:1", 60), ("openrent:1", 60)])
+    elif shape == "conflict":
+        response = create_time_filter_response([("openrent:1", 60)], unreachable=["openrent:1"])
+    elif shape == "malformed":
+        response.results = None
+    client = create_mock_client(
+        geocoding_response=create_geocoding_response(51.54, -0.09), time_filter_response=response
+    )
+    commute = CommuteFilter(app_id="test", api_key="test", destination_postcode="N1 5AA")
+    with patch("traveltimepy.AsyncClient", return_value=client):
+        results = await commute.filter_properties(
+            sample_properties, max_minutes=30, transport_mode=TransportMode.CYCLING
+        )
+    assert len(results) == len(sample_properties)
+    assert all(r.state == CommuteState.INVALID_RESPONSE for r in results)
+
+
+async def test_zero_longitude_is_a_real_coordinate(sample_properties):
+    prop = sample_properties[0].model_copy(update={"longitude": 0.0})
+    client = create_mock_client(
+        geocoding_response=create_geocoding_response(51.54, -0.09),
+        time_filter_response=create_time_filter_response([("openrent:1", 60)]),
+    )
+    commute = CommuteFilter(app_id="test", api_key="test", destination_postcode="N1 5AA")
+    with patch("traveltimepy.AsyncClient", return_value=client):
+        results = await commute.filter_properties(
+            [prop], max_minutes=30, transport_mode=TransportMode.CYCLING
+        )
+    assert results[0].within_limit is True
+    assert client.time_filter.call_args.kwargs["locations"][1].coords.lng == 0
+
+
+@pytest.mark.parametrize(
+    "state,seconds",
+    [
+        (CommuteState.PROVIDER_ERROR, 0),
+        (CommuteState.WITHIN_LIMIT, None),
+        (CommuteState.WITHIN_LIMIT, 1801),
+        (CommuteState.OVER_LIMIT, 1800),
+        (CommuteState.WITHIN_LIMIT, True),
+    ],
+)
+def test_incoherent_outcomes_rejected(state, seconds):
+    with pytest.raises(ValidationError):
+        CommuteResult(
+            property_id="test:1",
+            destination_postcode="N1 5AA",
+            transport_mode=TransportMode.CYCLING,
+            limit_seconds=1800,
+            state=state,
+            travel_time_seconds=seconds,
+        )
+
+
+def test_best_mode_uses_seconds_before_display_rounding():
+    results = [
+        CommuteResult(
+            property_id="test:1",
+            destination_postcode="N1 5AA",
+            transport_mode=mode,
+            limit_seconds=1800,
+            state=CommuteState.WITHIN_LIMIT,
+            travel_time_seconds=seconds,
+        )
+        for mode, seconds in [(TransportMode.CYCLING, 1259), (TransportMode.PUBLIC_TRANSPORT, 1201)]
+    ]
+    assert results[0].travel_time_minutes == results[1].travel_time_minutes == 21
+    assert (
+        best_measured_commutes(results)["test:1"].transport_mode == TransportMode.PUBLIC_TRANSPORT
+    )
+
+
+async def test_cancellation_propagates_instead_of_becoming_a_result(sample_properties):
+    client = create_mock_client(geocoding_response=create_geocoding_response(51.54, -0.09))
+    client.time_filter.side_effect = asyncio.CancelledError()
+    commute = CommuteFilter(app_id="test", api_key="test", destination_postcode="N1 5AA")
+    with (
+        patch("traveltimepy.AsyncClient", return_value=client),
+        pytest.raises(asyncio.CancelledError),
+    ):
+        await commute.filter_properties(
+            sample_properties, max_minutes=30, transport_mode=TransportMode.CYCLING
+        )
+
+
+async def test_missing_coordinates_remain_distinct_during_outage(
+    sample_properties, properties_without_coords
+):
+    client = create_mock_client(
+        geocoding_response=create_geocoding_response(51.54, -0.09),
+        time_filter_error=RuntimeError("unauthorized"),
+    )
+    commute = CommuteFilter(app_id="test", api_key="test", destination_postcode="N1 5AA")
+    with patch("traveltimepy.AsyncClient", return_value=client):
+        results = await commute.filter_properties(
+            [sample_properties[0], properties_without_coords[0]],
+            max_minutes=30,
+            transport_mode=TransportMode.CYCLING,
+        )
+    assert [r.state for r in results] == [
+        CommuteState.PROVIDER_ERROR,
+        CommuteState.MISSING_COORDINATES,
+    ]

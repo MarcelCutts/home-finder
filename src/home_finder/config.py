@@ -6,6 +6,8 @@ from pydantic import Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from home_finder.models import FurnishType, SearchCriteria, TransportMode
+from home_finder.models.analysis import AnalysisConfig
+from home_finder.models.spend import SpendPolicy
 
 
 class Settings(BaseSettings):
@@ -73,7 +75,15 @@ class Settings(BaseSettings):
         default=True,
         description="Enable extended thinking for deeper quality analysis",
     )
+    analysis_config: AnalysisConfig | None = Field(
+        default=None,
+        description="Versioned per-phase analysis JSON; when set, overrides legacy thinking flag",
+    )
     # AI analysis budget
+    analysis_spend_policy: SpendPolicy | None = Field(
+        default=None,
+        description="Exact USD caps as JSON; absent policy defers every paid analysis attempt",
+    )
     max_analysis_per_run: int = Field(
         default=75,
         ge=1,
@@ -175,11 +185,15 @@ class Settings(BaseSettings):
         description="Base URL for web dashboard (e.g. https://home-finder.fly.dev)",
     )
     web_port: int = Field(default=8000, description="Web server port")
+    carto_basemap_api_key: SecretStr = Field(
+        default=SecretStr(""),
+        description="CARTO browser tile key; restrict allowed origins at the provider",
+    )
     web_host: str = Field(default="0.0.0.0", description="Web server host")
     pipeline_interval_minutes: int = Field(
         default=55,
         ge=1,
-        description="Minutes between pipeline runs in serve mode",
+        description="Minimum delay after a serve-mode run finishes, plus 0-5 minutes jitter",
     )
 
     # Database

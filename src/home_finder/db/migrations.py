@@ -727,6 +727,72 @@ async def migrate_007_telegram_update_ids(conn: aiosqlite.Connection) -> None:
     """)
 
 
+async def migrate_008_listing_text(conn: aiosqlite.Connection) -> None:
+    """Retain current source text without inventing missing historical evidence."""
+    for table, column in (("source_listings", "text_json"), ("properties", "source_text_json")):
+        cursor = await conn.execute(f"PRAGMA table_info({table})")
+        if column not in {row[1] for row in await cursor.fetchall()}:
+            await conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} TEXT")
+
+
+async def migrate_009_paid_attempts(conn: aiosqlite.Connection) -> None:
+    """Retain spending independently of property deletion or run-log retention."""
+    await conn.execute("""
+        CREATE TABLE IF NOT EXISTS paid_attempts (
+            attempt_id TEXT PRIMARY KEY,
+            operation_key TEXT NOT NULL,
+            property_id TEXT NOT NULL,
+            phase TEXT NOT NULL CHECK (phase IN ('visual', 'evaluation')),
+            provider TEXT NOT NULL CHECK (provider = 'anthropic'),
+            model TEXT NOT NULL,
+            request_sha256 TEXT NOT NULL,
+            provenance_json TEXT NOT NULL CHECK (json_valid(provenance_json)),
+            configuration_sha256 TEXT NOT NULL,
+            rate_version TEXT NOT NULL,
+            rates_json TEXT NOT NULL CHECK (json_valid(rates_json)),
+            policy_json TEXT NOT NULL CHECK (json_valid(policy_json)),
+            admitted_at TEXT NOT NULL,
+            dispatched_at TEXT,
+            completed_at TEXT,
+            reconciled_at TEXT,
+            state TEXT NOT NULL CHECK (
+                state IN ('reserved', 'dispatched', 'unknown', 'settled', 'released')
+            ),
+            reserved_nanousd INTEGER NOT NULL CHECK (
+                typeof(reserved_nanousd) = 'integer' AND reserved_nanousd > 0
+            ),
+            accounted_nanousd INTEGER CHECK (
+                accounted_nanousd IS NULL OR
+                (typeof(accounted_nanousd) = 'integer' AND accounted_nanousd >= 0)
+            ),
+            cost_basis TEXT CHECK (
+                cost_basis IN ('provider_usage', 'provider_error', 'operator_confirmed')
+            ),
+            result TEXT,
+            request_id TEXT,
+            stop_reason TEXT,
+            settlement_json TEXT CHECK (settlement_json IS NULL OR json_valid(settlement_json)),
+            rejection_json TEXT CHECK (rejection_json IS NULL OR json_valid(rejection_json)),
+            reconciliation_json TEXT CHECK (
+                reconciliation_json IS NULL OR json_valid(reconciliation_json)
+            ),
+            CHECK ((state = 'settled') = (cost_basis IS NOT NULL)),
+            CHECK (state NOT IN ('settled', 'released') OR accounted_nanousd IS NOT NULL),
+            CHECK (state NOT IN ('dispatched', 'unknown', 'settled') OR dispatched_at IS NOT NULL)
+        )
+    """)
+    await conn.execute("""
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_paid_attempts_unresolved_operation
+        ON paid_attempts(operation_key) WHERE state IN ('reserved', 'dispatched', 'unknown')
+    """)
+    await conn.execute("""
+        CREATE INDEX IF NOT EXISTS idx_paid_attempts_admitted_at ON paid_attempts(admitted_at)
+    """)
+    await conn.execute("""
+        CREATE INDEX IF NOT EXISTS idx_paid_attempts_operation ON paid_attempts(operation_key)
+    """)
+
+
 _MigrationFn = Callable[[aiosqlite.Connection], Coroutine[Any, Any, None]]
 
 MIGRATIONS: list[_MigrationFn] = [
@@ -737,6 +803,8 @@ MIGRATIONS: list[_MigrationFn] = [
     migrate_005_fix_source_listings_linkage,
     migrate_006_off_market_enhancements,
     migrate_007_telegram_update_ids,
+    migrate_008_listing_text,
+    migrate_009_paid_attempts,
 ]
 
 

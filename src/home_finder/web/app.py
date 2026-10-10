@@ -27,7 +27,7 @@ PIPELINE_INITIAL_DELAY_SECONDS: Final = 30
 # Module-level lock prevents overlapping pipeline runs
 _pipeline_lock = asyncio.Lock()
 
-# Jitter range (seconds) added to sleep interval to avoid scraping at fixed offsets
+# Nonnegative jitter preserves the configured minimum delay after completion.
 _JITTER_SECONDS: Final = 300
 
 
@@ -51,7 +51,7 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
             "https://*.rmimg.com https://*.rightmove.co.uk "
             "https://*.onthemarket.com "
             "https://*.openrent.com https://*.openrent.co.uk "
-            "https://*.basemaps.cartocdn.com https://cdn.jsdelivr.net data:; "
+            "https://basemaps.cartocdn.com https://cdn.jsdelivr.net data:; "
             "connect-src 'self'; "
             "frame-ancestors 'none'; form-action 'self'; base-uri 'self'"
         )
@@ -88,7 +88,7 @@ async def _pipeline_loop(
                 except Exception:
                     logger.error("pipeline_scheduler_error", exc_info=True)
 
-        jitter = random.uniform(-_JITTER_SECONDS, _JITTER_SECONDS)
+        jitter = random.uniform(0, _JITTER_SECONDS)
         sleep_seconds = interval_minutes * 60 + jitter
         logger.info(
             "pipeline_scheduler_sleeping",

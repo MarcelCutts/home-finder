@@ -261,7 +261,7 @@ class ZooplaScraper(BaseScraper):
             target = self._pick_impersonate_target()
             await session.get(
                 f"{self.BASE_URL}/",
-                impersonate=target,  # type: ignore[arg-type]
+                impersonate=target,
                 headers=BROWSER_HEADERS,
                 timeout=15,
             )
@@ -376,7 +376,9 @@ class ZooplaScraper(BaseScraper):
             max_results=max_results,
             page_delay=self._page_delay,
         )
-        result.parse_errors = parse_errors
+        result.parse_errors += parse_errors
+        if parse_errors:
+            result.stop_reason = "parse_error"
 
         logger.info(
             "scraped_zoopla_complete",

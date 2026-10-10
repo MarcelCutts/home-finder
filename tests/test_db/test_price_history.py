@@ -1,6 +1,7 @@
 """Tests for price history and rent benchmarks (Ticket 10)."""
 
 import json
+import sqlite3
 from collections.abc import AsyncGenerator
 
 import pytest
@@ -97,6 +98,108 @@ class TestDetectAndRecordPriceChange:
         )
         row = await cursor.fetchone()
         assert row["price_pcm"] == 1750
+
+    @pytest.mark.parametrize("new_price", [1750, 2100])
+    async def test_price_range_and_source_quote_change_atomically(
+        self, storage, merged_a, new_price
+    ):
+        await storage.save_merged_property(merged_a)
+        await storage.detect_and_record_price_change(merged_a.unique_id, new_price)
+        async with storage._read_connection() as conn:
+            row = await (
+                await conn.execute("SELECT price_pcm, min_price, max_price FROM properties")
+            ).fetchone()
+            quote = await (await conn.execute("SELECT price_pcm FROM source_listings")).fetchone()
+        assert tuple(row) == (new_price, new_price, new_price)
+        assert quote[0] == new_price
+
+    async def test_retained_linked_source_prices_survive_canonical_change(self, storage, merged_a):
+        await storage.save_merged_property(merged_a)
+        other = merged_a.canonical.model_copy(
+            update={
+                "source": PropertySource.ZOOPLA,
+                "source_id": "other",
+                "price_pcm": 2150,
+                "url": HttpUrl("https://www.zoopla.co.uk/to-rent/details/456/"),
+            }
+        )
+        await storage.upsert_source_listings([other])
+        await storage.link_source_listings([(other.unique_id, merged_a.unique_id)])
+        await storage.detect_and_record_price_change(merged_a.unique_id, 1750, source="openrent")
+        async with storage._read_connection() as conn:
+            row = await (
+                await conn.execute("SELECT price_pcm, min_price, max_price FROM properties")
+            ).fetchone()
+            quotes = await (
+                await conn.execute("SELECT price_pcm FROM source_listings ORDER BY price_pcm")
+            ).fetchall()
+        assert tuple(row) == (1750, 1750, 2150)
+        assert [r[0] for r in quotes] == [1750, 2150]
+        assert len(await storage.get_price_history(merged_a.unique_id)) == 1
+
+    async def test_different_portal_price_is_not_a_same_listing_drop(self, storage, merged_a):
+        await storage.save_merged_property(merged_a)
+        assert (
+            await storage.detect_and_record_price_change(merged_a.unique_id, 1500, source="zoopla")
+            is None
+        )
+        assert await storage.get_price_history(merged_a.unique_id) == []
+        async with storage._read_connection() as conn:
+            row = await (
+                await conn.execute("SELECT price_pcm, min_price, max_price FROM properties")
+            ).fetchone()
+        assert tuple(row) == (1900, 1900, 1900)
+
+    async def test_history_failure_rolls_back_source_quote_and_range(self, storage, merged_a):
+        await storage.save_merged_property(merged_a)
+        async with storage._transaction() as conn:
+            await conn.execute(
+                "CREATE TRIGGER fail_history BEFORE INSERT ON price_history "
+                "BEGIN SELECT RAISE(ABORT, 'injected history failure'); END"
+            )
+        with pytest.raises(sqlite3.IntegrityError, match="injected history failure"):
+            await storage.detect_and_record_price_change(merged_a.unique_id, 1750)
+        async with storage._read_connection() as conn:
+            row = await (
+                await conn.execute("SELECT price_pcm, min_price, max_price FROM properties")
+            ).fetchone()
+            quote = await (await conn.execute("SELECT price_pcm FROM source_listings")).fetchone()
+        assert tuple(row) == (1900, 1900, 1900)
+        assert quote[0] == 1900
+        assert await storage.get_price_history(merged_a.unique_id) == []
+
+    async def test_cross_platform_selection_does_not_rewrite_canonical_quote(
+        self, storage, merged_a
+    ):
+        await storage.save_merged_property(merged_a)
+        other = merged_a.canonical.model_copy(
+            update={
+                "source": PropertySource.ZOOPLA,
+                "source_id": "cheaper",
+                "price_pcm": 1750,
+                "url": HttpUrl("https://www.zoopla.co.uk/to-rent/details/456/"),
+            }
+        )
+        await storage.upsert_source_listings([other])
+        await storage.link_source_listings([(other.unique_id, merged_a.unique_id)])
+        assert (
+            await storage.detect_and_record_price_change(
+                merged_a.unique_id, 1750, source="cross_platform"
+            )
+            == -150
+        )
+        async with storage._read_connection() as conn:
+            row = await (
+                await conn.execute("SELECT price_pcm, min_price, max_price FROM properties")
+            ).fetchone()
+            quotes = await (
+                await conn.execute("SELECT source, price_pcm FROM source_listings ORDER BY source")
+            ).fetchall()
+        assert tuple(row) == (1750, 1750, 1900)
+        assert [tuple(r) for r in quotes] == [("openrent", 1900), ("zoopla", 1750)]
+        assert (await storage.get_price_history(merged_a.unique_id))[0][
+            "source"
+        ] == "cross_platform"
 
     @pytest.mark.asyncio
     async def test_resets_notified_flag(

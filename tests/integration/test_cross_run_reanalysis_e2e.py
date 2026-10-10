@@ -16,6 +16,7 @@ from pydantic import HttpUrl, SecretStr
 
 from home_finder.config import Settings
 from home_finder.db import PropertyStorage
+from home_finder.db.merge_safety import MergeBlockedError
 from home_finder.filters.deduplication import Deduplicator
 from home_finder.filters.detail_enrichment import EnrichmentResult
 from home_finder.main import (
@@ -50,6 +51,60 @@ _FLOORPLAN_IMAGE = PropertyImage(
     source=PropertySource.OPENRENT,
     image_type="floorplan",
 )
+
+
+@pytest.mark.parametrize("both_pending", [False, True])
+async def test_pending_duplicate_group_is_saved_and_donor_retries_retired(
+    storage, make_property, both_pending
+):
+    first, second = _make_matching_pair(
+        make_property, PropertySource.OPENRENT, PropertySource.ZOOPLA
+    )
+    if both_pending:
+        await storage.pipeline.save_unenriched_property(_wrap_merged(first))
+    await storage.pipeline.save_unenriched_property(_wrap_merged(second))
+    retries = await storage.pipeline.get_unenriched_properties()
+    inputs = retries if both_pending else [_wrap_merged(first), *retries]
+
+    result = await _cross_run_deduplicate(
+        Deduplicator(enable_cross_platform=True),
+        inputs,
+        storage,
+        {retry.unique_id for retry in retries},
+    )
+    assert len(result.genuinely_new) == 1
+    await storage.pipeline.save_pre_analysis_properties(result.genuinely_new, {})
+    assert await storage.pipeline.get_unenriched_properties() == []
+    pending = await storage.pipeline.get_pending_analysis_properties()
+    assert len(pending) == 1
+    assert pending[0].source_urls == {first.source: first.url, second.source: second.url}
+    async with storage._read_connection() as conn:
+        cursor = await conn.execute("SELECT merged_id FROM source_listings")
+        assert {row[0] for row in await cursor.fetchall()} == {pending[0].unique_id}
+    # Replaying persistence after an interrupted analysis does not revive donors.
+    await storage.pipeline.save_pre_analysis_properties(pending, {})
+    assert await storage.pipeline.get_unenriched_properties() == []
+
+
+async def test_pre_analysis_group_cannot_absorb_protected_pending_member(storage, make_property):
+    first, second = _make_matching_pair(
+        make_property, PropertySource.OPENRENT, PropertySource.ZOOPLA
+    )
+    await storage.pipeline.save_unenriched_property(_wrap_merged(first))
+    await storage.pipeline.save_unenriched_property(_wrap_merged(second))
+    async with storage._transaction() as conn:
+        await conn.execute(
+            "UPDATE properties SET user_status='interested' WHERE unique_id=?", (second.unique_id,)
+        )
+    group = _wrap_merged(
+        first,
+        sources=(first.source, second.source),
+        source_urls={first.source: first.url, second.source: second.url},
+    )
+    with pytest.raises(MergeBlockedError):
+        await storage.pipeline.save_pre_analysis_properties([group], {})
+    assert len(await storage.pipeline.get_unenriched_properties()) == 2
+    assert await storage.pipeline.get_pending_analysis_properties() == []
 
 
 def _wrap_merged(prop: Property, **overrides: Any) -> MergedProperty:
@@ -1686,13 +1741,13 @@ class TestCrossPlatformPriceDropDetection:
         row = await cursor.fetchone()
         assert row is None, "No price_history expected when prices match"
 
-    async def test_new_source_higher_price_records_increase(
+    async def test_new_source_higher_price_preserves_lower_quote(
         self,
         storage: PropertyStorage,
         make_property: Callable[..., Property],
         quality_v1: PropertyQualityAnalysis,
     ):
-        """Anchor at £1800, new source at £2000 → price_history with change=+200."""
+        """Another portal's higher quote cannot create an increase then a false drop."""
         anchor, new = _make_matching_pair(
             make_property,
             PropertySource.OPENRENT,
@@ -1717,8 +1772,10 @@ class TestCrossPlatformPriceDropDetection:
             (anchor.unique_id,),
         )
         row = await cursor.fetchone()
-        assert row is not None
-        assert row["change_amount"] == 200
+        assert row is None
+        tracked = await storage.get_property(anchor.unique_id)
+        assert tracked is not None and tracked.property.price_pcm == 1800
+        assert await storage.detect_and_record_price_change(anchor.unique_id, 1800) is None
 
     async def test_two_new_sources_different_prices_records_lowest(
         self,
@@ -1828,3 +1885,60 @@ class TestCrossPlatformPriceDropDetection:
         )
         row = await cursor.fetchone()
         assert row is None, "Rescrape of known source should not create price_history"
+
+
+async def test_committed_merge_keeps_reanalysis_queued_when_cache_copy_fails(
+    storage, make_property, quality_v1, tmp_path, monkeypatch
+):
+    anchor, newcomer = _make_matching_pair(
+        make_property, PropertySource.RIGHTMOVE, PropertySource.ZOOPLA
+    )
+    await _populate_run1(storage, anchor, quality_v1)
+    pending = _wrap_merged(newcomer)
+    await storage.pipeline.save_unenriched_property(pending)
+
+    def interrupted_copy(*args):
+        raise OSError("simulated cache copy interruption")
+
+    monkeypatch.setattr("home_finder.pipeline.stages.copy_cached_images", interrupted_copy)
+    with pytest.raises(OSError, match="simulated cache"):
+        await _cross_run_deduplicate(
+            Deduplicator(enable_cross_platform=True),
+            [pending],
+            storage,
+            {newcomer.unique_id},
+            data_dir=str(tmp_path),
+        )
+    assert await storage.get_property(newcomer.unique_id) is None
+    await _assert_db_sources(storage, anchor.unique_id, {"rightmove", "zoopla"})
+    queued = await storage.pipeline.get_reanalysis_queue()
+    assert [item.unique_id for item in queued] == [anchor.unique_id]
+    assert queued[0].source_urls[newcomer.source] == newcomer.url
+
+
+async def test_pre_analysis_retirement_preserves_unrepresented_provider_rows(
+    storage, make_property
+):
+    from home_finder.db.merge_safety import MergeBlockedError
+
+    first, second = _make_matching_pair(
+        make_property, PropertySource.OPENRENT, PropertySource.ZOOPLA
+    )
+    extra = make_property(source=PropertySource.RIGHTMOVE)
+    await storage.pipeline.save_unenriched_property(_wrap_merged(second))
+    await storage.upsert_source_listings([first, extra])
+    await storage.link_source_listings([(extra.unique_id, second.unique_id)])
+    group = _wrap_merged(
+        first,
+        sources=(first.source, second.source),
+        source_urls={first.source: first.url, second.source: second.url},
+    )
+    with pytest.raises(MergeBlockedError):
+        await storage.pipeline.save_pre_analysis_properties([group], {})
+    assert await storage.get_property(second.unique_id) is not None
+    assert await storage.get_property(first.unique_id) is None
+    async with storage._read_connection() as conn:
+        cursor = await conn.execute(
+            "SELECT merged_id FROM source_listings WHERE unique_id=?", (extra.unique_id,)
+        )
+        assert (await cursor.fetchone())[0] == second.unique_id

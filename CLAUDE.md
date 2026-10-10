@@ -1,3 +1,14 @@
+## Current delivery scope
+
+Prioritize dependable collection, retained listing text, conservative costs and
+availability, owner decisions, bounded paid analysis and reliable notifications.
+The large implementation PR queue is being resolved, not extended. Do not resume
+its former automatic delivery plan. Source-observation ledgers, replay/evaluation
+platforms, reversible home grouping and multi-user infrastructure need a concrete
+product requirement before implementation. Keep collection and deployment manual
+until their operational configuration has been verified. See `docs/operations.md`
+and the review disposition record for current decisions.
+
 # CLAUDE.md
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.

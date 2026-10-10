@@ -1,19 +1,16 @@
-"""HTTP-level Anthropic API response tests using respx.
+"""HTTP-level Anthropic tests using the SDK's native httpx2 transport.
 
-Tests PropertyQualityFilter against realistic HTTP-level API responses,
-matching how Anthropic tests their own SDK. Unlike the existing ToolUseBlock
-mocks (which patch at the SDK client level), respx intercepts at the httpx
-transport layer, so we test that the SDK correctly deserializes the HTTP response.
-
-This complements (does not replace) the existing test_quality.py mock tests.
+The historical filename remains for handoff links. No process-wide aliases or
+legacy-httpx interception are used: production client construction, SDK request
+serialization and response parsing all execute against a native MockTransport.
 """
 
 import json
 from typing import Any
+from unittest.mock import Mock
 
-import httpx
+import httpx2
 import pytest
-import respx
 from pydantic import HttpUrl
 
 from home_finder.filters.quality import (
@@ -26,6 +23,25 @@ from home_finder.models import (
     PropertyImage,
     PropertySource,
 )
+
+pytestmark = pytest.mark.usefixtures("native_analysis_spending")
+
+
+@pytest.fixture
+async def native_api():
+    handler = Mock()
+
+    def respond(request: httpx2.Request) -> httpx2.Response:
+        assert request.method == "POST"
+        assert str(request.url) == "https://api.anthropic.com/v1/messages"
+        return handler(request)
+
+    handler.http_client = httpx2.AsyncClient(transport=httpx2.MockTransport(respond))
+    try:
+        yield handler
+    finally:
+        await handler.http_client.aclose()
+
 
 # ---------------------------------------------------------------------------
 # Golden HTTP response payloads (matching real Anthropic API format)
@@ -270,9 +286,9 @@ def cached_data_dir(tmp_path: Any, test_merged_property: MergedProperty) -> str:
     return data_dir
 
 
-def _make_quality_filter() -> PropertyQualityFilter:
+def _make_quality_filter(native_api: Mock) -> PropertyQualityFilter:
     """Create a PropertyQualityFilter with a real Anthropic client (no SDK mocks)."""
-    return PropertyQualityFilter(api_key="test-key-for-respx")
+    return PropertyQualityFilter(api_key="test-key-for-respx", http_client=native_api.http_client)
 
 
 # ---------------------------------------------------------------------------
@@ -281,21 +297,43 @@ def _make_quality_filter() -> PropertyQualityFilter:
 
 
 class TestTwoPhaseAnalysisViaHTTP:
-    """Test the full two-phase analysis through the HTTP layer with respx."""
+    """Test the full two-phase analysis through the native SDK HTTP layer."""
 
-    @respx.mock
-    async def test_full_two_phase_analysis(self, test_merged_property: MergedProperty) -> None:
+    @pytest.mark.parametrize(
+        ("description", "expected_epc"),
+        [
+            ("EPC rating C", "C"),
+            ("EPC rated C (potential B). Budget friendly flat.", "C"),
+            ("EPC rating is C", "C"),
+            ("No rating stated.", "unknown"),
+            ("EPC B. EPC C.", "unknown"),
+        ],
+    )
+    async def test_full_two_phase_analysis(
+        self,
+        native_api: Mock,
+        test_merged_property: MergedProperty,
+        description: str,
+        expected_epc: str,
+        cached_data_dir: str,
+    ) -> None:
         """Full two-phase analysis through real HTTP layer."""
-        route = respx.post("https://api.anthropic.com/v1/messages").mock(
+        test_merged_property = test_merged_property.model_copy(
+            update={"descriptions": {test_merged_property.canonical.source: description}}
+        )
+        route = native_api
+        native_api.configure_mock(
             side_effect=[
-                httpx.Response(200, json=PHASE1_VISUAL_RESPONSE),
-                httpx.Response(200, json=PHASE2_EVALUATION_RESPONSE),
+                httpx2.Response(200, json=PHASE1_VISUAL_RESPONSE),
+                httpx2.Response(200, json=PHASE2_EVALUATION_RESPONSE),
             ]
         )
 
-        quality_filter = _make_quality_filter()
+        quality_filter = _make_quality_filter(native_api)
         try:
-            results = await quality_filter.analyze_merged_properties([test_merged_property])
+            results = await quality_filter.analyze_merged_properties(
+                [test_merged_property], data_dir=cached_data_dir
+            )
         finally:
             await quality_filter.close()
 
@@ -314,7 +352,7 @@ class TestTwoPhaseAnalysisViaHTTP:
 
         # Phase 2 evaluation data parsed correctly
         assert analysis.listing_extraction is not None
-        assert analysis.listing_extraction.epc_rating == "C"
+        assert analysis.listing_extraction.epc_rating == expected_epc
         assert analysis.listing_extraction.broadband_type == "fttc"
         assert analysis.highlights is not None
         assert "Gas hob" in analysis.highlights
@@ -329,41 +367,45 @@ class TestTwoPhaseAnalysisViaHTTP:
         # Both phases were called
         assert route.call_count == 2
 
-    @respx.mock
-    async def test_request_headers(self, test_merged_property: MergedProperty) -> None:
+    async def test_request_headers(
+        self, native_api: Mock, test_merged_property: MergedProperty, cached_data_dir: str
+    ) -> None:
         """Requests should include correct Anthropic API headers."""
-        route = respx.post("https://api.anthropic.com/v1/messages").mock(
+        route = native_api
+        native_api.configure_mock(
             side_effect=[
-                httpx.Response(200, json=PHASE1_VISUAL_RESPONSE),
-                httpx.Response(200, json=PHASE2_EVALUATION_RESPONSE),
+                httpx2.Response(200, json=PHASE1_VISUAL_RESPONSE),
+                httpx2.Response(200, json=PHASE2_EVALUATION_RESPONSE),
             ]
         )
 
-        quality_filter = _make_quality_filter()
+        quality_filter = _make_quality_filter(native_api)
         try:
-            await quality_filter.analyze_merged_properties([test_merged_property])
+            await quality_filter.analyze_merged_properties(
+                [test_merged_property], data_dir=cached_data_dir
+            )
         finally:
             await quality_filter.close()
 
         # Check Phase 1 request headers
-        phase1_request = route.calls[0].request
+        phase1_request = route.call_args_list[0].args[0]
         assert phase1_request.headers["x-api-key"] == "test-key-for-respx"
         assert "anthropic-version" in phase1_request.headers
         assert phase1_request.headers["content-type"] == "application/json"
 
-    @respx.mock
     async def test_request_body_structure(
-        self, test_merged_property: MergedProperty, cached_data_dir: str
+        self, native_api: Mock, test_merged_property: MergedProperty, cached_data_dir: str
     ) -> None:
         """Phase 1 request body should contain images, system prompt, and tools."""
-        route = respx.post("https://api.anthropic.com/v1/messages").mock(
+        route = native_api
+        native_api.configure_mock(
             side_effect=[
-                httpx.Response(200, json=PHASE1_VISUAL_RESPONSE),
-                httpx.Response(200, json=PHASE2_EVALUATION_RESPONSE),
+                httpx2.Response(200, json=PHASE1_VISUAL_RESPONSE),
+                httpx2.Response(200, json=PHASE2_EVALUATION_RESPONSE),
             ]
         )
 
-        quality_filter = _make_quality_filter()
+        quality_filter = _make_quality_filter(native_api)
         try:
             await quality_filter.analyze_merged_properties(
                 [test_merged_property], data_dir=cached_data_dir
@@ -372,7 +414,7 @@ class TestTwoPhaseAnalysisViaHTTP:
             await quality_filter.close()
 
         # Parse Phase 1 request body
-        phase1_body = json.loads(route.calls[0].request.content)
+        phase1_body = json.loads(route.call_args_list[0].args[0].content)
 
         # Model and max_tokens
         assert phase1_body["model"] == "claude-sonnet-4-6"
@@ -397,24 +439,28 @@ class TestTwoPhaseAnalysisViaHTTP:
         assert phase1_body["thinking"]["type"] == "adaptive"
         assert phase1_body["tool_choice"] == {"type": "auto"}
 
-    @respx.mock
-    async def test_phase2_request_is_text_only(self, test_merged_property: MergedProperty) -> None:
+    async def test_phase2_request_is_text_only(
+        self, native_api: Mock, test_merged_property: MergedProperty, cached_data_dir: str
+    ) -> None:
         """Phase 2 should send text-only (no images) with output_config."""
-        route = respx.post("https://api.anthropic.com/v1/messages").mock(
+        route = native_api
+        native_api.configure_mock(
             side_effect=[
-                httpx.Response(200, json=PHASE1_VISUAL_RESPONSE),
-                httpx.Response(200, json=PHASE2_EVALUATION_RESPONSE),
+                httpx2.Response(200, json=PHASE1_VISUAL_RESPONSE),
+                httpx2.Response(200, json=PHASE2_EVALUATION_RESPONSE),
             ]
         )
 
-        quality_filter = _make_quality_filter()
+        quality_filter = _make_quality_filter(native_api)
         try:
-            await quality_filter.analyze_merged_properties([test_merged_property])
+            await quality_filter.analyze_merged_properties(
+                [test_merged_property], data_dir=cached_data_dir
+            )
         finally:
             await quality_filter.close()
 
         # Parse Phase 2 request body
-        phase2_body = json.loads(route.calls[1].request.content)
+        phase2_body = json.loads(route.call_args_list[1].args[0].content)
 
         # Phase 2 content is a text string (not a list of content blocks)
         phase2_content = phase2_body["messages"][0]["content"]
@@ -438,37 +484,43 @@ class TestTwoPhaseAnalysisViaHTTP:
 class TestHTTPErrorHandling:
     """Test error handling at the HTTP level."""
 
-    @respx.mock
-    async def test_phase1_server_error_graceful(self, test_merged_property: MergedProperty) -> None:
+    async def test_phase1_server_error_graceful(
+        self, native_api: Mock, test_merged_property: MergedProperty, cached_data_dir: str
+    ) -> None:
         """500 error on Phase 1 should fail gracefully (after SDK retries)."""
-        respx.post("https://api.anthropic.com/v1/messages").mock(
-            return_value=httpx.Response(
+        native_api.configure_mock(
+            return_value=httpx2.Response(
                 500,
                 json={"type": "error", "error": {"type": "api_error", "message": "overloaded"}},
             )
         )
 
-        quality_filter = PropertyQualityFilter(api_key="test-key", max_images=10)
+        quality_filter = PropertyQualityFilter(
+            api_key="test-key", max_images=10, http_client=native_api.http_client
+        )
         # Disable retries to speed up test
         import anthropic
 
-        quality_filter._client = anthropic.AsyncAnthropic(api_key="test-key", max_retries=0)
+        quality_filter._client = anthropic.AsyncAnthropic(
+            api_key="test-key", max_retries=0, http_client=native_api.http_client
+        )
 
         try:
             from home_finder.filters.quality import APIUnavailableError
 
             with pytest.raises(APIUnavailableError):
-                await quality_filter.analyze_single_merged(test_merged_property)
+                await quality_filter.analyze_single_merged(
+                    test_merged_property, data_dir=cached_data_dir
+                )
         finally:
             await quality_filter.close()
 
-    @respx.mock
     async def test_phase1_rate_limit_trips_circuit(
-        self, test_merged_property: MergedProperty
+        self, native_api: Mock, test_merged_property: MergedProperty, cached_data_dir: str
     ) -> None:
         """429 rate limit should trip circuit breaker."""
-        respx.post("https://api.anthropic.com/v1/messages").mock(
-            return_value=httpx.Response(
+        native_api.configure_mock(
+            return_value=httpx2.Response(
                 429,
                 json={
                     "type": "error",
@@ -478,31 +530,36 @@ class TestHTTPErrorHandling:
             )
         )
 
-        quality_filter = PropertyQualityFilter(api_key="test-key")
+        quality_filter = PropertyQualityFilter(
+            api_key="test-key", http_client=native_api.http_client
+        )
         import anthropic
 
-        quality_filter._client = anthropic.AsyncAnthropic(api_key="test-key", max_retries=0)
+        quality_filter._client = anthropic.AsyncAnthropic(
+            api_key="test-key", max_retries=0, http_client=native_api.http_client
+        )
 
         try:
             from home_finder.filters.quality import APIUnavailableError
 
             with pytest.raises(APIUnavailableError):
-                await quality_filter.analyze_single_merged(test_merged_property)
+                await quality_filter.analyze_single_merged(
+                    test_merged_property, data_dir=cached_data_dir
+                )
 
             # Circuit breaker should have recorded the failure
             assert quality_filter._breaker.failure_count >= 1
         finally:
             await quality_filter.close()
 
-    @respx.mock
     async def test_phase2_failure_raises_api_unavailable(
-        self, test_merged_property: MergedProperty
+        self, native_api: Mock, test_merged_property: MergedProperty, cached_data_dir: str
     ) -> None:
         """Phase 2 HTTP 500 should raise APIUnavailableError (circuit breaker)."""
-        respx.post("https://api.anthropic.com/v1/messages").mock(
+        native_api.configure_mock(
             side_effect=[
-                httpx.Response(200, json=PHASE1_VISUAL_RESPONSE),
-                httpx.Response(
+                httpx2.Response(200, json=PHASE1_VISUAL_RESPONSE),
+                httpx2.Response(
                     500,
                     json={
                         "type": "error",
@@ -512,14 +569,20 @@ class TestHTTPErrorHandling:
             ]
         )
 
-        quality_filter = PropertyQualityFilter(api_key="test-key")
+        quality_filter = PropertyQualityFilter(
+            api_key="test-key", http_client=native_api.http_client
+        )
         import anthropic
 
-        quality_filter._client = anthropic.AsyncAnthropic(api_key="test-key", max_retries=0)
+        quality_filter._client = anthropic.AsyncAnthropic(
+            api_key="test-key", max_retries=0, http_client=native_api.http_client
+        )
 
         try:
             with pytest.raises(APIUnavailableError):
-                await quality_filter.analyze_merged_properties([test_merged_property])
+                await quality_filter.analyze_merged_properties(
+                    [test_merged_property], data_dir=cached_data_dir
+                )
         finally:
             await quality_filter.close()
 
@@ -527,19 +590,22 @@ class TestHTTPErrorHandling:
 class TestTokenUsageParsing:
     """Test that token usage from HTTP responses is handled correctly."""
 
-    @respx.mock
-    async def test_cache_tokens_parsed(self, test_merged_property: MergedProperty) -> None:
+    async def test_cache_tokens_parsed(
+        self, native_api: Mock, test_merged_property: MergedProperty, cached_data_dir: str
+    ) -> None:
         """Cache read/creation tokens should be parsed from the HTTP response."""
-        respx.post("https://api.anthropic.com/v1/messages").mock(
+        native_api.configure_mock(
             side_effect=[
-                httpx.Response(200, json=PHASE1_VISUAL_RESPONSE),
-                httpx.Response(200, json=PHASE2_EVALUATION_RESPONSE),
+                httpx2.Response(200, json=PHASE1_VISUAL_RESPONSE),
+                httpx2.Response(200, json=PHASE2_EVALUATION_RESPONSE),
             ]
         )
 
-        quality_filter = _make_quality_filter()
+        quality_filter = _make_quality_filter(native_api)
         try:
-            results = await quality_filter.analyze_merged_properties([test_merged_property])
+            results = await quality_filter.analyze_merged_properties(
+                [test_merged_property], data_dir=cached_data_dir
+            )
         finally:
             await quality_filter.close()
 
