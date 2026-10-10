@@ -2,6 +2,18 @@
 {% if qa %}
 <section id="section-quality" class="detail-section quality-section">
     <h3>Quality Analysis</h3>
+    {% if qa.image_review_coverage %}
+    {% set coverage = qa.image_review_coverage %}
+    <p class="image-review-coverage">
+        Reviewed {{ coverage.reviewed_gallery_count }} of {{ coverage.available_gallery_count }} available gallery photos.
+        {% if coverage.reviewed_gallery_count < coverage.available_gallery_count %}
+        Other photos were not reviewed; photo completeness is unknown.
+        {% if coverage.rooms_not_seen_in_review %}
+        Not seen in reviewed photos: {{ coverage.rooms_not_seen_in_review | join(", ") }}.
+        {% endif %}
+        {% endif %}
+    </p>
+    {% endif %}
 
     {# Room-by-room grid #}
     <div class="quality-grid">

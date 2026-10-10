@@ -348,10 +348,10 @@
         {% if qa.listing_red_flags and qa.listing_red_flags.red_flag_count > 0 %}
         <div class="quality-alert alert-amber">
             <strong>Listing Red Flags ({{ qa.listing_red_flags.red_flag_count }}):</strong>
-            {% if qa.listing_red_flags.too_few_photos %}<p>Too few photos</p>{% endif %}
-            {% if qa.listing_red_flags.selective_angles %}<p>Selective camera angles</p>{% endif %}
+            {% if qa.listing_red_flags.too_few_photos %}<p>Few supplied photos</p>{% endif %}
+            {% if qa.listing_red_flags.selective_angles %}<p>Limited views in supplied photos</p>{% endif %}
             {% if qa.listing_red_flags.missing_room_photos %}
-            <p>No photos of: {{ qa.listing_red_flags.missing_room_photos | join(", ") }}</p>
+            <p>Not seen in supplied photos: {{ qa.listing_red_flags.missing_room_photos | join(", ") }}</p>
             {% endif %}
             {% if qa.listing_red_flags.description_concerns %}
             {% for concern in qa.listing_red_flags.description_concerns %}

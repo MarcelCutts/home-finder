@@ -408,9 +408,9 @@ def _format_quality_block(
         rf = analysis.listing_red_flags
         rf_parts = []
         if rf.missing_room_photos:
-            rf_parts.append(f"No photos of: {', '.join(rf.missing_room_photos)}")
+            rf_parts.append(f"Not seen in supplied photos: {', '.join(rf.missing_room_photos)}")
         if rf.too_few_photos:
-            rf_parts.append("Too few photos")
+            rf_parts.append("Few supplied photos")
         if rf_parts:
             lines.append(f"⚠️ {' · '.join(rf_parts)}")
 

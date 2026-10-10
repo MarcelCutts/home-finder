@@ -13,7 +13,12 @@ from home_finder.filters.quality import PropertyQualityFilter
 from home_finder.filters.quality_prompts import build_user_prompt
 from home_finder.filters.request_budget import input_reservation_tokens
 from home_finder.models import PropertyImage
-from home_finder.models.analysis import AnalysisConfig, AnalysisProvenance, PhaseConfig
+from home_finder.models.analysis import (
+    AnalysisConfig,
+    AnalysisProvenance,
+    ImageReviewCoverage,
+    PhaseConfig,
+)
 from home_finder.models.spend import SONNET_55_STANDARD_RATES, SpendDeferred, SpendPolicy
 from tests.test_filters.test_analysis_spend import CONTENT, rows
 from tests.test_filters.test_quality import _populate_image_cache
@@ -140,6 +145,9 @@ def test_visual_allowance_covers_configured_images_plus_floorplan_and_listing_co
         rent_trend="x" * 1000,
         hosting_tolerance="x" * 1000,
         has_labeled_floorplan=False,
+        image_review_coverage=ImageReviewCoverage(
+            reviewed_gallery_count=images, available_gallery_count=images + 1
+        ),
     )
     image = image_block("red")
     content = []

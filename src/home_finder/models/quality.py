@@ -11,7 +11,7 @@ from typing import Annotated, Any, Literal, Union, get_args, get_origin
 from pydantic import BaseModel, ConfigDict, field_validator, model_validator
 from pydantic.functional_validators import BeforeValidator
 
-from home_finder.models.analysis import AnalysisFailure, AnalysisProvenance
+from home_finder.models.analysis import AnalysisFailure, AnalysisProvenance, ImageReviewCoverage
 from home_finder.models.listing_text import ListingTextInputs
 
 # ---------------------------------------------------------------------------
@@ -432,6 +432,7 @@ class ViewingNotes(_LenientLiteralModel):
 _QUALITY_SUB_MODEL_FIELDS: frozenset[str] = frozenset(
     {
         "listing_text_inputs",
+        "image_review_coverage",
         "analysis_provenance",
         "analysis_failure",
         "kitchen",
@@ -458,6 +459,7 @@ class PropertyQualityAnalysis(_LenientLiteralModel):
 
     # Set by the application after model validation, never by model output.
     listing_text_inputs: ListingTextInputs | None = None
+    image_review_coverage: ImageReviewCoverage | None = None
     analysis_provenance: AnalysisProvenance | None = None
     analysis_failure: AnalysisFailure | None = None
 

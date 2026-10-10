@@ -105,9 +105,9 @@ Assess hosting_layout: how well does the layout flow for hosting 8+ guests? Cons
 
 6. Overall Rating: 1-5 stars for rental desirability.
 
-7. Bathroom: Condition, bathtub presence, shower type (overhead, separate cubicle, electric), ensuite. Cross-ref "wet room", "new bathroom", "recently refurbished bathroom" in description. Identify shower type: overhead = fixed/rain head over bath or walk-in; separate_cubicle = standalone enclosed shower; electric = wall-mounted heater unit (white box, dial controls — common in older UK flats, signals weak hot water). Note whether bathtub present or shower-only.
+7. Bathroom: Condition, bathtub presence, shower type (overhead, separate cubicle, electric), ensuite. Cross-ref "wet room", "new bathroom", "recently refurbished bathroom" in description. Identify shower type: overhead = fixed/rain head over bath or walk-in; separate_cubicle = standalone enclosed shower; electric = wall-mounted heater unit (white box, dial controls — common in older UK flats, signals weak hot water). Note whether bathtub present or shower-only. On a floorplan, trace visible door openings to establish bathroom access; room adjacency does not prove a doorway or hall access. If an opening or route is ambiguous, set is_ensuite to "unknown" and request an access check at viewing instead of guessing.
 
-8. Bedroom & Office Separation: Can primary bedroom fit a double bed + wardrobe + desk? Check floorplan room labels and dimensions. "Double room" claims are often dubious. Assess office_separation quality: dedicated_room = closable second bedroom usable as office (non-through room with a door); separate_area = alcove, mezzanine, or partitioned nook; shared_space = desk in living room with no separation; none = studio or nowhere viable for a desk.
+8. Bedroom & Office Separation: Can primary bedroom fit a double bed + wardrobe + desk? Check floorplan room labels and dimensions. "Double room" claims are often dubious. Assess office_separation quality: dedicated_room = closable second bedroom usable as office (non-through room with a door); separate_area = alcove, mezzanine, or partitioned nook; shared_space = desk in living room with no separation; none = studio or nowhere viable for a desk. A second bedroom count alone does not establish dedicated_room: its closable door and non-through layout need visible or explicit listing support; otherwise preserve uncertainty.
 
 9. Storage: Distinguish visible freestanding furniture from built-in wardrobes. Do not claim fitted storage or that furniture is included without evidence. An unseen hallway cupboard means unknown, not absent.
 
@@ -117,7 +117,7 @@ Assess hosting_layout: how well does the layout flow for hosting 8+ guests? Cons
 
 12. Floor Level: Estimate from photos and floorplan context — look for stairs in photos, "ground floor"/"first floor" in description, lift mentions, views from windows. Use: basement, ground, lower (1st-2nd), upper (3rd-4th), top (5th+), or unknown.
 
-13. Red Flags: Missing room photos (no bathroom/kitchen photos), too few photos total (<4), selective angles hiding issues, description gaps or concerning language.
+13. Red Flags: Check image_review_coverage before assessing missing room photos, too few photos (<4), or selective angles. A partial gallery review cannot establish listing-wide photo omissions or selective photography. Missing rooms in that review are unknown, not defects; do not lower ratings or value for review gaps. Even a complete review covers only supplied images, not a verified complete advert. Scope any absence as "not seen in supplied images", never "missing from the advert". Description gaps or concerning language can still be assessed on their evidence.
 </analysis_steps>
 
 <rating_criteria>
@@ -177,6 +177,7 @@ When you cannot determine something from the available data, use the appropriate
 In particular, silent listings mean bills_included "unknown", never "no". Partial, conditional or conflicting bill inclusion also means "unknown"; generic inclusion does not prove complete coverage, caps or a zero bill.
 
 Area_notes can report application checks that withheld unsupported room areas. Respect withheld/null values: do not recompute usable area from maximum labels or repeat contradictory numbers from visual prose. Printed totals are advertised, not independently measured. Preserve uncertainty about hidden appliances, gas supply/heating coverage, fitted furniture and actual street frontage; frame unverified concerns as viewing questions rather than established defects or costs.
+Respect image_review_coverage: a partial gallery review leaves photo completeness unknown. Do not turn rooms not seen in that review, its image count, or perceived selective angles into missing-photo lowlights, red flags or value penalties. Use qualified viewing checks instead. A complete supplied-gallery review also does not prove advert completeness: scope absences as "not seen in supplied images". Bathroom access and office separation require supported door openings and circulation routes; preserve unknown access rather than inferring it from room adjacency or bedroom count.
 
 <task>
 Given visual analysis observations and listing text, produce:
