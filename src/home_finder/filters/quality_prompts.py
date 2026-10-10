@@ -121,22 +121,20 @@ ceiling heights if visible.
 If a floorplan with dimensions is included:
 a) Read dimension labels for each room. UK floorplans use metric ("3.5m x 4.2m"), \
 imperial ("11'6" x 13'8""), or both. Convert imperial to metres (1 ft = 0.3048m).
-b) Preserve each readable room name and dimension label even when area is unknown. \
-Maximum lengths/widths of L-shaped, curved, tapered or otherwise irregular rooms \
-are bounding dimensions, not usable area. Never multiply them to claim room area. \
-Set area_basis to "rectangular_dimensions" only for a confirmed rectangular room, \
-"stated_on_floorplan" for a printed room area, otherwise "unknown" with area_sqm null.
-c) Double-check: re-examine each dimension you extracted against the floorplan image. \
-Flag uncertain readings by omitting length_m/width_m (set to null).
-d) Copy a printed INTERNAL whole-flat total into floorplan_total_area_sqm, even if \
-room labels are incomplete or inconsistent. Prefer that figure for total_area_sqm \
-with area_estimation_method "stated_on_floorplan"; it is an advertised figure, not \
-a verified measurement. Otherwise sum only complete, supported, non-overlapping \
-internal room areas ("measured_from_floorplan"). Never invent missing room areas.
-e) Compare room areas with the printed total. If even a partial room sum exceeds \
-it, retain labels and the printed total but leave precise room areas and \
-living_room_sqm null. Explain the conflict in area_notes. Do not repeat rejected \
-numbers or size-based conclusions in summary, notes or ratings.
+b) Retain readable room names and dimensions. Set area_scope: "internal" for dwelling \
+interior, "external" for balconies/terraces/gardens, "unknown" if unclear. Never count \
+external or unknown areas toward an internal total or its consistency check.
+c) Recheck labels; unreadable length_m/width_m must be null. Set area_basis to \
+"rectangular_dimensions" only for confirmed rectangles, "stated_on_floorplan" for \
+printed room areas, otherwise "unknown" with area_sqm null. Never multiply maximum \
+dimensions of L-shaped, curved, tapered or other irregular rooms into usable area.
+d) Copy a printed INTERNAL total to floorplan_total_area_sqm and total_area_sqm with \
+area_estimation_method "stated_on_floorplan", even with inconsistent room labels. \
+This is advertised, not verified. Otherwise use only complete, supported, \
+non-overlapping internal areas ("measured_from_floorplan"); never invent missing rooms.
+e) If supported internal areas, even a partial sum, exceed the internal total, \
+retain labels and the printed total but null internal room areas and living_room_sqm. \
+Explain in area_notes; omit rejected numbers and size conclusions from prose/ratings.
 f) living_room_sqm means supported usable living space, not a maximum rectangle or \
 whole-flat total. Identify kitchen/dining inclusion in area_notes; don't count it \
 twice or silently call it all living space. For office AND hosting 8+ people, \

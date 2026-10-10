@@ -38,6 +38,7 @@ def floorplan_response(*, reception_basis="rectangular_dimensions", reception_ar
                 "width_m": 6.53,
                 "area_sqm": reception_area,
                 "area_basis": reception_basis,
+                "area_scope": "internal",
             },
             {
                 "name": "Bedroom",
@@ -45,6 +46,7 @@ def floorplan_response(*, reception_basis="rectangular_dimensions", reception_ar
                 "width_m": 3.30,
                 "area_sqm": 16.3,
                 "area_basis": "rectangular_dimensions",
+                "area_scope": "internal",
             },
         ],
     )
@@ -207,10 +209,12 @@ def test_old_analysis_remains_readable_without_retroactive_area_changes():
     old["space"].pop("floorplan_total_area_sqm")
     for room in old["space"]["room_areas"]:
         room.pop("area_basis")
+        room.pop("area_scope")
     result = PropertyQualityAnalysis.model_validate(old)
     assert result.space.living_room_sqm == 43.8
     assert result.space.room_areas[0].area_sqm == 43.8
     assert result.space.floorplan_total_area_sqm is None
+    assert all(room.area_scope == "unknown" for room in result.space.room_areas)
 
 
 @pytest.mark.parametrize(

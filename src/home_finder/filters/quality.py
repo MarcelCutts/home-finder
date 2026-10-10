@@ -319,10 +319,14 @@ class _VisualAnalysisResponse(BaseModel):
         area_basis: Literal["stated_on_floorplan", "rectangular_dimensions", "unknown"] = Field(
             default="unknown",
             description=(
-                "Evidence for area_sqm: a printed room area or confirmed rectangular dimensions. "
-                "Use unknown for maximum dimensions, irregular outlines or uncertain geometry; "
-                "retain readable length/width labels but leave area_sqm null."
+                "Printed room area or confirmed rectangular dimensions; otherwise unknown "
+                "with area_sqm null."
             ),
+        )
+        area_scope: Literal["internal", "external", "unknown"] = Field(
+            description=(
+                "Internal dwelling area, external space (balcony/terrace/garden), or unclear."
+            )
         )
 
     class Space(BaseModel):
