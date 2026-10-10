@@ -1,8 +1,7 @@
 """Tests for Rightmove scraper."""
 
 from pathlib import Path
-from typing import Any
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import httpx
 import pytest
@@ -467,29 +466,12 @@ class TestRightmoveEarlyStop:
         known_ids = {p.source_id for p in page1_props}
         assert len(known_ids) >= 2
 
-        pages_fetched: list[int] = []
-
-        with patch("home_finder.scrapers.rightmove.BeautifulSoupCrawler") as MockCrawler:
-
-            def make_crawler(**kwargs: Any) -> MagicMock:
-                idx = len(pages_fetched)
-                mock = MagicMock()
-                handler: list[Any] = []
-                mock.router = MagicMock()
-                mock.router.default_handler = handler.append
-
-                async def run(urls: list[str]) -> None:
-                    ctx = MagicMock()
-                    ctx.soup = BeautifulSoup(rightmove_search_html, "html.parser")
-                    ctx.request.url = urls[0]
-                    await handler[0](ctx)
-
-                mock.run = run
-                pages_fetched.append(idx)
-                return mock
-
-            MockCrawler.side_effect = make_crawler
-
+        with patch.object(
+            rightmove_scraper,
+            "_fetch_page",
+            new_callable=AsyncMock,
+            return_value=rightmove_search_html,
+        ) as fetch:
             result = await rightmove_scraper.scrape(
                 min_price=1800,
                 max_price=2500,
@@ -499,7 +481,7 @@ class TestRightmoveEarlyStop:
                 known_source_ids=known_ids,
             )
 
-        assert len(pages_fetched) == 1  # Only page 1 fetched
+        assert fetch.await_count == 1
         assert {p.source_id for p in result.properties} == known_ids
         assert result.observations == result.properties
         assert result.stop_reason == "known_page"
@@ -515,41 +497,29 @@ class TestRightmoveEarlyStop:
         )
         known_ids = {page1_props[0].source_id}
 
-        pages_fetched: list[int] = []
+        empty = (
+            '<div class="l-searchResults"><div class="no-results">No properties found</div></div>'
+        )
+        with (
+            patch.object(
+                rightmove_scraper,
+                "_fetch_page",
+                new_callable=AsyncMock,
+                side_effect=[rightmove_search_html, empty],
+            ) as fetch,
+            patch.object(rightmove_scraper, "PAGE_DELAY_SECONDS", 0),
+        ):
+            result = await rightmove_scraper.scrape(
+                min_price=1800,
+                max_price=2500,
+                min_bedrooms=1,
+                max_bedrooms=2,
+                area="hackney",
+                known_source_ids=known_ids,
+            )
 
-        with patch("home_finder.scrapers.rightmove.BeautifulSoupCrawler") as MockCrawler:
-
-            def make_crawler(**kwargs: Any) -> MagicMock:
-                idx = len(pages_fetched)
-                mock = MagicMock()
-                handler: list[Any] = []
-                mock.router = MagicMock()
-                mock.router.default_handler = handler.append
-
-                async def run(urls: list[str]) -> None:
-                    ctx = MagicMock()
-                    if idx == 0:
-                        ctx.soup = BeautifulSoup(rightmove_search_html, "html.parser")
-                    else:
-                        ctx.soup = BeautifulSoup("<html></html>", "html.parser")
-                    ctx.request.url = urls[0]
-                    await handler[0](ctx)
-
-                mock.run = run
-                pages_fetched.append(idx)
-                return mock
-
-            MockCrawler.side_effect = make_crawler
-
-            with patch("asyncio.sleep", new_callable=AsyncMock):
-                result = await rightmove_scraper.scrape(
-                    min_price=1800,
-                    max_price=2500,
-                    min_bedrooms=1,
-                    max_bedrooms=2,
-                    area="hackney",
-                    known_source_ids=known_ids,
-                )
-
-        assert len(pages_fetched) >= 2  # Continued past page 1
+        assert fetch.await_count == 2
+        assert "&index=24" in fetch.call_args.args[1]
         assert len(result.properties) == len(page1_props)
+        assert result.stop_reason == "empty_page"
+        assert result.is_healthy

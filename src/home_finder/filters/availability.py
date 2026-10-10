@@ -16,6 +16,7 @@ from typing import Any
 
 from bs4 import BeautifulSoup
 
+from home_finder.scrapers.onthemarket_payloads import onthemarket_redux_state
 from home_finder.utils.http_evidence import is_challenge as is_challenge
 from home_finder.utils.listing_identity import listing_id as listing_id
 
@@ -57,7 +58,7 @@ def _primary_records(source: str, soup: BeautifulSoup) -> list[dict[str, Any]]:
                 record = (
                     _at(value, "props", "pageProps", "listing")
                     if source == "zoopla"
-                    else _at(value, "props", "initialReduxState", "property")
+                    else _at(onthemarket_redux_state(value), "property")
                     if source == "onthemarket"
                     else None
                 )
@@ -65,7 +66,7 @@ def _primary_records(source: str, soup: BeautifulSoup) -> list[dict[str, Any]]:
                 continue
             if isinstance(record, dict):
                 records.append(record)
-        except (json.JSONDecodeError, RecursionError):
+        except (ValueError, RecursionError):
             continue
     return records
 

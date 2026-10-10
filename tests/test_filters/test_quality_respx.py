@@ -424,7 +424,10 @@ class TestTwoPhaseAnalysisViaHTTP:
         assert len(phase1_body["system"]) == 1
         assert phase1_body["system"][0]["type"] == "text"
         assert phase1_body["system"][0]["cache_control"] == {"type": "ephemeral"}
-        assert "expert London rental property analyst" in phase1_body["system"][0]["text"]
+        assert (
+            "London rental property analyst assessing limited marketing evidence"
+            in phase1_body["system"][0]["text"]
+        )
 
         # Messages contain image blocks
         user_content = phase1_body["messages"][0]["content"]

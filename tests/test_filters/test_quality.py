@@ -5,7 +5,7 @@ from typing import Annotated, Any, Literal
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from anthropic.types import ToolUseBlock
+from anthropic.types import ToolUseBlock, Usage
 from pydantic import BaseModel as _BaseModel
 from pydantic import HttpUrl, ValidationError
 
@@ -197,7 +197,7 @@ class TestToolSchema:
         assert bed_props["can_fit_desk"]["enum"] == expected_enum
 
     def test_keeps_anyof_for_nullable_numeric_fields(self) -> None:
-        """Strict mode: only numeric fields retain anyOf for null."""
+        """Numeric and uncertain space-fit fields retain explicit null support."""
         visual_schema = VISUAL_ANALYSIS_TOOL["input_schema"]["properties"]
         eval_schema = _eval_schema_props()
 
@@ -207,9 +207,9 @@ class TestToolSchema:
         assert {"type": "number"} in living_room_sqm["anyOf"]
         assert {"type": "null"} in living_room_sqm["anyOf"]
 
-        # Space is_spacious_enough should now be plain boolean
+        # Unknown usable area must not be converted to a negative fit judgement.
         is_spacious = visual_schema["space"]["properties"]["is_spacious_enough"]
-        assert is_spacious["type"] == "boolean"
+        assert is_spacious["anyOf"] == [{"type": "boolean"}, {"type": "null"}]
 
         # listing_extraction.service_charge_pcm should use anyOf — Phase 2
         service_charge = eval_schema["listing_extraction"]["properties"]["service_charge_pcm"]
@@ -713,9 +713,7 @@ def create_mock_response(
     mock_response = MagicMock()
     mock_response.content = [tool_block]
     mock_response.stop_reason = stop_reason
-    mock_response.usage = MagicMock()
-    mock_response.usage.cache_read_input_tokens = 0
-    mock_response.usage.cache_creation_input_tokens = 0
+    mock_response.usage = Usage(input_tokens=100, output_tokens=50)
     return mock_response
 
 
@@ -733,11 +731,7 @@ def create_mock_eval_response(eval_data: dict[str, Any]) -> MagicMock:
     text_block.text = json.dumps(eval_data)
     mock_response.content = [text_block]
     mock_response.stop_reason = "end_turn"
-    mock_response.usage = MagicMock()
-    mock_response.usage.input_tokens = 100
-    mock_response.usage.output_tokens = 50
-    mock_response.usage.cache_read_input_tokens = 0
-    mock_response.usage.cache_creation_input_tokens = 0
+    mock_response.usage = Usage(input_tokens=100, output_tokens=50)
     return mock_response
 
 
@@ -923,6 +917,7 @@ class TestPropertyQualityFilter:
         mock_response = MagicMock()
         mock_response.content = []
         mock_response.stop_reason = "max_tokens"  # Unexpected stop reason
+        mock_response.usage = Usage(input_tokens=100, output_tokens=50)
 
         _populate_image_cache(str(tmp_path), sample_merged_property)
 
@@ -1093,7 +1088,10 @@ class TestPropertyQualityFilter:
         assert len(system1) == 1
         assert system1[0]["type"] == "text"
         assert system1[0]["cache_control"] == {"type": "ephemeral"}
-        assert "expert London rental property analyst" in system1[0]["text"]
+        assert (
+            "London rental property analyst assessing limited marketing evidence"
+            in system1[0]["text"]
+        )
 
         # Phase 2 system prompt (messages.create, second call)
         assert len(create_calls) == 2
@@ -3899,11 +3897,7 @@ class TestEvalHelpers:
         text_block.text = json.dumps(eval_data_with_invalid)
         mock_eval_response.content = [text_block]
         mock_eval_response.stop_reason = "end_turn"
-        mock_eval_response.usage = MagicMock()
-        mock_eval_response.usage.input_tokens = 100
-        mock_eval_response.usage.output_tokens = 50
-        mock_eval_response.usage.cache_read_input_tokens = 0
-        mock_eval_response.usage.cache_creation_input_tokens = 0
+        mock_eval_response.usage = Usage(input_tokens=100, output_tokens=50)
 
         # messages.create is called for both Phase 1 and Phase 2.
         # Return Phase 1 visual response first, then Phase 2 eval response.

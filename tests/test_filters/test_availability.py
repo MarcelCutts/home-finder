@@ -47,6 +47,54 @@ def assess(source, html, **kwargs):
     )
 
 
+@pytest.mark.parametrize(
+    ("status", "expected"),
+    [
+        ("available", ListingStatus.ACTIVE),
+        ("removed", ListingStatus.REMOVED),
+        ("let agreed", ListingStatus.LET_AGREED),
+    ],
+)
+def test_onthemarket_current_envelope_status(status, expected):
+    value = {
+        "props": {
+            "pageProps": {
+                "initialReduxState": {
+                    "property": {"id": 123, "status": status},
+                    "recommendations": [{"id": 456, "status": "removed"}],
+                }
+            }
+        }
+    }
+    html = f'<script id="__NEXT_DATA__">{json.dumps(value)}</script>'
+    assert assess("onthemarket", html).status == expected
+
+
+@pytest.mark.parametrize(
+    "state",
+    [
+        None,
+        [],
+        {},
+        {"property": None},
+        {"property": []},
+        {"property": {}},
+        {"property": {"id": 123, "images": [], "floorplans": []}},
+        {"property": {"id": 456, "status": "removed"}},
+        {"results": {"suggestedProperties": [{"id": 123, "status": "removed"}]}},
+    ],
+)
+def test_onthemarket_unknown_current_state_cannot_borrow_legacy_status(state):
+    value = {
+        "props": {
+            "pageProps": {"initialReduxState": state},
+            "initialReduxState": {"property": {"id": 123, "status": "removed"}},
+        }
+    }
+    html = f'<script id="__NEXT_DATA__">{json.dumps(value)}</script>'
+    assert assess("onthemarket", html).status == ListingStatus.UNKNOWN
+
+
 @pytest.mark.parametrize("source", URLS)
 @pytest.mark.parametrize(
     "status,expected", [("available", ListingStatus.ACTIVE), ("removed", ListingStatus.REMOVED)]

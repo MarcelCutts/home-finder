@@ -12,7 +12,6 @@ import aiosqlite
 
 from home_finder.logging import get_logger
 from home_finder.models.spend import (
-    SONNET_STANDARD_RATES,
     AttemptSpec,
     ConfirmedCost,
     ProviderRejection,
@@ -20,6 +19,7 @@ from home_finder.models.spend import (
     UsageSettlement,
     VisualCheckpointWrite,
     nanousd,
+    rate_card_for,
     usd_text,
 )
 from home_finder.models.spend import (
@@ -126,7 +126,8 @@ class SpendRepository:
 
     async def admit(self, spec: AttemptSpec, policy: SpendPolicy) -> str:
         """Reserve and record exactly one attempt before any network dispatch."""
-        reserve = SONNET_STANDARD_RATES.reservation(spec.phase_config)
+        rates = rate_card_for(spec.phase_config.model)
+        reserve = rates.reservation(spec.phase_config)
         if reserve > nanousd(policy.per_call_usd):
             raise SpendDeferred("per_call_limit")
         attempt_id = uuid4().hex
@@ -187,8 +188,8 @@ class SpendRepository:
                     spec.request_sha256,
                     spec.provenance.model_dump_json(),
                     spec.provenance.fingerprint,
-                    SONNET_STANDARD_RATES.version,
-                    SONNET_STANDARD_RATES.model_dump_json(),
+                    rates.version,
+                    rates.model_dump_json(),
                     policy.model_dump_json(),
                     utc_stamp(now),
                     reserve,
@@ -254,7 +255,14 @@ class SpendRepository:
             # Read the frozen card, rather than silently repricing old attempts.
             from home_finder.models.spend import RateCard
 
-            cost = RateCard.model_validate_json(row["rates_json"]).cost(settlement.usage)
+            rates = RateCard.model_validate_json(row["rates_json"])
+            if (rates.provider, rates.model, rates.version) != (
+                row["provider"],
+                row["model"],
+                row["rate_version"],
+            ):
+                raise ValueError("Frozen rate card does not match the admitted attempt")
+            cost = rates.cost(settlement.usage)
             if checkpoint is not None and (
                 row["phase"] != "visual" or settlement.result != "success"
             ):

@@ -3,6 +3,7 @@
 import asyncio
 import json
 import re
+from dataclasses import dataclass, field
 from typing import Any
 
 from curl_cffi.requests import AsyncSession
@@ -11,12 +12,21 @@ from tenacity import retry, retry_if_exception_type, stop_after_attempt
 
 from home_finder.logging import get_logger
 from home_finder.models import FurnishType, Property, PropertySource
-from home_finder.scrapers.base import BaseScraper, ScrapeResult
+from home_finder.scrapers.base import BaseScraper, ScrapeCancelled, ScrapeResult
 from home_finder.scrapers.constants import BROWSER_HEADERS
+from home_finder.scrapers.onthemarket_payloads import onthemarket_redux_state
 from home_finder.scrapers.parsing import extract_bedrooms, extract_postcode, extract_price
 from home_finder.scrapers.retry import SCRAPER_WAIT, RetryableHttpError
 
 logger = get_logger(__name__)
+
+
+@dataclass
+class _SearchPage:
+    """Keep valid listings and parse failures from the same page together."""
+
+    properties: list[Property] = field(default_factory=list)
+    parse_errors: int = 0
 
 
 class OnTheMarketScraper(BaseScraper):
@@ -36,6 +46,7 @@ class OnTheMarketScraper(BaseScraper):
     def __init__(self, *, proxy_url: str = "") -> None:
         self._session: AsyncSession | None = None  # type: ignore[type-arg]
         self._proxy_url = proxy_url
+        self._source_blocked = False
 
     async def _get_session(self) -> AsyncSession:  # type: ignore[type-arg]
         """Get or create a reusable curl_cffi session."""
@@ -52,6 +63,11 @@ class OnTheMarketScraper(BaseScraper):
     @property
     def source(self) -> PropertySource:
         return PropertySource.ONTHEMARKET
+
+    @property
+    def should_skip_remaining_areas(self) -> bool:
+        """Stop this scraper instance after a forbidden response or exhausted rate limit."""
+        return self._source_blocked
 
     async def scrape(
         self,
@@ -87,31 +103,36 @@ class OnTheMarketScraper(BaseScraper):
 
             html = await self._fetch_page(url)
             if html is None:
-                return None  # Signals fetch failure to _paginate
+                # _fetch_page has already applied its retry budget. Raising stops
+                # this area instead of spending that budget on every later page.
+                raise OSError("onthemarket_fetch_failed")
 
             # Parse __NEXT_DATA__ JSON
-            properties = self._parse_next_data(html)
-            if properties is None:
-                parse_errors += 1
-                return []
+            parsed = self._parse_next_data(html)
+            parse_errors += parsed.parse_errors
             logger.info(
                 "scraped_onthemarket_page",
                 url=url,
                 page=page,
-                properties_found=len(properties),
+                properties_found=len(parsed.properties),
+                parse_errors=parsed.parse_errors,
             )
-            return properties
+            return parsed.properties
 
         async def delay() -> None:
             await asyncio.sleep(self.PAGE_DELAY_SECONDS)
 
-        result = await self._paginate(
-            fetch_page,
-            max_pages=self.MAX_PAGES,
-            known_source_ids=known_source_ids,
-            max_results=max_results,
-            page_delay=delay,
-        )
+        try:
+            result = await self._paginate(
+                fetch_page,
+                max_pages=self.MAX_PAGES,
+                known_source_ids=known_source_ids,
+                max_results=max_results,
+                page_delay=delay,
+            )
+        except ScrapeCancelled as exc:
+            exc.result.parse_errors += parse_errors
+            raise
         result.parse_errors += parse_errors
         if parse_errors:
             result.stop_reason = "parse_error"
@@ -122,13 +143,17 @@ class OnTheMarketScraper(BaseScraper):
             total_properties=len(result.properties),
             pages_fetched=result.pages_fetched,
             pages_failed=result.pages_failed,
+            parse_errors=result.parse_errors,
         )
 
         return result
 
     async def _fetch_page(self, url: str) -> str | None:
         """Fetch page using curl_cffi with Chrome impersonation and retry on 429/5xx."""
+        if self._source_blocked:
+            return None
         session = await self._get_session()
+        rate_limited = False
 
         @retry(
             stop=stop_after_attempt(self.MAX_RETRIES),
@@ -137,6 +162,7 @@ class OnTheMarketScraper(BaseScraper):
             reraise=True,
         )
         async def _do_fetch() -> str:
+            nonlocal rate_limited
             kwargs: dict[str, object] = {
                 "impersonate": "chrome",
                 "headers": BROWSER_HEADERS,
@@ -150,9 +176,13 @@ class OnTheMarketScraper(BaseScraper):
                 text: str = response.text
                 return text
 
+            if response.status_code == 429:
+                rate_limited = True
             if response.status_code == 429 or response.status_code >= 500:
                 raise RetryableHttpError(response.status_code, url)
 
+            if response.status_code == 403:
+                self._source_blocked = True
             logger.warning(
                 "onthemarket_http_error",
                 status=response.status_code,
@@ -164,6 +194,8 @@ class OnTheMarketScraper(BaseScraper):
             result = await _do_fetch()
             return result if result else None
         except RetryableHttpError as e:
+            if rate_limited:
+                self._source_blocked = True
             logger.warning(
                 "onthemarket_retries_exhausted",
                 url=url,
@@ -172,13 +204,16 @@ class OnTheMarketScraper(BaseScraper):
             )
             return None
         except Exception as e:
+            if rate_limited:
+                self._source_blocked = True
             logger.error("onthemarket_fetch_exception", error=str(e), url=url, exc_info=True)
             return None
 
-    def _parse_next_data(self, html: str) -> list[Property] | None:
+    def _parse_next_data(self, html: str) -> _SearchPage:
         """Parse properties from __NEXT_DATA__ JSON.
 
-        Returns None on parse error (distinct from empty list meaning no listings).
+        Only an explicit results.list array can be a healthy empty result.
+        Retain valid listings while counting every malformed envelope or row.
         """
         match = re.search(
             r'<script id="__NEXT_DATA__"[^>]*>(.*?)</script>',
@@ -187,30 +222,29 @@ class OnTheMarketScraper(BaseScraper):
         )
         if not match:
             logger.warning("onthemarket_no_next_data")
-            return None
+            return _SearchPage(parse_errors=1)
 
         try:
             data = json.loads(match.group(1))
-            listings = (
-                data.get("props", {})
-                .get("initialReduxState", {})
-                .get("results", {})
-                .get("list", [])
-            )
-        except (json.JSONDecodeError, KeyError) as e:
+            listings = onthemarket_redux_state(data)["results"]["list"]
+            if not isinstance(listings, list):
+                raise ValueError("invalid_results_list")
+        except (ValueError, KeyError, TypeError) as e:
             logger.warning("onthemarket_parse_failed", error=str(e))
-            return None
+            return _SearchPage(parse_errors=1)
 
-        properties: list[Property] = []
+        result = _SearchPage()
         for listing in listings:
             try:
                 prop = self._listing_to_property(listing)
-                if prop:
-                    properties.append(prop)
+                if prop is None:
+                    raise ValueError("missing_required_listing_fields")
+                result.properties.append(prop)
             except Exception as e:
+                result.parse_errors += 1
                 logger.warning("onthemarket_listing_parse_failed", error=str(e))
 
-        return properties
+        return result
 
     def _listing_to_property(self, listing: dict[str, Any]) -> Property | None:
         """Convert a listing dict to a Property."""

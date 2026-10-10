@@ -50,8 +50,8 @@ def sample_listing() -> dict[str, Any]:
     }
 
 
-@pytest.fixture
-def sample_next_data(sample_listing: dict[str, Any]) -> str:
+@pytest.fixture(params=["legacy", "page_props"])
+def sample_next_data(sample_listing: dict[str, Any], request: pytest.FixtureRequest) -> str:
     """Sample HTML with __NEXT_DATA__ JSON."""
     next_data = {
         "props": {
@@ -81,6 +81,8 @@ def sample_next_data(sample_listing: dict[str, Any]) -> str:
             }
         }
     }
+    if request.param == "page_props":
+        next_data = {"props": {"pageProps": next_data["props"]}}
     data = json.dumps(next_data)
     script = f'<script id="__NEXT_DATA__" type="application/json">{data}</script>'
     return f"<html><body>{script}</body></html>"
@@ -132,7 +134,7 @@ class TestOnTheMarketScraper:
         empty_next_data = '{"props":{"initialReduxState":{"results":{"list":[]}}}}'
         mock_response_empty = MagicMock()
         mock_response_empty.status_code = 200
-        mock_response_empty.text = empty_next_data
+        mock_response_empty.text = f'<script id="__NEXT_DATA__">{empty_next_data}</script>'
 
         mock_session = MagicMock()
         mock_session.get = AsyncMock(side_effect=[mock_response_with_data, mock_response_empty])
@@ -164,8 +166,10 @@ class TestOnTheMarketParser:
         self, onthemarket_scraper: OnTheMarketScraper, sample_next_data: str
     ) -> None:
         """Test parsing of __NEXT_DATA__ JSON."""
-        properties = onthemarket_scraper._parse_next_data(sample_next_data)
+        result = onthemarket_scraper._parse_next_data(sample_next_data)
+        properties = result.properties
 
+        assert result.parse_errors == 0
         assert len(properties) == 3
 
         # Check first property
@@ -254,14 +258,16 @@ class TestOnTheMarketParser:
         """Test parsing page with no results."""
         next_data = '{"props":{"initialReduxState":{"results":{"list":[]}}}}'
         html = f'<html><body><script id="__NEXT_DATA__">{next_data}</script></body></html>'
-        properties = onthemarket_scraper._parse_next_data(html)
-        assert len(properties) == 0
+        result = onthemarket_scraper._parse_next_data(html)
+        assert result.properties == []
+        assert result.parse_errors == 0
 
     def test_parse_no_next_data(self, onthemarket_scraper: OnTheMarketScraper) -> None:
         """Test parsing page without __NEXT_DATA__."""
         html = "<html><body><p>No data</p></body></html>"
-        properties = onthemarket_scraper._parse_next_data(html)
-        assert properties is None
+        result = onthemarket_scraper._parse_next_data(html)
+        assert result.properties == []
+        assert result.parse_errors == 1
 
 
 class TestOnTheMarketEarlyStop:

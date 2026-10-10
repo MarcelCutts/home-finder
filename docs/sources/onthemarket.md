@@ -15,10 +15,12 @@
 
 ## Detail Page Extraction
 
-Same `__NEXT_DATA__` JSON structure as search, but at a different Redux path. Image URLs may have `original`, `largeUrl`, or `url` fields — tried in priority order, with a fallback that constructs URLs from a `prefix` field. Detail page requests are throttled at `_OTM_MIN_INTERVAL`.
+Search, detail enrichment, and availability share an explicit selector for the current `props.pageProps.initialReduxState` and legacy `props.initialReduxState` envelopes. Detail data comes from that state's `property` object and still must match the requested advert's identity. Missing or malformed state fails extraction and cannot supply availability status; empty media arrays in a valid, identified property remain valid. Image URLs may have `original`, `largeUrl`, or `url` fields — tried in priority order, with a fallback that constructs URLs from a `prefix` field. Detail page requests are throttled at `_OTM_MIN_INTERVAL`.
 
 ## Known Quirks
 
+- **Search envelopes**: Read `props.pageProps.initialReduxState.results.list` on current pages and `props.initialReduxState.results.list` on legacy pages. When `pageProps` is present it takes precedence, including empty or malformed data. Only an explicit list (including `[]`) is valid; missing/malformed data and rejected listings increment parse errors. Valid rows from a partially malformed page remain available, but the scrape is unhealthy. Never substitute `suggestedProperties` for the search results.
+- **Request bounds**: Retry 429, 5xx and transport exceptions up to four total attempts per page. A failed page stops that area's pagination. A 403 stops immediately; exhausting attempts after any 429 also stops further areas for that scraper instance, even if later attempts fail with 5xx or transport errors. A recovered request or failures without a source block remain eligible for the next area. Each pipeline run creates a new scraper instance.
 - **Image URL variations**: Multiple possible URL fields per image with different resolution semantics. The fallback `prefix`-based construction is a safety net for missing fields.
 - **Coordinate field naming**: Search results use `location.lon` (not `lng` like other portals).
 

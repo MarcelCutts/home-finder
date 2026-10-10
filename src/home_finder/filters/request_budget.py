@@ -3,7 +3,10 @@
 This is a local reservation policy, not a provider dollar-limit API. It accepts
 only inline text and static images. Text/schema JSON is charged at twice its
 UTF-8 byte length, plus 16,384 tokens for framing and provider overhead. Each
-image reserves 5,000 visual tokens (above Sonnet 4.6's 1,568-token maximum).
+image reserves 5,000 visual tokens (above Sonnet 4.6's 1,568-token maximum and
+Sonnet 5.5's 4,784-token high-resolution maximum). The byte-based text bound
+also covers the newer tokenizer; it does not assume the legacy token count.
+See https://platform.claude.com/docs/en/build-with-claude/vision (2026-10-10).
 Unknown request shapes cannot use the smaller reservation.
 """
 
