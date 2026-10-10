@@ -80,7 +80,9 @@ historical configuration parsing remains unchanged.
    actual model outputs against retained source text and a small image sample.
 5. Retain JSON logs, heartbeat cost/hold counts, attempt receipts and before/after
    database audits. Check foreign keys, integrity, group memberships, floorplan
-   origin, checkpoint consumption, terminal outcomes and cumulative cost.
+   origin, checkpoint consumption, terminal outcomes and cumulative cost. Compare
+   intended work with successful, failed and deferred counts explicitly: clean
+   accounting/integrity and a completed pipeline do not prove model success.
 6. Use Telegram fault tests for delivery qualification in this round. Live sends
    are not necessary to prioritize collection/assessment; do not claim live
    Telegram delivery has been qualified.
@@ -457,6 +459,8 @@ quality corpus.
 | #58 | Preserve yes/no/unknown outdoor access and include patios/courtyards. | Storage/filter/map/fit/UI parity, historical-unknown and positive-badge contradiction tests. Independent review's explicit-negative/positive-badge defect is fixed. Old silent flags remain unknown; raw historical assessments are not rewritten. |
 | #59 | Persist application-owned supplied-gallery coverage and prevent subset omissions becoming advert defects. | Native prompt-identity, checkpoint-reuse and typed-result tests; model-estimated prior area is excluded from source-area context. All 1–20 image bounds pass after prompt compaction. Free-form ratings and misplaced prose are not guaranteed by these typed guards. |
 | #60 | Record dry-run runs/events, correlated phase logs and terminal outcomes. | Combined 3,753 tests pass at 89.68% branch-inclusive coverage; 635 focused checks and static gates pass. Independent review reproduced and verified repairs for both primary-error masking and cancellation arriving during cleanup, on Python 3.11 and 3.14. |
+| #61 | Keep mobile result cards inside their grid. | A 24-card fictional browser case reproduces the offscreen wrapper's 380px automatic minimum overflowing a 358px grid. One CSS constraint fixes it; all cards fit at 320, 390, 768 and 1440px. Document scroll width alone had missed the clipping. |
+| #62 | Accept validated static GIFs and preserve animation checks during resizing. | 236 focused native tests and exact-byte replay; eight GIF/WebP boundary cases prevent first-frame-only admission. The formerly deferred home passes both live phases after repair. Strict-output experiments were rejected by the provider and removed. |
 
 The complete local candidate is `81dd45c392ceb0f1bdf5291cffd5f3aca98f9e73`.
 Its five test warnings were blocked socket/DNS attempts, not successful network
@@ -493,7 +497,7 @@ recovery; these distinct outcomes must not be reported as fifty successes.
 
 The batch cost $3.003109600; cumulative accounting reached $5.268742750 across 167
 settled requests, with zero holds, unresolved attempts or over-reservations. All
-74 current assessments pass the mechanical arithmetic/provenance checks. Every
+74 current assessments pass the mechanical area-consistency checks. Every
 one of the 48 new assessments records complete supplied-gallery coverage of five
 to eight photos; the twenty-image allowance was not exhausted. Their
 outdoor claims are 20 yes, 24 unknown and four no. These counts do not validate
@@ -517,6 +521,47 @@ documented explicit limits of 24 and 16, and all twelve objects already prohibit
 additional fields. Qualifying that option is a small response to the observed
 type/missing-field failure. Local validation and stop-reason checks must remain;
 schema correctness does not establish visual accuracy.
+
+That distinction mattered immediately: `native-contract-canary-01` on candidate
+`2b4de0e` reached the provider with the static GIF, but its strict visual grammar
+was rejected with HTTP 400 as too large to compile. The run finished in 1.791
+seconds with zero assessments. The rejected request settled at zero charge;
+cumulative spending stayed $5.268742750, with no holds, integrity errors or
+notifications. The draft is not accepted merely because its offline schema
+checks passed. A bounded reduction in optional schema branching must pass a live
+canary before strict mode can ship. The all-required, no-default-annotations wire
+variant in `native-contract-canary-02` was also rejected, in 1.632 seconds with
+zero charge and zero holds. Both strict changes were reverted. Final #62 retains
+the existing visual tool mode and local validation; simplifying the wider
+assessment contract is a future measured decision, not an automatic rollout task.
+
+`static-gif-canary-01` then exercised the final repair `d0c1c28` on the previously
+deferred home: eight JPEG gallery images plus its original static GIF plan. Both
+model phases succeeded and the assessment persisted in 21.724 seconds for
+$0.094775. Cumulative cost reached $5.363517750 across 171 settled attempts,
+including the two zero-charge grammar rejections. Holds and integrity checks are
+clear, the successful checkpoint was consumed, and the new delivery intent remains
+queued without a Telegram send. Sixteen homes remain pending after this recovery.
+
+A fresh independent review selected five of those 48 successes, excluding all
+26 previously assessed homes, and inspected their 37 gallery photographs and
+three plans. Their scalar database projections agree with the stored assessment
+JSON. The review exposed a separate deterministic error: the room-sum guard
+included a balcony in a comparison against internal floor area, then cleared
+otherwise valid internal-room measurements and notes. A synthetic reproduction
+through the pinned schema and guard established the cause. The repair gives room
+areas explicit internal/external/unknown scope; only supported internal areas
+may challenge an internal total. Historical unknown scope must remain unknown.
+
+Other findings remain evidence-quality limits: stylistic updating badges can
+overstate supporting observations; narrow garden-access wording can become a
+broader outdoor-absence claim; some explicit bills phrasings remain unknown; and
+the model can label a listing-text area as floorplan evidence or overstate
+rectangular-room certainty. Agreement between JSON and database columns does not
+validate those interpretations. These cases belong in the material-field corpus
+and owner review, not in a claim of general assessment accuracy. The five-case
+sample contains no newly assessed partial or greater-than-eight-photo gallery;
+the separate fifteen-gallery-image access canary covers a larger supplied set.
 
 Anthropic's [vision guidance](https://platform.claude.com/docs/en/build-with-claude/vision-coordinates)
 describes limits to spatial reasoning and recommends visual spot checks; small
