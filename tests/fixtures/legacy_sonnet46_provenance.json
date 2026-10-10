@@ -1,0 +1,35 @@
+{
+  "version": 3,
+  "configuration": {
+    "version": 1,
+    "visual": {
+      "provider": "anthropic",
+      "model": "claude-sonnet-4-6",
+      "reasoning": "adaptive",
+      "effort": null,
+      "max_output_tokens": 21000,
+      "request_timeout_seconds": 240.0,
+      "connect_timeout_seconds": 5.0,
+      "sdk_retries": 1,
+      "output_contract": "visual_tool_v1"
+    },
+    "evaluation": {
+      "provider": "anthropic",
+      "model": "claude-sonnet-4-6",
+      "reasoning": "disabled",
+      "effort": null,
+      "max_output_tokens": 4096,
+      "request_timeout_seconds": 60.0,
+      "connect_timeout_seconds": 5.0,
+      "sdk_retries": 1,
+      "output_contract": "evaluation_schema_v1"
+    }
+  },
+  "sdk_version": "fixture-sdk",
+  "max_images": 20,
+  "prompt_version": "two_phase_2026_09_28_v1",
+  "visual_system_sha256": "e00b4dd05802e501dc20e00b3b9616b8932a21ed72ca8a75260f763988c8dfc3",
+  "evaluation_system_sha256": "17465756eea1354df6b25b6726d0f77f4ba31d5983b0a5eb49c3e9368fdf0934",
+  "visual_output_sha256": "aee770c2011f71b3e89c9d729aecdc90cf4f1f4301d36da8af814bc1d543062c",
+  "evaluation_output_sha256": "ec16dcc41c8c250445ff3438d5dd1595df72702098b78f11945b3b68437ed3ad"
+}

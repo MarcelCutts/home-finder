@@ -46,10 +46,10 @@ async def test_metered_requests_preserve_baseline_except_explicit_billing_scope(
             energy_estimate=None,
             hosting_tolerance=None,
         )
-    # Recorded with SDK 0.81.0's real serializer and native mocked HTTP client.
-    # Change deliberately alongside an approved prompt/contract change, never
-    # merely to accommodate a transport upgrade.
-    # Evaluation includes the guidance review date refreshed on 10 October 2026.
+    # Native mocked HTTP snapshots intentionally refreshed for the evidence
+    # repair's two system prompts and visual area schema. Do not refresh these
+    # merely to accommodate a transport upgrade. Billing scope, defaults and
+    # timeouts remain pinned below; historical provenance is tested separately.
     payloads = [json.loads(r.content) for r in requests]
     for payload in payloads:
         assert payload.pop("service_tier") == "standard_only"
@@ -57,8 +57,8 @@ async def test_metered_requests_preserve_baseline_except_explicit_billing_scope(
     assert [
         hashlib.sha256(json.dumps(body, sort_keys=True).encode()).hexdigest() for body in payloads
     ] == [
-        "05007bbf2d261d843c31919c2a52daba72e6f3fb6ec202379413aca80323788b",
-        "41ff19c2bb1fad136c687f2f906caa3a828271e895bdf367b584fd594abb531e",
+        "146041cb46895d533a4a25a354b6049372d775bafc8063e0e28a9f079e90edb6",
+        "9e7a194ce1e78ea63eae97f690337cd35a68015c13aef71ded4e057d3a7a10b2",
     ]
     assert [r.extensions["timeout"]["read"] for r in requests] == [240.0, 60.0]
     assert [r.extensions["timeout"]["connect"] for r in requests] == [5.0, 5.0]

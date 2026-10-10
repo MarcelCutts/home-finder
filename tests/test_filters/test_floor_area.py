@@ -375,7 +375,13 @@ class TestSpaceAnalysisRoomAreas:
         )
         d = space.model_dump()
         assert d["room_areas"] == [
-            {"name": "Kitchen", "length_m": 3.0, "width_m": 2.5, "area_sqm": 7.5}
+            {
+                "name": "Kitchen",
+                "length_m": 3.0,
+                "width_m": 2.5,
+                "area_sqm": 7.5,
+                "area_basis": "unknown",
+            }
         ]
         assert d["area_estimation_method"] == "measured_from_floorplan"
 

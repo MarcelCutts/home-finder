@@ -29,7 +29,12 @@ from home_finder.filters.analysis_contracts import (
     failure as output_failure,
 )
 from home_finder.filters.analysis_spend import AnalysisSpendMeter, visual_input_key
-from home_finder.filters.listing_text import select_listing_text, supported_council_tax_band
+from home_finder.filters.listing_text import (
+    select_listing_text,
+    supported_bills_included,
+    supported_council_tax_band,
+)
+from home_finder.filters.space_evidence import reconcile_floorplan_areas
 from home_finder.logging import get_logger
 from home_finder.models import (
     BathroomAnalysis,
@@ -190,11 +195,11 @@ def assess_value(price_pcm: int, postcode: str | None, bedrooms: int) -> ValueAn
 
     # Generate note
     if difference < 0:
-        note = f"£{abs(difference):,} below {outcode} average"
+        note = f"£{abs(difference):,} below unverified historical {outcode} reference"
     elif difference > 0:
-        note = f"£{difference:,} above {outcode} average"
+        note = f"£{difference:,} above unverified historical {outcode} reference"
     else:
-        note = f"At {outcode} average"
+        note = f"At unverified historical {outcode} reference"
 
     return ValueAnalysis(
         area_average=average,
@@ -303,21 +308,44 @@ class _VisualAnalysisResponse(BaseModel):
         )
         area_sqm: float | None = Field(
             default=None,
-            description="Computed length x width. null if either dimension unavailable.",
+            description=(
+                "Printed room area, or length x width only for a confirmed rectangle. "
+                "null for irregular rooms, maximum/bounding dimensions or unknown geometry."
+            ),
+        )
+        area_basis: Literal["stated_on_floorplan", "rectangular_dimensions", "unknown"] = Field(
+            default="unknown",
+            description=(
+                "Evidence for area_sqm: a printed room area or confirmed rectangular dimensions. "
+                "Use unknown for maximum dimensions, irregular outlines or uncertain geometry; "
+                "retain readable length/width labels but leave area_sqm null."
+            ),
         )
 
     class Space(BaseModel):
         model_config = _Forbid
         living_room_sqm: float | None = Field(
-            description="Estimated living room size in sqm from floorplan"
+            description=(
+                "Supported usable living area, not a maximum length x width bounding box. "
+                "null when irregular/uncertain or inconsistent with the printed total. "
+                "Identify combined kitchen/living space in area_notes."
+            )
         )
         total_area_sqm: float | None = Field(
             default=None,
             description=(
-                "Total floor area in sqm by summing all rooms from the floorplan. "
-                "Include all rooms: bedrooms, living room, kitchen, bathroom, hallway, storage. "
-                "Only provide if a dimensioned floorplan is available. null if no floorplan."
+                "Prefer the printed internal total from floorplan_total_area_sqm. Otherwise "
+                "sum only a complete, non-overlapping set of supported internal room areas. "
+                "Do not sum maximum dimension products or guess missing rooms."
             ),
+        )
+        floorplan_total_area_sqm: float | None = Field(
+            default=None,
+            description="Internal total printed on the plan, converted to sqm; otherwise null.",
+        )
+        area_notes: str = Field(
+            default="",
+            description="Area uncertainty, conflicting labels/totals, or combined kitchen/living.",
         )
         room_areas: list["_VisualAnalysisResponse.RoomArea"] = Field(
             default_factory=list,
@@ -328,6 +356,7 @@ class _VisualAnalysisResponse(BaseModel):
         area_estimation_method: (
             Literal[
                 "measured_from_floorplan",
+                "stated_on_floorplan",
                 "partial_dimensions",
                 "estimated_from_scale",
                 "estimated_from_photos",  # Reserved — not prompted yet
@@ -337,7 +366,9 @@ class _VisualAnalysisResponse(BaseModel):
             default=None,
             description="How total_area_sqm was determined. null if total_area_sqm is null.",
         )
-        is_spacious_enough: bool = Field(description="True if can fit office AND host 8+ people")
+        is_spacious_enough: bool | None = Field(
+            description="True if can fit office AND host 8+ people; null if size is uncertain"
+        )
         hosting_layout: Literal["excellent", "good", "awkward", "poor", "unknown"] = Field(
             description=(
                 "Layout flow for hosting: excellent = open-plan kitchen/living + accessible "
@@ -1825,6 +1856,10 @@ class PropertyQualityFilter:
         if visual_data is None:
             raise output_failure("visual", "malformed_output")
 
+        # Apply equally to fresh output and reused raw visual checkpoints. Never
+        # alter the paid observation receipt or rewrite historical assessments.
+        visual_data = reconcile_floorplan_areas(visual_data)
+
         logger.info("visual_analysis_complete", property_id=property_id)
 
         detected_indices = visual_data.get("floorplan_detected_in_gallery", [])
@@ -1862,11 +1897,20 @@ class PropertyQualityFilter:
             extraction = analysis.listing_extraction
             band = supported_council_tax_band(extraction.council_tax_band, description, features)
             epc = supported_band("epc", extraction.epc_rating, description, features)
-            if band != extraction.council_tax_band or epc != extraction.epc_rating:
+            bills = supported_bills_included(extraction.bills_included, description, features)
+            if (
+                band != extraction.council_tax_band
+                or epc != extraction.epc_rating
+                or bills != extraction.bills_included
+            ):
                 analysis = analysis.model_copy(
                     update={
                         "listing_extraction": extraction.model_copy(
-                            update={"council_tax_band": band, "epc_rating": epc}
+                            update={
+                                "council_tax_band": band,
+                                "epc_rating": epc,
+                                "bills_included": bills,
+                            }
                         )
                     }
                 )

@@ -197,7 +197,7 @@ class TestToolSchema:
         assert bed_props["can_fit_desk"]["enum"] == expected_enum
 
     def test_keeps_anyof_for_nullable_numeric_fields(self) -> None:
-        """Strict mode: only numeric fields retain anyOf for null."""
+        """Numeric and uncertain space-fit fields retain explicit null support."""
         visual_schema = VISUAL_ANALYSIS_TOOL["input_schema"]["properties"]
         eval_schema = _eval_schema_props()
 
@@ -207,9 +207,9 @@ class TestToolSchema:
         assert {"type": "number"} in living_room_sqm["anyOf"]
         assert {"type": "null"} in living_room_sqm["anyOf"]
 
-        # Space is_spacious_enough should now be plain boolean
+        # Unknown usable area must not be converted to a negative fit judgement.
         is_spacious = visual_schema["space"]["properties"]["is_spacious_enough"]
-        assert is_spacious["type"] == "boolean"
+        assert is_spacious["anyOf"] == [{"type": "boolean"}, {"type": "null"}]
 
         # listing_extraction.service_charge_pcm should use anyOf — Phase 2
         service_charge = eval_schema["listing_extraction"]["properties"]["service_charge_pcm"]
@@ -1088,7 +1088,10 @@ class TestPropertyQualityFilter:
         assert len(system1) == 1
         assert system1[0]["type"] == "text"
         assert system1[0]["cache_control"] == {"type": "ephemeral"}
-        assert "expert London rental property analyst" in system1[0]["text"]
+        assert (
+            "London rental property analyst assessing limited marketing evidence"
+            in system1[0]["text"]
+        )
 
         # Phase 2 system prompt (messages.create, second call)
         assert len(create_calls) == 2

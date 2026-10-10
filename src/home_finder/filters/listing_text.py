@@ -4,11 +4,13 @@ from __future__ import annotations
 
 import hashlib
 import html
+import re
 from itertools import zip_longest
+from typing import Literal
 
 from home_finder.models import MergedProperty
 from home_finder.models.listing_text import ListingTextInputs
-from home_finder.utils.listing_facts import supported_band
+from home_finder.utils.listing_facts import plain_listing_text, supported_band
 
 
 def select_listing_text(merged: MergedProperty) -> ListingTextInputs:
@@ -66,3 +68,45 @@ def supported_council_tax_band(
     establish a council-tax band. This does not verify a portal's claim with VOA.
     """
     return supported_band("council_tax", claimed_band, description, features)
+
+
+def supported_bills_included(
+    claimed: Literal["yes", "no", "unknown"],
+    description: str | None,
+    features: list[str] | None,
+) -> Literal["yes", "no", "unknown"]:
+    """Retain only a simple, explicit and unambiguous bills declaration.
+
+    This intentionally misses elaborate prose. Silence, questions, conditions,
+    partial inclusions and contradictory statements cannot establish the flag.
+    A retained yes still does not establish coverage, caps or a zero bill.
+    """
+    if claimed == "unknown":
+        return claimed
+    text = plain_listing_text([description or "", *(features or [])])
+    text = re.sub(r"\[(?:Rightmove|Zoopla|OpenRent|OnTheMarket)\]", "", text, flags=re.I)
+    states: set[str] = set()
+    subject = r"(?:all\s+)?(?:utility\s+)?bills"
+    for clause in re.split(r"[.;\n]", text):
+        clause = clause.strip().lower()
+        if not re.search(r"\bbills\b", clause):
+            if re.search(
+                r"\b(?:gas|electricity|water|broadband|council tax)\b.*"
+                r"\b(?:excluded|not included|extra|additional)\b",
+                clause,
+            ):
+                return "unknown"
+            continue
+        if re.fullmatch(
+            rf"{subject}\s+(?:are\s+)?(?:included|inclusive)(?:\s+in\s+(?:the\s+)?rent)?",
+            clause,
+        ):
+            states.add("yes")
+        elif re.fullmatch(
+            rf"(?:{subject}\s+(?:are\s+)?(?:excluded|not included)|no\s+bills\s+included)",
+            clause,
+        ):
+            states.add("no")
+        else:
+            return "unknown"
+    return claimed if states == {claimed} else "unknown"

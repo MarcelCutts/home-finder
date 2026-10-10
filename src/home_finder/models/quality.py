@@ -274,6 +274,7 @@ class RoomArea(BaseModel):
     length_m: float | None = None
     width_m: float | None = None
     area_sqm: float | None = None
+    area_basis: Literal["stated_on_floorplan", "rectangular_dimensions", "unknown"] = "unknown"
 
 
 class SpaceAnalysis(_LenientLiteralModel):
@@ -282,11 +283,14 @@ class SpaceAnalysis(_LenientLiteralModel):
     model_config = ConfigDict(frozen=True)
 
     living_room_sqm: float | None = None
-    total_area_sqm: float | None = None  # Claude's estimate from floorplan
+    total_area_sqm: float | None = None
+    floorplan_total_area_sqm: float | None = None  # Printed total, separate from computed areas
+    area_notes: str = ""
     room_areas: list[RoomArea] = []
     area_estimation_method: (
         Literal[
             "measured_from_floorplan",
+            "stated_on_floorplan",
             "partial_dimensions",
             "estimated_from_scale",
             "estimated_from_photos",  # Reserved — not prompted yet

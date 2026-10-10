@@ -4,6 +4,7 @@ import base64
 import copy
 import json
 from io import BytesIO
+from pathlib import Path
 
 import httpx2
 import pytest
@@ -81,8 +82,16 @@ def test_opt_in_settings_and_legacy_provenance_are_stable(monkeypatch):
 
     monkeypatch.setattr(anthropic, "__version__", "fixture-sdk")
     default = PropertyQualityFilter("fixture")._analysis_provenance()
-    # Recorded from ccf7b9a with the same fixture SDK identity.
-    assert default.fingerprint == "adb93a7be9a07fb8afa52249a351aa18c1562c7384b257f0cf7aac72dd91c50b"
+    # Captured before the evidence repair. Old records retain their identity;
+    # only the deliberately changed prompts/visual schema differ for new work.
+    legacy = AnalysisProvenance.model_validate_json(
+        (Path(__file__).parents[1] / "fixtures" / "legacy_sonnet46_provenance.json").read_text()
+    )
+    assert legacy.fingerprint == "adb93a7be9a07fb8afa52249a351aa18c1562c7384b257f0cf7aac72dd91c50b"
+    assert {
+        key for key, value in default.model_dump().items() if value != legacy.model_dump()[key]
+    } == {"visual_system_sha256", "evaluation_system_sha256", "visual_output_sha256"}
+    assert default.fingerprint != legacy.fingerprint
     assert default.configuration == AnalysisConfig()
     assert default.configuration.visual.model == default.configuration.evaluation.model == LEGACY
     assert "thinking_type" not in default.model_dump_json()
