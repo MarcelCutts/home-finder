@@ -128,7 +128,7 @@ def test_explicit_settings_json_retains_legacy_parsing_and_overrides_factory(mon
 
 
 @pytest.mark.parametrize("images", range(1, 21))
-def test_visual_allowance_covers_configured_images_plus_floorplan_and_listing_context(images):
+async def test_visual_allowance_covers_configured_images_plus_floorplan_and_listing_context(images):
     config = Settings(_env_file=None, quality_filter_max_images=images).analysis_config
     q = PropertyQualityFilter("fixture", max_images=images, analysis_config=config)
     prompt = build_user_prompt(
@@ -166,6 +166,28 @@ def test_visual_allowance_covers_configured_images_plus_floorplan_and_listing_co
         "inference_geo": "global",
     }
     assert input_reservation_tokens(body) <= config.visual.input_token_limit
+
+    requests = []
+
+    def respond(request):
+        native = json.loads(request.content)
+        assert input_reservation_tokens(native) <= config.visual.input_token_limit
+        requests.append(native)
+        return httpx2.Response(200, json=response())
+
+    async with (
+        PropertyStorage(":memory:") as storage,
+        PropertyQualityFilter(
+            "fixture",
+            max_images=images,
+            analysis_config=config,
+            spend_repository=storage.spend,
+            spend_policy=SpendPolicy(per_call_usd="1", daily_usd="1", monthly_usd="1"),
+            http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(respond)),
+        ) as native,
+    ):
+        assert await native._run_visual_analysis(content, "fixture:full-context") is not None
+    assert len(requests) == 1
 
 
 @pytest.mark.parametrize("images,thinking", [(8, False), (20, True)])

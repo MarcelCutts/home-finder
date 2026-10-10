@@ -43,9 +43,12 @@ def is_valid_media_type(value: str) -> TypeGuard[ImageMediaType]:
 
 
 def resize_image_bytes(data: bytes, max_dim: int = MAX_IMAGE_DIMENSION) -> bytes:
-    """Downscale image so longest edge <= max_dim. Returns original bytes if already small."""
+    """Downscale static images; preserve small or animated input bytes."""
     try:
         img = Image.open(BytesIO(data))
+        # Keep all frames for admission to check; resizing saves only the first.
+        if getattr(img, "n_frames", 1) != 1:
+            return data
         w, h = img.size
         if w <= max_dim and h <= max_dim:
             return data

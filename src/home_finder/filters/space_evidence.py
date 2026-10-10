@@ -18,15 +18,11 @@ def reconcile_floorplan_areas(visual_data: dict[str, Any]) -> dict[str, Any]:
     printed = space.get("floorplan_total_area_sqm")
     total = printed if printed is not None else space.get("total_area_sqm")
     living = space.get("living_room_sqm")
-    # Allow only rounding slack, not a percentage of the whole flat. Even a
-    # partial room sum cannot exceed the internal total.
-    tolerance = max(0.5, len(rooms) * 0.05)
-    room_sum = sum(room.get("area_sqm") or 0 for room in rooms)
-    conflict = total is not None and (
-        room_sum > total + tolerance or (living is not None and living > total + tolerance)
-    )
     withheld = False
     for room in rooms:
+        # Older observations have no scope. Do not infer it from room names or
+        # treat their areas as internal merely because they are listed here.
+        scope = room.setdefault("area_scope", "unknown")
         area = room.get("area_sqm")
         basis = room.get("area_basis", "unknown")
         length, width = room.get("length_m"), room.get("width_m")
@@ -39,15 +35,30 @@ def reconcile_floorplan_areas(visual_data: dict[str, Any]) -> dict[str, Any]:
                 or width <= 0
                 or (area is not None and abs(area - length * width) > 0.5)
             )
-        if conflict or unsupported:
-            withheld = (
-                withheld
-                or area is not None
-                or (
-                    living is not None
-                    and bool(re.search(r"living|reception|lounge", room["name"], re.I))
+        if unsupported:
+            if scope != "external":
+                withheld = (
+                    withheld
+                    or area is not None
+                    or (
+                        living is not None
+                        and bool(re.search(r"living|reception|lounge", room["name"], re.I))
+                    )
                 )
-            )
+            room["area_sqm"] = None
+            room["area_basis"] = "unknown"
+
+    internal = [room for room in rooms if room["area_scope"] == "internal"]
+    supported = [room for room in internal if room.get("area_sqm") is not None]
+    # Compare only supported internal areas. External/unknown spaces neither
+    # contribute to the sum nor enlarge its rounding allowance.
+    tolerance = max(0.5, len(supported) * 0.05)
+    room_sum = sum(room["area_sqm"] for room in supported)
+    conflict = total is not None and (
+        room_sum > total + tolerance or (living is not None and living > total + tolerance)
+    )
+    if conflict:
+        for room in internal:
             room["area_sqm"] = None
             room["area_basis"] = "unknown"
 
@@ -62,7 +73,7 @@ def reconcile_floorplan_areas(visual_data: dict[str, Any]) -> dict[str, Any]:
 
     if conflict or withheld:
         note = (
-            "Room areas conflict with the internal total; precise room areas are withheld. "
+            "Internal room areas conflict with the total; precise internal areas are withheld. "
             if conflict
             else "Some room areas lack supported geometry; precise areas are withheld. "
         ) + "Readable dimensions are retained as labels, not usable areas; verify at viewing."

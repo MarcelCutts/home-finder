@@ -302,6 +302,7 @@ class RoomArea(BaseModel):
     width_m: float | None = None
     area_sqm: float | None = None
     area_basis: Literal["stated_on_floorplan", "rectangular_dimensions", "unknown"] = "unknown"
+    area_scope: Literal["internal", "external", "unknown"] = "unknown"
 
 
 class SpaceAnalysis(_LenientLiteralModel):
