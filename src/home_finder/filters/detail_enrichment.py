@@ -21,7 +21,6 @@ from home_finder.models.listing_text import merge_listing_text
 from home_finder.scrapers.detail_fetcher import DetailFetcher
 from home_finder.utils.address import is_outcode
 from home_finder.utils.epc_detector import detect_epc
-from home_finder.utils.floorplan_detector import detect_floorplan
 from home_finder.utils.image_cache import (
     clear_image_cache,
     find_cached_file,
@@ -52,54 +51,6 @@ class EnrichmentResult:
 _ENRICHMENT_CONCURRENCY: Final = 5
 
 
-def _detect_floorplan_in_gallery(
-    images: list[PropertyImage],
-    unique_id: str,
-    data_dir: str,
-) -> tuple[PropertyImage | None, list[PropertyImage], int]:
-    """Try to detect a floorplan among gallery images using PIL heuristics.
-
-    Iterates gallery images in reverse order (floorplans are often last),
-    reads cached bytes from disk, and runs the floorplan detector.
-
-    Args:
-        images: Gallery images to check.
-        unique_id: Property unique ID for cache path lookup.
-        data_dir: Data directory for image cache.
-
-    Returns:
-        Tuple of (detected_floorplan_image or None, remaining_gallery_images,
-        original_gallery_index). Index is -1 when no floorplan was detected.
-    """
-    # Iterate in reverse — floorplans are commonly placed at the end
-    for idx in range(len(images) - 1, -1, -1):
-        img = images[idx]
-        cache_path = find_cached_file(data_dir, unique_id, str(img.url), "gallery")
-        if cache_path is None:
-            continue
-        img_bytes = read_image_bytes(cache_path)
-        if img_bytes is None:
-            continue
-
-        is_floorplan, confidence = detect_floorplan(img_bytes)
-        if is_floorplan:
-            logger.info(
-                "floorplan_detected_by_heuristic",
-                property_id=unique_id,
-                image_index=idx,
-                confidence=confidence,
-            )
-            floorplan = PropertyImage(
-                url=img.url,
-                source=img.source,
-                image_type="floorplan",
-            )
-            remaining = [im for j, im in enumerate(images) if j != idx]
-            return floorplan, remaining, idx
-
-    return None, images, -1
-
-
 def _generate_gallery_thumbnails(
     images: list[PropertyImage],
     unique_id: str,
@@ -107,7 +58,7 @@ def _generate_gallery_thumbnails(
 ) -> int:
     """Generate thumbnails for gallery images that don't have one yet.
 
-    Called after EPC/floorplan detection so only surviving gallery images
+    Called after EPC detection so only surviving gallery images
     are thumbnailed (no orphaned thumb_ files for reclassified EPCs).
     """
     count = 0
@@ -288,6 +239,7 @@ async def _enrich_single(
                                     url=HttpUrl(normalized_fp_url),
                                     source=source,
                                     image_type="floorplan",
+                                    floorplan_origin="source_declared",
                                 )
                         else:
                             logger.warning(
@@ -326,32 +278,13 @@ async def _enrich_single(
                     error_type=type(exc).__name__,
                 )
 
-        # Detect and remove EPC charts from gallery before floorplan detection
+        # Detect and remove EPC charts from gallery before generating thumbnails
         if data_dir and all_images:
             all_images = await asyncio.to_thread(
                 _detect_epc_in_gallery, all_images, merged.unique_id, data_dir
             )
 
-        # If no floorplan found by structural extraction, try PIL heuristic on gallery images
-        if floorplan_image is None and data_dir and all_images:
-            floorplan_image, all_images, detected_idx = await asyncio.to_thread(
-                _detect_floorplan_in_gallery, all_images, merged.unique_id, data_dir
-            )
-            # Copy the cached image to the floorplan cache path so quality analysis finds it
-            if floorplan_image is not None and detected_idx >= 0:
-                old_path = find_cached_file(
-                    data_dir,
-                    merged.unique_id,
-                    str(floorplan_image.url),
-                    "gallery",
-                )
-                new_path = get_cached_image_path(
-                    data_dir, merged.unique_id, str(floorplan_image.url), "floorplan", 0
-                )
-                if old_path is not None and old_path.is_file() and not new_path.is_file():
-                    save_image_bytes(new_path, old_path.read_bytes())
-
-        # Generate thumbnails for surviving gallery images (after EPC/floorplan detection)
+        # Generate thumbnails for surviving gallery images (after EPC detection)
         if data_dir and all_images:
             await asyncio.to_thread(
                 _generate_gallery_thumbnails, all_images, merged.unique_id, data_dir
@@ -415,7 +348,11 @@ async def _load_cached_property(
             source_text.get(source, ListingTextEvidence()), evidence
         )
     gallery = tuple(img for img in images if img.image_type == "gallery")
-    floorplan = next((img for img in images if img.image_type == "floorplan"), None)
+    floorplan = max(
+        (img for img in images if img.image_type == "floorplan"),
+        key=lambda img: img.is_source_floorplan,
+        default=None,
+    )
 
     # Backfill coordinates/postcode from DB if in-memory canonical lacks them
     canonical = merged.canonical
@@ -540,7 +477,7 @@ def filter_by_floorplan(
     """Drop properties that have no valid image-format floorplan.
 
     Properties pass through if any of:
-    - They have a floorplan image
+    - They have a source-declared floorplan image (dimensions may still be unreadable)
     - They're exclusively from floorplan-exempt sources (e.g. OpenRent)
     - They have enough gallery images for photo-based layout inference
       (when min_gallery_for_photo_inference > 0)
@@ -555,7 +492,7 @@ def filter_by_floorplan(
     """
 
     def _passes(p: MergedProperty) -> bool:
-        if p.floorplan is not None:
+        if p.floorplan is not None and p.floorplan.is_source_floorplan:
             return True
         if set(p.sources).issubset(_FLOORPLAN_EXEMPT_SOURCES):
             return True

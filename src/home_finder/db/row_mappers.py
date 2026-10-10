@@ -247,7 +247,11 @@ async def row_to_merged_property(
             raise ValueError(msg)
         images = await get_property_images(prop.unique_id)
         gallery = tuple(img for img in images if img.image_type == "gallery")
-        floorplan_img = next((img for img in images if img.image_type == "floorplan"), None)
+        floorplan_img = max(
+            (img for img in images if img.image_type == "floorplan"),
+            key=lambda img: img.is_source_floorplan,
+            default=None,
+        )
 
     # Defensive access for pre-migration rows
     floor_area_sqm: float | None = None

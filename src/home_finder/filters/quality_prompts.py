@@ -342,7 +342,7 @@ def build_user_prompt(
     """Build the user prompt with property-specific context.
 
     Args:
-        has_labeled_floorplan: Whether a dedicated floorplan image is included.
+        has_labeled_floorplan: Whether a source-declared floorplan image is included.
             When False, adds a note asking Claude to identify floorplans in gallery.
     """
     prompt = _format_property_context(
@@ -371,6 +371,14 @@ def build_user_prompt(
             f"Cross-reference this with your floorplan estimate if available.\n"
             f"</scraped_floor_area>"
         )
+
+    prompt += (
+        "\n\n<floorplan_evidence>\n"
+        "An image role supplied by a listing source is not proof that it is a readable floorplan. "
+        "A bright or monochrome room photograph is still a photograph. Only report dimensions "
+        "as measured_from_floorplan when the relevant labels are actually readable; otherwise "
+        "retain uncertainty and do not invent measurements.\n</floorplan_evidence>"
+    )
 
     if not has_labeled_floorplan:
         prompt += (

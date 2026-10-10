@@ -197,6 +197,13 @@ class PropertyImage(BaseModel):
     url: HttpUrl
     source: PropertySource
     image_type: Literal["gallery", "floorplan", "epc"]
+    # Unknown includes legacy rows that may have been promoted by a heuristic.
+    # A source declaration says nothing about readable dimensions.
+    floorplan_origin: Literal["source_declared", "unknown"] = "unknown"
+
+    @property
+    def is_source_floorplan(self) -> bool:
+        return self.image_type == "floorplan" and self.floorplan_origin == "source_declared"
 
 
 class MergedProperty(BaseModel):

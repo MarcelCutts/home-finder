@@ -957,12 +957,24 @@ class PropertyStorage:
             return
 
         async with self._transaction(conn=_conn) as conn:
-            rows = [(unique_id, img.source.value, str(img.url), img.image_type) for img in images]
+            rows = [
+                (unique_id, img.source.value, str(img.url), img.image_type, img.floorplan_origin)
+                for img in images
+            ]
             await conn.executemany(
                 """
-                INSERT OR IGNORE INTO property_images
-                (property_unique_id, source, url, image_type)
-                VALUES (?, ?, ?, ?)
+                INSERT INTO property_images
+                (property_unique_id, source, url, image_type, floorplan_origin)
+                VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(property_unique_id, url) DO UPDATE SET
+                    source = excluded.source,
+                    image_type = excluded.image_type,
+                    floorplan_origin = excluded.floorplan_origin
+                WHERE (excluded.image_type = 'floorplan'
+                       AND excluded.floorplan_origin = 'source_declared')
+                   OR (property_images.image_type = 'floorplan'
+                       AND property_images.floorplan_origin = 'unknown'
+                       AND excluded.image_type = 'gallery')
                 """,
                 rows,
             )
@@ -987,7 +999,7 @@ class PropertyStorage:
         async with self._read_connection(conn=_conn) as conn:
             cursor = await conn.execute(
                 """
-                SELECT source, url, image_type
+                SELECT source, url, image_type, floorplan_origin
                 FROM property_images
                 WHERE property_unique_id = ?
                 ORDER BY image_type, id
@@ -1003,6 +1015,7 @@ class PropertyStorage:
                         source=PropertySource(row["source"]),
                         url=row["url"],
                         image_type=row["image_type"],
+                        floorplan_origin=row["floorplan_origin"],
                     )
                 )
             return images
@@ -1025,7 +1038,7 @@ class PropertyStorage:
             # Images
             img_cursor = await conn.execute(
                 """
-                SELECT source, url, image_type
+                SELECT source, url, image_type, floorplan_origin
                 FROM property_images
                 WHERE property_unique_id = ?
                 ORDER BY image_type, id
@@ -1038,6 +1051,7 @@ class PropertyStorage:
                     source=PropertySource(r["source"]),
                     url=r["url"],
                     image_type=r["image_type"],
+                    floorplan_origin=r["floorplan_origin"],
                 )
                 for r in img_rows
             ]

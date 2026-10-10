@@ -502,6 +502,7 @@ def sample_merged_property(sample_property: Property) -> MergedProperty:
             url=HttpUrl("https://example.com/floor.jpg"),
             source=sample_property.source,
             image_type="floorplan",
+            floorplan_origin="source_declared",
         ),
         min_price=sample_property.price_pcm,
         max_price=sample_property.price_pcm,
@@ -526,6 +527,7 @@ def one_bed_merged_property(one_bed_property: Property) -> MergedProperty:
             url=HttpUrl("https://example.com/floor.jpg"),
             source=one_bed_property.source,
             image_type="floorplan",
+            floorplan_origin="source_declared",
         ),
         min_price=one_bed_property.price_pcm,
         max_price=one_bed_property.price_pcm,
@@ -994,6 +996,7 @@ class TestPropertyQualityFilter:
                 url=HttpUrl("https://example.com/floor.jpg"),
                 source=sample_property.source,
                 image_type="floorplan",
+                floorplan_origin="source_declared",
             ),
             min_price=sample_property.price_pcm,
             max_price=sample_property.price_pcm,
@@ -1179,6 +1182,7 @@ class TestPropertyQualityFilter:
                 url=HttpUrl("https://example.com/floor.jpg"),
                 source=sample_property.source,
                 image_type="floorplan",
+                floorplan_origin="source_declared",
             ),
             min_price=sample_property.price_pcm,
             max_price=sample_property.price_pcm,
@@ -1335,6 +1339,33 @@ class TestPropertyQualityFilter:
 
 class TestFloorplanNoteWiring:
     """Tests that has_labeled_floorplan flows from _analyze_property to the prompt."""
+
+    async def test_unknown_legacy_image_is_sent_without_floorplan_authority(
+        self, sample_merged_property, sample_visual_response, sample_evaluation_response, tmp_path
+    ):
+        merged = sample_merged_property.model_copy(
+            update={
+                "floorplan": sample_merged_property.floorplan.model_copy(
+                    update={"floorplan_origin": "unknown"}
+                )
+            }
+        )
+        _populate_image_cache(str(tmp_path), merged)
+        quality_filter = PropertyQualityFilter(api_key="test-key", max_images=3)
+        quality_filter._client = MagicMock()
+        _setup_two_phase_mocks(
+            quality_filter._client, sample_visual_response, sample_evaluation_response
+        )
+        await quality_filter.analyze_single_merged(merged, data_dir=str(tmp_path))
+        content = quality_filter._client.messages.create.call_args_list[0].kwargs["messages"][0][
+            "content"
+        ]
+        assert sum(block["type"] == "image" for block in content) == 3
+        labels = [block["text"] for block in content[:-1] if block["type"] == "text"]
+        assert labels[-1] == "Gallery image 3 (historical image role unverified):"
+        assert not any("Source-declared floorplan" in label for label in labels)
+        assert "<floorplan_note>" in content[-1]["text"]
+        assert "actually readable" in content[-1]["text"]
 
     async def test_missing_cached_floorplan_uses_gallery_slot_and_includes_note(
         self,

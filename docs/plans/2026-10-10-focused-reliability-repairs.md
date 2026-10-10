@@ -12,7 +12,7 @@ within the current one-owner application.
 - [x] Allow 25 minutes for the hosted test job and report its 20 slowest tests.
 - [x] Preserve coverage, socket blocking, the CI Hypothesis profile and manual release.
 - [x] Describe production pagination through known pages within normal bounds.
-- [ ] Verify and review the fresh draft PR on its final head.
+- [x] Verify and review the fresh draft PR on its final head.
 
 The final consolidation head passed 3,019 tests at 88.54% coverage; its main-branch
 rerun reached 97% before the 15-minute job limit cancelled it. This repair changes
@@ -22,9 +22,10 @@ R1 local verification: 31 existing pagination/accounting tests passed with
 network sockets blocked; Ruff lint/format, strict mypy and an offline wheel/sdist
 build passed. Review confirmed only the test-job allowance/reporting changed;
 manual release, live-test opt-in and required checks remain intact. Hosted
-verification is recorded on the draft PR after publication.
+verification passed on `7bceffc`: [run 38074935433](https://github.com/MarcelCutts/home-finder/actions/runs/38074935433)
+finished its test job in 15m29s. Lint, typing and build also passed.
 
-### R2 Accessible listings during incomplete processing
+### R2 Accessible listings during incomplete processing — draft #45
 
 - [x] Show pending, failed-assessment and image-less listings without reviving dropped listings.
 - [x] Keep existing detail URLs accessible with placeholders; unknown IDs still return 404.
@@ -56,10 +57,36 @@ the fresh hosted run uses the corrected test allowance.
 
 ### R3 Conservative floorplan handling
 
-- [ ] Stop promoting heuristic gallery guesses into authoritative floorplans.
-- [ ] Preserve gallery membership and persist source-declared versus unknown legacy provenance.
-- [ ] Apply that distinction to gates, prompts and presentation without asserting readability.
-- [ ] Verify bright-photo negatives, real plans, legacy rows and source refreshes.
+- [x] Stop promoting heuristic gallery guesses into authoritative floorplans.
+- [x] Preserve gallery membership and persist source-declared versus unknown legacy provenance.
+- [x] Apply that distinction to gates, prompts and presentation without asserting readability.
+- [x] Verify bright-photo negatives, real plans, legacy rows and source refreshes.
+
+R3 removes the enrichment heuristic entirely. Migration 10 gives existing image
+rows `floorplan_origin='unknown'`; it does not rewrite their historical analyses,
+delete bytes or enqueue paid work. Fresh structural extraction records
+`source_declared`. Saving the same URL can upgrade its provenance; a fresh gallery
+observation can restore an unknown legacy image to the gallery. Grouping and cache
+reload prefer source-declared plans. Only those satisfy the dedicated-floorplan
+gate; the existing source/photo exemptions remain available. Unknown legacy images
+are still visible and usable as unverified gallery input. Prompts, Telegram copy
+and the dashboard distinguish image designation from readable dimensions.
+
+The retained bathroom photograph (SHA-256
+`c76272dea9a498267c103035fe8f6c512885a05665ace07c4be716c234a122a7`)
+reproduced the old heuristic's `(True, 0.665)` result. An offline replay through the
+new enrichment path retained one gallery image, produced no floorplan and failed
+the dedicated-floorplan gate. No portal or model request was made. Synthetic
+diagram tests cover gallery retention, source designation and cached bytes.
+
+R3 review checked the full path from extraction through SQLite reload, grouping,
+gating, request construction and presentation. 487 existing affected tests passed
+on the initial run; the expected prompt snapshots and migration compatibility
+check were corrected and the final targeted selection passed 141 tests. Another
+26 provenance/migration/request checks passed. Ruff lint/format and strict mypy
+passed. [Browser evidence](../../output/playwright/r3-floorplan-origin.jpg) uses
+authored diagrams. Rollback after migration requires the verified pre-upgrade
+database copy; earlier application versions reject schema 10.
 
 ### R4 Visual checkpoints for unfinished analysis
 

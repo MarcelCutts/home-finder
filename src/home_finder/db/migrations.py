@@ -793,6 +793,16 @@ async def migrate_009_paid_attempts(conn: aiosqlite.Connection) -> None:
     """)
 
 
+async def migrate_010_floorplan_origin(conn: aiosqlite.Connection) -> None:
+    """Preserve legacy images without inventing evidence for their assigned role."""
+    cursor = await conn.execute("PRAGMA table_info(property_images)")
+    if "floorplan_origin" not in {row[1] for row in await cursor.fetchall()}:
+        await conn.execute("""
+            ALTER TABLE property_images ADD COLUMN floorplan_origin TEXT NOT NULL
+            DEFAULT 'unknown' CHECK (floorplan_origin IN ('unknown', 'source_declared'))
+        """)
+
+
 _MigrationFn = Callable[[aiosqlite.Connection], Coroutine[Any, Any, None]]
 
 MIGRATIONS: list[_MigrationFn] = [
@@ -805,6 +815,7 @@ MIGRATIONS: list[_MigrationFn] = [
     migrate_007_telegram_update_ids,
     migrate_008_listing_text,
     migrate_009_paid_attempts,
+    migrate_010_floorplan_origin,
 ]
 
 

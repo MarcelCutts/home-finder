@@ -1062,6 +1062,9 @@ class PropertyQualityFilter:
                 merged.unique_id,
                 gallery_urls=gallery_urls[: self._max_images],
                 floorplan_url=floorplan_url,
+                floorplan_source_declared=bool(
+                    merged.floorplan and merged.floorplan.is_source_floorplan
+                ),
                 bedrooms=prop.bedrooms,
                 price_pcm=prop.price_pcm,
                 area_average=value.area_average,
@@ -1664,6 +1667,7 @@ class PropertyQualityFilter:
         floorplan_cached_path: Path | None = None,
         data_dir: str | None = None,
         floor_area_sqm: float | None = None,
+        floorplan_source_declared: bool = False,
     ) -> PropertyQualityAnalysis | None:
         """Analyze a single property using two-phase chained Claude analysis.
 
@@ -1709,8 +1713,9 @@ class PropertyQualityFilter:
         elif floorplan_url:
             logger.debug("skipping_pdf_floorplan", url=floorplan_url)
 
-        has_floorplan = floorplan_block is not None
-        effective_max = self._max_images - (1 if has_floorplan else 0)
+        has_extra_image = floorplan_block is not None
+        has_floorplan = has_extra_image and floorplan_source_declared
+        effective_max = self._max_images - (1 if has_extra_image else 0)
 
         gallery_num = 0
         cached_paths = gallery_cached_paths or [None] * len(gallery_urls)
@@ -1726,13 +1731,17 @@ class PropertyQualityFilter:
             content.append(
                 TextBlockParam(
                     type="text",
-                    text="Floorplan \u2014 read all dimension labels carefully"
-                    " (UK formats: metres or feet/inches):",
+                    text=(
+                        "Source-declared floorplan. Type and readable dimensions are not verified. "
+                        "Read only visible dimension labels (metres or feet/inches):"
+                        if floorplan_source_declared
+                        else f"Gallery image {gallery_num + 1} (historical image role unverified):"
+                    ),
                 )
             )
             content.append(floorplan_block)
 
-        if not gallery_num and not has_floorplan:
+        if not gallery_num and not has_extra_image:
             raise SpendDeferred("missing_usable_images")
 
         effective_average = area_average or DEFAULT_BENCHMARK.get(min(bedrooms, 3), 1800)
@@ -1760,6 +1769,9 @@ class PropertyQualityFilter:
             property_id=property_id,
             gallery_count=len(gallery_urls),
             has_floorplan=has_floorplan,
+            floorplan_origin=(
+                "source_declared" if has_floorplan else "unknown" if has_extra_image else None
+            ),
             image_blocks_sent=len(image_blocks),
             total_content_blocks=len(content),
         )

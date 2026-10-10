@@ -429,7 +429,8 @@
         <div class="floorplan-section">
             {% for img in prop.floorplan_images %}
             <div class="floorplan-frame">
-                <img src="{{ image_url_map.get(img.url|string, img.url) }}" alt="Floorplan" loading="lazy" class="floorplan-image" data-lightbox="floorplan">
+                <p class="processing-notice">{% if img.is_source_floorplan %}Source-declared floorplan. Dimensions may be unreadable.{% else %}Unverified floorplan image. Its original designation was not recorded.{% endif %}</p>
+                <img src="{{ image_url_map.get(img.url|string, img.url) }}" alt="{{ 'Source-declared floorplan' if img.is_source_floorplan else 'Unverified floorplan image' }}" loading="lazy" class="floorplan-image" data-lightbox="floorplan">
             </div>
             {% endfor %}
         </div>
@@ -569,7 +570,8 @@
         <div class="gallery-floorplan-scroll">
             {% for img in floorplan_images %}
             <div class="gallery-floorplan-frame">
-                <img src="{{ image_url_map.get(img.url|string, img.url) }}" alt="Floorplan {{ loop.index }}" loading="lazy" class="gallery-floorplan-img">
+                <p class="processing-notice">{{ 'Source-declared floorplan; dimensions may be unreadable.' if img.is_source_floorplan else 'Unverified floorplan image.' }}</p>
+                <img src="{{ image_url_map.get(img.url|string, img.url) }}" alt="{{ 'Source-declared floorplan' if img.is_source_floorplan else 'Unverified floorplan image' }} {{ loop.index }}" loading="lazy" class="gallery-floorplan-img">
             </div>
             {% endfor %}
         </div>

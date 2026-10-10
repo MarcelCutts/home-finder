@@ -11,6 +11,7 @@ from fastapi.testclient import TestClient
 
 from home_finder.config import Settings
 from home_finder.db.storage import PropertyStorage
+from home_finder.models import PropertyImage, PropertySource
 from home_finder.web.filters import PropertyFilter
 from home_finder.web.routes import router
 
@@ -179,6 +180,31 @@ def test_processing_filter_chip():
     assert PropertyFilter(processing="Unassessed").active_filter_chips() == [
         {"key": "processing", "label": "Unassessed"}
     ]
+
+
+@pytest.mark.parametrize("origin", ["unknown", "source_declared"])
+async def test_floorplan_role_labels_preserve_uncertainty(
+    processing_storage, processing_client, origin
+):
+    await processing_storage.save_property_images(
+        "openrent:details",
+        [
+            PropertyImage(
+                url="https://example.com/floorplan.jpg",
+                source=PropertySource.RIGHTMOVE,
+                image_type="floorplan",
+                floorplan_origin=origin,
+            )
+        ],
+    )
+    response = processing_client.get("/property/openrent:details")
+    assert response.status_code == 200
+    if origin == "unknown":
+        assert "Unverified floorplan image" in response.text
+        assert "Source-declared floorplan" not in response.text
+    else:
+        assert "Source-declared floorplan" in response.text
+        assert "Dimensions may be unreadable" in response.text
 
 
 @pytest.mark.parametrize("processing", ["assessed", "unassessed"])

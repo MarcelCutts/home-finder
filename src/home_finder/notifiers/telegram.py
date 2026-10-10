@@ -515,7 +515,11 @@ def format_merged_property_message(
         if merged.images:
             image_parts.append(f"{len(merged.images)} images")
         if merged.floorplan:
-            image_parts.append("floorplan")
+            image_parts.append(
+                "source-declared floorplan"
+                if merged.floorplan.is_source_floorplan
+                else "unverified floorplan image"
+            )
         lines.append(f"\n📸 {' + '.join(image_parts)}")
 
     # Source information

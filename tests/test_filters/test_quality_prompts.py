@@ -232,6 +232,10 @@ Bills, council-tax band and EPC: use only explicit listing evidence.
 Historical research comparator: £1,900/month (rent is £100 below). Effective date, sample and applicability are unverified; this is not a current market median or an offer recommendation.
 </unverified_reference>
 
+<floorplan_evidence>
+An image role supplied by a listing source is not proof that it is a readable floorplan. A bright or monochrome room photograph is still a photograph. Only report dimensions as measured_from_floorplan when the relevant labels are actually readable; otherwise retain uncertainty and do not invent measurements.
+</floorplan_evidence>
+
 Provide your visual quality assessment using the property_visual_analysis tool.\
 """)
 
@@ -257,6 +261,10 @@ Historical research comparator: £2,200/month (rent is £200 below). Effective d
 <listing_description>
 Spacious two bedroom flat with modern kitchen and garden.
 </listing_description>
+
+<floorplan_evidence>
+An image role supplied by a listing source is not proof that it is a readable floorplan. A bright or monochrome room photograph is still a photograph. Only report dimensions as measured_from_floorplan when the relevant labels are actually readable; otherwise retain uncertainty and do not invent measurements.
+</floorplan_evidence>
 
 Provide your visual quality assessment using the property_visual_analysis tool.\
 """)
@@ -285,6 +293,10 @@ Historical research comparator: £1,900/month (rent is £100 below). Effective d
 Vibrant East London area with excellent transport links
 </area_context>
 
+<floorplan_evidence>
+An image role supplied by a listing source is not proof that it is a readable floorplan. A bright or monochrome room photograph is still a photograph. Only report dimensions as measured_from_floorplan when the relevant labels are actually readable; otherwise retain uncertainty and do not invent measurements.
+</floorplan_evidence>
+
 Provide your visual quality assessment using the property_visual_analysis tool.\
 """)
 
@@ -312,6 +324,10 @@ Historical research comparator: £1,900/month (rent is £100 below). Effective d
 - Gas central heating
 - Garden
 </listing_features>
+
+<floorplan_evidence>
+An image role supplied by a listing source is not proof that it is a readable floorplan. A bright or monochrome room photograph is still a photograph. Only report dimensions as measured_from_floorplan when the relevant labels are actually readable; otherwise retain uncertainty and do not invent measurements.
+</floorplan_evidence>
 
 Provide your visual quality assessment using the property_visual_analysis tool.\
 """)
@@ -354,6 +370,10 @@ A lovely 2-bed flat.
 <listing_features>
 - Double glazing
 </listing_features>
+
+<floorplan_evidence>
+An image role supplied by a listing source is not proof that it is a readable floorplan. A bright or monochrome room photograph is still a photograph. Only report dimensions as measured_from_floorplan when the relevant labels are actually readable; otherwise retain uncertainty and do not invent measurements.
+</floorplan_evidence>
 
 Provide your visual quality assessment using the property_visual_analysis tool.\
 """)
