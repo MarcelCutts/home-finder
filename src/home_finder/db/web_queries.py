@@ -173,6 +173,29 @@ def build_filter_clauses(
     where_clauses: list[str] = ["p.notification_status != 'dropped'"]
     params: list[Any] = []
 
+    # Pending homes are useful in an unfiltered search, but fallback/default
+    # assessment fields are not evidence for an explicit assessment filter.
+    if any(
+        (
+            filters.min_fit_score is not None,
+            filters.property_type,
+            filters.outdoor_space,
+            filters.natural_light,
+            filters.pets,
+            filters.value_rating,
+            filters.hob_type,
+            filters.floor_level,
+            filters.building_construction,
+            filters.office_separation,
+            filters.hosting_layout,
+            filters.hosting_noise_risk,
+            filters.broadband_type,
+            filters.min_living_room_sqm is not None,
+            filters.tags,
+        )
+    ):
+        where_clauses.append(_ASSESSED_SQL)
+
     if filters.min_price is not None:
         where_clauses.append("p.price_pcm >= ?")
         params.append(filters.min_price)
@@ -183,7 +206,6 @@ def build_filter_clauses(
         where_clauses.append("p.bedrooms = ?")
         params.append(filters.bedrooms)
     if filters.min_fit_score is not None:
-        where_clauses.append(_ASSESSED_SQL)
         where_clauses.append("q.fit_score >= ?")
         params.append(filters.min_fit_score)
     if filters.processing == "assessed":
@@ -211,7 +233,7 @@ def build_filter_clauses(
     if filters.outdoor_space == "yes":
         where_clauses.append("q.has_outdoor_space = 1")
     elif filters.outdoor_space == "no":
-        where_clauses.append("(q.has_outdoor_space = 0 OR q.has_outdoor_space IS NULL)")
+        where_clauses.append("q.has_outdoor_space = 0")
     if filters.natural_light:
         where_clauses.append("json_extract(q.analysis_json, '$.light_space.natural_light') = ?")
         params.append(filters.natural_light)
@@ -261,7 +283,8 @@ def build_filter_clauses(
         where_clauses.append(
             "COALESCE("
             "    p.floor_area_sqm,"
-            "    CAST(json_extract(q.analysis_json, '$.space.total_area_sqm') AS REAL)"
+            f"    CASE WHEN {_ASSESSED_SQL} THEN "
+            "        CAST(json_extract(q.analysis_json, '$.space.total_area_sqm') AS REAL) END"
             ") >= ?"
         )
         params.append(filters.min_floor_area_sqm)
