@@ -174,7 +174,7 @@ async def run_pipeline(
         settings: Application settings.
         max_per_scraper: Maximum properties per scraper (None for unlimited).
         only_scrapers: If set, only run these scrapers (by source value).
-        full_scrape: Disable early-stop pagination (scrape all pages).
+        full_scrape: Compatibility flag; collection no longer stops at known IDs.
         dry_run: If True, save to DB but skip Telegram notifications.
         storage: Optional pre-existing storage instance (e.g. from web server).
             When provided, the caller owns the connection lifecycle.

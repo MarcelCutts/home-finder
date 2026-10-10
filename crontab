@@ -1,5 +1,5 @@
 # No cron jobs are installed by this repository.
-# Use ONE scheduler after the collection gates pass: the completion-relative
-# systemd timer in README.md, or the serve loop. Both wait at least 55 minutes
-# after completion by default, plus 0–5 minutes jitter. Keep the Fly dashboard
-# on --no-pipeline. The former */55 expression alternated 55- and 5-minute gaps.
+# Choose ONE scheduler only after source access and model settings are qualified.
+# The serve loop waits at least 55 minutes after completion, plus 0-5 minutes jitter.
+# Keep the Fly dashboard on --no-pipeline until collection is explicitly activated.
+# Collection must write to the same authoritative database as owner actions.

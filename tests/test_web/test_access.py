@@ -186,6 +186,9 @@ def test_failed_authentication_is_rate_limited_and_recovers(client, monkeypatch)
     assert response.headers["retry-after"] == "60"
     assert client.get("/", auth=("owner", PASSWORD)).status_code == 200
     assert client.get("/", auth=("owner", "wrong")).status_code == 429
+    challenge = client.get("/")
+    assert challenge.status_code == 401
+    assert challenge.headers["www-authenticate"].startswith("Basic")
     assert client.get("/health").status_code == 200
     now[0] += 61
     assert client.get("/", auth=("owner", "wrong")).status_code == 401
@@ -197,7 +200,9 @@ def test_anonymous_peer_limit_cannot_lock_out_owner_or_telegram(client, failed_p
     for _ in range(10):
         response = client.request("POST" if "webhook" in failed_path else "GET", failed_path)
         assert response.status_code in {401, 403}
-    assert client.get("/").status_code == 429
+    challenge = client.get("/")
+    assert challenge.status_code == 401
+    assert challenge.headers["www-authenticate"].startswith("Basic")
     assert client.get("/", auth=("owner", PASSWORD)).status_code == 200
     assert (
         client.post(
