@@ -187,7 +187,12 @@ async def test_real_analysis_stores_application_provenance_and_roundtrips(
     async with PropertyQualityFilter("fixture", http_client=native, analysis_config=config) as q:
         _, analysis = await q.analyze_single_merged(merged, data_dir=str(tmp_path))
         assert analysis is not None and analysis.overall_rating == 4
-        assert analysis.analysis_provenance == q._analysis_provenance()
+        assert analysis.analysis_provenance is not None
+        assert len(analysis.analysis_provenance.visual_input_sha256) == 64
+        assert (
+            analysis.analysis_provenance.model_copy(update={"visual_input_sha256": None})
+            == q._analysis_provenance()
+        )
         assert analysis.listing_text_inputs is not None
         assert analysis.listing_text_inputs.description != "injected"
     async with PropertyStorage(":memory:") as storage:
