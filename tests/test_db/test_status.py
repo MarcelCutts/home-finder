@@ -1,12 +1,13 @@
 """Tests for user status tracking (Ticket 7)."""
 
 from collections.abc import AsyncGenerator
+from pathlib import Path
 
 import pytest
 import pytest_asyncio
 from pydantic import HttpUrl
 
-from home_finder.db.storage import PropertyStorage
+from home_finder.db.storage import DuplicateTelegramUpdateError, PropertyStorage
 from home_finder.models import (
     MergedProperty,
     Property,
@@ -49,6 +50,47 @@ async def storage() -> AsyncGenerator[PropertyStorage, None]:
 
 
 class TestUpdateUserStatus:
+    async def test_telegram_replay_is_rejected_after_restart(
+        self,
+        tmp_path: Path,
+        merged_a: MergedProperty,
+    ) -> None:
+        path = str(tmp_path / "callbacks.db")
+        first = PropertyStorage(path)
+        await first.initialize()
+        try:
+            await first.save_merged_property(merged_a)
+            await first.update_user_status(
+                merged_a.unique_id,
+                UserStatus.INTERESTED,
+                source="telegram",
+                telegram_update_id=100,
+            )
+        finally:
+            await first.close()
+        restarted = PropertyStorage(path)
+        await restarted.initialize()
+        try:
+            with pytest.raises(DuplicateTelegramUpdateError):
+                await restarted.update_user_status(
+                    merged_a.unique_id,
+                    UserStatus.ARCHIVED,
+                    source="telegram",
+                    telegram_update_id=100,
+                )
+            # Telegram IDs can restart lower after an idle week. Deduplicate by
+            # equality, never a high watermark that would drop this valid action.
+            await restarted.update_user_status(
+                merged_a.unique_id,
+                UserStatus.VIEWING_BOOKED,
+                source="telegram",
+                telegram_update_id=50,
+            )
+            history = await restarted.get_status_history(merged_a.unique_id)
+            assert [event["to_status"] for event in history] == ["interested", "viewing_booked"]
+        finally:
+            await restarted.close()
+
     @pytest.mark.asyncio
     async def test_returns_previous_status(
         self, storage: PropertyStorage, merged_a: MergedProperty

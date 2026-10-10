@@ -667,20 +667,18 @@ def _build_inline_keyboard(
     # Arrange in rows of 2
     rows: list[list[InlineKeyboardButton]] = []
 
-    # Status action row (Ticket 7) — callback_data fits 64-byte limit
-    uid_short = merged.unique_id[:40]  # Leave room for prefix
-    rows.append(
-        [
-            InlineKeyboardButton(
-                text="\U0001f44d Interested",
-                callback_data=f"st:{uid_short}:interested",
-            ),
-            InlineKeyboardButton(
-                text="\u23ed Skip",
-                callback_data=f"st:{uid_short}:archived",
-            ),
-        ]
-    )
+    # Telegram limits callback_data to 64 bytes. Never truncate an identity:
+    # longer IDs keep their source/details links until tokenized callbacks exist.
+    interested = f"st:{merged.unique_id}:interested"
+    if len(interested.encode()) <= 64:
+        rows.append(
+            [
+                InlineKeyboardButton(text="\U0001f44d Interested", callback_data=interested),
+                InlineKeyboardButton(
+                    text="\u23ed Skip", callback_data=f"st:{merged.unique_id}:archived"
+                ),
+            ]
+        )
 
     for i in range(0, len(buttons), 2):
         rows.append(buttons[i : i + 2])

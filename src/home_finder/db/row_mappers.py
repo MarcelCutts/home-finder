@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from collections.abc import Callable, Coroutine
 from datetime import datetime
-from typing import Any, TypedDict
+from typing import Any, Protocol, TypedDict
 
 import aiosqlite
 from pydantic import HttpUrl
@@ -19,6 +19,14 @@ from home_finder.models import (
     PropertySource,
     TransportMode,
 )
+
+
+class ImageReader(Protocol):
+    """Image loader that can explicitly join an existing database scope."""
+
+    async def __call__(
+        self, unique_id: str, *, _conn: aiosqlite.Connection | None = None
+    ) -> list[PropertyImage]: ...
 
 
 class PropertyListItem(TypedDict, total=False):

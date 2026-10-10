@@ -16,6 +16,7 @@ from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoin
 from home_finder.config import Settings
 from home_finder.db import PropertyStorage
 from home_finder.logging import configure_logging, get_logger
+from home_finder.web.access import OwnerAccessMiddleware
 
 logger = get_logger(__name__)
 
@@ -52,10 +53,10 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
             "https://*.openrent.com https://*.openrent.co.uk "
             "https://*.basemaps.cartocdn.com https://cdn.jsdelivr.net data:; "
             "connect-src 'self'; "
-            "frame-ancestors 'none'"
+            "frame-ancestors 'none'; form-action 'self'; base-uri 'self'"
         )
-        if request.url.path.startswith("/static/"):
-            response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+        if request.url.path.startswith("/static/") and response.status_code == 200:
+            response.headers["Cache-Control"] = "private, max-age=31536000, immutable"
         return response
 
 
@@ -191,6 +192,7 @@ def create_app(settings: Settings | None = None, *, run_pipeline: bool = True) -
     app = FastAPI(title="I Hate Moving", lifespan=lifespan)
 
     # Security headers
+    app.add_middleware(OwnerAccessMiddleware, settings=settings)
     app.add_middleware(SecurityHeadersMiddleware)
 
     # Mount static files

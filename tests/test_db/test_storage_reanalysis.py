@@ -2,6 +2,7 @@
 
 from collections.abc import AsyncGenerator, Callable
 
+import aiosqlite
 import pytest
 import pytest_asyncio
 from pydantic import HttpUrl
@@ -104,7 +105,7 @@ class TestRequestReanalysis:
         assert first_row is not None
         first_ts = first_row["reanalysis_requested_at"]
 
-        # Re-request updates timestamp
+        # Re-request preserves the first pending intent.
         await storage.pipeline.request_reanalysis([merged.unique_id])
         cursor = await conn.execute(
             "SELECT reanalysis_requested_at FROM quality_analyses WHERE property_unique_id = ?",
@@ -113,8 +114,7 @@ class TestRequestReanalysis:
         second_row = await cursor.fetchone()
         assert second_row is not None
         second_ts = second_row["reanalysis_requested_at"]
-        assert second_ts is not None
-        # Both should be set (may be same or different depending on timing)
+        assert second_ts == first_ts
         assert first_ts is not None
 
     @pytest.mark.asyncio
@@ -553,9 +553,9 @@ class TestCompleteReanalysisAtomicity:
             uid: str,
             analysis: PropertyQualityAnalysis,
             *,
-            _commit: bool = True,
+            _conn: aiosqlite.Connection | None = None,
         ) -> None:
-            await original_save(uid, analysis, _commit=_commit)
+            await original_save(uid, analysis, _conn=_conn)
             raise RuntimeError("simulated crash after quality write")
 
         storage._pipeline._save_quality_analysis = _save_then_crash

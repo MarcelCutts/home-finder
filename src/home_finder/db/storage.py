@@ -6,11 +6,12 @@ import asyncio
 import contextlib
 import json
 import time
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
+from functools import partial
 from pathlib import Path
-from typing import Any, Final
+from typing import Any, Final, TypeVar
 
 import aiosqlite
 
@@ -46,6 +47,39 @@ _DEDUP_LOOKBACK_DAYS: Final = 30
 __all__ = ["PropertyStorage"]
 
 logger = get_logger(__name__)
+
+_T = TypeVar("_T")
+
+
+async def _execute_control(conn: aiosqlite.Connection, sql: str) -> None:
+    """Finish a transaction/PRAGMA statement without leaving an open cursor."""
+    cursor = await conn.execute(sql)
+    await cursor.close()
+
+
+async def _settle(operation: Awaitable[_T]) -> _T:
+    """Finish SQLite cleanup/commit before releasing ownership on cancellation.
+
+    Cancelling an aiosqlite await does not remove work from its worker queue.
+    Shield alone is insufficient: the caller must also wait for that work to
+    finish. Repeated cancellations are deferred, then delivered to the caller.
+    """
+    future = asyncio.ensure_future(operation)
+    cancelled = False
+    while not future.done():
+        try:
+            await asyncio.shield(future)
+        except asyncio.CancelledError:
+            cancelled = True
+    result = future.result()
+    if cancelled:
+        raise asyncio.CancelledError
+    return result
+
+
+class DuplicateTelegramUpdateError(Exception):
+    """The callback's status change has already been committed."""
+
 
 _CONNECTION_PRAGMAS: Final[tuple[str, ...]] = (
     "PRAGMA journal_mode=WAL",
@@ -83,10 +117,14 @@ class PropertyStorage:
         self.db_path = db_path
         self._conn: aiosqlite.Connection | None = None
         self._last_health_check: float = 0.0
+        self._connection_lock = asyncio.Lock()
+        self._owner: asyncio.Task[Any] | None = None
+        self._writing = False
+        self._connection_failed = False
         self._ensure_directory()
-        self._web = WebQueryService(self._get_connection, self.get_property_images)
+        self._web = WebQueryService(self._read_connection, self.get_property_images)
         self._pipeline = PipelineRepository(
-            self._get_connection,
+            self._read_connection,
             self.get_property_images,
             self.save_quality_analysis,
             self._transaction,
@@ -109,31 +147,119 @@ class PropertyStorage:
             path.parent.mkdir(parents=True, exist_ok=True)
 
     async def _get_connection(self) -> aiosqlite.Connection:
-        """Get or create the database connection, reconnecting if dead.
+        """Open/probe the connection while a database scope owns it.
 
-        Uses a throttled ``SELECT 1`` probe every 30 s to detect hung or
-        corrupted connections, then reconnects with full PRAGMA configuration.
+        Raw access is private and retained for isolated fixture setup only.
+        Application operations use _read_connection or _transaction throughout
+        their work, including fetches. Never abandon a live worker on reconnect.
         """
+        if self._owner is not None and self._owner is not asyncio.current_task():
+            raise RuntimeError("Database connection belongs to another task")
+        if self._connection_failed:
+            raise RuntimeError("Database connection cleanup failed; close storage before reuse")
         if self._conn is not None:  # noqa: SIM102
             # Throttled SELECT 1 probe
             if (time.monotonic() - self._last_health_check) > self._HEALTH_CHECK_INTERVAL:
                 try:
-                    await asyncio.wait_for(self._conn.execute("SELECT 1"), timeout=5.0)
+                    cursor = await asyncio.wait_for(self._conn.execute("SELECT 1"), timeout=5.0)
+                    await cursor.close()
                     self._last_health_check = time.monotonic()
                 except Exception:
                     logger.warning("db_connection_dead", db_path=self.db_path)
-                    # Don't await close() — if the worker thread is hung,
-                    # close() queues through the same SimpleQueue and hangs too.
-                    # Let GC / __del__ clean up the orphaned connection.
-                    self._conn = None
+                    await _settle(self._discard_connection(self._conn))
 
         if self._conn is None:
-            self._conn = await aiosqlite.connect(self.db_path)
-            self._conn.row_factory = aiosqlite.Row
-            for pragma in _CONNECTION_PRAGMAS:
-                await self._conn.execute(pragma)
+            # Complete opening even if cancelled so its worker can be closed.
+            async def open_connection() -> None:
+                self._conn = await aiosqlite.connect(self.db_path)
+
+            try:
+                await _settle(open_connection())
+                assert self._conn is not None
+                self._conn.row_factory = aiosqlite.Row
+                for pragma in _CONNECTION_PRAGMAS:
+                    await _execute_control(self._conn, pragma)
+            except BaseException:
+                if self._conn is not None:
+                    await _settle(self._discard_connection(self._conn))
+                raise
             self._last_health_check = time.monotonic()
+        assert self._conn is not None
         return self._conn
+
+    async def _discard_connection(self, conn: aiosqlite.Connection) -> None:
+        """Close before permitting a replacement; fail closed if cleanup fails."""
+        self._connection_failed = True
+        await conn.close()
+        self._conn = None
+        self._connection_failed = False
+
+    @asynccontextmanager
+    async def _exclusive(self, operation: str) -> AsyncIterator[None]:
+        """Own the shared connection from acquisition through final cleanup."""
+        task = asyncio.current_task()
+        if task is self._owner:
+            raise RuntimeError("Nested database scope requires an explicit connection handle")
+        waiting_since = time.monotonic()
+        async with self._connection_lock:
+            acquired = time.monotonic()
+            self._owner = task
+            try:
+                yield
+            finally:
+                self._owner = None
+                logger.debug(
+                    "db_scope_finished",
+                    operation=operation,
+                    wait_ms=round((acquired - waiting_since) * 1000, 2),
+                    duration_ms=round((time.monotonic() - acquired) * 1000, 2),
+                )
+
+    def _validate_handle(self, conn: aiosqlite.Connection, *, write: bool = False) -> None:
+        if conn is not self._conn or self._owner is not asyncio.current_task():
+            raise RuntimeError("Database handle is not owned by this task")
+        if write and not self._writing:
+            raise RuntimeError("A write requires an active write transaction")
+
+    async def _rollback(self, conn: aiosqlite.Connection) -> None:
+        try:
+            await conn.rollback()
+        except BaseException:
+            await self._discard_connection(conn)
+            raise
+
+    @asynccontextmanager
+    async def _read_connection(
+        self, *, conn: aiosqlite.Connection | None = None
+    ) -> AsyncIterator[aiosqlite.Connection]:
+        """Read one consistent snapshot; unrelated readers wait for the owner.
+
+        Passing the owner's handle permits read-after-write within its unit of
+        work. Child tasks never inherit ownership. No network work belongs here.
+        """
+        if conn is not None:
+            self._validate_handle(conn)
+            yield conn
+            return
+        async with self._exclusive("read"):
+            conn = await self._get_connection()
+            if conn.in_transaction:
+                raise RuntimeError("Database has an unmanaged transaction")
+
+            async def finish_read() -> None:
+                try:
+                    await conn.rollback()
+                    await _execute_control(conn, "PRAGMA query_only=OFF")
+                except BaseException:
+                    await self._discard_connection(conn)
+                    raise
+
+            try:
+                await _execute_control(conn, "PRAGMA query_only=ON")
+                await _execute_control(conn, "BEGIN")
+                yield conn
+            finally:
+                await _settle(finish_read())
 
     async def __aenter__(self) -> PropertyStorage:
         await self.initialize()
@@ -143,42 +269,66 @@ class PropertyStorage:
         await self.close()
 
     async def close(self) -> None:
-        """Close the database connection."""
-        if self._conn is not None:
-            try:
-                for pragma in _CLOSE_PRAGMAS:
-                    await self._conn.execute(pragma)
-            except Exception:
-                logger.debug("close_pragmas_failed", exc_info=True)
-            await self._conn.close()
-            self._conn = None
+        """Drain the active owner before closing, including during cancellation."""
+        async with self._exclusive("close"):
+            if self._conn is not None:
+                conn = self._conn
+
+                async def finish_close() -> None:
+                    try:
+                        for pragma in _CLOSE_PRAGMAS:
+                            await _execute_control(conn, pragma)
+                    except Exception:
+                        logger.debug("close_pragmas_failed", exc_info=True)
+                    await self._discard_connection(conn)
+
+                await _settle(finish_close())
 
     @asynccontextmanager
-    async def _transaction(self) -> AsyncIterator[aiosqlite.Connection]:
-        """Explicit transaction scope with automatic rollback on error.
+    async def _transaction(
+        self, *, conn: aiosqlite.Connection | None = None
+    ) -> AsyncIterator[aiosqlite.Connection]:
+        """Own a complete write, or explicitly join the caller's transaction.
 
-        Usage:
-            async with self._transaction() as conn:
-                await conn.execute(...)
-                await conn.execute(...)
-            # Commits on clean exit, rolls back on exception
+        Joined helpers neither begin nor commit; failures propagate to the owner.
+        There are no implicit nesting or savepoints. SQLite waits up to 5 seconds
+        for external locks, then fails without replaying application work. Once
+        commit begins, cancellation waits for it and may leave the whole write
+        committed; callers must not blindly retry a cancelled operation.
         """
-        conn = await self._get_connection()
-        await conn.execute("BEGIN IMMEDIATE")
-        try:
+        if conn is not None:
+            self._validate_handle(conn, write=True)
             yield conn
-            await conn.commit()
-        except BaseException:
-            await conn.rollback()
-            raise
+            return
+        async with self._exclusive("write"):
+            conn = await self._get_connection()
+            if conn.in_transaction:
+                raise RuntimeError("Database has an unmanaged transaction")
+            try:
+                # BEGIN is inside the guard: cancellation can arrive after the
+                # worker starts it but before its result reaches this coroutine.
+                await _execute_control(conn, "BEGIN IMMEDIATE")
+                self._writing = True
+                yield conn
+                await _settle(conn.commit())
+            except BaseException:
+                await _settle(self._rollback(conn))
+                raise
+            finally:
+                self._writing = False
 
     async def initialize(self) -> None:
         """Initialize the database schema via versioned migrations."""
-        conn = await self._get_connection()
-        version = await run_migrations(conn)
-        await self._backfill_fit_scores(conn)
-        # Commit needed for _backfill_fit_scores DML; migrations handle their own commits.
-        await conn.commit()
+        async with self._exclusive("initialize"):
+            conn = await self._get_connection()
+            try:
+                version = await run_migrations(conn)
+                await _execute_control(conn, "BEGIN IMMEDIATE")
+                await self._backfill_fit_scores(conn)
+                await _settle(conn.commit())
+            except BaseException:
+                await _settle(self._rollback(conn))
+                raise
         logger.info("database_initialized", db_path=self.db_path, schema_version=version)
 
     async def _backfill_fit_scores(self, conn: aiosqlite.Connection) -> None:
@@ -242,32 +392,31 @@ class PropertyStorage:
             commute_minutes: Commute time in minutes (if calculated).
             transport_mode: Transport mode used for commute calculation.
         """
-        conn = await self._get_connection()
-        columns, values = build_base_insert(
-            prop,
-            commute_minutes=commute_minutes,
-            transport_mode=transport_mode,
-            notification_status=NotificationStatus.PENDING,
-        )
-        col_list = ", ".join(columns)
-        placeholders = ", ".join("?" for _ in columns)
-        await conn.execute(
-            f"""
-            INSERT INTO properties ({col_list})
-            VALUES ({placeholders})
-            ON CONFLICT(unique_id) DO UPDATE SET
-                price_pcm = excluded.price_pcm,
-                title = excluded.title,
-                description = excluded.description,
-                image_url = excluded.image_url,
-                commute_minutes = COALESCE(excluded.commute_minutes, commute_minutes),
-                transport_mode = COALESCE(excluded.transport_mode, transport_mode)
-        """,
-            values,
-        )
-        # Keep source_listings in sync
-        await self._upsert_source_listing(conn, prop, merged_id=prop.unique_id)
-        await conn.commit()
+        async with self._transaction() as conn:
+            columns, values = build_base_insert(
+                prop,
+                commute_minutes=commute_minutes,
+                transport_mode=transport_mode,
+                notification_status=NotificationStatus.PENDING,
+            )
+            col_list = ", ".join(columns)
+            placeholders = ", ".join("?" for _ in columns)
+            await conn.execute(
+                f"""
+                INSERT INTO properties ({col_list})
+                VALUES ({placeholders})
+                ON CONFLICT(unique_id) DO UPDATE SET
+                    price_pcm = excluded.price_pcm,
+                    title = excluded.title,
+                    description = excluded.description,
+                    image_url = excluded.image_url,
+                    commute_minutes = COALESCE(excluded.commute_minutes, commute_minutes),
+                    transport_mode = COALESCE(excluded.transport_mode, transport_mode)
+            """,
+                values,
+            )
+            # Keep source_listings in sync
+            await self._upsert_source_listing(conn, prop, merged_id=prop.unique_id)
 
         logger.debug("property_saved", unique_id=prop.unique_id)
 
@@ -285,15 +434,18 @@ class PropertyStorage:
         Returns:
             True if property exists in source_listings with a merged_id.
         """
-        conn = await self._get_connection()
-        cursor = await conn.execute(
-            "SELECT 1 FROM source_listings WHERE unique_id = ? AND merged_id IS NOT NULL LIMIT 1",
-            (unique_id,),
-        )
-        row = await cursor.fetchone()
-        return row is not None
+        async with self._read_connection() as conn:
+            cursor = await conn.execute(
+                "SELECT 1 FROM source_listings "
+                "WHERE unique_id = ? AND merged_id IS NOT NULL LIMIT 1",
+                (unique_id,),
+            )
+            row = await cursor.fetchone()
+            return row is not None
 
-    async def get_property(self, unique_id: str) -> TrackedProperty | None:
+    async def get_property(
+        self, unique_id: str, *, _conn: aiosqlite.Connection | None = None
+    ) -> TrackedProperty | None:
         """Get a tracked property by unique ID.
 
         Args:
@@ -302,15 +454,15 @@ class PropertyStorage:
         Returns:
             TrackedProperty if found, None otherwise.
         """
-        conn = await self._get_connection()
-        cursor = await conn.execute(
-            "SELECT * FROM properties WHERE unique_id = ?",
-            (unique_id,),
-        )
-        row = await cursor.fetchone()
-        if row is None:
-            return None
-        return self._row_to_tracked_property(row)
+        async with self._read_connection(conn=_conn) as conn:
+            cursor = await conn.execute(
+                "SELECT * FROM properties WHERE unique_id = ?",
+                (unique_id,),
+            )
+            row = await cursor.fetchone()
+            if row is None:
+                return None
+            return self._row_to_tracked_property(row)
 
     async def get_all_properties(self) -> list[TrackedProperty]:
         """Get all tracked properties.
@@ -318,10 +470,10 @@ class PropertyStorage:
         Returns:
             List of all tracked properties.
         """
-        conn = await self._get_connection()
-        cursor = await conn.execute("SELECT * FROM properties ORDER BY first_seen DESC")
-        rows = await cursor.fetchall()
-        return [self._row_to_tracked_property(row) for row in rows]
+        async with self._read_connection() as conn:
+            cursor = await conn.execute("SELECT * FROM properties ORDER BY first_seen DESC")
+            rows = await cursor.fetchall()
+            return [self._row_to_tracked_property(row) for row in rows]
 
     async def get_pending_notifications(self) -> list[TrackedProperty]:
         """Get properties pending notification.
@@ -329,13 +481,13 @@ class PropertyStorage:
         Returns:
             List of properties with pending notification status.
         """
-        conn = await self._get_connection()
-        cursor = await conn.execute(
-            "SELECT * FROM properties WHERE notification_status = ? ORDER BY first_seen ASC",
-            (NotificationStatus.PENDING.value,),
-        )
-        rows = await cursor.fetchall()
-        return [self._row_to_tracked_property(row) for row in rows]
+        async with self._read_connection() as conn:
+            cursor = await conn.execute(
+                "SELECT * FROM properties WHERE notification_status = ? ORDER BY first_seen ASC",
+                (NotificationStatus.PENDING.value,),
+            )
+            rows = await cursor.fetchall()
+            return [self._row_to_tracked_property(row) for row in rows]
 
     async def get_unsent_notifications(self) -> list[TrackedProperty]:
         """Get properties that need notification (pending or previously failed).
@@ -343,15 +495,15 @@ class PropertyStorage:
         Returns:
             List of properties with pending or failed notification status.
         """
-        conn = await self._get_connection()
-        cursor = await conn.execute(
-            """SELECT * FROM properties
-               WHERE notification_status IN (?, ?)
-               ORDER BY first_seen ASC""",
-            (NotificationStatus.PENDING.value, NotificationStatus.FAILED.value),
-        )
-        rows = await cursor.fetchall()
-        return [self._row_to_tracked_property(row) for row in rows]
+        async with self._read_connection() as conn:
+            cursor = await conn.execute(
+                """SELECT * FROM properties
+                   WHERE notification_status IN (?, ?)
+                   ORDER BY first_seen ASC""",
+                (NotificationStatus.PENDING.value, NotificationStatus.FAILED.value),
+            )
+            rows = await cursor.fetchall()
+            return [self._row_to_tracked_property(row) for row in rows]
 
     async def mark_notified(self, unique_id: str) -> None:
         """Mark a property as notified.
@@ -359,20 +511,19 @@ class PropertyStorage:
         Args:
             unique_id: Unique property identifier.
         """
-        conn = await self._get_connection()
-        await conn.execute(
-            """
-            UPDATE properties
-            SET notification_status = ?, notified_at = ?
-            WHERE unique_id = ?
-        """,
-            (
-                NotificationStatus.SENT.value,
-                datetime.now(UTC).isoformat(),
-                unique_id,
-            ),
-        )
-        await conn.commit()
+        async with self._transaction() as conn:
+            await conn.execute(
+                """
+                UPDATE properties
+                SET notification_status = ?, notified_at = ?
+                WHERE unique_id = ?
+            """,
+                (
+                    NotificationStatus.SENT.value,
+                    datetime.now(UTC).isoformat(),
+                    unique_id,
+                ),
+            )
 
         logger.debug("property_marked_notified", unique_id=unique_id)
 
@@ -382,16 +533,15 @@ class PropertyStorage:
         Args:
             unique_id: Unique property identifier.
         """
-        conn = await self._get_connection()
-        await conn.execute(
-            """
-            UPDATE properties
-            SET notification_status = ?
-            WHERE unique_id = ?
-        """,
-            (NotificationStatus.FAILED.value, unique_id),
-        )
-        await conn.commit()
+        async with self._transaction() as conn:
+            await conn.execute(
+                """
+                UPDATE properties
+                SET notification_status = ?
+                WHERE unique_id = ?
+            """,
+                (NotificationStatus.FAILED.value, unique_id),
+            )
 
         logger.debug("property_notification_failed", unique_id=unique_id)
 
@@ -410,20 +560,20 @@ class PropertyStorage:
         """
         if not unique_ids:
             return set()
-        conn = await self._get_connection()
-        seen: set[str] = set()
-        chunk_size = 500
-        for i in range(0, len(unique_ids), chunk_size):
-            chunk = unique_ids[i : i + chunk_size]
-            placeholders = ",".join("?" * len(chunk))
-            cursor = await conn.execute(
-                f"SELECT unique_id FROM source_listings"
-                f" WHERE unique_id IN ({placeholders}) AND merged_id IS NOT NULL",
-                chunk,
-            )
-            rows = await cursor.fetchall()
-            seen.update(row[0] for row in rows)
-        return seen
+        async with self._read_connection() as conn:
+            seen: set[str] = set()
+            chunk_size = 500
+            for i in range(0, len(unique_ids), chunk_size):
+                chunk = unique_ids[i : i + chunk_size]
+                placeholders = ",".join("?" * len(chunk))
+                cursor = await conn.execute(
+                    f"SELECT unique_id FROM source_listings"
+                    f" WHERE unique_id IN ({placeholders}) AND merged_id IS NOT NULL",
+                    chunk,
+                )
+                rows = await cursor.fetchall()
+                seen.update(row[0] for row in rows)
+            return seen
 
     async def filter_new(self, properties: list[Property]) -> list[Property]:
         """Filter to only properties not yet seen.
@@ -496,62 +646,61 @@ class PropertyStorage:
         Returns:
             List of MergedProperty objects reconstructed from DB rows.
         """
-        conn = await self._get_connection()
+        async with self._read_connection() as conn:
+            if days is not None:
+                cutoff = (datetime.now(UTC) - timedelta(days=days)).isoformat()
+                cursor = await conn.execute(
+                    """
+                    SELECT * FROM properties
+                    WHERE first_seen >= ?
+                      AND COALESCE(enrichment_status, 'enriched') != 'pending'
+                    ORDER BY first_seen DESC
+                    """,
+                    (cutoff,),
+                )
+            else:
+                cursor = await conn.execute(
+                    """
+                    SELECT * FROM properties
+                    WHERE COALESCE(enrichment_status, 'enriched') != 'pending'
+                    ORDER BY first_seen DESC
+                    """
+                )
 
-        if days is not None:
-            cutoff = (datetime.now(UTC) - timedelta(days=days)).isoformat()
-            cursor = await conn.execute(
-                """
-                SELECT * FROM properties
-                WHERE first_seen >= ?
-                  AND COALESCE(enrichment_status, 'enriched') != 'pending'
-                ORDER BY first_seen DESC
-                """,
-                (cutoff,),
+            rows = await cursor.fetchall()
+            if not rows:
+                logger.debug("loaded_dedup_anchors", count=0, days=days)
+                return []
+
+            # Batch-load source_listings for all properties
+            unique_ids = [row["unique_id"] for row in rows]
+            sl_by_merged: dict[str, list[aiosqlite.Row]] = {}
+            chunk_size = 500
+            for i in range(0, len(unique_ids), chunk_size):
+                chunk = unique_ids[i : i + chunk_size]
+                placeholders = ",".join("?" * len(chunk))
+                sl_cursor = await conn.execute(
+                    f"SELECT * FROM source_listings WHERE merged_id IN ({placeholders})",
+                    chunk,
+                )
+                for sl in await sl_cursor.fetchall():
+                    sl_by_merged.setdefault(sl["merged_id"], []).append(sl)
+
+            results = [
+                await row_to_merged_property(
+                    row,
+                    source_listings=sl_by_merged.get(row["unique_id"]),
+                    get_property_images=partial(self.get_property_images, _conn=conn),
+                )
+                for row in rows
+            ]
+
+            logger.debug(
+                "loaded_dedup_anchors",
+                count=len(results),
+                days=days,
             )
-        else:
-            cursor = await conn.execute(
-                """
-                SELECT * FROM properties
-                WHERE COALESCE(enrichment_status, 'enriched') != 'pending'
-                ORDER BY first_seen DESC
-                """
-            )
-
-        rows = await cursor.fetchall()
-        if not rows:
-            logger.debug("loaded_dedup_anchors", count=0, days=days)
-            return []
-
-        # Batch-load source_listings for all properties
-        unique_ids = [row["unique_id"] for row in rows]
-        sl_by_merged: dict[str, list[aiosqlite.Row]] = {}
-        chunk_size = 500
-        for i in range(0, len(unique_ids), chunk_size):
-            chunk = unique_ids[i : i + chunk_size]
-            placeholders = ",".join("?" * len(chunk))
-            sl_cursor = await conn.execute(
-                f"SELECT * FROM source_listings WHERE merged_id IN ({placeholders})",
-                chunk,
-            )
-            for sl in await sl_cursor.fetchall():
-                sl_by_merged.setdefault(sl["merged_id"], []).append(sl)
-
-        results = [
-            await row_to_merged_property(
-                row,
-                source_listings=sl_by_merged.get(row["unique_id"]),
-                get_property_images=self.get_property_images,
-            )
-            for row in rows
-        ]
-
-        logger.debug(
-            "loaded_dedup_anchors",
-            count=len(results),
-            days=days,
-        )
-        return results
+            return results
 
     async def update_merged_sources(
         self,
@@ -627,7 +776,7 @@ class PropertyStorage:
             if merged.floorplan:
                 new_images.append(merged.floorplan)
             if new_images:
-                await self.save_property_images(existing_unique_id, new_images, _commit=False)
+                await self.save_property_images(existing_unique_id, new_images, _conn=conn)
 
         logger.info(
             "merged_sources_updated",
@@ -653,44 +802,43 @@ class PropertyStorage:
             transport_mode: Transport mode used for commute calculation.
             ward: Official ward name from postcodes.io lookup.
         """
-        conn = await self._get_connection()
-        columns, values = build_merged_insert_columns(
-            merged,
-            commute_minutes=commute_minutes,
-            transport_mode=transport_mode,
-            notification_status=NotificationStatus.PENDING,
-            extra={"ward": ward},
-        )
-        col_list = ", ".join(columns)
-        placeholders = ", ".join("?" for _ in columns)
+        async with self._transaction() as conn:
+            columns, values = build_merged_insert_columns(
+                merged,
+                commute_minutes=commute_minutes,
+                transport_mode=transport_mode,
+                notification_status=NotificationStatus.PENDING,
+                extra={"ward": ward},
+            )
+            col_list = ", ".join(columns)
+            placeholders = ", ".join("?" for _ in columns)
 
-        await conn.execute(
-            f"""
-            INSERT INTO properties ({col_list})
-            VALUES ({placeholders})
-            ON CONFLICT(unique_id) DO UPDATE SET
-                price_pcm = excluded.price_pcm,
-                title = excluded.title,
-                description = excluded.description,
-                image_url = excluded.image_url,
-                commute_minutes = COALESCE(excluded.commute_minutes, commute_minutes),
-                transport_mode = COALESCE(excluded.transport_mode, transport_mode),
-                sources = excluded.sources,
-                source_urls = excluded.source_urls,
-                min_price = excluded.min_price,
-                max_price = excluded.max_price,
-                descriptions_json = COALESCE(excluded.descriptions_json, descriptions_json),
-                ward = COALESCE(excluded.ward, ward)
-        """,
-            values,
-        )
-        # Keep source_listings in sync — write canonical source
-        await self._upsert_source_listing(
-            conn, merged.canonical, merged_id=merged.canonical.unique_id
-        )
-        # Link non-canonical source_listings by URL (in-run dedup absorbed sources)
-        await link_source_listings_by_url(conn, merged.canonical.unique_id, merged.source_urls)
-        await conn.commit()
+            await conn.execute(
+                f"""
+                INSERT INTO properties ({col_list})
+                VALUES ({placeholders})
+                ON CONFLICT(unique_id) DO UPDATE SET
+                    price_pcm = excluded.price_pcm,
+                    title = excluded.title,
+                    description = excluded.description,
+                    image_url = excluded.image_url,
+                    commute_minutes = COALESCE(excluded.commute_minutes, commute_minutes),
+                    transport_mode = COALESCE(excluded.transport_mode, transport_mode),
+                    sources = excluded.sources,
+                    source_urls = excluded.source_urls,
+                    min_price = excluded.min_price,
+                    max_price = excluded.max_price,
+                    descriptions_json = COALESCE(excluded.descriptions_json, descriptions_json),
+                    ward = COALESCE(excluded.ward, ward)
+            """,
+                values,
+            )
+            # Keep source_listings in sync — write canonical source
+            await self._upsert_source_listing(
+                conn, merged.canonical, merged_id=merged.canonical.unique_id
+            )
+            # Link non-canonical source_listings by URL (in-run dedup absorbed sources)
+            await link_source_listings_by_url(conn, merged.canonical.unique_id, merged.source_urls)
 
         logger.debug(
             "merged_property_saved",
@@ -709,12 +857,11 @@ class PropertyStorage:
         """
         if not ward_map:
             return 0
-        conn = await self._get_connection()
-        cursor = await conn.executemany(
-            "UPDATE properties SET ward = ? WHERE unique_id = ?",
-            [(ward, uid) for uid, ward in ward_map.items()],
-        )
-        await conn.commit()
+        async with self._transaction() as conn:
+            cursor = await conn.executemany(
+                "UPDATE properties SET ward = ? WHERE unique_id = ?",
+                [(ward, uid) for uid, ward in ward_map.items()],
+            )
         return cursor.rowcount
 
     async def get_properties_without_ward(
@@ -724,44 +871,44 @@ class PropertyStorage:
 
         Returns dicts with unique_id, postcode, latitude, longitude.
         """
-        conn = await self._get_connection()
-        cursor = await conn.execute(
-            """
-            SELECT unique_id, postcode, latitude, longitude
-            FROM properties
-            WHERE ward IS NULL
-            """
-        )
-        rows = await cursor.fetchall()
-        return [dict(row) for row in rows]
+        async with self._read_connection() as conn:
+            cursor = await conn.execute(
+                """
+                SELECT unique_id, postcode, latitude, longitude
+                FROM properties
+                WHERE ward IS NULL
+                """
+            )
+            rows = await cursor.fetchall()
+            return [dict(row) for row in rows]
 
     async def save_property_images(
-        self, unique_id: str, images: list[PropertyImage], *, _commit: bool = True
+        self,
+        unique_id: str,
+        images: list[PropertyImage],
+        *,
+        _conn: aiosqlite.Connection | None = None,
     ) -> None:
         """Save property images to the database.
 
         Args:
             unique_id: Property unique ID.
             images: List of images to save.
-            _commit: Whether to commit the transaction. Pass False when
-                called from a parent operation that manages its own commit.
+            _conn: Explicit handle when joining the caller's owned transaction.
         """
         if not images:
             return
 
-        conn = await self._get_connection()
-
-        rows = [(unique_id, img.source.value, str(img.url), img.image_type) for img in images]
-        await conn.executemany(
-            """
-            INSERT OR IGNORE INTO property_images
-            (property_unique_id, source, url, image_type)
-            VALUES (?, ?, ?, ?)
-            """,
-            rows,
-        )
-        if _commit:
-            await conn.commit()
+        async with self._transaction(conn=_conn) as conn:
+            rows = [(unique_id, img.source.value, str(img.url), img.image_type) for img in images]
+            await conn.executemany(
+                """
+                INSERT OR IGNORE INTO property_images
+                (property_unique_id, source, url, image_type)
+                VALUES (?, ?, ?, ?)
+                """,
+                rows,
+            )
 
         logger.debug(
             "property_images_saved",
@@ -769,7 +916,9 @@ class PropertyStorage:
             image_count=len(images),
         )
 
-    async def get_property_images(self, unique_id: str) -> list[PropertyImage]:
+    async def get_property_images(
+        self, unique_id: str, *, _conn: aiosqlite.Connection | None = None
+    ) -> list[PropertyImage]:
         """Get all images for a property.
 
         Args:
@@ -778,28 +927,28 @@ class PropertyStorage:
         Returns:
             List of property images.
         """
-        conn = await self._get_connection()
-        cursor = await conn.execute(
-            """
-            SELECT source, url, image_type
-            FROM property_images
-            WHERE property_unique_id = ?
-            ORDER BY image_type, id
-        """,
-            (unique_id,),
-        )
-        rows = await cursor.fetchall()
-
-        images = []
-        for row in rows:
-            images.append(
-                PropertyImage(
-                    source=PropertySource(row["source"]),
-                    url=row["url"],
-                    image_type=row["image_type"],
-                )
+        async with self._read_connection(conn=_conn) as conn:
+            cursor = await conn.execute(
+                """
+                SELECT source, url, image_type
+                FROM property_images
+                WHERE property_unique_id = ?
+                ORDER BY image_type, id
+            """,
+                (unique_id,),
             )
-        return images
+            rows = await cursor.fetchall()
+
+            images = []
+            for row in rows:
+                images.append(
+                    PropertyImage(
+                        source=PropertySource(row["source"]),
+                        url=row["url"],
+                        image_type=row["image_type"],
+                    )
+                )
+            return images
 
     async def get_property_images_and_row(
         self, unique_id: str
@@ -815,37 +964,36 @@ class PropertyStorage:
         Returns:
             Tuple of (images, property_or_none).
         """
-        conn = await self._get_connection()
-
-        # Images
-        img_cursor = await conn.execute(
-            """
-            SELECT source, url, image_type
-            FROM property_images
-            WHERE property_unique_id = ?
-            ORDER BY image_type, id
-            """,
-            (unique_id,),
-        )
-        img_rows = await img_cursor.fetchall()
-        images = [
-            PropertyImage(
-                source=PropertySource(r["source"]),
-                url=r["url"],
-                image_type=r["image_type"],
+        async with self._read_connection() as conn:
+            # Images
+            img_cursor = await conn.execute(
+                """
+                SELECT source, url, image_type
+                FROM property_images
+                WHERE property_unique_id = ?
+                ORDER BY image_type, id
+                """,
+                (unique_id,),
             )
-            for r in img_rows
-        ]
+            img_rows = await img_cursor.fetchall()
+            images = [
+                PropertyImage(
+                    source=PropertySource(r["source"]),
+                    url=r["url"],
+                    image_type=r["image_type"],
+                )
+                for r in img_rows
+            ]
 
-        # Property row
-        prop_cursor = await conn.execute(
-            "SELECT * FROM properties WHERE unique_id = ?",
-            (unique_id,),
-        )
-        prop_row = await prop_cursor.fetchone()
-        prop = row_to_property(prop_row) if prop_row is not None else None
+            # Property row
+            prop_cursor = await conn.execute(
+                "SELECT * FROM properties WHERE unique_id = ?",
+                (unique_id,),
+            )
+            prop_row = await prop_cursor.fetchone()
+            prop = row_to_property(prop_row) if prop_row is not None else None
 
-        return images, prop
+            return images, prop
 
     async def get_properties_needing_commute(self) -> list[Property]:
         """Get properties with coordinates but no commute data.
@@ -856,16 +1004,16 @@ class PropertyStorage:
         Returns:
             List of Property objects with lat/lon but no commute_minutes.
         """
-        conn = await self._get_connection()
-        cursor = await conn.execute(
-            """
-            SELECT * FROM properties
-            WHERE latitude IS NOT NULL AND longitude IS NOT NULL
-              AND commute_minutes IS NULL
-            """
-        )
-        rows = await cursor.fetchall()
-        return [row_to_property(row) for row in rows]
+        async with self._read_connection() as conn:
+            cursor = await conn.execute(
+                """
+                SELECT * FROM properties
+                WHERE latitude IS NOT NULL AND longitude IS NOT NULL
+                  AND commute_minutes IS NULL
+                """
+            )
+            rows = await cursor.fetchall()
+            return [row_to_property(row) for row in rows]
 
     async def update_commute_data(
         self,
@@ -881,19 +1029,18 @@ class PropertyStorage:
         """
         if not commute_lookup:
             return 0
-        conn = await self._get_connection()
-        await conn.executemany(
-            """
-            UPDATE properties
-            SET commute_minutes = ?, transport_mode = ?
-            WHERE unique_id = ?
-            """,
-            [
-                (minutes, mode.value, unique_id)
-                for unique_id, (minutes, mode) in commute_lookup.items()
-            ],
-        )
-        await conn.commit()
+        async with self._transaction() as conn:
+            await conn.executemany(
+                """
+                UPDATE properties
+                SET commute_minutes = ?, transport_mode = ?
+                WHERE unique_id = ?
+                """,
+                [
+                    (minutes, mode.value, unique_id)
+                    for unique_id, (minutes, mode) in commute_lookup.items()
+                ],
+            )
         return len(commute_lookup)
 
     # ------------------------------------------------------------------
@@ -968,49 +1115,48 @@ class PropertyStorage:
         """
         if not properties:
             return 0
-        conn = await self._get_connection()
-        now = datetime.now(UTC).isoformat()
-        rows = [
-            (
-                p.unique_id,
-                p.source.value,
-                p.source_id,
-                str(p.url),
-                p.title,
-                p.price_pcm,
-                p.bedrooms,
-                p.address,
-                p.postcode,
-                p.latitude,
-                p.longitude,
-                p.description,
-                str(p.image_url) if p.image_url else None,
-                p.available_from.isoformat() if p.available_from else None,
-                p.first_seen.isoformat(),
-                now,
+        async with self._transaction() as conn:
+            now = datetime.now(UTC).isoformat()
+            rows = [
+                (
+                    p.unique_id,
+                    p.source.value,
+                    p.source_id,
+                    str(p.url),
+                    p.title,
+                    p.price_pcm,
+                    p.bedrooms,
+                    p.address,
+                    p.postcode,
+                    p.latitude,
+                    p.longitude,
+                    p.description,
+                    str(p.image_url) if p.image_url else None,
+                    p.available_from.isoformat() if p.available_from else None,
+                    p.first_seen.isoformat(),
+                    now,
+                )
+                for p in properties
+            ]
+            await conn.executemany(
+                """
+                INSERT INTO source_listings (
+                    unique_id, source, source_id, url, title, price_pcm,
+                    bedrooms, address, postcode, latitude, longitude,
+                    description, image_url, available_from, first_seen, last_seen
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(unique_id) DO UPDATE SET
+                    price_pcm = excluded.price_pcm,
+                    title = excluded.title,
+                    description = excluded.description,
+                    image_url = excluded.image_url,
+                    last_seen = excluded.last_seen,
+                    latitude = COALESCE(excluded.latitude, latitude),
+                    longitude = COALESCE(excluded.longitude, longitude),
+                    postcode = COALESCE(excluded.postcode, postcode)
+                """,
+                rows,
             )
-            for p in properties
-        ]
-        await conn.executemany(
-            """
-            INSERT INTO source_listings (
-                unique_id, source, source_id, url, title, price_pcm,
-                bedrooms, address, postcode, latitude, longitude,
-                description, image_url, available_from, first_seen, last_seen
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(unique_id) DO UPDATE SET
-                price_pcm = excluded.price_pcm,
-                title = excluded.title,
-                description = excluded.description,
-                image_url = excluded.image_url,
-                last_seen = excluded.last_seen,
-                latitude = COALESCE(excluded.latitude, latitude),
-                longitude = COALESCE(excluded.longitude, longitude),
-                postcode = COALESCE(excluded.postcode, postcode)
-            """,
-            rows,
-        )
-        await conn.commit()
         return len(rows)
 
     async def link_source_listings(self, links: list[tuple[str, str]]) -> None:
@@ -1020,12 +1166,11 @@ class PropertyStorage:
         """
         if not links:
             return
-        conn = await self._get_connection()
-        await conn.executemany(
-            "UPDATE source_listings SET merged_id = ? WHERE unique_id = ?",
-            [(merged_id, uid) for uid, merged_id in links],
-        )
-        await conn.commit()
+        async with self._transaction() as conn:
+            await conn.executemany(
+                "UPDATE source_listings SET merged_id = ? WHERE unique_id = ?",
+                [(merged_id, uid) for uid, merged_id in links],
+            )
 
     async def get_all_known_source_ids(self) -> dict[str, set[str]]:
         """Get all source_ids grouped by property source.
@@ -1037,116 +1182,118 @@ class PropertyStorage:
         Returns:
             Dict mapping source name to set of source_ids.
         """
-        conn = await self._get_connection()
-        cursor = await conn.execute("SELECT source, source_id FROM source_listings")
-        rows = await cursor.fetchall()
-        result: dict[str, set[str]] = {}
-        for source, source_id in rows:
-            result.setdefault(source, set()).add(source_id)
-        return result
+        async with self._read_connection() as conn:
+            cursor = await conn.execute("SELECT source, source_id FROM source_listings")
+            rows = await cursor.fetchall()
+            result: dict[str, set[str]] = {}
+            for source, source_id in rows:
+                result.setdefault(source, set()).add(source_id)
+            return result
 
     async def save_quality_analysis(
-        self, unique_id: str, analysis: PropertyQualityAnalysis, *, _commit: bool = True
+        self,
+        unique_id: str,
+        analysis: PropertyQualityAnalysis,
+        *,
+        _conn: aiosqlite.Connection | None = None,
     ) -> None:
         """Save a quality analysis result for a property.
 
         Args:
             unique_id: Property unique ID.
             analysis: PropertyQualityAnalysis instance.
-            _commit: Whether to commit the transaction. Pass False when
-                called from a parent operation that manages its own commit.
+            _conn: Explicit handle when joining the caller's owned transaction.
         """
-        conn = await self._get_connection()
+        async with self._transaction(conn=_conn) as conn:
+            # Use model_dump(mode="json") + json.dumps() instead of model_dump_json()
+            # to guarantee valid JSON. Pydantic's Rust serializer can produce invalid
+            # JSON for edge cases (e.g. NaN floats), while json.dumps() is strict.
+            try:
+                analysis_json = json.dumps(analysis.model_dump(mode="json"))
+            except (ValueError, TypeError) as e:
+                logger.error(
+                    "analysis_json_serialization_failed",
+                    unique_id=unique_id,
+                    error=str(e),
+                    exc_info=True,
+                )
+                return
 
-        # Use model_dump(mode="json") + json.dumps() instead of model_dump_json()
-        # to guarantee valid JSON. Pydantic's Rust serializer can produce invalid
-        # JSON for edge cases (e.g. NaN floats), while json.dumps() is strict.
-        try:
-            analysis_json = json.dumps(analysis.model_dump(mode="json"))
-        except (ValueError, TypeError) as e:
-            logger.error(
-                "analysis_json_serialization_failed",
-                unique_id=unique_id,
-                error=str(e),
-                exc_info=True,
+            # Denormalize key fields for SQL filtering
+            overall_rating = analysis.overall_rating
+            condition_concerns = analysis.condition_concerns
+            concern_severity = analysis.concern_severity
+
+            # Extract denormalized fields from new analysis dimensions
+            epc_rating = (
+                analysis.listing_extraction.epc_rating if analysis.listing_extraction else None
             )
-            return
-
-        # Denormalize key fields for SQL filtering
-        overall_rating = analysis.overall_rating
-        condition_concerns = analysis.condition_concerns
-        concern_severity = analysis.concern_severity
-
-        # Extract denormalized fields from new analysis dimensions
-        epc_rating = analysis.listing_extraction.epc_rating if analysis.listing_extraction else None
-        has_outdoor_space = None
-        if analysis.outdoor_space:
-            has_outdoor_space = any(
-                [
-                    analysis.outdoor_space.has_balcony,
-                    analysis.outdoor_space.has_garden,
-                    analysis.outdoor_space.has_terrace,
-                    analysis.outdoor_space.has_shared_garden,
-                ]
+            has_outdoor_space = None
+            if analysis.outdoor_space:
+                has_outdoor_space = any(
+                    [
+                        analysis.outdoor_space.has_balcony,
+                        analysis.outdoor_space.has_garden,
+                        analysis.outdoor_space.has_terrace,
+                        analysis.outdoor_space.has_shared_garden,
+                    ]
+                )
+            red_flag_count = (
+                analysis.listing_red_flags.red_flag_count if analysis.listing_red_flags else None
             )
-        red_flag_count = (
-            analysis.listing_red_flags.red_flag_count if analysis.listing_red_flags else None
-        )
 
-        # Compute fit_score for SQL-based sorting
-        fit_score_val: int | None = None
-        prop_cursor = await conn.execute(
-            "SELECT bedrooms, postcode FROM properties WHERE unique_id = ?",
-            (unique_id,),
-        )
-        prop_row = await prop_cursor.fetchone()
-        if prop_row:
-            analysis_dict = json.loads(analysis_json)
-            postcode = prop_row["postcode"] or ""
-            outcode = postcode.split()[0] if postcode else None
-            if outcode:
-                ht = HOSTING_TOLERANCE.get(outcode)
-                if ht:
-                    analysis_dict["_area_hosting_tolerance"] = ht.get("rating")
-            fit_score_val = compute_fit_score(analysis_dict, prop_row["bedrooms"] or 0)
+            # Compute fit_score for SQL-based sorting
+            fit_score_val: int | None = None
+            prop_cursor = await conn.execute(
+                "SELECT bedrooms, postcode FROM properties WHERE unique_id = ?",
+                (unique_id,),
+            )
+            prop_row = await prop_cursor.fetchone()
+            if prop_row:
+                analysis_dict = json.loads(analysis_json)
+                postcode = prop_row["postcode"] or ""
+                outcode = postcode.split()[0] if postcode else None
+                if outcode:
+                    ht = HOSTING_TOLERANCE.get(outcode)
+                    if ht:
+                        analysis_dict["_area_hosting_tolerance"] = ht.get("rating")
+                fit_score_val = compute_fit_score(analysis_dict, prop_row["bedrooms"] or 0)
 
-        from home_finder.filters.fit_score import FIT_SCORE_VERSION
+            from home_finder.filters.fit_score import FIT_SCORE_VERSION
 
-        await conn.execute(
-            """
-            INSERT INTO quality_analyses (
-                property_unique_id, analysis_json, overall_rating,
-                condition_concerns, concern_severity, epc_rating,
-                has_outdoor_space, red_flag_count, fit_score,
-                fit_score_version, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(property_unique_id) DO UPDATE SET
-                analysis_json = excluded.analysis_json,
-                overall_rating = excluded.overall_rating,
-                condition_concerns = excluded.condition_concerns,
-                concern_severity = excluded.concern_severity,
-                epc_rating = excluded.epc_rating,
-                has_outdoor_space = excluded.has_outdoor_space,
-                red_flag_count = excluded.red_flag_count,
-                fit_score = excluded.fit_score,
-                fit_score_version = excluded.fit_score_version
-            """,
-            (
-                unique_id,
-                analysis_json,
-                overall_rating,
-                condition_concerns,
-                concern_severity,
-                epc_rating,
-                has_outdoor_space,
-                red_flag_count,
-                fit_score_val,
-                FIT_SCORE_VERSION,
-                datetime.now(UTC).isoformat(),
-            ),
-        )
-        if _commit:
-            await conn.commit()
+            await conn.execute(
+                """
+                INSERT INTO quality_analyses (
+                    property_unique_id, analysis_json, overall_rating,
+                    condition_concerns, concern_severity, epc_rating,
+                    has_outdoor_space, red_flag_count, fit_score,
+                    fit_score_version, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(property_unique_id) DO UPDATE SET
+                    analysis_json = excluded.analysis_json,
+                    overall_rating = excluded.overall_rating,
+                    condition_concerns = excluded.condition_concerns,
+                    concern_severity = excluded.concern_severity,
+                    epc_rating = excluded.epc_rating,
+                    has_outdoor_space = excluded.has_outdoor_space,
+                    red_flag_count = excluded.red_flag_count,
+                    fit_score = excluded.fit_score,
+                    fit_score_version = excluded.fit_score_version
+                """,
+                (
+                    unique_id,
+                    analysis_json,
+                    overall_rating,
+                    condition_concerns,
+                    concern_severity,
+                    epc_rating,
+                    has_outdoor_space,
+                    red_flag_count,
+                    fit_score_val,
+                    FIT_SCORE_VERSION,
+                    datetime.now(UTC).isoformat(),
+                ),
+            )
         logger.debug("quality_analysis_saved", unique_id=unique_id)
 
     async def get_quality_analysis(self, unique_id: str) -> PropertyQualityAnalysis | None:
@@ -1158,30 +1305,29 @@ class PropertyStorage:
         Returns:
             PropertyQualityAnalysis if found, None otherwise.
         """
-        conn = await self._get_connection()
-        cursor = await conn.execute(
-            "SELECT analysis_json FROM quality_analyses WHERE property_unique_id = ?",
-            (unique_id,),
-        )
-        row = await cursor.fetchone()
-        if row is None:
-            return None
-        return PropertyQualityAnalysis.model_validate_json(row["analysis_json"])
+        async with self._read_connection() as conn:
+            cursor = await conn.execute(
+                "SELECT analysis_json FROM quality_analyses WHERE property_unique_id = ?",
+                (unique_id,),
+            )
+            row = await cursor.fetchone()
+            if row is None:
+                return None
+            return PropertyQualityAnalysis.model_validate_json(row["analysis_json"])
 
     async def update_floor_area(
         self, unique_id: str, floor_area_sqm: float, floor_area_source: str
     ) -> None:
         """Update floor area for a property (only if not already set)."""
-        conn = await self._get_connection()
-        await conn.execute(
-            """
-            UPDATE properties
-            SET floor_area_sqm = ?, floor_area_source = ?
-            WHERE unique_id = ? AND floor_area_sqm IS NULL
-            """,
-            (floor_area_sqm, floor_area_source, unique_id),
-        )
-        await conn.commit()
+        async with self._transaction() as conn:
+            await conn.execute(
+                """
+                UPDATE properties
+                SET floor_area_sqm = ?, floor_area_source = ?
+                WHERE unique_id = ? AND floor_area_sqm IS NULL
+                """,
+                (floor_area_sqm, floor_area_source, unique_id),
+            )
 
     # ------------------------------------------------------------------
     # User status tracking (Ticket 7)
@@ -1194,12 +1340,23 @@ class PropertyStorage:
         *,
         note: str | None = None,
         source: str = "web",
+        telegram_update_id: int | None = None,
     ) -> UserStatus | None:
         """Update property user_status and log the event.
 
-        Returns the previous status, or None if property not found.
+        Returns the previous status, or None if property not found. A replayed
+        Telegram update raises DuplicateTelegramUpdateError without changing state.
         """
         async with self._transaction() as conn:
+            if telegram_update_id is not None:
+                if source != "telegram" or not 0 <= telegram_update_id < 2**63:
+                    raise ValueError("Invalid Telegram update identity")
+                cursor = await conn.execute(
+                    "SELECT 1 FROM status_events WHERE telegram_update_id = ?",
+                    (telegram_update_id,),
+                )
+                if await cursor.fetchone():
+                    raise DuplicateTelegramUpdateError
             cursor = await conn.execute(
                 "SELECT user_status FROM properties WHERE unique_id = ?",
                 (unique_id,),
@@ -1216,9 +1373,9 @@ class PropertyStorage:
             )
             await conn.execute(
                 """INSERT INTO status_events
-                   (property_unique_id, from_status, to_status, note, source)
-                   VALUES (?, ?, ?, ?, ?)""",
-                (unique_id, from_status, new_status.value, note, source),
+                   (property_unique_id, from_status, to_status, note, source, telegram_update_id)
+                   VALUES (?, ?, ?, ?, ?, ?)""",
+                (unique_id, from_status, new_status.value, note, source, telegram_update_id),
             )
         logger.debug(
             "user_status_updated",
@@ -1230,16 +1387,16 @@ class PropertyStorage:
 
     async def get_status_history(self, unique_id: str) -> list[dict[str, Any]]:
         """Get status change history for a property, ordered chronologically."""
-        conn = await self._get_connection()
-        cursor = await conn.execute(
-            """SELECT from_status, to_status, note, source, created_at
-               FROM status_events
-               WHERE property_unique_id = ?
-               ORDER BY created_at ASC""",
-            (unique_id,),
-        )
-        rows = await cursor.fetchall()
-        return [dict(row) for row in rows]
+        async with self._read_connection() as conn:
+            cursor = await conn.execute(
+                """SELECT from_status, to_status, note, source, created_at
+                   FROM status_events
+                   WHERE property_unique_id = ?
+                   ORDER BY created_at ASC""",
+                (unique_id,),
+            )
+            rows = await cursor.fetchall()
+            return [dict(row) for row in rows]
 
     # ------------------------------------------------------------------
     # Viewing messages (Ticket 8)
@@ -1247,35 +1404,33 @@ class PropertyStorage:
 
     async def get_viewing_message(self, unique_id: str) -> str | None:
         """Get cached viewing message for a property."""
-        conn = await self._get_connection()
-        cursor = await conn.execute(
-            "SELECT message FROM viewing_messages WHERE property_unique_id = ?",
-            (unique_id,),
-        )
-        row = await cursor.fetchone()
-        return row["message"] if row else None
+        async with self._read_connection() as conn:
+            cursor = await conn.execute(
+                "SELECT message FROM viewing_messages WHERE property_unique_id = ?",
+                (unique_id,),
+            )
+            row = await cursor.fetchone()
+            return row["message"] if row else None
 
     async def save_viewing_message(self, unique_id: str, message: str) -> None:
         """Save or replace a viewing message for a property."""
-        conn = await self._get_connection()
-        await conn.execute(
-            """INSERT INTO viewing_messages (property_unique_id, message)
-               VALUES (?, ?)
-               ON CONFLICT(property_unique_id) DO UPDATE SET
-                   message = excluded.message,
-                   created_at = CURRENT_TIMESTAMP""",
-            (unique_id, message),
-        )
-        await conn.commit()
+        async with self._transaction() as conn:
+            await conn.execute(
+                """INSERT INTO viewing_messages (property_unique_id, message)
+                   VALUES (?, ?)
+                   ON CONFLICT(property_unique_id) DO UPDATE SET
+                       message = excluded.message,
+                       created_at = CURRENT_TIMESTAMP""",
+                (unique_id, message),
+            )
 
     async def delete_viewing_message(self, unique_id: str) -> None:
         """Delete cached viewing message (for regeneration)."""
-        conn = await self._get_connection()
-        await conn.execute(
-            "DELETE FROM viewing_messages WHERE property_unique_id = ?",
-            (unique_id,),
-        )
-        await conn.commit()
+        async with self._transaction() as conn:
+            await conn.execute(
+                "DELETE FROM viewing_messages WHERE property_unique_id = ?",
+                (unique_id,),
+            )
 
     # ------------------------------------------------------------------
     # Price history (Ticket 10)
@@ -1384,49 +1539,48 @@ class PropertyStorage:
 
     async def get_price_history(self, unique_id: str) -> list[dict[str, Any]]:
         """Get price change history for a property, newest first."""
-        conn = await self._get_connection()
-        cursor = await conn.execute(
-            """SELECT old_price, new_price, change_amount, source, detected_at
-               FROM price_history
-               WHERE property_unique_id = ?
-               ORDER BY detected_at DESC""",
-            (unique_id,),
-        )
-        rows = await cursor.fetchall()
-        return [dict(row) for row in rows]
+        async with self._read_connection() as conn:
+            cursor = await conn.execute(
+                """SELECT old_price, new_price, change_amount, source, detected_at
+                   FROM price_history
+                   WHERE property_unique_id = ?
+                   ORDER BY detected_at DESC""",
+                (unique_id,),
+            )
+            rows = await cursor.fetchall()
+            return [dict(row) for row in rows]
 
     async def get_unsent_price_drops(self) -> list[dict[str, Any]]:
         """Get properties with unnotified price drops for Telegram alerts."""
-        conn = await self._get_connection()
-        cursor = await conn.execute(
-            """SELECT p.unique_id, p.title, p.postcode, p.first_seen, p.url,
-                      ph.old_price, ph.new_price, ph.change_amount
-               FROM properties p
-               JOIN price_history ph ON ph.property_unique_id = p.unique_id
-               WHERE p.price_drop_notified = 0
-                 AND ph.change_amount < 0
-                 AND p.notification_status = 'sent'
-               ORDER BY ph.detected_at DESC"""
-        )
-        rows = await cursor.fetchall()
-        # Deduplicate: only latest drop per property
-        seen: set[str] = set()
-        results: list[dict[str, Any]] = []
-        for row in rows:
-            uid = row["unique_id"]
-            if uid not in seen:
-                seen.add(uid)
-                results.append(dict(row))
-        return results
+        async with self._read_connection() as conn:
+            cursor = await conn.execute(
+                """SELECT p.unique_id, p.title, p.postcode, p.first_seen, p.url,
+                          ph.old_price, ph.new_price, ph.change_amount
+                   FROM properties p
+                   JOIN price_history ph ON ph.property_unique_id = p.unique_id
+                   WHERE p.price_drop_notified = 0
+                     AND ph.change_amount < 0
+                     AND p.notification_status = 'sent'
+                   ORDER BY ph.detected_at DESC"""
+            )
+            rows = await cursor.fetchall()
+            # Deduplicate: only latest drop per property
+            seen: set[str] = set()
+            results: list[dict[str, Any]] = []
+            for row in rows:
+                uid = row["unique_id"]
+                if uid not in seen:
+                    seen.add(uid)
+                    results.append(dict(row))
+            return results
 
     async def mark_price_drop_notified(self, unique_id: str) -> None:
         """Mark a property's price drop as notified."""
-        conn = await self._get_connection()
-        await conn.execute(
-            "UPDATE properties SET price_drop_notified = 1 WHERE unique_id = ?",
-            (unique_id,),
-        )
-        await conn.commit()
+        async with self._transaction() as conn:
+            await conn.execute(
+                "UPDATE properties SET price_drop_notified = 1 WHERE unique_id = ?",
+                (unique_id,),
+            )
 
     # ------------------------------------------------------------------
     # Enquiry log (Ticket 9)
@@ -1434,47 +1588,47 @@ class PropertyStorage:
 
     async def log_enquiry(self, result: dict[str, Any]) -> None:
         """Record an enquiry attempt (INSERT or UPDATE on conflict)."""
-        conn = await self._get_connection()
-        await conn.execute(
-            """INSERT INTO enquiry_log
-               (property_unique_id, portal, message, status, submitted_at, error, screenshot_path)
-               VALUES (?, ?, ?, ?, ?, ?, ?)
-               ON CONFLICT(property_unique_id, portal) DO UPDATE SET
-                   status = excluded.status,
-                   submitted_at = excluded.submitted_at,
-                   error = excluded.error,
-                   screenshot_path = excluded.screenshot_path""",
-            (
-                result["property_unique_id"],
-                result["portal"],
-                result["message"],
-                result["status"],
-                result.get("submitted_at"),
-                result.get("error"),
-                result.get("screenshot_path"),
-            ),
-        )
-        await conn.commit()
+        async with self._transaction() as conn:
+            await conn.execute(
+                """INSERT INTO enquiry_log
+                   (property_unique_id, portal, message, status,
+                    submitted_at, error, screenshot_path)
+                   VALUES (?, ?, ?, ?, ?, ?, ?)
+                   ON CONFLICT(property_unique_id, portal) DO UPDATE SET
+                       status = excluded.status,
+                       submitted_at = excluded.submitted_at,
+                       error = excluded.error,
+                       screenshot_path = excluded.screenshot_path""",
+                (
+                    result["property_unique_id"],
+                    result["portal"],
+                    result["message"],
+                    result["status"],
+                    result.get("submitted_at"),
+                    result.get("error"),
+                    result.get("screenshot_path"),
+                ),
+            )
 
     async def get_enquiries_for_property(self, unique_id: str) -> list[dict[str, Any]]:
         """Get all enquiry attempts for a property."""
-        conn = await self._get_connection()
-        cursor = await conn.execute(
-            "SELECT * FROM enquiry_log WHERE property_unique_id = ? ORDER BY created_at DESC",
-            (unique_id,),
-        )
-        rows = await cursor.fetchall()
-        return [dict(row) for row in rows]
+        async with self._read_connection() as conn:
+            cursor = await conn.execute(
+                "SELECT * FROM enquiry_log WHERE property_unique_id = ? ORDER BY created_at DESC",
+                (unique_id,),
+            )
+            rows = await cursor.fetchall()
+            return [dict(row) for row in rows]
 
     async def has_enquiry(self, unique_id: str, portal: str) -> bool:
         """Check if an enquiry has already been submitted for this property+portal."""
-        conn = await self._get_connection()
-        cursor = await conn.execute(
-            """SELECT 1 FROM enquiry_log
-               WHERE property_unique_id = ? AND portal = ? AND status = 'submitted'""",
-            (unique_id, portal),
-        )
-        return await cursor.fetchone() is not None
+        async with self._read_connection() as conn:
+            cursor = await conn.execute(
+                """SELECT 1 FROM enquiry_log
+                   WHERE property_unique_id = ? AND portal = ? AND status = 'submitted'""",
+                (unique_id, portal),
+            )
+            return await cursor.fetchone() is not None
 
     # ------------------------------------------------------------------
     # Off-market detection
@@ -1485,19 +1639,18 @@ class PropertyStorage:
 
         Returns True if the row was updated, False if property not found.
         """
-        conn = await self._get_connection()
-        now = datetime.now(UTC).isoformat()
-        cursor = await conn.execute(
-            """
-            UPDATE properties
-            SET is_off_market = 1,
-                off_market_since = COALESCE(off_market_since, ?),
-                off_market_reason = COALESCE(off_market_reason, ?)
-            WHERE unique_id = ?
-            """,
-            (now, reason, unique_id),
-        )
-        await conn.commit()
+        async with self._transaction() as conn:
+            now = datetime.now(UTC).isoformat()
+            cursor = await conn.execute(
+                """
+                UPDATE properties
+                SET is_off_market = 1,
+                    off_market_since = COALESCE(off_market_since, ?),
+                    off_market_reason = COALESCE(off_market_reason, ?)
+                WHERE unique_id = ?
+                """,
+                (now, reason, unique_id),
+            )
         updated = cursor.rowcount > 0
         if updated:
             logger.info(
@@ -1516,45 +1669,44 @@ class PropertyStorage:
 
         Returns True if the row was updated, False if property not found.
         """
-        conn = await self._get_connection()
-        now = datetime.now(UTC).isoformat()
+        async with self._transaction() as conn:
+            now = datetime.now(UTC).isoformat()
 
-        # Read current off-market state for history
-        cursor = await conn.execute(
-            "SELECT off_market_since, off_market_reason, off_market_history "
-            "FROM properties WHERE unique_id = ?",
-            (unique_id,),
-        )
-        row = await cursor.fetchone()
-        if row is None:
-            return False
-
-        # Build history entry
-        history: list[dict[str, str | None]] = []
-        if row["off_market_history"]:
-            with contextlib.suppress(json.JSONDecodeError, TypeError):
-                history = json.loads(row["off_market_history"])
-        if row["off_market_since"]:
-            history.append(
-                {
-                    "off": row["off_market_since"],
-                    "back": now,
-                    "reason": row["off_market_reason"],
-                }
+            # Read current off-market state for history
+            cursor = await conn.execute(
+                "SELECT off_market_since, off_market_reason, off_market_history "
+                "FROM properties WHERE unique_id = ?",
+                (unique_id,),
             )
+            row = await cursor.fetchone()
+            if row is None:
+                return False
 
-        cursor = await conn.execute(
-            """
-            UPDATE properties
-            SET is_off_market = 0,
-                off_market_since = NULL,
-                off_market_reason = NULL,
-                off_market_history = ?
-            WHERE unique_id = ?
-            """,
-            (json.dumps(history) if history else None, unique_id),
-        )
-        await conn.commit()
+            # Build history entry
+            history: list[dict[str, str | None]] = []
+            if row["off_market_history"]:
+                with contextlib.suppress(json.JSONDecodeError, TypeError):
+                    history = json.loads(row["off_market_history"])
+            if row["off_market_since"]:
+                history.append(
+                    {
+                        "off": row["off_market_since"],
+                        "back": now,
+                        "reason": row["off_market_reason"],
+                    }
+                )
+
+            cursor = await conn.execute(
+                """
+                UPDATE properties
+                SET is_off_market = 0,
+                    off_market_since = NULL,
+                    off_market_reason = NULL,
+                    off_market_history = ?
+                WHERE unique_id = ?
+                """,
+                (json.dumps(history) if history else None, unique_id),
+            )
         updated = cursor.rowcount > 0
         if updated:
             logger.info("property_returned_to_market", unique_id=unique_id)
@@ -1574,75 +1726,75 @@ class PropertyStorage:
             source_listings (list of dicts with unique_id, source, url,
             is_off_market, last_checked_at — or empty list for legacy).
         """
-        conn = await self._get_connection()
+        async with self._read_connection() as conn:
+            # Step 1: Get eligible golden records
+            cursor = await conn.execute(
+                """
+                SELECT unique_id, url, source, source_urls, is_off_market
+                FROM properties
+                WHERE COALESCE(enrichment_status, 'enriched') != 'pending'
+                  AND notification_status NOT IN
+                      ('pending_enrichment', 'pending_analysis', 'dropped')
+                ORDER BY first_seen DESC
+                """
+            )
+            rows = await cursor.fetchall()
+            golden_records = [dict(row) for row in rows]
 
-        # Step 1: Get eligible golden records
-        cursor = await conn.execute(
-            """
-            SELECT unique_id, url, source, source_urls, is_off_market
-            FROM properties
-            WHERE COALESCE(enrichment_status, 'enriched') != 'pending'
-              AND notification_status NOT IN ('pending_enrichment', 'pending_analysis', 'dropped')
-            ORDER BY first_seen DESC
-            """
-        )
-        rows = await cursor.fetchall()
-        golden_records = [dict(row) for row in rows]
+            if not golden_records:
+                return []
 
-        if not golden_records:
-            return []
+            # Step 2: Batch-fetch all linked source_listings
+            all_ids = [r["unique_id"] for r in golden_records]
+            placeholders = ",".join("?" * len(all_ids))
+            cursor = await conn.execute(
+                f"""
+                SELECT unique_id, source, url, merged_id, is_off_market, last_checked_at
+                FROM source_listings
+                WHERE merged_id IN ({placeholders})
+                """,
+                all_ids,
+            )
+            sl_rows = await cursor.fetchall()
 
-        # Step 2: Batch-fetch all linked source_listings
-        all_ids = [r["unique_id"] for r in golden_records]
-        placeholders = ",".join("?" * len(all_ids))
-        cursor = await conn.execute(
-            f"""
-            SELECT unique_id, source, url, merged_id, is_off_market, last_checked_at
-            FROM source_listings
-            WHERE merged_id IN ({placeholders})
-            """,
-            all_ids,
-        )
-        sl_rows = await cursor.fetchall()
+            # Group source_listings by merged_id
+            sl_by_merged: dict[str, list[dict[str, Any]]] = {}
+            for sl_row in sl_rows:
+                sl = dict(sl_row)
+                sl_by_merged.setdefault(sl["merged_id"], []).append(sl)
 
-        # Group source_listings by merged_id
-        sl_by_merged: dict[str, list[dict[str, Any]]] = {}
-        for sl_row in sl_rows:
-            sl = dict(sl_row)
-            sl_by_merged.setdefault(sl["merged_id"], []).append(sl)
+            # Step 3: Attach source_listings to golden records
+            results: list[dict[str, Any]] = []
+            for gr in golden_records:
+                linked_sls = sl_by_merged.get(gr["unique_id"], [])
+                gr["source_listings"] = linked_sls
+                results.append(gr)
 
-        # Step 3: Attach source_listings to golden records
-        results: list[dict[str, Any]] = []
-        for gr in golden_records:
-            linked_sls = sl_by_merged.get(gr["unique_id"], [])
-            gr["source_listings"] = linked_sls
-            results.append(gr)
+            # Step 4: Filter by source if requested
+            if sources:
+                filtered = []
+                for r in results:
+                    # Check source_listings first
+                    if r["source_listings"] and any(
+                        sl["source"] in sources for sl in r["source_listings"]
+                    ):
+                        filtered.append(r)
+                        continue
+                    # Also check primary source and source_urls JSON
+                    # (covers partial linkage and legacy records)
+                    if r["source"] in sources:
+                        filtered.append(r)
+                        continue
+                    if r.get("source_urls"):
+                        try:
+                            urls_dict = json.loads(r["source_urls"])
+                            if any(s in sources for s in urls_dict):
+                                filtered.append(r)
+                        except (json.JSONDecodeError, TypeError):
+                            pass
+                results = filtered
 
-        # Step 4: Filter by source if requested
-        if sources:
-            filtered = []
-            for r in results:
-                # Check source_listings first
-                if r["source_listings"] and any(
-                    sl["source"] in sources for sl in r["source_listings"]
-                ):
-                    filtered.append(r)
-                    continue
-                # Also check primary source and source_urls JSON
-                # (covers partial linkage and legacy records)
-                if r["source"] in sources:
-                    filtered.append(r)
-                    continue
-                if r.get("source_urls"):
-                    try:
-                        urls_dict = json.loads(r["source_urls"])
-                        if any(s in sources for s in urls_dict):
-                            filtered.append(r)
-                    except (json.JSONDecodeError, TypeError):
-                        pass
-            results = filtered
-
-        return results
+            return results
 
     # ------------------------------------------------------------------
     # Per-source off-market tracking (source_listings)
@@ -1653,19 +1805,18 @@ class PropertyStorage:
 
         Returns True if the row was updated, False if not found.
         """
-        conn = await self._get_connection()
-        now = datetime.now(UTC).isoformat()
-        cursor = await conn.execute(
-            """
-            UPDATE source_listings
-            SET is_off_market = 1,
-                off_market_since = COALESCE(off_market_since, ?),
-                off_market_reason = ?
-            WHERE unique_id = ?
-            """,
-            (now, reason, unique_id),
-        )
-        await conn.commit()
+        async with self._transaction() as conn:
+            now = datetime.now(UTC).isoformat()
+            cursor = await conn.execute(
+                """
+                UPDATE source_listings
+                SET is_off_market = 1,
+                    off_market_since = COALESCE(off_market_since, ?),
+                    off_market_reason = ?
+                WHERE unique_id = ?
+                """,
+                (now, reason, unique_id),
+            )
         return cursor.rowcount > 0
 
     async def mark_source_listing_active(self, unique_id: str) -> bool:
@@ -1673,16 +1824,15 @@ class PropertyStorage:
 
         Returns True if the row was updated, False if not found.
         """
-        conn = await self._get_connection()
-        cursor = await conn.execute(
-            """
-            UPDATE source_listings
-            SET is_off_market = 0, off_market_since = NULL, off_market_reason = NULL
-            WHERE unique_id = ?
-            """,
-            (unique_id,),
-        )
-        await conn.commit()
+        async with self._transaction() as conn:
+            cursor = await conn.execute(
+                """
+                UPDATE source_listings
+                SET is_off_market = 0, off_market_since = NULL, off_market_reason = NULL
+                WHERE unique_id = ?
+                """,
+                (unique_id,),
+            )
         return cursor.rowcount > 0
 
     async def update_source_listing_last_checked(self, unique_id: str) -> bool:
@@ -1690,13 +1840,12 @@ class PropertyStorage:
 
         Returns True if the row was updated, False if not found.
         """
-        conn = await self._get_connection()
-        now = datetime.now(UTC).isoformat()
-        cursor = await conn.execute(
-            "UPDATE source_listings SET last_checked_at = ? WHERE unique_id = ?",
-            (now, unique_id),
-        )
-        await conn.commit()
+        async with self._transaction() as conn:
+            now = datetime.now(UTC).isoformat()
+            cursor = await conn.execute(
+                "UPDATE source_listings SET last_checked_at = ? WHERE unique_id = ?",
+                (now, unique_id),
+            )
         return cursor.rowcount > 0
 
     async def update_property_last_checked(self, unique_id: str) -> bool:
@@ -1704,13 +1853,12 @@ class PropertyStorage:
 
         Returns True if the row was updated, False if not found.
         """
-        conn = await self._get_connection()
-        now = datetime.now(UTC).isoformat()
-        cursor = await conn.execute(
-            "UPDATE properties SET last_checked_at = ? WHERE unique_id = ?",
-            (now, unique_id),
-        )
-        await conn.commit()
+        async with self._transaction() as conn:
+            now = datetime.now(UTC).isoformat()
+            cursor = await conn.execute(
+                "UPDATE properties SET last_checked_at = ? WHERE unique_id = ?",
+                (now, unique_id),
+            )
         return cursor.rowcount > 0
 
     # ------------------------------------------------------------------

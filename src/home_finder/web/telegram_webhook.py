@@ -1,14 +1,16 @@
 """Telegram webhook endpoint for inline keyboard callbacks."""
 
-import hmac
+import re
 
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
 from home_finder.config import Settings
 from home_finder.db import PropertyStorage
+from home_finder.db.storage import DuplicateTelegramUpdateError
 from home_finder.logging import get_logger
 from home_finder.models import UserStatus
+from home_finder.web.access import valid_webhook_secret
 
 logger = get_logger(__name__)
 
@@ -28,25 +30,58 @@ async def telegram_webhook(request: Request) -> JSONResponse:
     Validates the secret token header, parses callback_query updates
     with ``st:{uid}:{status}`` data, and updates the DB.
     """
-    settings = request.app.state.settings
+    settings: Settings = request.app.state.settings
     secret = settings.telegram_webhook_secret
     if not secret:
         return JSONResponse({"error": "webhook not configured"}, status_code=404)
 
     # Validate secret token
-    header_token = request.headers.get("x-telegram-bot-api-secret-token", "")
-    if not hmac.compare_digest(header_token, secret):
+    if not valid_webhook_secret(request, settings):
         return JSONResponse({"error": "forbidden"}, status_code=403)
 
-    body = await request.json()
+    try:
+        body = await request.json()
+    except (ValueError, UnicodeDecodeError, RecursionError):
+        return JSONResponse({"error": "invalid JSON"}, status_code=400)
+    if not isinstance(body, dict):
+        return JSONResponse({"error": "invalid update"}, status_code=400)
 
     callback_query = body.get("callback_query")
-    if not callback_query:
+    if not isinstance(callback_query, dict):
         # Not a callback_query update — acknowledge and ignore
         return JSONResponse({"ok": True})
 
-    callback_data: str = callback_query.get("data", "")
-    callback_id: str = callback_query.get("id", "")
+    sender = callback_query.get("from")
+    message = callback_query.get("message")
+    chat = message.get("chat") if isinstance(message, dict) else None
+    owner_id = settings.telegram_owner_user_id
+    if owner_id is None and settings.telegram_chat_id > 0:
+        owner_id = settings.telegram_chat_id
+    if (
+        owner_id is None
+        or not settings.telegram_chat_id
+        or not isinstance(sender, dict)
+        or type(sender.get("id")) is not int
+        or sender["id"] != owner_id
+        or not isinstance(chat, dict)
+        or type(chat.get("id")) is not int
+        or chat["id"] != settings.telegram_chat_id
+    ):
+        return JSONResponse({"ok": True})
+
+    callback_data = callback_query.get("data")
+    callback_id = callback_query.get("id")
+    update_id = body.get("update_id")
+    if (
+        not isinstance(callback_data, str)
+        or not callback_data.isascii()
+        or not 1 <= len(callback_data) <= 64
+        or not isinstance(callback_id, str)
+        or not 1 <= len(callback_id) <= 256
+        or type(update_id) is not int
+        or not 0 <= update_id < 2**63
+    ):
+        return JSONResponse({"ok": True})
 
     # Parse st:{uid}:{status}
     parts = callback_data.split(":")
@@ -57,14 +92,24 @@ async def telegram_webhook(request: Request) -> JSONResponse:
     # uid may contain colons (e.g. "openrent:12345"), so rejoin middle parts
     status_str = parts[-1]
     uid = ":".join(parts[1:-1])
+    if not re.fullmatch(r"[A-Za-z0-9_-]+:[A-Za-z0-9_-]+", uid):
+        await _answer_callback(settings, callback_id, "Invalid property")
+        return JSONResponse({"ok": True})
 
     target_status = _CALLBACK_STATUSES.get(status_str)
     if not target_status:
-        await _answer_callback(settings, callback_id, f"Unknown status: {status_str}")
+        await _answer_callback(settings, callback_id, "Unknown status")
         return JSONResponse({"ok": True})
 
     storage: PropertyStorage = request.app.state.storage
-    prev = await storage.update_user_status(uid, target_status, source="telegram")
+    try:
+        prev = await storage.update_user_status(
+            uid, target_status, source="telegram", telegram_update_id=update_id
+        )
+    except DuplicateTelegramUpdateError:
+        # Telegram retries deliveries. Acknowledging a committed update must not
+        # overwrite a later owner decision or append another status event.
+        return JSONResponse({"ok": True})
 
     if prev is None:
         await _answer_callback(settings, callback_id, "Property not found")

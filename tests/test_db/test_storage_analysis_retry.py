@@ -2,6 +2,7 @@
 
 from collections.abc import AsyncGenerator, Callable
 
+import aiosqlite
 import pytest
 import pytest_asyncio
 from pydantic import HttpUrl
@@ -408,9 +409,12 @@ class TestCompleteAnalysisAtomicity:
         original_save = storage.save_quality_analysis
 
         async def _save_then_crash(
-            uid: str, analysis: PropertyQualityAnalysis, *, _commit: bool = True
+            uid: str,
+            analysis: PropertyQualityAnalysis,
+            *,
+            _conn: aiosqlite.Connection | None = None,
         ) -> None:
-            await original_save(uid, analysis, _commit=_commit)
+            await original_save(uid, analysis, _conn=_conn)
             raise RuntimeError("simulated crash after quality write")
 
         storage._pipeline._save_quality_analysis = _save_then_crash
