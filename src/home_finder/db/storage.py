@@ -16,6 +16,7 @@ from typing import Any, Final
 import aiosqlite
 
 from home_finder.data.area_context import HOSTING_TOLERANCE
+from home_finder.db.image_ops import upsert_property_images
 from home_finder.db.listing_text import (
     apply_source_text,
     persist_merged_text,
@@ -957,27 +958,7 @@ class PropertyStorage:
             return
 
         async with self._transaction(conn=_conn) as conn:
-            rows = [
-                (unique_id, img.source.value, str(img.url), img.image_type, img.floorplan_origin)
-                for img in images
-            ]
-            await conn.executemany(
-                """
-                INSERT INTO property_images
-                (property_unique_id, source, url, image_type, floorplan_origin)
-                VALUES (?, ?, ?, ?, ?)
-                ON CONFLICT(property_unique_id, url) DO UPDATE SET
-                    source = excluded.source,
-                    image_type = excluded.image_type,
-                    floorplan_origin = excluded.floorplan_origin
-                WHERE (excluded.image_type = 'floorplan'
-                       AND excluded.floorplan_origin = 'source_declared')
-                   OR (property_images.image_type = 'floorplan'
-                       AND property_images.floorplan_origin = 'unknown'
-                       AND excluded.image_type = 'gallery')
-                """,
-                rows,
-            )
+            await upsert_property_images(conn, unique_id, images)
 
         logger.debug(
             "property_images_saved",
