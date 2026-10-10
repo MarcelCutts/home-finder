@@ -32,6 +32,7 @@ from home_finder.scrapers.detail_identity import (
     validate_page_identity,
     validate_response_url,
 )
+from home_finder.scrapers.onthemarket_payloads import onthemarket_redux_state
 from home_finder.scrapers.retry import RetryableHttpError
 from home_finder.scrapers.rightmove_payloads import detail_property
 from home_finder.scrapers.source_area import AreaResult, rightmove_areas, single_area
@@ -923,8 +924,7 @@ class DetailFetcher:
                 return None
 
             data = json.loads(match.group(1), parse_float=Decimal)
-            redux_state = data.get("props", {}).get("initialReduxState", {})
-            property_data = redux_state.get("property", {})
+            property_data = onthemarket_redux_state(data)["property"]
             if not isinstance(property_data, dict):
                 raise DetailIdentityError("invalid_main_listing")
             self._qualify_page(prop, str(response.url), html, listing=property_data)
