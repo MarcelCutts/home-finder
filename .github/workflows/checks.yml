@@ -33,8 +33,8 @@ permissions:
 
 env:
   PYTHON_VERSION: "3.14.7"
-  # Match the existing Docker build tool; runtime/security upgrades are PR03.
-  UV_VERSION: "0.9.29"
+  # The installer must know this Python release on a clean hosted runner.
+  UV_VERSION: "0.12.19"
 
 jobs:
   lint:
