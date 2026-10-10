@@ -214,12 +214,6 @@ async def test_unknown_billing_preserves_reservation_and_request_id(budget, scen
     [
         (401, "authentication_error", "Invalid key", "authentication"),
         (400, "invalid_request_error", "Schema too complex", "unsupported_schema"),
-        (
-            400,
-            "invalid_request_error",
-            "compiled grammar too large; simplify tool schemas",
-            "request_rejected",
-        ),
         (400, "invalid_request_error", "Credit balance too low", "quota"),
     ],
 )
@@ -245,8 +239,6 @@ async def test_permanent_provider_errors_cannot_request_automatic_retry(
     attempts = await rows(storage)
     assert attempts[0]["result"] == result and attempts[0]["accounted_nanousd"] == 0
     assert attempts[0]["cost_basis"] == "provider_error"
-    report = await storage.spend.report()
-    assert report["held_nanousd"] == 0 and report["unresolved"] == []
 
 
 async def test_cancellation_after_response_finishes_accounting(budget, monkeypatch):

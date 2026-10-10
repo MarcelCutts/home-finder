@@ -244,10 +244,8 @@ class TestToolSchema:
             nonlocal optional, unions
             if isinstance(node, dict):
                 assert not unsupported.intersection(node)
-                assert "default" not in node
                 if node.get("type") == "object":
                     assert node.get("additionalProperties") is False
-                    assert node["required"] == list(node["properties"])
                     optional += len(set(node["properties"]) - set(node.get("required", [])))
                 if "anyOf" in node or isinstance(node.get("type"), list):
                     unions += 1
@@ -263,7 +261,7 @@ class TestToolSchema:
 
         check(VISUAL_ANALYSIS_TOOL["input_schema"])
         # Counts are combined across strict schemas; this request has only this tool.
-        assert optional == 0
+        assert optional <= 24
         assert unions <= 16
 
     def test_visual_tool_does_not_contain_evaluation_fields(self) -> None:

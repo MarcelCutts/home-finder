@@ -627,13 +627,16 @@ class TestToolSchemaSnapshots:
                                     },
                                     "total_area_sqm": {
                                         "anyOf": [{"type": "number"}, {"type": "null"}],
+                                        "default": None,
                                         "description": "Prefer the printed internal total from floorplan_total_area_sqm. Otherwise sum only a complete, non-overlapping set of supported internal room areas. Do not sum maximum dimension products or guess missing rooms.",
                                     },
                                     "floorplan_total_area_sqm": {
                                         "anyOf": [{"type": "number"}, {"type": "null"}],
+                                        "default": None,
                                         "description": "Internal total printed on the plan, converted to sqm; otherwise null.",
                                     },
                                     "area_notes": {
+                                        "default": "",
                                         "description": "Area uncertainty, conflicting labels/totals, or combined kitchen/living.",
                                         "type": "string",
                                     },
@@ -648,17 +651,21 @@ class TestToolSchemaSnapshots:
                                                 },
                                                 "length_m": {
                                                     "anyOf": [{"type": "number"}, {"type": "null"}],
+                                                    "default": None,
                                                     "description": "Length in metres. null if not readable.",
                                                 },
                                                 "width_m": {
                                                     "anyOf": [{"type": "number"}, {"type": "null"}],
+                                                    "default": None,
                                                     "description": "Width in metres. null if not readable.",
                                                 },
                                                 "area_sqm": {
                                                     "anyOf": [{"type": "number"}, {"type": "null"}],
+                                                    "default": None,
                                                     "description": "Printed room area, or length x width only for a confirmed rectangle. null for irregular rooms, maximum/bounding dimensions or unknown geometry.",
                                                 },
                                                 "area_basis": {
+                                                    "default": "unknown",
                                                     "description": "Evidence for area_sqm: a printed room area or confirmed rectangular dimensions. Use unknown for maximum dimensions, irregular outlines or uncertain geometry; retain readable length/width labels but leave area_sqm null.",
                                                     "enum": [
                                                         "stated_on_floorplan",
@@ -668,13 +675,7 @@ class TestToolSchemaSnapshots:
                                                     "type": "string",
                                                 },
                                             },
-                                            "required": [
-                                                "name",
-                                                "length_m",
-                                                "width_m",
-                                                "area_sqm",
-                                                "area_basis",
-                                            ],
+                                            "required": ["name"],
                                             "type": "object",
                                         },
                                         "type": "array",
@@ -693,6 +694,7 @@ class TestToolSchemaSnapshots:
                                             },
                                             {"type": "null"},
                                         ],
+                                        "default": None,
                                         "description": "How total_area_sqm was determined. null if total_area_sqm is null.",
                                     },
                                     "is_spacious_enough": {
@@ -707,11 +709,6 @@ class TestToolSchemaSnapshots:
                                 },
                                 "required": [
                                     "living_room_sqm",
-                                    "total_area_sqm",
-                                    "floorplan_total_area_sqm",
-                                    "area_notes",
-                                    "room_areas",
-                                    "area_estimation_method",
                                     "is_spacious_enough",
                                     "hosting_layout",
                                 ],
@@ -960,7 +957,6 @@ class TestToolSchemaSnapshots:
                             "storage",
                             "flooring_noise",
                             "listing_red_flags",
-                            "floorplan_detected_in_gallery",
                             "overall_rating",
                             "condition_concerns",
                             "concern_severity",
