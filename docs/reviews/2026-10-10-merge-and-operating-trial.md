@@ -50,7 +50,8 @@ outcomes for review; this application does not promise exactly-once delivery.
 Anthropic's [Sonnet 5.5 specification](https://platform.claude.com/docs/en/models/sonnet-5-5/overview)
 and [pricing](https://platform.claude.com/docs/en/about-claude/pricing) list
 `claude-sonnet-5-5` at US$2/US$10 per million input/output tokens, with cache writes
-at US$2.50/US$4 and reads at US$0.10. The configured account returned the model
+at US$2.50 for five minutes or US$4 for one hour, and cache reads at US$0.10,
+all per million tokens. The configured account returned the model
 successfully from the non-generating Models API. Subsequent live runs qualified
 generation, native usage settlement and checkpoint consumption. Neither check
 establishes the provider's remaining credit balance.
@@ -93,7 +94,7 @@ as though those application records had existed.
 ## Verification before live operation
 
 The integrated repair tree `292abd1` passed 3,134 default offline tests at
-88.85% branch coverage, with sockets blocked; Ruff, formatting, strict mypy and
+88.85% branch-inclusive total coverage, with sockets blocked; Ruff, formatting, strict mypy and
 wheel/sdist builds passed. The one warning was an attempted DNS lookup blocked by
 pytest-socket in an existing cross-run integration test. These checks exercise
 faults and persistence but do not establish current portal or provider health.
@@ -101,7 +102,7 @@ faults and persistence but do not establish current portal or provider health.
 The separate Sonnet implementation `00b09b7` received an independent accept
 review after 231 locked-runtime tests and 89 minimum-SDK tests, plus additional
 base-identity and invalid-usage probes. After integration with the reviewed
-repairs, 207 focused native-transport/accounting/checkpoint tests passed. The final hosted heads for #49–52 all passed; their merge is `22c9205`. The post-merge main run also passed 3,366 tests (89.24% branch coverage), with lint, typing and build green.
+repairs, 207 focused native-transport/accounting/checkpoint tests passed. The final hosted heads for #49–52 all passed; their merge is `22c9205`. The post-merge main run also passed 3,366 tests (89.24% branch-inclusive total coverage), with lint, typing and build green.
 
 The retained trial runner is
 `data/operating-trials/2026-10-10/runner-instrumented.py` (private, ignored from Git).
@@ -155,7 +156,7 @@ The original reliability stack #44–48 is merged at `468bccd`. Review preserved
 every component commit and verified each final head before the combined landing;
 no required checks were bypassed. All final heads #49–52 passed required hosted checks before their combined merge
 at `22c9205`. The separate model adapter #49 passed the full
-local suite (3,216 tests; 88.90% branch coverage). Its first hosted run exposed
+local suite (3,216 tests; 88.90% branch-inclusive total coverage). Its first hosted run exposed
 four MagicMock usage fixtures that were corrected to native SDK Usage values;
 accounting validation was not weakened.
 
@@ -179,7 +180,7 @@ floorplan views now use white image backgrounds. A 390×844 local browser check
 confirmed transparent labels are readable. Real-data screenshots remain private
 local artifacts after automatic approval review rejected publishing them.
 
-The integrated #49–51 tree passed 3,269 default tests at 89.03% branch coverage.
+The integrated #49–51 tree passed 3,269 default tests at 89.03% branch-inclusive total coverage.
 Nine warnings were blocked socket/DNS attempts in existing commute/cross-run
 integration fixtures; no test had external network access. A signal-probe fixture
 was fixed to delegate non-SIGINT handlers so it works with pytest's default
@@ -197,7 +198,7 @@ generic framework guarantee.
 ## Unpaid source qualification on the reviewed candidate
 
 After the final candidate `63a5761` passed 3,366 default local tests at 89.24%
-branch coverage, two bounded runs exercised real collection, enrichment, commute
+branch-inclusive total coverage, two bounded runs exercised real collection, enrichment, commute
 and grouping with native paid admission disabled. Hosted merge checks were still
 running, so these are explicitly candidate runs, not merged-main paid trials.
 
@@ -471,6 +472,52 @@ totals cover returned main-analysis usage, may be incomplete after interruption,
 and exclude reanalysis: the paid ledger remains authoritative. Successful phase
 execution is distinct from every property having a successful assessment.
 
+### Fifty-property operating batch
+
+On the clean reviewed candidate `81dd45c`, `evidence-batch-50` selected 100 known
+source adverts, admitted up to 50 of the 65 pending homes, and used three concurrent
+model operations with a twenty-image allowance. It finished in 401.380 seconds:
+31.387 seconds for acquisition and 369.979 seconds for assessment/persistence.
+Discovery created no new homes, memberships or image rows, and had no failed pages
+or parse errors.
+
+Forty-eight valid assessments persisted through 96 successful model requests.
+One additional visual request returned a wrong boolean type and omitted a required
+field; validation rejected it and settled its known $0.036886 charge without saving
+a successful assessment. Another home was deferred before dispatch because its
+valid, single-frame GIF plan was supported by the image builder but excluded by
+the reservation format whitelist. Its eight JPEG gallery images and GIF plan were
+otherwise valid. That case incurred no model charge. The fifteen homes outside
+the run cap were deliberately left queued. Seventeen homes therefore remain for
+recovery; these distinct outcomes must not be reported as fifty successes.
+
+The batch cost $3.003109600; cumulative accounting reached $5.268742750 across 167
+settled requests, with zero holds, unresolved attempts or over-reservations. All
+74 current assessments pass the mechanical arithmetic/provenance checks. Every
+one of the 48 new assessments records complete supplied-gallery coverage of five
+to eight photos; the twenty-image allowance was not exhausted. Their
+outdoor claims are 20 yes, 24 unknown and four no. These counts do not validate
+the factual quality of those claims.
+
+The application now records the completed run, two scraper summaries and 346
+property events. Both Telegram phases were explicitly skipped, and all 48 new
+delivery intents remain pending. Integrity and foreign-key checks pass; no visual
+checkpoint remains after the successful assessments. Of 747 write scopes, p95
+lock wait was 2.08 ms and maximum wait 6.85 ms; maximum write duration was 18.04 ms.
+These local three-worker measurements again provide no case for replacing SQLite.
+
+The remaining format/schema problems have bounded responses. Anthropic documents
+[static GIF support](https://platform.claude.com/docs/en/build-with-claude/vision);
+admission can accept verified single-frame GIFs while retaining decoded MIME,
+byte-size and animation restrictions. Its
+[structured-output contract](https://platform.claude.com/docs/en/build-with-claude/structured-outputs)
+provides strict tool inputs, subject to schema-complexity and response-stop limits.
+The current visual schema has 10 optional and eight union parameters, within the
+documented explicit limits of 24 and 16, and all twelve objects already prohibit
+additional fields. Qualifying that option is a small response to the observed
+type/missing-field failure. Local validation and stop-reason checks must remain;
+schema correctness does not establish visual accuracy.
+
 Anthropic's [vision guidance](https://platform.claude.com/docs/en/build-with-claude/vision-coordinates)
 describes limits to spatial reasoning and recommends visual spot checks; small
 details can also lose precision after downscaling. Its
@@ -513,11 +560,14 @@ runtime, distributed leases or a multi-user routing framework.
 
 Recommended sequential follow-ups, each with a reviewable completion gate:
 
-1. **Owner rollout qualification.** Verify anonymous denial on the intended public
-   origin, owner callback identity, the one database/worker authority, and a fresh
-   backup/restore including assets. Choose an ongoing spend policy explicitly;
-   this trial's $25 is not continuing authorization. Release only after those
-   checks, with a small scheduled sample and review of delivery holds.
+1. **Owner rollout qualification.** Identify the authoritative database, fence
+   writers and verify a fresh backup/restore including assets before cutover.
+   Deploy a separately authorized revision/configuration with scheduling and
+   sending disabled. Then verify anonymous denial on the public origin, owner
+   access, mutation/callback identity and the one-worker authority. Activate only
+   the separately authorized bounded operating policy, beginning with a small
+   scheduled sample and review of delivery holds. This trial's $25 is not
+   continuing authorization; any live Telegram trial needs its own authorization.
 2. **Material assessment evaluation corpus.** Freeze original source inputs,
    supplied-image coverage, prompts/configuration and independently reviewed
    verdicts for room access, separate office suitability, outdoor access, bills

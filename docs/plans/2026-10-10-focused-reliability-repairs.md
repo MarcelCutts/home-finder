@@ -152,8 +152,11 @@ workflow service or multi-user routing was added.
 restarts, lost receipts, cancellation, concurrency, permanent failures, recipient
 changes, assets, price revisions, legacy state and backup/upgrade preservation of
 spending holds/checkpoints. Existing pipeline tests now exercise the real delivery
-transactions with only the Bot API mocked. The final full-suite result is recorded
-in the [verification review](../reviews/2026-10-10-focused-repair-verification.md).
+transactions with only the Bot API mocked. The original 3,090-test verification
+checkpoint is recorded in the
+[verification review](../reviews/2026-10-10-focused-repair-verification.md). Later
+integrated checks are recorded in the
+[operating review](../reviews/2026-10-10-merge-and-operating-trial.md).
 
 ## Operational qualification
 
@@ -181,9 +184,9 @@ schema 12, preserving every historical column and its original hash. Its assets
 were not included. The default local development database has orphaned images and
 is not the qualified export. See the [full review and release prerequisites](../reviews/2026-10-10-focused-repair-verification.md).
 
-## Review boundaries
+## Original implementation and review boundaries
 
-Create fresh draft PRs and commit coherent tasks. Keep CI and visibility changes
+The original series used fresh draft PRs and coherent task commits. Keep CI and visibility changes
 independent where possible; order schema changes through provenance, checkpoints
 and delivery. Each PR records its own verification and review against its actual
 parent. Do not mix the unrelated dependency update into these repairs.
