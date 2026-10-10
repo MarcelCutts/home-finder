@@ -152,5 +152,16 @@
     "PR07b-3b reviewed home grouping/routing, personal-state presentation and recoverable staging retirement",
     "PR07b-4 complete member projections before active reconciliation",
     "17 historical ownership conflicts remain unresolved"
-  ]
+  ],
+  "verified_code_commit": "6798c76c82f79cfcd9084720802bd06561aed7cc",
+  "publication": {
+    "draft_pr": 30,
+    "url": "https://github.com/MarcelCutts/home-finder/pull/30",
+    "native_stack_number": 29,
+    "native_stack_id": 1973204,
+    "position": 27,
+    "stack_size_at_publication": 27,
+    "all_layers_draft": true,
+    "main_unchanged": "a86e51e9ef3e6f767ed307bcae5cbce5087d3cea"
+  }
 }

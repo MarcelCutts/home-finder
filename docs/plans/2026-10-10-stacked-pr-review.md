@@ -2,7 +2,7 @@
 
 **Reviewed:** 10 October 2026. **Native GitHub stack:** [#29, visible from the original top draft](https://github.com/MarcelCutts/home-finder/pull/28). **Scope:** 37 implementation commits, presented as 26 draft PRs from `main` at `a86e51e`. The original `codex/pr01-ci-baseline` branch is preserved; the stable-home segment was committed there as `545ad7c`.
 
-**Follow-on implementation:** [PR07b-3a: journaled ownership](2026-10-10-pr07b3a-membership-decisions.md) adds position 27 above this original 26-layer snapshot. Its separate verification record covers the new code; the 26 boundary counts below remain the evidence for their original heads.
+**Follow-on implementation:** [PR07b-3a: journaled ownership](2026-10-10-pr07b3a-membership-decisions.md) is draft [#30](https://github.com/MarcelCutts/home-finder/pull/30), position 27 above this original 26-layer snapshot. All 27 layers remain drafts in native stack #29; PR titles now use stable position numbers as the series grows. Its separate verification record covers the new code; the 26 boundary counts below remain the evidence for their original heads.
 
 This index is the review and navigation layer for the [delivery plan](2026-09-28-research-synthesis-and-delivery-plan.md). Stack positions are separate from the plan's original PR numbers. Each draft has a bounded behavior change, an author review, fresh verification, limits and a link to its detailed handoff. None has been approved on behalf of another reviewer, merged or deployed.
 
@@ -298,6 +298,12 @@ Before enabling remote CI, review and land the operating-baseline changes that s
 Use native stack operations for later rebases and merges; inspect changed diffs and rerun relevant checks after a lower layer changes. GitHub's [stack management guidance](https://docs.github.com/en/pull-requests/how-tos/create-pull-requests/managing-stacked-pull-requests) describes cascading rebases and synchronization. Ordinary manual squash/rebase of a lower branch needs corresponding descendant updates. Do not merge upper PRs into predecessors as a substitute for reviewing the stack. No merge or deployment was performed here.
 
 Fresh local verification details and reproduction test selections are in the JSON record. Temporary logs, isolated checkouts, exact-lock environments, build artifacts and publication metadata are under `/tmp/home-finder-2026-10-09/`; they are local artifacts rather than permanent CI storage. Private migration/replay reports remain under `data/home-identity-2026-10-09/` as described in the [stable-home handoff](2026-10-09-pr07b2-stable-home-links.md).
+
+## Follow-on layer 27 — [#30: Journal listing ownership and add reversible review commands](https://github.com/MarcelCutts/home-finder/pull/30)
+
+PR07b-3a adds a single ownership writer, additive immutable decisions, stale-review protection, split/reversal and retained personal-state provenance. It depends architecturally on transaction ownership (#7), merge preservation (#25), provider identity (#27) and stable links (#28). The migration guards and every ordinary writer form one atomic boundary; the old destructive image-audit utility also becomes read-only.
+
+**Author review:** traced all ownership writes, rollback/cancellation, concurrency, retry, source-evidence revisions, original-state preservation, empty reviewed donors, SQLite replacement behavior and maintenance bypasses. **Verification:** 3,317 tests on each of Python 3.11.16/3.14.7, more than 88% coverage, lint/format/mypy/build checks, copy preservation and unchanged offline 50-listing groups. **Limit:** grouped routing/cards, recoverable staging retirement and complete projections still need the following segments; reviewed commands remain for isolated rehearsals. The [handoff](2026-10-10-pr07b3a-membership-decisions.md) and [separate verification record](2026-10-10-pr07b3a-verification.json) contain this layer’s evidence without rewriting the original 26-boundary results.
 
 ## Next implementation
 

@@ -1,6 +1,6 @@
 # PR07b-3a: journaled listing ownership and reversible review commands
 
-**Date:** 10 October 2026. **Base:** `codex/stack/26-stable-home-links` at `3eec6fec59b7a429294a96bcc445f27d2c29a58c`. **Branch:** `codex/stack/27-reversible-membership`. This is the first implementation slice of PR07b-3, following the [reviewed 26-PR stack](2026-10-10-stacked-pr-review.md).
+**Date:** 10 October 2026. **Base:** `codex/stack/26-stable-home-links` at `3eec6fec59b7a429294a96bcc445f27d2c29a58c`. **Branch:** `codex/stack/27-reversible-membership`. **Application commit:** `6798c76`. **Draft:** [#30](https://github.com/MarcelCutts/home-finder/pull/30), position 27 in native stack #29. This is the first implementation slice of PR07b-3, following the [reviewed original 26-PR stack](2026-10-10-stacked-pr-review.md). The final publication commit changes documentation only.
 
 The ownership transaction contract is implemented. Reviewed merges, splits and reversals preserve original home records, issued links and personal/history rows. Ordinary saves cannot silently take a listing back from its reviewed owner. Migration 013 retains the historical ownership conflicts without resolving them.
 
