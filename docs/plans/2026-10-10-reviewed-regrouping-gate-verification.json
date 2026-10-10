@@ -116,5 +116,9 @@
     "portal_fetches": 0,
     "telegram_sends": 0
   },
-  "next": "returned-detail identity validation; qualified bills; frozen snapshot validity"
+  "next": "returned-detail identity validation; qualified bills; frozen snapshot validity",
+  "draft_url": "https://github.com/MarcelCutts/home-finder/pull/34",
+  "application_commit": "25a5fe84b914beedda9869d3acbe4f7c8c25ad71",
+  "native_stack": 29,
+  "stack_size_at_publication": 31
 }

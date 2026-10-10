@@ -1,6 +1,6 @@
 # Keep reviewed regrouping disabled while derived consumers are incomplete
 
-Status: implementation, author review and local checks complete; draft publication in progress. Base: `fc7b466971984a15f69a886eadfe3cd621ee8cf7`, [draft #33](https://github.com/MarcelCutts/home-finder/pull/33). Branch: `codex/stack/31-regrouping-gate`, intended stack position 31. This implements the first item in the revised corrective queue. Schema remains 015.
+Status: implementation, author review and local checks complete; published as [draft #34](https://github.com/MarcelCutts/home-finder/pull/34). Application commit: `25a5fe84b914beedda9869d3acbe4f7c8c25ad71`; the publication follow-up changes documentation only. Base: `fc7b466971984a15f69a886eadfe3cd621ee8cf7`, [draft #33](https://github.com/MarcelCutts/home-finder/pull/33). Branch: `codex/stack/31-regrouping-gate`, position 31 in native stack #29. This implements the first item in the revised corrective queue. Schema remains 015.
 
 ## Problem and bounded outcome
 
