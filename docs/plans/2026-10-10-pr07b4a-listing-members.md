@@ -1,6 +1,6 @@
 # PR07b-4a — preserve every listing in text and link consumers
 
-Status: implementation, author review and local verification complete; publication details follow after the draft is created. Base: `515b687c2cbb7a3cf70ca1140ff8e42fad3a30b7`, [draft #31](https://github.com/MarcelCutts/home-finder/pull/31). Branch: `codex/stack/29-member-projections`; intended position 29 in native stack #29. This is the first boundary within PR07b-4. The remaining projection lifecycle and reviewed reconciliation are PR07b-4b, described below. Schema remains 014.
+Status: implementation, author review and local verification complete; published as [draft #32](https://github.com/MarcelCutts/home-finder/pull/32). Application commit: `3a47502a01e378ef0a8b5f431a71962f4225e56d`; the publication follow-up changes documentation only. Base: `515b687c2cbb7a3cf70ca1140ff8e42fad3a30b7`, [draft #31](https://github.com/MarcelCutts/home-finder/pull/31). Branch: `codex/stack/29-member-projections`; position 29 in native stack #29. This is the first boundary within PR07b-4. The remaining projection lifecycle and reviewed reconciliation are PR07b-4b, described below. Schema remains 014.
 
 ## Outcome and architectural boundary
 

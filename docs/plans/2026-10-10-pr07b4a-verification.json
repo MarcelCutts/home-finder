@@ -223,5 +223,22 @@
       "junit_sha256": "8093ee0f388794eea5104da156e1af1415e7db58c9b13e61d120d5348fdf5310",
       "log_sha256": "ecf1347343d39b8a33fcc155f179c182aa75575ed9215c08cb69467762bf9088"
     }
-  ]
+  ],
+  "application_commit": "3a47502a01e378ef0a8b5f431a71962f4225e56d",
+  "draft_url": "https://github.com/MarcelCutts/home-finder/pull/32",
+  "publication": {
+    "draft_number": 32,
+    "url": "https://github.com/MarcelCutts/home-finder/pull/32",
+    "native_stack_number": 29,
+    "native_stack_id": 1973204,
+    "position": 29,
+    "size": 29,
+    "all_drafts_verified": true,
+    "all_base_branches_and_positions_verified": true,
+    "previous_28_heads_unchanged": true,
+    "trunk": "main",
+    "trunk_sha": "a86e51e9ef3e6f767ed307bcae5cbce5087d3cea",
+    "application_commit": "3a47502a01e378ef0a8b5f431a71962f4225e56d",
+    "publication_followup": "Documentation only; final remote head is recorded in private publication-verification.json after push."
+  }
 }
