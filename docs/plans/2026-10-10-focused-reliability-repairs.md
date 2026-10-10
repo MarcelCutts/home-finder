@@ -52,10 +52,11 @@ Browser review used fictional in-memory listings with no provider clients at
 [desktop](../../output/playwright/r2-desktop.jpg),
 [mobile](../../output/playwright/r2-mobile.jpg),
 [image-less detail](../../output/playwright/r2-detail-mobile.jpg).
+Hosted checks passed on `c923079` ([run 38075891565](https://github.com/MarcelCutts/home-finder/actions/runs/38075891565)); the test job took 16m36s.
 No schema or pipeline mutation behavior changes in this PR. Its parent is #44 so
 the fresh hosted run uses the corrected test allowance.
 
-### R3 Conservative floorplan handling
+### R3 Conservative floorplan handling — draft #46
 
 - [x] Stop promoting heuristic gallery guesses into authoritative floorplans.
 - [x] Preserve gallery membership and persist source-declared versus unknown legacy provenance.
@@ -84,17 +85,34 @@ gating, request construction and presentation. 487 existing affected tests passe
 on the initial run; the expected prompt snapshots and migration compatibility
 check were corrected and the final targeted selection passed 141 tests. Another
 26 provenance/migration/request checks passed. Ruff lint/format and strict mypy
-passed. [Browser evidence](../../output/playwright/r3-floorplan-origin.jpg) uses
+passed. A further 35 core-upgrade and backup checks passed after making the
+upgrade expectation follow the current migration count. [Browser evidence](../../output/playwright/r3-floorplan-origin.jpg) uses
 authored diagrams. Rollback after migration requires the verified pre-upgrade
 database copy; earlier application versions reject schema 10.
 
 ### R4 Visual checkpoints for unfinished analysis
 
-- [ ] Identify visual inputs by actual ordered image bytes, prompts and relevant configuration.
-- [ ] Store one validated result with its settled paid attempt before evaluation starts.
-- [ ] Reuse compatible results after evaluation failure/restart; invalidate changed inputs.
-- [ ] Remove the matching checkpoint on completed assessment; retain all spending history.
-- [ ] Verify repeated evaluation failures, attempt caps, uncertain holds and crash boundaries.
+- [x] Identify visual inputs by actual ordered image bytes, prompts and relevant configuration.
+- [x] Store one validated result with its settled paid attempt before evaluation starts.
+- [x] Reuse compatible results after evaluation failure/restart; invalidate changed inputs.
+- [x] Remove the matching checkpoint on completed assessment; retain all spending history.
+- [x] Verify repeated evaluation failures, attempt caps, uncertain holds and crash boundaries.
+
+R4 identifies the physical visual request, including ordered image bytes, rendered
+prompt, model, output schema and visual settings. A validated result and its usage
+receipt commit together. Recovery validates both before reuse; successful
+assessment consumes only its matching checkpoint in the assessment transaction.
+Evaluation still respects its own budget, attempt cap and uncertain-charge holds.
+The checkpoint preserves observation field order because the evaluation prompt
+contains JSON text: changing order on reload would incorrectly create a new paid
+operation identity. A changed evaluation configuration can reuse the visual result.
+
+Review covered cancellation, settlement failure, input invalidation, corrupted
+receipts, exhausted evaluation attempts, budget changes and sent-state refreshes.
+367 existing affected tests passed; the final checkpoint, spending and upgrade
+selection passed 64 tests, including 16 fault/identity cases using the real SDK
+with a mock transport. Ruff lint/format and strict mypy passed. No paid calls were
+made. Migration 11 requires the same verified-backup rollback discipline as R3.
 
 ### R5 Notification recovery
 

@@ -1403,6 +1403,19 @@ class PropertyStorage:
                     datetime.now(UTC).isoformat(),
                 ),
             )
+            provenance = analysis.analysis_provenance
+            if (
+                analysis.overall_rating is not None
+                and analysis.analysis_failure is None
+                and provenance is not None
+                and provenance.visual_input_sha256 is not None
+            ):
+                # Completion and consumption commit together. A newer checkpoint
+                # created for changed inputs must survive this older completion.
+                await conn.execute(
+                    "DELETE FROM visual_checkpoints WHERE property_id=? AND input_sha256=?",
+                    (unique_id, provenance.visual_input_sha256),
+                )
         logger.debug("quality_analysis_saved", unique_id=unique_id)
 
     async def get_quality_analysis(self, unique_id: str) -> PropertyQualityAnalysis | None:

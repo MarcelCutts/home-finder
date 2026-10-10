@@ -97,6 +97,22 @@ reservation that was never dispatched can be released without that evidence.
 Stop the runner before operator reconciliation. Do not erase accounting rows to
 re-enable calls. Offline tests establish code contracts, not live model quality.
 
+Successful visual observations are checkpointed in the same transaction as their
+usage receipt. Recovery reuses them only when the actual ordered image bytes,
+rendered visual prompt, model, schema and relevant configuration match. Evaluation
+still passes normal spending admission, including uncertain-charge holds and its
+attempt limit. A changed evaluation configuration alone need not repeat vision.
+The matching checkpoint is consumed atomically when assessment completes; paid
+attempts remain. There is at most one checkpoint per property, rather than a
+history of model responses. Changed visual inputs replace it only after success.
+
+The spending report includes checkpoint identifiers and creation time, without
+observations or images. Follow `visual_checkpoint_saved`, `visual_checkpoint_loaded`,
+`visual_checkpoint_input_changed` and `visual_checkpoint_reused` events alongside
+paid-attempt logs. An invalid receipt/payload or unavailable ledger defers work;
+it must not silently trigger another paid call. Migration 11 adds this state;
+rollback requires the verified pre-upgrade database, including all accounting.
+
 ## Collection and delivery
 
 Qualify permitted source access before live collection. A challenge, parser

@@ -28,7 +28,7 @@ from home_finder.filters.analysis_contracts import (
 from home_finder.filters.analysis_contracts import (
     failure as output_failure,
 )
-from home_finder.filters.analysis_spend import AnalysisSpendMeter
+from home_finder.filters.analysis_spend import AnalysisSpendMeter, visual_input_key
 from home_finder.filters.listing_text import select_listing_text, supported_council_tax_band
 from home_finder.logging import get_logger
 from home_finder.models import (
@@ -1120,7 +1120,7 @@ class PropertyQualityFilter:
             )
             analysis = PropertyQualityAnalysis(
                 listing_text_inputs=text_inputs,
-                analysis_provenance=self._analysis_provenance(),
+                analysis_provenance=analysis.analysis_provenance or self._analysis_provenance(),
                 kitchen=analysis.kitchen,
                 condition=analysis.condition,
                 light_space=analysis.light_space,
@@ -1212,6 +1212,41 @@ class PropertyQualityFilter:
             summary="No images available for quality analysis",
         )
 
+    def _visual_request(self, content: list[Any]) -> dict[str, Any]:
+        """Build the exact visual request used both for checkpoint identity and dispatch."""
+        phase = self.analysis_config.visual
+        create_kwargs: dict[str, Any] = {
+            "model": phase.model,
+            # SDK enforces non-streaming cap of ~21333 tokens (10-min timeout estimate).
+            # Streaming would allow 32768+ but requires a larger refactor.
+            "max_tokens": phase.max_output_tokens,
+            "system": [
+                {
+                    "type": "text",
+                    "text": VISUAL_ANALYSIS_SYSTEM_PROMPT,
+                    "cache_control": {"type": "ephemeral"},
+                }
+            ],
+            "messages": [{"role": "user", "content": content}],
+            "tools": [{**VISUAL_ANALYSIS_TOOL, "cache_control": {"type": "ephemeral"}}],
+        }
+
+        if phase.reasoning == "adaptive":
+            create_kwargs["thinking"] = {
+                "type": "adaptive",
+            }
+            create_kwargs["tool_choice"] = {"type": "auto"}
+        else:
+            create_kwargs["tool_choice"] = {
+                "type": "tool",
+                "name": "property_visual_analysis",
+            }
+
+        if phase.effort is not None:
+            create_kwargs["output_config"] = {"effort": phase.effort}
+
+        return create_kwargs
+
     async def _run_visual_analysis(
         self,
         content: list[Any],
@@ -1241,48 +1276,33 @@ class PropertyQualityFilter:
             InternalServerError,
             RateLimitError,
         )
-        from anthropic.types import ToolParam
 
         phase = self.analysis_config.visual
         client = self._phase_client(phase)
 
         try:
-            visual_tool: ToolParam = VISUAL_ANALYSIS_TOOL  # type: ignore[assignment]
-
-            create_kwargs: dict[str, Any] = {
-                "model": phase.model,
-                # SDK enforces non-streaming cap of ~21333 tokens (10-min timeout estimate).
-                # Streaming would allow 32768+ but requires a larger refactor.
-                "max_tokens": phase.max_output_tokens,
-                "system": [
-                    {
-                        "type": "text",
-                        "text": VISUAL_ANALYSIS_SYSTEM_PROMPT,
-                        "cache_control": {"type": "ephemeral"},
-                    }
-                ],
-                "messages": [{"role": "user", "content": content}],
-                "tools": [{**visual_tool, "cache_control": {"type": "ephemeral"}}],
-            }
-
-            if phase.reasoning == "adaptive":
-                create_kwargs["thinking"] = {
-                    "type": "adaptive",
-                }
-                create_kwargs["tool_choice"] = {"type": "auto"}
-            else:
-                create_kwargs["tool_choice"] = {
-                    "type": "tool",
-                    "name": "property_visual_analysis",
-                }
-
-            if phase.effort is not None:
-                create_kwargs["output_config"] = {"effort": phase.effort}
+            create_kwargs = self._visual_request(content)
+            provenance = self._analysis_provenance()
+            input_key = visual_input_key(property_id, create_kwargs, provenance)
+            cached = await self._spend_meter.get_visual_checkpoint(property_id, input_key)
+            if cached is not None:
+                try:
+                    visual_data = validate_output(cached, _VisualAnalysisResponse, "visual", None)
+                except AnalysisOutputError:
+                    raise SpendDeferred("visual_checkpoint_invalid") from None
+                logger.info(
+                    "visual_checkpoint_reused", property_id=property_id, input_sha256=input_key
+                )
+                return visual_data
 
             from anthropic import Timeout
 
             with self._spend_meter.bind(
-                property_id, "visual", self._analysis_provenance(), _visual_output
+                property_id,
+                "visual",
+                provenance,
+                _visual_output,
+                visual_input_sha256=input_key,
             ):
                 response = await client.messages.create(
                     **create_kwargs,
@@ -1826,6 +1846,16 @@ class PropertyQualityFilter:
                         )
                     }
                 )
+        if analysis is not None:
+            provenance = self._analysis_provenance()
+            input_key = visual_input_key(property_id, self._visual_request(content), provenance)
+            analysis = analysis.model_copy(
+                update={
+                    "analysis_provenance": provenance.model_copy(
+                        update={"visual_input_sha256": input_key}
+                    )
+                }
+            )
         return analysis
 
     async def __aenter__(self) -> "PropertyQualityFilter":

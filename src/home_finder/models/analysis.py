@@ -75,6 +75,9 @@ class AnalysisProvenance(BaseModel):
     input_budget_policy: Literal["bounded_listing_payload_2026_09_29_v1"] | None = Field(
         default=None, exclude_if=lambda value: value is None
     )
+    visual_input_sha256: str | None = Field(
+        default=None, pattern=r"^[a-f0-9]{64}$", exclude_if=lambda value: value is None
+    )
 
     @property
     def fingerprint(self) -> str:

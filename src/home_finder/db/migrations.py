@@ -803,6 +803,20 @@ async def migrate_010_floorplan_origin(conn: aiosqlite.Connection) -> None:
         """)
 
 
+async def migrate_011_visual_checkpoints(conn: aiosqlite.Connection) -> None:
+    """Keep one unfinished visual result per property, tied to an accounted attempt."""
+    await conn.execute("""
+        CREATE TABLE IF NOT EXISTS visual_checkpoints (
+            property_id TEXT PRIMARY KEY,
+            input_sha256 TEXT NOT NULL CHECK (length(input_sha256) = 64),
+            attempt_id TEXT NOT NULL UNIQUE REFERENCES paid_attempts(attempt_id),
+            data_json TEXT NOT NULL CHECK (json_valid(data_json) AND length(data_json) <= 500000),
+            data_sha256 TEXT NOT NULL CHECK (length(data_sha256) = 64),
+            created_at TEXT NOT NULL
+        )
+    """)
+
+
 _MigrationFn = Callable[[aiosqlite.Connection], Coroutine[Any, Any, None]]
 
 MIGRATIONS: list[_MigrationFn] = [
@@ -816,6 +830,7 @@ MIGRATIONS: list[_MigrationFn] = [
     migrate_008_listing_text,
     migrate_009_paid_attempts,
     migrate_010_floorplan_origin,
+    migrate_011_visual_checkpoints,
 ]
 
 
