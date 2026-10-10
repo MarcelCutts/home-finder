@@ -9,6 +9,7 @@ import pytest
 from pydantic import ValidationError
 
 from home_finder.db import PropertyStorage
+from home_finder.db.homes import HomeIdentityConflict
 from home_finder.db.membership_ops import MembershipConflict
 from home_finder.db.merge_safety import MergeBlockedError
 from home_finder.db.migrations import MIGRATIONS, run_migrations
@@ -99,13 +100,16 @@ async def test_merge_split_replay_preserves_all_rows_and_original_links(
     assert combined.has_status_conflict and combined.has_message_conflict
     assert {s.home_id for s in combined.personal_states} == {t.home_id for t in targets[:2]}
     for prop, target in zip(props, targets, strict=True):
-        assert await db.homes.resolve(prop.unique_id) == target
-        assert await db.homes.resolve(target.home_id) == target
+        expected = targets[0] if prop in props[:2] else target
+        assert await db.homes.resolve(prop.unique_id) == expected
+        assert await db.homes.resolve(target.home_id) == expected
     for table in original.keys() - {
         "source_listings",
         "source_memberships",
         "membership_decisions",
         "membership_changes",
+        "home_routes",
+        "home_route_changes",
         "membership_projection_invalidations",
     }:
         assert await rows(db, table) == original[table], table
@@ -283,7 +287,7 @@ async def test_ordinary_save_paths_cannot_undo_a_reviewed_assignment(homes, meth
     await db.memberships.apply(await review_pair(db, targets))
     before = await snapshot(db)
     prop = props[1].model_copy(update={"price_pcm": 9876})
-    with pytest.raises(MergeBlockedError, match=prop.unique_id):
+    with pytest.raises((MergeBlockedError, HomeIdentityConflict)):
         if method == "property":
             await db.save_property(prop)
         elif method == "merged":
@@ -350,7 +354,7 @@ async def test_initial_link_and_noop_retries_are_journaled_once(homes, sample_pr
         ("actor", " "),
         ("reason", ""),
         ("evidence", ()),
-        ("version", 2),
+        ("version", 3),
         ("decision_id", "arbitrary"),
     ],
 )

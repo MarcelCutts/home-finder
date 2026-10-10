@@ -26,6 +26,7 @@ from home_finder.data.area_context import (
 )
 from home_finder.data.rental_guidance import GUIDANCE
 from home_finder.db import PropertyStorage
+from home_finder.db.home_groups import HomeActionConflict
 from home_finder.filters.fit_score import (
     FIT_TIERS,
     compute_fit_score_and_breakdown,
@@ -520,8 +521,8 @@ async def property_detail(
             status_code=404,
         )
 
-    # Files and history retain their original storage IDs even for a stable or
-    # redirected home URL. Use the resolved row for every downstream lookup.
+    # Images and current group projections use the representative's storage key.
+    # Personal status/history below use the issued link's original home instead.
     unique_id = prop["unique_id"]
 
     # Hide properties with no images — not worth viewing without photos
@@ -629,7 +630,8 @@ async def property_detail(
 
     # Status tracking (Ticket 7)
     user_status = prop.get("user_status") or "new"
-    status_history = await storage.get_status_history(unique_id)
+    action_id = prop.get("action_home_id")
+    status_history = await storage.get_status_history(action_id) if action_id else []
 
     # Price history (Ticket 10)
     price_history = await storage.get_price_history(unique_id)
@@ -743,7 +745,14 @@ async def update_property_status(
             )
         return JSONResponse({"error": f"Invalid status: {status_value}"}, status_code=400)
 
-    prev = await storage.update_user_status(unique_id, new_status)
+    try:
+        prev = await storage.update_user_status(unique_id, new_status)
+    except HomeActionConflict as exc:
+        if request.headers.get("HX-Request"):
+            return HTMLResponse(
+                f'<p class="toast-message">{html_escape(str(exc))}</p>', status_code=409
+            )
+        return JSONResponse({"error": str(exc)}, status_code=409)
     if prev is None:
         if request.headers.get("HX-Request"):
             return HTMLResponse(

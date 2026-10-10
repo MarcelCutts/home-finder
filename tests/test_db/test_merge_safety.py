@@ -130,7 +130,8 @@ async def test_pending_retirement_moves_every_owned_source_and_retains_evidence(
         anchor.unique_id, combined, absorbed_ids=[pending.unique_id, anchor.unique_id]
     ) == [pending.unique_id]
     after = await snapshot(db)
-    assert len(after["properties"]) == 1
+    assert len(after["properties"]) == 2  # Retained donor supports reversal.
+    assert len(await db.get_all_properties()) == 1
     assert after["source_observations"] == observations
     async with db._read_connection() as conn:
         async with conn.execute("SELECT unique_id,merged_id FROM source_listings") as cur:
@@ -157,7 +158,7 @@ async def test_delete_failure_rolls_back_membership_and_projection(
     anchor, pending, combined = proposed_merge
     async with db._transaction() as conn:
         await conn.execute(
-            "CREATE TRIGGER fail_retirement BEFORE DELETE ON properties "
+            "CREATE TRIGGER fail_retirement BEFORE UPDATE ON home_routes "
             "BEGIN SELECT RAISE(ABORT,'simulated retirement failure'); END"
         )
     before = await snapshot(db)

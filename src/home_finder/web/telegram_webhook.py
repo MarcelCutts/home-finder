@@ -5,6 +5,7 @@ from fastapi.responses import JSONResponse
 
 from home_finder.config import Settings
 from home_finder.db import PropertyStorage
+from home_finder.db.home_groups import HomeActionConflict
 from home_finder.db.storage import DuplicateTelegramUpdateError
 from home_finder.logging import get_logger
 from home_finder.models import UserStatus
@@ -105,6 +106,13 @@ async def telegram_webhook(request: Request) -> JSONResponse:
         prev = await storage.update_user_status(
             uid, target_status, source="telegram", telegram_update_id=update_id
         )
+    except HomeActionConflict:
+        await _answer_callback(
+            settings,
+            callback_id,
+            "Open a specific saved record in the dashboard to change its status.",
+        )
+        return JSONResponse({"ok": True})
     except DuplicateTelegramUpdateError:
         # Telegram retries deliveries. Acknowledging a committed update must not
         # overwrite a later owner decision or append another status event.

@@ -1,0 +1,172 @@
+{
+  "segment": "PR07b-3b",
+  "base": "8350a650becaa6ae2311fe379b34538ff04a29c0",
+  "schema": 14,
+  "stack_position": 28,
+  "source_and_test_manifest_sha256": "06c1029eb2b8d3d519cad495eb99aab842cd5ca3a7b6603bfec7a07e262f6285",
+  "full_suites": [
+    {
+      "python": "Python 3.14.7",
+      "passed": 3348,
+      "failures": 0,
+      "coverage_percent": 88.31,
+      "workers": 4,
+      "network": "pytest-socket blocked except Unix sockets",
+      "log_sha256": "3c8dc76079154e24ba16058d910d05fcdb6877d465373305a8977785d529d8c9",
+      "junit_sha256": "1dd56ec1925a0293867f1bb49036c34cc1f2f1595e7cbbbf48aca3365d0f410b"
+    },
+    {
+      "python": "Python 3.11.16",
+      "passed": 3348,
+      "failures": 0,
+      "coverage_percent": 88.38,
+      "workers": 8,
+      "network": "pytest-socket blocked except Unix sockets",
+      "log_sha256": "9fe935459711551b8d5d4d289472f0a7168649835d7f41d234f99b0418b8a322",
+      "junit_sha256": "d7254dea34203da99498a5ecc6a58aaede678b155a5a0ac8474885a3fb80774d"
+    }
+  ],
+  "final_targeted_web_checks": {
+    "passed_per_interpreter": 4,
+    "reason": "Added an ambiguous Telegram acknowledgement assertion after full-suite collection; application code unchanged."
+  },
+  "static_checks": {
+    "ruff_check": "passed",
+    "ruff_format": "passed (257 Python files)",
+    "mypy": "passed (114 source files)",
+    "diff_check": "passed"
+  },
+  "packaging": {
+    "application_files": 148,
+    "all_application_files_byte_exact": true,
+    "wheel_sha256": "983ba09d94bdfe24079e92406e6efd140984455205de88733d5e75b60f17826a",
+    "sdist_sha256": "44f1202c51e30cef59b5646d39e0d2f3362190b6e555f117c4363195ec9bc0f2",
+    "sdist_final_test_fixtures_present": true,
+    "sdist_private_artifacts_excluded": true,
+    "sdist_read_only_audit_script_included": true
+  },
+  "copy_rehearsals": {
+    "historical": {
+      "network_blocked": true,
+      "source_sha256": "e1494adf0f5b174cd9a2e142f50aa25b8ffd5a85ba3f4d66383a3e8762cea639",
+      "source_unchanged": true,
+      "original_schema": 6,
+      "migrated_schema": 14,
+      "all_original_rows_preserved": true,
+      "migration_and_restart_idempotent": true,
+      "ownership_conflicts": 17,
+      "counts": {
+        "homes": 1016,
+        "home_aliases": 1217,
+        "source_memberships": 3267,
+        "membership_decisions": 0,
+        "membership_changes": 0,
+        "membership_projection_invalidations": 0,
+        "home_routes": 1016,
+        "home_route_changes": 0
+      },
+      "foreign_key_errors": 0,
+      "projection_drift": 0,
+      "integrity": "ok",
+      "examples": {},
+      "membership_replay_audit": {
+        "revision": 0,
+        "decisions": 0,
+        "retained_source_memberships": 3267,
+        "errors": {},
+        "valid": true
+      }
+    },
+    "fifty": {
+      "network_blocked": true,
+      "source_sha256": "e2bdf0073f39067b85a8f1deb707b828cd369f45c9244a9c0360aed2f0934fa7",
+      "source_unchanged": true,
+      "original_schema": 10,
+      "migrated_schema": 14,
+      "all_original_rows_preserved": true,
+      "migration_and_restart_idempotent": true,
+      "ownership_conflicts": 0,
+      "counts": {
+        "homes": 35,
+        "home_aliases": 35,
+        "source_memberships": 55,
+        "membership_decisions": 8,
+        "membership_changes": 12,
+        "membership_projection_invalidations": 20,
+        "home_routes": 35,
+        "home_route_changes": 12
+      },
+      "foreign_key_errors": 0,
+      "projection_drift": 0,
+      "integrity": "ok",
+      "examples": {
+        "southborough": {
+          "advertisements": 2,
+          "changed_members": 1,
+          "all_original_rows_after_split_and_reversal": true,
+          "replayed_merge_after_split_is_noop": true,
+          "issued_links_preserved": true
+        },
+        "wilmot": {
+          "advertisements": 3,
+          "changed_members": 2,
+          "all_original_rows_after_split_and_reversal": true,
+          "replayed_merge_after_split_is_noop": true,
+          "issued_links_preserved": true
+        }
+      },
+      "membership_replay_audit": {
+        "revision": 8,
+        "decisions": 8,
+        "retained_source_memberships": 55,
+        "errors": {},
+        "valid": true
+      }
+    }
+  },
+  "fifty_property_replay": {
+    "input_count": 50,
+    "groups_per_shape": 35,
+    "selected_members": 50,
+    "checks": {
+      "same_and_split_match_live_membership": true,
+      "known_replay_produces_no_new_work": true,
+      "no_model_attempts": true,
+      "database_integrity": true,
+      "original_artifacts_unchanged": true
+    },
+    "original_artifacts_unchanged": true
+  },
+  "browser": {
+    "synthetic_only": true,
+    "skill": "playwright",
+    "viewports": [
+      [
+        1365,
+        1000
+      ],
+      [
+        390,
+        844
+      ]
+    ],
+    "horizontal_overflow": false,
+    "console_errors": 0,
+    "console_warnings": 0,
+    "selected_record_and_representative_statuses_independent": true,
+    "selected_label_updated_without_reload": true
+  },
+  "remote_ci": {
+    "workflow_id": 262027904,
+    "state": "disabled_inactivity",
+    "run": false
+  },
+  "limitations": [
+    "Complete member text/price/availability/image/assessment projections remain PR07b-4.",
+    "Reviewed reconciliation remains limited to explicitly authorized copies.",
+    "The 17 historical ownership conflicts are unresolved.",
+    "No new model, portal, Telegram, production or deployment operations.",
+    "Author review is not independent approval."
+  ],
+  "recovery": "Missing temporary worktree recovered into persistent repository worktree and reverified; missing prior full-suite output is not used as evidence."
+}

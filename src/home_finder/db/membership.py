@@ -12,6 +12,7 @@ from uuid import uuid4
 
 import aiosqlite
 
+from home_finder.db.home_groups import HomeRouteConflict, audit_routes, group_scope, read_routes
 from home_finder.db.membership_ops import (
     MembershipConflict,
     membership_revision,
@@ -19,6 +20,7 @@ from home_finder.db.membership_ops import (
 )
 from home_finder.db.observations import ConnectionScope
 from home_finder.logging import get_logger
+from home_finder.models.home_group import HomeRoute
 from home_finder.models.membership import (
     MemberAssignment,
     MembershipAudit,
@@ -32,47 +34,42 @@ logger = get_logger(__name__)
 
 
 async def membership_snapshot(
-    conn: aiosqlite.Connection, home_ids: tuple[str, ...]
+    conn: aiosqlite.Connection, home_ids: tuple[str, ...], unowned_source_ids: tuple[str, ...] = ()
 ) -> MembershipSnapshot:
     """Include every source representation and each original personal-state owner."""
-    scope = tuple(sorted(set(home_ids)))
+    scope = await group_scope(conn, home_ids)
     if not scope:
         raise MembershipConflict("empty_home_scope")
     members: list[MemberAssignment] = []
     evidence_hash = hashlib.sha256()
     provenance = set(scope)
-    for home_id in scope:
-        async with conn.execute("SELECT 1 FROM homes WHERE home_id = ?", (home_id,)) as cur:
-            if await cur.fetchone() is None:
-                raise MembershipConflict("unknown_home")
-        async with conn.execute(
-            "SELECT s.*, m.home_id, o.home_id AS origin_home_id "
-            "FROM source_memberships m JOIN source_listings s ON s.unique_id = m.source_unique_id "
-            "LEFT JOIN membership_origins o USING(source_unique_id) WHERE m.home_id = ? "
-            "ORDER BY s.unique_id",
-            (home_id,),
-        ) as cur:
-            for member in await cur.fetchall():
-                source_id = member["unique_id"]
-                members.append(
-                    MemberAssignment(source_unique_id=source_id, home_id=member["home_id"])
+    marks = ",".join("?" for _ in scope)
+    unowned_marks = ",".join("?" for _ in unowned_source_ids) or "NULL"
+    async with conn.execute(
+        "SELECT s.*, m.home_id, o.home_id AS origin_home_id "
+        "FROM source_memberships m JOIN source_listings s ON s.unique_id = m.source_unique_id "
+        "LEFT JOIN membership_origins o USING(source_unique_id) "
+        f"WHERE m.home_id IN ({marks}) OR (m.home_id IS NULL "
+        f"AND m.source_unique_id IN ({unowned_marks})) ORDER BY s.unique_id",
+        (*scope, *unowned_source_ids),
+    ) as cur:
+        source_rows = await cur.fetchall()
+    for member in source_rows:
+        source_id = member["unique_id"]
+        members.append(MemberAssignment(source_unique_id=source_id, home_id=member["home_id"]))
+        if member["origin_home_id"]:
+            provenance.add(member["origin_home_id"])
+        evidence_hash.update(json.dumps(dict(member), sort_keys=True).encode())
+        for table, key in (
+            ("source_observations", "observation_id"),
+            ("source_identity_claims", "claim_id"),
+        ):
+            async with conn.execute(
+                f"SELECT {key} FROM {table} WHERE source_unique_id = ? ORDER BY {key}", (source_id,)
+            ) as evidence_cursor:
+                evidence_hash.update(
+                    json.dumps([r[0] for r in await evidence_cursor.fetchall()]).encode()
                 )
-                if member["origin_home_id"]:
-                    provenance.add(member["origin_home_id"])
-                evidence_hash.update(json.dumps(dict(member), sort_keys=True).encode())
-                # A new receipt or changed persisted source makes old evidence
-                # review stale even when its ownership has not changed.
-                for table, key in (
-                    ("source_observations", "observation_id"),
-                    ("source_identity_claims", "claim_id"),
-                ):
-                    async with conn.execute(
-                        f"SELECT {key} FROM {table} WHERE source_unique_id = ? ORDER BY {key}",
-                        (source_id,),
-                    ) as evidence_cursor:
-                        evidence_hash.update(
-                            json.dumps([r[0] for r in await evidence_cursor.fetchall()]).encode()
-                        )
     states = []
     for home_id in sorted(provenance):
         async with conn.execute(
@@ -106,6 +103,9 @@ async def membership_snapshot(
         members=tuple(sorted(members, key=lambda m: m.source_unique_id)),
         source_evidence_sha256=evidence_hash.hexdigest(),
         personal_states=tuple(states),
+        routes=tuple(
+            route for home, route in sorted((await read_routes(conn)).items()) if home in scope
+        ),
     )
 
 
@@ -117,13 +117,75 @@ def _changed(decision: MembershipDecision) -> dict[str, tuple[str | None, str | 
     }
 
 
-async def _reversal_map(conn: aiosqlite.Connection, decision_id: str) -> dict[str, str | None]:
+def _route_changes(decision: MembershipDecision) -> dict[str, tuple[HomeRoute, HomeRoute]]:
+    return {
+        old.home_id: (old, new)
+        for old, new in zip(decision.before.routes, decision.after_routes, strict=True)
+        if old != new
+    }
+
+
+async def _split_routes(
+    conn: aiosqlite.Connection,
+    before: MembershipSnapshot,
+    after: tuple[MemberAssignment, ...],
+    overrides: dict[str, str] | None = None,
+) -> tuple[HomeRoute, ...]:
+    assignments = {m.source_unique_id: m.home_id for m in after}
+    owners = {m.home_id for m in after} - {None}
+    routes = {r.home_id: r for r in before.routes}
+    overrides = overrides or {}
+    if not overrides.keys() <= routes.keys() or not set(overrides.values()) <= owners:
+        raise MembershipConflict("alias_routes_must_choose_reviewed_owners")
+    for home, route in routes.items():
+        target: str | None
+        if home in owners:
+            target = home
+            if home in overrides and overrides[home] != home:
+                raise MembershipConflict("owning_home_cannot_be_an_alias")
+        elif home in overrides:
+            target = overrides[home]
+        else:
+            async with conn.execute(
+                "SELECT source_unique_id FROM membership_origins WHERE home_id = ?", (home,)
+            ) as cur:
+                ids = [r[0] for r in await cur.fetchall()]
+            if not ids:
+                async with conn.execute(
+                    "SELECT origin_property_id FROM homes WHERE home_id = ?", (home,)
+                ) as cur:
+                    row = await cur.fetchone()
+                assert row is not None
+                ids = [row[0]]
+            destinations = {assignments[i] for i in ids if i in assignments} - {None}
+            if len(destinations) > 1:
+                raise MembershipConflict("ambiguous_alias_split_requires_explicit_route")
+            target = next(iter(destinations), route.target_home_id)
+        routes[home] = HomeRoute(
+            home_id=home, target_home_id=target, state="active" if target else route.state
+        )
+    return tuple(routes[home] for home in sorted(routes))
+
+
+async def _reversal_map(
+    conn: aiosqlite.Connection, decision_id: str
+) -> tuple[dict[str, str | None], dict[str, HomeRoute], tuple[str, ...]]:
     async with conn.execute(
-        "SELECT revision, operation FROM membership_decisions WHERE decision_id = ?", (decision_id,)
+        "SELECT revision, operation, command_json FROM membership_decisions WHERE decision_id = ?",
+        (decision_id,),
     ) as cur:
         decision = await cur.fetchone()
-    if decision is None or decision["operation"] not in {"merge", "split", "reversal"}:
-        raise MembershipConflict("only_reviewed_decisions_are_reversible")
+    if decision is None or decision["operation"] not in {
+        "merge",
+        "split",
+        "reversal",
+        "staging_link",
+        "cleanup",
+    }:
+        raise MembershipConflict("only_reviewed_or_retained_retirement_decisions_are_reversible")
+    payload = json.loads(decision["command_json"])
+    if payload["version"] == 1 and decision["operation"] not in {"merge", "split", "reversal"}:
+        raise MembershipConflict("old_automatic_retirement_has_no_recoverable_route_history")
     async with conn.execute(
         "SELECT 1 FROM membership_decisions WHERE reverses = ?", (decision_id,)
     ) as cur:
@@ -137,19 +199,65 @@ async def _reversal_map(conn: aiosqlite.Connection, decision_id: str) -> dict[st
     ) as cur:
         rows = await cur.fetchall()
     if any(
-        row["revision"] != decision["revision"] or row["home_id"] != row["next_home_id"]
-        for row in rows
+        r["revision"] != decision["revision"] or r["home_id"] != r["next_home_id"] for r in rows
     ):
         raise MembershipConflict("later_decision_touched_membership")
-    return {row["source_unique_id"]: row["previous_home_id"] for row in rows}
+    async with conn.execute(
+        "SELECT c.*, r.revision, r.target_home_id, r.state FROM home_route_changes c "
+        "JOIN home_routes r USING(home_id) WHERE c.decision_id = ?",
+        (decision_id,),
+    ) as cur:
+        route_rows = await cur.fetchall()
+    if any(
+        r["revision"] != decision["revision"]
+        or r["target_home_id"] != r["next_target_home_id"]
+        or r["state"] != r["next_state"]
+        for r in route_rows
+    ):
+        raise MembershipConflict("later_decision_touched_home_route")
+    destinations = {r["source_unique_id"]: r["previous_home_id"] for r in rows}
+    routes = {
+        r["home_id"]: HomeRoute(
+            home_id=r["home_id"],
+            target_home_id=r["previous_target_home_id"],
+            state=r["previous_state"],
+        )
+        for r in route_rows
+    }
+    scope = (
+        {r[key] for r in rows for key in ("previous_home_id", "next_home_id")}
+        | set(routes)
+        | {r.target_home_id for r in routes.values()}
+    )
+    if "before" in payload:
+        scope.update(payload["before"]["scope_home_ids"])
+    homes = tuple(sorted(home for home in scope if home is not None))
+    if payload["version"] == 1:
+        before = await membership_snapshot(conn, homes)
+        after = tuple(
+            MemberAssignment(
+                source_unique_id=m.source_unique_id,
+                home_id=destinations.get(m.source_unique_id, m.home_id),
+            )
+            for m in before.members
+        )
+        inferred = await _split_routes(conn, before, after)
+        routes = {
+            new.home_id: new for old, new in zip(before.routes, inferred, strict=True) if old != new
+        }
+    return destinations, routes, homes
 
 
 async def _validate_operation(conn: aiosqlite.Connection, decision: MembershipDecision) -> None:
     changes = _changed(decision)
     if decision.operation == "merge":
+        owners = {m.home_id for m in decision.after}
         if (
-            len({m.home_id for m in decision.before.members}) < 2
-            or len({m.home_id for m in decision.after}) != 1
+            len(decision.before.scope_home_ids) < 2
+            or len(owners) != 1
+            or any(
+                r.target_home_id not in owners or r.state != "active" for r in decision.after_routes
+            )
         ):
             raise MembershipConflict("merge_requires_complete_homes_and_one_destination")
     elif decision.operation == "split":
@@ -158,12 +266,29 @@ async def _validate_operation(conn: aiosqlite.Connection, decision: MembershipDe
             raise MembershipConflict("split_must_retain_members_in_its_original_home")
     else:
         assert decision.reverses is not None
-        expected = await _reversal_map(conn, decision.reverses)
-        if {source: new for source, (_, new) in changes.items()} != expected:
+        expected, routes, _ = await _reversal_map(conn, decision.reverses)
+        if {source: new for source, (_, new) in changes.items()} != expected or {
+            home: new for home, (_, new) in _route_changes(decision).items()
+        } != routes:
             raise MembershipConflict("reversal_must_restore_the_recorded_map")
-    for state in decision.before.personal_states:
-        if state.home_id in decision.before.scope_home_ids and state.property_id is None:
-            raise MembershipConflict("unavailable_destination_home")
+    routes = {r.home_id: r for r in decision.after_routes}
+    for route in routes.values():
+        if route.state == "active":
+            root = routes.get(route.target_home_id or "")
+            if root is None or root.state != "active" or root.target_home_id != root.home_id:
+                raise MembershipConflict("destination_must_be_a_group_root")
+            async with conn.execute(
+                "SELECT current_property_id FROM homes WHERE home_id = ?", (root.home_id,)
+            ) as cur:
+                row = await cur.fetchone()
+            if row is None or row[0] is None:
+                raise MembershipConflict("unavailable_destination_home")
+    for member in decision.after:
+        if member.home_id is not None and (
+            routes[member.home_id].state != "active"
+            or routes[member.home_id].target_home_id != member.home_id
+        ):
+            raise MembershipConflict("owning_home_must_be_a_group_root")
 
 
 class MembershipRepository:
@@ -246,6 +371,7 @@ class MembershipRepository:
             assert missing is not None
             if missing[0]:
                 errors["missing_memberships"] = int(missing[0])
+            errors.update(await audit_routes(conn))
             report = MembershipAudit(
                 revision=previous_revision,
                 decisions=decisions,
@@ -274,8 +400,13 @@ class MembershipRepository:
         async with self._transaction() as conn:
             before = await membership_snapshot(conn, (target_home_id, *other_home_ids))
             decision = MembershipDecision(
+                version=2,
                 decision_id="md_" + uuid4().hex,
                 operation="merge",
+                after_routes=tuple(
+                    HomeRoute(home_id=h, target_home_id=target_home_id)
+                    for h in before.scope_home_ids
+                ),
                 actor=actor,
                 reason=reason,
                 evidence=evidence,
@@ -293,6 +424,7 @@ class MembershipRepository:
         source_home_id: str,
         destinations: dict[str, str],
         *,
+        alias_routes: dict[str, str] | None = None,
         actor: str,
         reason: str,
         evidence: tuple[str, ...],
@@ -302,20 +434,23 @@ class MembershipRepository:
             eligible = {m.source_unique_id for m in before.members if m.home_id == source_home_id}
             if not destinations or not destinations.keys() <= eligible:
                 raise MembershipConflict("split_members_must_belong_to_the_source_home")
+            after = tuple(
+                MemberAssignment(
+                    source_unique_id=m.source_unique_id,
+                    home_id=destinations.get(m.source_unique_id, m.home_id),
+                )
+                for m in before.members
+            )
             decision = MembershipDecision(
+                version=2,
                 decision_id="md_" + uuid4().hex,
                 operation="split",
                 actor=actor,
                 reason=reason,
                 evidence=evidence,
                 before=before,
-                after=tuple(
-                    MemberAssignment(
-                        source_unique_id=m.source_unique_id,
-                        home_id=destinations.get(m.source_unique_id, m.home_id),
-                    )
-                    for m in before.members
-                ),
+                after=after,
+                after_routes=await _split_routes(conn, before, after, alias_routes),
             )
             await _validate_operation(conn, decision)
             return decision
@@ -329,16 +464,10 @@ class MembershipRepository:
         evidence: tuple[str, ...],
     ) -> MembershipDecision:
         async with self._transaction() as conn:
-            destinations = await _reversal_map(conn, decision_id)
-            async with conn.execute(
-                "SELECT command_json FROM membership_decisions WHERE decision_id = ?",
-                (decision_id,),
-            ) as cur:
-                row = await cur.fetchone()
-            assert row is not None
-            original = MembershipDecision.model_validate_json(row[0])
-            before = await membership_snapshot(conn, original.before.scope_home_ids)
+            destinations, routes, scope = await _reversal_map(conn, decision_id)
+            before = await membership_snapshot(conn, scope, tuple(destinations))
             decision = MembershipDecision(
+                version=2,
                 decision_id="md_" + uuid4().hex,
                 operation="reversal",
                 actor=actor,
@@ -346,6 +475,7 @@ class MembershipRepository:
                 evidence=evidence,
                 before=before,
                 reverses=decision_id,
+                after_routes=tuple(routes.get(r.home_id, r) for r in before.routes),
                 after=tuple(
                     MemberAssignment(
                         source_unique_id=m.source_unique_id,
@@ -369,16 +499,25 @@ class MembershipRepository:
                 ) as cur:
                     existing = await cur.fetchone()
                 if existing is not None:
-                    if existing["command_json"] != payload:
+                    if MembershipDecision.model_validate_json(existing["command_json"]) != decision:
                         raise MembershipConflict("decision_id_reused_with_different_payload")
                     receipt = MembershipReceipt(
                         decision_id=decision.decision_id,
                         revision=existing["revision"],
                         changed=len(_changed(decision)),
+                        routes_changed=len(_route_changes(decision)),
                         replayed=True,
                     )
                 else:
-                    current = await membership_snapshot(conn, decision.before.scope_home_ids)
+                    if decision.version != 2:
+                        raise MembershipConflict("old_review_requires_refresh")
+                    current = await membership_snapshot(
+                        conn,
+                        decision.before.scope_home_ids,
+                        tuple(
+                            m.source_unique_id for m in decision.before.members if m.home_id is None
+                        ),
+                    )
                     if current != decision.before:
                         raise MembershipConflict("stale_membership_or_personal_state_review")
                     await _validate_operation(conn, decision)
@@ -392,6 +531,7 @@ class MembershipRepository:
                         expected_revision=decision.before.revision,
                         command_json=payload,
                         changes=_changed(decision),
+                        route_changes=_route_changes(decision),
                         reverses=decision.reverses,
                     )
                     await conn.executemany(
@@ -401,7 +541,7 @@ class MembershipRepository:
                             for home_id in decision.before.scope_home_ids
                         ],
                     )
-        except MembershipConflict as exc:
+        except (MembershipConflict, HomeRouteConflict) as exc:
             logger.warning(
                 "membership_decision_refused", decision_id=decision.decision_id, reason=str(exc)
             )
@@ -420,6 +560,8 @@ class MembershipRepository:
             revision=receipt.revision,
             operation=decision.operation,
             changed=receipt.changed,
+            routes_changed=receipt.routes_changed,
+            scoped_homes=len(decision.before.scope_home_ids),
             status_conflict=decision.before.has_status_conflict,
             message_conflict=decision.before.has_message_conflict,
         )

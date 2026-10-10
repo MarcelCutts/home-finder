@@ -821,6 +821,13 @@ async def migrate_013_membership_decisions(conn: aiosqlite.Connection) -> None:
     await create_membership_schema(conn)
 
 
+async def migrate_014_home_groups(conn: aiosqlite.Connection) -> None:
+    """Retain staging rows and journal display routing independently of personal state."""
+    from home_finder.db.home_group_schema import create_home_group_schema
+
+    await create_home_group_schema(conn)
+
+
 _MigrationFn = Callable[[aiosqlite.Connection], Coroutine[Any, Any, None]]
 
 MIGRATIONS: list[_MigrationFn] = [
@@ -837,6 +844,7 @@ MIGRATIONS: list[_MigrationFn] = [
     migrate_011_provider_identities,
     migrate_012_home_identities,
     migrate_013_membership_decisions,
+    migrate_014_home_groups,
 ]
 
 

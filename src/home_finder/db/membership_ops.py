@@ -10,9 +10,11 @@ from uuid import uuid4
 
 import aiosqlite
 
+from home_finder.db.home_groups import read_routes, write_routes
 from home_finder.db.homes import ensure_home
 from home_finder.db.merge_safety import MergeBlockedError
 from home_finder.logging import get_logger
+from home_finder.models.home_group import HomeRoute
 from home_finder.models.membership import MembershipReceipt
 
 logger = get_logger(__name__)
@@ -41,13 +43,15 @@ async def write_membership_decision(
     command_json: str,
     changes: dict[str, tuple[str | None, str | None]],
     reverses: str | None = None,
+    route_changes: dict[str, tuple[HomeRoute, HomeRoute]] | None = None,
 ) -> MembershipReceipt:
     """Append evidence and update both projections under the caller's write lock."""
     if not conn.in_transaction:
         raise RuntimeError("Membership changes require an owning write transaction")
     if expected_revision != await membership_revision(conn):
         raise MembershipConflict("stale_membership_revision")
-    if not changes or any(old == new for old, new in changes.values()):
+    route_changes = route_changes or {}
+    if (not changes and not route_changes) or any(old == new for old, new in changes.values()):
         raise MembershipConflict("empty_membership_change")
     cursor = await conn.execute(
         "INSERT INTO membership_decisions (decision_id, operation, actor, reason, evidence_json, "
@@ -103,14 +107,21 @@ async def write_membership_decision(
             "UPDATE source_listings SET merged_id = ? WHERE unique_id = ?",
             (target_property_id, source_id),
         )
+    await write_routes(conn, decision_id, revision, route_changes)
     logger.debug(
         "membership_decision_prepared",
+        routes_changed=len(route_changes),
         decision_id=decision_id,
         operation=operation,
         revision=revision,
         changed=len(changes),
     )
-    return MembershipReceipt(decision_id=decision_id, revision=revision, changed=len(changes))
+    return MembershipReceipt(
+        decision_id=decision_id,
+        revision=revision,
+        changed=len(changes),
+        routes_changed=len(route_changes),
+    )
 
 
 async def link_memberships(
@@ -119,6 +130,7 @@ async def link_memberships(
     *,
     operation: Literal["initial_link", "staging_link", "cleanup"] = "initial_link",
     reason: str,
+    routes: dict[str, HomeRoute] | None = None,
 ) -> None:
     """Journal automatic links; ordinary saves can claim only currently unowned rows.
 
@@ -141,6 +153,13 @@ async def link_memberships(
             row = await cur.fetchone()
         if row is None:
             raise MergeBlockedError({source_id: ["missing_source_listing"]})
+        if operation == "initial_link" and row["home_id"] is not None:
+            async with conn.execute(
+                "SELECT current_property_id FROM homes WHERE home_id = ?", (row["home_id"],)
+            ) as cur:
+                owner = await cur.fetchone()
+            if owner is None or owner[0] != property_id:
+                raise MergeBlockedError({source_id: ["membership_review_required"]})
         if property_id is not None and property_id not in homes:
             homes[property_id] = await ensure_home(conn, property_id)
         target = homes[property_id] if property_id is not None else None
@@ -151,7 +170,17 @@ async def link_memberships(
         if operation == "initial_link" and row["home_id"] is not None:
             raise MergeBlockedError({source_id: ["membership_review_required"]})
         changes[source_id] = (row["home_id"], target)
-    if not changes:
+    current_routes = await read_routes(conn)
+    requested_routes = dict(routes or {})
+    for home in homes.values():
+        if current_routes[home].state == "retired":
+            requested_routes[home] = HomeRoute(home_id=home, target_home_id=home)
+    route_changes = {
+        home: (current_routes[home], route)
+        for home, route in requested_routes.items()
+        if current_routes[home] != route
+    }
+    if not changes and not route_changes:
         return
     await write_membership_decision(
         conn,
@@ -161,6 +190,14 @@ async def link_memberships(
         reason=reason,
         evidence=("policy:existing-staging-and-linkage-gates",),
         expected_revision=await membership_revision(conn),
-        command_json=json.dumps({"version": 1, "links": sorted(requested.items())}, sort_keys=True),
+        command_json=json.dumps(
+            {
+                "version": 2,
+                "links": sorted(requested.items()),
+                "routes": {home: new.model_dump() for home, (_, new) in route_changes.items()},
+            },
+            sort_keys=True,
+        ),
+        route_changes=route_changes,
         changes=changes,
     )

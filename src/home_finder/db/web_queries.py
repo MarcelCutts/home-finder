@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 import aiosqlite
 
+from home_finder.db.home_groups import HomeActionConflict, resolve_action
 from home_finder.db.homes import resolve_home
 from home_finder.db.listing_text import text_from_property_row
 from home_finder.db.row_mappers import (
@@ -32,6 +33,10 @@ logger = get_logger(__name__)
 
 _CARD_COLUMNS = """
     p.*, h.home_id, q.overall_rating as quality_rating,
+    (SELECT count(*) FROM group_personal_states g
+     WHERE g.group_home_id = h.home_id) AS group_record_count,
+    (SELECT count(DISTINCT g.user_status) FROM group_personal_states g
+     WHERE g.group_home_id = h.home_id AND g.property_id IS NOT NULL) > 1 AS status_conflict,
     q.condition_concerns as quality_concerns,
     q.concern_severity as quality_severity,
     q.analysis_json,
@@ -51,7 +56,7 @@ _CARD_COLUMNS = """
 """
 
 _CARD_JOINS = """
-    FROM properties p
+    FROM active_properties p
     LEFT JOIN quality_analyses q ON p.unique_id = q.property_unique_id
     LEFT JOIN homes h ON h.current_property_id = p.unique_id
 """
@@ -178,7 +183,12 @@ def build_filter_clauses(
             cutoff = (datetime.now(UTC) - timedelta(days=days)).isoformat()
             params.append(cutoff)
     if filters.status:
-        where_clauses.append("COALESCE(p.user_status, 'new') = ?")
+        where_clauses.append(
+            "EXISTS (SELECT 1 FROM group_personal_states g "
+            "JOIN homes gh ON gh.home_id = g.group_home_id "
+            "WHERE gh.current_property_id = p.unique_id AND g.property_id IS NOT NULL "
+            "AND g.user_status = ?)"
+        )
         params.append(filters.status)
     if filters.property_type:
         where_clauses.append(
@@ -289,7 +299,7 @@ class WebQueryService:
             where_sql, params = build_filter_clauses(filters)
             cursor = await conn.execute(
                 f"""
-                SELECT COUNT(*) FROM properties p
+                SELECT COUNT(*) FROM active_properties p
                 LEFT JOIN quality_analyses q ON p.unique_id = q.property_unique_id
                 WHERE {where_sql}
                 """,
@@ -326,7 +336,7 @@ class WebQueryService:
                        json_extract(q.analysis_json, '$.value.quality_adjusted_rating')
                            as value_rating,
                        json_extract(q.analysis_json, '$.one_line') as one_line
-                FROM properties p
+                FROM active_properties p
                 LEFT JOIN quality_analyses q ON p.unique_id = q.property_unique_id
                 LEFT JOIN homes h ON h.current_property_id = p.unique_id
                 WHERE {where_sql}
@@ -391,7 +401,7 @@ class WebQueryService:
             # Count total
             count_cursor = await conn.execute(
                 f"""
-                SELECT COUNT(*) FROM properties p
+                SELECT COUNT(*) FROM active_properties p
                 LEFT JOIN quality_analyses q ON p.unique_id = q.property_unique_id
                 WHERE {where_sql}
                 """,
@@ -441,11 +451,17 @@ class WebQueryService:
             target = await resolve_home(conn, unique_id)
             if target is None:
                 return None
+            action_error = None
+            try:
+                action = await resolve_action(conn, unique_id)
+            except HomeActionConflict as exc:
+                action = None
+                action_error = str(exc)
             unique_id = target.property_id
             cursor = await conn.execute(
                 """
                 SELECT p.*, q.analysis_json, q.overall_rating as quality_rating
-                FROM properties p
+                FROM active_properties p
                 LEFT JOIN quality_analyses q ON p.unique_id = q.property_unique_id
                 WHERE p.unique_id = ?
                 """,
@@ -457,6 +473,21 @@ class WebQueryService:
 
             prop_dict = dict(row)
             prop_dict["home_id"] = target.home_id
+            prop_dict["action_home_id"] = action.home_id if action else None
+            prop_dict["action_property_id"] = action.property_id if action else None
+            prop_dict["action_error"] = action_error
+            async with conn.execute(
+                "SELECT * FROM group_personal_states WHERE group_home_id = ? ORDER BY home_id",
+                (target.home_id,),
+            ) as cur:
+                prop_dict["saved_records"] = [dict(r) for r in await cur.fetchall()]
+            if action:
+                async with conn.execute(
+                    "SELECT user_status FROM properties WHERE unique_id = ?", (action.property_id,)
+                ) as cur:
+                    personal = await cur.fetchone()
+                assert personal is not None
+                prop_dict["user_status"] = personal[0]
             parse_json_fields(prop_dict)
             prop_dict["listing_evidence"] = text_from_property_row(row)
 
@@ -482,6 +513,6 @@ class WebQueryService:
             Count of properties in database.
         """
         async with self._read_connection() as conn:
-            cursor = await conn.execute("SELECT COUNT(*) FROM properties")
+            cursor = await conn.execute("SELECT COUNT(*) FROM active_properties")
             row = await cursor.fetchone()
             return row[0] if row else 0

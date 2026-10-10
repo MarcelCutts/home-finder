@@ -16,7 +16,8 @@ from typing import Any, Final
 import aiosqlite
 
 from home_finder.data.area_context import HOSTING_TOLERANCE
-from home_finder.db.homes import HomeRepository, ensure_home, redirect_staging_homes, resolve_home
+from home_finder.db.home_groups import HomeActionConflict, read_routes, resolve_action
+from home_finder.db.homes import HomeRepository, ensure_home, redirect_staging_homes
 from home_finder.db.identities import IdentityRepository, record_stored_identities
 from home_finder.db.listing_text import (
     apply_source_text,
@@ -58,6 +59,7 @@ from home_finder.models import (
     TransportMode,
     UserStatus,
 )
+from home_finder.models.home_group import HomeRoute
 from home_finder.models.listing_text import merge_listing_text
 from home_finder.models.observations import MAX_BATCH_BYTES, SourceObservation
 from home_finder.utils.async_tasks import finish_before_cancelling as _settle
@@ -486,7 +488,7 @@ class PropertyStorage:
         """
         async with self._read_connection(conn=_conn) as conn:
             cursor = await conn.execute(
-                "SELECT * FROM properties WHERE unique_id = ?",
+                "SELECT * FROM active_properties WHERE unique_id = ?",
                 (unique_id,),
             )
             row = await cursor.fetchone()
@@ -501,7 +503,7 @@ class PropertyStorage:
             List of all tracked properties.
         """
         async with self._read_connection() as conn:
-            cursor = await conn.execute("SELECT * FROM properties ORDER BY first_seen DESC")
+            cursor = await conn.execute("SELECT * FROM active_properties ORDER BY first_seen DESC")
             rows = await cursor.fetchall()
             return [self._row_to_tracked_property(row) for row in rows]
 
@@ -513,7 +515,8 @@ class PropertyStorage:
         """
         async with self._read_connection() as conn:
             cursor = await conn.execute(
-                "SELECT * FROM properties WHERE notification_status = ? ORDER BY first_seen ASC",
+                "SELECT * FROM active_properties WHERE notification_status = ? "
+                "ORDER BY first_seen ASC",
                 (NotificationStatus.PENDING.value,),
             )
             rows = await cursor.fetchall()
@@ -527,7 +530,7 @@ class PropertyStorage:
         """
         async with self._read_connection() as conn:
             cursor = await conn.execute(
-                """SELECT * FROM properties
+                """SELECT * FROM active_properties
                    WHERE notification_status IN (?, ?)
                    ORDER BY first_seen ASC""",
                 (NotificationStatus.PENDING.value, NotificationStatus.FAILED.value),
@@ -647,17 +650,30 @@ class PropertyStorage:
             if blockers:
                 raise MergeBlockedError(blockers)
             async with conn.execute(
+                "SELECT 1 FROM active_properties WHERE unique_id = ?", (unique_id,)
+            ) as cur:
+                if await cur.fetchone() is None:
+                    return
+            async with conn.execute(
                 "SELECT unique_id FROM source_listings WHERE merged_id = ?", (unique_id,)
             ) as cursor:
                 links = [(row[0], None) for row in await cursor.fetchall()]
+            async with conn.execute(
+                "SELECT home_id FROM homes WHERE origin_property_id = ?", (unique_id,)
+            ) as cur:
+                home = await cur.fetchone()
+            routes = {}
+            if home:
+                current = await read_routes(conn)
+                routes = {
+                    h: HomeRoute(home_id=h, target_home_id=None, state="retired")
+                    for h, r in current.items()
+                    if h == home[0] or r.target_home_id == home[0]
+                }
             await link_memberships(
-                conn, links, operation="cleanup", reason="unused_staging_cleanup"
+                conn, links, operation="cleanup", reason="unused_staging_cleanup", routes=routes
             )
-            await conn.execute(
-                "DELETE FROM properties WHERE unique_id = ?",
-                (unique_id,),
-            )
-        logger.debug("property_deleted", unique_id=unique_id)
+        logger.debug("property_retired", unique_id=unique_id)
 
     async def get_recent_properties_for_dedup(
         self, days: int | None = _DEDUP_LOOKBACK_DAYS
@@ -679,7 +695,7 @@ class PropertyStorage:
                 cutoff = (datetime.now(UTC) - timedelta(days=days)).isoformat()
                 cursor = await conn.execute(
                     """
-                    SELECT * FROM properties
+                    SELECT * FROM active_properties
                     WHERE first_seen >= ?
                       AND COALESCE(enrichment_status, 'enriched') != 'pending'
                     ORDER BY first_seen DESC
@@ -689,7 +705,7 @@ class PropertyStorage:
             else:
                 cursor = await conn.execute(
                     """
-                    SELECT * FROM properties
+                    SELECT * FROM active_properties
                     WHERE COALESCE(enrichment_status, 'enriched') != 'pending'
                     ORDER BY first_seen DESC
                     """
@@ -767,8 +783,26 @@ class PropertyStorage:
                         links.extend(
                             (row[0], existing_unique_id) for row in await cursor.fetchall()
                         )
+                anchor_home = await ensure_home(conn, existing_unique_id)
+                donor_homes = set()
+                for uid in absorbed_ids:
+                    async with conn.execute(
+                        "SELECT home_id FROM homes WHERE origin_property_id = ?", (uid,)
+                    ) as cur:
+                        row = await cur.fetchone()
+                    if row:
+                        donor_homes.add(row[0])
+                routes = {
+                    home: HomeRoute(home_id=home, target_home_id=anchor_home)
+                    for home, route in (await read_routes(conn)).items()
+                    if home in donor_homes or route.target_home_id in donor_homes
+                }
                 await link_memberships(
-                    conn, links, operation="staging_link", reason="guarded_staging_absorption"
+                    conn,
+                    links,
+                    operation="staging_link",
+                    reason="guarded_staging_absorption",
+                    routes=routes,
                 )
 
             # Rebuild denormalized caches from source_listings
@@ -833,7 +867,7 @@ class PropertyStorage:
 
         Images on disk are deliberately retained. A failed group leaves both
         sides and their source memberships intact; no partial merge is applied.
-        Returns the IDs of property rows actually retired (sources may have no
+        Returns the IDs of property rows newly hidden from work (sources may have no
         promoted property row yet). Established identity merge/split is separate.
         """
         ids = sorted(set(absorbed_ids) - {anchor_id})
@@ -842,14 +876,14 @@ class PropertyStorage:
             async with self._transaction() as conn:
                 if not ids:
                     await ensure_staging_merge(conn, anchor_id, ids)
-                await self.update_merged_sources(anchor_id, merged, absorbed_ids=ids, _conn=conn)
-                await redirect_staging_homes(conn, anchor_id, ids)
                 for uid in ids:
                     async with conn.execute(
-                        "DELETE FROM properties WHERE unique_id = ?", (uid,)
+                        "SELECT 1 FROM active_properties WHERE unique_id = ?", (uid,)
                     ) as cur:
-                        if cur.rowcount:
+                        if await cur.fetchone():
                             retired.append(uid)
+                await self.update_merged_sources(anchor_id, merged, absorbed_ids=ids, _conn=conn)
+                await redirect_staging_homes(conn, anchor_id, ids)
         except MergeBlockedError as exc:
             logger.warning(
                 "canonical_merge_deferred",
@@ -968,7 +1002,7 @@ class PropertyStorage:
             cursor = await conn.execute(
                 """
                 SELECT unique_id, postcode, latitude, longitude
-                FROM properties
+                FROM active_properties
                 WHERE ward IS NULL
                 """
             )
@@ -1123,7 +1157,7 @@ class PropertyStorage:
         async with self._read_connection() as conn:
             cursor = await conn.execute(
                 """
-                SELECT * FROM properties
+                SELECT * FROM active_properties
                 WHERE latitude IS NOT NULL AND longitude IS NOT NULL
                   AND commute_minutes IS NULL
                 """
@@ -1563,7 +1597,7 @@ class PropertyStorage:
                 )
                 if await cursor.fetchone():
                     raise DuplicateTelegramUpdateError
-            target = await resolve_home(conn, unique_id)
+            target = await resolve_action(conn, unique_id)
             if target is None:
                 return None
             unique_id = target.property_id
@@ -1598,6 +1632,10 @@ class PropertyStorage:
     async def get_status_history(self, unique_id: str) -> list[dict[str, Any]]:
         """Get status change history for a property, ordered chronologically."""
         async with self._read_connection() as conn:
+            target = await resolve_action(conn, unique_id)
+            if target is None:
+                return []
+            unique_id = target.property_id
             cursor = await conn.execute(
                 """SELECT from_status, to_status, note, source, created_at
                    FROM status_events
@@ -1615,6 +1653,10 @@ class PropertyStorage:
     async def get_viewing_message(self, unique_id: str) -> str | None:
         """Get cached viewing message for a property."""
         async with self._read_connection() as conn:
+            target = await resolve_action(conn, unique_id)
+            if target is None:
+                return None
+            unique_id = target.property_id
             cursor = await conn.execute(
                 "SELECT message FROM viewing_messages WHERE property_unique_id = ?",
                 (unique_id,),
@@ -1625,6 +1667,10 @@ class PropertyStorage:
     async def save_viewing_message(self, unique_id: str, message: str) -> None:
         """Save or replace a viewing message for a property."""
         async with self._transaction() as conn:
+            target = await resolve_action(conn, unique_id)
+            if target is None:
+                raise HomeActionConflict("Saved record not found")
+            unique_id = target.property_id
             await conn.execute(
                 """INSERT INTO viewing_messages (property_unique_id, message)
                    VALUES (?, ?)
@@ -1637,6 +1683,10 @@ class PropertyStorage:
     async def delete_viewing_message(self, unique_id: str) -> None:
         """Delete cached viewing message (for regeneration)."""
         async with self._transaction() as conn:
+            target = await resolve_action(conn, unique_id)
+            if target is None:
+                raise HomeActionConflict("Saved record not found")
+            unique_id = target.property_id
             await conn.execute(
                 "DELETE FROM viewing_messages WHERE property_unique_id = ?",
                 (unique_id,),
@@ -1788,7 +1838,7 @@ class PropertyStorage:
             cursor = await conn.execute(
                 """SELECT p.unique_id, p.title, p.postcode, p.first_seen, p.url,
                           ph.old_price, ph.new_price, ph.change_amount
-                   FROM properties p
+                   FROM active_properties p
                    JOIN price_history ph ON ph.property_unique_id = p.unique_id
                    WHERE p.price_drop_notified = 0
                      AND ph.change_amount < 0
@@ -1963,7 +2013,7 @@ class PropertyStorage:
             cursor = await conn.execute(
                 """
                 SELECT unique_id, url, source, source_urls, is_off_market
-                FROM properties
+                FROM active_properties
                 WHERE COALESCE(enrichment_status, 'enriched') != 'pending'
                   AND notification_status NOT IN
                       ('pending_enrichment', 'pending_analysis', 'dropped')

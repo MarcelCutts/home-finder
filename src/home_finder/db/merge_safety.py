@@ -1,8 +1,8 @@
 """Preservation gates for retiring pending rows during canonical matching.
 
 Established homes need a reversible membership operation. This narrow gate only
-permits disposal of staging rows before user, delivery or analysis history exists.
-Run it inside the transaction that will change membership and delete those rows.
+permits retirement of staging rows before user, delivery or analysis history exists.
+Run it inside the transaction that will change membership and retire those rows.
 """
 
 from collections.abc import Iterable
@@ -34,7 +34,19 @@ async def staging_blockers(
 ) -> dict[str, list[str]]:
     """Inspect live state under the caller's write lock, without modifying it."""
     blockers: dict[str, list[str]] = {}
-    for uid in sorted(set(unique_ids)):
+    scope = set(unique_ids)
+    for uid in tuple(scope):
+        async with conn.execute(
+            "SELECT member.current_property_id FROM homes root "
+            "JOIN home_routes r ON r.target_home_id = root.home_id "
+            "JOIN homes member ON member.home_id = r.home_id "
+            "WHERE root.current_property_id = ? AND member.current_property_id IS NOT NULL "
+            "AND EXISTS (SELECT 1 FROM home_routes active WHERE active.home_id = root.home_id "
+            "AND active.target_home_id = root.home_id AND active.state = 'active')",
+            (uid,),
+        ) as cur:
+            scope.update(row[0] for row in await cur.fetchall())
+    for uid in sorted(scope):
         reasons: list[str] = []
         async with conn.execute("SELECT * FROM properties WHERE unique_id = ?", (uid,)) as cur:
             row = await cur.fetchone()
@@ -71,7 +83,9 @@ async def ensure_staging_merge(
     conn: aiosqlite.Connection, anchor_id: str, absorbed_ids: list[str]
 ) -> None:
     """Reject the whole group before any source link or projection is changed."""
-    async with conn.execute("SELECT 1 FROM properties WHERE unique_id = ?", (anchor_id,)) as cur:
+    async with conn.execute(
+        "SELECT 1 FROM active_properties WHERE unique_id = ?", (anchor_id,)
+    ) as cur:
         if await cur.fetchone() is None:
             raise MergeBlockedError({anchor_id: ["missing_anchor"]})
     blockers = await staging_blockers(conn, absorbed_ids)

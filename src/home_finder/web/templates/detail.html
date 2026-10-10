@@ -108,10 +108,12 @@
                 {%- endif %}
             </p>
             <div class="detail-header-meta">
-                {% set unique_id = prop.home_id or prop.unique_id %}
+                {% set unique_id = prop.action_home_id %}
                 {% set current_status = user_status %}
                 <div class="status-selector-wrap">
+                    {% if unique_id %}
                     {% include "_status_controls.html" %}
+                    {% else %}<p role="status">{{ prop.action_error or 'Choose a saved record to change its status.' }}</p>{% endif %}
                 </div>
                 {{ commute_pill(prop.commute_minutes, prop.transport_mode) }}
                 {% if prop.first_seen %}
@@ -123,6 +125,22 @@
             </div>
         </div>
     </div>
+
+    {% if prop.saved_records|length > 1 %}
+    <section class="saved-records" aria-label="Saved records in this group">
+        <h2>Saved records in this group</h2>
+        <p>Statuses and saved messages belong to each original record. Changes here apply to the selected record.</p>
+        <ul>
+        {% for record in prop.saved_records %}
+            <li>{% if record.property_id %}
+                <a href="/property/{{ record.home_id }}"{% if record.home_id == prop.action_home_id %} aria-current="page"{% endif %}>{{ record.title }}</a> —
+                <span{% if record.home_id == prop.action_home_id %} class="saved-record-current-status" aria-live="polite"{% endif %}>{{ status_meta[record.user_status].label }}</span>
+                {% if record.home_id == prop.action_home_id %}(selected){% endif %}{% if record.has_message %} · Saved message{% endif %}
+            {% else %}Original record unavailable{% endif %}</li>
+        {% endfor %}
+        </ul>
+    </section>
+    {% endif %}
 
     {# Status history (Ticket 7) — collapsible timeline #}
     {% if status_history %}

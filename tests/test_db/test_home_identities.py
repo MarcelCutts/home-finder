@@ -7,6 +7,7 @@ import aiosqlite
 import pytest
 
 from home_finder.db import PropertyStorage
+from home_finder.db.home_groups import HomeActionConflict
 from home_finder.db.homes import HomeIdentityConflict
 from home_finder.db.merge_safety import MergeBlockedError
 from home_finder.db.migrations import MIGRATIONS, run_migrations
@@ -107,7 +108,8 @@ async def test_staging_absorption_retains_old_home_and_legacy_links(storage, sam
     assert (
         await storage.update_user_status(previous.home_id, UserStatus.INTERESTED) == UserStatus.NEW
     )
-    assert len(await storage.get_status_history(first.unique_id)) == 1
+    assert len(await storage.get_status_history(second.unique_id)) == 1
+    assert not await storage.get_status_history(first.unique_id)
 
 
 async def test_unpromoted_source_alias_resolves_after_guarded_absorption(storage, sample_property):
@@ -156,7 +158,7 @@ async def test_failed_absorption_rolls_back_redirects_and_membership(storage, sa
     original = await storage.homes.resolve(second.unique_id)
     conn = await storage._get_connection()
     await conn.execute("""
-        CREATE TRIGGER injected_retirement_failure BEFORE DELETE ON properties
+        CREATE TRIGGER injected_retirement_failure BEFORE UPDATE ON home_routes
         BEGIN SELECT RAISE(ABORT, 'injected retirement failure'); END
     """)
     await conn.commit()
@@ -209,13 +211,22 @@ async def test_ambiguous_alias_and_redirect_cycle_fail_closed(storage, sample_pr
             [(first_target.home_id,), (second_target.home_id,)],
         )
     assert await storage.homes.resolve("rightmove:ambiguous") is None
-    assert await storage.update_user_status("rightmove:ambiguous", UserStatus.ARCHIVED) is None
+    with pytest.raises(HomeActionConflict):
+        await storage.update_user_status("rightmove:ambiguous", UserStatus.ARCHIVED)
     async with storage._transaction() as conn:
-        await conn.executemany(
-            "INSERT INTO home_redirects VALUES (?, ?, 'staging_absorption', 'old')",
-            [
+        with pytest.raises(aiosqlite.IntegrityError, match="legacy evidence"):
+            await conn.execute(
+                "INSERT INTO home_redirects VALUES (?, ?, 'staging_absorption', 'old')",
                 (first_target.home_id, second_target.home_id),
+            )
+        # Corruption rehearsal: bypass guards deliberately and refuse chained routes.
+        await conn.execute("DROP TRIGGER home_route_guard")
+        await conn.execute("DROP TRIGGER home_route_owner_guard")
+        await conn.executemany(
+            "UPDATE home_routes SET target_home_id = ? WHERE home_id = ?",
+            [
                 (second_target.home_id, first_target.home_id),
+                (first_target.home_id, second_target.home_id),
             ],
         )
     assert await storage.homes.resolve(first_target.home_id) is None

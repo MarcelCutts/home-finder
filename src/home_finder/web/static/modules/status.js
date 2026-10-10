@@ -91,6 +91,8 @@ document.addEventListener("click", function (e) {
     if (wrap) {
       const label = wrap.querySelector(".status-selector-trigger");
       if (label) {
+        const selectedRecordStatus = document.querySelector(".saved-record-current-status");
+        if (selectedRecordStatus) selectedRecordStatus.textContent = label.textContent.trim();
         const announcer = document.getElementById("sr-announcer");
         if (announcer) announcer.textContent = "Status changed to " + label.textContent.trim();
       }

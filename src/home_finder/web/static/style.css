@@ -3592,6 +3592,40 @@ nav.container-fluid li {
 }
 
 /* ===== Status history timeline (Ticket 7) ===== */
+.card-group-status {
+    margin: 0;
+    padding: 0.65rem 0.8rem;
+    border-top: 1px solid var(--border);
+    color: var(--text-muted);
+    font-size: 0.75rem;
+    line-height: 1.5;
+}
+.saved-records {
+    margin: 1rem 0;
+    padding: 1rem;
+    border: 1px solid var(--border);
+    border-radius: 0.5rem;
+    background: var(--bg);
+}
+.saved-records h2 {
+    margin-bottom: 0.5rem;
+    font-size: 1rem;
+}
+.saved-records p,
+.saved-records li {
+    font-size: 0.85rem;
+    line-height: 1.6;
+}
+.saved-records p {
+    color: var(--text-muted);
+    margin-bottom: 0.65rem;
+}
+.saved-records ul {
+    margin-bottom: 0;
+}
+.saved-records a[aria-current="page"] {
+    font-weight: 700;
+}
 .status-history-section {
     margin: 0.5rem 0 1rem;
 }

@@ -41,6 +41,8 @@ class PropertyListItem(TypedDict, total=False):
 
     unique_id: str
     home_id: str | None
+    group_record_count: int
+    status_conflict: bool
     title: str
     price_pcm: int
     bedrooms: int
@@ -92,6 +94,10 @@ class PropertyDetailItem(PropertyListItem, total=False):
     Extends PropertyListItem with images and parsed quality analysis.
     """
 
+    action_home_id: str | None
+    action_property_id: str | None
+    action_error: str | None
+    saved_records: list[dict[str, Any]]
     description: str | None
     ward: str | None
     quality_analysis: PropertyQualityAnalysis | None

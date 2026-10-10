@@ -392,7 +392,7 @@ class PipelineRepository:
         async with self._read_connection() as conn:
             cursor = await conn.execute(
                 """
-                SELECT * FROM properties
+                SELECT * FROM active_properties
                 WHERE enrichment_status = 'pending'
                   AND enrichment_attempts < ?
                 ORDER BY first_seen ASC
@@ -416,7 +416,7 @@ class PipelineRepository:
             cursor = await conn.execute(
                 """
                 SELECT enrichment_attempts, COUNT(*) as cnt
-                FROM properties
+                FROM active_properties
                 WHERE enrichment_status = 'pending'
                   AND enrichment_attempts < ?
                 GROUP BY enrichment_attempts
@@ -466,6 +466,7 @@ class PipelineRepository:
                 SET enrichment_status = 'failed'
                 WHERE enrichment_status = 'pending'
                   AND enrichment_attempts >= ?
+                  AND unique_id IN (SELECT unique_id FROM active_properties)
                 """,
                 (max_attempts,),
             )
@@ -612,7 +613,7 @@ class PipelineRepository:
         """
         async with self._read_connection() as conn:
             query = """
-                SELECT * FROM properties
+                SELECT * FROM active_properties
                 WHERE notification_status = ?
                   AND COALESCE(analysis_attempts, 0) < 3
                 ORDER BY first_seen ASC
@@ -622,7 +623,7 @@ class PipelineRepository:
             if exclude_ids:
                 placeholders = ",".join("?" * len(exclude_ids))
                 query = f"""
-                    SELECT * FROM properties
+                    SELECT * FROM active_properties
                     WHERE notification_status = ?
                       AND COALESCE(analysis_attempts, 0) < 3
                       AND unique_id NOT IN ({placeholders})
@@ -716,7 +717,8 @@ class PipelineRepository:
         async with self._transaction() as conn:
             cursor = await conn.execute(
                 """
-                SELECT p.unique_id, p.analysis_attempts, p.notification_status FROM properties p
+                SELECT p.unique_id, p.analysis_attempts, p.notification_status
+                FROM active_properties p
                 JOIN quality_analyses q ON p.unique_id = q.property_unique_id
                 WHERE q.overall_rating IS NULL
                   AND p.notification_status != ?
@@ -853,7 +855,7 @@ class PipelineRepository:
                     UPDATE quality_analyses
                     SET reanalysis_requested_at = COALESCE(reanalysis_requested_at, ?)
                     WHERE property_unique_id IN (
-                        SELECT unique_id FROM properties
+                        SELECT unique_id FROM active_properties
                     )
                     """,
                     (now,),
@@ -871,7 +873,7 @@ class PipelineRepository:
                     UPDATE quality_analyses
                     SET reanalysis_requested_at = COALESCE(reanalysis_requested_at, ?)
                     WHERE property_unique_id IN (
-                        SELECT p.unique_id FROM properties p
+                        SELECT p.unique_id FROM active_properties p
                         WHERE {or_clause}
                     )
                     """,
@@ -902,7 +904,7 @@ class PipelineRepository:
         async with self._read_connection() as conn:
             if outcode:
                 query = """
-                    SELECT p.* FROM properties p
+                    SELECT p.* FROM active_properties p
                     JOIN quality_analyses q ON p.unique_id = q.property_unique_id
                     WHERE q.reanalysis_requested_at IS NOT NULL
                       AND UPPER(p.postcode) LIKE ?
@@ -912,7 +914,7 @@ class PipelineRepository:
                 cursor = await conn.execute(query, params)
             else:
                 cursor = await conn.execute("""
-                    SELECT p.* FROM properties p
+                    SELECT p.* FROM active_properties p
                     JOIN quality_analyses q ON p.unique_id = q.property_unique_id
                     WHERE q.reanalysis_requested_at IS NOT NULL
                     ORDER BY p.first_seen ASC

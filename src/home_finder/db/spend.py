@@ -118,6 +118,14 @@ class SpendRepository:
         async with self._transaction() as conn:
             now = self._clock()
             async with conn.execute(
+                "SELECT 1 FROM homes h JOIN home_routes r USING(home_id) "
+                "WHERE h.current_property_id = ? AND (r.state != 'active' "
+                "OR r.target_home_id != h.home_id)",
+                (spec.property_id,),
+            ) as cursor:
+                if await cursor.fetchone():
+                    raise SpendDeferred("inactive_home")
+            async with conn.execute(
                 f"SELECT 1 FROM paid_attempts WHERE operation_key = ? AND state IN {_HELD}",
                 (spec.operation_key,),
             ) as cursor:
@@ -179,14 +187,33 @@ class SpendRepository:
 
     async def mark_dispatched(self, attempt_id: str) -> None:
         """Commit before dispatch; a lost acknowledgement cannot permit redispatch."""
+        inactive = False
         async with self._transaction() as conn:
-            cursor = await conn.execute(
-                """UPDATE paid_attempts SET state = 'dispatched', dispatched_at = ?
-                    WHERE attempt_id = ? AND state = 'reserved'""",
-                (utc_stamp(self._clock()), attempt_id),
-            )
-            if cursor.rowcount != 1:
-                raise AttemptTransitionError("Attempt is not reserved")
+            async with conn.execute(
+                "SELECT 1 FROM paid_attempts a "
+                "JOIN homes h ON h.current_property_id = a.property_id "
+                "JOIN home_routes r USING(home_id) WHERE a.attempt_id = ? AND a.state = 'reserved' "
+                "AND (r.state != 'active' OR r.target_home_id != h.home_id)",
+                (attempt_id,),
+            ) as cursor:
+                inactive = await cursor.fetchone() is not None
+            if inactive:
+                await conn.execute(
+                    "UPDATE paid_attempts SET state = 'released', completed_at = ?, "
+                    "result = 'cancelled_before_dispatch', accounted_nanousd = 0 "
+                    "WHERE attempt_id = ? AND state = 'reserved'",
+                    (utc_stamp(self._clock()), attempt_id),
+                )
+            else:
+                cursor = await conn.execute(
+                    "UPDATE paid_attempts SET state = 'dispatched', dispatched_at = ? "
+                    "WHERE attempt_id = ? AND state = 'reserved'",
+                    (utc_stamp(self._clock()), attempt_id),
+                )
+                if cursor.rowcount != 1:
+                    raise AttemptTransitionError("Attempt is not reserved")
+        if inactive:
+            raise SpendDeferred("inactive_home")
 
     async def release_undispatched(self, attempt_id: str) -> None:
         """Only a reservation proven not dispatched may be released without cost evidence."""

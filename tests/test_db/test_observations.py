@@ -367,7 +367,7 @@ async def test_historical_migration_preserves_exact_rows_and_never_invents_fresh
         patch("home_finder.db.storage.ensure_home", new_callable=AsyncMock),
         patch("home_finder.db.storage.link_memberships", side_effect=legacy_link),
         patch(
-            "home_finder.db.storage.resolve_home",
+            "home_finder.db.storage.resolve_action",
             AsyncMock(return_value=HomeTarget("unused-fixture-id", sample_property.unique_id)),
         ),
     ):

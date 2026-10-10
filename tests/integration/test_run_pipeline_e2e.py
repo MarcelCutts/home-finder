@@ -361,31 +361,9 @@ class TestRunPipelineE2E:
                 async def _init_and_seed(self_storage):
                     await original_init_method(self_storage)
                     storage.instance = self_storage
-                    # Manually insert a property with 'failed' notification status
-                    conn = await self_storage._get_connection()
-                    await conn.execute(
-                        """INSERT INTO properties (
-                            unique_id, source, source_id, url, title,
-                            price_pcm, bedrooms, address, postcode,
-                            latitude, longitude, notification_status, first_seen
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                        (
-                            prop.unique_id,
-                            prop.source.value,
-                            prop.source_id,
-                            str(prop.url),
-                            prop.title,
-                            prop.price_pcm,
-                            prop.bedrooms,
-                            prop.address,
-                            prop.postcode,
-                            prop.latitude,
-                            prop.longitude,
-                            "failed",
-                            prop.first_seen.isoformat() if prop.first_seen else None,
-                        ),
-                    )
-                    await conn.commit()
+                    # Use the application writer so the retry has its stable home identity.
+                    await self_storage.save_property(prop)
+                    await self_storage.mark_notification_failed(prop.unique_id)
 
                 with patch.object(PropertyStorage, "initialize", _init_and_seed):
                     await run_pipeline(pipeline_settings)
