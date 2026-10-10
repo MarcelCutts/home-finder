@@ -1,13 +1,47 @@
 """Application configuration using pydantic-settings."""
 
+import json
 from pathlib import Path
+from typing import Annotated, Any
 
-from pydantic import Field, SecretStr, model_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic import Field, SecretStr, field_validator, model_validator
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 from home_finder.models import FurnishType, SearchCriteria, TransportMode
-from home_finder.models.analysis import AnalysisConfig
+from home_finder.models.analysis import AnalysisConfig, EvaluationPhaseConfig, VisualPhaseConfig
 from home_finder.models.spend import SpendPolicy
+
+
+def new_runtime_analysis_config(
+    *, max_images: int = 20, enable_extended_thinking: bool = True
+) -> AnalysisConfig:
+    """New-run defaults, separate from historical configuration deserialization.
+
+    Reserve 110k for visual text/schema/framing, plus 5.5k per configured image
+    and one spare floorplan slot (5k visual tokens plus metadata headroom).
+    The native payload check still defers unusually large text before dispatch.
+    Gallery selection and the persisted input-budget policy remain unchanged.
+    """
+    if type(max_images) is not int or not 1 <= max_images <= 20:
+        raise ValueError("max_images must be an integer between 1 and 20")
+    return AnalysisConfig(
+        visual=VisualPhaseConfig(
+            model="claude-sonnet-5-5",
+            reasoning="adaptive" if enable_extended_thinking else "disabled",
+            effort="low",
+            input_token_limit=110_000 + 5_500 * (max_images + 1),
+            max_output_tokens=8192,
+            sdk_retries=0,
+        ),
+        evaluation=EvaluationPhaseConfig(
+            model="claude-sonnet-5-5",
+            reasoning="disabled",
+            effort="low",
+            input_token_limit=140_000,
+            max_output_tokens=8192,
+            sdk_retries=0,
+        ),
+    )
 
 
 class Settings(BaseSettings):
@@ -75,9 +109,13 @@ class Settings(BaseSettings):
         default=True,
         description="Enable extended thinking for deeper quality analysis",
     )
-    analysis_config: AnalysisConfig | None = Field(
-        default=None,
-        description="Versioned per-phase analysis JSON; when set, overrides legacy thinking flag",
+    analysis_config: Annotated[AnalysisConfig | None, NoDecode] = Field(
+        default_factory=lambda data: new_runtime_analysis_config(
+            max_images=data["quality_filter_max_images"],
+            enable_extended_thinking=data["enable_extended_thinking"],
+        ),
+        description="New runs default to bounded Sonnet 5.5; explicit phase JSON retains its "
+        "versioned parsing defaults and overrides the legacy thinking flag",
     )
     # AI analysis budget
     analysis_spend_policy: SpendPolicy | None = Field(
@@ -198,6 +236,13 @@ class Settings(BaseSettings):
 
     # Database
     database_path: str = Field(default="data/properties.db")
+
+    @field_validator("analysis_config", mode="before")
+    @classmethod
+    def _parse_analysis_config(cls, value: Any) -> Any:
+        # The settings source otherwise discards decoded JSON null as absent,
+        # which would turn an explicit legacy fallback into the new default.
+        return json.loads(value) if isinstance(value, str) else value
 
     @model_validator(mode="after")
     def _validate_csv_fields(self) -> "Settings":

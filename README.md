@@ -173,6 +173,7 @@ Create a `.env` file with these settings (all use `HOME_FINDER_` prefix):
 - `HOME_FINDER_QUALITY_FILTER_MAX_IMAGES`: Max gallery images to analyze per property (default: 20, max: 20)
 - `HOME_FINDER_MIN_GALLERY_FOR_PHOTO_INFERENCE`: Minimum gallery images to bypass floorplan gate via photo inference; 0 disables (default: 5)
 - `HOME_FINDER_ENABLE_EXTENDED_THINKING`: Enable extended thinking for deeper quality analysis (default: true)
+- `HOME_FINDER_ANALYSIS_CONFIG`: Optional phase overrides. When absent, new runs use bounded Sonnet 5.5 at low effort with 8,192 output tokens and no SDK retries. Explicit JSON retains historical parsing defaults; see [paid analysis](docs/operations.md#runtime-model-defaults). Spend caps remain required.
 - `HOME_FINDER_ENABLE_IMAGE_HASH_MATCHING`: Enable perceptual image hashing for deduplication (default: true)
 - `HOME_FINDER_MAX_ENRICHMENT_ATTEMPTS`: Max enrichment retry attempts before giving up on a property, 1-10 (default: 3)
 

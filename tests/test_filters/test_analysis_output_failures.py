@@ -275,6 +275,8 @@ async def test_rejected_evaluation_stays_pending_without_notifying(
 ):
     merged, _ = cached_analysis_property
     bodies = [copy.deepcopy(PHASE1_VISUAL_RESPONSE), failed_message("evaluation", scenario)]
+    for body in bodies:
+        body["model"] = "claude-sonnet-5-5"  # Current Settings default used by the pipeline.
     pending = iter(bodies)
     native = httpx2.AsyncClient(
         transport=httpx2.MockTransport(
