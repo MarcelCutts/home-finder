@@ -313,14 +313,14 @@ class TestRunReanalysisSuccess:
 
 
 class TestRunReanalysisErrorHandling:
-    async def test_api_unavailable_cancels_remaining(
+    async def test_api_unavailable_preserves_completed_work_and_pending_queue(
         self,
         populated_storage: PropertyStorage,
         reanalysis_settings: Settings,
         make_merged_property: Callable[..., MergedProperty],
         make_quality_analysis: Callable[..., PropertyQualityAnalysis],
     ) -> None:
-        """APIUnavailableError triggers circuit breaker — cancels remaining tasks."""
+        """Provider failures pause queued work while completed analyses are saved."""
         merged_list = []
         for i in range(3):
             m = await _save_and_flag(

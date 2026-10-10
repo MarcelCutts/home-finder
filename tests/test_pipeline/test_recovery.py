@@ -8,9 +8,11 @@ from pydantic import HttpUrl, SecretStr
 
 from home_finder.config import Settings
 from home_finder.db import PropertyStorage
-from home_finder.filters.quality import TokenUsage
+from home_finder.filters.quality import APIUnavailableError, TokenUsage
 from home_finder.main import _make_notify_callback, _run_pipeline_with_storage
 from home_finder.models import PropertyImage, PropertySource
+from home_finder.models.analysis import AnalysisFailure
+from home_finder.models.spend import SpendDeferred, SpendPolicy
 from home_finder.pipeline.analysis import _run_quality_and_save
 from home_finder.pipeline.stages import PreAnalysisResult, _run_pre_analysis_pipeline
 
@@ -194,6 +196,99 @@ async def test_failed_initial_analysis_has_bounded_attempts_and_no_delivery(
     assert await storage.get_quality_analysis(pending.unique_id) is None
     notifier.send_merged_property_notification.assert_not_awaited()
     notifier.send_property_notification.assert_not_awaited()
+
+
+@pytest.mark.parametrize("failure", ["api_unavailable", "request_rejected", "unsupported_schema"])
+async def test_provider_failures_leave_homes_retryable_after_multiple_runs(
+    storage, settings, boundaries, make_merged_property, make_quality_analysis, failure
+):
+    notifier, quality, _ = boundaries
+    settings.quality_concurrency = 1
+    pending = [make_merged_property(images=gallery()) for _ in range(3)]
+    await storage.pipeline.save_pre_analysis_properties(pending, {})
+    if failure == "api_unavailable":
+        quality.analyze_single_merged.side_effect = APIUnavailableError("provider unavailable")
+    else:
+        qa = make_quality_analysis().model_copy(
+            update={
+                "overall_rating": None,
+                "analysis_failure": AnalysisFailure(phase="visual", kind=failure),
+            }
+        )
+        quality.analyze_single_merged.side_effect = lambda m, **kw: (m, qa)
+
+    for _ in range(4):
+        await _run_pipeline_with_storage(settings, storage)
+    expected_calls = 12 if failure == "request_rejected" else 4
+    assert quality.analyze_single_merged.await_count == expected_calls
+    assert len(await storage.pipeline.get_pending_analysis_properties()) == 3
+    async with (
+        storage._read_connection() as conn,
+        conn.execute("SELECT analysis_attempts FROM properties") as cur,
+    ):
+        assert [row[0] for row in await cur.fetchall()] == [0, 0, 0]
+    notifier.send_merged_property_notification.assert_not_awaited()
+
+    quality.analyze_single_merged.side_effect = lambda m, **kw: (m, make_quality_analysis())
+    await _run_pipeline_with_storage(settings, storage)
+    assert not await storage.pipeline.get_pending_analysis_properties()
+    assert notifier.send_merged_property_notification.await_count == 3
+
+
+async def test_one_rejected_request_does_not_starve_healthy_homes(
+    storage, settings, boundaries, make_merged_property, make_quality_analysis
+):
+    _, quality, _ = boundaries
+    settings.quality_concurrency = 1
+    items = [make_merged_property() for _ in range(3)]
+    rejected = make_quality_analysis().model_copy(
+        update={
+            "overall_rating": None,
+            "analysis_failure": AnalysisFailure(phase="visual", kind="request_rejected"),
+        }
+    )
+    quality.analyze_single_merged.side_effect = lambda merged, **kw: (
+        merged,
+        rejected if merged.unique_id == items[0].unique_id else make_quality_analysis(),
+    )
+    count, _ = await _run_quality_and_save(
+        PreAnalysisResult(merged_to_process=items), settings, storage, AsyncMock()
+    )
+    assert count == 2
+    assert [
+        item.unique_id for item in await storage.pipeline.get_pending_analysis_properties()
+    ] == [items[0].unique_id]
+
+
+async def test_pipeline_queues_all_selected_homes_within_spending_concurrency(
+    storage, settings, boundaries, make_merged_property, make_quality_analysis
+):
+    _, quality, _ = boundaries
+    settings.quality_concurrency = 15
+    settings.analysis_spend_policy = SpendPolicy(
+        per_call_usd="7", daily_usd="20", monthly_usd="20", max_in_flight=1
+    )
+    active = 0
+
+    async def analyze(merged, **kwargs):
+        nonlocal active
+        active += 1
+        try:
+            if active > 1:
+                raise SpendDeferred("concurrency_limit")
+            await asyncio.sleep(0)
+            return merged, make_quality_analysis()
+        finally:
+            active -= 1
+
+    quality.analyze_single_merged.side_effect = analyze
+    fresh = [make_merged_property() for _ in range(6)]
+    callback = AsyncMock()
+    count, _ = await _run_quality_and_save(
+        PreAnalysisResult(merged_to_process=fresh), settings, storage, callback
+    )
+    assert count == callback.await_count == 6
+    assert not await storage.pipeline.get_pending_analysis_properties()
 
 
 async def test_legacy_sent_fallback_recovers_without_another_notification(

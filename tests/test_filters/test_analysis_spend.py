@@ -18,6 +18,7 @@ from home_finder.models.analysis import AnalysisConfig
 from home_finder.models.spend import SpendDeferred, SpendPolicy
 from home_finder.pipeline.analysis import (
     _drain_reanalysis_queue,
+    _run_concurrent_analysis,
     _run_quality_and_save,
     run_reanalysis,
 )
@@ -400,7 +401,7 @@ async def test_ledger_failure_stops_sdk_retries(budget, monkeypatch, boundary):
     assert report["held_nanousd"] == (0 if boundary == "admit" else 6_315_000_000)
 
 
-async def test_attempt_limit_applies_inside_sdk_retry_loop(budget):
+async def test_uncharged_sdk_rejections_do_not_exhaust_future_paid_attempts(budget):
     storage, cap = budget
     cap = cap.model_copy(update={"max_attempts_per_operation": 1})
     calls = []
@@ -414,9 +415,56 @@ async def test_attempt_limit_applies_inside_sdk_retry_loop(budget):
         )
 
     async with quality(storage, cap, respond) as q:
+        with pytest.raises(APIUnavailableError):
+            await q._run_visual_analysis(CONTENT, "fixture:retry-cap")
+    # SDK retry bounds still apply to each run. A later recovered request can
+    # use the one allowed paid attempt because both rejections were uncharged.
+    assert len(calls) == 2 and (await storage.spend.report())["provider_rejections"] == 2
+    async with quality(
+        storage, cap, lambda _: httpx2.Response(200, json=PHASE1_VISUAL_RESPONSE)
+    ) as q:
+        await q._run_visual_analysis(CONTENT, "fixture:retry-cap")
         with pytest.raises(SpendDeferred, match="attempt_limit"):
             await q._run_visual_analysis(CONTENT, "fixture:retry-cap")
-    assert len(calls) == 1 and (await storage.spend.report())["provider_rejections"] == 1
+    assert len(await rows(storage)) == 3
+
+
+async def test_provider_timeout_drains_other_inflight_requests_without_cancelling_them(
+    budget, make_merged_property
+):
+    storage, policy = budget
+    items = [make_merged_property() for _ in range(3)]
+    second_started, release_success = asyncio.Event(), asyncio.Event()
+    dispatched = 0
+
+    async def respond(request):
+        nonlocal dispatched
+        dispatched += 1
+        if dispatched == 1:
+            await second_started.wait()
+            raise httpx2.ReadTimeout("fixture", request=request)
+        second_started.set()
+        await release_success.wait()
+        return httpx2.Response(200, json=PHASE1_VISUAL_RESPONSE)
+
+    async with quality(storage, policy, respond) as q:
+
+        async def analyze(merged):
+            await q._run_visual_analysis(CONTENT, merged.unique_id)
+            return merged, None
+
+        complete = AsyncMock()
+        complete.return_value = None
+        count = await asyncio.wait_for(
+            _run_concurrent_analysis(
+                items, analyze, complete, concurrency=2, on_deferred=release_success.set
+            ),
+            timeout=2,
+        )
+    assert count == 1 and dispatched == 2
+    assert [row["state"] for row in await rows(storage)] == ["unknown", "settled"]
+    assert (await storage.spend.report())["held_nanousd"] == 6_315_000_000
+    assert complete.await_args.args[0].unique_id == items[1].unique_id
 
 
 async def test_native_concurrency_cannot_bypass_admission(budget):

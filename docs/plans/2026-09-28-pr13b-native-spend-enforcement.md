@@ -64,7 +64,15 @@ uv run python -m home_finder.pipeline.spend_admin \
 
 For a reservation that was **never dispatched**, use `--release-undispatched` instead of the amount/reference. This action rejects dispatched and unknown attempts. Both operator actions require an existing ledger and acquire the application's nonblocking runner lock; an active runner prevents reconciliation. They do not start collection, inference or notifications. Invalid/missing paths do not create a new database. A lock only fences current local cooperating processes; an operator must still establish the remote result and ensure obsolete workers cannot resume.
 
-Daily/monthly exhaustion clears when a new UTC window has capacity, but unresolved holds carry forward. Attempt-limit deferral requires review: caps allow at most three attempts per identical operation, and there is no automatic reset command that erases earlier attempts. PR12b owns durable due times and explicit work retry controls. Later pipeline invocations can retry a settled failure within this lifetime cap; this segment's error-class suppression controls the immediate SDK loop, not the future work scheduler.
+Daily/monthly exhaustion clears when a new UTC window has capacity, but unresolved holds carry forward. The per-operation lifetime cap counts substantive model responses and unknown outcomes; complete provider rejections recorded as zero-cost do not exhaust it. They remain in the ledger and count toward an explicitly configured absolute `max_total_attempts` limit. No automatic reset erases earlier attempts.
+
+The pipeline bounds local concurrency by the smaller of `quality_concurrency` and
+`max_in_flight`, so queued homes wait instead of failing admission just because all
+local slots are occupied. Provider/account failures stop queued work without
+burning a home's output-failure allowance. Already running requests finish their
+accounting. A timeout retains its own uncertain charge hold; it does not cancel
+every other request and manufacture more holds. An absent policy produces a
+warning and leaves analysis pending; collection and dashboard use remain available.
 
 ## Verification and delivery limits
 

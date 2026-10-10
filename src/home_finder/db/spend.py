@@ -133,12 +133,18 @@ class SpendRepository:
                     raise SpendDeferred("operation_unresolved")
             async with conn.execute(
                 "SELECT COUNT(*) FROM paid_attempts "
-                "WHERE operation_key = ? AND state != 'released'",
+                "WHERE operation_key = ? AND state != 'released' "
+                "AND NOT (state = 'settled' AND cost_basis = 'provider_error' "
+                "AND accounted_nanousd = 0)",
                 (spec.operation_key,),
             ) as cursor:
                 row = await cursor.fetchone()
                 assert row is not None
                 attempts = row[0]
+            # Complete provider rejections are proven uncharged. They remain
+            # in the audit/absolute-attempt totals, but cannot permanently use
+            # up a home's paid retries during an outage. Unknown outcomes and
+            # substantive (even invalid) model responses still count.
             if attempts >= policy.max_attempts_per_operation:
                 raise SpendDeferred("attempt_limit")
             report = await spend_report(conn, now)

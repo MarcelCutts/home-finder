@@ -54,15 +54,21 @@ def check_stop_reason(response: Any, phase: Phase) -> None:
         raise failure(phase, "unexpected_stop_reason", response)
 
 
-def _canonical_literals(value: Any, schema: dict[str, Any], defs: dict[str, Any]) -> Any:
-    """Only normalise unambiguous enum casing; never invent a missing value."""
+def _canonical_values(value: Any, schema: dict[str, Any], defs: dict[str, Any]) -> Any:
+    """Normalise equivalent JSON values without inventing or coercing facts."""
     if "$ref" in schema:
         schema = defs[schema["$ref"].rsplit("/", 1)[-1]]
-    # Nullable enums are represented as anyOf(enum, null) by Pydantic.
+    # A nullable field retains the same non-null value contract, including
+    # integer fields and nested models represented by references.
+    if value is not None and "anyOf" in schema:
+        options = [option for option in schema["anyOf"] if option.get("type") != "null"]
+        if len(options) == 1:
+            return _canonical_values(value, options[0], defs)
+    # Preserve the existing unambiguous enum match in other union schemas.
     if isinstance(value, str) and "anyOf" in schema:
         enum_options = [option for option in schema["anyOf"] if "enum" in option]
         if len(enum_options) == 1:
-            return _canonical_literals(value, enum_options[0], defs)
+            return _canonical_values(value, enum_options[0], defs)
     if isinstance(value, str) and "enum" in schema:
         matches = [
             choice
@@ -70,13 +76,17 @@ def _canonical_literals(value: Any, schema: dict[str, Any], defs: dict[str, Any]
             if isinstance(choice, str) and choice.casefold() == value.casefold()
         ]
         return matches[0] if len(matches) == 1 else value
+    # JSON Schema treats 4 and 4.0 as the same integer. Keep strings,
+    # booleans and fractional numbers subject to strict model validation.
+    if type(value) is float and schema.get("type") == "integer" and value.is_integer():
+        return int(value)
     if isinstance(value, dict):
         fields = schema.get("properties", {})
         return {
-            key: _canonical_literals(item, fields.get(key, {}), defs) for key, item in value.items()
+            key: _canonical_values(item, fields.get(key, {}), defs) for key, item in value.items()
         }
     if isinstance(value, list):
-        return [_canonical_literals(item, schema.get("items", {}), defs) for item in value]
+        return [_canonical_values(item, schema.get("items", {}), defs) for item in value]
     return value
 
 
@@ -100,7 +110,7 @@ def validate_output(
         if len(json.dumps(raw, ensure_ascii=False, allow_nan=False)) > MAX_OUTPUT_CHARACTERS:
             raise failure(phase, "oversized_output", response)
         schema = model.model_json_schema()
-        canonical: dict[str, Any] = _canonical_literals(raw, schema, schema.get("$defs", {}))
+        canonical: dict[str, Any] = _canonical_values(raw, schema, schema.get("$defs", {}))
         # Metadata describing runtime execution is never accepted from model output.
         for name in ("analysis_provenance", "analysis_failure", "listing_text_inputs"):
             canonical.pop(name, None)

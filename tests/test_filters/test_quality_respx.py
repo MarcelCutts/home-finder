@@ -301,7 +301,13 @@ class TestTwoPhaseAnalysisViaHTTP:
 
     @pytest.mark.parametrize(
         ("description", "expected_epc"),
-        [("EPC rating C", "C"), ("No rating stated.", "unknown"), ("EPC B. EPC C.", "unknown")],
+        [
+            ("EPC rating C", "C"),
+            ("EPC rated C (potential B). Budget friendly flat.", "C"),
+            ("EPC rating is C", "C"),
+            ("No rating stated.", "unknown"),
+            ("EPC B. EPC C.", "unknown"),
+        ],
     )
     async def test_full_two_phase_analysis(
         self,

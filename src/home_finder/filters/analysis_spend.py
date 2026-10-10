@@ -190,7 +190,11 @@ class AnalysisSpendMeter:
         scope = self._context.get()
         repo, policy = self._repository, self._policy
         if scope is None or repo is None or policy is None:
-            logger.info("analysis_dispatch_deferred", reason="spending_not_configured")
+            logger.warning(
+                "analysis_dispatch_deferred",
+                reason="spending_not_configured",
+                hint="Configure HOME_FINDER_ANALYSIS_SPEND_POLICY before enabling paid analysis",
+            )
             raise SpendDeferred("spending_not_configured")
         body = request.json
         phase_config = getattr(scope.provenance.configuration, scope.phase)
