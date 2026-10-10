@@ -132,6 +132,8 @@ def test_visual_allowance_covers_configured_images_plus_floorplan_and_listing_co
         area_average=2450,
         description="x" * 3000,
         features=["x" * 200] * 15,
+        listing_address="x" * 500,
+        listing_postcode="x" * 32,
         area_context="x" * 6000,
         outcode="E8",
         crime_summary="x" * 1000,

@@ -81,9 +81,9 @@ they do not cover other billing accounts or independently issued requests.
 Historical or explicit profiles without an input limit reserve the full context
 and can exceed $6 per attempt. A $1 per-call cap defers such a request. Per-phase
 `input_token_limit` values enable conservative admission of supported text/static
-image payloads. For example, setting both phases to 140,000 input tokens and 8,192
-maximum output tokens reserves $0.96288 **per attempt**; it does not guarantee a
-complete property fits a $1 daily cap. There are two phases and potentially a
+image payloads. For Sonnet 4.6, setting both phases to 140,000 input tokens and
+8,192 maximum output tokens reserves $0.96288 **per attempt**; it does not guarantee
+a complete property fits a $1 daily cap. There are two phases and potentially a
 retry. Unsupported/oversized payloads are deferred. These are local admission
 bounds, not a provider-enforced dollar cap. Actual settled usage releases unused
 reservation; a bound violation stops new dispatch for reconciliation.
