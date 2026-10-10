@@ -18,7 +18,7 @@ pytestmark = pytest.mark.usefixtures("native_analysis_spending")
 CONTENT = [{"type": "text", "text": "Transport compatibility fixture"}]
 
 
-async def test_metered_requests_preserve_baseline_except_explicit_billing_scope():
+async def test_native_request_changes_are_limited_to_billing_scope_and_strict_tool_use():
     requests = []
     responses = [PHASE1_VISUAL_RESPONSE, PHASE2_EVALUATION_RESPONSE]
 
@@ -55,6 +55,8 @@ async def test_metered_requests_preserve_baseline_except_explicit_billing_scope(
     for payload in payloads:
         assert payload.pop("service_tier") == "standard_only"
         assert payload.pop("inference_geo") == "global"
+    # Enabling strict tool decoding must not silently alter prompts or schemas.
+    assert payloads[0]["tools"][0].pop("strict") is True
     assert [
         hashlib.sha256(json.dumps(body, sort_keys=True).encode()).hexdigest() for body in payloads
     ] == [

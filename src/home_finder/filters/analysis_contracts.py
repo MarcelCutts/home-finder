@@ -98,8 +98,8 @@ def validate_output(
 ) -> dict[str, Any]:
     """Validate required live fields before any historical coercion can run.
 
-    Non-strict visual tool responses can have unused extension fields. Validate
-    the requested fields strictly, without using extensions to fill omissions.
+    Validate visual fields locally even when provider strict mode is requested,
+    without using unused extension fields to fill omissions.
     Evaluation uses its complete native schema, including its extra-field rule.
     """
     if not isinstance(raw, dict):

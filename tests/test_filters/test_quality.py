@@ -216,8 +216,53 @@ class TestToolSchema:
         assert "anyOf" in service_charge
 
     def test_strict_mode_on_visual_tool(self) -> None:
-        """Phase 1 tool is non-strict (schema exceeds grammar limits)."""
-        assert "strict" not in VISUAL_ANALYSIS_TOOL
+        """Request provider schema enforcement as well as local validation."""
+        assert VISUAL_ANALYSIS_TOOL["strict"] is True
+
+    def test_visual_schema_fits_documented_strict_subset(self) -> None:
+        """Guard explicit API limits; server grammar compilation still needs a canary."""
+        optional = 0
+        unions = 0
+        unsupported = {
+            "minimum",
+            "maximum",
+            "exclusiveMinimum",
+            "exclusiveMaximum",
+            "multipleOf",
+            "minLength",
+            "maxLength",
+            "minProperties",
+            "maxProperties",
+            "maxItems",
+            "uniqueItems",
+            "contains",
+            "minContains",
+            "maxContains",
+        }
+
+        def check(node: object) -> None:
+            nonlocal optional, unions
+            if isinstance(node, dict):
+                assert not unsupported.intersection(node)
+                if node.get("type") == "object":
+                    assert node.get("additionalProperties") is False
+                    optional += len(set(node["properties"]) - set(node.get("required", [])))
+                if "anyOf" in node or isinstance(node.get("type"), list):
+                    unions += 1
+                if "minItems" in node:
+                    assert node["minItems"] in (0, 1)
+                if "enum" in node:
+                    assert all(not isinstance(value, (dict, list)) for value in node["enum"])
+                for value in node.values():
+                    check(value)
+            elif isinstance(node, list):
+                for value in node:
+                    check(value)
+
+        check(VISUAL_ANALYSIS_TOOL["input_schema"])
+        # Counts are combined across strict schemas; this request has only this tool.
+        assert optional <= 24
+        assert unions <= 16
 
     def test_visual_tool_does_not_contain_evaluation_fields(self) -> None:
         """Visual analysis tool should not contain Phase 2 fields."""

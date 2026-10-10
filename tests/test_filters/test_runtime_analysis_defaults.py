@@ -165,6 +165,7 @@ def test_visual_allowance_covers_configured_images_plus_floorplan_and_listing_co
         "service_tier": "standard_only",
         "inference_geo": "global",
     }
+    assert body["tools"][0]["strict"] is True
     assert input_reservation_tokens(body) <= config.visual.input_token_limit
 
 

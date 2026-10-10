@@ -198,6 +198,8 @@ async def test_native_two_phase_calls_use_model_specific_contracts_and_rates(
             assert body["service_tier"] == "standard_only"
             assert body["inference_geo"] == "global"
             assert input_reservation_tokens(body) <= settings.input_token_limit
+            if phase == "visual":
+                assert body["tools"][0]["strict"] is True
             if settings.model == SONNET55:
                 assert body["thinking"] == {
                     "type": "adaptive" if settings.reasoning == "adaptive" else "between_tools"
