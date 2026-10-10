@@ -244,6 +244,45 @@ async def test_no_outdoor_badge_requires_explicit_absence(assemble, availability
         assert logs[0]["field"] == "outdoor_space.availability"
 
 
+@pytest.mark.parametrize(
+    ("availability", "positive_flag", "keep_access"),
+    [("no", False, False), ("yes", False, True), ("unknown", False, True), ("no", True, True)],
+)
+async def test_explicit_outdoor_absence_rejects_contradictory_access_badges(
+    assemble, availability, positive_flag, keep_access
+):
+    access_badges = [
+        "Private balcony",
+        "Private garden",
+        "Private terrace",
+        "Shared garden",
+        "Communal gardens",
+        "Roof terrace",
+    ]
+    result, logs = await assemble(
+        visual={
+            "outdoor_space": {
+                "availability": availability,
+                "has_balcony": False,
+                "has_garden": positive_flag,
+                "has_terrace": False,
+                "has_shared_garden": False,
+            }
+        },
+        highlights=[*access_badges, "Modern kitchen"],
+        lowlights=["No outdoor space", "Potential traffic noise"],
+    )
+    assert result.highlights == [*(access_badges if keep_access else []), "Modern kitchen"]
+    assert result.lowlights == [
+        *([] if keep_access else ["No outdoor space"]),
+        "Potential traffic noise",
+    ]
+    assert result.outdoor_space.availability == availability
+    assert result.outdoor_space.has_garden == positive_flag
+    assert len(logs) == (1 if keep_access else len(access_badges))
+    assert all(log["field"] == "outdoor_space.availability" for log in logs)
+
+
 async def test_supported_facts_do_not_generate_new_badges(assemble):
     result, logs = await assemble(bills="yes", description="All bills included.")
     assert result.highlights == result.lowlights == []
