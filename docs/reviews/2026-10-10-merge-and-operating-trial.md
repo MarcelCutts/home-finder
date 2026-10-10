@@ -7,6 +7,28 @@ without unnecessary repetition, and notifications have explicit delivery state.
 The operating trial uses a separate database and a cumulative US$25 model budget.
 It does not activate the deployed scheduler or replace the production authority.
 
+This is the reviewed delivery checkpoint as of 2026-10-10 23:17 UTC, before the
+final stack merge. The delivery PR records subsequent merged-main recovery,
+repeat-run and backup verification; the named historical checkpoints below remain
+unchanged so their counts and costs can be reconciled with retained evidence.
+
+The repairs address observed failures in source parsing, recovery, evidence
+provenance and presentation. New runtime configurations use Sonnet 5.5 with native
+usage accounting; the older models' saved configurations and prices remain intact.
+The controlled collection reached 93 canonical records and 31 two-source groups.
+The assessment batches grew from one to five, twenty and fifty homes. Counts and
+costs below belong to their named checkpoints; canonical records are not a claim
+that every row represents a distinct physical home.
+
+My assessment is that the owner workflow is ready for bounded operational
+qualification, while assessment fidelity needs a deliberate evaluation corpus.
+Typed output and successful execution still leave mistakes in spatial judgments,
+source attribution and concise labels. Deduplication also needs a representation
+that can retain several adverts from one portal before reviewed coalescing is
+safe. Measured database waits support keeping the current single-authority SQLite
+design. Public owner-access checks, a fresh production backup with assets and a
+separately authorized operating policy remain prerequisites to activation.
+
 ## Fresh review decisions
 
 | Change | Purpose | Fresh review finding and disposition |
@@ -64,7 +86,7 @@ provenance and frozen rate cards. Its native contracts passed offline checks bef
 the live canary. PR #55 selects 5.5 for new runtime settings after those trials;
 historical configuration parsing remains unchanged.
 
-## Trial gates
+## Trial gates and initial merge sequence
 
 1. Verify every final PR head and the complete stack with required hosted checks,
    then land the combined stack through #48. Preserve individual PR commits and
@@ -461,13 +483,18 @@ quality corpus.
 | #60 | Record dry-run runs/events, correlated phase logs and terminal outcomes. | Combined 3,753 tests pass at 89.68% branch-inclusive coverage; 635 focused checks and static gates pass. Independent review reproduced and verified repairs for both primary-error masking and cancellation arriving during cleanup, on Python 3.11 and 3.14. |
 | #61 | Keep mobile result cards inside their grid. | A 24-card fictional browser case reproduces the offscreen wrapper's 380px automatic minimum overflowing a 358px grid. One CSS constraint fixes it; all cards fit at 320, 390, 768 and 1440px. Document scroll width alone had missed the clipping. |
 | #62 | Accept validated static GIFs and preserve animation checks during resizing. | 236 focused native tests and exact-byte replay; eight GIF/WebP boundary cases prevent first-frame-only admission. The formerly deferred home passes both live phases after repair. Strict-output experiments were rejected by the provider and removed. |
+| #63 | Compare supported internal room areas with internal totals. | Required live scope, conservative historical unknowns and unchanged raw checkpoints; genuine internal oversums remain guarded. Corrected unrelated-room regression and integrated wiring pass independent review, with 336 focused, 156 Python 3.11 and 37 serial snapshot checks. Final combined verification passes 3,796 tests at 89.71% branch-inclusive total coverage. |
 
-The complete local candidate is `81dd45c392ceb0f1bdf5291cffd5f3aca98f9e73`.
-Its five test warnings were blocked socket/DNS attempts, not successful network
-access. Independent cancellation review covered exact repair `27c8a3c`; the
-reviewed helper, pipeline, recorder and repository code is unchanged by the
-integration merge. Synthetic desktop/mobile screenshots are committed with #58
-and #59; real trial screenshots remain local.
+The candidate through #60 is `81dd45c392ceb0f1bdf5291cffd5f3aca98f9e73`.
+The final combined code candidate is `f8b7580a032248c71c3930f4757ef5331d2e1faa`:
+3,796 tests passed in 462 seconds at 89.71% branch-inclusive total coverage,
+along with Ruff, formatting and strict mypy over 99 source files. Its five
+warnings were blocked socket/DNS attempts in existing fixtures, not successful
+network access. Independent cancellation review covered exact repair `27c8a3c`;
+that reviewed helper, pipeline, recorder and repository code is unchanged by
+integration. The corrected area reconciler received a separate final-head
+read-only review. Synthetic desktop/mobile screenshots are committed with #58,
+#59 and #61; real trial screenshots remain local.
 
 The observability repair deliberately keeps existing storage tables. Durable run
 rows do not identify dry/live mode; logs do. Dry runs can become the latest
@@ -516,10 +543,11 @@ admission can accept verified single-frame GIFs while retaining decoded MIME,
 byte-size and animation restrictions. Its
 [structured-output contract](https://platform.claude.com/docs/en/build-with-claude/structured-outputs)
 provides strict tool inputs, subject to schema-complexity and response-stop limits.
-The current visual schema has 10 optional and eight union parameters, within the
-documented explicit limits of 24 and 16, and all twelve objects already prohibit
-additional fields. Qualifying that option is a small response to the observed
-type/missing-field failure. Local validation and stop-reason checks must remain;
+The visual schema tested at that checkpoint had 10 optional and eight union
+parameters, within the documented explicit limits of 24 and 16, and all twelve
+objects already prohibited additional fields. We tested that option as a bounded
+response to the observed type/missing-field failure. Local validation and
+stop-reason checks remain;
 schema correctness does not establish visual accuracy.
 
 That distinction mattered immediately: `native-contract-canary-01` on candidate
@@ -527,9 +555,9 @@ That distinction mattered immediately: `native-contract-canary-01` on candidate
 was rejected with HTTP 400 as too large to compile. The run finished in 1.791
 seconds with zero assessments. The rejected request settled at zero charge;
 cumulative spending stayed $5.268742750, with no holds, integrity errors or
-notifications. The draft is not accepted merely because its offline schema
-checks passed. A bounded reduction in optional schema branching must pass a live
-canary before strict mode can ship. The all-required, no-default-annotations wire
+notifications. Offline schema checks therefore did not establish provider
+compatibility. A bounded reduction in optional schema branching followed: the
+all-required, no-default-annotations wire
 variant in `native-contract-canary-02` was also rejected, in 1.632 seconds with
 zero charge and zero holds. Both strict changes were reverted. Final #62 retains
 the existing visual tool mode and local validation; simplifying the wider
@@ -552,6 +580,18 @@ otherwise valid internal-room measurements and notes. A synthetic reproduction
 through the pinned schema and guard established the cause. The repair gives room
 areas explicit internal/external/unknown scope; only supported internal areas
 may challenge an internal total. Historical unknown scope must remain unknown.
+
+`area-scope-canary-01` reanalysed that retained home on the final code candidate
+`f8b7580` in 24.803 seconds. Both model phases succeeded, with no failed or deferred
+reanalysis. The saved result retains a 17.7 m² reception estimate, identifies
+43.0 m² of supported internal room estimates and keeps the 6.7 m² balcony external
+to the advertised 47.1 m² internal total. The erroneous subtotal warning disappears.
+This demonstrates the repaired scope contract on one case; rectangular geometry
+and the advertised measurements remain model/source claims, not a measured survey.
+The recheck cost $0.103828500, bringing cumulative usage-based accounting to
+$5.467346250 across 173 settled attempts. All charge, integrity, foreign-key and
+notification-suppression checks pass, with no remaining checkpoint or hold.
+Seventy-five current assessments are saved and sixteen homes remain pending.
 
 Other findings remain evidence-quality limits: stylistic updating badges can
 overstate supporting observations; narrow garden-access wording can become a
@@ -649,7 +689,8 @@ Recommended sequential follow-ups, each with a reviewable completion gate:
    retain source provenance; it must not create a parallel analysis or delivery
    path. Expose assessment uncertainty rather than treating ratings as truth.
 8. **Hosted-service expansion.** Introduce user isolation before a second independent
-   user. Measure database contention, queue delay and operational needs before
+   user. Separate private criteria, decisions and notification state from any
+   shared public-source evidence. Measure database contention, queue delay and operational needs before
    choosing a different database or worker topology. Tens to hundreds of users
    remain the intended gradual destination, not a reason for a platform rewrite now.
 

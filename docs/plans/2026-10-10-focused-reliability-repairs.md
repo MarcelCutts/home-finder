@@ -1,9 +1,9 @@
 # Focused reliability repairs
 
-The owner workflow needs five bounded repairs after the consolidation at
-`7fa12c6`. This checklist replaces the former automatic implementation queue.
-It preserves the eventual small hosted-service target while keeping this series
-within the current one-owner application.
+The consolidation at `7fa12c6` left five bounded owner-workflow repairs. This
+checklist records that completed series and replaces the former automatic
+implementation queue. It preserves the eventual small hosted-service target
+while keeping this series within the current one-owner application.
 
 The original repair PRs #44–48 have now merged after fresh review and additional
 boundary fixes. The subsequent operating round has an explicit US$25 cumulative
