@@ -10,17 +10,16 @@ from home_finder.notifiers.telegram import TelegramNotifier, _build_inline_keybo
 
 
 class TestBuildInlineKeyboardWithWebUrl:
-    def test_with_https_url_uses_webapp_button(
-        self, sample_merged_property: MergedProperty
-    ) -> None:
+    def test_with_https_url_uses_regular_link(self, sample_merged_property: MergedProperty) -> None:
         keyboard = _build_inline_keyboard(
             sample_merged_property, web_base_url="https://home-finder.fly.dev"
         )
         all_buttons = [btn for row in keyboard.inline_keyboard for btn in row]
         details_btn = next(btn for btn in all_buttons if btn.text == "Details")
-        assert details_btn.web_app is not None
-        assert "/property/" in details_btn.web_app.url
-        assert sample_merged_property.unique_id in details_btn.web_app.url
+        assert details_btn.web_app is None
+        assert details_btn.url is not None
+        assert "/property/" in details_btn.url
+        assert sample_merged_property.unique_id in details_btn.url
 
     def test_with_http_url_uses_regular_link(self, sample_merged_property: MergedProperty) -> None:
         keyboard = _build_inline_keyboard(
@@ -60,8 +59,9 @@ class TestBuildInlineKeyboardWithWebUrl:
         all_buttons = [btn for row in keyboard.inline_keyboard for btn in row]
         details_btn = next(btn for btn in all_buttons if btn.text == "Details")
         # URL should not have double slashes
-        assert details_btn.web_app is not None
-        assert "//property" not in details_btn.web_app.url
+        assert details_btn.web_app is None
+        assert details_btn.url is not None
+        assert "//property" not in details_btn.url
 
     def test_map_button_present_with_coords(self, sample_merged_property: MergedProperty) -> None:
         keyboard = _build_inline_keyboard(sample_merged_property)

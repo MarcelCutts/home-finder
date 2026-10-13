@@ -661,10 +661,9 @@ def _build_inline_keyboard(
 ) -> "InlineKeyboardMarkup":
     """Build an inline keyboard markup with source URL buttons and map button.
 
-    If web_base_url uses HTTPS, the "Details" button opens inside Telegram
-    as a Mini App (WebApp). Otherwise it opens in the external browser.
+    Dashboard links use ordinary URL buttons in both private and group chats.
     """
-    from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo
+    from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
     buttons: list[InlineKeyboardButton] = []
 
@@ -672,16 +671,7 @@ def _build_inline_keyboard(
     if web_base_url:
         base = web_base_url.rstrip("/")
         detail_url = f"{base}/property/{merged.unique_id}"
-        if base.startswith("https://"):
-            # Open inside Telegram as a Mini App
-            buttons.append(
-                InlineKeyboardButton(
-                    text="Details",
-                    web_app=WebAppInfo(url=detail_url),
-                )
-            )
-        else:
-            buttons.append(InlineKeyboardButton(text="Details", url=detail_url))
+        buttons.append(InlineKeyboardButton(text="Details", url=detail_url))
 
     for source in merged.sources:
         name = SOURCE_NAMES.get(source.value, source.value)

@@ -429,7 +429,8 @@ explicit retry. Remote URL media remain dependent on their source host.
 
 Migration holds untracked legacy pending/failed outcomes for review, preserves
 old sent homes, and creates no historical Telegram IDs. Do not bulk-reset these
-records. Owner-only `/diagnostics` and this read-only command expose bounded
+records. Owner-only `/deliveries` (the **Alerts** navigation link), `/diagnostics`
+and this read-only command expose bounded
 metadata, acknowledged IDs, retry timing and reasons without loading secrets,
 running migrations or sending anything:
 
@@ -437,6 +438,18 @@ running migrations or sending anything:
 uv run python -m home_finder.pipeline.delivery_admin --database data/properties.db
 uv run python -m home_finder.pipeline.delivery_admin --help
 ```
+
+The delivery page shows the oldest 100 unfinished records, acknowledged parts,
+saved message IDs and retry times. Filter by state to reach blocked or uncertain
+work even when older queued records fill the first view. It renders a fixed set
+of failure explanations and omits raw exception text, payloads, recipient IDs and
+operator evidence references. The page provides read-only recovery instructions;
+the local command remains the fenced mutation path.
+
+New discovery and price-drop plans use ordinary dashboard URL buttons. Telegram's
+Web App buttons are limited to private user/bot chats; a URL button also works for
+the configured group chat. Existing frozen plans retain their original buttons.
+[Telegram button contract](https://core.telegram.org/bots/api#inlinekeyboardbutton).
 
 Stop the runner before reconciling one exact `event_key`. Use `--delivery KEY`
 and a short non-secret `--evidence-ref REF` with exactly one action:
@@ -451,6 +464,13 @@ and a short non-secret `--evidence-ref REF` with exactly one action:
   or a successful send. The record remains available for review.
 
 These actions acquire the application runner lock and never themselves send.
+Uncertain parts still have **no automatic retry allowance**. A restart cannot
+renew such an allowance because none is granted. No fallback payload revision
+is introduced here: restore original cached bytes or suppress the unfinished
+alert. A future revision mechanism must preserve earlier receipts and record
+what changed. The old sender remains available until a separately authorized
+controlled live qualification verifies the actual bot/chat path; offline tests
+and the local browser preview do not establish that external result.
 Changing the bot/chat cannot reuse another recipient's receipts. Multi-user
 routing is outside the owner workflow. Logs include `notification_delivery_planned`,
 `notification_part_dispatched`, `notification_part_acknowledged`,
