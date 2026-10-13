@@ -529,15 +529,11 @@ class PropertyQualityAnalysis(_LenientLiteralModel):
     @model_validator(mode="before")
     @classmethod
     def coerce_json_strings(cls, data: Any) -> Any:
-        """Parse JSON strings that should be sub-model dicts (LLM artifact).
+        """Read historical rows with stringified sub-model objects.
 
-        Defense-in-depth safety net: in the normal pipeline path,
-        ``_clean_dict`` (in ``filters/quality.py``) already parses JSON
-        strings before ``model_validate`` is called.  This validator
-        protects against future code paths that skip ``_clean_dict``
-        (e.g. direct ``model_validate_json`` from DB) and adds extra
-        repair logic (control character stripping) that ``_clean_value``
-        does not perform.
+        Live responses are strictly validated before assembly. Repair is
+        limited to fields known to hold sub-models; bracketed prose remains
+        prose and must never pass through a recursive JSON cleaner.
         """
         if not isinstance(data, dict):
             return data
@@ -554,7 +550,7 @@ class PropertyQualityAnalysis(_LenientLiteralModel):
                 data[key] = json.loads(val)
             except (json.JSONDecodeError, ValueError):
                 # Strip control characters (common LLM artifact), then
-                # fix trailing commas — same regex as _clean_value.
+                # fix trailing commas in historical sub-model objects.
                 cleaned = val.translate(_ctrl_table)
                 sanitized = re.sub(r",\s*([}\]])", r"\1", cleaned)
                 try:

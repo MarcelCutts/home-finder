@@ -5,7 +5,6 @@ import base64
 import functools
 import hashlib
 import json as _json
-import re as _re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Final, Literal, NoReturn
@@ -65,7 +64,6 @@ from home_finder.models.analysis import (
     PhaseConfig,
     VisualPhaseConfig,
 )
-from home_finder.models.quality import _QUALITY_SUB_MODEL_FIELDS
 from home_finder.models.spend import (
     NANOUSD_PER_USD,
     SONNET_STANDARD_RATES,
@@ -73,6 +71,7 @@ from home_finder.models.spend import (
     SpendDeferred,
     SpendPolicy,
     rate_card_for,
+    usd_text,
 )
 from home_finder.utils.image_cache import find_cached_file, is_valid_image_url, read_image_bytes
 from home_finder.utils.image_processing import (
@@ -702,78 +701,6 @@ VISUAL_ANALYSIS_TOOL: Final[dict[str, Any]] = _build_tool_schema(
 )
 
 
-def _attempt_json_repair(s: str) -> dict[str, Any] | list[Any] | None:
-    """Best-effort repair of common LLM JSON malformations.
-
-    Uses the ``json_repair`` library (parser-based) to handle:
-    - Missing colons between key-value pairs
-    - Set-literal syntax (valueless keys like ``"primary_is_double"``)
-    - Trailing commas, single quotes, Python booleans, and more
-    """
-    from json_repair import loads as repair_loads
-
-    try:
-        parsed = repair_loads(s)
-        if isinstance(parsed, (dict, list)):
-            return parsed
-    except Exception:
-        pass
-    return None
-
-
-def _clean_value(val: Any) -> Any:
-    """Clean a single response value — parse JSON strings that should be dicts/lists."""
-    if not isinstance(val, str):
-        return val
-    s = val.strip()
-    if (s.startswith("{") and s.endswith("}")) or (s.startswith("[") and s.endswith("]")):
-        try:
-            parsed = _json.loads(s)
-            if isinstance(parsed, (dict, list)):
-                return parsed
-        except (ValueError, _json.JSONDecodeError):
-            # Retry after stripping trailing commas (common LLM quirk)
-            sanitized = _re.sub(r",\s*([}\]])", r"\1", s)
-            try:
-                parsed = _json.loads(sanitized)
-                if isinstance(parsed, (dict, list)):
-                    return parsed
-            except (ValueError, _json.JSONDecodeError):
-                pass
-            # Third pass: best-effort structural repair (missing colons, etc.)
-            repaired = _attempt_json_repair(s)
-            if repaired is not None:
-                logger.info("json_repair_succeeded", preview=s[:120])
-                return repaired
-    return s
-
-
-def _clean_list(lst: list[Any]) -> list[Any]:
-    """Clean list values and remove junk entries (bare commas, empty strings)."""
-    cleaned = []
-    for item in lst:
-        item = _clean_value(item)
-        if isinstance(item, str) and item.strip() in ("", ","):
-            continue
-        if isinstance(item, dict):
-            item = _clean_dict(item)
-        cleaned.append(item)
-    return cleaned
-
-
-def _clean_dict(d: dict[str, Any]) -> dict[str, Any]:
-    """Clean a dict of response data — parse JSON strings, recurse nested dicts, remove junk."""
-    out: dict[str, Any] = {}
-    for k, v in d.items():
-        if isinstance(v, list):
-            out[k] = _clean_list(v)
-        elif isinstance(v, dict):
-            out[k] = _clean_dict(v)
-        else:
-            out[k] = _clean_value(v)
-    return out
-
-
 # Construction type → acoustic profile key mapping
 _CONSTRUCTION_TO_PROFILE: dict[str, str] = {
     "timber_frame": "victorian",
@@ -870,6 +797,17 @@ class PropertyQualityFilter:
         self._http_client = http_client
         self.token_usage = TokenUsage()
         self._spend_meter = AnalysisSpendMeter(spend_repository, spend_policy)
+        for phase, config in (
+            ("visual", self._analysis_config.visual),
+            ("evaluation", self._analysis_config.evaluation),
+        ):
+            logger.info(
+                "analysis_phase_configured",
+                phase=phase,
+                configuration=config.model_dump(mode="json"),
+                reservation_usd=usd_text(rate_card_for(config.model).reservation(config)),
+                spending_configured=spend_repository is not None and spend_policy is not None,
+            )
         # Circuit breaker (asyncio is single-threaded, no lock needed)
         from home_finder.utils.circuit_breaker import CircuitBreaker
 
@@ -1687,8 +1625,9 @@ class PropertyQualityFilter:
     ) -> PropertyQualityAnalysis | None:
         """Merge Phase 1 + Phase 2 results into a PropertyQualityAnalysis.
 
-        Live callers validate both response contracts first. Historical data
-        can still use the storage model's bounded repairs here.
+        Live callers validate both response contracts first. Preserve their
+        prose and input dictionaries; historical repairs belong to the storage
+        model's tolerant reader, not to an untyped recursive cleaner.
 
         Args:
             visual_data: Phase 1 visual analysis output.
@@ -1699,11 +1638,8 @@ class PropertyQualityFilter:
         Returns:
             Validated analysis, or None if validation failed.
         """
-        visual_data = _clean_dict(visual_data)
-        eval_data = _clean_dict(eval_data)
-
         # Extract value_for_quality from Phase 2 response
-        value_for_quality = eval_data.pop("value_for_quality", {})
+        value_for_quality = eval_data.get("value_for_quality", {})
         quality_adjusted_rating = value_for_quality.get("rating")
         quality_adjusted_note = value_for_quality.get("reasoning", "")
 
@@ -1714,6 +1650,7 @@ class PropertyQualityFilter:
 
         try:
             merged_data = {**visual_data, **eval_data, "value": value}
+            merged_data.pop("value_for_quality", None)
             # These fields describe the application's actual execution. Ignore
             # any model-supplied attempt to supply or invalidate that provenance.
             merged_data.pop("analysis_provenance", None)
@@ -1721,17 +1658,6 @@ class PropertyQualityFilter:
             merged_data.pop("listing_text_inputs", None)
             merged_data.pop("image_review_coverage", None)
             merged_data.setdefault("summary", "Analysis completed")
-
-            # Warn if _clean_dict failed to parse any sub-model JSON strings.
-            # The model validator will attempt further repair (control char
-            # stripping), but this log flags upstream issues worth investigating.
-            for key in _QUALITY_SUB_MODEL_FIELDS:
-                if isinstance(merged_data.get(key), str):
-                    logger.warning(
-                        "clean_dict_missed_json_string",
-                        field=key,
-                        property_id=property_id,
-                    )
 
             analysis = PropertyQualityAnalysis.model_validate(merged_data)
         except Exception as e:

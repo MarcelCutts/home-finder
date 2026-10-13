@@ -64,8 +64,9 @@ uv run home-finder --scrape-only        # Just scrape and print (no filtering/st
 uv run home-finder --max-per-scraper 5  # Limit results per scraper (for testing)
 uv run home-finder --scrapers openrent,zoopla  # Only run specific scrapers
 uv run home-finder --full-scrape        # Compatibility flag; normal collection already passes known pages
-uv run home-finder --serve              # Web dashboard + recurring pipeline scheduler
-uv run home-finder --serve --no-pipeline  # Web dashboard only, no background pipeline
+uv run home-finder --serve              # Web dashboard only
+uv run home-finder --serve --with-pipeline  # Explicitly enable recurring collection
+uv run home-finder --serve --no-pipeline  # Dashboard only (compatible with existing commands)
 uv run home-finder --reanalyze          # Re-run quality analysis on flagged properties
 uv run home-finder --reanalyze --all    # Flag ALL analyzed properties for re-analysis
 uv run home-finder --reanalyze --outcode E2,E8  # Flag specific outcodes for re-analysis
@@ -93,7 +94,7 @@ reanalysis usage. The paid spend ledger is authoritative for reconciled spending
 
 ## Web Dashboard
 
-The `--serve` flag starts a FastAPI web server on port 8000 with a background pipeline scheduler that runs every 55 minutes (configurable via `HOME_FINDER_PIPELINE_INTERVAL_MINUTES`).
+The `--serve` flag starts a FastAPI web server on port 8000 without collection. Add `--with-pipeline` to explicitly enable the background scheduler, which waits at least 55 minutes after each run (configurable via `HOME_FINDER_PIPELINE_INTERVAL_MINUTES`). CLI modes are mutually exclusive; reanalysis and scheduler modifiers require their corresponding mode.
 
 ### Dashboard Features
 
@@ -186,7 +187,7 @@ Create a `.env` file with these settings (all use `HOME_FINDER_` prefix):
 - `HOME_FINDER_QUALITY_FILTER_MAX_IMAGES`: Max gallery images to analyze per property (default: 20, max: 20)
 - `HOME_FINDER_MIN_GALLERY_FOR_PHOTO_INFERENCE`: Minimum gallery images to bypass floorplan gate via photo inference; 0 disables (default: 5)
 - `HOME_FINDER_ENABLE_EXTENDED_THINKING`: Enable extended thinking for deeper quality analysis (default: true)
-- `HOME_FINDER_ANALYSIS_CONFIG`: Optional phase overrides. When absent, new runs use bounded Sonnet 5.5 at low effort with 8,192 output tokens and no SDK retries. Explicit JSON retains historical parsing defaults; see [paid analysis](docs/operations.md#runtime-model-defaults). Spend caps remain required.
+- `HOME_FINDER_ANALYSIS_CONFIG`: Optional phase overrides merged onto the bounded Sonnet 5.5 runtime profile: low effort, 8,192 output tokens and no SDK retries. `{}` retains those defaults; top-level `null` is rejected. Stored historical profiles remain unchanged. See [paid analysis](docs/operations.md#runtime-model-defaults). Spend caps remain required.
 - `HOME_FINDER_ENABLE_IMAGE_HASH_MATCHING`: Enable perceptual image hashing for deduplication (default: true)
 - `HOME_FINDER_MAX_ENRICHMENT_ATTEMPTS`: Max enrichment retry attempts before giving up on a property, 1-10 (default: 3)
 

@@ -68,24 +68,28 @@ def test_runtime_factory_rejects_unsupported_image_counts(bad):
         new_runtime_analysis_config(max_images=bad)
 
 
-def test_settings_field_order_and_explicit_none_preserve_fallback():
+def test_settings_field_order_and_explicit_none_reject_ambiguous_fallback():
     fields = list(Settings.model_fields)
     assert fields.index("quality_filter_max_images") < fields.index("analysis_config")
     assert fields.index("enable_extended_thinking") < fields.index("analysis_config")
-    assert Settings(_env_file=None, analysis_config=None).analysis_config is None
+    with pytest.raises(ValidationError, match="analysis_config cannot be null"):
+        Settings(_env_file=None, analysis_config=None)
     for bad in (0, 21, "invalid"):
         with pytest.raises(ValidationError):
             Settings(_env_file=None, quality_filter_max_images=bad)
 
 
-def test_dotenv_null_and_partial_json_are_explicit_profiles(tmp_path):
+def test_dotenv_null_is_rejected_and_partial_json_inherits_runtime_profile(tmp_path):
     dotenv = tmp_path / ".env"
     dotenv.write_text("HOME_FINDER_ANALYSIS_CONFIG=null\n")
-    assert Settings(_env_file=dotenv).analysis_config is None
+    with pytest.raises(ValidationError, match="analysis_config cannot be null"):
+        Settings(_env_file=dotenv)
     dotenv.write_text('HOME_FINDER_ANALYSIS_CONFIG={"visual":{"effort":"medium"}}\n')
     config = Settings(_env_file=dotenv).analysis_config
-    assert config.visual.model == config.evaluation.model == "claude-sonnet-4-6"
+    assert config.visual.model == config.evaluation.model == "claude-sonnet-5-5"
     assert config.visual.effort == "medium"
+    assert config.visual.input_token_limit == 225_500
+    assert config.evaluation == new_runtime_analysis_config().evaluation
 
 
 def test_historical_models_and_provenance_keep_their_identity():
@@ -108,23 +112,49 @@ def test_historical_models_and_provenance_keep_their_identity():
     assert provenance.configuration == legacy
 
 
-@pytest.mark.parametrize("value", ["{}", '{"visual":{"effort":"medium"}}', "null"])
-def test_explicit_settings_json_retains_legacy_parsing_and_overrides_factory(monkeypatch, value):
+@pytest.mark.parametrize("value", ["{}", '{"visual":{"effort":"medium"}}'])
+def test_partial_settings_json_overrides_only_supplied_fields(monkeypatch, value):
     monkeypatch.setenv("HOME_FINDER_ANALYSIS_CONFIG", value)
     settings = Settings(_env_file=None, enable_extended_thinking=False)
-    if value == "null":
-        assert settings.analysis_config is None
-        q = PropertyQualityFilter(
-            "fixture",
-            analysis_config=settings.analysis_config,
-            enable_extended_thinking=settings.enable_extended_thinking,
-        )
-        assert q.analysis_config.visual.reasoning == "disabled"
-        assert q.analysis_config.visual.model == "claude-sonnet-4-6"
-    else:
-        assert settings.analysis_config == AnalysisConfig.model_validate_json(value)
-        assert settings.analysis_config.visual.model == "claude-sonnet-4-6"
-        assert settings.analysis_config.visual.reasoning == "adaptive"
+    expected = new_runtime_analysis_config(enable_extended_thinking=False).model_dump()
+    expected["visual"].update(json.loads(value).get("visual", {}))
+    assert settings.analysis_config == AnalysisConfig.model_validate(expected)
+    assert settings.analysis_config.visual.model == "claude-sonnet-5-5"
+    assert settings.analysis_config.visual.reasoning == "disabled"
+
+
+def test_explicit_phase_overrides_can_select_model_and_reasoning_without_losing_bounds():
+    config = Settings(
+        _env_file=None,
+        quality_filter_max_images=8,
+        enable_extended_thinking=False,
+        analysis_config={"visual": {"model": "claude-sonnet-4-6", "reasoning": "adaptive"}},
+    ).analysis_config
+    assert config.visual.model == "claude-sonnet-4-6"
+    assert config.visual.reasoning == "adaptive"
+    assert config.visual.input_token_limit == 159_500
+    assert config.visual.sdk_retries == 0
+    assert config.evaluation == new_runtime_analysis_config().evaluation
+
+
+@pytest.mark.parametrize(
+    "override",
+    ["null", {"visual": None}, {"visual": {"effotr": "low"}}, {"unknown_phase": {}}],
+)
+def test_invalid_runtime_overrides_fail_at_settings_boundary(override):
+    with pytest.raises(ValidationError):
+        Settings(_env_file=None, analysis_config=override)
+
+
+def test_explicit_resolved_profile_retains_all_of_its_fields():
+    legacy = AnalysisConfig()
+    assert Settings(_env_file=None, analysis_config=legacy).analysis_config == legacy
+    explicit = legacy.model_dump()
+    # Historical serialization omits None limits. A new-run override must
+    # explicitly request an unbounded phase rather than inherit it by omission.
+    for phase in ("visual", "evaluation"):
+        explicit[phase]["input_token_limit"] = None
+    assert Settings(_env_file=None, analysis_config=json.dumps(explicit)).analysis_config == legacy
 
 
 @pytest.mark.parametrize("images", range(1, 21))

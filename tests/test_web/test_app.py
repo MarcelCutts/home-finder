@@ -26,6 +26,12 @@ def settings() -> Settings:
 
 
 class TestCreateApp:
+    async def test_default_lifespan_does_not_start_collection(self, settings: Settings) -> None:
+        app = create_app(settings)
+        with patch("home_finder.web.app._pipeline_loop", new_callable=AsyncMock) as pipeline:
+            async with app.router.lifespan_context(app):
+                pipeline.assert_not_called()
+
     def test_returns_fastapi_instance(self, settings: Settings) -> None:
         app = create_app(settings)
         assert isinstance(app, FastAPI)

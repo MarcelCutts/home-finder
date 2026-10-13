@@ -181,7 +181,7 @@ def provider_rejection(status: int, body: Any, request_id: str | None) -> Provid
     result = "request_rejected"
     if status == 401:
         result = "authentication"
-    elif "credit balance" in message or "billing" in message or "quota" in message:
+    elif status == 402 or any(word in message for word in ("credit balance", "billing", "quota")):
         result = "quota"
     elif status == 429:
         result = "rate_limit"

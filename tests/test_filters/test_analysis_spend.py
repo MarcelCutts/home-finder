@@ -213,6 +213,7 @@ async def test_unknown_billing_preserves_reservation_and_request_id(budget, scen
     "status,error_type,message,result",
     [
         (401, "authentication_error", "Invalid key", "authentication"),
+        (402, "billing_error", "Payment details must be updated", "quota"),
         (400, "invalid_request_error", "Schema too complex", "unsupported_schema"),
         (400, "invalid_request_error", "Credit balance too low", "quota"),
     ],
@@ -239,6 +240,51 @@ async def test_permanent_provider_errors_cannot_request_automatic_retry(
     attempts = await rows(storage)
     assert attempts[0]["result"] == result and attempts[0]["accounted_nanousd"] == 0
     assert attempts[0]["cost_basis"] == "provider_error"
+
+
+@pytest.mark.parametrize("status,error_type", [(409, "conflict_error"), (504, "timeout_error")])
+async def test_documented_transient_error_envelopes_settle_each_rejection(
+    budget, status, error_type
+):
+    storage, policy = budget
+    async with quality(
+        storage,
+        policy,
+        lambda _: httpx2.Response(
+            status,
+            json={"type": "error", "error": {"type": error_type, "message": "Try later"}},
+        ),
+    ) as q:
+        with pytest.raises((APIUnavailableError, AnalysisOutputError)):
+            await q._run_visual_analysis(CONTENT, "fixture:transient")
+    attempts = await rows(storage)
+    assert len(attempts) == 2  # The explicit legacy SDK policy permits one retry.
+    assert all(
+        attempt["state"] == "settled"
+        and attempt["result"] == "transient"
+        and attempt["cost_basis"] == "provider_error"
+        and attempt["accounted_nanousd"] == 0
+        for attempt in attempts
+    )
+
+
+async def test_unrecognised_provider_error_does_not_discard_liability(budget):
+    storage, policy = budget
+    async with quality(
+        storage,
+        policy,
+        lambda _: httpx2.Response(
+            500,
+            json={"type": "error", "error": {"type": "future_error", "message": "Unknown"}},
+        ),
+    ) as q:
+        with pytest.raises(APIUnavailableError, match="unpriced_provider_response"):
+            await q._run_visual_analysis(CONTENT, "fixture:unknown-error")
+    attempts = await rows(storage)
+    assert len(attempts) == 1
+    assert attempts[0]["state"] == "unknown"
+    assert attempts[0]["cost_basis"] is None
+    assert (await storage.spend.report())["held_nanousd"] > 0
 
 
 async def test_cancellation_after_response_finishes_accounting(budget, monkeypatch):
