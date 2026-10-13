@@ -144,6 +144,12 @@ class Settings(BaseSettings):
     )
 
     # Enrichment retry
+    max_enrichment_per_run: int = Field(
+        default=75,
+        ge=1,
+        le=500,
+        description="Maximum homes to enrich per run, sharing slots between backlog and discovery",
+    )
     max_enrichment_attempts: int = Field(
         default=3,
         ge=1,

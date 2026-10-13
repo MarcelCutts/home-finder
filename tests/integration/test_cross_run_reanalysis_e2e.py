@@ -16,7 +16,6 @@ from pydantic import HttpUrl, SecretStr
 
 from home_finder.config import Settings
 from home_finder.db import PropertyStorage
-from home_finder.db.merge_safety import MergeBlockedError
 from home_finder.filters.deduplication import Deduplicator
 from home_finder.filters.detail_enrichment import EnrichmentResult
 from home_finder.main import (
@@ -102,8 +101,9 @@ async def test_pre_analysis_group_cannot_absorb_protected_pending_member(storage
         sources=(first.source, second.source),
         source_urls={first.source: first.url, second.source: second.url},
     )
-    with pytest.raises(MergeBlockedError):
-        await storage.pipeline.save_pre_analysis_properties([group], {})
+    result = await storage.pipeline.save_pre_analysis_properties([group], {})
+    assert result.accepted == []
+    assert "user_state" in result.refused[group.unique_id][second.unique_id]
     assert len(await storage.pipeline.get_unenriched_properties()) == 2
     assert await storage.pipeline.get_pending_analysis_properties() == []
 
@@ -1907,8 +1907,6 @@ async def test_committed_merge_keeps_reanalysis_queued_when_cache_copy_fails(
 async def test_pre_analysis_retirement_preserves_unrepresented_provider_rows(
     storage, make_property
 ):
-    from home_finder.db.merge_safety import MergeBlockedError
-
     first, second = _make_matching_pair(
         make_property, PropertySource.OPENRENT, PropertySource.ZOOPLA
     )
@@ -1921,8 +1919,9 @@ async def test_pre_analysis_retirement_preserves_unrepresented_provider_rows(
         sources=(first.source, second.source),
         source_urls={first.source: first.url, second.source: second.url},
     )
-    with pytest.raises(MergeBlockedError):
-        await storage.pipeline.save_pre_analysis_properties([group], {})
+    result = await storage.pipeline.save_pre_analysis_properties([group], {})
+    assert result.accepted == []
+    assert result.refused[group.unique_id][second.unique_id] == ["unrepresented_source_listing"]
     assert await storage.get_property(second.unique_id) is not None
     assert await storage.get_property(first.unique_id) is None
     async with storage._read_connection() as conn:

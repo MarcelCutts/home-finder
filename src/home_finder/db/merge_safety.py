@@ -30,6 +30,16 @@ class MergeBlockedError(Exception):
         super().__init__("Merge requires review: " + ", ".join(sorted(blockers)))
 
 
+async def ensure_canonical_source_owner(conn: aiosqlite.Connection, unique_id: str) -> None:
+    """A stale proposal cannot steal its canonical source from an accepted home."""
+    async with conn.execute(
+        "SELECT merged_id FROM source_listings WHERE unique_id = ?", (unique_id,)
+    ) as cursor:
+        source = await cursor.fetchone()
+    if source is not None and source[0] not in {None, unique_id}:
+        raise MergeBlockedError({unique_id: ["canonical_source_owned_by_other_home"]})
+
+
 async def staging_blockers(
     conn: aiosqlite.Connection, unique_ids: Iterable[str]
 ) -> dict[str, list[str]]:
@@ -40,6 +50,8 @@ async def staging_blockers(
         async with conn.execute("SELECT * FROM properties WHERE unique_id = ?", (uid,)) as cur:
             row = await cur.fetchone()
         if row is not None:
+            if row["enrichment_recovery_requested_at"]:
+                reasons.append("processing_recovery")
             if row["enrichment_status"] != "pending":
                 reasons.append("established_property")
             if row["notification_status"] != "pending_enrichment" or row["notified_at"]:

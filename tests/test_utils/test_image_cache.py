@@ -2,6 +2,7 @@
 
 from pathlib import Path
 
+import pytest
 from pydantic import HttpUrl
 
 from home_finder.utils.image_cache import (
@@ -212,6 +213,36 @@ class TestCopyCachedImages:
     def test_empty_source_dir(self, tmp_path: Path) -> None:
         copied = copy_cached_images(str(tmp_path), "nonexistent:999", "rightmove:200")
         assert copied == 0
+
+    def test_interrupted_copy_publishes_no_partial_asset(self, tmp_path, monkeypatch):
+        import shutil
+
+        source_dir = get_cache_dir(str(tmp_path), "openrent:100")
+        target_dir = get_cache_dir(str(tmp_path), "rightmove:200")
+        source_dir.mkdir(parents=True)
+        name = "gallery_000_abcdef12.jpg"
+        (source_dir / name).write_bytes(b"complete source bytes")
+        original = shutil.copyfileobj
+
+        def interrupted(source, target):
+            target.write(b"partial")
+            raise OSError("interrupted copy")
+
+        monkeypatch.setattr(shutil, "copyfileobj", interrupted)
+        with pytest.raises(OSError, match="interrupted copy"):
+            copy_cached_images(str(tmp_path), "openrent:100", "rightmove:200")
+        assert not (target_dir / name).exists()
+        assert not list(target_dir.iterdir())
+        monkeypatch.setattr(shutil, "copyfileobj", original)
+        assert copy_cached_images(str(tmp_path), "openrent:100", "rightmove:200") == 1
+        assert (target_dir / name).read_bytes() == b"complete source bytes"
+
+    def test_orphan_temporary_copy_is_not_an_asset(self, tmp_path):
+        source_dir = get_cache_dir(str(tmp_path), "openrent:100")
+        source_dir.mkdir(parents=True)
+        (source_dir / ".cache-copy-interrupted").write_bytes(b"partial")
+        assert not is_property_cached(str(tmp_path), "openrent:100")
+        assert copy_cached_images(str(tmp_path), "openrent:100", "rightmove:200") == 0
 
 
 class TestIsValidImageUrl:

@@ -33,6 +33,51 @@ async def _table_names(conn: aiosqlite.Connection) -> set[str]:
     return {r[0] for r in rows}
 
 
+async def test_analysis_exhaustion_upgrade_preserves_other_lifecycle_axes(fresh_conn):
+    with patch("home_finder.db.migrations.MIGRATIONS", MIGRATIONS[:12]):
+        await run_migrations(fresh_conn)
+    for uid, attempts, status in [
+        ("exhausted", 3, "pending_analysis"),
+        ("sent", 4, "sent"),
+        ("retry", 2, "pending_analysis"),
+    ]:
+        await fresh_conn.execute(
+            """INSERT INTO properties (
+                unique_id, source, source_id, url, title, price_pcm, bedrooms, address, first_seen,
+                notification_status, analysis_attempts, user_status, enrichment_status
+            ) VALUES (?, 'openrent', ?, 'https://example.com/test', 'Fixture', 1800, 1,
+                      'Fixture address', '2026-10-01T00:00:00Z', ?, ?, 'interested', 'enriched')""",
+            (uid, uid, status, attempts),
+        )
+    await fresh_conn.commit()
+    before = [
+        dict(row)
+        for row in await (
+            await fresh_conn.execute("SELECT * FROM properties ORDER BY 1")
+        ).fetchall()
+    ]
+    await run_migrations(fresh_conn)
+    after = [
+        dict(row)
+        for row in await (
+            await fresh_conn.execute("SELECT * FROM properties ORDER BY 1")
+        ).fetchall()
+    ]
+    for old, new in zip(before, after, strict=True):
+        assert {key: new[key] for key in old} == old
+        assert new["analysis_exhausted_reason"] == (
+            "initial_failure_limit" if old["unique_id"] == "exhausted" else None
+        )
+    await run_migrations(fresh_conn)
+    repeated = [
+        dict(row)
+        for row in await (
+            await fresh_conn.execute("SELECT * FROM properties ORDER BY 1")
+        ).fetchall()
+    ]
+    assert repeated == after
+
+
 class TestRunMigrations:
     async def test_fresh_db_applies_all_migrations(self, fresh_conn: aiosqlite.Connection):
         """Fresh DB should run all migrations and set user_version = len(MIGRATIONS)."""

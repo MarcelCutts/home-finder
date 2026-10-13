@@ -2,6 +2,7 @@
 
 import time
 from dataclasses import dataclass, field
+from itertools import zip_longest
 
 from home_finder.config import Settings
 from home_finder.db import PropertyStorage
@@ -25,6 +26,7 @@ from home_finder.models import (
     TransportMode,
 )
 from home_finder.models.commute import best_measured_commutes, commute_minutes_projection
+from home_finder.pipeline.cache_recovery import repair_merged_image_caches
 from home_finder.pipeline.event_recorder import EventRecorder, PropertyEvent
 from home_finder.pipeline.scraping import ScraperMetrics, _run_scrape, _source_counts
 from home_finder.scrapers.detail_fetcher import DetailFetcher
@@ -110,6 +112,10 @@ async def _cross_run_deduplicate(
     await storage.upsert_source_listings([mp.canonical for mp in merged_to_notify])
 
     db_anchors = await storage.get_recent_properties_for_dedup(days=30)
+    recovering_input_ids = {merged.unique_id for merged in merged_to_notify} & re_enrichment_ids
+    # A recovering anchor is the current input, not a second copy of itself.
+    # Unselected recovery anchors still retain their identity in dedup lookup.
+    db_anchors = [anchor for anchor in db_anchors if anchor.unique_id not in recovering_input_ids]
     logger.info("loaded_dedup_anchors", anchor_count=len(db_anchors))
 
     # Map each anchor's source URLs to its DB unique_id so we can detect
@@ -440,10 +446,9 @@ async def _load_unenriched(
     storage: PropertyStorage,
     settings: Settings,
 ) -> tuple[list[MergedProperty], set[str]]:
-    """Load unenriched properties for retry, clearing stale image caches."""
+    """Load the pending backlog without consuming slots or clearing cache assets."""
     max_attempts = settings.max_enrichment_attempts
     unenriched = await storage.pipeline.get_unenriched_properties(max_attempts=max_attempts)
-    unenriched = unenriched[: settings.max_analysis_per_run]
     re_enrichment_ids: set[str] = set()
     if unenriched:
         retry_stats = await storage.pipeline.get_unenriched_retry_stats(max_attempts=max_attempts)
@@ -457,11 +462,59 @@ async def _load_unenriched(
             by_attempts=retry_stats.get("by_attempts", {}),
             oldest_days=oldest_days,
         )
-        for m in unenriched:
-            if settings.data_dir:
-                clear_image_cache(settings.data_dir, m.unique_id)
         re_enrichment_ids = {m.unique_id for m in unenriched}
     return unenriched, re_enrichment_ids
+
+
+async def _prepare_enrichment_batch(
+    new: list[MergedProperty],
+    pending: list[MergedProperty],
+    storage: PropertyStorage,
+    settings: Settings,
+    *,
+    recorder: EventRecorder | None = None,
+) -> list[MergedProperty]:
+    """Persist discovery, then share a finite batch between recovery and new homes."""
+    for merged in new:
+        await storage.pipeline.save_unenriched_property(merged, attempted=False)
+
+    # Same fairness policy as paid analysis: oldest pending first, alternating
+    # with discovery. A stream of fresh results cannot starve recovery.
+    candidates = list(
+        {
+            item.unique_id: item
+            for pair in zip_longest(pending, new)
+            for item in pair
+            if item is not None
+        }.values()
+    )
+    limit = settings.max_enrichment_per_run
+    selected, deferred = candidates[:limit], candidates[limit:]
+    if deferred:
+        logger.info(
+            "enrichment_run_limit",
+            selected=len(selected),
+            deferred=len(deferred),
+            limit=limit,
+        )
+        if recorder is not None:
+            for merged in deferred:
+                recorder.record(
+                    PropertyEvent(
+                        merged.unique_id,
+                        merged.canonical.source.value,
+                        "enrichment_deferred",
+                        "enrichment",
+                        {"reason": "run_limit", "limit": limit},
+                    )
+                )
+            await recorder.flush()
+
+    retry_ids = {m.unique_id for m in pending}
+    for merged in selected:
+        if merged.unique_id in retry_ids and settings.data_dir:
+            clear_image_cache(settings.data_dir, merged.unique_id)
+    return selected
 
 
 async def _geocode_and_compute_commute(
@@ -708,10 +761,15 @@ async def _run_post_enrichment(
         # Compute passed/dropped sets (shared by save + T4 recorder)
         passed_ids = {m.unique_id for m in merged_to_notify}
         dropped = [m for m in pre_floorplan if m.unique_id not in passed_ids]
+        refused: dict[str, dict[str, list[str]]] = {}
 
         # Save floorplan-dropped properties so they don't get re-enriched
         if dropped and commute_lookup is not None:
-            await storage.pipeline.save_dropped_properties(dropped, commute_lookup)
+            persisted = await storage.pipeline.save_dropped_properties(dropped, commute_lookup)
+            refused = persisted.refused
+            await repair_merged_image_caches(
+                storage, settings.data_dir, [m.unique_id for m in persisted.accepted]
+            )
 
         # T4: record floorplan gate events
         if recorder is not None:
@@ -720,6 +778,16 @@ async def _run_post_enrichment(
                 src = m.canonical.source.value
                 if uid in passed_ids:
                     recorder.record(PropertyEvent(uid, src, "floorplan_passed", "floorplan"))
+                elif uid in refused:
+                    recorder.record(
+                        PropertyEvent(
+                            uid,
+                            src,
+                            "persistence_refused",
+                            "floorplan",
+                            {"reason": "merge_review", "blockers": refused[uid]},
+                        )
+                    )
                 else:
                     recorder.record(
                         PropertyEvent(
@@ -908,7 +976,9 @@ async def _run_pre_analysis_pipeline(
         # Step 5: Enrichment
         active_phase = "enrichment_seconds"
         t0 = time.monotonic()
-        merged_to_enrich = list(new_merged) + list(unenriched)
+        merged_to_enrich = await _prepare_enrichment_batch(
+            new_merged, unenriched, storage, settings, recorder=recorder
+        )
         enriched = await _run_enrichment(merged_to_enrich, settings, storage, recorder=recorder)
         if enriched is None:
             timings["enrichment_seconds"] = time.monotonic() - t0

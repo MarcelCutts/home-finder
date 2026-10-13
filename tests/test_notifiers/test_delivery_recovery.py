@@ -758,7 +758,7 @@ async def test_schema_upgrade_and_backup_preserve_spending_holds_and_checkpoint(
         assert after["held_nanousd"] > 0 and len(after["visual_checkpoints"]) == 1
         async with storage._read_connection() as conn:
             cur = await conn.execute("PRAGMA user_version")
-            assert (await cur.fetchone())[0] == 12
+            assert (await cur.fetchone())[0] == len(MIGRATIONS)
 
 
 def test_without_asset_root_does_not_use_incidental_working_directory_cache(

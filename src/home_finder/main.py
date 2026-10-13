@@ -26,6 +26,7 @@ from home_finder.pipeline.analysis import (
     _run_quality_and_save,
     run_reanalysis,
 )
+from home_finder.pipeline.cache_recovery import repair_merged_image_caches
 from home_finder.pipeline.commands import (
     run_backfill_commute,
     run_check_off_market,
@@ -308,6 +309,7 @@ async def _run_pipeline_with_storage(
                 finally:
                     structlog.contextvars.bind_contextvars(run_id=run_id)
                 assert run_id is not None
+                await repair_merged_image_caches(storage, settings.data_dir)
                 notifier = None
                 if not dry_run:
                     notifier = await stack.enter_async_context(

@@ -28,6 +28,7 @@ from home_finder.db.listing_text import (
 from home_finder.db.merge_safety import MergeBlockedError, ensure_staging_merge, staging_blockers
 from home_finder.db.migrations import run_migrations
 from home_finder.db.pipeline_repo import PipelineRepository
+from home_finder.db.processing import request_enrichment_recovery
 from home_finder.db.row_mappers import (
     build_base_insert,
     build_merged_insert_columns,
@@ -642,7 +643,8 @@ class PropertyStorage:
                     """
                     SELECT * FROM properties
                     WHERE first_seen >= ?
-                      AND COALESCE(enrichment_status, 'enriched') != 'pending'
+                      AND (COALESCE(enrichment_status, 'enriched') != 'pending'
+                           OR enrichment_recovery_requested_at IS NOT NULL)
                     ORDER BY first_seen DESC
                     """,
                     (cutoff,),
@@ -652,6 +654,7 @@ class PropertyStorage:
                     """
                     SELECT * FROM properties
                     WHERE COALESCE(enrichment_status, 'enriched') != 'pending'
+                       OR enrichment_recovery_requested_at IS NOT NULL
                     ORDER BY first_seen DESC
                     """
                 )
@@ -769,13 +772,16 @@ class PropertyStorage:
             await persist_merged_text(conn, merged, unique_id=existing_unique_id)
             if {row["unique_id"] for row in rows} - previous_members:
                 # A committed source merge must survive a crash before cache
-                # copies. The existing queue repairs images and revisits assessed
-                # anchors; no request is created for a home never analyzed.
+                # copies. Assessed homes get a refresh request; a retained
+                # unassessed dropped/failed anchor gets one detail-recovery grant.
                 await conn.execute(
                     "UPDATE quality_analyses "
                     "SET reanalysis_requested_at = COALESCE(reanalysis_requested_at, ?) "
                     "WHERE property_unique_id = ?",
                     (datetime.now(UTC).isoformat(), existing_unique_id),
+                )
+                await request_enrichment_recovery(
+                    conn, [existing_unique_id], reason="accepted_new_source"
                 )
 
             # Save any new images from the merged property
@@ -1001,6 +1007,36 @@ class PropertyStorage:
                     )
                 )
             return images
+
+    async def get_merged_cache_memberships(
+        self, property_ids: list[str] | None = None
+    ) -> list[tuple[str, str]]:
+        """Committed source ownership is the recovery record for cache consolidation.
+
+        Include retired staging identities: their source listings and original
+        cache directories survive a merge. Never infer permission from a proposal.
+        """
+        if property_ids == []:
+            return []
+        pairs: list[tuple[str, str]] = []
+        async with self._read_connection() as conn:
+            chunks = (
+                [property_ids[i : i + 500] for i in range(0, len(property_ids), 500)]
+                if property_ids is not None
+                else [None]
+            )
+            for chunk in chunks:
+                restriction = (
+                    f" AND sl.merged_id IN ({','.join('?' for _ in chunk)})" if chunk else ""
+                )
+                cursor = await conn.execute(
+                    "SELECT sl.unique_id, sl.merged_id FROM source_listings sl "
+                    "JOIN properties p ON p.unique_id = sl.merged_id "
+                    "WHERE sl.unique_id != sl.merged_id" + restriction + " ORDER BY 1, 2",
+                    chunk or [],
+                )
+                pairs.extend((row[0], row[1]) for row in await cursor.fetchall())
+        return pairs
 
     async def get_property_images_and_row(
         self, unique_id: str
