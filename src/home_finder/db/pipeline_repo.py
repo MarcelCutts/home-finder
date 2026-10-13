@@ -36,6 +36,26 @@ from home_finder.models import (
 
 logger = get_logger(__name__)
 
+# Discovery is queued before enrichment, so both outcomes must promote the
+# complete projection on conflict. Missing observations retain prior evidence;
+# owner state, delivery history and accumulated attempts are separate fields.
+_ENRICHED_PROJECTION_UPDATES = """
+    commute_minutes = COALESCE(excluded.commute_minutes, commute_minutes),
+    transport_mode = COALESCE(excluded.transport_mode, transport_mode),
+    latitude = COALESCE(excluded.latitude, latitude),
+    longitude = COALESCE(excluded.longitude, longitude),
+    postcode = COALESCE(excluded.postcode, postcode),
+    available_from = COALESCE(excluded.available_from, available_from),
+    sources = excluded.sources,
+    source_urls = excluded.source_urls,
+    min_price = excluded.min_price,
+    max_price = excluded.max_price,
+    floor_area_sqm = COALESCE(excluded.floor_area_sqm, floor_area_sqm),
+    floor_area_source = CASE WHEN excluded.floor_area_sqm IS NOT NULL
+        THEN excluded.floor_area_source
+        ELSE floor_area_source END
+"""
+
 
 @dataclass
 class PersistenceResult:
@@ -251,7 +271,8 @@ class PipelineRepository:
                 ON CONFLICT(unique_id) DO UPDATE SET
                     notification_status = 'dropped',
                     enrichment_status = 'enriched',
-                    enrichment_recovery_requested_at = NULL
+                    enrichment_recovery_requested_at = NULL,
+                    {_ENRICHED_PROJECTION_UPDATES}
                 WHERE properties.notification_status = 'pending_enrichment'
                   AND properties.enrichment_status = 'pending'
                 """,
@@ -573,15 +594,7 @@ class PipelineRepository:
                     notification_status = excluded.notification_status,
                     enrichment_status = 'enriched',
                     enrichment_recovery_requested_at = NULL,
-                    commute_minutes = COALESCE(excluded.commute_minutes, commute_minutes),
-                    transport_mode = COALESCE(excluded.transport_mode, transport_mode),
-                    latitude = COALESCE(excluded.latitude, latitude),
-                    longitude = COALESCE(excluded.longitude, longitude),
-                    postcode = COALESCE(excluded.postcode, postcode),
-                    sources = excluded.sources,
-                    source_urls = excluded.source_urls,
-                    min_price = excluded.min_price,
-                    max_price = excluded.max_price
+                    {_ENRICHED_PROJECTION_UPDATES}
                 """,
                 values,
             )
