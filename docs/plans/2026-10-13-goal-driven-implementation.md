@@ -200,4 +200,25 @@ M5 final verification: `UV_CACHE_DIR=/tmp/home-finder-goal-uv uv run --offline -
 
 Final Ruff, formatting (270 files), strict mypy (109 source files) and diff whitespace checks pass. Both release artifacts were rebuilt offline after the test-fixture corrections; their application modules and assets are present, with no root runtime data or `.env`. All 61 local links across the assessment, plan and audit resolve. Actual installed CLI smoke checks reject invalid modes before creating a database. All 33 pre-existing untracked roots remain, the original tracked observability/evaluation work is preserved, and both historical source database hashes still match the recorded baselines.
 
-**G1 completion audit:** the [requirement-by-requirement audit](../reviews/2026-10-13-core-reliability-completion-audit.md) closes M1–M5 and T02–T09 within the native goal's defined offline scope. No required G1 implementation or verification remains. G2–G4 stay queued: the next release goal must qualify protected access, operating mode, backup/media restoration and operational signals, and inspect retained delivery intent before enabling collection. T08's controlled live send remains a separately authorized qualification; no uncertain-delivery retry policy, fallback revision or old-sender retirement was silently introduced. The old exposed release must remain contained until a protected release is qualified. At that completion checkpoint no commit or deployment had been made. Subsequent draft commits and their isolated verification are recorded in the [PR series](../reviews/2026-10-13-reliability-pr-series.md); deployment remains separate.
+**Original G1 completion checkpoint:** the [requirement-by-requirement audit](../reviews/2026-10-13-core-reliability-completion-audit.md) recorded M1–M5 and T02–T09 as complete within the native goal's defined offline scope. Subsequent merge review found missing regression cases, recorded below. G2–G4 stay queued: the next release goal must qualify protected access, operating mode, backup/media restoration and operational signals, and inspect retained delivery intent before enabling collection. T08's controlled live send remains a separately authorized qualification; no uncertain-delivery retry policy, fallback revision or old-sender retirement was silently introduced. The old exposed release must remain contained until a protected release is qualified. At that completion checkpoint no commit or deployment had been made. Subsequent draft commits and their isolated verification are recorded in the [PR series](../reviews/2026-10-13-reliability-pr-series.md); deployment remains separate.
+
+## Merge-review follow-up
+
+Independent review of the published series reproduced two regressions despite
+the earlier passing suites. The user authorized their repair and ordered merging.
+PR #67's correction, `e046f3a`, preserves enriched observations when promoting
+prequeued homes, including dropped multi-source homes, while retaining owner and
+financial history. Its regressions cover actual enrichment, restart, size filters,
+recovery, sparse inputs and paired floor-area provenance. PR #69's correction,
+`7b82f57`, preserves a recipient's Telegram cooldown when a waiting alert is
+suppressed; its regressions cover archive/rejection/off-market changes, receipts,
+restart, recipient isolation and exact expiry. Both corrective commits are signed
+and preserve the original implementation history.
+
+The [series record](../reviews/2026-10-13-reliability-pr-series.md#merge-review-corrections-and-final-validation)
+holds the corrected candidate's final checks separately from the original 4,100-test
+workspace and 4,006-test packaged checkpoints. The merge procedure retains signed
+merge commits and requires protected-branch checks on each reviewed candidate;
+it does not use force pushes or administrative bypass. Original workspace changes
+remain untouched. This follow-up does not deploy, migrate production, enable
+collection or send Telegram messages; the release qualifications above remain open.

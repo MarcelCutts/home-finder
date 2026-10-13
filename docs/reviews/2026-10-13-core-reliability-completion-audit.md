@@ -6,16 +6,20 @@ The [execution record](../plans/2026-10-13-goal-driven-implementation.md) contai
 the research, decisions and intermediate test results. The original assessment
 remains the explanation of what is valuable and what should be deferred.
 
-**G1 complete within its defined offline scope:** 4,100 default tests pass with
-90.94% branch-enabled total coverage; all 63 dashboard browser tests pass.
+**Original G1 offline completion checkpoint:** 4,100 default tests passed with
+90.94% branch-enabled total coverage; all 63 dashboard browser tests passed.
 Lint, formatting, strict typing, release-artifact builds and historical-copy
-upgrade/restart checks pass. Protected deployment and live qualification remain
+upgrade/restart checks passed. Protected deployment and live qualification remain
 the separate work described below.
 
 These are the original G1 **workspace** totals, which include the pre-existing
-offline evaluation prototype. The [draft PR series record](2026-10-13-reliability-pr-series.md)
+offline evaluation prototype. The [PR series record](2026-10-13-reliability-pr-series.md)
 distinguishes validation of the isolated published tree and documents the
-pre-existing work intentionally excluded from its commits.
+pre-existing work intentionally excluded from its commits. Subsequent independent
+merge review found and corrected two regressions: promotion of queued homes lost
+enriched evidence, and alert suppression erased a recipient's saved cooldown.
+The series record separates those fixes and their final validation from the
+historical checkpoint results retained here.
 
 ## Architectural outcome
 
@@ -99,6 +103,10 @@ evidence that a new release would run scheduled collection.
   enrichment. Waiting retains cache, attempts and a `run_limit` event; reopening
   storage can drain the backlog without fresh discovery.
   [Admission/restart tests](../../tests/test_pipeline/test_enrichment_admission.py).
+- Merge review added [promotion regressions](../../tests/test_pipeline/test_enrichment_persistence.py):
+  enriched measurements and their provenance survive prequeueing, promotion and
+  restart, including floorplan-dropped multi-source homes. Sparse observations do
+  not erase retained evidence, owner history or spend records.
 
 **Disposition:** offline requirement met. This bounds homes, not every HTTP
 request. Live source access and parser support still need source-specific
@@ -192,7 +200,10 @@ relevance calibration remain subsequent evidence work.
 - [Delivery recovery tests](../../tests/test_notifiers/test_delivery_recovery.py)
   cover 429 delay, definitive rejection, response loss, changed assets, missing
   assets, cancellation, restart, incomplete receipts and recipient changes.
-  Acknowledged parts and plan assets remain authoritative.
+  Acknowledged parts and plan assets remain authoritative. The subsequent
+  [selection regressions](../../tests/test_notifiers/test_notification_selection.py)
+  verify that suppressing a rate-limited alert preserves the recipient's original
+  delay across restart, without blocking other recipients or extending its expiry.
 - The chosen uncertainty policy remains conservative: no automatic retry allowance
   exists to reset after restart. Local fenced reconciliation can acknowledge actual
   observed IDs, retry a confirmed-undelivered part, or suppress remaining parts.
@@ -218,11 +229,11 @@ bounded real bot/chat qualification; its removal is not silently counted as done
   and last-page clamping. A history-restore request receives a complete page even
   if both HTMX headers are present.
   [Database/HTTP regressions](../../tests/test_web/test_filter_navigation.py).
-- Applied server state updates controls, counts and badges. Valid bookmark values
-  outside compact menu options survive Apply. Reset, history restoration, native
-  numeric validation and correct `morph` registration are verified in the actual
-  [browser suite](../../tests/test_web/test_browser_e2e.py), including card DOM
-  identity and a working score popover after status mutation.
+- Applied server state updates controls, counts and badges. Tested bedroom and
+  fit-score bookmark values outside compact menu options survive Apply. Reset,
+  history restoration, native numeric validation and correct `morph` registration
+  are verified in the actual [browser suite](../../tests/test_web/test_browser_e2e.py),
+  including card DOM identity and a working score popover after status mutation.
 - The independent CLI flow followed page two, Back, Forward and mobile Reset all
   with 29 synthetic homes. It retained all tested controls, reported zero console
   errors/warnings and fit a 390 px viewport. Screenshots:
@@ -286,9 +297,11 @@ This adds a server round trip and preserves the current application stack.
   were stopped. At this G1 checkpoint no commit had been made; the subsequent
   draft PR series preserves the original workspace and excludes unrelated WIP.
 
-All G1 milestones and requirement entries above are satisfied by recorded local
-evidence. There are no waived test failures or unfinished G1 implementation tasks.
-The threshold, history-reload and conservative uncertainty decisions are explicit.
+At the original G1 checkpoint, the recorded local evidence satisfied its milestones
+without waived failures. The later merge review exposed the two missing regression
+cases described above; their fixes and corrected-candidate validation are recorded
+in the [PR series](2026-10-13-reliability-pr-series.md#merge-review-corrections-and-final-validation).
+The threshold, history-reload and conservative uncertainty decisions remain explicit.
 The original application stack, historical evidence and user work remain intact.
 
 ## Remaining qualifications and subsequent goals
