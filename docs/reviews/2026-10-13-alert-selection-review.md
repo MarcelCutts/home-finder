@@ -1,8 +1,8 @@
 # Score consistency and provisional alert selection
 
-13 October 2026. Historical evidence and rationale for the implemented notification selection policy. The complete architecture assessment and execution record follow in the final documentation PR.
+13 October 2026. Evidence for T07 of the [architecture assessment](2026-10-13-architecture-assessment-and-tasks.md), tracked under G1/M4 in the [execution plan](../plans/2026-10-13-goal-driven-implementation.md).
 
-**Decision: use 60 as the provisional default discovery threshold when the selection policy is implemented.** A home must first have a valid rated assessment without a recorded analysis failure. Archived or recorded off-market homes should not generate new alerts. Preserve every dashboard record and record the policy, score and reason for each notification decision. This is a product starting point, not a validated accuracy claim. At this checkpoint the score repairs are implemented; notification selection is still pending.
+**Decision: use 60 as the provisional default discovery threshold.** A home must first have a valid rated assessment without a recorded analysis failure. Archived, rejected or recorded off-market homes do not generate new alerts. Preserve every dashboard record and record the policy, score and reason for each notification decision. This is a product starting point, not a validated accuracy claim. Score normalization and durable notification selection are implemented; the later section records the policy replay.
 
 ## What changed in the score
 

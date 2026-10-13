@@ -297,7 +297,8 @@ reasons and existing notification statuses. It is a counterfactual review, not a
 forecast of the pending send queue or current market availability. The two historical
 snapshots reproduce 446/1,016 and 4/93 eligible homes at 60 after saved personal-state
 exclusions, with unchanged file hashes. Calibrate from future owner decisions; these
-different populations do not establish model accuracy or live alert volume. Complete protected-release and live-source qualification before release.
+different populations do not establish model accuracy or live alert volume. Follow
+the [execution plan](plans/2026-10-13-goal-driven-implementation.md) before release.
 
 ## Dashboard filters and navigation
 
