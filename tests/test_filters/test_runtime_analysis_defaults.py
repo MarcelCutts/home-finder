@@ -19,7 +19,12 @@ from home_finder.models.analysis import (
     ImageReviewCoverage,
     PhaseConfig,
 )
-from home_finder.models.spend import SONNET_55_STANDARD_RATES, SpendDeferred, SpendPolicy
+from home_finder.models.spend import (
+    SONNET_55_FIVE_MINUTE_RATES,
+    SONNET_55_STANDARD_RATES,
+    SpendDeferred,
+    SpendPolicy,
+)
 from tests.test_filters.test_analysis_spend import CONTENT, rows
 from tests.test_filters.test_quality import _populate_image_cache
 from tests.test_filters.test_sonnet55 import response
@@ -48,6 +53,8 @@ def test_settings_default_is_modern_bounded_and_not_spend_authorization(images, 
     assert AnalysisConfig.model_validate_json(config.model_dump_json()) == config
     assert SONNET_55_STANDARD_RATES.reservation(config.visual) == bound * 4000 + 81_920_000
     assert SONNET_55_STANDARD_RATES.reservation(config.evaluation) == 641_920_000
+    assert SONNET_55_FIVE_MINUTE_RATES.reservation(config.visual) == bound * 2500 + 81_920_000
+    assert SONNET_55_FIVE_MINUTE_RATES.reservation(config.evaluation) == 431_920_000
 
 
 def test_environment_fields_are_validated_before_runtime_defaults(monkeypatch):
@@ -286,8 +293,8 @@ async def test_new_settings_reach_both_native_phases_without_reducing_gallery(
         attempts = await rows(storage)
         assert [attempt["state"] for attempt in attempts] == ["settled", "settled"]
         assert [attempt["model"] for attempt in attempts] == ["claude-sonnet-5-5"] * 2
-        assert attempts[0]["reserved_nanousd"] == (719_920_000 if images == 8 else 983_920_000)
-        assert attempts[1]["reserved_nanousd"] == 641_920_000
+        assert attempts[0]["reserved_nanousd"] == (480_670_000 if images == 8 else 645_670_000)
+        assert attempts[1]["reserved_nanousd"] == 431_920_000
 
 
 @pytest.mark.parametrize("mode", ["missing_policy", "zero_policy", "oversized_input"])

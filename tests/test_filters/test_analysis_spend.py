@@ -171,7 +171,7 @@ async def test_ambiguous_outcome_does_not_repeat_even_with_a_new_client(budget, 
             await restarted._run_visual_analysis(CONTENT, "fixture:uncertain")
     assert calls == 1
     report = await storage.spend.report()
-    assert report["held_nanousd"] == 6_315_000_000
+    assert report["held_nanousd"] == 4_065_000_000
     assert len(report["unresolved"]) == 1 and report["unresolved"][0]["state"] == "unknown"
 
 
@@ -204,7 +204,7 @@ async def test_unknown_billing_preserves_reservation_and_request_id(budget, scen
         with pytest.raises(APIUnavailableError, match="unpriced_provider_response"):
             await q._run_visual_analysis(CONTENT, "fixture:billing")
     report = await storage.spend.report()
-    assert report["held_nanousd"] == 6_315_000_000
+    assert report["held_nanousd"] == 4_065_000_000
     assert report["unresolved"][0]["request_id"] == "unknown-fixture"
     assert (await rows(storage))[0]["settlement_json"] is None
 
@@ -393,7 +393,9 @@ async def test_all_processing_entry_points_defer_without_spending_or_losing_resu
 
 async def test_phase_two_needs_its_own_admission(budget, cached_analysis_property):
     storage, _ = budget
-    policy = SpendPolicy(per_call_usd="6.03", daily_usd="6.03", monthly_usd="6.03")
+    # This permits the 1,024-output-token visual phase but not evaluation's
+    # 4,096-token bound under the five-minute cache reservation policy.
+    policy = SpendPolicy(per_call_usd="3.78", daily_usd="3.78", monthly_usd="3.78")
     calls = []
 
     def respond(request):
@@ -426,7 +428,7 @@ async def test_provider_redirect_cannot_dispatch_a_second_unmetered_post(budget)
         with pytest.raises(APIUnavailableError):
             await q._run_visual_analysis(CONTENT, "fixture:redirect")
     assert len(calls) == 1 and str(calls[0].url).startswith("https://api.anthropic.com/")
-    assert (await storage.spend.report())["held_nanousd"] == 6_315_000_000
+    assert (await storage.spend.report())["held_nanousd"] == 4_065_000_000
 
 
 @pytest.mark.parametrize("boundary", ["admit", "settle_usage"])
@@ -444,7 +446,7 @@ async def test_ledger_failure_stops_sdk_retries(budget, monkeypatch, boundary):
             await q._run_visual_analysis(CONTENT, "fixture:ledger-failure")
     assert len(calls) == (0 if boundary == "admit" else 1)
     report = await storage.spend.report()
-    assert report["held_nanousd"] == (0 if boundary == "admit" else 6_315_000_000)
+    assert report["held_nanousd"] == (0 if boundary == "admit" else 4_065_000_000)
 
 
 async def test_uncharged_sdk_rejections_do_not_exhaust_future_paid_attempts(budget):
@@ -510,7 +512,7 @@ async def test_provider_timeout_drains_other_inflight_requests_without_cancellin
         )
     assert count == 1 and dispatched == 2
     assert [row["state"] for row in await rows(storage)] == ["unknown", "settled"]
-    assert (await storage.spend.report())["held_nanousd"] == 6_315_000_000
+    assert (await storage.spend.report())["held_nanousd"] == 4_065_000_000
     assert complete.await_args.args[0].unique_id == items[1].unique_id
 
 
@@ -571,7 +573,7 @@ async def test_failed_uncertainty_write_keeps_durable_hold_and_stops_processing(
                 await q._run_visual_analysis(CONTENT, "fixture:uncertainty-write")
     assert calls == 1
     report = await storage.spend.report()
-    assert report["held_nanousd"] == 6_315_000_000
+    assert report["held_nanousd"] == 4_065_000_000
     assert report["unresolved"][0]["state"] == "dispatched"
 
 

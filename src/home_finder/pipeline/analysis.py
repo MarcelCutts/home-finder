@@ -20,7 +20,7 @@ from home_finder.models import (
 from home_finder.models.spend import SpendDeferred
 from home_finder.pipeline.cache_recovery import repair_merged_image_caches
 from home_finder.pipeline.event_recorder import EventRecorder, PropertyEvent
-from home_finder.pipeline.runner import exclusive_runner
+from home_finder.pipeline.runner import exclusive_runner, recover_abandoned_spend
 from home_finder.pipeline.stages import PreAnalysisResult
 from home_finder.scrapers.detail_fetcher import DetailFetcher
 from home_finder.utils.image_cache import (
@@ -820,6 +820,8 @@ async def run_reanalysis(
 
         if request_only:
             return
+
+        await recover_abandoned_spend(storage)
 
         # Step 2: Load queue and re-enrich incomplete caches
         queue = (await storage.pipeline.get_reanalysis_queue())[: settings.max_analysis_per_run]

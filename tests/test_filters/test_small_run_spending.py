@@ -217,20 +217,21 @@ async def test_unknown_cost_holds_budget_and_no_retry(cached_analysis_property):
             with pytest.raises(APIUnavailableError):
                 await q._run_visual_analysis(body()["messages"][0]["content"], "fixture:unknown")
         assert calls == 1
-        assert (await storage.spend.report())["held_nanousd"] == 962_880_000
+        assert (await storage.spend.report())["held_nanousd"] == 647_880_000
         with pytest.raises(SpendDeferred, match="lifetime_limit"):
             await storage.spend.admit(spec("b"), policy())
 
 
 async def test_lifetime_cap_survives_restart_and_month_boundary(tmp_path):
     path = str(tmp_path / "smoke.db")
+    cap = policy(lifetime_usd="0.90")  # $0.30 settled plus $0.64788 reserved exceeds this.
     async with PropertyStorage(path) as storage:
         repo = SpendRepository(
             storage._read_connection,
             storage._transaction,
             clock=lambda: datetime(2026, 9, 30, tzinfo=UTC),
         )
-        attempt = await repo.admit(spec(), policy())
+        attempt = await repo.admit(spec(), cap)
         await repo.mark_dispatched(attempt)
         await repo.settle_usage(
             attempt,
@@ -245,4 +246,4 @@ async def test_lifetime_cap_survives_restart_and_month_boundary(tmp_path):
             clock=lambda: datetime(2026, 10, 1, tzinfo=UTC),
         )
         with pytest.raises(SpendDeferred, match="lifetime_limit"):
-            await repo.admit(spec("b"), policy())
+            await repo.admit(spec("b"), cap)

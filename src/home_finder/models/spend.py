@@ -92,6 +92,8 @@ class RateCard(BaseModel):
     version: Literal[
         "anthropic-sonnet-4-6-global-standard-2026-09-28-v1",
         "anthropic-sonnet-5-5-global-standard-2026-10-10-v1",
+        "anthropic-sonnet-4-6-global-standard-2026-10-13-v2",
+        "anthropic-sonnet-5-5-global-standard-2026-10-13-v2",
     ] = "anthropic-sonnet-4-6-global-standard-2026-09-28-v1"
     provider: Literal["anthropic"] = "anthropic"
     model: AnalysisModel = "claude-sonnet-4-6"
@@ -124,6 +126,14 @@ class RateCard(BaseModel):
                 100,
             ),
         }
+        # v2 changes reservation policy, not token tariffs. Keep v1 decoding and
+        # reservation calculations frozen for existing ledger evidence.
+        identities["anthropic-sonnet-4-6-global-standard-2026-10-13-v2"] = identities[
+            "anthropic-sonnet-4-6-global-standard-2026-09-28-v1"
+        ]
+        identities["anthropic-sonnet-5-5-global-standard-2026-10-13-v2"] = identities[
+            "anthropic-sonnet-5-5-global-standard-2026-10-10-v1"
+        ]
         if (
             self.model,
             self.input_nanousd,
@@ -135,6 +145,15 @@ class RateCard(BaseModel):
             raise ValueError("Rate card does not match its version and model")
         return self
 
+    @property
+    def reservation_cache_ttl(self) -> Literal["5m", "1h"]:
+        """Maximum cache-write price covered by this version's reservation.
+
+        New native requests enforce the same TTL before admission. Historical
+        v1 cards retain the more conservative one-hour bound.
+        """
+        return "5m" if self.version.endswith("-v2") else "1h"
+
     def cost(self, usage: BillableUsage) -> int:
         return (
             usage.input_tokens * self.input_nanousd
@@ -145,7 +164,7 @@ class RateCard(BaseModel):
         )
 
     def reservation(self, phase: PhaseConfig) -> int:
-        """Cover admitted input at the highest input rate, plus maximum output.
+        """Cover admitted input at the highest allowed rate, plus maximum output.
 
         The default reserves the full context. Smaller explicit limits require
         the local supported-payload admission policy; they are not a provider
@@ -157,9 +176,12 @@ class RateCard(BaseModel):
         # An explicit input limit is checked against the supported payload at
         # the native HTTP boundary. Older configurations keep the full context.
         input_bound = phase.input_token_limit or self.input_context_bound
-        return input_bound * self.cache_write_1h_nanousd + (
-            phase.max_output_tokens * self.output_nanousd
+        input_rate = (
+            self.cache_write_5m_nanousd
+            if self.reservation_cache_ttl == "5m"
+            else self.cache_write_1h_nanousd
         )
+        return input_bound * input_rate + phase.max_output_tokens * self.output_nanousd
 
 
 SONNET_STANDARD_RATES = RateCard()
@@ -174,9 +196,24 @@ SONNET_55_STANDARD_RATES = RateCard(
     cache_read_nanousd=100,
 )
 
+# https://platform.claude.com/docs/en/build-with-claude/prompt-caching (2026-10-13)
+# These versions require the coupled five-minute-only native request policy.
+SONNET_46_FIVE_MINUTE_RATES = RateCard.model_validate(
+    {
+        **SONNET_STANDARD_RATES.model_dump(),
+        "version": "anthropic-sonnet-4-6-global-standard-2026-10-13-v2",
+    }
+)
+SONNET_55_FIVE_MINUTE_RATES = RateCard.model_validate(
+    {
+        **SONNET_55_STANDARD_RATES.model_dump(),
+        "version": "anthropic-sonnet-5-5-global-standard-2026-10-13-v2",
+    }
+)
+
 
 def rate_card_for(model: str) -> RateCard:
-    for card in (SONNET_STANDARD_RATES, SONNET_55_STANDARD_RATES):
+    for card in (SONNET_46_FIVE_MINUTE_RATES, SONNET_55_FIVE_MINUTE_RATES):
         if model == card.model:
             return card
     raise ValueError("Unpriced model")

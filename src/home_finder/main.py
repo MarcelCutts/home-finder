@@ -33,7 +33,7 @@ from home_finder.pipeline.commands import (
     run_dedup_existing,
 )
 from home_finder.pipeline.event_recorder import EventRecorder, PropertyEvent
-from home_finder.pipeline.runner import exclusive_runner, runner_lock
+from home_finder.pipeline.runner import exclusive_runner, recover_abandoned_spend, runner_lock
 from home_finder.pipeline.scraping import (
     scrape_all_platforms,
 )
@@ -192,6 +192,7 @@ async def run_pipeline(
             When None (CLI mode), a fresh storage is created and closed.
     """
     if storage is not None:
+        await recover_abandoned_spend(storage)
         await _run_pipeline_with_storage(
             settings,
             storage,
@@ -202,6 +203,7 @@ async def run_pipeline(
         )
     else:
         async with PropertyStorage(settings.database_path) as own_storage:
+            await recover_abandoned_spend(own_storage)
             await _run_pipeline_with_storage(
                 settings,
                 own_storage,

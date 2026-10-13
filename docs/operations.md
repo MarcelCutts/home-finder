@@ -84,11 +84,13 @@ Choose per-call, daily and monthly amounts and a concurrency limit. Optional
 provider usage for the supported global standard Sonnet 4.6 and Sonnet 5.5 paths;
 they do not cover other billing accounts or independently issued requests.
 
-Historical or explicit profiles without an input limit reserve the full context
-and can exceed $6 per attempt. A $1 per-call cap defers such a request. Per-phase
+Profiles without an input limit reserve the full context. New requests can reserve
+up to $4.065 for Sonnet 4.6 or $2.71 for Sonnet 5.5; existing v1 ledger reservations
+retain their original, potentially larger amounts. A $1 per-call cap defers a
+full-context request. Per-phase
 `input_token_limit` values enable conservative admission of supported text/static
 image payloads. For Sonnet 4.6, setting both phases to 140,000 input tokens and
-8,192 maximum output tokens reserves $0.96288 **per attempt**; it does not guarantee
+8,192 maximum output tokens reserves $0.64788 **per attempt**; it does not guarantee
 a complete property fits a $1 daily cap. There are two phases and potentially a
 retry. Unsupported/oversized payloads are deferred. These are local admission
 bounds, not a provider-enforced dollar cap. Actual settled usage releases unused
@@ -108,8 +110,8 @@ current text/schema/framing and image payloads in offline fixtures across all
 supported image counts. The actual serialized request must still fit the bound;
 unusually large text, including Unicode-heavy payloads, can defer before dispatch.
 Evaluation has a 140,000-token input allowance. At 20 images the reservations
-are **$0.98392 visual** and **$0.64192 evaluation per attempt**. At 8 images the
-visual reservation is $0.71992. These reservations are not predicted charges or
+are **$0.64567 visual** and **$0.43192 evaluation per attempt**. At 8 images the
+visual reservation is $0.48067. These reservations are not predicted charges or
 new spend authorization. Explicit caps are still required; repeated application
 attempts remain subject to the existing durable attempt and budget limits.
 
@@ -132,10 +134,16 @@ HOME_FINDER_ANALYSIS_CONFIG={"version":1,"visual":{"model":"claude-sonnet-5-5","
 ```
 
 Legacy reservations and stored rate-card versions are unchanged; each attempt
-stores its own model and complete frozen tariff. Reservations include the highest
-cache-write rate and all possible output tokens.
+stores its own model and complete frozen tariff. New attempts use the 13 October
+2026 v2 cards: all admitted input is reserved at the five-minute cache-write price,
+plus all possible output tokens. The native request boundary enforces the same
+five-minute TTL in system, tool and message cache controls before reserving or
+dispatching; one-hour and unsupported cache controls are rejected. Omitted TTLs
+mean five minutes. Existing v1 cards retain their one-hour reservation calculation;
+their saved amounts are never recalculated. Cache hits do not reduce admission
+reservations. [Cache TTLs and pricing](https://platform.claude.com/docs/en/build-with-claude/prompt-caching).
 
-Published global standard prices, checked 10 October 2026, in USD per million tokens:
+Published global standard prices, checked 13 October 2026, in USD per million tokens:
 
 | Model | Input | Output (including thinking) | 5m cache write | 1h cache write | Cache read |
 |---|---:|---:|---:|---:|---:|
@@ -173,7 +181,7 @@ units remain unsupported and fail closed.
 Provider/account errors leave homes pending rather than spending their output
 failure allowances. Proven uncharged rejections remain in the audit but do not
 consume the paid-operation retry cap. Timeouts/disconnects may have been billed,
-so unknown attempts continue holding capacity. Inspect without loading secrets
+so unknown attempts continue holding financial allowance. Inspect without loading secrets
 or running migrations:
 
 ```bash
@@ -185,6 +193,24 @@ Reconcile uncertain charges only against provider billing evidence. Only a
 reservation that was never dispatched can be released without that evidence.
 Stop the runner before operator reconciliation. Do not erase accounting rows to
 re-enable calls. Offline tests establish code contracts, not live model quality.
+
+At the start of a full pipeline run or standalone analysis run, after acquiring
+the database's exclusive runner lock, execution recovery releases prior `reserved`
+attempts with `abandoned_before_dispatch` and moves prior `dispatched` attempts to
+`unknown` with `process_exit`. Dispatch is committed before any provider request,
+so only the first category has evidence of no dispatch. Both transitions commit
+together. Recovery happens once per ownership period and never uses elapsed time
+to declare a live owner dead. Existing unknown, settled and released rows retain
+their evidence. A request-only reanalysis command does not perform this recovery.
+
+An unknown attempt no longer occupies a concurrency slot, but its full original
+reservation remains in daily, monthly and lifetime exposure, across date boundaries.
+It still blocks the same operation until reconciled. Recovery does not invent usage,
+declare a possibly billed attempt free, or settle it at an assumed charge. Released
+attempts remain in the audit and the optional total-attempt cap still counts them.
+The read-only spend report includes `oldest_unresolved_at` and
+`oldest_unresolved_age_seconds`, measured from admission, alongside the individual
+held attempts. Neither an old timestamp nor a report read authorizes release.
 
 Successful visual observations are checkpointed in the same transaction as their
 usage receipt. Recovery reuses them only when the actual ordered image bytes,
