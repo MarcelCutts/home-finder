@@ -332,8 +332,10 @@ class DeliveryRepository:
             reason = decision.reason if decision.disposition == "dashboard_only" else None
         if reason is None:
             return False
+        # Suppression stops this alert, but Telegram's saved delay still gates
+        # every other alert to the same recipient until the original expiry.
         await conn.execute(
-            """UPDATE notification_deliveries SET state='suppressed',reason=?,retry_at=NULL,
+            """UPDATE notification_deliveries SET state='suppressed',reason=?,
                updated_at=CURRENT_TIMESTAMP WHERE event_key=?""",
             (reason, key),
         )

@@ -4,6 +4,7 @@ import json
 import sqlite3
 from collections import Counter
 from contextlib import closing
+from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, patch
 
 import aiosqlite
@@ -310,6 +311,69 @@ async def test_claim_rechecks_archive_after_planning(
     await storage.update_user_status(merged.unique_id, UserStatus.ARCHIVED)
     assert not await storage.deliveries.claim(row["event_key"], "123456:123", 0)
     assert (await storage.deliveries.get(row["event_key"]))["reason"] == "user_archived"
+
+
+@pytest.mark.parametrize("stopped", ["archived", "rejected", "off_market"])
+async def test_stopping_rate_limited_alert_preserves_recipient_delay_through_restart(
+    tmp_path, make_merged_property, make_quality_analysis, stopped
+):
+    path = str(tmp_path / "recipient-delay.db")
+    now = datetime(2026, 10, 13, tzinfo=UTC)
+    homes = [make_merged_property(source_id=f"delay-{index}") for index in range(3)]
+    first_plan = DeliveryPlan(
+        parts=(
+            DeliveryPart(method="message", payload={"text": "first"}),
+            DeliveryPart(method="message", payload={"text": "second"}),
+        )
+    )
+    other_plan = DeliveryPlan(parts=(DeliveryPart(method="message", payload={"text": "other"}),))
+    async with PropertyStorage(path) as storage:
+        storage.deliveries._clock = lambda: now
+        keys = []
+        for index, home in enumerate(homes):
+            row = await select(
+                storage, home, make_quality_analysis(), NotificationPolicy(min_fit_score=0)
+            )
+            keys.append(row["event_key"])
+            await storage.deliveries.prepare(
+                row["event_key"],
+                "123456:456" if index == 2 else "123456:123",
+                first_plan if index == 0 else other_plan,
+            )
+        assert await storage.deliveries.claim(keys[0], "123456:123", 0)
+        await storage.deliveries.acknowledge(keys[0], 0, [11])
+        assert await storage.deliveries.claim(keys[0], "123456:123", 1)
+        await storage.deliveries.fail(keys[0], 1, "waiting", "rate_limited", retry_after=60)
+        before = await storage.deliveries.get(keys[0])
+        assert not await storage.deliveries.claim(keys[1], "123456:123", 0)
+
+        if stopped == "off_market":
+            await storage.mark_off_market(homes[0].unique_id)
+        else:
+            await storage.update_user_status(homes[0].unique_id, UserStatus(stopped))
+        sender, bot = notifier(storage)
+        assert not await deliver(sender, storage.deliveries, keys[0])
+        assert not bot.mock_calls
+        after = await storage.deliveries.get(keys[0])
+        assert after["state"] == "suppressed"
+        for field in ("plan_json", "plan_sha256", "receipts_json", "next_part", "selection_json"):
+            assert after[field] == before[field]
+        assert not await storage.deliveries.claim(keys[1], "123456:123", 0)
+        assert after["retry_at"] == before["retry_at"]
+        # A server delay for one recipient must not stop another recipient.
+        assert await storage.deliveries.claim(keys[2], "123456:456", 0)
+        await storage.deliveries.acknowledge(keys[2], 0, [21])
+
+    async with PropertyStorage(path) as storage:
+        storage.deliveries._clock = lambda: now + timedelta(seconds=59)
+        await storage.deliveries.recover()
+        sender, bot = notifier(storage)
+        assert not await deliver(sender, storage.deliveries, keys[1])
+        assert not bot.mock_calls
+        storage.deliveries._clock = lambda: now + timedelta(seconds=60)
+        assert await deliver(sender, storage.deliveries, keys[1])
+        bot.send_message.assert_awaited_once()
+        assert await storage.deliveries.get(keys[0]) == after
 
 
 async def test_shadow_report_matches_admission_without_migrating_or_creating_intents(
