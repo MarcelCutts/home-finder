@@ -10,7 +10,7 @@ from home_finder.logging import get_logger
 from home_finder.models import MergedProperty, Property, PropertyImage, PropertySource
 from home_finder.models.listing_text import ListingTextEvidence, merge_listing_text
 from home_finder.utils.address import extract_outcode
-from home_finder.utils.image_cache import copy_cached_images, find_cached_file
+from home_finder.utils.image_cache import find_cached_file
 from home_finder.utils.image_hash import (
     fetch_image_hashes_batch,
     hash_cached_gallery,
@@ -413,14 +413,6 @@ class Deduplicator:
             floor_area_sqm=best_floor_area,
             floor_area_source=best_floor_source,
         )
-
-        # Consolidate image cache: copy cached files from secondary sources
-        # to the canonical's directory so quality analysis finds all images.
-        if self.data_dir:
-            canonical_id = canonical.unique_id
-            for mp in sorted_mps[1:]:
-                if mp.canonical.unique_id != canonical_id:
-                    copy_cached_images(self.data_dir, mp.canonical.unique_id, canonical_id)
 
         return result
 

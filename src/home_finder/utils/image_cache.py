@@ -1,8 +1,10 @@
 """Disk-based image cache for property images."""
 
 import hashlib
+import os
 import re
 import shutil
+import tempfile
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Final
@@ -106,6 +108,8 @@ def copy_cached_images(data_dir: str, from_id: str, to_id: str) -> int:
     """Copy all cached image files from one property to another.
 
     Skips files that already exist in the target directory (by filename).
+    Publish each complete copy atomically without replacing existing bytes.
+    Retain source files so committed memberships can repair an interrupted copy.
 
     Args:
         data_dir: Base data directory.
@@ -122,13 +126,29 @@ def copy_cached_images(data_dir: str, from_id: str, to_id: str) -> int:
     dst_dir.mkdir(parents=True, exist_ok=True)
     copied = 0
     for src_file in src_dir.iterdir():
-        if not src_file.is_file():
+        if not src_file.is_file() or src_file.name.startswith("."):
             continue
         dst_file = dst_dir / src_file.name
         if dst_file.exists():
             continue
-        shutil.copy2(src_file, dst_file)
-        copied += 1
+        # A partial file must never be mistaken for an immutable finished asset.
+        # The temporary file shares the destination filesystem; link publishes
+        # it atomically and refuses to replace a concurrently created target.
+        with tempfile.NamedTemporaryFile(dir=dst_dir, prefix=".cache-copy-", delete=False) as temp:
+            temp_path = Path(temp.name)
+            try:
+                with src_file.open("rb") as source:
+                    shutil.copyfileobj(source, temp)
+                temp.flush()
+                os.fsync(temp.fileno())
+                try:
+                    os.link(temp_path, dst_file)
+                except FileExistsError:
+                    pass
+                else:
+                    copied += 1
+            finally:
+                temp_path.unlink(missing_ok=True)
     if copied:
         logger.debug("cached_images_copied", from_id=from_id, to_id=to_id, count=copied)
     return copied
@@ -139,7 +159,7 @@ def is_property_cached(data_dir: str, unique_id: str) -> bool:
     cache_dir = get_cache_dir(data_dir, unique_id)
     if not cache_dir.is_dir():
         return False
-    return any(cache_dir.iterdir())
+    return any(path.is_file() and not path.name.startswith(".") for path in cache_dir.iterdir())
 
 
 def get_cached_image_path(

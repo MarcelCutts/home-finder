@@ -222,6 +222,71 @@ unexpected page callback exception is recorded as `page_error` without guessing
 whether transport or parsing caused it. Valid listings from a partial page remain
 available even when the run is unhealthy.
 
+`HOME_FINDER_MAX_ENRICHMENT_PER_RUN` limits detail enrichment to 75 homes by default
+(1–500). This limit is independent of paid-analysis slots. Oldest pending homes
+alternate with fresh discovery; waiting homes retain `pending_enrichment` state
+and an `enrichment_deferred` event with reason `run_limit`. New candidates are
+persisted before enrichment starts. Waiting consumes no enrichment attempt, and
+only selected retries have their stale enrichment cache cleared. The queue can
+drain after restart even if collection returns no new listings.
+
+Merge proposal construction reads cache files without copying them. After source
+ownership commits, missing assets can be reconstructed from retained source
+directories. Regular pipeline startup and the dedup maintenance command repair
+these copies; analysis and floorplan-drop persistence also repair accepted groups.
+Each copied file is published atomically and existing destination bytes are kept.
+Do not remove original source cache directories as routine merge cleanup: they
+are the recovery inputs if a process stops after database acceptance. This repairs
+missing copies; it does not certify or overwrite an already-corrupt old file.
+
+Each proposed group commits independently. A refused merge returns structured
+blockers and records `persistence_refused`; its original fields and memberships
+remain intact while accepted neighboring groups progress. Analysis admission uses
+the accepted groups only. A stale proposal cannot take its canonical source back
+from a home that already owns it.
+
+Processing, market availability, personal decisions and delivery are independent:
+
+| Axis | Current transition rules |
+| --- | --- |
+| Availability | Received source observations update market state; a parser failure or processing stop does not establish off-market status. |
+| Detail processing | Pending homes consume bounded enrichment slots; failed attempts accumulate, and reaching the configured retry limit marks details failed. Waiting at the run cap consumes no attempt. Floorplan exclusions retain their evidence. |
+| Assessment processing | Initial failures accumulate up to three. A paid operation's own retry ceiling is also terminal. Migration 13 records the reason and timestamp separately; queues skip that work. Global budgets, concurrency and unresolved charges remain deferrals. |
+| Personal status | The owner's interested/archived/etc. decision and history survive processing failures and source merges. |
+| Delivery | An exhausted assessment never counts as sent. Existing delivery state and receipts survive a stopped refresh; acknowledged parts remain authoritative. |
+
+The dashboard labels exhausted initial assessments as “Assessment attempts
+exhausted” and stopped refreshes as “Assessment refresh stopped”, retaining any
+previous useful assessment. Re-presenting a stopped home or requesting the same
+refresh does not reset its counters or bypass the ledger. Inspect the recorded
+cause before changing inputs or policy; do not erase attempt rows to resume work.
+
+Migration 14 adds a detail-recovery grant for retained, unassessed homes. Accepting
+a new source membership can queue a dropped or detail-failed anchor in the same
+transaction as the merge. The original identity, owner decision and counters
+remain. The existing enrichment cap schedules it; successful processing or one
+recorded failure consumes the grant. A failed recovery returns to `failed`, even
+if its older counter was below the normal retry limit. Replaying the same source
+membership does not renew it. Pending recovery anchors remain identity anchors
+and cannot be retired as disposable staging rows.
+
+For a corrected parser or newly confirmed evidence on an existing source, queue
+up to 20 explicit homes without scraping, analysis or sending messages:
+
+```bash
+uv run python -m home_finder.pipeline.recovery_admin \
+  --database data/properties.db \
+  --property-id 'openrent:1234567' \
+  --reason 'New floorplan confirmed'
+```
+
+Repeat `--property-id` for additional selected homes. The command refuses an
+active runner and reports each requested/refused ID. It initializes the current
+schema, so take the normal pre-upgrade backup first. Existing assessments,
+delivery history and exhausted analysis are refused; use their separate review
+paths. The next regular pipeline run processes an accepted request. Interrupted
+processing retains the grant until an outcome is recorded; request replay is
+idempotent. Recovery never resets cumulative detail or paid-attempt counts.
 
 One supported active layout is a single Linux host with the locked runtime
 (`uv sync --locked --no-dev`), the owner dashboard and one database:

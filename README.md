@@ -190,6 +190,7 @@ Create a `.env` file with these settings (all use `HOME_FINDER_` prefix):
 - `HOME_FINDER_ANALYSIS_CONFIG`: Optional phase overrides merged onto the bounded Sonnet 5.5 runtime profile: low effort, 8,192 output tokens and no SDK retries. `{}` retains those defaults; top-level `null` is rejected. Stored historical profiles remain unchanged. See [paid analysis](docs/operations.md#runtime-model-defaults). Spend caps remain required.
 - `HOME_FINDER_ENABLE_IMAGE_HASH_MATCHING`: Enable perceptual image hashing for deduplication (default: true)
 - `HOME_FINDER_MAX_ENRICHMENT_ATTEMPTS`: Max enrichment retry attempts before giving up on a property, 1-10 (default: 3)
+- `HOME_FINDER_MAX_ENRICHMENT_PER_RUN`: Maximum homes to enrich per run, 1-500 (default: 75). Recovery and discovery share the slots; excess homes remain queued without consuming attempts.
 
 ### Search Criteria
 

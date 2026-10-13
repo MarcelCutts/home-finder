@@ -18,6 +18,7 @@ from home_finder.models import (
     TransportMode,
 )
 from home_finder.models.spend import SpendDeferred
+from home_finder.pipeline.cache_recovery import repair_merged_image_caches
 from home_finder.pipeline.event_recorder import EventRecorder, PropertyEvent
 from home_finder.pipeline.runner import exclusive_runner
 from home_finder.pipeline.stages import PreAnalysisResult
@@ -61,6 +62,31 @@ class AnalysisDisposition(StrEnum):
     COMPLETED = "completed"
     DEFERRED = "deferred"
     FAILED = "failed"
+
+
+class _AnalysisExhausted(Exception):
+    """An operation retry ceiling needs review, rather than another scheduled attempt."""
+
+    def __init__(self, property_id: str) -> None:
+        self.property_id = property_id
+        super().__init__("paid_operation_attempt_limit")
+
+
+async def _analyze_with_spend_disposition(
+    quality_filter: PropertyQualityFilter,
+    merged: MergedProperty,
+    settings: Settings,
+    storage: PropertyStorage,
+) -> tuple[MergedProperty, PropertyQualityAnalysis | None]:
+    try:
+        return await quality_filter.analyze_single_merged(merged, data_dir=settings.data_dir)
+    except SpendDeferred as exc:
+        if exc.reason != "attempt_limit":
+            raise
+        await storage.pipeline.mark_analysis_exhausted(
+            merged.unique_id, "paid_operation_attempt_limit"
+        )
+        raise _AnalysisExhausted(merged.unique_id) from exc
 
 
 _OnAnalysisResult = Callable[
@@ -294,6 +320,15 @@ async def _run_concurrent_analysis(
                 if on_error:
                     on_error()
                 continue
+            except _AnalysisExhausted as exc:
+                logger.warning(
+                    "analysis_exhausted",
+                    property_id=exc.property_id,
+                    reason="paid_operation_attempt_limit",
+                )
+                if on_error:
+                    on_error()
+                continue
             except SpendDeferred as exc:
                 logger.info("analysis_admission_deferred", reason=exc.reason)
                 if on_deferred:
@@ -352,7 +387,24 @@ async def _run_quality_and_save(
         Tuple of (number of properties processed, token usage or None).
     """
     # Save all properties to DB before analysis (crash recovery checkpoint)
-    await storage.pipeline.save_pre_analysis_properties(pre.merged_to_process, pre.commute_lookup)
+    proposed_ids = {m.unique_id for m in pre.merged_to_process}
+    persisted = await storage.pipeline.save_pre_analysis_properties(
+        pre.merged_to_process, pre.commute_lookup
+    )
+    if recorder is not None:
+        for merged in pre.merged_to_process:
+            if merged.unique_id in persisted.refused:
+                recorder.record(
+                    PropertyEvent(
+                        merged.unique_id,
+                        merged.canonical.source.value,
+                        "persistence_refused",
+                        "analysis",
+                        {"reason": "merge_review", "blockers": persisted.refused[merged.unique_id]},
+                    )
+                )
+        await recorder.flush()
+    pre.merged_to_process = persisted.accepted
 
     # Reset properties with fallback analysis (API failed previously)
     # so they get re-analyzed this run
@@ -362,9 +414,8 @@ async def _run_quality_and_save(
         logger.info("reset_failed_analyses_for_retry", count=reset_count)
 
     # Load any pending_analysis properties from previous crashed runs
-    current_ids = {m.unique_id for m in pre.merged_to_process}
     pending_from_prev = await storage.pipeline.get_pending_analysis_properties(
-        exclude_ids=current_ids
+        exclude_ids=proposed_ids
     )
     retried = list(pending_from_prev)
     if retried:
@@ -392,6 +443,9 @@ async def _run_quality_and_save(
     if not all_to_analyze:
         return 0, None
 
+    await repair_merged_image_caches(
+        storage, settings.data_dir, [m.unique_id for m in all_to_analyze]
+    )
     if use_quality:
         _warn_if_spending_unconfigured(settings)
 
@@ -412,7 +466,19 @@ async def _run_quality_and_save(
         ) -> tuple[MergedProperty, PropertyQualityAnalysis | None]:
             if qf:
                 try:
-                    return await qf.analyze_single_merged(merged, data_dir=settings.data_dir)
+                    return await _analyze_with_spend_disposition(qf, merged, settings, storage)
+                except _AnalysisExhausted:
+                    if recorder is not None:
+                        recorder.record(
+                            PropertyEvent(
+                                merged.unique_id,
+                                merged.canonical.source.value,
+                                "analysis_exhausted",
+                                "analysis",
+                                {"reason": "paid_operation_attempt_limit"},
+                            )
+                        )
+                    raise
                 except SpendDeferred as exc:
                     if recorder is not None:
                         recorder.record(
@@ -448,10 +514,14 @@ async def _run_quality_and_save(
                     and quality_analysis.analysis_failure is not None
                     else None
                 )
+                exhausted = False
                 if quality_analysis is not None:
-                    await storage.pipeline.record_analysis_failure(merged.unique_id)
+                    exhausted = await storage.pipeline.record_analysis_failure(merged.unique_id)
+                event = "analysis_exhausted" if exhausted else "analysis_deferred"
+                if exhausted:
+                    reason = "initial_failure_limit"
                 logger.info(
-                    "analysis_deferred",
+                    event,
                     property_id=merged.unique_id,
                     reason=reason,
                     failure=failure_meta,
@@ -461,7 +531,7 @@ async def _run_quality_and_save(
                         PropertyEvent(
                             merged.unique_id,
                             merged.canonical.source.value,
-                            "analysis_deferred",
+                            event,
                             "analysis",
                             {
                                 "reason": reason,
@@ -497,6 +567,9 @@ async def _run_quality_and_save(
                 )
             return AnalysisDisposition.COMPLETED
 
+        async def _record_timeout(property_id: str) -> None:
+            await storage.pipeline.record_analysis_failure(property_id)
+
         return await _run_concurrent_analysis(
             all_to_analyze,
             _analyze,
@@ -505,7 +578,7 @@ async def _run_quality_and_save(
             per_property_timeout=settings.property_analysis_timeout,
             breaker_log_event="api_circuit_breaker_activated",
             error_log_event="property_processing_failed",
-            on_timeout=storage.pipeline.record_analysis_failure if qf is not None else None,
+            on_timeout=_record_timeout if qf is not None else None,
         )
 
     token_usage: TokenUsage | None = None
@@ -587,6 +660,7 @@ async def _re_enrich_incomplete(
     if not settings.data_dir:
         return queue
 
+    await repair_merged_image_caches(storage, settings.data_dir, [m.unique_id for m in queue])
     # Find properties with incomplete caches
     incomplete: list[MergedProperty] = []
     for merged in queue:
@@ -680,7 +754,7 @@ async def _drain_reanalysis_queue(
         async def _analyze(
             merged: MergedProperty,
         ) -> tuple[MergedProperty, PropertyQualityAnalysis | None]:
-            return await quality_filter.analyze_single_merged(merged, data_dir=settings.data_dir)
+            return await _analyze_with_spend_disposition(quality_filter, merged, settings, storage)
 
         async def _handle_result(
             merged: MergedProperty,
@@ -782,8 +856,8 @@ async def run_reanalysis(
             async def _analyze(
                 merged: MergedProperty,
             ) -> tuple[MergedProperty, PropertyQualityAnalysis | None]:
-                return await quality_filter.analyze_single_merged(
-                    merged, data_dir=settings.data_dir
+                return await _analyze_with_spend_disposition(
+                    quality_filter, merged, settings, storage
                 )
 
             async def _handle_result(

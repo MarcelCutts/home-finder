@@ -282,3 +282,54 @@ async def test_successful_cross_run_retains_original_cache_for_recovery(
     assert await db.get_property(pending.unique_id) is None
     assert path.read_bytes() == b"retained fixture bytes"
     assert any(get_cache_dir(str(tmp_path), anchor.unique_id).iterdir())
+
+
+async def test_rejected_proposal_never_changes_cache_files(
+    in_memory_storage, proposed_merge, tmp_path
+):
+    from home_finder.filters.deduplication import Deduplicator
+    from home_finder.utils.image_cache import get_cache_dir, save_image_bytes
+
+    anchor, pending, _ = proposed_merge
+    pending_path = get_cache_dir(str(tmp_path), pending.unique_id) / "gallery_000_abcdef12.jpg"
+    save_image_bytes(pending_path, b"unaccepted source")
+    await in_memory_storage.mark_notified(pending.unique_id)
+    before = await snapshot(in_memory_storage)
+    proposal = Deduplicator(data_dir=str(tmp_path))._merge_merged_properties([anchor, pending])
+    with pytest.raises(MergeBlockedError):
+        await in_memory_storage.absorb_staging_properties(
+            anchor.unique_id, proposal, absorbed_ids=[pending.unique_id]
+        )
+    assert await snapshot(in_memory_storage) == before
+    assert pending_path.read_bytes() == b"unaccepted source"
+    assert not get_cache_dir(str(tmp_path), anchor.unique_id).exists()
+
+
+async def test_committed_merge_repairs_cache_without_repeating_the_merge(
+    in_memory_storage, proposed_merge, tmp_path, monkeypatch
+):
+    from home_finder.pipeline.cache_recovery import repair_merged_image_caches
+    from home_finder.utils.image_cache import get_cache_dir, save_image_bytes
+
+    db = in_memory_storage
+    anchor, pending, combined = proposed_merge
+    path = get_cache_dir(str(tmp_path), pending.unique_id) / "gallery_000_abcdef12.jpg"
+    save_image_bytes(path, b"accepted source bytes")
+    dedup = AsyncMock()
+    dedup.deduplicate_merged_async.return_value = [combined]
+
+    def interrupted(*args):
+        raise OSError("interrupted after commit")
+
+    monkeypatch.setattr("home_finder.pipeline.stages.copy_cached_images", interrupted)
+    with pytest.raises(OSError, match="interrupted after commit"):
+        await _cross_run_deduplicate(
+            dedup, [pending], db, {pending.unique_id}, data_dir=str(tmp_path)
+        )
+    assert await db.get_property(pending.unique_id) is None
+    before = await snapshot(db)
+    assert await repair_merged_image_caches(db, str(tmp_path)) == 1
+    assert await repair_merged_image_caches(db, str(tmp_path)) == 0
+    assert await snapshot(db) == before
+    target = get_cache_dir(str(tmp_path), anchor.unique_id) / path.name
+    assert target.read_bytes() == path.read_bytes() == b"accepted source bytes"

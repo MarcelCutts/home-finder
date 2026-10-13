@@ -11,6 +11,7 @@ from home_finder.filters import CommuteFilter, Deduplicator
 from home_finder.logging import get_logger
 from home_finder.models import CommuteResult
 from home_finder.models.commute import commute_minutes_projection
+from home_finder.pipeline.cache_recovery import repair_merged_image_caches
 from home_finder.pipeline.runner import exclusive_runner
 from home_finder.utils.image_cache import copy_cached_images
 
@@ -256,6 +257,7 @@ async def run_dedup_existing(settings: Settings) -> None:
     records keep their identity and history; ambiguous groups are reported.
     """
     async with PropertyStorage(settings.database_path) as storage:
+        await repair_merged_image_caches(storage, settings.data_dir)
         established = await storage.get_recent_properties_for_dedup(days=None)
         established_ids = {merged.unique_id for merged in established}
         # Reuse the retry queue: these are the pending rows this command can

@@ -847,6 +847,34 @@ async def migrate_012_notification_deliveries(conn: aiosqlite.Connection) -> Non
     await record_legacy_deliveries(conn)
 
 
+async def migrate_013_analysis_exhaustion(conn: aiosqlite.Connection) -> None:
+    """Make exhausted processing explicit without rewriting delivery or personal state."""
+    columns = {
+        row[1] for row in await (await conn.execute("PRAGMA table_info(properties)")).fetchall()
+    }
+    for column in ("analysis_exhausted_reason", "analysis_exhausted_at"):
+        if column not in columns:
+            await conn.execute(f"ALTER TABLE properties ADD COLUMN {column} TEXT")
+    await conn.execute(
+        """UPDATE properties
+           SET analysis_exhausted_reason = 'initial_failure_limit',
+               analysis_exhausted_at = CURRENT_TIMESTAMP
+           WHERE notification_status = 'pending_analysis'
+             AND analysis_exhausted_reason IS NULL
+             AND COALESCE(analysis_attempts, 0) >= 3"""
+    )
+
+
+async def migrate_014_enrichment_recovery(conn: aiosqlite.Connection) -> None:
+    """Persist a bounded recovery grant independently of accumulated attempt counters."""
+    columns = {
+        row[1] for row in await (await conn.execute("PRAGMA table_info(properties)")).fetchall()
+    }
+    for column in ("enrichment_recovery_requested_at", "enrichment_recovery_reason"):
+        if column not in columns:
+            await conn.execute(f"ALTER TABLE properties ADD COLUMN {column} TEXT")
+
+
 _MigrationFn = Callable[[aiosqlite.Connection], Coroutine[Any, Any, None]]
 
 MIGRATIONS: list[_MigrationFn] = [
@@ -862,6 +890,8 @@ MIGRATIONS: list[_MigrationFn] = [
     migrate_010_floorplan_origin,
     migrate_011_visual_checkpoints,
     migrate_012_notification_deliveries,
+    migrate_013_analysis_exhaustion,
+    migrate_014_enrichment_recovery,
 ]
 
 

@@ -240,6 +240,10 @@ async def test_failed_initial_analysis_has_bounded_attempts_and_no_delivery(
         await storage.get_property(pending.unique_id)
     ).notification_status.value == "pending_analysis"
     assert await storage.get_quality_analysis(pending.unique_id) is None
+    detail = await storage.web.get_property_detail(pending.unique_id)
+    assert detail["analysis_exhausted_reason"] == "initial_failure_limit"
+    assert detail["processing_state"] == "analysis_exhausted"
+    assert (await storage.web.get_processing_counts())["analysis_exhausted"] == 1
     notifier.send_merged_property_notification.assert_not_awaited()
     notifier.send_property_notification.assert_not_awaited()
 
@@ -397,4 +401,79 @@ async def test_missing_notification_images_are_not_marked_sent(storage, make_mer
     callback = _make_notify_callback(notifier, storage, [0])
     await callback(merged, None, None)
     assert (await storage.get_property(merged.unique_id)).notification_status.value == "pending"
+    notifier.send_merged_property_notification.assert_not_awaited()
+
+
+@pytest.mark.parametrize(
+    "reason",
+    [
+        "attempt_limit",
+        "daily_limit",
+        "concurrency_limit",
+        "operation_unresolved",
+        "total_attempt_limit",
+    ],
+)
+async def test_only_property_operation_ceiling_becomes_terminal(
+    storage, settings, boundaries, make_merged_property, reason
+):
+    _, quality, _ = boundaries
+    merged = make_merged_property(images=gallery())
+    await storage.pipeline.save_pre_analysis_properties([merged], {})
+    quality.analyze_single_merged.side_effect = SpendDeferred(reason)
+    for _ in range(3):
+        await _run_pipeline_with_storage(settings, storage)
+    terminal = reason == "attempt_limit"
+    assert quality.analyze_single_merged.await_count == (1 if terminal else 3)
+    async with storage._read_connection() as conn:
+        row = await (
+            await conn.execute("SELECT * FROM properties WHERE unique_id=?", (merged.unique_id,))
+        ).fetchone()
+        deliveries = await (await conn.execute("SELECT * FROM notification_deliveries")).fetchall()
+    assert row["analysis_exhausted_reason"] == (
+        "paid_operation_attempt_limit" if terminal else None
+    )
+    assert bool(row["analysis_exhausted_at"]) == terminal
+    assert row["analysis_attempts"] == 0
+    assert row["notification_status"] == "pending_analysis"
+    assert row["user_status"] == "new"
+    assert deliveries == []
+    detail = await storage.web.get_property_detail(merged.unique_id)
+    assert detail["processing_state"] == (
+        "analysis_exhausted" if terminal else "awaiting_assessment"
+    )
+    if terminal:
+        # Re-presenting the same work cannot bypass its recorded stop.
+        result = await storage.pipeline.save_pre_analysis_properties([merged], {})
+        assert not result.accepted
+        assert result.refused[merged.unique_id][merged.unique_id] == ["analysis_attempts_exhausted"]
+        assert await storage.pipeline.get_pending_analysis_properties() == []
+
+
+async def test_exhausted_refresh_preserves_delivered_assessment_and_request(
+    storage, settings, boundaries, make_merged_property, make_quality_analysis
+):
+    notifier, quality, _ = boundaries
+    merged = make_merged_property(images=gallery())
+    await storage.pipeline.save_pre_analysis_properties([merged], {})
+    analysis = make_quality_analysis(rating=5)
+    await storage.pipeline.complete_analysis(merged.unique_id, analysis)
+    await storage.mark_notified(merged.unique_id)
+    await storage.pipeline.request_reanalysis([merged.unique_id])
+    async with storage._read_connection() as conn:
+        before = dict(await (await conn.execute("SELECT * FROM quality_analyses")).fetchone())
+    quality.analyze_single_merged.side_effect = SpendDeferred("attempt_limit")
+    for _ in range(3):
+        await _run_pipeline_with_storage(settings, storage)
+    assert quality.analyze_single_merged.await_count == 1
+    async with storage._read_connection() as conn:
+        after = dict(await (await conn.execute("SELECT * FROM quality_analyses")).fetchone())
+    assert after == before
+    assert (await storage.get_quality_analysis(merged.unique_id)).overall_rating == 5
+    assert (await storage.get_property(merged.unique_id)).notification_status.value == "sent"
+    assert await storage.pipeline.get_reanalysis_queue() == []
+    detail = await storage.web.get_property_detail(merged.unique_id)
+    assert detail["processing_state"] == "analysis_exhausted"
+    assert detail["processing_label"] == "Assessment refresh stopped"
+    assert detail["reanalysis_requested_at"] is not None
     notifier.send_merged_property_notification.assert_not_awaited()

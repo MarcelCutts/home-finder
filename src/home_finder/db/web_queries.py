@@ -93,7 +93,12 @@ _QUALITY_FIELD_DEFAULTS: dict[str, Any] = {
 def _add_processing_state(prop: dict[str, Any]) -> None:
     """Describe recorded processing state, independently of the owner's triage status."""
     prop["is_assessed"] = bool(prop["is_assessed"])
-    if prop.get("notification_status") == "dropped":
+    if prop.get("analysis_exhausted_reason"):
+        state = "analysis_exhausted"
+        label = (
+            "Assessment refresh stopped" if prop["is_assessed"] else "Assessment attempts exhausted"
+        )
+    elif prop.get("notification_status") == "dropped":
         state, label = "excluded", "Excluded from search"
     elif prop.get("reanalysis_requested_at") and prop["is_assessed"]:
         state, label = "refresh_requested", "Assessment refresh requested"
@@ -543,6 +548,7 @@ class WebQueryService:
         async with self._read_connection() as conn:
             cursor = await conn.execute(
                 f"SELECT p.notification_status, p.enrichment_status, p.analysis_attempts, "
+                f"p.analysis_exhausted_reason, "
                 f"q.reanalysis_requested_at, q.analysis_json IS NOT NULL as analysis_json, "
                 f"{_ASSESSED_SQL} as is_assessed "
                 f"{_CARD_JOINS}"
