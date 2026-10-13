@@ -24,8 +24,8 @@
                         {% endfor %}
                     </fieldset>
 
-                    <input type="number" name="min_price" placeholder="Min price" value="{{ min_price or '' }}" aria-label="Min price" step="50">
-                    <input type="number" name="max_price" placeholder="Max price" value="{{ max_price or '' }}" aria-label="Max price" step="50">
+                    <input type="number" name="min_price" placeholder="Min price" value="{{ min_price if min_price is not none else '' }}" aria-label="Min price" step="1">
+                    <input type="number" name="max_price" placeholder="Max price" value="{{ max_price if max_price is not none else '' }}" aria-label="Max price" step="1">
 
                     <select name="min_fit_score" aria-label="Min fit score">
                         <option value="">Any fit</option>
@@ -105,13 +105,10 @@
                     <option value="longest_listed" {% if sort == "longest_listed" %}selected{% endif %}>First observed: oldest</option>
                 </select>
 
-                <button type="button" id="open-filters-btn" class="filter-modal-btn">Filters{% if secondary_filter_count %} <span class="filter-badge">{{ secondary_filter_count }}</span>{% endif %}</button>
+                <button type="button" id="open-filters-btn" class="filter-modal-btn">Filters <span class="filter-badge" {% if not secondary_filter_count %}hidden{% endif %}>{{ secondary_filter_count }}</span></button>
 
                 <button type="submit" class="secondary">Apply</button>
-                {% if active_filters %}
-                <a href="/" role="button" class="outline secondary filter-reset"
-                   hx-get="/" hx-target="#results" hx-push-url="true" hx-indicator="#loading">Reset</a>
-                {% endif %}
+                <a href="/" role="button" class="outline secondary filter-reset" {% if not active_filters %}hidden{% endif %}>Reset</a>
             </div>
         </div>
         <div class="filter-toolbar">
@@ -202,7 +199,7 @@
                             <option value="{{ l }}" {% if natural_light == l %}selected{% endif %}>{{ l | title }} light</option>
                             {% endfor %}
                         </select>
-                        <input type="number" name="min_floor_area_sqm" placeholder="Min m² total" value="{{ min_floor_area_sqm or '' }}" aria-label="Minimum total floor area" step="5" min="15" max="200">
+                        <input type="number" name="min_floor_area_sqm" placeholder="Min m² total" value="{{ min_floor_area_sqm or '' }}" aria-label="Minimum total floor area" step="1" min="15" max="200">
                         <input type="number" name="min_living_room_sqm" placeholder="Min m² living room" value="{{ min_living_room_sqm or '' }}" aria-label="Minimum living room size" step="1" min="5" max="60">
                         <select name="floor_level" aria-label="Floor level">
                             <option value="">Any floor</option>
@@ -238,12 +235,11 @@
                             <option value="">Pets</option>
                             <option value="yes" {% if pets == "yes" %}selected{% endif %}>Pets allowed</option>
                         </select>
-                    </div>
-                    <div class="tag-chips-wrap">
-                        <label class="tag-chip">
-                            <input type="checkbox" name="off_market" value="show" class="sr-only" {% if off_market == "show" %}checked{% endif %}>
-                            Include off-market
-                        </label>
+                        <select name="off_market" aria-label="Market status">
+                            <option value="">Hide off-market</option>
+                            <option value="show" {% if off_market == 'show' %}selected{% endif %}>Include off-market</option>
+                            <option value="only" {% if off_market == 'only' %}selected{% endif %}>Off-market only</option>
+                        </select>
                     </div>
                 </fieldset>
 

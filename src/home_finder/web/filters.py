@@ -267,6 +267,16 @@ class PropertyFilter(BaseModel):
 
     # --- convenience methods ---
 
+    def query_params(self) -> list[tuple[str, str]]:
+        """Serialize validated fields, preserving zero and repeated tag parameters."""
+        params: list[tuple[str, str]] = []
+        for name, value in self.model_dump().items():
+            if name == "tags":
+                params.extend(("tag", tag) for tag in value)
+            elif value is not None:
+                params.append((name, str(value)))
+        return params
+
     def active_filter_chips(self) -> list[dict[str, str]]:
         """Build filter chip descriptors for template rendering."""
         chips: list[dict[str, str]] = []

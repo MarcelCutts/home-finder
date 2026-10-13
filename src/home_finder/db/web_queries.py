@@ -348,11 +348,12 @@ def build_filter_clauses(
             if t == PropertyLowlight.NO_OUTDOOR_SPACE:
                 where_clauses.append(f"{_OUTDOOR_AVAILABILITY_SQL} = 'no'")
             where_clauses.append(
-                "(json_extract(q.analysis_json, '$.highlights') LIKE ?"
-                " OR json_extract(q.analysis_json, '$.lowlights') LIKE ?)"
+                "(EXISTS (SELECT 1 FROM json_each(q.analysis_json, '$.highlights') "
+                "WHERE type='text' AND value=?) "
+                "OR EXISTS (SELECT 1 FROM json_each(q.analysis_json, '$.lowlights') "
+                "WHERE type='text' AND value=?))"
             )
-            escaped = t.replace("%", "\\%").replace("_", "\\_")
-            params.extend([f"%{escaped}%", f"%{escaped}%"])
+            params.extend([t, t])
 
     # Off-market filter: default hides off-market, "show" shows all, "only" shows only off-market
     if filters.off_market == "only":

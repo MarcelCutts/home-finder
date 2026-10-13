@@ -3,6 +3,7 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="htmx-config" content='{"historyCacheSize":0,"refreshOnHistoryMiss":true,"historyRestoreAsHxRequest":false}'>
     <title>{% block title %}I Hate Moving{% endblock %}</title>
 
     <!-- Branding -->
@@ -33,7 +34,7 @@
     <link rel="stylesheet" href="/static/framework-imports.css?v={{ static_version }}">
     <link rel="stylesheet" href="/static/style.css?v={{ static_version }}">
 </head>
-<body hx-ext="response-targets,idiomorph">
+<body hx-ext="response-targets,morph">
     <a href="#main-content" class="skip-link">Skip to content</a>
     <nav class="container-fluid">
         <ul>

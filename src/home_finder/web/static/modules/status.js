@@ -1,16 +1,13 @@
-// Dashboard status filter: option selection business logic
-// Toggle/outside-click/Escape handled by native popover; this handles option -> hidden input -> form submit
-document.addEventListener("click", function (e) {
-  const option = e.target.closest(".status-filter-option");
-  if (!option) return;
-
-  const filter = option.closest(".status-filter");
+// Keep the status label consistent with the form after selection or filter restoration.
+function renderStatusFilter(filter) {
   const trigger = filter.querySelector(".status-filter-trigger");
   const hiddenInput = filter.querySelector('input[name="status"]');
   if (!trigger || !hiddenInput) return;
-
-  const value = option.dataset.statusValue;
-  hiddenInput.value = value;
+  const value = hiddenInput.value;
+  const option = [...filter.querySelectorAll(".status-filter-option")].find(
+    item => item.dataset.statusValue === value
+  );
+  if (!option) return;
 
   // Update trigger appearance
   const color = option.style.getPropertyValue("--option-color") || "#888";
@@ -51,6 +48,22 @@ document.addEventListener("click", function (e) {
   for (let i = 0; i < allOptions.length; i++) {
     allOptions[i].classList.toggle("active", allOptions[i].dataset.statusValue === value);
   }
+}
+
+document.addEventListener("filters:restored", function () {
+  const filter = document.querySelector(".status-filter");
+  if (filter) renderStatusFilter(filter);
+});
+
+// Toggle/outside-click/Escape handled by native popover.
+document.addEventListener("click", function (e) {
+  const option = e.target.closest(".status-filter-option");
+  if (!option) return;
+  const filter = option.closest(".status-filter");
+  const hiddenInput = filter.querySelector('input[name="status"]');
+  if (!hiddenInput) return;
+  hiddenInput.value = option.dataset.statusValue;
+  renderStatusFilter(filter);
 
   // Close popover and submit
   const popoverEl = filter.querySelector("[popover]");

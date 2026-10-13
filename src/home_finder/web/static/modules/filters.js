@@ -1,5 +1,79 @@
 // Filter form: strip empty params, chip removal, explicit apply
 
+function setFilterValues(values) {
+  const form = document.querySelector(".filter-form");
+  if (!form) return;
+
+  // A valid bookmarked bedroom count can be outside the usual compact toggles.
+  const beds = values.bedrooms == null ? "" : String(values.bedrooms);
+  form.querySelectorAll("[data-custom-bedrooms]").forEach(el => el.remove());
+  if (![...form.querySelectorAll('[name="bedrooms"]')].some(el => el.value === beds)) {
+    const input = document.createElement("input");
+    Object.assign(input, {type: "radio", name: "bedrooms", id: "beds-custom", value: beds});
+    input.className = "sr-only";
+    input.dataset.customBedrooms = "";
+    const label = document.createElement("label");
+    label.htmlFor = input.id;
+    label.textContent = beds;
+    label.dataset.customBedrooms = "";
+    form.querySelector(".beds-toggle").append(input, label);
+  }
+
+  for (const field of form.elements) {
+    if (!field.name) continue;
+    const value = field.name === "tag" ? values.tags || [] : values[field.name] ?? "";
+    if (field.type === "checkbox") {
+      field.checked = Array.isArray(value) ? value.includes(field.value) : field.value === value;
+    } else if (field.type === "radio") {
+      field.checked = field.value === String(value);
+    } else {
+      if (field.tagName === "SELECT") {
+        field.querySelectorAll("[data-custom-filter]").forEach(option => option.remove());
+        if (value !== "" && ![...field.options].some(option => option.value === String(value))) {
+          const option = new Option(String(value), String(value));
+          option.dataset.customFilter = "";
+          field.add(option);
+        }
+      }
+      field.value = value;
+    }
+  }
+  document.dispatchEvent(new CustomEvent("filters:restored"));
+}
+
+function syncAppliedFilters() {
+  const data = document.getElementById("applied-filters");
+  if (!data) return;
+  const applied = JSON.parse(data.textContent);
+  setFilterValues(applied.values);
+  const navCount = document.getElementById("nav-count");
+  if (navCount) {
+    navCount.textContent = applied.total + " properties";
+    if (applied.active_count) {
+      const detail = document.createElement("small");
+      detail.textContent = "(" + applied.active_count + " filter" +
+        (applied.active_count === 1 ? "" : "s") + " active)";
+      navCount.append(" ", detail);
+    }
+  }
+  const reset = document.querySelector(".filter-reset");
+  if (reset) reset.hidden = applied.active_count === 0;
+  const badge = document.querySelector("#open-filters-btn .filter-badge");
+  if (badge) {
+    badge.textContent = applied.secondary_count;
+    badge.hidden = applied.secondary_count === 0;
+  }
+  const count = document.getElementById("modal-count");
+  if (count) count.textContent = applied.total;
+}
+
+syncAppliedFilters();
+// Native history can restore unsaved form values; applied server state wins.
+window.addEventListener("pageshow", syncAppliedFilters);
+document.addEventListener("htmx:afterSwap", function (e) {
+  if (e.detail.target.id === "results") syncAppliedFilters();
+});
+
 // Strip empty-string params before HTMX sends request
 document.addEventListener("htmx:configRequest", function (e) {
   const params = e.detail.parameters;
@@ -45,9 +119,6 @@ document.addEventListener("click", function (e) {
     // Reset beds toggle to "Any"
     const anyRadio = form.querySelector('input[name="bedrooms"][value=""]');
     if (anyRadio) anyRadio.checked = true;
-  } else if (key === "off_market") {
-    const cb = form.querySelector('input[name="off_market"]');
-    if (cb) cb.checked = false;
   } else {
     const field = form.querySelector('[name="' + key + '"]');
     if (field) {
@@ -81,29 +152,8 @@ if (dialog && openBtn) {
   });
 
   dialog.querySelector(".filter-modal-reset").addEventListener("click", function () {
-    const form = document.querySelector(".filter-form");
-    // Clear all selects and checkboxes inside the dialog
-    const selects = dialog.querySelectorAll("select");
-    for (let i = 0; i < selects.length; i++) selects[i].value = "";
-    const checkboxes = dialog.querySelectorAll('input[type="checkbox"]');
-    for (let j = 0; j < checkboxes.length; j++) checkboxes[j].checked = false;
-    // Reset primary filters (works whether in dialog or filter bar)
-    if (primaryFilters) {
-      const anyBeds = primaryFilters.querySelector('input[name="bedrooms"][value=""]');
-      if (anyBeds) anyBeds.checked = true;
-      const minP = primaryFilters.querySelector('input[name="min_price"]');
-      if (minP) minP.value = "";
-      const maxP = primaryFilters.querySelector('input[name="max_price"]');
-      if (maxP) maxP.value = "";
-      const fitScore = primaryFilters.querySelector('select[name="min_fit_score"]');
-      if (fitScore) fitScore.value = "";
-    }
-    if (form) {
-      const deskArea = form.querySelector('select[name="area"]');
-      if (deskArea) deskArea.value = "";
-      const deskAdded = form.querySelector('select[name="added"]');
-      if (deskAdded) deskAdded.value = "";
-    }
+    // Clear every filter, including status/assessment/size, before explicit Apply.
+    setFilterValues({sort: "newest", tags: []});
     dialog.dispatchEvent(new CustomEvent("filterChange", { bubbles: true }));
   });
 
