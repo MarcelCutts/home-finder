@@ -306,7 +306,8 @@ def fixture_tiles(page):
     requests = []
 
     def serve(route):
-        requests.append(route.request.url)
+        if route.request.url.startswith("https://basemaps.cartocdn.com/"):
+            requests.append(route.request.url)
         route.fulfill(
             content_type="image/svg+xml",
             body=(
@@ -318,6 +319,7 @@ def fixture_tiles(page):
         )
 
     page.route("https://basemaps.cartocdn.com/**", serve)
+    page.route("https://lid.zoocdn.com/**", serve)
     return requests
 
 
@@ -818,6 +820,112 @@ class TestFilterBehavior:
 
         expect(nav_count).to_contain_text("5 properties")
         assert "area=E8" not in page.url
+
+
+@pytest.mark.browser
+class TestFilterNavigation:
+    def test_history_restores_applied_values_then_both_resets_clear_the_form(self, page):
+        page.goto("/?area=E8&min_price=0")
+        expect(page.locator("nav #nav-count")).to_contain_text("2 properties")
+        expect(page.get_by_label("Min price", exact=True)).to_have_value("0")
+        page.get_by_label("Area", exact=True).select_option("E5")
+        page.get_by_role("button", name="Apply", exact=True).click()
+        expect(page.locator("nav #nav-count")).to_contain_text("1 properties")
+        # This unsaved draft must not replace the applied values in history.
+        page.get_by_label("Area", exact=True).select_option("E9")
+        # HTMX Back first changes the URL, then starts a full-page reload.
+        # Wait for that document (including its scripts), not just the URL event.
+        with page.expect_response(
+            lambda response: response.request.is_navigation_request()
+        ) as back:
+            page.go_back()
+        back.value.finished()
+        page.wait_for_load_state("load")
+        expect(page.get_by_label("Area", exact=True)).to_have_value("E8")
+        expect(page.get_by_label("Min price", exact=True)).to_have_value("0")
+        expect(page.locator("nav #nav-count")).to_contain_text("2 properties")
+        with page.expect_response(
+            lambda response: response.request.is_navigation_request()
+        ) as forward:
+            page.go_forward()
+        forward.value.finished()
+        page.wait_for_load_state("load")
+        expect(page.get_by_label("Area", exact=True)).to_have_value("E5")
+        expect(page.locator("nav #nav-count")).to_contain_text("1 properties")
+        page.get_by_role("button", name="Map view", exact=True).click()
+        expect(page.locator("#dashboard-map .leaflet-tile-loaded").first).to_be_visible()
+
+        page.locator(".filter-reset").click()
+        page.wait_for_load_state("load")
+        expect(page.locator("nav #nav-count")).to_have_text("5 properties")
+        expect(page.get_by_label("Area", exact=True)).to_have_value("")
+        expect(page.get_by_label("Min price", exact=True)).to_have_value("")
+        expect(page.locator(".filter-reset")).to_be_hidden()
+        expect(page.locator(".filter-badge")).to_be_hidden()
+
+        page.get_by_label("Max price", exact=True).fill("100")
+        page.get_by_role("button", name="Apply", exact=True).click()
+        expect(page.locator(".empty-state")).to_be_visible()
+        page.get_by_role("button", name="Reset filters", exact=True).click()
+        page.wait_for_load_state("load")
+        expect(page.locator("nav #nav-count")).to_have_text("5 properties")
+        expect(page.get_by_label("Max price", exact=True)).to_have_value("")
+        expect(page.locator(".filter-reset")).to_be_hidden()
+
+    def test_valid_bookmark_values_survive_apply_and_modal_reset(self, page):
+        from urllib.parse import parse_qs, urlsplit
+
+        page.goto(
+            "/?bedrooms=3&min_fit_score=57&off_market=only&processing=assessed"
+            "&status=interested&min_living_room_sqm=21&min_floor_area_sqm=61"
+            "&tag=Gas+hob&tag=Washing+machine"
+        )
+        expect(page.locator('[name="bedrooms"]:checked')).to_have_value("3")
+        expect(page.get_by_label("Min fit score", exact=True)).to_have_value("57")
+        page.get_by_role("button", name="Apply", exact=True).click()
+        expect(page).to_have_url(re.compile(r"page=1"))
+        query = parse_qs(urlsplit(page.url).query)
+        assert query["bedrooms"] == ["3"]
+        assert query["min_fit_score"] == ["57"]
+        assert query["off_market"] == ["only"]
+        assert query["min_living_room_sqm"] == ["21"]
+        assert query["min_floor_area_sqm"] == ["61"]
+        assert set(query["tag"]) == {"Gas hob", "Washing machine"}
+
+        page.locator("#open-filters-btn").click()
+        expect(page.get_by_label("Market status", exact=True)).to_have_value("only")
+        page.get_by_role("button", name="Reset all", exact=True).click()
+        expect(page.locator("#modal-count")).to_have_text("5")
+        expect(page.locator('[name="status"]')).to_have_value("")
+        expect(page.locator(".status-filter-trigger")).to_have_text("Status")
+        expect(page.get_by_label("Assessment", exact=True)).to_have_value("")
+        expect(page.get_by_label("Market status", exact=True)).to_have_value("")
+        expect(page.locator('[name="tag"]:checked')).to_have_count(0)
+        page.get_by_role("button", name="Show 5 properties", exact=True).click()
+        expect(page.locator("nav #nav-count")).to_have_text("5 properties")
+        expect(page.locator('[name="bedrooms"]:checked')).to_have_value("")
+        expect(page.locator(".filter-badge")).to_be_hidden()
+
+    def test_card_status_morph_preserves_one_card_and_working_popover(self, page, console_errors):
+        page.goto("/?area=E5")
+        card = page.locator('[data-property-id="openrent:1003"]')
+        expect(card).to_have_count(1)
+        page.evaluate("window.originalCard = document.querySelector('.property-card')")
+        try:
+            card.get_by_title("Interested", exact=True).click()
+            expect(card).to_have_attribute("data-status", "interested")
+            expect(card).to_have_count(1)
+            expect(card.locator("article")).to_have_count(0)
+            expect(card.locator(".card-link")).to_have_count(1)
+            assert page.evaluate("window.originalCard === document.querySelector('.property-card')")
+            card.locator(".fit-badge").click()
+            expect(card.locator(".fit-popover")).to_be_visible()
+            assert not console_errors
+        finally:
+            page.goto("/property/openrent:1003")
+            page.locator(".status-selector-trigger").click()
+            page.get_by_role("menuitem", name="New", exact=True).click()
+            expect(page.locator(".status-selector-trigger")).to_contain_text("New")
 
 
 @pytest.mark.browser

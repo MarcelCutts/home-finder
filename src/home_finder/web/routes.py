@@ -6,6 +6,7 @@ from datetime import UTC, datetime
 from html import escape as html_escape
 from pathlib import Path
 from typing import Annotated, Any, Final, Literal, cast
+from urllib.parse import urlencode
 
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
@@ -371,6 +372,12 @@ async def dashboard(
         properties, total = await storage.web.get_properties_paginated(
             filters, sort=sort, page=page_val, per_page=per_page
         )
+        total_pages = max(1, math.ceil(total / per_page))
+        if page_val > total_pages:
+            page_val = total_pages
+            properties, total = await storage.web.get_properties_paginated(
+                filters, sort=sort, page=page_val, per_page=per_page
+            )
         _enrich_fit_scores(properties)
 
         # Rewrite external CDN thumbnail URLs to locally cached images.
@@ -390,9 +397,6 @@ async def dashboard(
             status_code=500,
         )
 
-    total_pages = math.ceil(total / per_page) if total > 0 else 1
-    page_val = min(page_val, total_pages)
-
     # Build properties JSON for map view — all matching properties with coords,
     # not just the current page.
     try:
@@ -411,6 +415,13 @@ async def dashboard(
 
     highlight_values = {h.value for h in PropertyHighlight}
 
+    def page_url(target_page: int) -> str:
+        return "?" + urlencode(
+            [("page", str(target_page)), ("sort", sort), *filters.query_params()]
+        )
+
+    active_filters = filters.active_filter_chips()
+
     context: dict[str, Any] = {
         "request": request,
         "properties": properties,
@@ -418,11 +429,18 @@ async def dashboard(
         "page": page_val,
         "total_pages": total_pages,
         "sort": sort,
+        "page_url": page_url,
         "source_names": SOURCE_NAMES,
         "source_badges": SOURCE_BADGES,
         "properties_json": properties_json,
         "search_areas": search_areas,
-        "active_filters": filters.active_filter_chips(),
+        "active_filters": active_filters,
+        "applied_filters": {
+            "values": {**filters.model_dump(), "sort": sort},
+            "active_count": len(active_filters),
+            "secondary_count": filters.secondary_filter_count,
+            "total": total,
+        },
         "any_quality_filter_active": filters.quality_fields_active,
         "secondary_filter_count": filters.secondary_filter_count,
         "tag_categories": TAG_CATEGORIES,
@@ -435,13 +453,14 @@ async def dashboard(
     }
 
     # HTMX partial rendering
-    if request.headers.get("HX-Request"):
+    if request.headers.get("HX-Request") and not request.headers.get("HX-History-Restore-Request"):
         response = templates.TemplateResponse(request, "_results.html", context)
-        response.headers["Vary"] = "HX-Request"
+        response.headers["Vary"] = "HX-Request, HX-History-Restore-Request"
+        response.headers["HX-Push-Url"] = "/" + page_url(page_val)
         return response
 
     response = templates.TemplateResponse(request, "dashboard.html", context)
-    response.headers["Vary"] = "HX-Request"
+    response.headers["Vary"] = "HX-Request, HX-History-Restore-Request"
     return response
 
 

@@ -1593,7 +1593,7 @@ class TestSecondaryFilterCount:
     def test_no_badge_without_secondary_filters(self, client: TestClient) -> None:
         resp = client.get("/")
         assert resp.status_code == 200
-        assert "filter-badge" not in resp.text
+        assert 'class="filter-badge" hidden' in resp.text
 
     @pytest.mark.asyncio
     async def test_badge_with_one_secondary_filter(
@@ -2710,7 +2710,7 @@ class TestResponseTargetsAndARIA:
     def test_body_has_hx_ext(self, client: TestClient) -> None:
         resp = client.get("/")
         assert resp.status_code == 200
-        assert 'hx-ext="response-targets,idiomorph"' in resp.text
+        assert 'hx-ext="response-targets,morph"' in resp.text
 
     def test_error_toast_container_exists(self, client: TestClient) -> None:
         resp = client.get("/")

@@ -137,6 +137,10 @@ nav.container-fluid li {
 .filter-reset {
     font-size: 0.85rem;
 }
+.filter-reset[hidden],
+.filter-badge[hidden] {
+    display: none;
+}
 
 /* ===== Beds segmented toggle ===== */
 .beds-toggle {

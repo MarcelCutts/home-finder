@@ -299,6 +299,29 @@ snapshots reproduce 446/1,016 and 4/93 eligible homes at 60 after saved personal
 exclusions, with unchanged file hashes. Calibrate from future owner decisions; these
 different populations do not establish model accuracy or live alert volume. Complete protected-release and live-source qualification before release.
 
+## Dashboard filters and navigation
+
+Tag filters match exact highlight/lowlight elements. Selecting multiple tags
+requires every selected tag; `Washing machine` therefore excludes a home whose
+only matching text is `No washing machine`. Grid, map and live count share this
+query. Pagination serializes the validated filter object, including repeated
+tags, zero values, both size limits and the three market-status modes. A request
+beyond the final page fetches that final page instead of showing an empty grid.
+
+Applying filters and paging still update results through HTMX. The response also
+supplies the validated applied state, which updates controls, chips and counts.
+The main **Reset** and empty-result **Reset filters** links load the default page.
+The modal **Reset all** clears the draft and refreshes its count; **Show properties**
+applies it. Browser Back/Forward reloads the requested page, so its controls,
+event handlers and map are initialized together. HTMX's DOM snapshot cache is
+disabled for this purpose; returning to a previous query requires a server request.
+This deliberately favors consistent navigation over cached history transitions.
+[HTMX history configuration](https://htmx.org/docs/#history).
+
+Status changes use the registered `morph` extension to update the existing card.
+The package name is Idiomorph, but its HTMX extension name is `morph`.
+[Idiomorph extension contract](https://htmx.org/extensions/idiomorph/).
+
 ## Collection and delivery
 
 Qualify permitted source access before live collection. A challenge, parser
