@@ -13,7 +13,7 @@ from tenacity import retry, retry_if_exception_type, stop_after_attempt
 from home_finder.data.location_mappings import RIGHTMOVE_LOCATIONS, RIGHTMOVE_OUTCODES
 from home_finder.logging import get_logger
 from home_finder.models import FurnishType, Property, PropertySource
-from home_finder.scrapers.base import BaseScraper, ScrapeCancelled, ScrapeResult
+from home_finder.scrapers.base import BaseScraper, ParsedSearchPage, ScrapeResult
 from home_finder.scrapers.parsing import extract_bedrooms, extract_postcode, extract_price
 from home_finder.scrapers.retry import SCRAPER_WAIT, RetryableHttpError
 from home_finder.scrapers.rightmove_payloads import SearchPage, parse_structured_search
@@ -199,10 +199,7 @@ class RightmoveScraper(BaseScraper):
         if not search_url:
             return ScrapeResult()
 
-        parse_errors = 0
-
-        async def fetch_page(page_idx: int) -> list[Property] | None:
-            nonlocal parse_errors
+        async def fetch_page(page_idx: int) -> ParsedSearchPage | None:
             index = page_idx * self.RESULTS_PER_PAGE
             url = f"{search_url}&index={index}" if page_idx > 0 else search_url
 
@@ -211,7 +208,6 @@ class RightmoveScraper(BaseScraper):
             parse_started = monotonic()
             soup = await asyncio.to_thread(BeautifulSoup, html, "lxml")
             parsed = self._parse_search_page(soup, requested_index=index)
-            parse_errors += parsed.parse_errors
             logger.info(
                 "scraped_rightmove_page",
                 url=url,
@@ -221,7 +217,7 @@ class RightmoveScraper(BaseScraper):
                 parse_duration_ms=round((monotonic() - parse_started) * 1000, 2),
                 duration_ms=round((monotonic() - started) * 1000, 2),
             )
-            return parsed.properties
+            return parsed
 
         async def delay() -> None:
             await asyncio.sleep(self.PAGE_DELAY_SECONDS)
@@ -234,20 +230,13 @@ class RightmoveScraper(BaseScraper):
                 "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
             },
         ) as client:
-            try:
-                result = await self._paginate(
-                    fetch_page,
-                    max_pages=self.MAX_PAGES,
-                    known_source_ids=known_source_ids,
-                    max_results=max_results,
-                    page_delay=delay,
-                )
-            except ScrapeCancelled as exc:
-                exc.result.parse_errors += parse_errors
-                raise
-        result.parse_errors += parse_errors
-        if parse_errors:
-            result.stop_reason = "parse_error"
+            result = await self._paginate(
+                fetch_page,
+                max_pages=self.MAX_PAGES,
+                known_source_ids=known_source_ids,
+                max_results=max_results,
+                page_delay=delay,
+            )
 
         logger.info(
             "scraped_rightmove_complete",
@@ -255,7 +244,7 @@ class RightmoveScraper(BaseScraper):
             total_properties=len(result.properties),
             pages_fetched=result.pages_fetched,
             pages_failed=result.pages_failed,
-            parse_errors=parse_errors,
+            parse_errors=result.parse_errors,
         )
 
         return result
@@ -340,7 +329,7 @@ class RightmoveScraper(BaseScraper):
     def _parse_search_page(self, soup: BeautifulSoup, *, requested_index: int = 0) -> SearchPage:
         if is_challenge(str(soup)):
             logger.warning("rightmove_search_challenge")
-            return SearchPage(parse_errors=1)
+            return SearchPage(parse_errors=1, failure_reason="challenge")
         structured = parse_structured_search(soup, requested_index=requested_index)
         if structured is not None:
             if structured.parse_errors:
@@ -363,7 +352,7 @@ class RightmoveScraper(BaseScraper):
             ):
                 return result
             logger.warning("rightmove_search_unrecognised")
-            return SearchPage(parse_errors=1)
+            return SearchPage(parse_errors=1, failure_reason="unrecognized_page")
 
         for card in property_cards:
             try:

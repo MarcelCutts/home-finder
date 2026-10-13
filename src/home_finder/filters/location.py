@@ -5,42 +5,20 @@ search areas, catching any "leakage" from scrapers that return properties
 outside the intended geographic boundaries.
 """
 
-import json
-import re
-from pathlib import Path
-from typing import Final
-
+from home_finder.data.location_mappings import (
+    BOROUGH_OUTCODES as BOROUGH_OUTCODES,
+)
+from home_finder.data.location_mappings import (
+    normalize_area as normalize_area,
+)
+from home_finder.data.location_mappings import (
+    resolve_area_outcodes,
+)
 from home_finder.logging import get_logger
 from home_finder.models import Property
 from home_finder.utils.address import extract_outcode
 
 logger = get_logger(__name__)
-
-# Load borough outcodes and aliases from JSON data file
-_DATA_PATH = Path(__file__).resolve().parent.parent / "data" / "borough_outcodes.json"
-try:
-    _DATA = json.loads(_DATA_PATH.read_text())
-except (FileNotFoundError, json.JSONDecodeError) as e:
-    raise RuntimeError(f"Failed to load {_DATA_PATH}: {e}") from e
-
-BOROUGH_OUTCODES: Final[dict[str, set[str]]] = {
-    k: set(v) for k, v in _DATA["borough_outcodes"].items()
-}
-
-OUTCODE_ALIASES: Final[dict[str, str]] = _DATA["outcode_aliases"]
-
-
-def normalize_area(area: str) -> str:
-    """Normalize an area name for lookup.
-
-    Args:
-        area: Area name or outcode.
-
-    Returns:
-        Normalized area name.
-    """
-    normalized = area.lower().strip()
-    return OUTCODE_ALIASES.get(normalized, normalized)
 
 
 class LocationFilter:
@@ -62,15 +40,7 @@ class LocationFilter:
         self.search_areas = [normalize_area(a) for a in search_areas]
         self.strict = strict
 
-        # Build set of valid outcodes from search areas
-        self.valid_outcodes: set[str] = set()
-        for area in self.search_areas:
-            # Check if area is an outcode itself
-            if re.match(r"^[a-z]{1,2}\d{1,2}[a-z]?$", area, re.IGNORECASE):
-                self.valid_outcodes.add(area.upper())
-            # Otherwise look up borough outcodes
-            elif area in BOROUGH_OUTCODES:
-                self.valid_outcodes.update(BOROUGH_OUTCODES[area])
+        self.valid_outcodes = resolve_area_outcodes(self.search_areas)
 
         logger.debug(  # pragma: no mutate
             "location_filter_initialized",

@@ -6,7 +6,10 @@ rightmove.py and zoopla.py into a single source of truth.
 
 from __future__ import annotations
 
+import json
+import re
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Final
 
 
@@ -314,3 +317,49 @@ def _build_borough_areas() -> dict[str, tuple[str, str]]:
 RIGHTMOVE_LOCATIONS: Final[dict[str, str]] = _build_rightmove_locations()
 RIGHTMOVE_OUTCODES: Final[dict[str, str]] = _build_rightmove_outcodes()
 BOROUGH_AREAS: Final[dict[str, tuple[str, str]]] = _build_borough_areas()
+
+# Collection preflight and post-collection filtering must recognize the same
+# areas. Outcode coverage is approximate borough coverage, not a boundary map.
+_DATA_PATH = Path(__file__).with_name("borough_outcodes.json")
+try:
+    _DATA = json.loads(_DATA_PATH.read_text())
+except (FileNotFoundError, json.JSONDecodeError) as exc:
+    raise RuntimeError(f"Failed to load {_DATA_PATH}: {exc}") from exc
+
+BOROUGH_OUTCODES: Final[dict[str, set[str]]] = {
+    name: set(outcodes) for name, outcodes in _DATA["borough_outcodes"].items()
+}
+OUTCODE_ALIASES: Final[dict[str, str]] = {
+    **_DATA["outcode_aliases"],
+    **{alias: area.name for area in AREA_MAPPINGS for alias in area.aliases},
+}
+
+
+def normalize_area(area: str) -> str:
+    """Normalize supported borough aliases and the case of outcodes."""
+    normalized = area.lower().strip()
+    return OUTCODE_ALIASES.get(normalized, normalized)
+
+
+def resolve_area_outcodes(search_areas: list[str]) -> set[str]:
+    """Resolve configured areas, rejecting unknown names before collection.
+
+    Outcodes are checked for syntax, not against a complete postal gazetteer.
+    An empty list deliberately disables collection; a typo must not do so.
+    """
+    outcodes: set[str] = set()
+    unknown: list[str] = []
+    for raw_area in search_areas:
+        area = normalize_area(raw_area)
+        if re.fullmatch(r"[a-z]{1,2}\d{1,2}[a-z]?", area):
+            outcodes.add(area.upper())
+        elif area in BOROUGH_OUTCODES:
+            outcodes.update(BOROUGH_OUTCODES[area])
+        else:
+            unknown.append(raw_area)
+    if unknown:
+        raise ValueError(
+            f"Unknown search area(s): {', '.join(unknown)}. "
+            "Use a supported London borough name or a postcode outcode (for example E8)."
+        )
+    return outcodes

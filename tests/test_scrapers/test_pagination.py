@@ -34,12 +34,15 @@ async def test_processing_cap_retains_whole_fetched_page(make_property):
 @pytest.mark.parametrize("failure", [None, RuntimeError("fixture failure")])
 async def test_later_failure_preserves_prefix_and_is_unhealthy(make_property, failure):
     prop = make_property()
-    result = await OpenRentScraper()._paginate(
-        AsyncMock(side_effect=[[prop], failure]), max_pages=2
-    )
+    fetch = AsyncMock(side_effect=[[prop], failure, [make_property()]])
+    delay = AsyncMock()
+    result = await OpenRentScraper()._paginate(fetch, max_pages=20, page_delay=delay)
     assert result.properties == result.observations == [prop]
     assert result.pages_fetched == result.pages_failed == 1
     assert not result.is_healthy
+    assert result.stop_reason == "page_error"
+    assert fetch.await_count == 2
+    delay.assert_awaited_once()
 
 
 async def test_duplicate_page_keeps_latest_quote_without_duplicate_work(make_property):

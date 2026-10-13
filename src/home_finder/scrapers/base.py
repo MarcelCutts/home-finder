@@ -14,6 +14,15 @@ logger = get_logger(__name__)
 
 
 @dataclass
+class ParsedSearchPage:
+    """Received listings plus errors, including incomplete or unrecognized pages."""
+
+    properties: list[Property] = field(default_factory=list)
+    parse_errors: int = 0
+    failure_reason: str | None = None
+
+
+@dataclass
 class ScrapeResult:
     """Result of a scrape operation with metadata for distinguishing success from failure."""
 
@@ -23,6 +32,7 @@ class ScrapeResult:
     parse_errors: int = 0
     observations: list[Property] = field(default_factory=list)
     stop_reason: str = "unspecified"
+    failure_reasons: list[str] = field(default_factory=list)
 
     @property
     def is_healthy(self) -> bool:
@@ -88,7 +98,7 @@ class BaseScraper(ABC):
 
     async def _paginate(
         self,
-        fetch_page: Callable[[int], Awaitable[list[Property] | None]],
+        fetch_page: Callable[[int], Awaitable[ParsedSearchPage | list[Property] | None]],
         *,
         max_pages: int,
         known_source_ids: set[str] | None = None,
@@ -99,8 +109,8 @@ class BaseScraper(ABC):
 
         Args:
             fetch_page: Async callable receiving 0-based page index. Returns
-                properties for that page, empty list for end of results, or
-                None for fetch failure.
+                a parsed page (including failures), a legacy property list,
+                or None for transport failure after exhausted source retries.
             max_pages: Maximum number of pages to fetch.
             known_source_ids: Source IDs already in DB; enables early-stop.
             max_results: Maximum total results to return (None = unlimited).
@@ -118,10 +128,13 @@ class BaseScraper(ABC):
         try:
             for page_idx in range(max_pages):
                 try:
-                    properties = await fetch_page(page_idx)
+                    page = await fetch_page(page_idx)
                 except Exception as exc:
                     result.pages_failed += 1
                     result.stop_reason = "page_error"
+                    # An unexpected callback exception may come from parsing
+                    # or transport; do not assert a network diagnosis.
+                    result.failure_reasons.append("page_error")
                     logger.warning(
                         "scrape_page_error",
                         source=self.source.value,
@@ -130,11 +143,22 @@ class BaseScraper(ABC):
                     )
                     break
 
-                if properties is None:
+                if page is None:
                     result.pages_failed += 1
-                    if page_delay is not None and page_idx < max_pages - 1:
-                        await page_delay()
-                    continue
+                    # Transports own their bounded retries. Moving to a later
+                    # page after exhaustion hides a gap and amplifies failures.
+                    result.stop_reason = "page_error"
+                    result.failure_reasons.append("transport_error")
+                    break
+                if isinstance(page, ParsedSearchPage):
+                    result.parse_errors += page.parse_errors
+                    if page.parse_errors:
+                        reason = page.failure_reason or "invalid_records"
+                        if reason not in result.failure_reasons:
+                            result.failure_reasons.append(reason)
+                    properties = page.properties
+                else:
+                    properties = page
                 result.pages_fetched += 1
                 if not properties:
                     result.stop_reason = "empty_page"
@@ -183,6 +207,8 @@ class BaseScraper(ABC):
             result.stop_reason = "cancelled"
             raise ScrapeCancelled(result) from None
 
+        if result.parse_errors:
+            result.stop_reason = "parse_error"
         logger.info(
             "scrape_pagination_complete",
             source=self.source.value,
@@ -191,6 +217,7 @@ class BaseScraper(ABC):
             selected=len(result.properties),
             pages_fetched=result.pages_fetched,
             pages_failed=result.pages_failed,
+            failure_reasons=result.failure_reasons,
         )
         return result
 

@@ -3,7 +3,7 @@
 import json
 import math
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from decimal import Decimal
 from typing import Any
 from urllib.parse import urljoin
@@ -12,6 +12,7 @@ from bs4 import BeautifulSoup
 from pydantic import HttpUrl
 
 from home_finder.models import ListingTextEvidence, Property, PropertySource
+from home_finder.scrapers.base import ParsedSearchPage
 from home_finder.scrapers.parsing import extract_postcode
 
 MAX_PAYLOAD_CHARACTERS = 4_000_000
@@ -22,9 +23,7 @@ MAX_DETAIL_DEPTH = 64
 
 
 @dataclass
-class SearchPage:
-    properties: list[Property] = field(default_factory=list)
-    parse_errors: int = 0
+class SearchPage(ParsedSearchPage):
     end_of_results: bool = False
 
 

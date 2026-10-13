@@ -7,7 +7,7 @@ import json
 import random
 import re
 import urllib.parse
-from contextlib import suppress
+from collections.abc import Iterable
 from typing import Any
 
 from bs4 import BeautifulSoup, Tag
@@ -18,11 +18,12 @@ from tenacity import retry, retry_if_exception_type, stop_after_attempt
 from home_finder.data.location_mappings import BOROUGH_AREAS
 from home_finder.logging import get_logger
 from home_finder.models import FurnishType, Property, PropertySource
-from home_finder.scrapers.base import BaseScraper, ScrapeResult
+from home_finder.scrapers.base import BaseScraper, ParsedSearchPage, ScrapeResult
 from home_finder.scrapers.constants import BROWSER_HEADERS
 from home_finder.scrapers.parsing import extract_bedrooms, extract_postcode, extract_price
 from home_finder.scrapers.retry import SCRAPER_WAIT, RetryableHttpError
 from home_finder.utils.address import is_outcode
+from home_finder.utils.http_evidence import is_challenge
 
 logger = get_logger(__name__)
 
@@ -314,10 +315,7 @@ class ZooplaScraper(BaseScraper):
         # Pick one browser profile per area (switching mid-session is suspicious)
         impersonate_target = self._pick_impersonate_target()
 
-        parse_errors = 0
-
-        async def fetch_page(page_idx: int) -> list[Property] | None:
-            nonlocal parse_errors
+        async def fetch_page(page_idx: int) -> ParsedSearchPage | None:
             page = page_idx + 1  # Zoopla uses 1-based pages
             url = self._build_search_url(
                 area=area,
@@ -335,39 +333,16 @@ class ZooplaScraper(BaseScraper):
             if html is None:
                 return None  # Signals fetch failure to _paginate
 
-            # Try RSC extraction first (primary method)
-            rsc_result = self._parse_rsc_properties(html)
-            rsc_failed = rsc_result is None
-
-            if rsc_result:
-                properties = rsc_result
-                method = "rsc"
-            else:
-                # RSC returned [] (no listings) or None (parse failure) — try HTML
-                soup = BeautifulSoup(html, "html.parser")
-                html_result = self._parse_search_results(soup, url)
-                html_failed = html_result is None
-
-                if html_result:
-                    properties = html_result
-                    method = "html"
-                elif rsc_failed and html_failed:
-                    # Both methods had structural markers but couldn't parse
-                    parse_errors += 1
-                    properties = []
-                    method = "failed"
-                else:
-                    properties = []
-                    method = "html"
+            parsed = self._parse_search_page(html)
 
             logger.info(
                 "scraped_zoopla_page",
                 url=url,
                 page=page,
-                properties_found=len(properties),
-                method=method,
+                properties_found=len(parsed.properties),
+                parse_errors=parsed.parse_errors,
             )
-            return properties
+            return parsed
 
         result = await self._paginate(
             fetch_page,
@@ -376,9 +351,6 @@ class ZooplaScraper(BaseScraper):
             max_results=max_results,
             page_delay=self._page_delay,
         )
-        result.parse_errors += parse_errors
-        if parse_errors:
-            result.stop_reason = "parse_error"
 
         logger.info(
             "scraped_zoopla_complete",
@@ -386,7 +358,7 @@ class ZooplaScraper(BaseScraper):
             total_properties=len(result.properties),
             pages_fetched=result.pages_fetched,
             pages_failed=result.pages_failed,
-            parse_errors=parse_errors,
+            parse_errors=result.parse_errors,
         )
 
         return result
@@ -449,27 +421,31 @@ class ZooplaScraper(BaseScraper):
             return None
 
     def _extract_rsc_listings(self, html: str) -> list[ZooplaListing]:
-        """Extract listing data from React Server Components payload.
+        """Compatibility reader for validated React Server Components listings."""
+        return self._read_rsc_listings(html)[0]
 
-        The RSC format is: self.__next_f.push([1, "id:json_content"])
-        The second element is a string containing an RSC line ID followed by
-        a colon and then JSON content.
-        """
+    def _read_rsc_listings(self, html: str) -> tuple[list[ZooplaListing], int, bool]:
+        """Retain malformed-record counts and distinguish empty from absent data."""
         pattern = r"self\.__next_f\.push\(\s*\[(.*?)\]\s*\)"
         matches = re.findall(pattern, html, re.DOTALL)
         listings: list[ZooplaListing] = []
+        errors = 0
+        recognized = False
 
         for match in matches:
             if "regularListingsFormatted" not in match and "listingId" not in match:
                 continue
+            recognized = True
 
             # Parse the push call arguments as a JSON array: [1, "id:content"]
             try:
                 arr = json.loads(f"[{match}]")
             except json.JSONDecodeError:
+                errors += 1
                 continue
 
             if len(arr) < 2 or not isinstance(arr[1], str):
+                errors += 1
                 continue
 
             payload = arr[1]
@@ -477,6 +453,7 @@ class ZooplaScraper(BaseScraper):
             # Split on first colon to separate RSC line ID from content
             colon_idx = payload.find(":")
             if colon_idx < 0:
+                errors += 1
                 continue
 
             rsc_content = payload[colon_idx + 1 :]
@@ -485,10 +462,17 @@ class ZooplaScraper(BaseScraper):
             try:
                 parsed = json.loads(rsc_content)
             except json.JSONDecodeError:
+                errors += 1
                 continue
 
-            found = self._extract_listings_from_parsed(parsed)
+            found, record_errors, has_container = self._read_listing_records(parsed)
             listings.extend(found)
+            errors += record_errors + int(not has_container)
+
+        if not recognized and "regularListingsFormatted" in html:
+            # Marker without a decodable push call is layout drift, not zero results.
+            recognized = True
+            errors += 1
 
         # Deduplicate by listing_id
         seen: set[int] = set()
@@ -498,63 +482,96 @@ class ZooplaScraper(BaseScraper):
                 seen.add(listing.listing_id)
                 unique.append(listing)
 
-        return unique
+        return unique, errors, recognized
 
     def _extract_listings_from_parsed(self, data: Any, depth: int = 0) -> list[ZooplaListing]:
-        """Recursively search a parsed JSON structure for listing data."""
+        """Compatibility reader; collection also retains errors and recognition."""
+        return self._read_listing_records(data, depth)[0]
+
+    def _read_listing_records(
+        self, data: Any, depth: int = 0
+    ) -> tuple[list[ZooplaListing], int, bool]:
+        """Read supported containers without silently dropping invalid records."""
         if depth > 15:
-            return []
+            return [], 0, False
 
         listings: list[ZooplaListing] = []
-
+        errors = 0
+        recognized = False
+        children: Iterable[Any]
         if isinstance(data, dict):
-            # Check for known container key
             if "regularListingsFormatted" in data:
                 raw = data["regularListingsFormatted"]
-                if isinstance(raw, list):
-                    for item in raw:
-                        if isinstance(item, dict) and "listingId" in item:
-                            try:
-                                listings.append(ZooplaListing.model_validate(item))
-                            except ValidationError:
-                                continue
-
-            # Check if this dict is itself a listing
-            if "listingId" in data and not listings:
-                with suppress(ValidationError):
-                    listings.append(ZooplaListing.model_validate(data))
-
-            # Recurse into values
-            if not listings:
-                for value in data.values():
-                    if isinstance(value, (dict, list)):
-                        listings.extend(self._extract_listings_from_parsed(value, depth + 1))
-
+                if not isinstance(raw, list):
+                    return [], 1, True
+                for item in raw:
+                    try:
+                        listings.append(ZooplaListing.model_validate(item))
+                    except ValidationError:
+                        errors += 1
+                return listings, errors, True
+            if "listingId" in data:
+                try:
+                    return [ZooplaListing.model_validate(data)], 0, True
+                except ValidationError:
+                    return [], 1, True
+            children = data.values()
         elif isinstance(data, list):
-            for item in data:
-                listings.extend(self._extract_listings_from_parsed(item, depth + 1))
+            children = data
+        else:
+            return [], 0, False
 
-        return listings
+        for item in children:
+            found, child_errors, child_recognized = self._read_listing_records(item, depth + 1)
+            listings.extend(found)
+            errors += child_errors
+            recognized = recognized or child_recognized
+        return listings, errors, recognized
 
     def _parse_rsc_properties(self, html: str) -> list[Property] | None:
-        """Parse properties from RSC payload in HTML.
+        """Compatibility reader for supported RSC pages."""
+        parsed = self._parse_rsc_page(html)
+        if parsed is None or (parsed.parse_errors and not parsed.properties):
+            return None
+        return parsed.properties
 
-        Returns None when RSC data markers are present but no listings could
-        be extracted, indicating a possible RSC format change.
-        """
-        listings = self._extract_rsc_listings(html)
-        if not listings:
-            if "regularListingsFormatted" in html:
-                logger.warning("zoopla_rsc_extraction_failed")
-                return None
-            return []
-
-        properties: list[Property] = []
+    def _parse_rsc_page(self, html: str) -> ParsedSearchPage | None:
+        listings, errors, recognized = self._read_rsc_listings(html)
+        if not recognized:
+            return None
+        result = ParsedSearchPage(parse_errors=errors)
         for listing in listings:
-            prop = self._listing_to_property(listing)
-            if prop:
-                properties.append(prop)
-        return properties
+            try:
+                prop = self._listing_to_property(listing)
+            except (ValueError, TypeError):
+                prop = None
+            if prop is None:
+                result.parse_errors += 1
+            else:
+                result.properties.append(prop)
+        return result
+
+    def _parse_search_page(self, html: str) -> ParsedSearchPage:
+        if is_challenge(html):
+            return ParsedSearchPage(parse_errors=1, failure_reason="challenge")
+        rsc = self._parse_rsc_page(html)
+        if rsc is not None and rsc.properties:
+            return rsc
+        soup = BeautifulSoup(html, "html.parser")
+        # An explicitly decoded empty array is sufficient, unless actual cards
+        # contradict it. Merely missing RSC/HTML markers never establishes empty.
+        if (
+            rsc is not None
+            and not rsc.parse_errors
+            and not soup.find("div", {"data-testid": "search-result"})
+        ):
+            return rsc
+        fallback = self._parse_html_page(soup)
+        if rsc is not None:
+            if fallback.failure_reason == "unrecognized_page":
+                return rsc
+            fallback.parse_errors += rsc.parse_errors
+        return fallback
 
     def _listing_to_property(self, listing: ZooplaListing) -> Property | None:
         """Convert a validated ZooplaListing to a Property."""
@@ -667,18 +684,27 @@ class ZooplaScraper(BaseScraper):
         return f"{self.BASE_URL}/to-rent/property/{path_seg}/?{urllib.parse.urlencode(params)}"
 
     def _parse_search_results(self, soup: BeautifulSoup, _base_url: str) -> list[Property] | None:
-        """Parse property listings from search results page (HTML fallback).
+        """Compatibility reader for the supported HTML fallback."""
+        parsed = self._parse_html_page(soup)
+        return None if parsed.parse_errors and not parsed.properties else parsed.properties
 
-        Returns None when result cards are found but all fail to parse,
-        indicating a possible site layout change.
-        """
+    def _parse_html_page(self, soup: BeautifulSoup) -> ParsedSearchPage:
+        """Recognize explicit empty markup and count incomplete result cards."""
         properties: list[Property] = []
 
         # Find all search result cards
         result_cards = soup.find_all("div", {"data-testid": "search-result"})
 
         if not result_cards:
-            return []
+            container = soup.find("div", class_=re.compile(r"ListingsContainer"))
+            recognized_empty = container is not None and bool(
+                container.find(string=re.compile(r"^\s*No properties found\s*$", re.IGNORECASE))
+            )
+            return (
+                ParsedSearchPage()
+                if recognized_empty
+                else ParsedSearchPage(parse_errors=1, failure_reason="unrecognized_page")
+            )
 
         card_errors = 0
         for card in result_cards:
@@ -686,19 +712,13 @@ class ZooplaScraper(BaseScraper):
                 prop = self._parse_property_card(card)
                 if prop:
                     properties.append(prop)
+                else:
+                    card_errors += 1
             except Exception as e:
                 card_errors += 1
                 logger.warning("failed_to_parse_zoopla_card", error=str(e))
 
-        if not properties and card_errors > 0:
-            logger.warning(
-                "zoopla_all_html_cards_unparseable",
-                card_count=len(result_cards),
-                card_errors=card_errors,
-            )
-            return None
-
-        return properties
+        return ParsedSearchPage(properties=properties, parse_errors=card_errors)
 
     def _parse_property_card(self, card: Tag) -> Property | None:
         """Parse a single property card element (HTML fallback)."""
