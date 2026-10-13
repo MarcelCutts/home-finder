@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 from typing import Annotated, Any
 
-from pydantic import Field, SecretStr, field_validator, model_validator
+from pydantic import Field, SecretStr, ValidationInfo, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 from home_finder.models import FurnishType, SearchCriteria, TransportMode
@@ -109,13 +109,13 @@ class Settings(BaseSettings):
         default=True,
         description="Enable extended thinking for deeper quality analysis",
     )
-    analysis_config: Annotated[AnalysisConfig | None, NoDecode] = Field(
+    analysis_config: Annotated[AnalysisConfig, NoDecode] = Field(
         default_factory=lambda data: new_runtime_analysis_config(
             max_images=data["quality_filter_max_images"],
             enable_extended_thinking=data["enable_extended_thinking"],
         ),
-        description="New runs default to bounded Sonnet 5.5; explicit phase JSON retains its "
-        "versioned parsing defaults and overrides the legacy thinking flag",
+        description="Phase JSON overrides the bounded runtime profile; omitted fields retain "
+        "current defaults. Historical configuration decoding is independent.",
     )
     # AI analysis budget
     analysis_spend_policy: SpendPolicy | None = Field(
@@ -239,10 +239,29 @@ class Settings(BaseSettings):
 
     @field_validator("analysis_config", mode="before")
     @classmethod
-    def _parse_analysis_config(cls, value: Any) -> Any:
-        # The settings source otherwise discards decoded JSON null as absent,
-        # which would turn an explicit legacy fallback into the new default.
-        return json.loads(value) if isinstance(value, str) else value
+    def _parse_analysis_config(cls, value: Any, info: ValidationInfo) -> Any:
+        """Resolve new-run overrides without reinterpreting stored configuration."""
+        if isinstance(value, str):
+            value = json.loads(value)
+        if value is None:
+            raise ValueError(
+                "analysis_config cannot be null; omit it for runtime defaults or set "
+                "enable_quality_filter=false to disable analysis"
+            )
+        if not isinstance(value, dict):
+            # Explicit model instances are already resolved; malformed inputs
+            # still pass through the field's ordinary model validation.
+            return value
+        profile = new_runtime_analysis_config(
+            max_images=info.data.get("quality_filter_max_images", 20),
+            enable_extended_thinking=info.data.get("enable_extended_thinking", True),
+        ).model_dump()
+        for key, override in value.items():
+            if key in {"visual", "evaluation"} and isinstance(override, dict):
+                profile[key] = {**profile[key], **override}
+            else:
+                profile[key] = override
+        return profile
 
     @model_validator(mode="after")
     def _validate_csv_fields(self) -> "Settings":

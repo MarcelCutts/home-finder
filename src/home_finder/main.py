@@ -574,12 +574,13 @@ def main() -> None:
     parser = argparse.ArgumentParser(
         description="Home Finder - Multi-platform London rental property scraper"
     )
-    parser.add_argument(
+    modes = parser.add_mutually_exclusive_group()
+    modes.add_argument(
         "--dry-run",
         action="store_true",
         help="Run pipeline without sending Telegram notifications",
     )
-    parser.add_argument(
+    modes.add_argument(
         "--scrape-only",
         action="store_true",
         help="Only scrape and print properties (no filtering, storage, or notifications)",
@@ -597,22 +598,22 @@ def main() -> None:
         help="Comma-separated list of scrapers to run (e.g. openrent,zoopla). "
         "Options: openrent, rightmove, zoopla, onthemarket",
     )
-    parser.add_argument(
+    modes.add_argument(
         "--backfill-commute",
         action="store_true",
         help="Backfill commute data for properties with coordinates but no commute_minutes",
     )
-    parser.add_argument(
+    modes.add_argument(
         "--dedup-existing",
         action="store_true",
-        help="Retroactively merge duplicate properties already in the database",
+        help="Retire duplicate pending staging rows while preserving established homes",
     )
-    parser.add_argument(
+    modes.add_argument(
         "--generate-thumbnails",
         action="store_true",
         help="Generate missing thumbnails for all cached gallery images",
     )
-    parser.add_argument(
+    modes.add_argument(
         "--reanalyze",
         action="store_true",
         help="Re-run quality analysis on flagged properties",
@@ -634,20 +635,26 @@ def main() -> None:
         dest="reanalyze_all",
         help="Flag ALL analyzed properties for re-analysis. Use with --reanalyze",
     )
-    parser.add_argument(
+    modes.add_argument(
         "--check-off-market",
         action="store_true",
         help="Check active properties for off-market removal signals via URL spot-check",
     )
-    parser.add_argument(
+    modes.add_argument(
         "--serve",
         action="store_true",
-        help="Start web server with background pipeline scheduler",
+        help="Start the dashboard; collection requires --with-pipeline",
     )
-    parser.add_argument(
+    scheduler = parser.add_mutually_exclusive_group()
+    scheduler.add_argument(
+        "--with-pipeline",
+        action="store_true",
+        help="With --serve: explicitly enable the background collection scheduler",
+    )
+    scheduler.add_argument(
         "--no-pipeline",
         action="store_true",
-        help="With --serve: start web server only, skip background pipeline",
+        help="With --serve: dashboard only (the default; retained for existing commands)",
     )
     parser.add_argument(
         "--full-scrape",
@@ -660,6 +667,38 @@ def main() -> None:
         help="Enable debug-level logging for troubleshooting",
     )
     args = parser.parse_args()
+
+    if (args.with_pipeline or args.no_pipeline) and not args.serve:
+        parser.error("--with-pipeline and --no-pipeline require --serve")
+    if (args.outcode is not None or args.request_only or args.reanalyze_all) and not args.reanalyze:
+        parser.error("--outcode, --request-only and --all require --reanalyze")
+    if args.outcode is not None and args.reanalyze_all:
+        parser.error("choose either --outcode or --all")
+    collection = not any(
+        (
+            args.backfill_commute,
+            args.dedup_existing,
+            args.generate_thumbnails,
+            args.reanalyze,
+            args.check_off_market,
+            args.serve,
+        )
+    )
+    if args.max_per_scraper is not None:
+        if not collection:
+            parser.error("--max-per-scraper requires pipeline collection or --scrape-only")
+        if args.max_per_scraper < 1:
+            parser.error("--max-per-scraper must be positive")
+    if args.full_scrape and (not collection or args.scrape_only):
+        parser.error("--full-scrape is only supported by pipeline collection")
+    only_scrapers: set[str] | None = None
+    if args.scrapers is not None:
+        if not (collection or args.check_off_market):
+            parser.error("--scrapers requires collection or --check-off-market")
+        valid = {source.value for source in PropertySource}
+        only_scrapers = {source.strip().lower() for source in args.scrapers.split(",")}
+        if only_scrapers - valid:
+            parser.error(f"--scrapers must contain only: {', '.join(sorted(valid))}")
 
     # Configure logging
     import logging
@@ -688,20 +727,6 @@ def main() -> None:
         dry_run=args.dry_run,
         scrape_only=args.scrape_only,
     )
-
-    # Parse --scrapers into a set of source values
-    only_scrapers: set[str] | None = None
-    if args.scrapers:
-        valid = {s.value for s in PropertySource}
-        only_scrapers = {s.strip().lower() for s in args.scrapers.split(",")}
-        unknown = only_scrapers - valid
-        if unknown:
-            logger.error(
-                "unknown_scrapers",
-                unknown=sorted(unknown),
-                valid=sorted(valid),
-            )
-            sys.exit(1)
 
     if args.backfill_commute:
         asyncio.run(run_backfill_commute(settings))
@@ -736,7 +761,7 @@ def main() -> None:
 
         from home_finder.web.app import create_app
 
-        app = create_app(settings, run_pipeline=not args.no_pipeline)
+        app = create_app(settings, run_pipeline=args.with_pipeline)
         uvicorn.run(app, host=settings.web_host, port=settings.web_port, log_level="info")
     elif args.scrape_only:
         asyncio.run(

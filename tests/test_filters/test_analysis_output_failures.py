@@ -15,7 +15,11 @@ from home_finder.filters.analysis_contracts import (
     AnalysisOutputError,
     validate_output,
 )
-from home_finder.filters.quality import PropertyQualityFilter, _VisualAnalysisResponse
+from home_finder.filters.quality import (
+    PropertyQualityFilter,
+    _EvaluationResponse,
+    _VisualAnalysisResponse,
+)
 from home_finder.pipeline.analysis import _run_quality_and_save
 from home_finder.pipeline.event_recorder import EventRecorder
 from home_finder.pipeline.stages import PreAnalysisResult
@@ -25,6 +29,25 @@ from tests.test_filters.test_quality_respx import (
 )
 
 pytestmark = pytest.mark.usefixtures("native_analysis_spending")
+
+
+@pytest.mark.parametrize("prose", ["[Not visible in photos]", '{"source": "listing"}', " [] "])
+def test_validated_prose_survives_assembly_without_mutating_phase_inputs(prose):
+    visual = copy.deepcopy(PHASE1_VISUAL_RESPONSE["content"][0]["input"])
+    evaluation = json.loads(PHASE2_EVALUATION_RESPONSE["content"][0]["text"])
+    visual["kitchen"]["notes"] = prose
+    evaluation["value_for_quality"]["reasoning"] = prose
+    visual = validate_output(visual, _VisualAnalysisResponse, "visual", None)
+    evaluation = validate_output(evaluation, _EvaluationResponse, "evaluation", None)
+    before_visual, before_evaluation = copy.deepcopy(visual), copy.deepcopy(evaluation)
+
+    for _ in range(2):
+        analysis = PropertyQualityFilter._merge_analysis_results(visual, evaluation, 2, "fixture")
+        assert analysis is not None
+        assert analysis.kitchen.notes == prose
+        assert analysis.value.quality_adjusted_note == prose
+        assert visual == before_visual
+        assert evaluation == before_evaluation
 
 
 def failed_message(phase, scenario):

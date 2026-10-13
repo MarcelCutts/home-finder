@@ -136,12 +136,12 @@ def _compute_static_version() -> str:
     return str(int(mtime))
 
 
-def create_app(settings: Settings | None = None, *, run_pipeline: bool = True) -> FastAPI:
+def create_app(settings: Settings | None = None, *, run_pipeline: bool = False) -> FastAPI:
     """Create the FastAPI application.
 
     Args:
         settings: Application settings. Loaded from env if not provided.
-        run_pipeline: Whether to start the background pipeline scheduler.
+        run_pipeline: Explicitly enable the background pipeline scheduler (default: off).
     """
     if settings is None:
         settings = Settings()

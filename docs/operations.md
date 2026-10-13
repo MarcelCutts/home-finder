@@ -17,6 +17,12 @@ chats require an explicit owner user ID. Start with:
 uv run home-finder --serve --no-pipeline
 ```
 
+`--serve` alone also starts only the dashboard. Use `--serve --with-pipeline`
+to explicitly activate recurring collection on an appropriately configured host.
+Scheduler modifiers require `--serve`; pipeline, maintenance and serving modes
+cannot be combined. Reanalysis modifiers (`--all`, `--outcode`, `--request-only`)
+require `--reanalyze`.
+
 Verify that anonymous dashboard/assets/diagnostics requests are rejected, valid
 owner credentials work, and cross-origin mutations are rejected. `/health` is
 liveness only. Never put a password in a URL or commit a filled `.env`.
@@ -107,14 +113,19 @@ visual reservation is $0.71992. These reservations are not predicted charges or
 new spend authorization. Explicit caps are still required; repeated application
 attempts remain subject to the existing durable attempt and budget limits.
 
-The runtime factory is separate from versioned `AnalysisConfig` parsing. Existing
-JSON, saved provenance and operation/checkpoint identities are not rewritten.
-Explicit phase JSON retains its historical field defaults: an omitted model is
-still Sonnet 4.6. `HOME_FINDER_ANALYSIS_CONFIG={}` selects the original complete
-profile; JSON `null` retains the original filter fallback and thinking flag.
-An explicit configuration overrides the runtime factory, including its image-based
-allowance, so supply models and bounds deliberately. For example, to pin the
-new 20-image runtime profile independently of later runtime-default changes:
+The runtime factory is separate from versioned `AnalysisConfig` parsing. Saved
+JSON, provenance and operation/checkpoint identities are not rewritten. New-run
+phase JSON merges onto the current runtime profile: `{}` retains the defaults,
+and `{"visual":{"effort":"medium"}}` changes only visual effort. An omitted model
+therefore stays Sonnet 5.5; an omitted input bound retains the configured image-based
+allowance. Top-level JSON `null` is rejected with a configuration error. To disable
+analysis, use `HOME_FINDER_ENABLE_QUALITY_FILTER=false` instead.
+
+An explicit phase field overrides its runtime default, including reasoning, model
+or input bound. An explicitly null `input_token_limit` deliberately requests the
+legacy full-context allowance and can raise a new reservation above $4. Historical
+`AnalysisConfig` decoding retains its original defaults, independently of Settings.
+To pin the complete new 20-image runtime profile against later default changes:
 
 ```dotenv
 HOME_FINDER_ANALYSIS_CONFIG={"version":1,"visual":{"model":"claude-sonnet-5-5","reasoning":"adaptive","effort":"low","input_token_limit":225500,"max_output_tokens":8192,"sdk_retries":0},"evaluation":{"model":"claude-sonnet-5-5","reasoning":"disabled","effort":"low","input_token_limit":140000,"max_output_tokens":8192,"sdk_retries":0}}
@@ -141,8 +152,8 @@ maximum. [Vision limits](https://platform.claude.com/docs/en/build-with-claude/v
 On Sonnet 5.5, the application setting `reasoning: "disabled"` sends
 `thinking: {"type": "between_tools"}` (no up-front thinking); adaptive reasoning
 remains available. Visual requests always use `tool_choice: {"type": "auto"}`.
-In explicit phase JSON, omitted effort is still pinned to `high` for Sonnet 5.5;
-the runtime factory supplies `low`. Supported overrides are `low`, `medium`, and
+New-run phase JSON inherits `low` effort when omitted. Historical phase decoding
+retains its original model-dependent defaults. Supported overrides are `low`, `medium`, and
 `high`. No thinking blocks are replayed between these independent
 single-turn phases. [Migration guide](https://platform.claude.com/docs/en/models/sonnet-5-5/migration-guide).
 

@@ -41,13 +41,17 @@ def test_json_environment_is_validated_and_defaults_are_expanded(monkeypatch):
     settings = Settings(_env_file=None)
     config = settings.analysis_config
     assert config is not None and config.visual.effort == "medium"
-    assert config.visual.model == config.evaluation.model == "claude-sonnet-4-6"
-    assert config.visual.max_output_tokens == 21_000
+    assert config.visual.model == config.evaluation.model == "claude-sonnet-5-5"
+    assert config.visual.max_output_tokens == 8192
     assert config.evaluation.max_output_tokens == 2048
     assert config.visual.request_timeout_seconds == 240
     assert config.evaluation.output_contract == "evaluation_schema_v1"
     with pytest.raises(ValidationError):
         config.visual.effort = "low"
+    # Stored configurations still expand using their historical defaults.
+    historical = AnalysisConfig.model_validate({"visual": {"effort": "medium"}})
+    assert historical.visual.model == historical.evaluation.model == "claude-sonnet-4-6"
+    assert historical.visual.max_output_tokens == 21_000
 
 
 @pytest.mark.parametrize(
