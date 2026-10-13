@@ -16,11 +16,13 @@ from home_finder.db import PropertyStorage
 from home_finder.db.spend import AttemptTransitionError, SpendDeferred, SpendRepository
 from home_finder.filters.quality import PropertyQualityFilter
 from home_finder.models.spend import (
+    SONNET_46_FIVE_MINUTE_RATES,
     SONNET_STANDARD_RATES,
     AttemptSpec,
     BillableUsage,
     ConfirmedCost,
     ProviderRejection,
+    RateCard,
     SpendPolicy,
     UsageSettlement,
     nanousd,
@@ -80,6 +82,41 @@ def test_rates_use_nonoverlapping_exact_units_and_conservative_bound():
     assert nanousd(Decimal("0.000000001")) == 1
     assert SONNET_STANDARD_RATES.reservation(spec().phase_config) == 6_315_000_000
     assert SONNET_STANDARD_RATES.reservation(spec(phase="evaluation").phase_config) == 6_061_440_000
+    assert SONNET_46_FIVE_MINUTE_RATES.reservation(spec().phase_config) == 4_065_000_000
+    assert (
+        SONNET_46_FIVE_MINUTE_RATES.reservation(spec(phase="evaluation").phase_config)
+        == 3_811_440_000
+    )
+
+
+async def test_new_reservations_do_not_reprice_existing_attempts(in_memory_storage, monkeypatch):
+    repo = in_memory_storage.spend
+    with monkeypatch.context() as historical:
+        historical.setattr(
+            "home_finder.db.spend.rate_card_for", lambda model: SONNET_STANDARD_RATES
+        )
+        old = await repo.admit(spec("legacy-rate"), policy())
+    await repo.mark_dispatched(old)
+    await repo.mark_unknown(old, "timeout")
+    new = await repo.admit(spec("current-rate"), policy())
+    async with in_memory_storage._read_connection() as conn:
+        before = dict(await repo._attempt(conn, old))
+        current = dict(await repo._attempt(conn, new))
+    assert before["rates_json"] == SONNET_STANDARD_RATES.model_dump_json()
+    assert before["reserved_nanousd"] == 6_315_000_000
+    assert current["rates_json"] == SONNET_46_FIVE_MINUTE_RATES.model_dump_json()
+    assert current["reserved_nanousd"] == 4_065_000_000
+    assert (await repo.report())["held_nanousd"] == 10_380_000_000
+    await repo.settle_usage(old, settlement())
+    async with in_memory_storage._read_connection() as conn:
+        after = dict(await repo._attempt(conn, old))
+    for field in ("rates_json", "rate_version", "reserved_nanousd", "provenance_json"):
+        assert before[field] == after[field]
+    assert (
+        RateCard.model_validate_json(after["rates_json"]).reservation(spec().phase_config)
+        == (before["reserved_nanousd"])
+    )
+    assert after["accounted_nanousd"] == 3_547_500
 
 
 @pytest.mark.parametrize("bad", [True, 0.1, "NaN", "Infinity", "-1", "0.0000000001", "1000001"])
@@ -103,7 +140,7 @@ def test_money_conversion_never_rounds_a_cap(bad):
 async def test_competing_connections_cannot_oversubscribe_daily_limit(tmp_path):
     path = str(tmp_path / "spend.db")
     async with PropertyStorage(path) as a, PropertyStorage(path) as b:
-        cap = policy(per_call_usd="6.315", daily_usd="12.63", monthly_usd="12.63", max_in_flight=50)
+        cap = policy(per_call_usd="4.065", daily_usd="8.13", monthly_usd="8.13", max_in_flight=50)
         results = await asyncio.gather(
             *(db.spend.admit(spec(str(i)), cap) for i, db in enumerate([a, b] * 8)),
             return_exceptions=True,
@@ -114,8 +151,8 @@ async def test_competing_connections_cannot_oversubscribe_daily_limit(tmp_path):
         assert all(r.reason == "daily_limit" for r in rejected)
         report = await b.spend.report()
         assert report["attempts"] == 2 and report["in_flight"] == 2
-        assert report["day_committed_nanousd"] == 12_630_000_000
-        assert report["month_committed_usd"] == "12.630000000"
+        assert report["day_committed_nanousd"] == 8_130_000_000
+        assert report["month_committed_usd"] == "8.130000000"
 
 
 async def test_concurrent_duplicate_operation_admitted_once(in_memory_storage):
@@ -146,7 +183,7 @@ async def test_monthly_limit_includes_earlier_days(in_memory_storage):
     repo = SpendRepository(
         in_memory_storage._read_connection, in_memory_storage._transaction, clock=lambda: now
     )
-    cap = policy(per_call_usd="6.315", daily_usd="6.315", monthly_usd="6.315")
+    cap = policy(per_call_usd="4.065", daily_usd="4.065", monthly_usd="4.065")
     first = await repo.admit(spec(), cap)
     await repo.mark_dispatched(first)
     await repo.mark_unknown(first, "timeout")
@@ -164,14 +201,14 @@ async def test_unknown_reservation_carries_across_month_and_requires_reconciliat
     repo = SpendRepository(
         in_memory_storage._read_connection, in_memory_storage._transaction, clock=lambda: now
     )
-    cap = policy(per_call_usd="6.315", daily_usd="6.315", monthly_usd="6.315")
+    cap = policy(per_call_usd="4.065", daily_usd="4.065", monthly_usd="4.065")
     attempt = await repo.admit(spec(), cap)
     await repo.mark_dispatched(attempt)
     await repo.mark_unknown(attempt, "timeout")
     now += timedelta(seconds=2)
     report = await repo.report()
     assert report["in_flight"] == 0
-    assert report["day_committed_nanousd"] == report["month_committed_nanousd"] == 6_315_000_000
+    assert report["day_committed_nanousd"] == report["month_committed_nanousd"] == 4_065_000_000
     with pytest.raises(SpendDeferred, match="daily_limit"):
         await repo.admit(spec("new-month"), cap)
     with pytest.raises(SpendDeferred, match="operation_unresolved"):
@@ -200,6 +237,8 @@ async def test_usage_settlement_is_exact_idempotent_and_bounded_by_attempt_limit
     await repo.settle_usage(attempt, settlement())
     report = await repo.report()
     assert report["held_nanousd"] == 0 and report["day_accounted_nanousd"] == 3_547_500
+    assert report["oldest_unresolved_at"] is None
+    assert report["oldest_unresolved_age_seconds"] is None
     assert report["lifetime_usage_estimate_nanousd"] == 3_547_500
     assert report["lifetime_confirmed_nanousd"] == 0
     with pytest.raises(AttemptTransitionError):
@@ -228,7 +267,7 @@ async def test_undispatched_release_never_frees_a_dispatched_call(in_memory_stor
     await repo.mark_dispatched(replacement)
     with pytest.raises(AttemptTransitionError):
         await repo.release_undispatched(replacement)
-    assert (await repo.report())["held_nanousd"] == 6_315_000_000
+    assert (await repo.report())["held_nanousd"] == 4_065_000_000
 
 
 async def test_cancelled_admission_rolls_back_before_dispatch(in_memory_storage, monkeypatch):
@@ -276,7 +315,7 @@ asyncio.run(run())
     assert result.returncode == 23, result.stderr.decode()
     async with PropertyStorage(str(path)) as storage:
         report = await storage.spend.report()
-        assert report["held_nanousd"] == 6_315_000_000
+        assert report["held_nanousd"] == 4_065_000_000
         assert report["unresolved"][0]["state"] == "dispatched"
         with pytest.raises(SpendDeferred, match="operation_unresolved"):
             await storage.spend.admit(spec(), policy())
@@ -328,7 +367,7 @@ async def test_ledger_survives_property_deletion(in_memory_storage, sample_prope
         await conn.execute(
             "DELETE FROM properties WHERE unique_id = ?", (sample_property.unique_id,)
         )
-    assert (await in_memory_storage.spend.report())["held_nanousd"] == 6_315_000_000
+    assert (await in_memory_storage.spend.report())["held_nanousd"] == 4_065_000_000
 
 
 async def test_billing_confirmation_preserves_original_usage(in_memory_storage):
@@ -393,5 +432,5 @@ async def test_read_report_cli_cannot_start_processing(tmp_path):
     )
     assert result.returncode == 0, result.stderr.decode()
     report = json.loads(result.stdout)
-    assert report["attempts"] == 1 and report["held_usd"] == "6.315000000"
+    assert report["attempts"] == 1 and report["held_usd"] == "4.065000000"
     assert len(report["unresolved"]) == 1

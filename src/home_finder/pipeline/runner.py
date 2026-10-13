@@ -1,10 +1,13 @@
 """Single-host run exclusion shared by CLI, maintenance and serve scheduling."""
 
+import asyncio
 import errno
 import fcntl
 import os
 from collections.abc import Callable, Coroutine, Iterator
 from contextlib import contextmanager
+from contextvars import ContextVar
+from dataclasses import dataclass
 from enum import StrEnum
 from functools import wraps
 from pathlib import Path
@@ -18,6 +21,44 @@ logger = get_logger(__name__)
 _P = ParamSpec("_P")
 _T = TypeVar("_T")
 _memory_owners: set[int] = set()
+
+
+def _authority(path: str, storage: PropertyStorage | None) -> str | int | None:
+    if path == ":memory:":
+        return id(storage) if storage is not None else None
+    return str(Path(path).expanduser().resolve())
+
+
+@dataclass
+class _Ownership:
+    authority: str | int | None
+    task: asyncio.Task[Any] | None
+    active: bool = True
+    spend_recovered: bool = False
+
+
+_ownership: ContextVar[_Ownership | None] = ContextVar("runner_ownership", default=None)
+
+
+async def recover_abandoned_spend(storage: PropertyStorage) -> None:
+    """Recover once before paid work, with actual ownership of this authority.
+
+    Do not allow a competing task, a different database or a child task whose
+    runner has finished to turn somebody else's live work into abandoned work.
+    """
+    owner = _ownership.get()
+    if owner is None or not owner.active or owner.task is not asyncio.current_task():
+        raise RuntimeError("Spend recovery requires ownership of this database's runner")
+    # An entry point may create its own isolated in-memory DB after acquiring
+    # ownership. Bind that one instance on first use; never substitute another.
+    if owner.authority is None and storage.db_path == ":memory:":
+        owner.authority = id(storage)
+    if owner.authority != _authority(storage.db_path, storage):
+        raise RuntimeError("Spend recovery requires ownership of this database's runner")
+    if not owner.spend_recovered:
+        counts = await storage.spend.recover_abandoned_execution()
+        owner.spend_recovered = True
+        logger.info("abandoned_spend_execution_recovered", **counts)
 
 
 class RunSkipped(StrEnum):
@@ -74,14 +115,21 @@ def exclusive_runner(
         settings = args[0] if args else kwargs.get("settings")
         if not isinstance(settings, Settings):
             raise TypeError("Runner entry point requires Settings")
-        storage = kwargs.get("storage")
-        path = storage.db_path if isinstance(storage, PropertyStorage) else settings.database_path
+        provided = kwargs.get("storage")
+        storage = provided if isinstance(provided, PropertyStorage) else None
+        path = storage.db_path if storage is not None else settings.database_path
         with runner_lock(path, memory_owner=storage) as acquired:
             if not acquired:
                 logger.info(
                     "runner_skipped", operation=operation.__name__, reason="already_running"
                 )
                 return RunSkipped.ALREADY_RUNNING
-            return await operation(*args, **kwargs)
+            owner = _Ownership(_authority(path, storage), asyncio.current_task())
+            token = _ownership.set(owner)
+            try:
+                return await operation(*args, **kwargs)
+            finally:
+                owner.active = False
+                _ownership.reset(token)
 
     return run

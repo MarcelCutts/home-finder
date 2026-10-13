@@ -752,9 +752,11 @@ async def test_schema_upgrade_and_backup_preserve_spending_holds_and_checkpoint(
     restore_backup(backup, restored)
     async with PropertyStorage(str(restored / "properties.db")) as storage:
         after = await storage.spend.report()
-        assert {k: v for k, v in before.items() if k != "as_of"} == {
-            k: v for k, v in after.items() if k != "as_of"
+        temporal = {"as_of", "oldest_unresolved_age_seconds"}
+        assert {k: v for k, v in before.items() if k not in temporal} == {
+            k: v for k, v in after.items() if k not in temporal
         }
+        assert after["oldest_unresolved_age_seconds"] >= before["oldest_unresolved_age_seconds"]
         assert after["held_nanousd"] > 0 and len(after["visual_checkpoints"]) == 1
         async with storage._read_connection() as conn:
             cur = await conn.execute("PRAGMA user_version")

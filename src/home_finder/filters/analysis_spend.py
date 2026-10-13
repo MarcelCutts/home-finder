@@ -69,18 +69,19 @@ def visual_input_key(property_id: str, body: dict[str, Any], provenance: Analysi
     )
 
 
-def _default_cache_ttl(value: Any) -> bool:
+def _supported_cache_ttl(value: Any, ttl: str) -> bool:
     if isinstance(value, dict):
         control = value.get("cache_control")
         if control is not None and (
             not isinstance(control, dict)
+            or set(control) - {"type", "ttl"}
             or control.get("type") != "ephemeral"
-            or control.get("ttl", "5m") != "5m"
+            or control.get("ttl", "5m") != ttl
         ):
             return False
-        return all(_default_cache_ttl(item) for item in value.values())
+        return all(_supported_cache_ttl(item, ttl) for item in value.values())
     if isinstance(value, list):
-        return all(_default_cache_ttl(item) for item in value)
+        return all(_supported_cache_ttl(item, ttl) for item in value)
     return True
 
 
@@ -272,6 +273,7 @@ class AnalysisSpendMeter:
             raise SpendDeferred("spending_not_configured")
         body = request.json
         phase_config = getattr(scope.provenance.configuration, scope.phase)
+        rates = rate_card_for(phase_config.model)
         allowed = {
             "model",
             "max_tokens",
@@ -297,7 +299,7 @@ class AnalysisSpendMeter:
             or body.get("service_tier", "standard_only") != "standard_only"
             or body.get("inference_geo", "global") != "global"
             or not isinstance(body.get("tools", []), list)
-            or not _default_cache_ttl(body)
+            or not _supported_cache_ttl(body, rates.reservation_cache_ttl)
             or not _supported_phase_options(body, phase_config, scope.phase)
             or any(
                 not isinstance(tool, dict)
@@ -352,7 +354,7 @@ class AnalysisSpendMeter:
             request_sha256=request_digest,
             configuration_sha256=scope.provenance.fingerprint,
         )
-        reserved = rate_card_for(phase_config.model).reservation(phase_config)
+        reserved = rates.reservation(phase_config)
         try:
             attempt_id = await repo.admit(spec, policy)
             log = log.bind(attempt_id=attempt_id)

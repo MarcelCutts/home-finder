@@ -98,6 +98,13 @@ async def spend_report(conn: aiosqlite.Connection, now: datetime) -> dict[str, A
             WHERE state IN {_HELD} ORDER BY admitted_at, attempt_id"""
     ) as cursor:
         report["unresolved"] = [dict(row) for row in await cursor.fetchall()]
+    oldest = report["unresolved"][0]["admitted_at"] if report["unresolved"] else None
+    report["oldest_unresolved_at"] = oldest
+    report["oldest_unresolved_age_seconds"] = (
+        max(0, int((now - datetime.fromisoformat(oldest)).total_seconds()))
+        if oldest is not None
+        else None
+    )
     async with conn.execute(
         "SELECT 1 FROM sqlite_master WHERE type='table' AND name='visual_checkpoints'"
     ) as cursor:
@@ -123,6 +130,28 @@ class SpendRepository:
         self._read_connection = read_connection
         self._transaction = transaction
         self._clock = clock
+
+    async def recover_abandoned_execution(self) -> dict[str, int]:
+        """Recover once at startup, only while the caller owns the runner fence.
+
+        The native request boundary commits dispatch before provider I/O. A
+        reserved attempt therefore never reached that boundary. Dispatched
+        attempts may be billed: end their execution occupancy, retain their
+        entire reservation and require evidence before financial settlement.
+        Age alone never establishes abandonment.
+        """
+        async with self._transaction() as conn:
+            released = await conn.execute(
+                """UPDATE paid_attempts SET state = 'released', completed_at = ?,
+                    result = 'abandoned_before_dispatch', accounted_nanousd = 0
+                    WHERE state = 'reserved'""",
+                (utc_stamp(self._clock()),),
+            )
+            unknown = await conn.execute(
+                """UPDATE paid_attempts SET state = 'unknown',
+                    result = COALESCE(result, 'process_exit') WHERE state = 'dispatched'"""
+            )
+            return {"released": released.rowcount, "unknown": unknown.rowcount}
 
     async def admit(self, spec: AttemptSpec, policy: SpendPolicy) -> str:
         """Reserve and record exactly one attempt before any network dispatch."""

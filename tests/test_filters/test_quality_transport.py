@@ -116,7 +116,7 @@ async def test_native_timeout_keeps_reservation_without_retry(native_analysis_sp
         assert quality._breaker.failure_count == 1
     assert native.is_closed
     report = await native_analysis_spending[0].spend.report()
-    assert report["held_nanousd"] == 6_315_000_000
+    assert report["held_nanousd"] == 4_065_000_000
     assert report["unresolved"][0]["state"] == "unknown"
 
 
@@ -147,7 +147,7 @@ async def test_cancellation_reaches_native_request_without_retry_or_circuit_fail
         assert quality.token_usage.input_tokens == quality.token_usage.output_tokens == 0
     assert native.is_closed
     report = await native_analysis_spending[0].spend.report()
-    assert report["held_nanousd"] == 6_315_000_000
+    assert report["held_nanousd"] == 4_065_000_000
     assert report["unresolved"][0]["result"] == "cancelled"
 
 

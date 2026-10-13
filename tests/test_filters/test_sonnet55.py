@@ -19,6 +19,8 @@ from home_finder.filters.quality import APIUnavailableError, PropertyQualityFilt
 from home_finder.filters.request_budget import input_reservation_tokens
 from home_finder.models.analysis import AnalysisConfig, AnalysisProvenance
 from home_finder.models.spend import (
+    SONNET_46_FIVE_MINUTE_RATES,
+    SONNET_55_FIVE_MINUTE_RATES,
     SONNET_55_STANDARD_RATES,
     SONNET_STANDARD_RATES,
     AttemptSpec,
@@ -27,6 +29,7 @@ from home_finder.models.spend import (
     SpendPolicy,
     UsageSettlement,
     rate_card_for,
+    usd_text,
 )
 from tests.test_filters.test_analysis_output_failures import failed_message
 from tests.test_filters.test_analysis_spend import CONTENT, quality, rows
@@ -141,9 +144,17 @@ def test_both_rate_cards_roundtrip_without_repricing():
     )
     assert SONNET_55_STANDARD_RATES.reservation(full.visual) == 4_210_000_000
     assert SONNET_55_STANDARD_RATES.reservation(full.evaluation) == 4_040_960_000
-    for card in (SONNET_STANDARD_RATES, SONNET_55_STANDARD_RATES):
+    for card in (
+        SONNET_STANDARD_RATES,
+        SONNET_55_STANDARD_RATES,
+        SONNET_46_FIVE_MINUTE_RATES,
+        SONNET_55_FIVE_MINUTE_RATES,
+    ):
         assert RateCard.model_validate_json(card.model_dump_json()) == card
-        assert rate_card_for(card.model) == card
+        active = rate_card_for(card.model)
+        assert active.cost(billed) == card.cost(billed)
+        assert active.reservation_cache_ttl == "5m"
+    assert SONNET_55_FIVE_MINUTE_RATES.reservation(configuration().visual) == 431_920_000
     with pytest.raises(ValueError, match="Unpriced model"):
         rate_card_for("claude-sonnet-5")
     with pytest.raises(ValueError, match="Unpriced model"):
@@ -152,7 +163,15 @@ def test_both_rate_cards_roundtrip_without_repricing():
         SONNET_STANDARD_RATES.reservation(configuration().visual)
 
 
-@pytest.mark.parametrize("card", [SONNET_STANDARD_RATES, SONNET_55_STANDARD_RATES])
+@pytest.mark.parametrize(
+    "card",
+    [
+        SONNET_STANDARD_RATES,
+        SONNET_55_STANDARD_RATES,
+        SONNET_46_FIVE_MINUTE_RATES,
+        SONNET_55_FIVE_MINUTE_RATES,
+    ],
+)
 @pytest.mark.parametrize(
     "field",
     [
@@ -247,7 +266,7 @@ async def test_native_two_phase_calls_use_model_specific_contracts_and_rates(
         assert (await storage.spend.report())["held_nanousd"] == 0
 
 
-@pytest.mark.parametrize("cap", ["0", "0.641919999", "0.641920000"])
+@pytest.mark.parametrize("cap", ["0", "0.431919999", "0.431920000"])
 async def test_native_admission_respects_exact_sonnet55_cap(cap):
     calls = []
 
@@ -259,13 +278,61 @@ async def test_native_admission_respects_exact_sonnet55_cap(cap):
         PropertyStorage(":memory:") as storage,
         quality(storage, policy(per_call_usd=cap), respond, analysis_config=configuration()) as q,
     ):
-        if cap == "0.641920000":
+        if cap == "0.431920000":
             assert await q._run_visual_analysis(CONTENT, "fixture:cap")
             assert len(calls) == 1
         else:
             with pytest.raises(SpendDeferred, match="per_call_limit"):
                 await q._run_visual_analysis(CONTENT, "fixture:cap")
             assert not calls and not await rows(storage)
+
+
+@pytest.mark.parametrize("model, reserve", [(LEGACY, 647_880_000), (SONNET55, 431_920_000)])
+@pytest.mark.parametrize("location", ["system", "tools", "message"])
+@pytest.mark.parametrize(
+    "control, allowed",
+    [
+        ({"type": "ephemeral"}, True),
+        ({"type": "ephemeral", "ttl": "5m"}, True),
+        ({"type": "ephemeral", "ttl": "1h"}, False),
+        ({"type": "ephemeral", "billing_override": "unknown"}, False),
+    ],
+)
+async def test_five_minute_reservation_is_coupled_to_the_native_request(
+    model, reserve, location, control, allowed
+):
+    calls = []
+
+    async def respond(request):
+        calls.append(json.loads(request.content))
+        attempt = (await rows(storage))[0]
+        assert attempt["state"] == "dispatched"
+        assert attempt["reserved_nanousd"] == reserve
+        assert attempt["rate_version"].endswith("2026-10-13-v2")
+        return httpx2.Response(200, json=response(model=model))
+
+    config = configuration(visual=model, reasoning="disabled")
+    async with PropertyStorage(":memory:") as storage:
+        async with quality(
+            storage, policy(per_call_usd=usd_text(reserve)), respond, analysis_config=config
+        ) as q:
+            request = copy.deepcopy(q._visual_request(CONTENT))
+            block = (
+                request["messages"][0]["content"][0]
+                if location == "message"
+                else request[location][0]
+            )
+            block["cache_control"] = control
+            with q._spend_meter.bind(
+                "fixture:cache-policy", "visual", q._analysis_provenance(), _visual_output
+            ):
+                if allowed:
+                    await q._get_client().messages.create(**request)
+                else:
+                    with pytest.raises(SpendDeferred, match="unpriced_request"):
+                        await q._get_client().messages.create(**request)
+        assert len(calls) == int(allowed)
+        assert len(await rows(storage)) == int(allowed)
 
 
 @pytest.mark.parametrize(
@@ -415,7 +482,7 @@ async def test_unpriced_sonnet55_response_holds_reservation_without_retry(failur
             with pytest.raises(APIUnavailableError, match="unpriced_provider_response"):
                 await q._run_visual_analysis(CONTENT, "fixture:billing")
         assert len(calls) == 1
-        assert (await storage.spend.report())["held_nanousd"] == 641_920_000
+        assert (await storage.spend.report())["held_nanousd"] == 431_920_000
         assert (await rows(storage))[0]["state"] == "unknown"
         assert await checkpoint_rows(storage) == []
 
@@ -532,7 +599,7 @@ async def test_native_retry_is_separately_admitted_and_keeps_sonnet55_effort(eff
         assert first["operation_key"] == second["operation_key"]
         assert first["accounted_nanousd"] == 0 and first["cost_basis"] == "provider_error"
         assert second["accounted_nanousd"] == 2_335_000
-        assert first["reserved_nanousd"] == second["reserved_nanousd"] == 641_920_000
+        assert first["reserved_nanousd"] == second["reserved_nanousd"] == 431_920_000
         assert (await storage.spend.report())["held_nanousd"] == 0
 
 
@@ -604,4 +671,4 @@ async def test_frozen_card_must_match_admitted_model_and_version(field):
                 ),
             )
         assert (await rows(storage))[0]["state"] == "dispatched"
-        assert (await storage.spend.report())["held_nanousd"] == 641_920_000
+        assert (await storage.spend.report())["held_nanousd"] == 431_920_000
