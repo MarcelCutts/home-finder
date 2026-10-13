@@ -5,7 +5,7 @@ import math
 from datetime import UTC, datetime
 from html import escape as html_escape
 from pathlib import Path
-from typing import Annotated, Any, Final, cast
+from typing import Annotated, Any, Final, Literal, cast
 
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
@@ -45,6 +45,7 @@ from home_finder.models import (
     PropertyLowlight,
     UserStatus,
 )
+from home_finder.models.delivery import UnfinishedDeliveryState
 from home_finder.utils.address import extract_outcode
 from home_finder.utils.cost_calculator import build_monthly_budget
 from home_finder.utils.image_cache import (
@@ -55,6 +56,7 @@ from home_finder.utils.image_cache import (
 )
 from home_finder.utils.negotiation import generate_negotiation_brief
 from home_finder.web.app import _compute_static_version
+from home_finder.web.deliveries import DELIVERY_STATES, delivery_view
 from home_finder.web.filters import (
     ADDED_OPTIONS,
     VALID_SORT_OPTIONS,
@@ -291,6 +293,27 @@ async def diagnostics(request: Request) -> JSONResponse:
             "processing_counts": await storage.web.get_processing_counts(),
             "delivery": await storage.deliveries.report(),
         }
+    )
+
+
+@router.get("/deliveries", response_class=HTMLResponse)
+async def delivery_status(
+    request: Request,
+    storage: StorageDep,
+    base_url: BaseUrlDep,
+    state: UnfinishedDeliveryState | Literal[""] = "",
+) -> HTMLResponse:
+    """Owner-only read view; reconciliation remains fenced by the local admin command."""
+    report = await storage.deliveries.report(state=state or None)
+    return templates.TemplateResponse(
+        request,
+        "deliveries.html",
+        {
+            "base_url": base_url,
+            "delivery": delivery_view(report),
+            "delivery_states": DELIVERY_STATES,
+            "selected_state": state,
+        },
     )
 
 

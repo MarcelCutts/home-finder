@@ -1,10 +1,14 @@
 """Bounded Telegram delivery snapshots; no provider secrets or retry history."""
 
-from typing import Any, Literal
+from typing import Any, Literal, TypeAlias
 
 from pydantic import BaseModel, ConfigDict, Field
 
 from home_finder.models import MergedProperty, PropertyQualityAnalysis, TransportMode
+
+UnfinishedDeliveryState: TypeAlias = Literal[
+    "queued", "ready", "sending", "waiting", "uncertain", "blocked", "review"
+]
 
 
 class DiscoverySnapshot(BaseModel):

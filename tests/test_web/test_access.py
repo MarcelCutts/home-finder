@@ -40,6 +40,7 @@ def client(tmp_path: Path):
         "/static/style.css",
         "/openapi.json",
         "/diagnostics",
+        "/deliveries",
     ],
 )
 def test_anonymous_reads_are_rejected(client: TestClient, path: str) -> None:

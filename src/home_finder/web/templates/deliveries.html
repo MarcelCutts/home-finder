@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+{% block title %}Alert delivery — I Hate Moving{% endblock %}
+{% block content %}
+<h1>Alert delivery</h1>
+<p>Saved delivery progress for the owner. Acknowledged parts are retained; uncertain parts require review.</p>
+<form method="get" action="/deliveries">
+    <label for="delivery-state">Unfinished alerts</label>
+    <select id="delivery-state" name="state">
+        <option value="" {% if not selected_state %}selected{% endif %}>All unfinished</option>
+        {% for state in delivery_states %}
+        <option value="{{ state }}" {% if state == selected_state %}selected{% endif %}>{{ state|capitalize }} ({{ delivery.counts.get(state, 0) }})</option>
+        {% endfor %}
+    </select>
+    <button type="submit">Show alerts</button>
+</form>
+<p>{{ delivery.counts.get('complete', 0) }} completed · {{ delivery.counts.get('suppressed', 0) }} stopped or dashboard only.</p>
+<p>Showing {{ delivery.records|length }} oldest unfinished alerts{% if selected_state %} in {{ selected_state }} state{% endif %}, up to {{ delivery.limit }}. Times are UTC. <a href="/deliveries">Show all states</a>.</p>
+{% for item in delivery.records %}
+<article class="delivery-record" data-delivery-key="{{ item.event_key }}">
+    <header>
+        <a href="/property/{{ item.property_id }}">{{ item.property_id }}</a> ·
+        <strong>{{ item.state|capitalize }}</strong> · {{ 'New home' if item.kind == 'discovery' else 'Price drop' }}
+    </header>
+    <p>{{ item.reason_label }} {{ item.next_action }}</p>
+    <dl>
+        <dt>Delivery reference</dt><dd><code>{{ item.event_key }}</code></dd>
+        <dt>Progress</dt><dd>{{ item.next_part }} acknowledged part{{ '' if item.next_part == 1 else 's' }}{% if item.total_parts %} of {{ item.total_parts }}; next part {{ item.next_part + 1 }}{% else %}; plan not recorded{% endif %}</dd>
+        <dt>Saved message IDs</dt><dd>{% for group in item.message_ids %}Part {{ loop.index }}: {{ group|join(', ') }}{% if not loop.last %}; {% endif %}{% else %}None recorded{% endfor %}</dd>
+        {% if item.retry_at %}<dt>Retry after</dt><dd><time>{{ item.retry_at }}</time></dd>{% endif %}
+        <dt>Updated</dt><dd><time>{{ item.updated_at }}</time></dd>
+    </dl>
+</article>
+{% else %}
+<p>No unfinished alerts{% if selected_state %} in this state{% endif %}.</p>
+{% endfor %}
+<details>
+    <summary>Review or recover an alert</summary>
+    <p>Use the local command on the authoritative database. Reading the report sends nothing:</p>
+    <pre><code>uv run python -m home_finder.pipeline.delivery_admin --database data/properties.db</code></pre>
+    <p>Stop the runner before reconciling. Add <code>--delivery KEY</code> using the exact delivery reference and <code>--evidence-ref REF</code> with a short, non-secret explanation reference. Choose one action:</p>
+    <ul>
+        <li><code>--message-ids ID,ID</code>: acknowledge the uncertain current part using every message ID actually observed in the configured chat.</li>
+        <li><code>--retry-confirmed-undelivered</code>: retry after verifying non-delivery or correcting a definite rejection. Earlier acknowledged parts stay saved.</li>
+        <li><code>--suppress</code>: stop the remaining alert without claiming it was delivered.</li>
+    </ul>
+    <p>An unknown response is not proof of non-delivery. Automatic retries for uncertain parts remain disabled. Planned media must be restored byte for byte; changing the payload requires a separate reviewed revision.</p>
+</details>
+{% endblock %}

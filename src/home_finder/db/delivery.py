@@ -16,7 +16,7 @@ from home_finder.filters.notification_policy import (
     stopped_reason,
 )
 from home_finder.models import PropertyImage, PropertyQualityAnalysis
-from home_finder.models.delivery import DeliveryPlan, DiscoverySnapshot
+from home_finder.models.delivery import DeliveryPlan, DiscoverySnapshot, UnfinishedDeliveryState
 from home_finder.models.notifications import TRACKED_USER_STATUSES, NotificationPolicy
 
 ConnectionScope = Callable[[], AbstractAsyncContextManager[aiosqlite.Connection]]
@@ -189,7 +189,9 @@ async def record_legacy_deliveries(conn: aiosqlite.Connection) -> None:
         ON CONFLICT(event_key) DO NOTHING""")
 
 
-async def delivery_report(conn: aiosqlite.Connection) -> dict[str, Any]:
+async def delivery_report(
+    conn: aiosqlite.Connection, *, state: UnfinishedDeliveryState | None = None
+) -> dict[str, Any]:
     async with conn.execute(
         "SELECT 1 FROM sqlite_master WHERE type='table' AND name='notification_deliveries'"
     ) as cur:
@@ -199,10 +201,15 @@ async def delivery_report(conn: aiosqlite.Connection) -> dict[str, Any]:
         "SELECT state,COUNT(*) AS count FROM notification_deliveries GROUP BY state"
     ) as cur:
         counts = {r["state"]: r["count"] for r in await cur.fetchall()}
-    async with conn.execute("""SELECT event_key,property_id,kind,state,next_part,receipts_json,
-            reason,retry_at,created_at,updated_at,plan_sha256,resolution_ref
+    async with conn.execute(
+        """SELECT event_key,property_id,kind,state,next_part,receipts_json,
+            reason,retry_at,created_at,updated_at,plan_sha256,resolution_ref,
+            json_array_length(plan_json, '$.parts') AS total_parts
         FROM notification_deliveries WHERE state NOT IN ('complete','suppressed')
-        ORDER BY created_at,event_key LIMIT 100""") as cur:
+            AND (? IS NULL OR state=?)
+        ORDER BY created_at,event_key LIMIT 100""",
+        (state, state),
+    ) as cur:
         records = [dict(r) for r in await cur.fetchall()]
     for record in records:
         record["message_ids"] = json.loads(record.pop("receipts_json"))
@@ -449,9 +456,9 @@ class DeliveryRepository:
             raise DeliveryStateError("Invalid delivery plan digest")
         return DeliveryPlan.model_validate_json(body)
 
-    async def report(self) -> dict[str, Any]:
+    async def report(self, *, state: UnfinishedDeliveryState | None = None) -> dict[str, Any]:
         async with self._read_connection() as conn:
-            return await delivery_report(conn)
+            return await delivery_report(conn, state=state)
 
     async def resolve(
         self,
