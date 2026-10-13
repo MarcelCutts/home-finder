@@ -228,6 +228,77 @@ paid-attempt logs. An invalid receipt/payload or unavailable ledger defers work;
 it must not silently trigger another paid call. Migration 11 adds this state;
 rollback requires the verified pre-upgrade database, including all accounting.
 
+## Assessment scores
+
+Fit score version 3 uses the same rating eligibility and property postcode context
+for storage, dashboard cards/details/maps, Telegram text and new delivery plans.
+An unrated or failed assessment has no fit recommendation. Free-form noise notes,
+including an empty default list, are not acoustic evidence for scoring; typed
+construction, glazing and hosting-risk fields remain inputs. The area hosting
+guide is explicitly labelled unverified in the score explanation.
+
+Initialization backfills older derived scores to the current version. It preserves
+the original assessment JSON, personal choices, paid attempts and delivery history.
+Frozen delivery plans retain their original content. Existing numeric score caches
+may therefore change after upgrading without another paid assessment or a new alert.
+
+The [selection review](reviews/2026-10-13-alert-selection-review.md) records the
+historical replay and mixed sample supporting a **provisional default of 60**.
+New discoveries require a valid rated assessment at or above that minimum.
+Configure `HOME_FINDER_NOTIFICATION_POLICY={"min_fit_score":60}` to choose an
+integer from 0 to 100. Even zero requires valid rated evidence. This cutoff is
+independent of the presentation threshold of 70 for richer Telegram media.
+
+The assessment, first discovery decision and processing transition commit together,
+including for re-enriched homes. The `owner_notifications_v1` decision records the
+score, score version, cutoff and reason in `notification_deliveries.selection_json`.
+Below-minimum or unassessed homes become `dashboard_only`; they remain searchable
+with the reason on their card and detail page. They are not marked sent and do not
+enter delivery retries. Incomplete assessment recovery retains its separate limits.
+
+Decisions are made once per discovery. Reanalysis, a new score version or a changed
+cutoff does not reopen a previous suppression or resend an existing alert. Existing
+frozen plans, receipts and uncertain outcomes retain their meaning. Migration 15
+adds nullable selection metadata without retroactively classifying old deliveries;
+migration 12's legacy review rules remain frozen. An older record with no decision
+metadata is not evidence that it passed the current cutoff.
+
+Inspect unfinished deliveries before activating collection on a restored or
+upgraded authority. Preserved older queued intents can send independently of the
+new cutoff. For example, the October trial export retains 91 queued intents even
+though a counterfactual selection replay at 60 admits only four of its 93 homes.
+Those are different questions: the shadow report is not the next-send count.
+Review and reconcile specific intents under the existing runner fence; do not
+bulk-reset history to make the queue match a new threshold.
+
+Price drops use independent interest rules: an already announced home, an existing
+durable discovery intent, or explicit `interested`, `enquired`, `viewing_booked`,
+`viewed`, `applied` or `offered` status. Pending discovery interest queues a price
+revision but waits for discovery completion before dispatch; explicit tracking can
+receive the update immediately. Fit is not reapplied to price updates. A home never
+announced or tracked gets a recorded `no_prior_interest` suppression for that revision.
+
+Archived, rejected and recorded off-market homes cannot start alerts. Current state
+is checked again before planning and atomically before each dispatch. Archiving
+between parts stops known unsent work while preserving acknowledgements and the
+frozen plan. An in-flight or uncertain request still needs reconciliation; an archive
+action does not prove it was undelivered. Unarchiving does not replay old events.
+
+Review alternative cutoffs without credentials, migration, intent creation or sends:
+
+```bash
+uv run python -m home_finder.pipeline.notification_report \
+  --database data/properties.db --minimum-fit-score 60
+```
+
+This read-only report applies the exact discovery policy to **every retained home**,
+including previously delivered homes, and reports total/scored counts, dispositions,
+reasons and existing notification statuses. It is a counterfactual review, not a
+forecast of the pending send queue or current market availability. The two historical
+snapshots reproduce 446/1,016 and 4/93 eligible homes at 60 after saved personal-state
+exclusions, with unchanged file hashes. Calibrate from future owner decisions; these
+different populations do not establish model accuracy or live alert volume. Complete protected-release and live-source qualification before release.
+
 ## Collection and delivery
 
 Qualify permitted source access before live collection. A challenge, parser

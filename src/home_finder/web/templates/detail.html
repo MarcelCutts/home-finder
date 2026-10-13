@@ -87,6 +87,9 @@
         {% if prop.processing_state != 'assessed' %}
         <p class="processing-notice">{{ prop.processing_label }}.{% if not prop.is_assessed %} A fit score is not available yet.{% endif %}</p>
         {% endif %}
+        {% if prop.notification_label %}
+        <p class="processing-notice">{{ prop.notification_label }}.</p>
+        {% endif %}
         <div class="detail-header-row">
             <h1>{{ prop.title }}</h1>
             <p class="key-price">

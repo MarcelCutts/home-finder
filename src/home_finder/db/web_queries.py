@@ -20,6 +20,7 @@ from home_finder.db.row_mappers import (
 )
 from home_finder.logging import get_logger
 from home_finder.models import PropertyLowlight, PropertyQualityAnalysis
+from home_finder.models.notifications import NotificationDecision
 from home_finder.models.quality import (
     OUTDOOR_SPACE_FLAGS,
     filter_outdoor_absence_badge,
@@ -37,7 +38,9 @@ logger = get_logger(__name__)
 
 # A fallback analysis has no overall rating. It must never acquire a fit score
 # merely because the scoring formula supplies defaults for missing observations.
-_ASSESSED_SQL = "(q.overall_rating IS NOT NULL)"
+# The stored score is built through the shared rating/failure eligibility gate;
+# a rejected or corrupt assessment therefore has no derived recommendation.
+_ASSESSED_SQL = "(COALESCE(q.overall_rating BETWEEN 1 AND 5, 0) AND q.fit_score IS NOT NULL)"
 
 # Old denormalized zeros mean all type flags were false, which also represented
 # unknown. Derive filters from retained evidence; never relabel historical JSON.
@@ -57,6 +60,7 @@ _CARD_COLUMNS = f"""
     q.condition_concerns as quality_concerns,
     q.concern_severity as quality_severity,
     q.analysis_json,
+    d.state as discovery_state, d.reason as discovery_reason, d.selection_json,
     (SELECT pi.url FROM property_images pi
      WHERE pi.property_unique_id = p.unique_id
      AND pi.image_type = 'gallery'
@@ -75,6 +79,7 @@ _CARD_COLUMNS = f"""
 _CARD_JOINS = """
     FROM properties p
     LEFT JOIN quality_analyses q ON p.unique_id = q.property_unique_id
+    LEFT JOIN notification_deliveries d ON d.event_key = 'discovery:' || p.unique_id
 """
 
 _QUALITY_FIELD_DEFAULTS: dict[str, Any] = {
@@ -118,11 +123,40 @@ def _add_processing_state(prop: dict[str, Any]) -> None:
     prop["processing_label"] = label
 
 
+def _add_notification_state(prop: dict[str, Any]) -> None:
+    """Expose bounded selection reasons, independent of current assessment readiness."""
+    prop["notification_label"] = None
+    if prop.get("discovery_state") != "suppressed":
+        return
+    reason = prop.get("discovery_reason")
+    explanations = {
+        "assessment_unavailable": "assessment unavailable at selection",
+        "user_archived": "archived",
+        "user_rejected": "rejected",
+        "off_market": "off market",
+        "operator_suppressed": "alert stopped by operator",
+    }
+    if reason == "already_sent":
+        return
+    detail = explanations.get(reason or "", "alert stopped")
+    if reason == "below_min_fit" and prop.get("selection_json"):
+        try:
+            decision = NotificationDecision.model_validate_json(prop["selection_json"])
+            detail = (
+                f"fit {decision.fit_score} below alert minimum "
+                f"{decision.min_fit_score} at selection"
+            )
+        except ValidationError:
+            pass
+    prop["notification_label"] = f"Dashboard only — {detail}"
+
+
 def _row_to_card_dict(row: aiosqlite.Row) -> PropertyListItem:
     """Convert a raw DB row (with card columns) into a PropertyListItem dict."""
     prop_dict = dict(row)
     parse_json_fields(prop_dict)
     _add_processing_state(prop_dict)
+    _add_notification_state(prop_dict)
 
     if prop_dict.get("first_gallery_url"):
         prop_dict["image_url"] = prop_dict["first_gallery_url"]
@@ -390,6 +424,7 @@ class WebQueryService:
                        p.bedrooms, p.title, p.postcode,
                        p.commute_minutes, p.image_url,
                        p.is_off_market,
+                       {_ASSESSED_SQL} as is_assessed,
                        q.overall_rating as quality_rating,
                        CASE WHEN {_ASSESSED_SQL} THEN q.fit_score END as fit_score,
                        json_extract(q.analysis_json, '$.value.quality_adjusted_rating')
@@ -410,18 +445,16 @@ class WebQueryService:
                     "lon": row["longitude"],
                     "price": row["price_pcm"],
                     "bedrooms": row["bedrooms"],
-                    "rating": row["quality_rating"],
+                    "rating": row["quality_rating"] if row["is_assessed"] else None,
                     "fit_score": row["fit_score"],
                     "title": row["title"],
                     "url": f"/property/{row['unique_id']}",
                     "image_url": row["image_url"],
                     "postcode": row["postcode"],
                     "commute_minutes": row["commute_minutes"],
-                    "value_rating": (
-                        row["value_rating"] if row["quality_rating"] is not None else None
-                    ),
-                    "one_line": row["one_line"] if row["quality_rating"] is not None else None,
-                    "is_assessed": row["quality_rating"] is not None,
+                    "value_rating": (row["value_rating"] if row["is_assessed"] else None),
+                    "one_line": row["one_line"] if row["is_assessed"] else None,
+                    "is_assessed": bool(row["is_assessed"]),
                     "is_off_market": bool(row["is_off_market"]),
                 }
                 for row in rows
@@ -510,9 +543,11 @@ class WebQueryService:
             cursor = await conn.execute(
                 f"""
                 SELECT p.*, q.analysis_json, q.overall_rating as quality_rating,
-                       {_ASSESSED_SQL} as is_assessed, q.reanalysis_requested_at
+                       {_ASSESSED_SQL} as is_assessed, q.reanalysis_requested_at,
+                       d.state as discovery_state, d.reason as discovery_reason, d.selection_json
                 FROM properties p
                 LEFT JOIN quality_analyses q ON p.unique_id = q.property_unique_id
+                LEFT JOIN notification_deliveries d ON d.event_key = 'discovery:' || p.unique_id
                 WHERE p.unique_id = ?
                 """,
                 (unique_id,),
@@ -524,6 +559,7 @@ class WebQueryService:
             prop_dict = dict(row)
             parse_json_fields(prop_dict)
             _add_processing_state(prop_dict)
+            _add_notification_state(prop_dict)
             prop_dict["listing_evidence"] = text_from_property_row(row)
 
             # Parse quality analysis

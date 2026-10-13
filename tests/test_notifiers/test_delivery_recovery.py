@@ -13,6 +13,7 @@ from aiogram.methods import SendMessage
 
 from home_finder.db import PropertyStorage
 from home_finder.models.delivery import DiscoverySnapshot
+from home_finder.models.notifications import NotificationPolicy
 from home_finder.notifiers.delivery import deliver, discovery_plan
 from home_finder.notifiers.telegram import TelegramNotifier
 from home_finder.pipeline.delivery_admin import administer, read_report
@@ -61,7 +62,10 @@ def notifier(storage, *, data_dir="", chat_id=123):
 async def seed(storage, merged, analysis):
     await storage.pipeline.save_pre_analysis_properties([merged], {})
     await storage.save_property_images(merged.unique_id, list(merged.images))
-    await storage.pipeline.complete_analysis(merged.unique_id, analysis)
+    # Transport scenarios explicitly admit any rated fixture. Selection has its own suite.
+    await storage.pipeline.complete_analysis(
+        merged.unique_id, analysis, notification_policy=NotificationPolicy(min_fit_score=0)
+    )
     return f"discovery:{merged.unique_id}"
 
 
@@ -601,13 +605,13 @@ async def test_saved_asset_cannot_silently_be_replaced(
 
 
 async def test_final_receipt_and_property_sent_status_commit_together(
-    tmp_path, enriched_merged_property, delivery_analysis
+    tmp_path, enriched_merged_property, make_quality_analysis
 ):
     merged = enriched_merged_property.model_copy(
         update={"images": enriched_merged_property.images[:1]}
     )
     async with PropertyStorage(str(tmp_path / "final-ack.db")) as storage:
-        key = await seed(storage, merged, None)
+        key = await seed(storage, merged, make_quality_analysis())
         async with storage._transaction() as conn:
             await conn.execute("""CREATE TRIGGER fail_sent BEFORE UPDATE OF notification_status
                 ON properties WHEN NEW.notification_status='sent'
@@ -707,11 +711,11 @@ async def test_read_only_report_does_not_migrate_an_old_database(tmp_path):
 
 
 async def test_images_arriving_before_first_plan_unblock_delivery(
-    tmp_path, enriched_merged_property
+    tmp_path, enriched_merged_property, make_quality_analysis
 ):
     merged = enriched_merged_property.model_copy(update={"images": ()})
     async with PropertyStorage(str(tmp_path / "later-images.db")) as storage:
-        key = await seed(storage, merged, None)
+        key = await seed(storage, merged, make_quality_analysis())
         sender, bot = notifier(storage)
         assert not await deliver(sender, storage.deliveries, key)
         assert (await storage.deliveries.get(key))["reason"] == "no_images"

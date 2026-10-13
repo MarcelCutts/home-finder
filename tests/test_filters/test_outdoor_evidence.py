@@ -54,11 +54,13 @@ def test_old_and_new_evidence_has_one_interpretation(data, expected, make_qualit
             }
         ]
         assert hosting.confidence > 0
-    icons = compute_lifestyle_icons({"outdoor_space": data}, 1)
-    assert ("Has outdoor space" in icons["space"]["tooltip"]) == (expected == "yes")
+    assert compute_lifestyle_icons({"outdoor_space": data}, 1) is None
     analysis = make_quality_analysis(
         outdoor_space=outdoor, lowlights=["No outdoor space", "Potential traffic noise"]
     )
+    icons = compute_lifestyle_icons(analysis, 1)
+    assert icons is not None
+    assert ("Has outdoor space" in icons["space"]["tooltip"]) == (expected == "yes")
     assert analysis.display_lowlights == [
         *(["No outdoor space"] if expected == "no" else []),
         "Potential traffic noise",

@@ -24,6 +24,7 @@ from home_finder.filters.fit_score import (
 def _full_analysis(**overrides: object) -> dict[str, Any]:
     """Build a realistic analysis_json dict with sensible defaults."""
     base: dict[str, Any] = {
+        "summary": "Fixture assessment",
         "kitchen": {
             "overall_quality": "decent",
             "hob_type": "gas",
@@ -177,10 +178,10 @@ class TestComputeFitScore:
         assert s1 > s2
 
     def test_missing_sections_still_produce_score(self):
-        """Partial analysis with only kitchen data should still return a score."""
-        partial = {
-            "kitchen": {"overall_quality": "modern", "hob_type": "gas"},
-        }
+        """A rated assessment can still score when an optional section is absent."""
+        partial = _full_analysis()
+        partial.pop("bedroom")
+        partial.pop("outdoor_space")
         score = compute_fit_score(partial, 1)
         assert score is not None
         assert 0 <= score <= 100
@@ -425,11 +426,7 @@ class TestEdgeCases:
         # Should return None since no dimension has real signal
         assert score is None
 
-        icons = compute_lifestyle_icons(analysis, 1)
-        assert icons is not None
-        # All should be neutral
-        for icon in icons.values():
-            assert icon["state"] == "neutral"
+        assert compute_lifestyle_icons(analysis, 1) is None
 
     def test_negative_living_room_sqm_ignored(self):
         """Negative sqm value shouldn't contribute to score."""
@@ -482,22 +479,19 @@ class TestEdgeCases:
 
     def test_high_area_tolerance_boosts_hosting(self):
         """High area hosting tolerance should boost the hosting dimension."""
-        high = _full_analysis(_area_hosting_tolerance="high")
-        low = _full_analysis(_area_hosting_tolerance="low")
-        none = _full_analysis()
-        high_score = compute_fit_score(high, 2)
-        low_score = compute_fit_score(low, 2)
-        none_score = compute_fit_score(none, 2)
+        analysis = _full_analysis()
+        high_score = compute_fit_score(analysis, 2, postcode="N15 3RH")
+        low_score = compute_fit_score(analysis, 2, postcode="N16 3RH")
+        none_score = compute_fit_score(analysis, 2)
         assert high_score is not None and low_score is not None and none_score is not None
         assert high_score > none_score
         assert none_score > low_score
 
     def test_moderate_area_tolerance_neutral(self):
         """Moderate area hosting tolerance should not change the score vs absent."""
-        moderate = _full_analysis(_area_hosting_tolerance="moderate")
-        none = _full_analysis()
-        mod_score = compute_fit_score(moderate, 2)
-        none_score = compute_fit_score(none, 2)
+        analysis = _full_analysis()
+        mod_score = compute_fit_score(analysis, 2, postcode="E8 3RH")
+        none_score = compute_fit_score(analysis, 2)
         assert mod_score is not None and none_score is not None
         # Moderate adds a signal but 0 points — score stays same or very close
         # (confidence weighting may cause minor variation)
@@ -540,10 +534,10 @@ class TestEdgeCases:
         assert 0 <= score <= 100
 
     def test_non_list_highlights_handled(self):
-        """Non-list highlights shouldn't crash."""
+        """A shape the historical decoder rejects cannot become a recommendation."""
         analysis = _full_analysis(highlights="not a list")
         score = compute_fit_score(analysis, 2)
-        assert score is not None
+        assert score is None
 
     def test_none_outdoor_space(self):
         """None outdoor_space section should be handled."""
@@ -719,13 +713,11 @@ class TestFactorTags:
         assert "Studio (no separation)" in states
         assert states["Studio (no separation)"] == "missed"
 
-    def test_empty_analysis_returns_empty_factors(self):
-        """Dimensions with no analysis data return empty or unknown-only factors."""
-        result = compute_fit_breakdown({"kitchen": {"hob_type": "gas"}}, 1)
-        assert result is not None
-        for dim in result:
-            for f in dim["factors"]:
-                assert f["state"] in ("earned", "missed", "unknown")
+    def test_unrated_partial_evidence_has_no_recommendation(self):
+        analysis = {"kitchen": {"hob_type": "gas"}}
+        assert compute_fit_breakdown(analysis, 1) is None
+        assert compute_fit_score(analysis, 1) is None
+        assert compute_lifestyle_icons(analysis, 1) is None
 
 
 # ── Hosting scorer (direct unit tests) ────────────────────────────────────────

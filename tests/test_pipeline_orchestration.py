@@ -103,10 +103,10 @@ class TestSaveOne:
 
         count = await storage.web.get_property_count()
         assert count == 1
-        # Should transition from pending_analysis to pending
+        # A skipped assessment finishes processing without establishing an alert.
         tracked = await storage.get_property(merged.unique_id)
         assert tracked is not None
-        assert tracked.notification_status.value == "pending"
+        assert tracked.notification_status.value == "dashboard_only"
 
     async def test_preserves_commute_from_pre_save(
         self,

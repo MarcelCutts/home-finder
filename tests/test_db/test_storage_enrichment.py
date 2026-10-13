@@ -193,7 +193,7 @@ class TestMarkEnriched:
         storage: PropertyStorage,
         make_merged_property: Callable[..., MergedProperty],
     ) -> None:
-        """Should set enrichment_status='enriched' and notification_status='pending'."""
+        """Details alone finish enrichment but do not establish alert eligibility."""
         merged = make_merged_property()
         await storage.pipeline.save_unenriched_property(merged)
 
@@ -207,7 +207,7 @@ class TestMarkEnriched:
         row = await cursor.fetchone()
         assert row is not None
         assert row["enrichment_status"] == "enriched"
-        assert row["notification_status"] == NotificationStatus.PENDING.value
+        assert row["notification_status"] == NotificationStatus.DASHBOARD_ONLY.value
 
     @pytest.mark.asyncio
     async def test_noop_for_already_pending(

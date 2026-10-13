@@ -15,8 +15,7 @@ from typing import Any, Final
 
 import aiosqlite
 
-from home_finder.data.area_context import HOSTING_TOLERANCE
-from home_finder.db.delivery import DeliveryRepository
+from home_finder.db.delivery import DeliveryRepository, enqueue_price_drop
 from home_finder.db.image_ops import upsert_property_images
 from home_finder.db.listing_text import (
     apply_source_text,
@@ -342,8 +341,7 @@ class PropertyStorage:
             FROM quality_analyses q
             JOIN properties p ON p.unique_id = q.property_unique_id
             WHERE q.analysis_json IS NOT NULL
-              AND (q.fit_score IS NULL
-                   OR q.fit_score_version IS NULL
+              AND (q.fit_score_version IS NULL
                    OR q.fit_score_version != ?)
             """,
             (FIT_SCORE_VERSION,),
@@ -357,15 +355,9 @@ class PropertyStorage:
             try:
                 analysis = json.loads(row["analysis_json"])
             except (json.JSONDecodeError, TypeError):
-                continue
-            postcode = row["postcode"] or ""
-            outcode = postcode.split()[0] if postcode else None
-            if outcode:
-                ht = HOSTING_TOLERANCE.get(outcode)
-                if ht:
-                    analysis["_area_hosting_tolerance"] = ht.get("rating")
+                analysis = None
             bedrooms = row["bedrooms"] or 0
-            score = compute_fit_score(analysis, bedrooms)
+            score = compute_fit_score(analysis, bedrooms, postcode=row["postcode"])
             updates.append((score, FIT_SCORE_VERSION, row["property_unique_id"]))
 
         if updates:
@@ -1373,13 +1365,9 @@ class PropertyStorage:
             prop_row = await prop_cursor.fetchone()
             if prop_row:
                 analysis_dict = json.loads(analysis_json)
-                postcode = prop_row["postcode"] or ""
-                outcode = postcode.split()[0] if postcode else None
-                if outcode:
-                    ht = HOSTING_TOLERANCE.get(outcode)
-                    if ht:
-                        analysis_dict["_area_hosting_tolerance"] = ht.get("rating")
-                fit_score_val = compute_fit_score(analysis_dict, prop_row["bedrooms"] or 0)
+                fit_score_val = compute_fit_score(
+                    analysis_dict, prop_row["bedrooms"] or 0, postcode=prop_row["postcode"]
+                )
 
             from home_finder.filters.fit_score import FIT_SCORE_VERSION
 
@@ -1642,33 +1630,11 @@ class PropertyStorage:
                 (unique_id,),
             )
             if change_amount < 0:
-                # An unfinished discovery still quotes its frozen price. Save the
-                # newer revision atomically now; delivery.claim gates its dispatch
-                # on discovery's final acknowledgement setting the property to sent.
-                # Untracked or suppressed discoveries do not establish this intent.
-                await conn.execute(
-                    """INSERT INTO notification_deliveries
-                    (event_key,property_id,kind,price_history_id,snapshot_json)
-                    SELECT ?,unique_id,'price_drop',?,
-                        json_object('title',title,'postcode',COALESCE(postcode,''),
-                            'old_price',?,'new_price',?,'unique_id',unique_id,'first_seen',first_seen)
-                    FROM properties WHERE unique_id=? AND (
-                        notification_status='sent' OR (
-                            notification_status IN ('pending','failed') AND EXISTS (
-                                SELECT 1 FROM notification_deliveries d
-                                WHERE d.event_key='discovery:'||properties.unique_id
-                                  AND d.snapshot_json IS NOT NULL
-                                  AND d.state NOT IN ('review','suppressed','complete')
-                            )
-                        )
-                    )""",
-                    (
-                        f"price:{history_cursor.lastrowid}",
-                        history_cursor.lastrowid,
-                        old_price,
-                        new_price,
-                        unique_id,
-                    ),
+                # Queue updates for prior discovery or explicit tracking. Pending
+                # discoveries gate dispatch until acknowledged unless tracked.
+                assert history_cursor.lastrowid is not None
+                await enqueue_price_drop(
+                    conn, unique_id, history_cursor.lastrowid, old_price, new_price
                 )
 
             # Recompute value rating and fit_score for the new price
@@ -1703,13 +1669,9 @@ class PropertyStorage:
                     # Recompute fit_score
                     from home_finder.filters.fit_score import FIT_SCORE_VERSION
 
-                    postcode = qa_row["postcode"] or ""
-                    outcode = postcode.split()[0] if postcode else None
-                    if outcode:
-                        ht = HOSTING_TOLERANCE.get(outcode)
-                        if ht:
-                            analysis["_area_hosting_tolerance"] = ht.get("rating")
-                    fit = compute_fit_score(analysis, qa_row["bedrooms"] or 0)
+                    fit = compute_fit_score(
+                        analysis, qa_row["bedrooms"] or 0, postcode=qa_row["postcode"]
+                    )
 
                     await conn.execute(
                         "UPDATE quality_analyses "

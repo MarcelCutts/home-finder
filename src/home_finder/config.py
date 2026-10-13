@@ -10,6 +10,7 @@ from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 from home_finder.data.location_mappings import resolve_area_outcodes
 from home_finder.models import FurnishType, SearchCriteria, TransportMode
 from home_finder.models.analysis import AnalysisConfig, EvaluationPhaseConfig, VisualPhaseConfig
+from home_finder.models.notifications import NotificationPolicy
 from home_finder.models.spend import SpendPolicy
 
 
@@ -117,6 +118,10 @@ class Settings(BaseSettings):
         ),
         description="Phase JSON overrides the bounded runtime profile; omitted fields retain "
         "current defaults. Historical configuration decoding is independent.",
+    )
+    notification_policy: NotificationPolicy = Field(
+        default_factory=NotificationPolicy,
+        description="Versioned discovery selection; default minimum fit 60 with rated evidence",
     )
     # AI analysis budget
     analysis_spend_policy: SpendPolicy | None = Field(
