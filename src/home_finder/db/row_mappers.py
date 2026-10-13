@@ -60,6 +60,7 @@ class PropertyListItem(TypedDict, total=False):
     is_assessed: bool
     processing_state: str
     processing_label: str
+    notification_label: str | None
     # Parsed JSON fields
     sources_list: list[str]
     source_urls_dict: dict[str, str]

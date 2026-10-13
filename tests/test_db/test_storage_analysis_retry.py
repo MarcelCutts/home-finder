@@ -21,6 +21,7 @@ from home_finder.models import (
     SpaceAnalysis,
     TransportMode,
 )
+from home_finder.models.notifications import NotificationPolicy
 from home_finder.web.filters import PropertyFilter
 
 
@@ -325,7 +326,11 @@ class TestCompleteAnalysis:
         merged = make_merged_property()
         await storage.pipeline.save_pre_analysis_properties([merged], {})
 
-        await storage.pipeline.complete_analysis(merged.unique_id, make_quality_analysis())
+        await storage.pipeline.complete_analysis(
+            merged.unique_id,
+            make_quality_analysis(),
+            notification_policy=NotificationPolicy(min_fit_score=0),
+        )
 
         conn = await storage._get_connection()
         cursor = await conn.execute(
@@ -359,7 +364,7 @@ class TestCompleteAnalysis:
         storage: PropertyStorage,
         make_merged_property: Callable[..., MergedProperty],
     ) -> None:
-        """complete_analysis with None quality_analysis just transitions status."""
+        """An unassessed home remains on the dashboard without a discovery alert."""
         merged = make_merged_property()
         await storage.pipeline.save_pre_analysis_properties([merged], {})
 
@@ -372,7 +377,7 @@ class TestCompleteAnalysis:
         )
         row = await cursor.fetchone()
         assert row is not None
-        assert row["notification_status"] == NotificationStatus.PENDING.value
+        assert row["notification_status"] == NotificationStatus.DASHBOARD_ONLY.value
 
     @pytest.mark.asyncio
     async def test_noop_for_already_sent(

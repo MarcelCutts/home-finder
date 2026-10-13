@@ -10,8 +10,14 @@ from typing import Any, Literal
 import aiosqlite
 
 from home_finder.db.row_mappers import row_to_merged_property
+from home_finder.filters.notification_policy import (
+    select_discovery,
+    select_price_drop,
+    stopped_reason,
+)
 from home_finder.models import PropertyImage, PropertyQualityAnalysis
 from home_finder.models.delivery import DeliveryPlan, DiscoverySnapshot
+from home_finder.models.notifications import TRACKED_USER_STATUSES, NotificationPolicy
 
 ConnectionScope = Callable[[], AbstractAsyncContextManager[aiosqlite.Connection]]
 
@@ -51,12 +57,115 @@ async def discovery_snapshot(conn: aiosqlite.Connection, uid: str) -> str:
     ).model_dump_json()
 
 
-async def enqueue_discovery(conn: aiosqlite.Connection, uid: str) -> None:
-    """Called inside the transaction that first makes a home notification-ready."""
+async def enqueue_discovery(
+    conn: aiosqlite.Connection,
+    uid: str,
+    *,
+    policy: NotificationPolicy | None = None,
+) -> None:
+    """Select once in the same transaction as the assessment/status transition.
+
+    Reanalysis or configuration changes cannot replay a previously decided event.
+    Existing plans, outcomes and uncertainty remain authoritative.
+    """
+    key = f"discovery:{uid}"
+    async with conn.execute(
+        "SELECT state FROM notification_deliveries WHERE event_key=?", (key,)
+    ) as cur:
+        existing = await cur.fetchone()
+    if existing is None:
+        async with conn.execute(
+            """SELECT p.bedrooms,p.postcode,p.user_status,p.is_off_market,q.analysis_json
+               FROM properties p LEFT JOIN quality_analyses q ON q.property_unique_id=p.unique_id
+               WHERE p.unique_id=?""",
+            (uid,),
+        ) as cur:
+            row = await cur.fetchone()
+        if row is None:
+            raise DeliveryStateError("Missing property")
+        try:
+            analysis = json.loads(row["analysis_json"]) if row["analysis_json"] else None
+        except json.JSONDecodeError:
+            analysis = None
+        decision = select_discovery(
+            analysis,
+            row["bedrooms"],
+            postcode=row["postcode"],
+            user_status=row["user_status"],
+            is_off_market=bool(row["is_off_market"]),
+            policy=policy or NotificationPolicy(),
+        )
+        alert = decision.disposition == "alert"
+        state = "queued" if alert else "suppressed"
+        await conn.execute(
+            """INSERT INTO notification_deliveries
+               (event_key,property_id,kind,state,reason,snapshot_json,selection_json)
+               VALUES (?,?,'discovery',?,?,?,?)""",
+            (
+                key,
+                uid,
+                state,
+                None if alert else decision.reason,
+                await discovery_snapshot(conn, uid) if alert else None,
+                decision.model_dump_json(),
+            ),
+        )
+    else:
+        state = existing["state"]
+    if state == "suppressed":
+        await conn.execute(
+            """UPDATE properties SET notification_status='dashboard_only'
+               WHERE unique_id=? AND notification_status IN ('pending','failed')""",
+            (uid,),
+        )
+
+
+async def _price_context(conn: aiosqlite.Connection, uid: str) -> aiosqlite.Row | None:
+    async with conn.execute(
+        """SELECT p.*, (p.notification_status='sent' OR EXISTS (
+               SELECT 1 FROM notification_deliveries d
+               WHERE d.event_key='discovery:'||p.unique_id AND d.snapshot_json IS NOT NULL
+                 AND d.state NOT IN ('review','suppressed')
+           )) AS has_discovery_interest FROM properties p WHERE p.unique_id=?""",
+        (uid,),
+    ) as cur:
+        return await cur.fetchone()
+
+
+async def enqueue_price_drop(
+    conn: aiosqlite.Connection, uid: str, history_id: int, old_price: int, new_price: int
+) -> None:
+    """Record selection atomically with its price revision, independently of fit."""
+    row = await _price_context(conn, uid)
+    if row is None:
+        raise DeliveryStateError("Missing property")
+    decision = select_price_drop(
+        user_status=row["user_status"],
+        is_off_market=bool(row["is_off_market"]),
+        has_discovery_interest=bool(row["has_discovery_interest"]),
+    )
+    alert = decision.disposition == "alert"
+    snapshot = {
+        "title": row["title"],
+        "postcode": row["postcode"] or "",
+        "old_price": old_price,
+        "new_price": new_price,
+        "unique_id": uid,
+        "first_seen": row["first_seen"],
+    }
     await conn.execute(
-        """INSERT INTO notification_deliveries(event_key,property_id,kind,snapshot_json)
-           VALUES (?,?,'discovery',?) ON CONFLICT(event_key) DO NOTHING""",
-        (f"discovery:{uid}", uid, await discovery_snapshot(conn, uid)),
+        """INSERT INTO notification_deliveries
+           (event_key,property_id,kind,price_history_id,state,reason,snapshot_json,selection_json)
+           VALUES (?,?,'price_drop',?,?,?,?,?) ON CONFLICT(event_key) DO NOTHING""",
+        (
+            f"price:{history_id}",
+            uid,
+            history_id,
+            "queued" if alert else "suppressed",
+            None if alert else decision.reason,
+            json.dumps(snapshot),
+            decision.model_dump_json(),
+        ),
     )
 
 
@@ -170,6 +279,8 @@ class DeliveryRepository:
     async def claim(self, key: str, recipient: str, index: int) -> bool:
         now = self._clock().astimezone(UTC).isoformat()
         async with self._transaction() as conn:
+            if await self._suppress_if_stopped(conn, key):
+                return False
             # A flood-control delay survives a process restart and gates this recipient.
             async with conn.execute(
                 """SELECT 1 FROM notification_deliveries
@@ -178,18 +289,61 @@ class DeliveryRepository:
             ) as cur:
                 if await cur.fetchone():
                     return False
+            tracked = sorted(TRACKED_USER_STATUSES)
+            placeholders = ",".join("?" for _ in tracked)
             cur = await conn.execute(
-                """UPDATE notification_deliveries SET state='sending',
+                f"""UPDATE notification_deliveries SET state='sending',
                     reason=NULL,retry_at=NULL,updated_at=CURRENT_TIMESTAMP
                 WHERE event_key=? AND recipient=? AND next_part=?
                   AND state IN ('ready','waiting') AND (retry_at IS NULL OR retry_at<=?)
                   AND EXISTS (SELECT 1 FROM properties p
                     WHERE p.unique_id=notification_deliveries.property_id
                       AND ((kind='discovery' AND p.notification_status IN ('pending','failed'))
-                           OR (kind='price_drop' AND p.notification_status='sent')))""",
-                (key, recipient, index, now),
+                           OR (kind='price_drop' AND (p.notification_status='sent'
+                               OR p.user_status IN ({placeholders})))))""",
+                (key, recipient, index, now, *tracked),
             )
             return cur.rowcount == 1
+
+    async def suppress_if_stopped(self, key: str) -> bool:
+        """Stop known unsent work; never reinterpret an in-flight/uncertain request."""
+        async with self._transaction() as conn:
+            return await self._suppress_if_stopped(conn, key)
+
+    async def _suppress_if_stopped(self, conn: aiosqlite.Connection, key: str) -> bool:
+        async with conn.execute(
+            """SELECT property_id,kind FROM notification_deliveries WHERE event_key=?
+               AND state IN ('queued','ready','waiting','blocked')""",
+            (key,),
+        ) as cur:
+            delivery = await cur.fetchone()
+        if delivery is None:
+            return False
+        row = await _price_context(conn, delivery["property_id"])
+        if row is None:
+            return False
+        reason = stopped_reason(row["user_status"], bool(row["is_off_market"]))
+        if delivery["kind"] == "price_drop":
+            decision = select_price_drop(
+                user_status=row["user_status"],
+                is_off_market=bool(row["is_off_market"]),
+                has_discovery_interest=bool(row["has_discovery_interest"]),
+            )
+            reason = decision.reason if decision.disposition == "dashboard_only" else None
+        if reason is None:
+            return False
+        await conn.execute(
+            """UPDATE notification_deliveries SET state='suppressed',reason=?,retry_at=NULL,
+               updated_at=CURRENT_TIMESTAMP WHERE event_key=?""",
+            (reason, key),
+        )
+        if delivery["kind"] == "discovery":
+            await conn.execute(
+                """UPDATE properties SET notification_status='dashboard_only'
+                   WHERE unique_id=? AND notification_status IN ('pending','failed')""",
+                (delivery["property_id"],),
+            )
+        return True
 
     async def fail(
         self,

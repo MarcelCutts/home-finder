@@ -819,7 +819,6 @@ async def migrate_011_visual_checkpoints(conn: aiosqlite.Connection) -> None:
 
 async def migrate_012_notification_deliveries(conn: aiosqlite.Connection) -> None:
     """Bounded current delivery state, with legacy outcomes held for review."""
-    from home_finder.db.delivery import record_legacy_deliveries
 
     await conn.execute("""CREATE TABLE IF NOT EXISTS notification_deliveries (
         event_key TEXT PRIMARY KEY,
@@ -844,7 +843,24 @@ async def migrate_012_notification_deliveries(conn: aiosqlite.Connection) -> Non
     )""")
     await conn.execute("""CREATE INDEX IF NOT EXISTS idx_notification_delivery_state
         ON notification_deliveries(state,recipient)""")
-    await record_legacy_deliveries(conn)
+    # Freeze v12's legacy classification. Runtime selection must never change
+    # the meaning of this already released migration on an older database.
+    await conn.execute("""INSERT INTO notification_deliveries
+        (event_key,property_id,kind,state,reason)
+        SELECT 'discovery:'||unique_id, unique_id, 'discovery','review','legacy_untracked'
+        FROM properties WHERE notification_status IN ('pending','failed')
+        ON CONFLICT(event_key) DO NOTHING""")
+    await conn.execute("""INSERT INTO notification_deliveries
+        (event_key,property_id,kind,price_history_id,state,reason,snapshot_json)
+        SELECT 'price:'||ph.id, p.unique_id, 'price_drop', ph.id, 'review','legacy_untracked',
+            json_object('title',p.title,'postcode',COALESCE(p.postcode,''),
+                'old_price',ph.old_price,'new_price',ph.new_price,'unique_id',p.unique_id,
+                'first_seen',p.first_seen)
+        FROM properties p JOIN price_history ph ON ph.property_unique_id=p.unique_id
+        WHERE p.notification_status='sent' AND p.price_drop_notified=0
+          AND ph.change_amount<0
+          AND ph.id=(SELECT MAX(id) FROM price_history WHERE property_unique_id=p.unique_id)
+        ON CONFLICT(event_key) DO NOTHING""")
 
 
 async def migrate_013_analysis_exhaustion(conn: aiosqlite.Connection) -> None:
@@ -875,6 +891,20 @@ async def migrate_014_enrichment_recovery(conn: aiosqlite.Connection) -> None:
             await conn.execute(f"ALTER TABLE properties ADD COLUMN {column} TEXT")
 
 
+async def migrate_015_notification_selection(conn: aiosqlite.Connection) -> None:
+    """Record new selection decisions without reclassifying historical deliveries."""
+    columns = {
+        row[1]
+        for row in await (
+            await conn.execute("PRAGMA table_info(notification_deliveries)")
+        ).fetchall()
+    }
+    if "selection_json" not in columns:
+        await conn.execute("""ALTER TABLE notification_deliveries ADD COLUMN selection_json TEXT
+            CHECK(selection_json IS NULL OR
+                (json_valid(selection_json) AND length(selection_json)<=2000))""")
+
+
 _MigrationFn = Callable[[aiosqlite.Connection], Coroutine[Any, Any, None]]
 
 MIGRATIONS: list[_MigrationFn] = [
@@ -892,6 +922,7 @@ MIGRATIONS: list[_MigrationFn] = [
     migrate_012_notification_deliveries,
     migrate_013_analysis_exhaustion,
     migrate_014_enrichment_recovery,
+    migrate_015_notification_selection,
 ]
 
 

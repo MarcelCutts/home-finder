@@ -265,7 +265,9 @@ class TestGetUnsentPriceDrops:
         assert drops == []
 
 
-def _make_analysis(value: ValueAnalysis | None = None) -> PropertyQualityAnalysis:
+def _make_analysis(
+    value: ValueAnalysis | None = None, *, rating: int | None = None
+) -> PropertyQualityAnalysis:
     """Build a minimal PropertyQualityAnalysis for testing."""
     return PropertyQualityAnalysis(
         kitchen=KitchenAnalysis(),
@@ -273,6 +275,7 @@ def _make_analysis(value: ValueAnalysis | None = None) -> PropertyQualityAnalysi
         light_space=LightSpaceAnalysis(),
         space=SpaceAnalysis(),
         summary="Nice flat",
+        overall_rating=rating,
         value=value,
     )
 
@@ -317,6 +320,7 @@ class TestValueRecomputeOnPriceChange:
     ) -> None:
         await storage.save_merged_property(merged_a)
         analysis = _make_analysis(
+            rating=4,
             value=ValueAnalysis(
                 area_average=1800,
                 difference=100,
@@ -336,6 +340,7 @@ class TestValueRecomputeOnPriceChange:
         )
         original = await cursor.fetchone()
         original_score = original["fit_score"]
+        assert original_score is not None
 
         # Price drop should trigger fit_score recompute
         await storage.detect_and_record_price_change(merged_a.unique_id, 1750)

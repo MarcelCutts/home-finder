@@ -253,16 +253,13 @@ def _enrich_fit_scores(properties: list[Any]) -> None:
             prop.setdefault("lifestyle_icons", None)
             continue
         postcode = prop.get("postcode") or ""
-        outcode = postcode.split()[0] if postcode else None
-        if outcode:
-            ht = HOSTING_TOLERANCE.get(outcode)
-            if ht:
-                analysis["_area_hosting_tolerance"] = ht.get("rating")
         bedrooms = prop.get("bedrooms", 0) or 0
-        fit_score, fit_breakdown = compute_fit_score_and_breakdown(analysis, bedrooms)
+        fit_score, fit_breakdown = compute_fit_score_and_breakdown(
+            analysis, bedrooms, postcode=postcode
+        )
         prop["fit_score"] = fit_score
         prop["fit_breakdown"] = fit_breakdown
-        prop["lifestyle_icons"] = compute_lifestyle_icons(analysis, bedrooms)
+        prop["lifestyle_icons"] = compute_lifestyle_icons(analysis, bedrooms, postcode=postcode)
 
 
 @router.get("/count")
@@ -592,13 +589,10 @@ async def property_detail(
     fit_breakdown = None
     qa = prop.get("quality_analysis")
     if qa is not None:
-        analysis_dict = qa.model_dump()
-        if outcode:
-            ht = HOSTING_TOLERANCE.get(outcode)
-            if ht:
-                analysis_dict["_area_hosting_tolerance"] = ht.get("rating")
         bedrooms = prop.get("bedrooms", 0) or 0
-        fit_score, fit_breakdown = compute_fit_score_and_breakdown(analysis_dict, bedrooms)
+        fit_score, fit_breakdown = compute_fit_score_and_breakdown(
+            qa, bedrooms, postcode=prop.get("postcode")
+        )
 
     # Rebuild from current retained listing evidence and rent, without model work.
     extraction = qa.listing_extraction if qa else None

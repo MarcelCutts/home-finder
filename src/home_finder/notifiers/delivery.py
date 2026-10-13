@@ -51,7 +51,7 @@ def _photo(notifier: "TelegramNotifier", url: str, uid: str, album: bool) -> dic
 def discovery_plan(notifier: "TelegramNotifier", snapshot: DiscoverySnapshot) -> DeliveryPlan:
     merged = snapshot.merged
     quality = snapshot.quality_analysis
-    fit = compute_fit_score(quality.model_dump(), merged.canonical.bedrooms) if quality else None
+    fit = compute_fit_score(quality, merged.canonical.bedrooms, postcode=merged.canonical.postcode)
     high = fit is not None and fit >= 70
     keyboard = _build_inline_keyboard(merged, web_base_url=notifier.web_base_url).model_dump(
         mode="json", exclude_none=True
@@ -179,6 +179,8 @@ def message_ids(result: Any, part: DeliveryPart, chat_id: int) -> list[int]:
 async def deliver(notifier: "TelegramNotifier", repo: DeliveryRepository, key: str) -> bool:
     # Token rotation for the same bot is harmless; another bot/chat must not inherit receipts.
     recipient = f"{notifier.bot_token.split(':', 1)[0]}:{notifier.chat_id}"
+    if await repo.suppress_if_stopped(key):
+        return False
     await repo.refresh_missing_images(key)
     row = await repo.get(key)
     if row is None or row["state"] in {"review", "blocked", "uncertain", "sending", "suppressed"}:

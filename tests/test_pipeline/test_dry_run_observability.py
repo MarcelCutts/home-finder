@@ -12,6 +12,7 @@ from home_finder.config import Settings
 from home_finder.db import PropertyStorage
 from home_finder.filters.quality import TokenUsage
 from home_finder.main import _run_pipeline_with_storage
+from home_finder.models.notifications import NotificationPolicy
 from home_finder.pipeline.event_recorder import PropertyEvent
 from home_finder.pipeline.scraping import ScraperMetrics
 from home_finder.pipeline.stages import PreAnalysisResult
@@ -31,6 +32,7 @@ def settings(tmp_path):
         data_dir=str(tmp_path),
         enable_quality_filter=False,
         anthropic_api_key=SecretStr(""),
+        notification_policy=NotificationPolicy(min_fit_score=0),
     )
 
 

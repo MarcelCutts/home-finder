@@ -452,7 +452,7 @@ def format_property_message(
         Formatted message string with HTML markup.
     """
     fs = (
-        compute_fit_score(quality_analysis.model_dump(), prop.bedrooms)
+        compute_fit_score(quality_analysis, prop.bedrooms, postcode=prop.postcode)
         if quality_analysis
         else None
     )
@@ -498,7 +498,7 @@ def format_merged_property_message(
     """
     prop = merged.canonical
     fs = (
-        compute_fit_score(quality_analysis.model_dump(), prop.bedrooms)
+        compute_fit_score(quality_analysis, prop.bedrooms, postcode=prop.postcode)
         if quality_analysis
         else None
     )
@@ -571,7 +571,7 @@ def format_merged_property_caption(
     """
     prop = merged.canonical
     fs = (
-        compute_fit_score(quality_analysis.model_dump(), prop.bedrooms)
+        compute_fit_score(quality_analysis, prop.bedrooms, postcode=prop.postcode)
         if quality_analysis
         else None
     )

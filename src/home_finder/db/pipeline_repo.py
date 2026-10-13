@@ -33,6 +33,7 @@ from home_finder.models import (
     PropertyQualityAnalysis,
     TransportMode,
 )
+from home_finder.models.notifications import NotificationPolicy
 
 logger = get_logger(__name__)
 
@@ -446,7 +447,12 @@ class PipelineRepository:
             by_attempts = {str(row["enrichment_attempts"]): row["cnt"] for row in rows}
             return {"by_attempts": by_attempts}
 
-    async def mark_enriched(self, unique_id: str) -> None:
+    async def mark_enriched(
+        self,
+        unique_id: str,
+        *,
+        notification_policy: NotificationPolicy | None = None,
+    ) -> None:
         """Transition a re-enriched property into the normal notification flow.
 
         Sets enrichment_status='enriched' and notification_status='pending'
@@ -470,7 +476,7 @@ class PipelineRepository:
                 ),
             )
             if transition.rowcount:
-                await enqueue_discovery(conn, unique_id)
+                await enqueue_discovery(conn, unique_id, policy=notification_policy)
 
     async def expire_unenriched(self, max_attempts: int = 3) -> int:
         """Give up on properties that exceeded max enrichment retries.
@@ -732,12 +738,15 @@ class PipelineRepository:
         self,
         unique_id: str,
         quality_analysis: PropertyQualityAnalysis | None,
+        *,
+        notification_policy: NotificationPolicy | None = None,
     ) -> None:
-        """Complete quality analysis for a property and transition to pending notification.
+        """Save the assessment and a single durable notification decision atomically.
 
         Saves quality data (if any), increments ``analysis_attempts``, and
-        sets notification_status to 'pending'.  Only transitions properties
-        that are currently 'pending_analysis'.
+        sets notification_status to 'pending' or 'dashboard_only'. Transitions an
+        initial assessment or a re-enriched home awaiting its assessment. The
+        latter retains its cumulative initial-analysis counter.
 
         Uses a single commit for both the quality save and the status update
         to prevent inconsistent state on crash.
@@ -754,18 +763,22 @@ class PipelineRepository:
                 """
                 UPDATE properties
                 SET notification_status = ?,
-                    analysis_attempts = COALESCE(analysis_attempts, 0) + 1
+                    analysis_attempts = COALESCE(analysis_attempts, 0)
+                        + CASE WHEN notification_status='pending_analysis' THEN 1 ELSE 0 END,
+                    enrichment_status = 'enriched',
+                    enrichment_recovery_requested_at = NULL
                 WHERE unique_id = ?
-                  AND notification_status = ?
+                  AND notification_status IN (?, ?)
                 """,
                 (
                     NotificationStatus.PENDING.value,
                     unique_id,
                     NotificationStatus.PENDING_ANALYSIS.value,
+                    NotificationStatus.PENDING_ENRICHMENT.value,
                 ),
             )
             if transition.rowcount:
-                await enqueue_discovery(conn, unique_id)
+                await enqueue_discovery(conn, unique_id, policy=notification_policy)
         logger.debug("analysis_completed", unique_id=unique_id)
 
     async def reset_failed_analyses(self, *, max_analysis_attempts: int = 3) -> int:

@@ -33,14 +33,18 @@ async def test_failed_price_change_cannot_commit_through_unrelated_notification(
     price_written = asyncio.Event()
     fail_price = asyncio.Event()
 
-    async def intercept(sql: str, *args, **kwargs):  # type: ignore[no-untyped-def]
-        if sql.startswith("SELECT q.analysis_json, p.postcode"):
-            price_written.set()
-            await fail_price.wait()
-            raise RuntimeError("price transaction failed")
-        return await original_execute(sql, *args, **kwargs)
+    async def pause_after_price():  # type: ignore[no-untyped-def]
+        price_written.set()
+        await fail_price.wait()
+        raise RuntimeError("price transaction failed")
 
-    with patch.object(conn, "execute", side_effect=intercept):
+    def intercept(sql: str, *args, **kwargs):  # type: ignore[no-untyped-def]
+        if sql.startswith("SELECT q.analysis_json, p.postcode"):
+            return pause_after_price()
+        # Preserve execute's awaitable AND async-context-manager interface.
+        return original_execute(sql, *args, **kwargs)
+
+    with patch.object(conn, "execute", new=intercept):
         price_task = asyncio.create_task(
             storage.detect_and_record_price_change(sample_property.unique_id, 1700)
         )

@@ -33,6 +33,9 @@
             {% if prop.processing_state != 'assessed' %}
             <p class="processing-notice">{{ prop.processing_label }}</p>
             {% endif %}
+            {% if prop.notification_label %}
+            <p class="processing-notice">{{ prop.notification_label }}</p>
+            {% endif %}
             {# Meta row: rating | postcode | commute pill #}
             <div class="card-meta">
                 <div class="card-meta-left">

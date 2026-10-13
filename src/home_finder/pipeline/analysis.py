@@ -17,6 +17,7 @@ from home_finder.models import (
     PropertyQualityAnalysis,
     TransportMode,
 )
+from home_finder.models.notifications import NotificationPolicy
 from home_finder.models.spend import SpendDeferred
 from home_finder.pipeline.cache_recovery import repair_merged_image_caches
 from home_finder.pipeline.event_recorder import EventRecorder, PropertyEvent
@@ -163,18 +164,18 @@ async def _save_one(
     commute_info: tuple[int, TransportMode] | None,
     quality_analysis: PropertyQualityAnalysis | None,
     storage: PropertyStorage,
+    *,
+    notification_policy: NotificationPolicy | None = None,
 ) -> None:
     """Complete analysis for a single property and transition to notification-ready.
 
     Called after quality analysis completes. The property was already saved to DB
     by save_pre_analysis_properties() before analysis started.
     """
-    # Save quality data and transition notification_status to 'pending'
-    await storage.pipeline.complete_analysis(merged.unique_id, quality_analysis)
-
-    # Transition re-enriched properties into normal notification flow.
-    # No-op for genuinely new properties (already handled by complete_analysis).
-    await storage.pipeline.mark_enriched(merged.unique_id)
+    # Persist the selection alongside the completed assessment.
+    await storage.pipeline.complete_analysis(
+        merged.unique_id, quality_analysis, notification_policy=notification_policy
+    )
 
 
 async def _lookup_wards(storage: PropertyStorage) -> None:
@@ -545,7 +546,13 @@ async def _run_quality_and_save(
                     else AnalysisDisposition.FAILED
                 )
             commute_info = pre.commute_lookup.get(merged.canonical.unique_id)
-            await _save_one(merged, commute_info, quality_analysis, storage)
+            await _save_one(
+                merged,
+                commute_info,
+                quality_analysis,
+                storage,
+                notification_policy=settings.notification_policy,
+            )
             await _persist_estimated_floor_area(merged, quality_analysis, storage)
             await on_result(merged, commute_info, quality_analysis)
 

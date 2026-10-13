@@ -12,6 +12,7 @@ from home_finder.filters.quality import APIUnavailableError, PropertyQualityFilt
 from home_finder.main import _make_notify_callback, _run_pipeline_with_storage
 from home_finder.models import PropertyImage, PropertySource
 from home_finder.models.analysis import AnalysisFailure
+from home_finder.models.notifications import NotificationPolicy
 from home_finder.models.spend import SpendDeferred, SpendPolicy
 from home_finder.pipeline.analysis import _run_quality_and_save
 from home_finder.pipeline.stages import PreAnalysisResult, _run_pre_analysis_pipeline
@@ -41,6 +42,7 @@ def settings(tmp_path):
         traveltime_api_key=SecretStr(""),
         anthropic_api_key=SecretStr("fixture"),
         enable_quality_filter=True,
+        notification_policy=NotificationPolicy(min_fit_score=0),
     )
 
 

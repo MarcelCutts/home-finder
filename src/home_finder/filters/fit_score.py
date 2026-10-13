@@ -11,13 +11,55 @@ from quality analysis data, weighted to Marcel's priorities:
 
 from __future__ import annotations
 
-from typing import Any, Final, TypedDict
+from copy import deepcopy
+from typing import Any, Final, TypeAlias, TypedDict
 
-from home_finder.models.quality import outdoor_availability
+from pydantic import ValidationError
 
-# Increment when the scoring algorithm changes (weights, signals, dimensions).
+from home_finder.data.area_context import HOSTING_TOLERANCE
+from home_finder.models.quality import PropertyQualityAnalysis, outdoor_availability
+from home_finder.utils.address import extract_outcode
+
+# Increment when weights, signals, dimensions or contextual scoring data change.
 # Triggers automatic recomputation via _backfill_fit_scores().
-FIT_SCORE_VERSION: Final = 2
+FIT_SCORE_VERSION: Final = 3
+
+AnalysisInput: TypeAlias = PropertyQualityAnalysis | dict[str, Any] | None
+
+
+def normalized_fit_inputs(
+    analysis: AnalysisInput, *, postcode: str | None = None
+) -> dict[str, Any] | None:
+    """One eligibility and context boundary for every score consumer.
+
+    Partial or failed assessments are retained as evidence but cannot become
+    recommendations through scorer defaults. Do not mutate supplied evidence or
+    trust an area-context field supplied inside model output/old JSON.
+    """
+    values = analysis.model_dump() if isinstance(analysis, PropertyQualityAnalysis) else analysis
+    if not isinstance(values, dict):
+        return None
+    rating = values.get("overall_rating")
+    if (
+        type(rating) is not int
+        or not 1 <= rating <= 5
+        or values.get("analysis_failure") is not None
+    ):
+        return None
+    # Historical literals/optional fields must be decoded identically to the
+    # model objects used by detail pages and Telegram. An invalid required shape
+    # is evidence to retain, not a recommendation to synthesize from defaults.
+    try:
+        decoded = (
+            analysis
+            if isinstance(analysis, PropertyQualityAnalysis)
+            else PropertyQualityAnalysis.model_validate(deepcopy(values))
+        )
+    except ValidationError:
+        return None
+    outcode = extract_outcode(postcode)
+    area = HOSTING_TOLERANCE.get(outcode) if outcode else None
+    return {**decoded.model_dump(), "_area_hosting_tolerance": area.get("rating") if area else None}
 
 
 # ── Fit tiers (single source of truth) ────────────────────────────────────────
@@ -314,11 +356,13 @@ def _score_hosting(analysis: dict[str, Any], bedrooms: int) -> _DimensionResult:
     if area_tolerance == "high":
         score += 10
         signals += 1
-        factors.append({"label": "Tolerant area", "state": "earned"})
+        factors.append({"label": "Area hosting guide: tolerant (unverified)", "state": "earned"})
     elif area_tolerance == "low":
         score -= 10
         signals += 1
-        factors.append({"label": "Noise-sensitive area", "state": "missed"})
+        factors.append(
+            {"label": "Area hosting guide: noise-sensitive (unverified)", "state": "missed"}
+        )
     elif area_tolerance == "moderate":
         signals += 1  # neutral score impact
 
@@ -366,16 +410,9 @@ def _score_sound(analysis: dict[str, Any], _bedrooms: int) -> _DimensionResult:
         signals += 1
         factors.append({"label": f"{floor_level.title()} floor", "state": "missed"})
 
-    noise_indicators = flooring.get("noise_indicators")
-    if isinstance(noise_indicators, list):
-        if len(noise_indicators) == 0:
-            score += 10
-            signals += 1
-            factors.append({"label": "No noise indicators", "state": "earned"})
-        else:
-            signals += 1
-            noise_text = ", ".join(noise_indicators[:2])
-            factors.append({"label": f"Noise: {noise_text}", "state": "missed"})
+    # These notes mix positive, negative and uncertain prose. Neither presence
+    # nor an empty default list establishes an acoustic fact. Keep the prose in
+    # the assessment; only typed observations contribute to this score.
 
     listing_ext = analysis.get("listing_extraction") or {}
     prop_type = listing_ext.get("property_type")
@@ -396,6 +433,8 @@ def _score_sound(analysis: dict[str, Any], _bedrooms: int) -> _DimensionResult:
     elif hosting_noise and hosting_noise not in ("unknown", None):
         signals += 1
         factors.append({"label": "High hosting noise risk", "state": "missed"})
+    else:
+        factors.append({"label": "Hosting noise risk", "state": "unknown"})
 
     confidence = min(1.0, signals * 0.35) if signals > 0 else 0.0
     return _DimensionResult(score, confidence, factors)
@@ -720,67 +759,28 @@ def _compute_dimension_results(
 # ── Main entry points ─────────────────────────────────────────────────────────
 
 
-def compute_fit_score(analysis: dict[str, Any] | None, bedrooms: int) -> int | None:
+def compute_fit_score(
+    analysis: AnalysisInput, bedrooms: int, *, postcode: str | None = None
+) -> int | None:
     """Compute Marcel's personalised fit score (0-100).
 
-    Returns None if no analysis data or all dimensions have zero confidence.
+    Returns None for an unrated/failed assessment or no confident dimensions.
     """
-    if not analysis:
-        return None
-
-    results = _compute_dimension_results(analysis, bedrooms)
-
-    weighted_sum = 0.0
-    weight_confidence_sum = 0.0
-
-    for dim, weight in WEIGHTS.items():
-        result = results[dim]
-        weighted_sum += result.score * weight * result.confidence
-        weight_confidence_sum += weight * result.confidence
-
-    if weight_confidence_sum == 0:
-        return None
-
-    return round(weighted_sum / weight_confidence_sum)
+    return compute_fit_score_and_breakdown(analysis, bedrooms, postcode=postcode)[0]
 
 
 def compute_fit_breakdown(
-    analysis: dict[str, Any] | None, bedrooms: int
+    analysis: AnalysisInput, bedrooms: int, *, postcode: str | None = None
 ) -> list[FitDimension] | None:
     """Compute per-dimension breakdown for Marcel Fit Score UI.
 
-    Returns None if no analysis data or all dimensions have zero confidence.
+    Returns None for an unrated/failed assessment or no confident dimensions.
     """
-    if not analysis:
-        return None
-
-    results = _compute_dimension_results(analysis, bedrooms)
-    dimensions: list[FitDimension] = []
-    any_confidence = False
-
-    for dim, weight in WEIGHTS.items():
-        result = results[dim]
-        if result.confidence > 0:
-            any_confidence = True
-        dimensions.append(
-            FitDimension(
-                key=dim,
-                label=_DIMENSION_LABELS[dim],
-                score=round(result.score),
-                weight=int(weight),
-                confidence=round(result.confidence, 2),
-                factors=result.factors,
-            )
-        )
-
-    if not any_confidence:
-        return None
-
-    return dimensions
+    return compute_fit_score_and_breakdown(analysis, bedrooms, postcode=postcode)[1]
 
 
 def compute_fit_score_and_breakdown(
-    analysis: dict[str, Any] | None, bedrooms: int
+    analysis: AnalysisInput, bedrooms: int, *, postcode: str | None = None
 ) -> tuple[int | None, list[FitDimension] | None]:
     """Compute both fit score and breakdown in a single pass over all scorers.
 
@@ -788,13 +788,14 @@ def compute_fit_score_and_breakdown(
     to avoid scoring each dimension twice.
 
     Returns:
-        Tuple of (fit_score, breakdown). Either or both may be None if no analysis
-        data or all dimensions have zero confidence.
+        Tuple of (fit_score, breakdown). Both are None without a valid rated
+        assessment, on a recorded failure, or when all dimensions lack confidence.
     """
-    if not analysis:
+    normalized = normalized_fit_inputs(analysis, postcode=postcode)
+    if normalized is None:
         return None, None
 
-    results = _compute_dimension_results(analysis, bedrooms)
+    results = _compute_dimension_results(normalized, bedrooms)
 
     weighted_sum = 0.0
     weight_confidence_sum = 0.0
@@ -834,24 +835,25 @@ class LifestyleIcon(TypedDict):
 
 
 def compute_lifestyle_icons(
-    analysis: dict[str, Any] | None, bedrooms: int
+    analysis: AnalysisInput, bedrooms: int, *, postcode: str | None = None
 ) -> dict[str, LifestyleIcon] | None:
     """Compute lifestyle quick-glance icon states.
 
     Returns dict with keys: workspace, hosting, kitchen, vibe, space, internet.
     Each value has 'state' ("good"/"neutral"/"concern") and 'tooltip' string.
-    Returns None if no analysis data.
+    Returns None for an unrated/failed assessment.
     """
-    if not analysis:
+    normalized = normalized_fit_inputs(analysis, postcode=postcode)
+    if normalized is None:
         return None
 
     return {
-        "workspace": _icon_workspace(analysis, bedrooms),
-        "hosting": _icon_hosting(analysis, bedrooms),
-        "kitchen": _icon_kitchen(analysis),
-        "vibe": _icon_vibe(analysis),
-        "space": _icon_space(analysis, bedrooms),
-        "internet": _icon_internet(analysis),
+        "workspace": _icon_workspace(normalized, bedrooms),
+        "hosting": _icon_hosting(normalized, bedrooms),
+        "kitchen": _icon_kitchen(normalized),
+        "vibe": _icon_vibe(normalized),
+        "space": _icon_space(normalized, bedrooms),
+        "internet": _icon_internet(normalized),
     }
 
 
@@ -901,8 +903,7 @@ def _icon_hosting(analysis: dict[str, Any], bedrooms: int) -> LifestyleIcon:
     if is_spacious is True and good_sound:
         return {"state": "good", "tooltip": "Spacious + good sound insulation"}
     if is_spacious is False:
-        noise_indicators = flooring.get("noise_indicators") or []
-        if isinstance(noise_indicators, list) and len(noise_indicators) > 0:
+        if flooring.get("hosting_noise_risk") == "high":
             return {"state": "concern", "tooltip": "Compact space + noise concerns"}
         if bedrooms >= 2:
             return {"state": "neutral", "tooltip": "2-bed — compact but size less critical"}

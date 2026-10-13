@@ -22,6 +22,7 @@ from home_finder.models import (
     PropertyQualityAnalysis,
     PropertySource,
 )
+from home_finder.models.notifications import NotificationPolicy
 from tests.notifier_helpers import mock_durable_notifier
 
 # ---------------------------------------------------------------------------
@@ -196,6 +197,7 @@ def pipeline_settings() -> Settings:
         min_bedrooms=1,
         max_bedrooms=2,
         enable_quality_filter=True,
+        notification_policy=NotificationPolicy(min_fit_score=0),
         require_floorplan=False,
         anthropic_api_key=SecretStr("test-anthropic-key"),
     )
@@ -477,12 +479,15 @@ class TestRunPipelineE2E:
             count = await storage.web.get_property_count()
             assert count == 1
 
-            # Notification sent (with quality_analysis=None)
+            # The callback runs, but an unrated home creates no sendable alert.
             assert ctx.notifier.send_merged_property_notification.call_count == 1
 
             run = await storage.pipeline.get_last_pipeline_run()
             assert run is not None
             assert run["status"] == "completed"
+            assert run["notified_count"] == 0
+            deliveries = await storage.deliveries.report()
+            assert deliveries["counts"] == {"suppressed": 1}
 
             await storage.close()
 
