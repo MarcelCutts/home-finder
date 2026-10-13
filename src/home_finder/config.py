@@ -7,6 +7,7 @@ from typing import Annotated, Any
 from pydantic import Field, SecretStr, ValidationInfo, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
+from home_finder.data.location_mappings import resolve_area_outcodes
 from home_finder.models import FurnishType, SearchCriteria, TransportMode
 from home_finder.models.analysis import AnalysisConfig, EvaluationPhaseConfig, VisualPhaseConfig
 from home_finder.models.spend import SpendPolicy
@@ -277,7 +278,9 @@ class Settings(BaseSettings):
 
     def get_search_areas(self) -> list[str]:
         """Parse search_areas string into a list of area names."""
-        return [a.strip() for a in self.search_areas.split(",") if a.strip()]
+        areas = [a.strip() for a in self.search_areas.split(",") if a.strip()]
+        resolve_area_outcodes(areas)
+        return areas
 
     def get_furnish_types(self) -> tuple[FurnishType, ...]:
         """Parse furnish_types string into FurnishType enum values."""

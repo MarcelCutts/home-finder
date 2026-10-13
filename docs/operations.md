@@ -212,6 +212,17 @@ text is saved before optional media work. Historical text has no invented fetch
 date. Page/rate caps still bound collection; a page of known IDs does not end the
 normal scrape because unseen work may follow it.
 
+Collection preflight rejects unknown borough names before constructing scrapers.
+An explicitly empty `HOME_FINDER_SEARCH_AREAS` still disables collection. Outcodes
+are checked for syntax; borough coverage uses approximate outcode sets, not exact
+administrative boundaries. A failed request stops pagination after the source's
+own retry budget. Stored scraper metrics distinguish recognized challenge pages,
+unrecognized layouts, invalid records and exhausted transport failures. An
+unexpected page callback exception is recorded as `page_error` without guessing
+whether transport or parsing caused it. Valid listings from a partial page remain
+available even when the run is unhealthy.
+
+
 One supported active layout is a single Linux host with the locked runtime
 (`uv sync --locked --no-dev`), the owner dashboard and one database:
 

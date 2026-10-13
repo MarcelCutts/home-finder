@@ -3,7 +3,6 @@
 import asyncio
 import json
 import re
-from dataclasses import dataclass, field
 from typing import Any
 
 from curl_cffi.requests import AsyncSession
@@ -12,21 +11,14 @@ from tenacity import retry, retry_if_exception_type, stop_after_attempt
 
 from home_finder.logging import get_logger
 from home_finder.models import FurnishType, Property, PropertySource
-from home_finder.scrapers.base import BaseScraper, ScrapeCancelled, ScrapeResult
+from home_finder.scrapers.base import BaseScraper, ParsedSearchPage, ScrapeResult
 from home_finder.scrapers.constants import BROWSER_HEADERS
 from home_finder.scrapers.onthemarket_payloads import onthemarket_redux_state
 from home_finder.scrapers.parsing import extract_bedrooms, extract_postcode, extract_price
 from home_finder.scrapers.retry import SCRAPER_WAIT, RetryableHttpError
+from home_finder.utils.http_evidence import is_challenge
 
 logger = get_logger(__name__)
-
-
-@dataclass
-class _SearchPage:
-    """Keep valid listings and parse failures from the same page together."""
-
-    properties: list[Property] = field(default_factory=list)
-    parse_errors: int = 0
 
 
 class OnTheMarketScraper(BaseScraper):
@@ -94,22 +86,17 @@ class OnTheMarketScraper(BaseScraper):
             min_bathrooms=min_bathrooms,
             include_let_agreed=include_let_agreed,
         )
-        parse_errors = 0
 
-        async def fetch_page(page_idx: int) -> list[Property] | None:
-            nonlocal parse_errors
+        async def fetch_page(page_idx: int) -> ParsedSearchPage | None:
             page = page_idx + 1  # OnTheMarket uses 1-based pages
             url = f"{search_url}&page={page}" if page > 1 else search_url
 
             html = await self._fetch_page(url)
             if html is None:
-                # _fetch_page has already applied its retry budget. Raising stops
-                # this area instead of spending that budget on every later page.
-                raise OSError("onthemarket_fetch_failed")
+                return None  # The transport has already exhausted its retry budget.
 
             # Parse __NEXT_DATA__ JSON
             parsed = self._parse_next_data(html)
-            parse_errors += parsed.parse_errors
             logger.info(
                 "scraped_onthemarket_page",
                 url=url,
@@ -117,25 +104,18 @@ class OnTheMarketScraper(BaseScraper):
                 properties_found=len(parsed.properties),
                 parse_errors=parsed.parse_errors,
             )
-            return parsed.properties
+            return parsed
 
         async def delay() -> None:
             await asyncio.sleep(self.PAGE_DELAY_SECONDS)
 
-        try:
-            result = await self._paginate(
-                fetch_page,
-                max_pages=self.MAX_PAGES,
-                known_source_ids=known_source_ids,
-                max_results=max_results,
-                page_delay=delay,
-            )
-        except ScrapeCancelled as exc:
-            exc.result.parse_errors += parse_errors
-            raise
-        result.parse_errors += parse_errors
-        if parse_errors:
-            result.stop_reason = "parse_error"
+        result = await self._paginate(
+            fetch_page,
+            max_pages=self.MAX_PAGES,
+            known_source_ids=known_source_ids,
+            max_results=max_results,
+            page_delay=delay,
+        )
 
         logger.info(
             "scraped_onthemarket_complete",
@@ -209,12 +189,14 @@ class OnTheMarketScraper(BaseScraper):
             logger.error("onthemarket_fetch_exception", error=str(e), url=url, exc_info=True)
             return None
 
-    def _parse_next_data(self, html: str) -> _SearchPage:
+    def _parse_next_data(self, html: str) -> ParsedSearchPage:
         """Parse properties from __NEXT_DATA__ JSON.
 
         Only an explicit results.list array can be a healthy empty result.
         Retain valid listings while counting every malformed envelope or row.
         """
+        if is_challenge(html):
+            return ParsedSearchPage(parse_errors=1, failure_reason="challenge")
         match = re.search(
             r'<script id="__NEXT_DATA__"[^>]*>(.*?)</script>',
             html,
@@ -222,7 +204,7 @@ class OnTheMarketScraper(BaseScraper):
         )
         if not match:
             logger.warning("onthemarket_no_next_data")
-            return _SearchPage(parse_errors=1)
+            return ParsedSearchPage(parse_errors=1, failure_reason="unrecognized_page")
 
         try:
             data = json.loads(match.group(1))
@@ -231,9 +213,9 @@ class OnTheMarketScraper(BaseScraper):
                 raise ValueError("invalid_results_list")
         except (ValueError, KeyError, TypeError) as e:
             logger.warning("onthemarket_parse_failed", error=str(e))
-            return _SearchPage(parse_errors=1)
+            return ParsedSearchPage(parse_errors=1)
 
-        result = _SearchPage()
+        result = ParsedSearchPage()
         for listing in listings:
             try:
                 prop = self._listing_to_property(listing)

@@ -11,9 +11,10 @@ from tenacity import retry, retry_if_exception_type, stop_after_attempt
 
 from home_finder.logging import get_logger
 from home_finder.models import FurnishType, Property, PropertySource
-from home_finder.scrapers.base import BaseScraper, ScrapeResult
+from home_finder.scrapers.base import BaseScraper, ParsedSearchPage, ScrapeResult
 from home_finder.scrapers.constants import BROWSER_HEADERS
 from home_finder.scrapers.retry import SCRAPER_WAIT, RetryableHttpError
+from home_finder.utils.http_evidence import is_challenge
 
 logger = get_logger(__name__)
 
@@ -137,10 +138,7 @@ class OpenRentScraper(BaseScraper):
             include_let_agreed=include_let_agreed,
         )
 
-        parse_errors = 0
-
-        async def fetch_page(page_idx: int) -> list[Property] | None:
-            nonlocal parse_errors
+        async def fetch_page(page_idx: int) -> ParsedSearchPage | None:
             skip = page_idx * self.RESULTS_PER_PAGE
             url = f"{base_url}&skip={skip}" if page_idx > 0 else base_url
 
@@ -149,18 +147,16 @@ class OpenRentScraper(BaseScraper):
                 return None  # Signals fetch failure to _paginate
 
             soup = BeautifulSoup(html, "html.parser")
-            page_properties = self._parse_search_results(soup, url)
-            if page_properties is None:
-                parse_errors += 1
-                return []
+            parsed = self._parse_search_page(soup)
 
             logger.info(
                 "scraped_openrent_page",
                 url=url,
                 page=page_idx + 1,
-                properties_found=len(page_properties),
+                properties_found=len(parsed.properties),
+                parse_errors=parsed.parse_errors,
             )
-            return page_properties
+            return parsed
 
         async def delay() -> None:
             await asyncio.sleep(self.PAGE_DELAY_SECONDS)
@@ -176,9 +172,6 @@ class OpenRentScraper(BaseScraper):
             max_results=max_results,
             page_delay=delay,
         )
-        result.parse_errors += parse_errors
-        if parse_errors:
-            result.stop_reason = "parse_error"
 
         logger.info(
             "scraped_openrent_complete",
@@ -186,7 +179,7 @@ class OpenRentScraper(BaseScraper):
             total_properties=len(result.properties),
             pages_fetched=result.pages_fetched,
             pages_failed=result.pages_failed,
-            parse_errors=parse_errors,
+            parse_errors=result.parse_errors,
         )
 
         return result
@@ -239,15 +232,15 @@ class OpenRentScraper(BaseScraper):
 
         return f"{self.BASE_URL}/properties-to-rent/{area_slug}?{'&'.join(params)}"
 
-    def _parse_search_results(self, soup: BeautifulSoup, base_url: str) -> list[Property] | None:
-        """Parse property listings from search results page.
+    def _parse_search_results(self, soup: BeautifulSoup, _base_url: str) -> list[Property] | None:
+        """Compatibility reader; collection uses the full page error counts."""
+        parsed = self._parse_search_page(soup)
+        return None if parsed.parse_errors and not parsed.properties else parsed.properties
 
-        OpenRent embeds property data in JavaScript arrays on the page.
-        We extract these arrays and correlate them with the listing links.
-
-        Returns None when property links are found but all fail to produce
-        properties, indicating a possible site layout change.
-        """
+    def _parse_search_page(self, soup: BeautifulSoup) -> ParsedSearchPage:
+        """Correlate listing links with arrays; unknown HTML is never healthy empty."""
+        if is_challenge(str(soup)):
+            return ParsedSearchPage(parse_errors=1, failure_reason="challenge")
         properties: list[Property] = []
 
         # Find all property links
@@ -320,6 +313,7 @@ class OpenRentScraper(BaseScraper):
                 beds = self._extract_bedrooms_from_html(link)
 
             if price is None or beds is None or not title:
+                card_errors += 1
                 logger.debug(
                     "skipping_incomplete_property",
                     property_id=property_id,
@@ -354,23 +348,23 @@ class OpenRentScraper(BaseScraper):
                     error=str(e),
                 )
 
-        if not properties and seen_ids and card_errors > 0:
-            logger.warning(
-                "openrent_all_listings_unparseable",
-                links_found=len(seen_ids),
-                card_errors=card_errors,
-            )
-            return None
-
-        return properties
+        # IDs in structured data without corresponding usable links also mean
+        # incomplete coverage, even when some other cards parsed successfully.
+        card_errors += len({str(pid) for pid in property_ids} - seen_ids)
+        recognized_empty = not property_links and all(
+            js_data.get(key) == [] for key in ("PROPERTYIDS", "prices", "bedrooms")
+        )
+        if not properties and not card_errors and not recognized_empty:
+            return ParsedSearchPage(parse_errors=1, failure_reason="unrecognized_page")
+        return ParsedSearchPage(properties=properties, parse_errors=card_errors)
 
     def _extract_js_arrays(self, soup: BeautifulSoup) -> dict[str, list[int | float]]:
         """Extract JavaScript array variables from script tags."""
         data: dict[str, list[int | float]] = {}
         array_patterns = {
-            "PROPERTYIDS": r"PROPERTYIDS\s*=\s*\[([\d,\s]+)\]",
-            "prices": r"prices\s*=\s*\[([\d,\s]+)\]",
-            "bedrooms": r"bedrooms\s*=\s*\[([\d,\s]+)\]",
+            "PROPERTYIDS": r"PROPERTYIDS\s*=\s*\[([\d,\s]*)\]",
+            "prices": r"prices\s*=\s*\[([\d,\s]*)\]",
+            "bedrooms": r"bedrooms\s*=\s*\[([\d,\s]*)\]",
             "PROPERTYLISTLATITUDES": r"PROPERTYLISTLATITUDES\s*=\s*\[([\d.,\s-]+)\]",
             "PROPERTYLISTLONGITUDES": r"PROPERTYLISTLONGITUDES\s*=\s*\[([\d.,\s-]+)\]",
         }

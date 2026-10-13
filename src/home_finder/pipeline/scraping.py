@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 
 from home_finder.config import Settings
+from home_finder.data.location_mappings import resolve_area_outcodes
 from home_finder.db import PropertyStorage
 from home_finder.logging import get_logger
 from home_finder.models import (
@@ -93,6 +94,7 @@ async def scrape_all_platforms(
         Tuple of (combined list of properties, list of per-scraper metrics).
     """
     areas = list(search_areas or [])
+    resolve_area_outcodes(areas)
     if not areas:
         logger.warning("no_search_areas_configured")
         return ([], [])
@@ -145,6 +147,12 @@ async def scrape_all_platforms(
                 metrics.pages_fetched += result.pages_fetched
                 metrics.pages_failed += result.pages_failed
                 metrics.parse_errors += result.parse_errors
+                if result.failure_reasons:
+                    metrics.error_message = ",".join(result.failure_reasons)
+                elif result.parse_errors:
+                    metrics.error_message = "parse_error"
+                elif result.pages_failed:
+                    metrics.error_message = "page_error"
                 if result.stop_reason != "cancelled":
                     metrics.areas_completed += 1
                 observations = result.observations or result.properties

@@ -139,6 +139,14 @@ async def test_cap_retains_extra_observations_and_counts_only_attempted_area(
         (ScrapeResult(pages_fetched=1, stop_reason="empty_page"), "completed"),
         (ScrapeResult(pages_failed=1), "failed"),
         (ScrapeResult(pages_fetched=1, parse_errors=1), "failed"),
+        (
+            ScrapeResult(pages_fetched=1, parse_errors=1, failure_reasons=["challenge"]),
+            "failed",
+        ),
+        (
+            ScrapeResult(pages_fetched=1, parse_errors=1, failure_reasons=["unrecognized_page"]),
+            "failed",
+        ),
     ],
 )
 async def test_empty_and_failed_collection_remain_distinguishable(
@@ -153,6 +161,8 @@ async def test_empty_and_failed_collection_remain_distinguishable(
     assert metrics["is_healthy"] == (status == "completed")
     assert metrics["pages_failed"] == result.pages_failed
     assert metrics["parse_errors"] == result.parse_errors
+    if result.failure_reasons:
+        assert metrics["error_message"] == ",".join(result.failure_reasons)
     quality.assert_not_called()
 
 
