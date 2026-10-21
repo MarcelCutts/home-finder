@@ -730,7 +730,7 @@ def _floorplan_png(*, rooms: list[tuple[int, int, int, int]], size: tuple[int, i
 
 
 class TestFloorplanDedup:
-    """Each portal supplies its own copy of a plan; show each drawing once."""
+    """Reduce repetition without losing potentially different plan evidence."""
 
     @pytest.fixture
     def settings(self, tmp_path: Path) -> Settings:
@@ -784,14 +784,20 @@ class TestFloorplanDedup:
         await storage.save_property_images(merged_a.unique_id, images)
 
         soup = BeautifulSoup(client.get(f"/property/{merged_a.unique_id}").text, "html.parser")
-        shown = [img["src"] for img in soup.select("#section-floorplan img")]
+        section = soup.select_one("#section-floorplan")
+        shown = [img["src"] for img in section.select(":scope > .floorplan-section img")]
         safe_id = safe_dir_name(merged_a.unique_id)
         assert shown == [
             f"/images/{safe_id}/{url_to_filename(url, 'floorplan', index)}"
             for index, url in enumerate(plans)
             if index != 0
         ]
-        assert soup.select_one("#gallery-tab-floorplan").get_text() == "Floorplan 2"
+        variants = section.select_one("details.floorplan-repeats")
+        assert variants is not None
+        assert "Unverified floorplan image" in variants.get_text()
+        assert variants.img.parent["data-lightbox"] == "floorplan"
+        assert soup.select_one("#gallery-tab-floorplan").get_text() == "Floorplan 3"
+        assert len(soup.select(".gallery-floorplan-img")) == 3
 
     @pytest.mark.asyncio
     async def test_uncached_plan_from_another_portal_is_set_aside_not_hidden(
@@ -834,8 +840,71 @@ class TestFloorplanDedup:
             same_site_url,
         ]
         repeats = section.select_one("details.floorplan-repeats")
-        assert repeats.summary.get_text() == "1 more from other sites, probably the same plan"
+        assert repeats.summary.get_text() == "Additional floorplan versions (1)"
         assert [img["src"] for img in repeats.select("img")] == [other_site_url]
+        assert repeats.img.parent["data-lightbox"] == "floorplan"
+        assert other_site_url in [img["src"] for img in soup.select(".gallery-floorplan-img")]
+
+    def test_changed_dimension_with_identical_perceptual_hash_is_retained(
+        self, settings: Settings, merged_a: MergedProperty
+    ) -> None:
+        """A text change can leave the pHash identical, even at distance zero."""
+        import io
+
+        from PIL import Image, ImageDraw
+
+        from home_finder.utils.image_hash import hash_from_disk
+        from home_finder.web.routes import _split_floorplans
+
+        images = []
+        hashes = []
+        encoded = []
+        for index, dimension in enumerate(["4.2m x 3.1m", "3.2m x 3.1m"]):
+            plan = Image.new("L", (800, 600), 255)
+            draw = ImageDraw.Draw(plan)
+            for room in [(20, 20, 780, 300), (20, 300, 400, 580), (400, 300, 780, 580)]:
+                draw.rectangle(room, outline=0, width=8)
+            draw.text((80, 100), dimension, fill=0)
+            buf = io.BytesIO()
+            plan.save(buf, format="PNG")
+            encoded.append(buf.getvalue())
+            url = f"https://example.com/plan-{index}.png"
+            path = get_cache_dir(settings.data_dir, merged_a.unique_id) / url_to_filename(
+                url, "floorplan", index
+            )
+            save_image_bytes(path, encoded[-1])
+            hashes.append(hash_from_disk(path))
+            images.append(
+                PropertyImage(
+                    source=[PropertySource.RIGHTMOVE, PropertySource.ZOOPLA][index],
+                    url=HttpUrl(url),
+                    image_type="floorplan",
+                    floorplan_origin="source_declared",
+                )
+            )
+
+        assert encoded[0] != encoded[1]
+        assert hashes[0] is not None and hashes[0] == hashes[1]
+        shown, variants = _split_floorplans(settings.data_dir, merged_a.unique_id, images)
+        assert shown == images[:1]
+        assert variants == images[1:]
+
+    def test_cache_removed_during_lookup_preserves_plan(
+        self, settings: Settings, merged_a: MergedProperty, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from home_finder.web import routes
+
+        missing_path = Path(settings.data_dir) / "evicted.png"
+        monkeypatch.setattr(routes, "find_cached_file", lambda *args: missing_path)
+        image = PropertyImage(
+            source=PropertySource.RIGHTMOVE,
+            url=HttpUrl("https://example.com/plan.png"),
+            image_type="floorplan",
+        )
+        assert routes._split_floorplans(settings.data_dir, merged_a.unique_id, [image]) == (
+            [image],
+            [],
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -1002,19 +1071,19 @@ class TestCardRendering:
         )
         dashboard = BeautifulSoup(client.get("/").text, "html.parser")
         card_tags = [chip.get_text() for chip in dashboard.select(".highlight-negative")]
-        assert card_tags == ["Road or rail noise"]
+        assert card_tags == ["Potential road or rail noise"]
         tag_input = dashboard.select_one('input[name="tag"][value="Potential traffic noise"]')
-        assert tag_input.parent.get_text(strip=True) == "Road or rail noise"
+        assert tag_input.parent.get_text(strip=True) == "Potential road or rail noise"
 
         filtered = BeautifulSoup(
             client.get("/", params={"tag": "Potential traffic noise"}).text, "html.parser"
         )
         assert filtered.select(".property-card")
         chip = filtered.select_one(".filter-chip")
-        assert chip.get_text(" ", strip=True).startswith("Road or rail noise")
+        assert chip.get_text(" ", strip=True).startswith("Potential road or rail noise")
 
         detail = client.get(f"/property/{merged_a.unique_id}").text
-        assert "Road or rail noise" in detail
+        assert "Potential road or rail noise" in detail
         assert "Potential traffic noise" not in detail
 
     @pytest.mark.parametrize("minutes", [None, 0])

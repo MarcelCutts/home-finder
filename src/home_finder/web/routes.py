@@ -556,35 +556,38 @@ def _cached_image_hash(path: str, mtime_ns: int) -> str | None:
 def _split_floorplans(
     data_dir: str, unique_id: str, floorplans: list[PropertyImage]
 ) -> tuple[list[PropertyImage], list[PropertyImage]]:
-    """Return (plans to show, other sites' plans that could not be compared).
+    """Return (primary plans, additional versions), preserving every source image.
 
-    Each portal supplies its own copy of the same drawing, so a home listed on
-    three sites would otherwise show its plan three times. Cached copies that
-    match one already shown are dropped. Another site's plan that was never
-    cached can't be compared without fetching it, so it is set aside rather
-    than hidden.
+    Similarity controls presentation only: even identical perceptual hashes can
+    conceal changed dimensions or labels. Keep similar or uncomparable copies
+    available for inspection, with source-declared plans presented first.
     """
     hashed: list[tuple[PropertyImage, str | None]] = []
     for img in floorplans:
         cached = find_cached_file(data_dir, unique_id, str(img.url), img.image_type)
-        digest = _cached_image_hash(str(cached), cached.stat().st_mtime_ns) if cached else None
+        try:
+            digest = _cached_image_hash(str(cached), cached.stat().st_mtime_ns) if cached else None
+        except OSError:
+            # Cache cleanup can remove the file between lookup and stat.
+            digest = None
         hashed.append((img, digest))
     # Source-declared and comparable plans go first, so they are the ones kept.
     hashed.sort(key=lambda pair: (not pair[0].is_source_floorplan, pair[1] is None))
 
     shown: list[PropertyImage] = []
-    unchecked: list[PropertyImage] = []
+    variants: list[PropertyImage] = []
     seen: list[str] = []
     for img, digest in hashed:
         if digest is not None and any(hashes_match(digest, other) for other in seen):
+            variants.append(img)
             continue
         if digest is None and shown and img.source not in {s.source for s in shown}:
-            unchecked.append(img)
+            variants.append(img)
             continue
         shown.append(img)
         if digest is not None:
             seen.append(digest)
-    return shown, unchecked
+    return shown, variants
 
 
 @router.get("/property/{unique_id}", response_class=HTMLResponse)

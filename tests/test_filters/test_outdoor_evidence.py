@@ -63,7 +63,7 @@ def test_old_and_new_evidence_has_one_interpretation(data, expected, make_qualit
     assert ("Has outdoor space" in icons["space"]["tooltip"]) == (expected == "yes")
     assert analysis.display_lowlights == [
         *(["No outdoor space"] if expected == "no" else []),
-        "Road or rail noise",
+        "Potential road or rail noise",
     ]
     assert analysis.lowlights == ["No outdoor space", "Potential traffic noise"]
     block = "\n".join(_format_quality_block(analysis))

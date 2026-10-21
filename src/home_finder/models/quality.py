@@ -237,7 +237,7 @@ def filter_outdoor_absence_badge(
 # The analysis prompt asks for railway as well as road noise, but the saved
 # vocabulary only has a traffic value, so name it for what it covers.
 LOWLIGHT_DISPLAY_LABELS: Final[dict[str, str]] = {
-    PropertyLowlight.TRAFFIC_NOISE: "Road or rail noise",
+    PropertyLowlight.TRAFFIC_NOISE: "Potential road or rail noise",
 }
 
 
