@@ -47,7 +47,6 @@
             </a></li>
         </ul>
         <ul>
-            <li><a href="/deliveries">Alerts</a></li>
             <li>{% block nav_info %}{% endblock %}</li>
         </ul>
     </nav>
@@ -56,8 +55,10 @@
         {% block content %}{% endblock %}
     </main>
 
-    <footer class="container-fluid">
+    <footer class="container-fluid site-footer">
         <small>I hate moving.</small>
+        {# Operator recovery tools, kept out of the everyday navigation. #}
+        <small><a href="/deliveries">Alert delivery</a></small>
     </footer>
 
     <script src="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.js" integrity="sha384-cxOPjt7s7Iz04uaHJceBmS+qpjv2JkIHNVcuOrM+YHwZOmJGBXI00mdUXEq65HTH" crossorigin="anonymous"></script>

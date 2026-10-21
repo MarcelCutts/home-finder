@@ -190,7 +190,18 @@ async def _populate_db(db_path: str):
             transport_mode=TransportMode.CYCLING,
         )
         if merged.images:
-            await storage.save_property_images(merged.unique_id, list(merged.images))
+            images = list(merged.images)
+            if merged.canonical.source_id == "1003":
+                images.extend(
+                    PropertyImage(
+                        url=HttpUrl(f"https://lid.zoocdn.com/plan-{source.value}.png"),
+                        source=source,
+                        image_type="floorplan",
+                        floorplan_origin="source_declared",
+                    )
+                    for source in [PropertySource.OPENRENT, PropertySource.ZOOPLA]
+                )
+            await storage.save_property_images(merged.unique_id, images)
         if analysis:
             await storage.save_quality_analysis(merged.unique_id, analysis)
 
@@ -534,6 +545,23 @@ class TestPropertyDetailBrowser:
         # Press Escape to close
         page.keyboard.press("Escape")
         expect(gallery_view).not_to_be_visible()
+
+    def test_additional_floorplan_opens_selected_version_with_keyboard(self, page):
+        page.goto("/property/openrent:1003")
+        page.get_by_text("Additional floorplan versions (1)", exact=True).click()
+        extra_plan = page.locator(".floorplan-repeats a[data-lightbox]")
+        selected_src = extra_plan.locator("img").get_attribute("src")
+        extra_plan.focus()
+        extra_plan.press("Enter")
+        gallery = page.locator("#gallery-view")
+        expect(gallery).to_be_visible()
+        expect(page.locator("#gallery-tab-floorplan")).to_have_text("Floorplan 2")
+        expect(page.locator(".gallery-floorplan-img")).to_have_count(2)
+        selected = gallery.locator(f'img[src="{selected_src}"]')
+        expect(selected).to_be_in_viewport()
+        page.keyboard.press("Escape")
+        expect(gallery).not_to_be_visible()
+        expect(extra_plan).to_be_focused()
 
     def test_quality_analysis_section(self, page):
         # Property 1003 has quality analysis
@@ -912,7 +940,7 @@ class TestFilterNavigation:
         expect(card).to_have_count(1)
         page.evaluate("window.originalCard = document.querySelector('.property-card')")
         try:
-            card.get_by_title("Interested", exact=True).click()
+            card.get_by_role("button", name="Mark interested", exact=True).click()
             expect(card).to_have_attribute("data-status", "interested")
             expect(card).to_have_count(1)
             expect(card.locator("article")).to_have_count(0)
@@ -1023,7 +1051,7 @@ class TestMobileViewport:
         budget = page.locator(".cost-breakdown-card")
         expect(budget).to_contain_text("Incomplete budget")
         expect(budget).to_contain_text("Advertised subtotal")
-        expect(budget).to_contain_text("Unknown")
+        expect(budget).to_contain_text("Listing EPC: not")
         budget.locator("summary").click()
         expect(budget).to_contain_text("England: private assured periodic tenancies")
         expect(budget.get_by_role("link", name="Rental bidding rules")).to_be_visible()

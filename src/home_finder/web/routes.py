@@ -1,5 +1,7 @@
 """Web dashboard routes."""
 
+import asyncio
+import functools
 import json
 import math
 from datetime import UTC, datetime
@@ -47,6 +49,7 @@ from home_finder.models import (
     UserStatus,
 )
 from home_finder.models.delivery import UnfinishedDeliveryState
+from home_finder.models.quality import lowlight_display_label
 from home_finder.utils.address import extract_outcode
 from home_finder.utils.cost_calculator import build_monthly_budget
 from home_finder.utils.image_cache import (
@@ -55,11 +58,13 @@ from home_finder.utils.image_cache import (
     get_cache_dir,
     safe_dir_name,
 )
+from home_finder.utils.image_hash import hash_from_disk, hashes_match
 from home_finder.utils.negotiation import generate_negotiation_brief
 from home_finder.web.app import _compute_static_version
 from home_finder.web.deliveries import DELIVERY_STATES, delivery_view
 from home_finder.web.filters import (
     ADDED_OPTIONS,
+    DEFAULT_SORT,
     VALID_SORT_OPTIONS,
     FilterDep,
     _parse_optional_int,
@@ -182,7 +187,14 @@ def listing_age_filter(iso_str: str | None) -> str:
     return f"{months}mo" if months >= 1 else "4w"
 
 
+def bed_label_filter(bedrooms: int | None) -> str:
+    """Name a bedroom count; a studio is not "0 bed"."""
+    return "Studio" if bedrooms == 0 else f"{bedrooms} bed"
+
+
 templates.env.filters["listing_age"] = listing_age_filter
+templates.env.filters["bed_label"] = bed_label_filter
+templates.env.filters["lowlight_label"] = lowlight_display_label
 templates.env.filters["json_script_safe"] = lambda s: s.replace("</", r"<\/")
 
 templates.env.globals["static_version"] = _compute_static_version()
@@ -358,13 +370,13 @@ async def dashboard(
     data_dir: DataDirDep,
     base_url: BaseUrlDep,
     filters: FilterDep,
-    sort: str = "newest",
+    sort: str = DEFAULT_SORT,
     page: str | None = None,
 ) -> HTMLResponse:
     """Dashboard page with property card grid."""
     page_val = _parse_optional_int(page) or 1
     page_val = max(1, page_val)
-    sort = sort if sort in VALID_SORT_OPTIONS else "newest"
+    sort = sort if sort in VALID_SORT_OPTIONS else DEFAULT_SORT
 
     per_page = 24
 
@@ -535,6 +547,49 @@ async def property_card(
     )
 
 
+@functools.lru_cache(maxsize=1024)
+def _cached_image_hash(path: str, mtime_ns: int) -> str | None:
+    """Hash one version of a cached image file; the mtime keys out stale entries."""
+    return hash_from_disk(Path(path))
+
+
+def _split_floorplans(
+    data_dir: str, unique_id: str, floorplans: list[PropertyImage]
+) -> tuple[list[PropertyImage], list[PropertyImage]]:
+    """Return (primary plans, additional versions), preserving every source image.
+
+    Similarity controls presentation only: even identical perceptual hashes can
+    conceal changed dimensions or labels. Keep similar or uncomparable copies
+    available for inspection, with source-declared plans presented first.
+    """
+    hashed: list[tuple[PropertyImage, str | None]] = []
+    for img in floorplans:
+        cached = find_cached_file(data_dir, unique_id, str(img.url), img.image_type)
+        try:
+            digest = _cached_image_hash(str(cached), cached.stat().st_mtime_ns) if cached else None
+        except OSError:
+            # Cache cleanup can remove the file between lookup and stat.
+            digest = None
+        hashed.append((img, digest))
+    # Source-declared and comparable plans go first, so they are the ones kept.
+    hashed.sort(key=lambda pair: (not pair[0].is_source_floorplan, pair[1] is None))
+
+    shown: list[PropertyImage] = []
+    variants: list[PropertyImage] = []
+    seen: list[str] = []
+    for img, digest in hashed:
+        if digest is not None and any(hashes_match(digest, other) for other in seen):
+            variants.append(img)
+            continue
+        if digest is None and shown and img.source not in {s.source for s in shown}:
+            variants.append(img)
+            continue
+        shown.append(img)
+        if digest is not None:
+            seen.append(digest)
+    return shown, variants
+
+
 @router.get("/property/{unique_id}", response_class=HTMLResponse)
 async def property_detail(
     request: Request,
@@ -603,12 +658,17 @@ async def property_detail(
             if enforcement:
                 area_context["noise_enforcement"] = enforcement
 
+    prop["floorplan_images"], floorplan_repeats = await asyncio.to_thread(
+        _split_floorplans, data_dir, unique_id, prop.get("floorplan_images", [])
+    )
+
     # Build URL mapping: original CDN URL -> local /images/ URL for cached images
     image_url_map: dict[str, str] = {}
     safe_id = safe_dir_name(unique_id)
     all_images: list[PropertyImage] = [
         *prop.get("gallery_images", []),
         *prop.get("floorplan_images", []),
+        *floorplan_repeats,
     ]
     for img in all_images:
         img_url = str(img.url)
@@ -688,6 +748,7 @@ async def property_detail(
             "source_names": SOURCE_NAMES,
             "source_badges": SOURCE_BADGES,
             "image_url_map": image_url_map,
+            "floorplan_repeats": floorplan_repeats,
             "base_url": base_url,
             "og_image_url": og_image_url,
             "fit_score": fit_score,

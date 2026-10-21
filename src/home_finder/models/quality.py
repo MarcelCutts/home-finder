@@ -7,7 +7,7 @@ import re
 import types
 from collections.abc import Mapping
 from enum import StrEnum
-from typing import Annotated, Any, Literal, Union, get_args, get_origin
+from typing import Annotated, Any, Final, Literal, Union, get_args, get_origin
 
 from pydantic import BaseModel, ConfigDict, field_validator, model_validator
 from pydantic.functional_validators import BeforeValidator
@@ -234,6 +234,18 @@ def filter_outdoor_absence_badge(
     return [badge for badge in badges if badge != PropertyLowlight.NO_OUTDOOR_SPACE]
 
 
+# The analysis prompt asks for railway as well as road noise, but the saved
+# vocabulary only has a traffic value, so name it for what it covers.
+LOWLIGHT_DISPLAY_LABELS: Final[dict[str, str]] = {
+    PropertyLowlight.TRAFFIC_NOISE: "Potential road or rail noise",
+}
+
+
+def lowlight_display_label(badge: str) -> str:
+    """Name a saved lowlight for display without rewriting the stored value."""
+    return LOWLIGHT_DISPLAY_LABELS.get(badge, badge)
+
+
 class PropertyType(StrEnum):
     """Property stock type."""
 
@@ -452,6 +464,21 @@ class ListingRedFlags(_LenientLiteralModel):
     description_concerns: list[str] = []
     red_flag_count: int = 0
 
+    @property
+    def display_items(self) -> list[str]:
+        """Every flag the listing page shows, so its heading can count them.
+
+        The saved ``red_flag_count`` can leave out the photo flags.
+        """
+        items: list[str] = []
+        if self.too_few_photos:
+            items.append("Few supplied photos")
+        if self.selective_angles:
+            items.append("Limited views in supplied photos")
+        if self.missing_room_photos:
+            items.append(f"Not seen in supplied photos: {', '.join(self.missing_room_photos)}")
+        return [*items, *self.description_concerns]
+
 
 class ViewingNotes(_LenientLiteralModel):
     """Property-specific viewing preparation notes."""
@@ -525,7 +552,8 @@ class PropertyQualityAnalysis(_LenientLiteralModel):
         availability = (
             self.outdoor_space.effective_availability if self.outdoor_space else "unknown"
         )
-        return filter_outdoor_absence_badge(self.lowlights, availability)
+        badges = filter_outdoor_absence_badge(self.lowlights, availability)
+        return None if badges is None else [lowlight_display_label(b) for b in badges]
 
     @model_validator(mode="before")
     @classmethod

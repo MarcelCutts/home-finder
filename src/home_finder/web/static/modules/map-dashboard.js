@@ -84,15 +84,16 @@ if (mapEl && resultsEl) {
     const container = document.createElement("div");
     container.className = "map-popup";
 
+    const beds = p.bedrooms === 0 ? "Studio" : p.bedrooms + " bed";
+    const titleText = beds + " \u2014 " + (p.postcode || "Property");
     if (p.image_url) {
       const img = document.createElement("img");
       img.className = "map-popup-img";
       img.src = p.image_url;
-      img.alt = p.bedrooms + " bed \u2014 " + (p.postcode || "Property");
+      img.alt = titleText;
       container.appendChild(img);
     }
 
-    const titleText = p.bedrooms + " bed \u2014 " + (p.postcode || "Property");
     const title = document.createElement("a");
     title.className = "map-popup-title";
     title.href = p.url;
