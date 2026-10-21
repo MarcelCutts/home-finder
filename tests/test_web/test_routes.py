@@ -1590,7 +1590,8 @@ class TestStudioSupport:
         resp = client.get(f"/property/{merged_studio.unique_id}")
         soup = BeautifulSoup(resp.text, "html.parser")
         assert soup.select_one(".detail-meta").get_text(" ", strip=True).startswith("Studio")
-        assert soup.select_one('meta[name="description"]')["content"].startswith("Studio ·")
+        for meta in ('meta[name="description"]', 'meta[property="og:description"]'):
+            assert soup.select_one(meta)["content"] == "Studio · 15 Mare Street, E8 3RH"
         assert "0 bed" not in resp.text
 
 
