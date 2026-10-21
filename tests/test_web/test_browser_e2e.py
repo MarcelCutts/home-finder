@@ -912,7 +912,7 @@ class TestFilterNavigation:
         expect(card).to_have_count(1)
         page.evaluate("window.originalCard = document.querySelector('.property-card')")
         try:
-            card.get_by_title("Interested", exact=True).click()
+            card.get_by_role("button", name="Mark interested", exact=True).click()
             expect(card).to_have_attribute("data-status", "interested")
             expect(card).to_have_count(1)
             expect(card.locator("article")).to_have_count(0)
@@ -1023,7 +1023,7 @@ class TestMobileViewport:
         budget = page.locator(".cost-breakdown-card")
         expect(budget).to_contain_text("Incomplete budget")
         expect(budget).to_contain_text("Advertised subtotal")
-        expect(budget).to_contain_text("Unknown")
+        expect(budget).to_contain_text("Listing EPC: not")
         budget.locator("summary").click()
         expect(budget).to_contain_text("England: private assured periodic tenancies")
         expect(budget.get_by_role("link", name="Rental bidding rules")).to_be_visible()

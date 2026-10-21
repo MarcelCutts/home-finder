@@ -24,6 +24,7 @@ from home_finder.models.notifications import NotificationDecision
 from home_finder.models.quality import (
     OUTDOOR_SPACE_FLAGS,
     filter_outdoor_absence_badge,
+    lowlight_display_label,
     outdoor_availability,
 )
 from home_finder.utils.listing_facts import supported_band
@@ -183,11 +184,14 @@ def _row_to_card_dict(row: aiosqlite.Row) -> PropertyListItem:
         if isinstance(raw_hl, list)
         else None
     )
-    prop_dict["lowlights"] = filter_outdoor_absence_badge(
+    lowlights = filter_outdoor_absence_badge(
         [t for t in raw_ll if isinstance(t, str) and t.strip() not in ("", ",")]
         if isinstance(raw_ll, list)
         else None,
         outdoor_availability(analysis.get("outdoor_space")),
+    )
+    prop_dict["lowlights"] = (
+        None if lowlights is None else [lowlight_display_label(t) for t in lowlights]
     )
     prop_dict["one_line"] = analysis.get("one_line")
     listing_ext = analysis.get("listing_extraction") or {}

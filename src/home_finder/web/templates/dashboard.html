@@ -50,7 +50,7 @@
                 </select>
 
                 <select name="processing" aria-label="Assessment">
-                    <option value="">All assessments</option>
+                    <option value="">Assessment</option>
                     <option value="assessed" {% if processing == 'assessed' %}selected{% endif %}>Assessed</option>
                     <option value="unassessed" {% if processing == 'unassessed' %}selected{% endif %}>Unassessed</option>
                 </select>
@@ -98,11 +98,11 @@
                 </div>
 
                 <select name="sort" aria-label="Sort">
+                    <option value="fit_desc" {% if sort == "fit_desc" %}selected{% endif %}>Best fit</option>
                     <option value="newest" {% if sort == "newest" %}selected{% endif %}>Newest</option>
-                    <option value="price_asc" {% if sort == "price_asc" %}selected{% endif %}>Price: Low</option>
-                    <option value="price_desc" {% if sort == "price_desc" %}selected{% endif %}>Price: High</option>
-                    <option value="fit_desc" {% if sort == "fit_desc" %}selected{% endif %}>Best Fit</option>
-                    <option value="longest_listed" {% if sort == "longest_listed" %}selected{% endif %}>First observed: oldest</option>
+                    <option value="price_asc" {% if sort == "price_asc" %}selected{% endif %}>Cheapest</option>
+                    <option value="price_desc" {% if sort == "price_desc" %}selected{% endif %}>Most expensive</option>
+                    <option value="longest_listed" {% if sort == "longest_listed" %}selected{% endif %}>Seen longest</option>
                 </select>
 
                 <button type="button" id="open-filters-btn" class="filter-modal-btn">Filters <span class="filter-badge" {% if not secondary_filter_count %}hidden{% endif %}>{{ secondary_filter_count }}</span></button>
@@ -253,7 +253,7 @@
                             {% for t in tag_list %}
                             <label class="tag-chip {% if t in highlight_values %}tag-chip-positive{% else %}tag-chip-negative{% endif %}">
                                 <input type="checkbox" name="tag" value="{{ t }}" class="sr-only" {% if t in tags %}checked{% endif %}>
-                                {{ t }}
+                                {{ t | lowlight_label }}
                             </label>
                             {% endfor %}
                         </div>
