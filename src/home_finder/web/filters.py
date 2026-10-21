@@ -8,6 +8,7 @@ from fastapi import Depends, Query
 from pydantic import BaseModel, field_validator
 
 from home_finder.models import PropertyHighlight, PropertyLowlight, UserStatus
+from home_finder.models.quality import lowlight_display_label
 
 # ---------------------------------------------------------------------------
 # Valid option sets (moved from routes.py)
@@ -20,6 +21,8 @@ VALID_SORT_OPTIONS: Final = {
     "fit_desc",
     "longest_listed",
 }
+# With hundreds of homes saved, the best matches belong on the first page.
+DEFAULT_SORT: Final = "fit_desc"
 VALID_USER_STATUSES: Final = {s.value for s in UserStatus}
 VALID_PROPERTY_TYPES: Final = {
     "victorian",
@@ -378,7 +381,7 @@ class PropertyFilter(BaseModel):
                 }
             )
         for t in self.tags:
-            chips.append({"key": "tag", "label": t, "value": t})
+            chips.append({"key": "tag", "label": lowlight_display_label(t), "value": t})
         if self.status:
             from home_finder.models import USER_STATUS_META
 

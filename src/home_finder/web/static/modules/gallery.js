@@ -194,6 +194,10 @@ if (gallery) {
 
     if (target.dataset.lightbox === "floorplan") {
       open(0, "floorplan");
+      const clickedImg = target.tagName === "IMG" ? target : target.querySelector("img");
+      const fullSizeImg = Array.from(gallery.querySelectorAll(".gallery-floorplan-img"))
+        .find(function (img) { return clickedImg && img.src === clickedImg.src; });
+      if (fullSizeImg) fullSizeImg.scrollIntoView({ block: "start", behavior: "instant" });
       return;
     }
 

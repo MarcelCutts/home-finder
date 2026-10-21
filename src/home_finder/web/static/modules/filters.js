@@ -153,7 +153,7 @@ if (dialog && openBtn) {
 
   dialog.querySelector(".filter-modal-reset").addEventListener("click", function () {
     // Clear every filter, including status/assessment/size, before explicit Apply.
-    setFilterValues({sort: "newest", tags: []});
+    setFilterValues({sort: "fit_desc", tags: []});
     dialog.dispatchEvent(new CustomEvent("filterChange", { bubbles: true }));
   });
 
