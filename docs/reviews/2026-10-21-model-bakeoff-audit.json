@@ -1,0 +1,574 @@
+{
+  "alert_counts_assuming_new_active_homes": {
+    "haiku55-low": 0,
+    "luna6-low": 1,
+    "sol6-low": 0,
+    "sol61-low": 1,
+    "sonnet55-low": 1
+  },
+  "arms": 27,
+  "claude_judge_sol61_exact_two_sided_p": 0.13604594767093658,
+  "claude_judge_sol61_wilson95": [
+    0.47345104090476137,
+    0.80059281473325
+  ],
+  "claude_judge_sol61_win_fraction": 0.6551724137931034,
+  "consensus": {
+    "astra6-low": {
+      "agree": 160,
+      "homes": 12
+    },
+    "fable51-low": {
+      "agree": 160,
+      "homes": 12
+    },
+    "haiku55-low": {
+      "abstain": 14,
+      "agree": 132,
+      "disagree": 14,
+      "homes": 12
+    },
+    "haiku55-medium": {
+      "abstain": 17,
+      "agree": 134,
+      "disagree": 9,
+      "homes": 12
+    },
+    "haiku55-nothink": {
+      "abstain": 12,
+      "agree": 97,
+      "disagree": 8,
+      "homes": 9
+    },
+    "luna56-low": {
+      "abstain": 3,
+      "agree": 142,
+      "disagree": 15,
+      "homes": 12
+    },
+    "luna6-low": {
+      "abstain": 3,
+      "agree": 145,
+      "disagree": 12,
+      "homes": 12
+    },
+    "luna6-medium": {
+      "abstain": 2,
+      "agree": 145,
+      "disagree": 13,
+      "homes": 12
+    },
+    "luna6-none": {
+      "abstain": 3,
+      "agree": 134,
+      "disagree": 10,
+      "homes": 11
+    },
+    "opus55-low": {
+      "abstain": 2,
+      "agree": 73,
+      "disagree": 3,
+      "homes": 6
+    },
+    "opus55-low-fast": {
+      "abstain": 4,
+      "agree": 69,
+      "disagree": 2,
+      "homes": 6
+    },
+    "opus55-medium": {
+      "abstain": 1,
+      "agree": 14,
+      "disagree": 1,
+      "homes": 1
+    },
+    "sol56-low": {
+      "abstain": 2,
+      "agree": 149,
+      "disagree": 9,
+      "homes": 12
+    },
+    "sol56-medium": {
+      "agree": 39,
+      "disagree": 3,
+      "homes": 3
+    },
+    "sol6-low": {
+      "abstain": 6,
+      "agree": 148,
+      "disagree": 6,
+      "homes": 12
+    },
+    "sol6-none": {
+      "abstain": 10,
+      "agree": 143,
+      "disagree": 7,
+      "homes": 12
+    },
+    "sol61-high": {
+      "abstain": 1,
+      "agree": 71,
+      "disagree": 3,
+      "homes": 6
+    },
+    "sol61-low": {
+      "agree": 157,
+      "disagree": 3,
+      "homes": 12
+    },
+    "sol61-low-fast": {
+      "abstain": 4,
+      "agree": 125,
+      "disagree": 3,
+      "homes": 10
+    },
+    "sol61-low-flex": {
+      "abstain": 2,
+      "agree": 153,
+      "disagree": 5,
+      "homes": 12
+    },
+    "sol61-low-imglow": {
+      "abstain": 2,
+      "agree": 153,
+      "disagree": 5,
+      "homes": 12
+    },
+    "sol61-medium": {
+      "abstain": 1,
+      "agree": 153,
+      "disagree": 6,
+      "homes": 12
+    },
+    "sonnet55-high": {
+      "abstain": 1,
+      "agree": 114,
+      "disagree": 7,
+      "homes": 9
+    },
+    "sonnet55-low": {
+      "abstain": 2,
+      "agree": 137,
+      "disagree": 9,
+      "homes": 11
+    },
+    "sonnet55-low+haiku-eval": {
+      "abstain": 1,
+      "agree": 150,
+      "disagree": 9,
+      "homes": 12
+    },
+    "sonnet55-medium": {
+      "abstain": 1,
+      "agree": 149,
+      "disagree": 10,
+      "homes": 12
+    },
+    "terra56-low": {
+      "abstain": 3,
+      "agree": 144,
+      "disagree": 13,
+      "homes": 12
+    }
+  },
+  "consensus_field_instances": 160,
+  "consensus_homes": 12,
+  "core_records": 579,
+  "decision_crossings_vs_sonnet": {
+    "haiku55-low": {
+      "challenger_only_alert": 0,
+      "jointly_valid_homes": 27,
+      "sonnet_only_alert": 1
+    },
+    "luna6-low": {
+      "challenger_only_alert": 0,
+      "jointly_valid_homes": 29,
+      "sonnet_only_alert": 0
+    },
+    "sol6-low": {
+      "challenger_only_alert": 0,
+      "jointly_valid_homes": 29,
+      "sonnet_only_alert": 1
+    },
+    "sol61-low": {
+      "challenger_only_alert": 1,
+      "jointly_valid_homes": 29,
+      "sonnet_only_alert": 1
+    },
+    "sonnet55-low": {
+      "challenger_only_alert": 0,
+      "jointly_valid_homes": 29,
+      "sonnet_only_alert": 0
+    }
+  },
+  "decode_replay": [
+    {
+      "decoded_fields": 0,
+      "recovered": false
+    },
+    {
+      "decoded_fields": 0,
+      "recovered": false
+    }
+  ],
+  "first_runs": 499,
+  "homes": 30,
+  "judges": {
+    "haiku55-low__vs__luna6-low": {
+      "opus55": {
+        "calibration": {
+          "haiku55-low": 16,
+          "luna6-low": 10,
+          "tie": 2
+        },
+        "factual_accuracy": {
+          "haiku55-low": 13,
+          "luna6-low": 15
+        },
+        "overall": {
+          "haiku55-low": 17,
+          "luna6-low": 11
+        },
+        "usefulness": {
+          "haiku55-low": 20,
+          "luna6-low": 6,
+          "tie": 2
+        },
+        "viewing_notes": {
+          "haiku55-low": 24,
+          "luna6-low": 1,
+          "tie": 3
+        }
+      },
+      "sol56": {
+        "calibration": {
+          "haiku55-low": 11,
+          "luna6-low": 17
+        },
+        "factual_accuracy": {
+          "haiku55-low": 6,
+          "luna6-low": 22
+        },
+        "overall": {
+          "haiku55-low": 10,
+          "luna6-low": 18
+        },
+        "usefulness": {
+          "haiku55-low": 15,
+          "luna6-low": 13
+        },
+        "viewing_notes": {
+          "haiku55-low": 22,
+          "luna6-low": 6
+        }
+      }
+    },
+    "sonnet55-low__vs__sol6-low": {
+      "opus55": {
+        "calibration": {
+          "sol6-low": 14,
+          "sonnet55-low": 12,
+          "tie": 3
+        },
+        "factual_accuracy": {
+          "sol6-low": 15,
+          "sonnet55-low": 13,
+          "tie": 1
+        },
+        "overall": {
+          "sol6-low": 11,
+          "sonnet55-low": 18
+        },
+        "usefulness": {
+          "sol6-low": 2,
+          "sonnet55-low": 25,
+          "tie": 2
+        },
+        "viewing_notes": {
+          "sonnet55-low": 29
+        }
+      },
+      "sol56": {
+        "calibration": {
+          "sol6-low": 29
+        },
+        "factual_accuracy": {
+          "sol6-low": 29
+        },
+        "overall": {
+          "sol6-low": 28,
+          "sonnet55-low": 1
+        },
+        "usefulness": {
+          "sol6-low": 21,
+          "sonnet55-low": 8
+        },
+        "viewing_notes": {
+          "sol6-low": 6,
+          "sonnet55-low": 23
+        }
+      }
+    },
+    "sonnet55-low__vs__sol61-low": {
+      "opus55": {
+        "calibration": {
+          "sol61-low": 17,
+          "sonnet55-low": 12
+        },
+        "factual_accuracy": {
+          "sol61-low": 20,
+          "sonnet55-low": 9
+        },
+        "overall": {
+          "sol61-low": 19,
+          "sonnet55-low": 10
+        },
+        "usefulness": {
+          "sol61-low": 9,
+          "sonnet55-low": 12,
+          "tie": 8
+        },
+        "viewing_notes": {
+          "sol61-low": 4,
+          "sonnet55-low": 14,
+          "tie": 11
+        }
+      },
+      "sol56": {
+        "calibration": {
+          "sol61-low": 27,
+          "sonnet55-low": 2
+        },
+        "factual_accuracy": {
+          "sol61-low": 27,
+          "sonnet55-low": 2
+        },
+        "overall": {
+          "sol61-low": 28,
+          "sonnet55-low": 1
+        },
+        "usefulness": {
+          "sol61-low": 27,
+          "sonnet55-low": 2
+        },
+        "viewing_notes": {
+          "sol61-low": 28,
+          "sonnet55-low": 1
+        }
+      }
+    }
+  },
+  "retry_calls": [
+    {
+      "arm": "sol61-low-flex",
+      "attempts": 2,
+      "phase": "visual"
+    },
+    {
+      "arm": "sol61-low-flex",
+      "attempts": 3,
+      "phase": "visual"
+    },
+    {
+      "arm": "sol61-low-flex",
+      "attempts": 3,
+      "phase": "visual"
+    }
+  ],
+  "source_core_sha256": "26314ec361342115566112319d334ca2d50d5d7ecc233612aa41669c8fbcba27",
+  "source_judges_sha256": "2efc4eab435b43536f016131a25fd15d6a39353abb3980a0b76bbcc5284f1936",
+  "successful_request_median_seconds": {
+    "astra6-low": 48.89456794449961,
+    "fable51-low": 60.454873693500076,
+    "haiku55-low": 18.18514341900027,
+    "haiku55-medium": 30.138967357999718,
+    "haiku55-nothink": 15.668097322000222,
+    "luna56-low": 26.24203723550022,
+    "luna6-low": 19.528781822500378,
+    "luna6-medium": 30.077467596999895,
+    "luna6-none": 16.301187395999477,
+    "opus55-low": 27.988271382500216,
+    "opus55-low-fast": 11.833248425500301,
+    "opus55-medium": 42.285291873999995,
+    "sol56-low": 40.160202946000254,
+    "sol56-medium": 48.61072150899986,
+    "sol6-low": 22.87590789249998,
+    "sol6-none": 22.382284393500186,
+    "sol61-high": 115.49141757000007,
+    "sol61-low": 41.34183181599997,
+    "sol61-low-fast": 26.0322953375005,
+    "sol61-low-flex": 41.46335229900001,
+    "sol61-low-imglow": 41.24644083799967,
+    "sol61-medium": 53.61552854000047,
+    "sonnet55-high": 26.614616010999725,
+    "sonnet55-low": 23.618884409499742,
+    "sonnet55-low+haiku-eval": 18.387072990999968,
+    "sonnet55-medium": 24.142660071000137,
+    "terra56-low": 31.197418622999976
+  },
+  "validity": {
+    "astra6-low": {
+      "all_total": 12,
+      "all_valid": 12,
+      "first_total": 12,
+      "first_valid": 12
+    },
+    "fable51-low": {
+      "all_total": 12,
+      "all_valid": 12,
+      "first_total": 12,
+      "first_valid": 12
+    },
+    "haiku55-low": {
+      "all_total": 50,
+      "all_valid": 47,
+      "first_total": 30,
+      "first_valid": 28
+    },
+    "haiku55-medium": {
+      "all_total": 30,
+      "all_valid": 29,
+      "first_total": 30,
+      "first_valid": 29
+    },
+    "haiku55-nothink": {
+      "all_total": 30,
+      "all_valid": 26,
+      "first_total": 30,
+      "first_valid": 26
+    },
+    "luna56-low": {
+      "all_total": 30,
+      "all_valid": 30,
+      "first_total": 30,
+      "first_valid": 30
+    },
+    "luna6-low": {
+      "all_total": 50,
+      "all_valid": 50,
+      "first_total": 30,
+      "first_valid": 30
+    },
+    "luna6-medium": {
+      "all_total": 30,
+      "all_valid": 30,
+      "first_total": 30,
+      "first_valid": 30
+    },
+    "luna6-none": {
+      "all_total": 30,
+      "all_valid": 25,
+      "first_total": 30,
+      "first_valid": 25
+    },
+    "opus55-low": {
+      "all_total": 10,
+      "all_valid": 6,
+      "first_total": 10,
+      "first_valid": 6
+    },
+    "opus55-low-fast": {
+      "all_total": 8,
+      "all_valid": 6,
+      "first_total": 8,
+      "first_valid": 6
+    },
+    "opus55-medium": {
+      "all_total": 3,
+      "all_valid": 1,
+      "first_total": 3,
+      "first_valid": 1
+    },
+    "sol56-low": {
+      "all_total": 15,
+      "all_valid": 15,
+      "first_total": 15,
+      "first_valid": 15
+    },
+    "sol56-medium": {
+      "all_total": 3,
+      "all_valid": 3,
+      "first_total": 3,
+      "first_valid": 3
+    },
+    "sol6-low": {
+      "all_total": 30,
+      "all_valid": 30,
+      "first_total": 30,
+      "first_valid": 30
+    },
+    "sol6-none": {
+      "all_total": 20,
+      "all_valid": 20,
+      "first_total": 20,
+      "first_valid": 20
+    },
+    "sol61-high": {
+      "all_total": 6,
+      "all_valid": 6,
+      "first_total": 6,
+      "first_valid": 6
+    },
+    "sol61-low": {
+      "all_total": 50,
+      "all_valid": 50,
+      "first_total": 30,
+      "first_valid": 30
+    },
+    "sol61-low-fast": {
+      "all_total": 10,
+      "all_valid": 10,
+      "first_total": 10,
+      "first_valid": 10
+    },
+    "sol61-low-flex": {
+      "all_total": 15,
+      "all_valid": 15,
+      "first_total": 15,
+      "first_valid": 15
+    },
+    "sol61-low-imglow": {
+      "all_total": 15,
+      "all_valid": 15,
+      "first_total": 15,
+      "first_valid": 15
+    },
+    "sol61-medium": {
+      "all_total": 15,
+      "all_valid": 15,
+      "first_total": 15,
+      "first_valid": 15
+    },
+    "sonnet55-high": {
+      "all_total": 10,
+      "all_valid": 9,
+      "first_total": 10,
+      "first_valid": 9
+    },
+    "sonnet55-low": {
+      "all_total": 50,
+      "all_valid": 48,
+      "first_total": 30,
+      "first_valid": 29
+    },
+    "sonnet55-low+haiku-eval": {
+      "all_total": 15,
+      "all_valid": 15,
+      "first_total": 15,
+      "first_valid": 15
+    },
+    "sonnet55-medium": {
+      "all_total": 15,
+      "all_valid": 15,
+      "first_total": 15,
+      "first_valid": 15
+    },
+    "terra56-low": {
+      "all_total": 15,
+      "all_valid": 15,
+      "first_total": 15,
+      "first_valid": 15
+    }
+  },
+  "zero_failures_30_upper95_one_sided_iid": 0.09503385285530419
+}

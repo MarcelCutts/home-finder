@@ -19,7 +19,7 @@ def new_runtime_analysis_config(
 ) -> AnalysisConfig:
     """New-run defaults, separate from historical configuration deserialization.
 
-    Reserve 110k for visual text/schema/framing, plus 5.5k per configured image
+    Reserve 111k for visual text/schema/framing, plus 5.5k per configured image
     and one spare floorplan slot (5k visual tokens plus metadata headroom).
     The native payload check still defers unusually large text before dispatch.
     Gallery selection and the persisted input-budget policy remain unchanged.
@@ -31,7 +31,7 @@ def new_runtime_analysis_config(
             model="claude-sonnet-5-5",
             reasoning="adaptive" if enable_extended_thinking else "disabled",
             effort="low",
-            input_token_limit=110_000 + 5_500 * (max_images + 1),
+            input_token_limit=111_000 + 5_500 * (max_images + 1),
             max_output_tokens=8192,
             sdk_retries=0,
         ),

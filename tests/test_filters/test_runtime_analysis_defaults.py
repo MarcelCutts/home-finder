@@ -31,7 +31,7 @@ from tests.test_filters.test_sonnet55 import response
 from tests.test_filters.test_visual_checkpoints import image_block
 
 
-@pytest.mark.parametrize("images,bound", [(1, 121_000), (8, 159_500), (20, 225_500)])
+@pytest.mark.parametrize("images,bound", [(1, 122_000), (8, 160_500), (20, 226_500)])
 def test_settings_default_is_modern_bounded_and_not_spend_authorization(images, bound):
     settings = Settings(_env_file=None, quality_filter_max_images=images)
     config = settings.analysis_config
@@ -61,7 +61,7 @@ def test_environment_fields_are_validated_before_runtime_defaults(monkeypatch):
     monkeypatch.setenv("HOME_FINDER_QUALITY_FILTER_MAX_IMAGES", "8")
     monkeypatch.setenv("HOME_FINDER_ENABLE_EXTENDED_THINKING", "false")
     settings = Settings(_env_file=None)
-    assert settings.analysis_config.visual.input_token_limit == 159_500
+    assert settings.analysis_config.visual.input_token_limit == 160_500
     assert settings.analysis_config.visual.thinking_type == "between_tools"
     assert settings.analysis_config.visual.effort == "low"
     monkeypatch.setenv("HOME_FINDER_QUALITY_FILTER_MAX_IMAGES", "21")
@@ -95,7 +95,7 @@ def test_dotenv_null_is_rejected_and_partial_json_inherits_runtime_profile(tmp_p
     config = Settings(_env_file=dotenv).analysis_config
     assert config.visual.model == config.evaluation.model == "claude-sonnet-5-5"
     assert config.visual.effort == "medium"
-    assert config.visual.input_token_limit == 225_500
+    assert config.visual.input_token_limit == 226_500
     assert config.evaluation == new_runtime_analysis_config().evaluation
 
 
@@ -139,7 +139,7 @@ def test_explicit_phase_overrides_can_select_model_and_reasoning_without_losing_
     ).analysis_config
     assert config.visual.model == "claude-sonnet-4-6"
     assert config.visual.reasoning == "adaptive"
-    assert config.visual.input_token_limit == 159_500
+    assert config.visual.input_token_limit == 160_500
     assert config.visual.sdk_retries == 0
     assert config.evaluation == new_runtime_analysis_config().evaluation
 
@@ -293,7 +293,7 @@ async def test_new_settings_reach_both_native_phases_without_reducing_gallery(
         attempts = await rows(storage)
         assert [attempt["state"] for attempt in attempts] == ["settled", "settled"]
         assert [attempt["model"] for attempt in attempts] == ["claude-sonnet-5-5"] * 2
-        assert attempts[0]["reserved_nanousd"] == (480_670_000 if images == 8 else 645_670_000)
+        assert attempts[0]["reserved_nanousd"] == (483_170_000 if images == 8 else 648_170_000)
         assert attempts[1]["reserved_nanousd"] == 431_920_000
 
 
