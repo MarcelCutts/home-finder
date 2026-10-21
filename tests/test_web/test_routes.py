@@ -326,7 +326,7 @@ class TestPropertyDetail:
         assert "Dashboard" in resp.text
 
     @pytest.mark.parametrize("saved_count", [3, 0])
-    async def test_red_flag_heading_counts_every_flag_shown(
+    async def test_every_red_flag_is_listed_under_watch_out(
         self,
         client: TestClient,
         storage: PropertyStorage,
@@ -335,7 +335,7 @@ class TestPropertyDetail:
         base_analysis: PropertyQualityAnalysis,
         saved_count: int,
     ) -> None:
-        """The saved count leaves out photo flags, so the heading counts the lines."""
+        """The saved count can leave out photo flags, so it decides nothing shown."""
         from bs4 import BeautifulSoup
 
         flags = ListingRedFlags(
@@ -344,21 +344,74 @@ class TestPropertyDetail:
             description_concerns=["Railway beside the building", "Price above average"],
             red_flag_count=saved_count,
         )
+        analysis = base_analysis.model_copy(
+            update={
+                "listing_red_flags": flags,
+                "lowlights": ["Potential traffic noise", "Missing key photos"],
+            }
+        )
         await storage.save_merged_property(merged_a)
-        await storage.save_quality_analysis(
-            prop_a.unique_id, base_analysis.model_copy(update={"listing_red_flags": flags})
-        )
+        await storage.save_quality_analysis(prop_a.unique_id, analysis)
         soup = BeautifulSoup(client.get(f"/property/{merged_a.unique_id}").text, "html.parser")
-        alert = next(
-            box for box in soup.select(".quality-alert") if "Listing Red Flags" in box.get_text()
-        )
-        assert alert.strong.get_text() == "Listing Red Flags (4):"
-        assert [p.get_text() for p in alert.select("p")] == [
+        assert [li.get_text() for li in soup.select(".verdict-watch li")] == [
+            "Potential road or rail noise",
             "Limited views in supplied photos",
             "Not seen in supplied photos: Second bedroom",
             "Railway beside the building",
             "Price above average",
         ]
+
+    @pytest.mark.asyncio
+    async def test_facts_and_verdict_lead_the_page(
+        self,
+        client: TestClient,
+        storage: PropertyStorage,
+        prop_a: Property,
+        merged_a: MergedProperty,
+        base_analysis: PropertyQualityAnalysis,
+    ) -> None:
+        from bs4 import BeautifulSoup
+
+        highlights = ["Gas hob", "Dishwasher included", "Modern kitchen", "Private garden"]
+        analysis = base_analysis.model_copy(
+            update={
+                "one_line": "Garden flat with a gas hob",
+                "highlights": [*highlights, "High ceilings", "Period features"],
+                "lowlights": ["Service charge unstated"],
+            }
+        )
+        await storage.save_merged_property(merged_a, commute_minutes=22)
+        await storage.save_quality_analysis(prop_a.unique_id, analysis)
+        soup = BeautifulSoup(client.get(f"/property/{merged_a.unique_id}").text, "html.parser")
+
+        facts = {
+            fact.dt.get_text(strip=True): " ".join(fact.dd.get_text(" ").split())
+            for fact in soup.select(".detail-facts .detail-fact")
+        }
+        assert facts["Rent"] == "£1,900 pcm"
+        assert facts["Bedrooms"] == "1"
+        assert facts["Floor area"] == "Not listed"
+        assert facts["Commute"].startswith("22 min")
+        assert facts["Fit"].endswith("of 100")
+
+        verdict = soup.select_one("#section-overview")
+        assert verdict.h2.get_text() == "Garden flat with a gas hob"
+        assert "AI reading of the listing photos" in verdict.select_one(".provenance-note").text
+        fits = verdict.select_one(".verdict-fits")
+        assert [li.get_text() for li in fits.select(":scope > ul li")] == [
+            *highlights,
+            "High ceilings",
+        ]
+        assert fits.select_one(".verdict-more summary").get_text() == "1 more"
+        assert verdict.select_one(".verdict-watch .verdict-empty").get_text() == "Nothing flagged."
+        find_out = [li.get_text() for li in verdict.select(".verdict-find li")]
+        assert find_out[0] == "Service charge"
+        assert verdict.select_one("#section-fit") is not None
+
+        order = [
+            el["id"] for el in soup.select("#section-overview, #section-costs, #section-quality")
+        ]
+        assert order == ["section-overview", "section-costs", "section-quality"]
 
     @pytest.mark.asyncio
     async def test_area_context_populated(
@@ -590,7 +643,8 @@ class TestDetailQualityCards:
             assert "Other photos were not reviewed" not in response.text
         if reviewed == 8:
             assert "Not seen in supplied photos: bathroom" in response.text
-            assert "No bathroom photos supplied" in response.text
+            # The red flag names the room, so the vaguer photo tag isn't repeated.
+            assert "No bathroom photos supplied" not in response.text
 
     @pytest.mark.asyncio
     async def test_quality_cards_render_room_data(
@@ -628,7 +682,7 @@ class TestDetailQualityCards:
         await storage.save_quality_analysis(prop_a.unique_id, base_analysis)
         resp = client.get(f"/property/{merged_a.unique_id}")
         assert resp.status_code == 200
-        assert "Quality Analysis" in resp.text
+        assert "Room by room" in resp.text
 
     @pytest.mark.asyncio
     async def test_estimated_badge_absent_with_floorplan(
@@ -784,20 +838,22 @@ class TestFloorplanDedup:
         await storage.save_property_images(merged_a.unique_id, images)
 
         soup = BeautifulSoup(client.get(f"/property/{merged_a.unique_id}").text, "html.parser")
-        section = soup.select_one("#section-floorplan")
-        shown = [img["src"] for img in section.select(":scope > .floorplan-section img")]
         safe_id = safe_dir_name(merged_a.unique_id)
-        assert shown == [
+        distinct = [
             f"/images/{safe_id}/{url_to_filename(url, 'floorplan', index)}"
             for index, url in enumerate(plans)
             if index != 0
         ]
-        variants = section.select_one("details.floorplan-repeats")
-        assert variants is not None
-        assert "Unverified floorplan image" in variants.get_text()
+        repeat = f"/images/{safe_id}/{url_to_filename(next(iter(plans)), 'floorplan', 0)}"
+        panel = soup.select_one("#section-floorplan")
+        assert [img["src"] for img in panel.select(".floorplan-panel-image img")] == distinct[:1]
+        assert "See all 3 plans" in panel.figcaption.get_text()
+        variants = panel.select_one("details.floorplan-repeats")
+        assert variants.summary.get_text() == "Additional floorplan versions (1)"
+        assert "label wasn't recorded" in variants.get_text()
         assert variants.img.parent["data-lightbox"] == "floorplan"
         assert soup.select_one("#gallery-tab-floorplan").get_text() == "Floorplan 3"
-        assert len(soup.select(".gallery-floorplan-img")) == 3
+        assert [img["src"] for img in soup.select(".gallery-floorplan-img")] == [*distinct, repeat]
 
     @pytest.mark.asyncio
     async def test_uncached_plan_from_another_portal_is_set_aside_not_hidden(
@@ -833,17 +889,16 @@ class TestFloorplanDedup:
 
         soup = BeautifulSoup(client.get(f"/property/{merged_a.unique_id}").text, "html.parser")
         section = soup.select_one("#section-floorplan")
-        shown = [img["src"] for img in section.select(":scope > .floorplan-section img")]
-        assert shown == [
+        assert [img["src"] for img in soup.select(".gallery-floorplan-img")] == [
             f"/images/{safe_dir_name(merged_a.unique_id)}/"
             f"{url_to_filename(cached_url, 'floorplan', 0)}",
             same_site_url,
+            other_site_url,
         ]
         repeats = section.select_one("details.floorplan-repeats")
         assert repeats.summary.get_text() == "Additional floorplan versions (1)"
         assert [img["src"] for img in repeats.select("img")] == [other_site_url]
         assert repeats.img.parent["data-lightbox"] == "floorplan"
-        assert other_site_url in [img["src"] for img in soup.select(".gallery-floorplan-img")]
 
     def test_changed_dimension_with_identical_perceptual_hash_is_retained(
         self, settings: Settings, merged_a: MergedProperty
@@ -1589,7 +1644,10 @@ class TestStudioSupport:
         await storage.save_merged_property(merged_studio)
         resp = client.get(f"/property/{merged_studio.unique_id}")
         soup = BeautifulSoup(resp.text, "html.parser")
-        assert soup.select_one(".detail-meta").get_text(" ", strip=True).startswith("Studio")
+        bedrooms = next(
+            fact.dd for fact in soup.select(".detail-fact") if fact.dt.get_text() == "Bedrooms"
+        )
+        assert bedrooms.get_text(strip=True) == "Studio"
         for meta in ('meta[name="description"]', 'meta[property="og:description"]'):
             assert soup.select_one(meta)["content"] == "Studio · 15 Mare Street, E8 3RH"
         assert "0 bed" not in resp.text
@@ -1996,7 +2054,7 @@ class TestReanalysisEndpoint:
 
 
 class TestCostBreakdown:
-    """Tests for the True Monthly Cost card on detail page."""
+    """Tests for the costs section of the detail page."""
 
     async def test_earlier_bills_claim_remains_visible_as_unverified(
         self, client, storage, merged_a, base_analysis
@@ -2036,8 +2094,9 @@ class TestCostBreakdown:
         detail = BeautifulSoup(client.get(f"/property/{merged_a.unique_id}").text, "html.parser")
         card = detail.select_one(".cost-breakdown-card")
         assert "In rent" not in card.get_text()
-        water = next(line for line in card.select(".cost-line") if "Water" in line.get_text())
-        assert "Unpriced" in water.get_text()
+        assert "Included in rent" not in card.get_text()
+        assert "water" in card.select_one(".money-total-note").get_text().split("Not priced:")[1]
+        water = next(row for row in card.select(".cost-bills tr") if "Water" in row.get_text())
         assert "Coverage and amount unknown" in water.get_text()
 
     @pytest.mark.asyncio
@@ -2072,8 +2131,9 @@ class TestCostBreakdown:
             ),
         )
         first = BeautifulSoup(client.get(f"/property/{merged_a.unique_id}").text, "html.parser")
-        budget = first.select_one(".cost-breakdown-card").get_text(" ", strip=True)
-        assert "£1,930.00/mo" in budget
+        budget = " ".join(first.select_one(".cost-breakdown-card").get_text(" ").split())
+        assert "Each month £1,930 Rent, water £30 as advertised." in budget
+        assert "Included in rent: gas, electricity. Not priced: council tax, broadband." in budget
         assert "Listing EPC: B (an earlier AI reading said D)" in budget
         assert "Council-tax band: D (an earlier AI reading said C)" in budget
         assert "earlier analysis: £450/mo, unverified" in budget
@@ -2084,7 +2144,9 @@ class TestCostBreakdown:
 
         await storage.detect_and_record_price_change(merged_a.unique_id, 1800)
         second = BeautifulSoup(client.get(f"/property/{merged_a.unique_id}").text, "html.parser")
-        assert "£1,830.00/mo" in second.select_one(".cost-breakdown-card").get_text()
+        assert "Each month £1,830" in " ".join(
+            second.select_one(".cost-breakdown-card").get_text(" ").split()
+        )
         await storage.update_source_text(
             merged_a.unique_id,
             ListingTextEvidence.observed(
@@ -2095,8 +2157,8 @@ class TestCostBreakdown:
             ),
         )
         third = BeautifulSoup(client.get(f"/property/{merged_a.unique_id}").text, "html.parser")
-        cleared = third.select_one(".cost-breakdown-card").get_text(" ", strip=True)
-        assert "£1,800.00/mo" in cleared
+        cleared = " ".join(third.select_one(".cost-breakdown-card").get_text(" ").split())
+        assert "Each month £1,800" in cleared
         assert (
             "Listing EPC: not in the saved advert (an earlier AI reading said D, unconfirmed)"
             in cleared
@@ -2117,8 +2179,8 @@ class TestCostBreakdown:
     ) -> None:
         await storage.save_merged_property(merged_a)
         response = client.get(f"/property/{merged_a.unique_id}")
-        assert "Rent and bills" in response.text
-        assert "Incomplete budget" in response.text
+        assert "What it costs" in response.text
+        assert "Each month" in response.text
         assert "Listing EPC: not stated. Council-tax band: not stated." in response.text
 
     @pytest.mark.asyncio
@@ -2144,8 +2206,8 @@ class TestCostBreakdown:
 
         resp = client.get(f"/property/{merged_a.unique_id}")
         assert resp.status_code == 200
-        assert "Rent and bills" in resp.text
-        assert "Incomplete budget" in resp.text
+        assert "What it costs" in resp.text
+        assert "Each month" in resp.text
         # The advert text was not retained, so the earlier reading is the only claim.
         assert (
             "Council-tax band: not in the saved advert (an earlier AI reading said C, unconfirmed)"
@@ -2174,7 +2236,7 @@ class TestCostBreakdown:
         resp = client.get(f"/property/{merged_a.unique_id}")
         assert resp.status_code == 200
         assert "Rent" in resp.text
-        assert "Advertised subtotal" in resp.text
+        assert "Each month" in resp.text
 
 
 # ---------------------------------------------------------------------------

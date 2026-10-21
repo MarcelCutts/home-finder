@@ -165,3 +165,23 @@ def build_monthly_budget(
             "optional insurance are outside this monthly subtotal."
         ),
     }
+
+
+def move_in_cash(rent_pcm: int) -> dict[str, int]:
+    """The most a tenant can be asked to pay before moving in, worked out from the rent.
+
+    Tenant Fees Act 2019 caps: a tenancy deposit of 5 weeks' rent, or 6 weeks when
+    the annual rent is £50,000 or more, and a holding deposit of 1 week's rent,
+    which is normally put towards the first payment. Figures are whole pounds
+    rounded down, because they are ceilings.
+    """
+    weekly = Decimal(rent_pcm) * 12 / 52
+    deposit_weeks = 6 if rent_pcm * 12 >= 50_000 else 5
+    deposit = int(weekly * deposit_weeks)
+    return {
+        "deposit_weeks": deposit_weeks,
+        "deposit": deposit,
+        "holding_deposit": int(weekly),
+        "first_month": rent_pcm,
+        "total": deposit + rent_pcm,
+    }
