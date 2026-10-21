@@ -104,6 +104,9 @@ from home_finder.utils.circuit_breaker import (  # noqa: E402
     APIUnavailableError as APIUnavailableError,
 )
 
+# Retry only a completed, invalid visual response; every send remains metered.
+_MALFORMED_VISUAL_RETRIES: Final = 1
+
 
 @dataclass
 class TokenUsage:
@@ -1315,37 +1318,53 @@ class PropertyQualityFilter:
 
             from anthropic import Timeout
 
-            with self._spend_meter.bind(
-                property_id,
-                "visual",
-                provenance,
-                _visual_output,
-                visual_input_sha256=input_key,
-            ):
-                response = await client.messages.create(
-                    **create_kwargs,
-                    timeout=Timeout(
-                        phase.request_timeout_seconds, connect=phase.connect_timeout_seconds
-                    ),
-                )
-
-            if hasattr(response, "usage"):
-                usage = response.usage
-                self.token_usage.add_from_response(usage, model=phase.model)
-                cache_read = getattr(usage, "cache_read_input_tokens", 0)
-                cache_creation = getattr(usage, "cache_creation_input_tokens", 0)
-                if cache_read or cache_creation:
-                    logger.debug(
-                        "prompt_cache_stats",
-                        property_id=property_id,
-                        phase="visual",
-                        cache_read_tokens=cache_read,
-                        cache_creation_tokens=cache_creation,
+            retries_left = _MALFORMED_VISUAL_RETRIES
+            while True:
+                # Each send is admitted and settled separately; the spend policy's
+                # per-operation attempt cap still bounds an identical retry.
+                with self._spend_meter.bind(
+                    property_id,
+                    "visual",
+                    provenance,
+                    _visual_output,
+                    visual_input_sha256=input_key,
+                ):
+                    response = await client.messages.create(
+                        **create_kwargs,
+                        timeout=Timeout(
+                            phase.request_timeout_seconds, connect=phase.connect_timeout_seconds
+                        ),
                     )
 
-            visual_data = _visual_output(response)
-            self._breaker.record_success()
-            return visual_data
+                if hasattr(response, "usage"):
+                    usage = response.usage
+                    self.token_usage.add_from_response(usage, model=phase.model)
+                    cache_read = getattr(usage, "cache_read_input_tokens", 0)
+                    cache_creation = getattr(usage, "cache_creation_input_tokens", 0)
+                    if cache_read or cache_creation:
+                        logger.debug(
+                            "prompt_cache_stats",
+                            property_id=property_id,
+                            phase="visual",
+                            cache_read_tokens=cache_read,
+                            cache_creation_tokens=cache_creation,
+                        )
+
+                try:
+                    visual_data = _visual_output(response)
+                except AnalysisOutputError as exc:
+                    if exc.failure.kind != "malformed_output" or not retries_left:
+                        raise
+                    retries_left -= 1
+                    logger.warning(
+                        "visual_output_retry",
+                        property_id=property_id,
+                        request_id=exc.failure.request_id,
+                        output_diagnostics=exc.diagnostics,
+                    )
+                    continue
+                self._breaker.record_success()
+                return visual_data
 
         except SpendDeferred as exc:
             self._raise_spend_deferral(exc)

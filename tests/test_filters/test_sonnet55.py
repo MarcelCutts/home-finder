@@ -31,7 +31,10 @@ from home_finder.models.spend import (
     rate_card_for,
     usd_text,
 )
-from tests.test_filters.test_analysis_output_failures import failed_message
+from tests.test_filters.test_analysis_output_failures import (
+    failed_message,
+    recorded_malformed_visual,
+)
 from tests.test_filters.test_analysis_spend import CONTENT, quality, rows
 from tests.test_filters.test_quality_respx import (
     PHASE1_VISUAL_RESPONSE,
@@ -78,6 +81,40 @@ def response(phase="visual", model=SONNET55, *, thinking=True):
     if thinking:
         output["content"].insert(0, {"type": "thinking", "thinking": "", "signature": "fixture"})
     return output
+
+
+@pytest.mark.parametrize("case", ["c218d61fc0d__r2", "c6a9db682ca__r0"])
+@pytest.mark.parametrize("recovered", [False, True])
+async def test_recorded_malformed_receipt_retry_is_bounded_and_checkpointed(case, recovered):
+    broken = response(thinking=False)
+    broken["content"][0]["input"] = recorded_malformed_visual(case)
+    outputs = iter([broken, response(thinking=False) if recovered else broken])
+    calls = []
+
+    def respond(request):
+        calls.append(request)
+        return httpx2.Response(200, json=next(outputs))
+
+    async with PropertyStorage(":memory:") as storage:
+        async with quality(
+            storage, policy(), respond, analysis_config=configuration(reasoning="disabled")
+        ) as q:
+            if recovered:
+                result = await q._run_visual_analysis(CONTENT, "fixture:recorded-failure")
+                assert result["kitchen"]["overall_quality"] == "modern"
+            else:
+                with pytest.raises(AnalysisOutputError):
+                    await q._run_visual_analysis(CONTENT, "fixture:recorded-failure")
+        assert len(calls) == 2
+        assert calls[0].content == calls[1].content
+        assert q.token_usage.output_tokens == 2 * USAGE["output_tokens"]
+        attempts = await rows(storage)
+        assert [attempt["result"] for attempt in attempts] == [
+            "malformed_output",
+            "success" if recovered else "malformed_output",
+        ]
+        assert all(attempt["state"] == "settled" for attempt in attempts)
+        assert len(await checkpoint_rows(storage)) == int(recovered)
 
 
 def test_opt_in_settings_and_legacy_provenance_are_stable(monkeypatch):
@@ -410,10 +447,7 @@ async def test_native_sdk_cannot_inherit_beta_modes_from_environment(monkeypatch
         assert len(calls) == 1 and (await rows(storage))[0]["state"] == "settled"
 
 
-@pytest.mark.parametrize(
-    "failure", ["no_tool", "wrong_tool", "duplicate_tool", "schema", "refusal", "truncated"]
-)
-async def test_sonnet55_auto_tool_failures_are_billed_without_checkpoint_or_retry(failure):
+def failed_visual(failure):
     output = response(thinking=False)
     if failure == "no_tool":
         output["content"] = [{"type": "text", "text": "No assessment"}]
@@ -426,6 +460,14 @@ async def test_sonnet55_auto_tool_failures_are_billed_without_checkpoint_or_retr
         del output["content"][0]["input"]["kitchen"]
     else:
         output["stop_reason"] = "refusal" if failure == "refusal" else "max_tokens"
+    return output
+
+
+@pytest.mark.parametrize(
+    "failure", ["no_tool", "wrong_tool", "duplicate_tool", "schema", "refusal", "truncated"]
+)
+async def test_sonnet55_auto_tool_failures_are_billed_and_only_malformed_output_retries(failure):
+    output = failed_visual(failure)
     calls = []
 
     def respond(request):
@@ -441,13 +483,56 @@ async def test_sonnet55_auto_tool_failures_are_billed_without_checkpoint_or_retr
         ) as q:
             with pytest.raises(AnalysisOutputError):
                 await q._run_visual_analysis(CONTENT, "fixture:invalid")
-        assert len(calls) == 1
-        (attempt,) = await rows(storage)
-        assert attempt["state"] == "settled" and attempt["accounted_nanousd"] == 2_335_000
-        assert attempt["result"] == (
-            failure if failure in {"refusal", "truncated"} else "malformed_output"
-        )
+        # The SDK never resends a completed response; only the filter's own
+        # malformed-output retry does, as a separately admitted identical request.
+        retried = failure not in {"refusal", "truncated"}
+        assert len(calls) == (2 if retried else 1)
+        assert len({call.content for call in calls}) == 1
+        attempts = await rows(storage)
+        assert len(attempts) == len(calls)
+        assert len({attempt["operation_key"] for attempt in attempts}) == 1
+        for attempt in attempts:
+            assert attempt["state"] == "settled" and attempt["accounted_nanousd"] == 2_335_000
+            assert attempt["result"] == ("malformed_output" if retried else failure)
         assert await checkpoint_rows(storage) == []
+
+
+async def test_malformed_visual_output_is_recovered_by_one_retry():
+    outputs = iter([failed_visual("schema"), response(thinking=False)])
+
+    def respond(request):
+        return httpx2.Response(200, json=next(outputs))
+
+    async with PropertyStorage(":memory:") as storage:
+        async with quality(
+            storage, policy(), respond, analysis_config=configuration(reasoning="disabled")
+        ) as q:
+            visual = await q._run_visual_analysis(CONTENT, "fixture:recovered")
+        assert visual["kitchen"]["overall_quality"] == "modern"
+        first, second = await rows(storage)
+        assert first["result"] == "malformed_output" and second["result"] == "success"
+        assert q.token_usage.output_tokens == 2 * USAGE["output_tokens"]
+        assert len(await checkpoint_rows(storage)) == 1
+
+
+async def test_malformed_visual_retry_respects_the_paid_attempt_cap():
+    calls = []
+
+    def respond(request):
+        calls.append(request)
+        return httpx2.Response(200, json=failed_visual("schema"))
+
+    async with PropertyStorage(":memory:") as storage:
+        async with quality(
+            storage,
+            policy(max_attempts_per_operation=1),
+            respond,
+            analysis_config=configuration(reasoning="disabled"),
+        ) as q:
+            with pytest.raises(SpendDeferred) as caught:
+                await q._run_visual_analysis(CONTENT, "fixture:capped")
+        assert caught.value.reason == "attempt_limit"
+        assert len(calls) == 1 and len(await rows(storage)) == 1
 
 
 @pytest.mark.parametrize(

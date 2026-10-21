@@ -372,7 +372,7 @@ Processing, market availability, personal decisions and delivery are independent
 | --- | --- |
 | Availability | Received source observations update market state; a parser failure or processing stop does not establish off-market status. |
 | Detail processing | Pending homes consume bounded enrichment slots; failed attempts accumulate, and reaching the configured retry limit marks details failed. Waiting at the run cap consumes no attempt. Floorplan exclusions retain their evidence. |
-| Assessment processing | Initial failures accumulate up to three. A paid operation's own retry ceiling is also terminal. Migration 13 records the reason and timestamp separately; queues skip that work. Global budgets, concurrency and unresolved charges remain deferrals. |
+| Assessment processing | A completed malformed visual response gets at most one immediate retry of the identical request, admitted and settled separately. Refusals, truncation and uncertain dispatches do not take this path. Existing per-operation attempt and spend ceilings still apply. Initial failures accumulate up to three. A paid operation's own retry ceiling is also terminal. Migration 13 records the reason and timestamp separately; queues skip that work. Global budgets, concurrency and unresolved charges remain deferrals. |
 | Personal status | The owner's interested/archived/etc. decision and history survive processing failures and source merges. |
 | Delivery | An exhausted assessment never counts as sent. Existing delivery state and receipts survive a stopped refresh; acknowledged parts remain authoritative. |
 

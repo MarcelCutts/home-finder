@@ -124,4 +124,103 @@ The added schema field exposed an existing admission-fixture limit at one to thr
 
 Validation: the initial regression run failed on all nine saved-case/native-request checks. The related filter, model and notification sweep passed 1,776 tests and exposed three admission-bound failures, fixed as above. Final focused runs cover 264 image/badge/schema/transport/checkpoint tests and 57 configuration/admission tests, all passing. Ruff lint, formatting and strict mypy pass. Tests use mocked providers; no live-provider qualification is claimed.
 
-The other subsequent changes need separate judgement. The bounded malformed-output retry is metered per dispatch, but the two actual malformed receipts remain undecodable by ordinary JSON parsing. The deterministic rating proposal changes product policy: unknown observations are omitted and renormalised, and entirely unknown evidence receives three stars. Agreement with other model ratings does not validate those choices against a renter's decisions. The revised hosting, office and floor-level definitions also change semantics. Those changes are not prerequisites for the image and badge fixes and are not included in this implementation.
+At this initial implementation checkpoint, the other changes were left for separate review. The broader follow-up below adopts the reviewed recovery changes and records which policy changes remain experimental.
+
+## Broader review of Opus's work today
+
+Scope: the Home Finder work dated 21 October 2026. Remote PR search found one
+existing PR, [#75](https://github.com/MarcelCutts/home-finder/pull/75), alongside
+the uncommitted model-comparison worktree. Older dirty files in the main checkout
+were excluded. Original experiment data and Opus's working files were preserved.
+
+### Recovery: adopt with stronger validation
+
+Nested JSON text can be decoded safely when the schema expects an object or
+array and the decoded value validates. Ordinary prose remains prose; evaluation
+output keeps its stricter contract. However, Opus's implementation accepted
+conflicting duplicate keys, NaN, infinity and overflowing exponents inside those
+strings. Six targeted tests reproduced that acceptance. The reviewed decoder
+rejects all of them, shares duplicate-key handling with evaluation parsing, and
+logs only schema-owned paths. Python's default decoder accepts repeated names
+and nonstandard numeric constants, so an ordinary successful `json.loads` is
+insufficient here. [Python JSON documentation](https://docs.python.org/3/library/json.html#standard-compliance-and-interoperability).
+
+The two observed malformed shapes remain failures: a truncated `space` JSON
+string and pseudo-XML with nested fields spilled into the parent. We do not
+invent missing syntax or infer where repeated root fields belong. Minimal
+regressions retain these structural failures without private advert text.
+
+One identical retry is now included for a *completed malformed visual response*.
+Each dispatch has a separate admission and settlement, both usages are counted,
+and a checkpoint is written only for a valid response. Refusals, truncation and
+uncertain dispatches are not retried by this path. Tests cover both actual shapes
+recovering and remaining malformed, an exhausted attempt budget, and absence of
+invalid checkpoints. They verify behavior, not a claimed real-world recovery
+percentage. Non-strict calls can fail the schema; strict output support does not
+remove the need to handle refusals or incomplete output.
+[Anthropic structured outputs](https://platform.claude.com/docs/en/build-with-claude/structured-outputs).
+
+### Policy and prompt changes: useful direction, not ready to adopt
+
+The deterministic rating is a reasonable shadow experiment. It separates
+observations from a repeatable policy, but its calibration target is other
+models, not renter decisions. Running the proposed function gives **3 for `{}`**
+and **5 when the only observation is a modern kitchen**. Its test explicitly
+expects some missing evidence to increase the score. That is a policy choice,
+not validation that the five-star scale has retained its meaning. Keep the
+existing production rating contract for this PR. Before adoption, define an
+evidence-coverage rule, review alert-threshold crossings on held-out homes,
+version the policy, and show the proposed score alongside the current score.
+Do not replace the formula with another set of unvalidated weights.
+
+The hosting checklist is more explicit, but the four checks are neither equally
+important nor always observable. A standing-capacity proxy does not establish
+that eight guests can dine comfortably. Record each check as yes/no/unknown
+before choosing an aggregation policy; do not let an unseen check become a
+negative by subtraction.
+
+The office rule weakens the existing evidence requirement: seeing a door in a
+photo does not prove that the room has independent access or is not a through-room.
+An unmeasured, partly shown room can also leave desk fit unknown. Retain those
+unknowns instead of restricting them to only two scenarios.
+
+Changing “top” from fifth-floor-or-higher to the building's top floor repairs a
+real semantic mismatch with the fit score's acoustic interpretation. However,
+changing only the prompt silently mixes old and new meanings in persisted data.
+Prefer separate observations for vertical level and whether a dwelling is above
+the flat; alternatively version the interpretation and stop awarding that
+benefit to legacy ambiguous values. Direct garden access alone is also not proof
+that the accommodation is on the ground floor.
+
+### Dashboard and experiment tooling
+
+PR #75's count, label and layout changes are useful. Review found a pair of
+floorplans with different dimensions but identical perceptual hashes. The PR now
+retains alternatives in a collapsed section and full-size gallery, preserves
+their source status, supports keyboard opening of the selected version, and
+survives a cache eviction race. “Potential road or rail noise” preserves the
+uncertainty lost in the original wording. The PR contains the walkthrough,
+screenshots and checks in `docs/reviews/2026-10-21-ui-pr-75-review.md`.
+
+The experiment harness also had accounting defects: outstanding reservations
+were process-local, judge JSON failures discarded already reported costs, and
+cancellation released potentially billable work. A separate experiment-review
+worktree contains shared atomic reservations, specific settlement tokens,
+retained uncertain charges and no automatic retry of an ambiguous dispatch.
+Warm and cold report columns now use the same valid-result denominator,
+including costs of failures. Its small historical reservation estimates are
+**not validated upper bounds on a provider invoice**; qualify actual request
+cost bounds before another paid trial. The harness remains exploratory, and
+none of its private data or retained reports were copied into source control.
+
+The next decision remains a controlled, human-labelled comparison after these
+correctness repairs. Shipping more deterministic labels, or reducing run-to-run
+variation, is not a substitute for checking whether the labels are right.
+
+Final application verification for this worktree: **4,105 default tests pass**,
+with **90.84% branch-inclusive coverage** (75% required). Ruff lint, formatting
+and strict mypy pass. The earlier recovery-specific run passed 260 tests; the
+four saved-shape retry tests first failed without recovery, and six strict-JSON
+tests first failed against Opus's proposed decoder. PR #75 was independently
+verified with 610 related tests and 64 Chromium tests. Provider calls were mocked;
+there is no new live-model quality or paid-budget qualification claim.

@@ -1,14 +1,44 @@
 """Live output validation, separate from lenient historical record loading."""
 
 import json
+import math
 from typing import Any, Literal
 
 from pydantic import BaseModel, ValidationError
 
+from home_finder.logging import get_logger
 from home_finder.models.analysis import AnalysisFailure, AnalysisFailureKind
+
+logger = get_logger(__name__)
 
 Phase = Literal["visual", "evaluation"]
 MAX_OUTPUT_CHARACTERS = 500_000
+
+
+def _unique_fields(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    result: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError("duplicate_json_field")
+        result[key] = value
+    return result
+
+
+def _finite_float(value: str) -> float:
+    number = float(value)
+    if not math.isfinite(number):
+        raise ValueError("nonfinite_json_number")
+    return number
+
+
+def _json_values(text: str) -> Any:
+    """Reject ambiguous fields, nonstandard constants and overflowing numbers."""
+    return json.loads(
+        text,
+        object_pairs_hook=_unique_fields,
+        parse_float=_finite_float,
+        parse_constant=_finite_float,
+    )
 
 
 class AnalysisOutputError(Exception):
@@ -54,8 +84,18 @@ def check_stop_reason(response: Any, phase: Phase) -> None:
         raise failure(phase, "unexpected_stop_reason", response)
 
 
-def _canonical_values(value: Any, schema: dict[str, Any], defs: dict[str, Any]) -> Any:
-    """Normalise equivalent JSON values without inventing or coercing facts."""
+def _canonical_values(
+    value: Any,
+    schema: dict[str, Any],
+    defs: dict[str, Any],
+    decoded: list[str] | None = None,
+    path: str = "",
+) -> Any:
+    """Normalise equivalent JSON values without inventing or coercing facts.
+
+    With ``decoded``, a string where the schema expects an object or array is
+    parsed as JSON text, and the schema-owned path is recorded.
+    """
     if "$ref" in schema:
         schema = defs[schema["$ref"].rsplit("/", 1)[-1]]
     # A nullable field retains the same non-null value contract, including
@@ -63,12 +103,24 @@ def _canonical_values(value: Any, schema: dict[str, Any], defs: dict[str, Any]) 
     if value is not None and "anyOf" in schema:
         options = [option for option in schema["anyOf"] if option.get("type") != "null"]
         if len(options) == 1:
-            return _canonical_values(value, options[0], defs)
+            return _canonical_values(value, options[0], defs, decoded, path)
     # Preserve the existing unambiguous enum match in other union schemas.
     if isinstance(value, str) and "anyOf" in schema:
         enum_options = [option for option in schema["anyOf"] if "enum" in option]
         if len(enum_options) == 1:
-            return _canonical_values(value, enum_options[0], defs)
+            return _canonical_values(value, enum_options[0], defs, decoded, path)
+    # Non-strict tool calls sometimes carry a nested object or list as its JSON
+    # text. Decoding restores the same value; any other text still fails validation.
+    kind = schema.get("type")
+    container = {"object": dict, "array": list}.get(kind) if isinstance(kind, str) else None
+    if decoded is not None and container is not None and isinstance(value, str):
+        try:
+            parsed = _json_values(value)
+        except (ValueError, RecursionError):
+            parsed = None
+        if isinstance(parsed, container):
+            decoded.append(path or "[root]")
+            value = parsed
     if isinstance(value, str) and "enum" in schema:
         matches = [
             choice
@@ -82,11 +134,18 @@ def _canonical_values(value: Any, schema: dict[str, Any], defs: dict[str, Any]) 
         return int(value)
     if isinstance(value, dict):
         fields = schema.get("properties", {})
-        return {
-            key: _canonical_values(item, fields.get(key, {}), defs) for key, item in value.items()
-        }
+        result = {}
+        for key, item in value.items():
+            # Record only schema-owned names, never generated keys.
+            name = key if key in fields else "[unknown_field]"
+            child = f"{path}.{name}" if path else name
+            result[key] = _canonical_values(item, fields.get(key, {}), defs, decoded, child)
+        return result
     if isinstance(value, list):
-        return [_canonical_values(item, schema.get("items", {}), defs) for item in value]
+        return [
+            _canonical_values(item, schema.get("items", {}), defs, decoded, f"{path}[{index}]")
+            for index, item in enumerate(value)
+        ]
     return value
 
 
@@ -100,6 +159,7 @@ def validate_output(
 
     Non-strict visual tool responses can have unused extension fields. Validate
     the requested fields strictly, without using extensions to fill omissions.
+    They can also carry nested objects as JSON text, which is decoded first.
     Evaluation uses its complete native schema, including its extra-field rule.
     """
     if not isinstance(raw, dict):
@@ -110,7 +170,8 @@ def validate_output(
         if len(json.dumps(raw, ensure_ascii=False, allow_nan=False)) > MAX_OUTPUT_CHARACTERS:
             raise failure(phase, "oversized_output", response)
         schema = model.model_json_schema()
-        canonical: dict[str, Any] = _canonical_values(raw, schema, schema.get("$defs", {}))
+        decoded: list[str] | None = [] if phase == "visual" else None
+        canonical: dict[str, Any] = _canonical_values(raw, schema, schema.get("$defs", {}), decoded)
         # Metadata describing runtime execution is never accepted from model output.
         for name in (
             "analysis_provenance",
@@ -126,6 +187,8 @@ def validate_output(
             raise failure(
                 phase, "malformed_output", response, diagnostics={"reason": "invalid_rating"}
             )
+        if decoded:
+            logger.info("analysis_output_json_text_decoded", phase=phase, fields=decoded[:20])
         return canonical
     except ValidationError as exc:
         # Error messages/inputs/context can contain model text. Paths can also
@@ -193,16 +256,8 @@ def evaluation_json(response: Any) -> Any:
     if len(text) > MAX_OUTPUT_CHARACTERS:
         raise failure("evaluation", "oversized_output", response)
 
-    def unique_fields(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
-        result: dict[str, Any] = {}
-        for key, value in pairs:
-            if key in result:
-                raise ValueError("duplicate_json_field")
-            result[key] = value
-        return result
-
     try:
-        return json.loads(text, object_pairs_hook=unique_fields)
+        return _json_values(text)
     except (ValueError, RecursionError) as exc:
         raise failure(
             "evaluation",
