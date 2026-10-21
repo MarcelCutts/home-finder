@@ -224,3 +224,66 @@ async def test_shim_retries_rate_limit_with_fresh_reservation(tmp_path, monkeypa
     assert calls == 2 and records[0].attempts == 2
     assert ledger(path).spent == {"anthropic": 0.1}
     assert json.loads(path.read_text())["reservations"] == {}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("outcome", ["budget", "cancelled"])
+async def test_sweep_retains_paid_calls_when_later_phase_cannot_finish(
+    tmp_path, monkeypatch, outcome
+):
+    import asyncio
+
+    import run
+    from mc.shim import Clients, PhaseSpec, RunConfig, _Messages
+
+    async def dispatch(self, kwargs, spec, phase, record):
+        if phase == "evaluation":
+            raise asyncio.CancelledError
+        record.input_tokens = 1000
+        record.output_tokens = 1000
+        record.cost_usd = 0.5
+        record.request_id = "paid-visual-fixture"
+        record.extra["usage_priced"] = True
+        return SimpleNamespace(stop_reason="tool_use")
+
+    async def analyze(self, *args, **kwargs):
+        await self._client.messages.create(tools=[{}])
+        await self._client.messages.create()
+
+    monkeypatch.setattr(_Messages, "_anthropic", dispatch)
+    monkeypatch.setattr(run.PropertyQualityFilter, "analyze_single_merged", analyze)
+    monkeypatch.setattr(run, "RUNS", tmp_path / "runs")
+    budget = Ledger(
+        {"anthropic": 1.0},
+        {"anthropic": 0.6 if outcome == "budget" else 0.4},
+        tmp_path / "ledger.json",
+    )
+    phase = PhaseSpec("anthropic", "claude-sonnet-5-5")
+    config = RunConfig("fixture", phase, phase)
+    clients = Clients(None, None, budget, {"anthropic": asyncio.Semaphore(1)})
+    case = SimpleNamespace(case_id="fixture", merged=SimpleNamespace(unique_id="fixture"))
+    stop = {}
+    if outcome == "cancelled":
+        with pytest.raises(asyncio.CancelledError):
+            await run.run_one("fixture", config, case, 0, clients, stop)
+    else:
+        assert await run.run_one("fixture", config, case, 0, clients, stop) == "budget"
+        assert stop == {"anthropic": True}
+
+    path = run.result_path("fixture", config.id, case.case_id, 0)
+    assert path.exists(), "paid and unresolved attempts must survive a partial run"
+    payload = json.loads(path.read_text())
+    assert payload["cost_usd"] == budget.spent["anthropic"] == 0.5
+    assert payload["calls"][0]["request_id"] == "paid-visual-fixture"
+    assert len(payload["calls"]) == 2
+    assert payload["error"].startswith(
+        "BudgetExceeded:" if outcome == "budget" else "CancelledError:"
+    )
+    assert payload["calls"][1]["error"].startswith(
+        "BudgetExceeded:" if outcome == "budget" else "CancelledError:"
+    )
+    if outcome == "cancelled":
+        with pytest.raises(BudgetExceeded, match="unresolved"):
+            budget.check("anthropic")
+    # Resuming must not silently send the paid visual phase again.
+    assert await run.run_one("fixture", config, case, 0, clients, {}) == "skip"

@@ -21,14 +21,14 @@ from dataclasses import asdict
 from pathlib import Path
 
 import structlog
-
-from home_finder.filters.quality import PropertyQualityFilter
-from home_finder.models.analysis import AnalysisConfig, EvaluationPhaseConfig, VisualPhaseConfig
 from mc.cases import WORK_DIR, Case, load_cases, select, write_manifest
 from mc.configs import CONFIGS
 from mc.env import make_clients
 from mc.ledger import Ledger
 from mc.shim import Clients, RunConfig, ShimClient
+
+from home_finder.filters.quality import PropertyQualityFilter
+from home_finder.models.analysis import AnalysisConfig, EvaluationPhaseConfig, VisualPhaseConfig
 
 ROOT = Path(__file__).resolve().parent
 RUNS = ROOT / "data" / "runs"
@@ -74,35 +74,38 @@ async def run_one(
     analysis = None
     try:
         _, analysis = await filt.analyze_single_merged(case.merged, data_dir=str(WORK_DIR))
-    except Exception as exc:  # outages surface here after shim retries
+    except BaseException as exc:
         error = f"{type(exc).__name__}: {str(exc)[:500]}"
-    wall = time.perf_counter() - t0
+        if not isinstance(exc, Exception):
+            # Persist completed and unresolved calls, then preserve cancellation.
+            raise
+    finally:
+        payload = {
+            "run": run,
+            "config_id": config.id,
+            "config": asdict(config),
+            "case_id": case.case_id,
+            "unique_id": case.merged.unique_id,
+            "rep": rep,
+            "wall_s": time.perf_counter() - t0,
+            "error": error,
+            "failure": (
+                analysis.analysis_failure.model_dump(mode="json")
+                if analysis is not None and analysis.analysis_failure is not None
+                else None
+            ),
+            "analysis": analysis.model_dump(mode="json") if analysis is not None else None,
+            "calls": [asdict(r) for r in records],
+            "cost_usd": sum(r.cost_usd for r in records),
+        }
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_suffix(".tmp")
+        tmp.write_text(json.dumps(payload, indent=1, default=str))
+        tmp.replace(path)
     if any((r.error or "").startswith("BudgetExceeded") for r in records):
         for p in providers:
             stop[p] = True
         return "budget"
-    payload = {
-        "run": run,
-        "config_id": config.id,
-        "config": asdict(config),
-        "case_id": case.case_id,
-        "unique_id": case.merged.unique_id,
-        "rep": rep,
-        "wall_s": wall,
-        "error": error,
-        "failure": (
-            analysis.analysis_failure.model_dump(mode="json")
-            if analysis is not None and analysis.analysis_failure is not None
-            else None
-        ),
-        "analysis": analysis.model_dump(mode="json") if analysis is not None else None,
-        "calls": [asdict(r) for r in records],
-        "cost_usd": sum(r.cost_usd for r in records),
-    }
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(".tmp")
-    tmp.write_text(json.dumps(payload, indent=1, default=str))
-    tmp.replace(path)
     ok = error is None and payload["failure"] is None and analysis is not None
     return "ok" if ok else "fail"
 

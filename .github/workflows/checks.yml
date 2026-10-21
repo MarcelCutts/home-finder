@@ -116,6 +116,32 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+  experiment-tests:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          version: ${{ env.UV_VERSION }}
+          python-version: ${{ env.PYTHON_VERSION }}
+          enable-cache: true
+      - run: uv sync --locked --project experiments/model-comparison
+      - name: Check accounting repairs
+        run: >-
+          uv run --locked --project experiments/model-comparison ruff check --exclude ''
+          experiments/model-comparison/mc/ledger.py
+          experiments/model-comparison/run.py
+          experiments/model-comparison/tests
+      - name: Run mocked accounting regressions without network access
+        run: >-
+          uv run --locked --project experiments/model-comparison python -m pytest
+          -c pyproject.toml experiments/model-comparison/tests -n 0 --no-cov
+        env:
+          PYTHONPATH: experiments/model-comparison:src
+
   slow-tests:
     if: inputs.run_live_tests
     runs-on: ubuntu-24.04

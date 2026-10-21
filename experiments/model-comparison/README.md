@@ -41,20 +41,26 @@ ledgers and generated HTML are excluded. No new paid runs were made during revie
   historical last-attempt timings: do not pool them as identical measurements.
 - Warm and cold cost columns both divide total attempted cost by valid results.
   Results include repeated runs; they are not necessarily distinct homes.
+- A budget stop between phases or cancellation retains the partial case, including
+  completed and unresolved calls. Resuming skips that saved attempt; retry under
+  a new run name after reconciliation so earlier spending remains inspectable.
 - The existing `RESERVE` amounts are historical estimates, not maximum costs.
   **This harness does not guarantee a hard invoice cap.** Before another paid
   trial, bound effective requests and supported pricing modes, including cache
   writes, and reconcile the old ledger with provider receipts. The application's
   durable spend-admission machinery is the preferred basis for a production adapter.
 
-Offline checks (with the experiment dependencies and pytest installed):
+Offline checks, from the repository root (also run by CI):
 
 ```bash
-PYTHONPATH=experiments/model-comparison:src python -m pytest \
-  experiments/model-comparison/tests -n 0 --no-cov
+uv sync --locked --project experiments/model-comparison
+PYTHONPATH=experiments/model-comparison:src \
+  uv run --locked --project experiments/model-comparison python -m pytest \
+  -c pyproject.toml experiments/model-comparison/tests -n 0 --no-cov
 ```
 
-`preflight`, `sweep` and `judge.py` make provider calls. The example commands above
+`preflight`, `sweep`, `judge.py` and the `probe_grammar*.py` scripts make provider
+calls. The preflight ping and grammar probes bypass this ledger. The example commands above
 describe the original experiment; they are not part of the offline test workflow.
 The reviewed rating and prompt proposals remain candidates for a held-out,
 human-labelled evaluation, not changes to the production rating policy.

@@ -47,10 +47,19 @@ measurement, and they should not be pooled without accounting for that differenc
 
 ## Status
 
-**16 offline tests pass.** The new ledger and regression tests pass Ruff lint;
-the seven touched Python files pass formatting, and all experiment Python
-sources parse. Provider calls were mocked. No experiment was rerun against a
-paid service, and private historical artifacts were not regenerated.
+The final review reproduced two more failures: a budget stop after the paid
+visual phase discarded the case record, and cancellation during evaluation
+did the same. The sweep now writes partial results before returning or
+propagating cancellation. Completed calls, costs and unresolved calls remain
+inspectable, and resuming skips that saved attempt instead of repeating it.
+
+**18 offline tests pass**, including both new regressions. They pass in the
+locked experiment environment, which now includes the test dependencies and
+matches the application's supported Python range. A dedicated CI job runs the
+suite with sockets disabled and lints the ledger, runner and tests. Standard
+application CI previously did not collect this suite. Provider calls were
+mocked. No experiment was rerun against a paid service, and private historical
+artifacts were not regenerated.
 
 The fixed reserve amounts still are estimates rather than defensible maximum
 request charges. This branch must not be promoted as hard budget enforcement.
@@ -58,3 +67,7 @@ Before another paid trial, qualify effective requests and pricing modes or reuse
 the application's durable admission machinery through a truthful provider
 adapter. Preserve effective provider, model, effort, schema, prompt and image
 identities; the compatibility shim's application provenance is not sufficient.
+The preflight ping and grammar probes also bypass the ledger. Keep this PR in
+draft until the paid entry points share qualified admission and their actual
+request identities are recorded; passing offline tests does not establish those
+properties.
