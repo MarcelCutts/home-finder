@@ -383,6 +383,15 @@ class _VisualAnalysisResponse(BaseModel):
                 "poor = fundamentally unsuitable (through-rooms, isolated kitchen)"
             ),
         )
+        kitchen_living_layout: Literal["open_plan", "separate", "unknown"] = Field(
+            default="unknown",
+            description=(
+                "Kitchen and living room connection: open_plan only when photos or a readable "
+                "floorplan show one continuous room; separate when divided into rooms. "
+                "A shared living/dining room or good hosting layout alone is not evidence of "
+                "an open-plan kitchen. Use unknown when unseen, unclear or sources disagree."
+            ),
+        )
 
     class Bathroom(BaseModel):
         model_config = _Forbid

@@ -327,6 +327,7 @@ class SpaceAnalysis(_LenientLiteralModel):
     ) = None
     is_spacious_enough: bool | None = None  # None = unknown
     hosting_layout: Literal["excellent", "good", "awkward", "poor", "unknown"] = "unknown"
+    kitchen_living_layout: Literal["open_plan", "separate", "unknown"] = "unknown"
 
 
 class ValueAnalysis(_LenientLiteralModel):
