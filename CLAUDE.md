@@ -128,6 +128,11 @@ async with AsyncSession() as session:
 
 ### Quality Analysis
 
+- The experimental `opus_visual_weighted_2026_10_21_v1` rating is available only through
+  `python -m home_finder.pipeline.rating_shadow_report --database PATH`. It reports candidate
+  ratings, evidence coverage and counterfactual selection; it never replaces live ratings,
+  enters either model prompt, writes a database or creates deliveries. Its sparse-evidence
+  failures remain visible for review. See the 2026-10-22 follow-up in the model bake-off review.
 - Uses claude-sonnet-4-6 (`claude-sonnet-4-6`) via Anthropic API
 - **Two-phase chained analysis** (perception → evaluation):
   - **Phase 1 (Visual)**: Images + listing text → structured observations (kitchen, condition, space, etc.). Uses adaptive thinking (`type: adaptive`), `tool_choice: auto`, `max_tokens: 21000` (total cap for thinking + response; SDK enforces ~21333 non-streaming ceiling). Non-strict (schema exceeds Anthropic's grammar complexity limit).

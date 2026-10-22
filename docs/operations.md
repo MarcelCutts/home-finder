@@ -271,6 +271,30 @@ Those are different questions: the shadow report is not the next-send count.
 Review and reconcile specific intents under the existing runner fence; do not
 bulk-reset history to make the queue match a new threshold.
 
+The experimental rating can be reviewed offline on retained assessments:
+
+```bash
+uv run python -m home_finder.pipeline.rating_shadow_report --database /path/to/snapshot.db
+```
+
+This explicitly invoked command needs no provider credentials. It uses SQLite
+read-only mode and one consistent read transaction, without initialization,
+migrations, rating updates or delivery creation. It reports the existing rating
+and a versioned candidate, with the baseline and candidate selection decisions.
+All other retained observations and owner/market states stay fixed. No new rating
+is supplied for an unrated, malformed or failed assessment. The report records
+input hashes and the rating, fit-score and notification-policy versions.
+
+The candidate preserves Opus's measured formula, including its known defect of
+awarding five stars from a modern kitchen alone. `observed_weight_percent` measures
+how much of the formula had usable inputs; it is neither model confidence nor a
+production-readiness threshold. `threshold_crossed` records a numerical crossing;
+`selection_changed` also respects archived/rejected/off-market stops. Neither means
+an alert would now be sent: existing delivery history is never reopened. The
+live pipeline, prompts, badges and ratings do not consume this candidate. See the
+[crossing review](reviews/2026-10-21-model-bakeoff-review.md#2026-10-22-versioned-shadow-rating-and-alert-crossing-review)
+before considering a production policy or historical backfill.
+
 Price drops use independent interest rules: an already announced home, an existing
 durable discovery intent, or explicit `interested`, `enquired`, `viewing_booked`,
 `viewed`, `applied` or `offered` status. Pending discovery interest queues a price

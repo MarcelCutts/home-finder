@@ -1,0 +1,410 @@
+{
+  "candidate_ratings": {
+    "2": 15,
+    "3": 337,
+    "4": 196,
+    "5": 7
+  },
+  "changed_fit_scores": 149,
+  "context": "All homes held new/active; only overall_rating is varied in isolated copies.",
+  "fit_score_version": 3,
+  "historical_snapshot_separate": {
+    "changes_stored_ratings": false,
+    "compared_homes": 91,
+    "coverage": {
+      "complete": 24,
+      "partial": 67
+    },
+    "creates_deliveries": false,
+    "crossing_cases": [
+      {
+        "baseline_selection": {
+          "disposition": "dashboard_only",
+          "fit_score": 57,
+          "fit_score_version": 3,
+          "kind": "discovery",
+          "min_fit_score": 60,
+          "policy_version": "owner_notifications_v1",
+          "reason": "below_min_fit"
+        },
+        "candidate_selection": {
+          "disposition": "alert",
+          "fit_score": 60,
+          "fit_score_version": 3,
+          "kind": "discovery",
+          "min_fit_score": 60,
+          "policy_version": "owner_notifications_v1",
+          "reason": "eligible_fit"
+        },
+        "case_id": "c012c941ad6",
+        "model_rating": 3,
+        "selection_changed": true,
+        "shadow": {
+          "candidate_rating": 4,
+          "coverage": "partial",
+          "missing_components": [
+            "kitchen",
+            "space"
+          ],
+          "observed_components": [
+            "condition",
+            "bathroom",
+            "light"
+          ],
+          "observed_weight_percent": 65,
+          "policy_version": "opus_visual_weighted_2026_10_21_v1"
+        },
+        "source_sha256": "c30b21cf7bb7b3e0eae1b66dc3b04c7695b45e31e546c7f57844266fb33a087d",
+        "threshold_crossed": true
+      }
+    ],
+    "fit_score_version": 3,
+    "mode": "offline_rating_shadow",
+    "notification_policy": {
+      "min_fit_score": 60,
+      "version": "owner_notifications_v1"
+    },
+    "rating_policy_version": "opus_visual_weighted_2026_10_21_v1",
+    "report_version": 1,
+    "selection_changes": 1,
+    "source_sha256": "9af8e6073b8d5b244586d9226222a034995f36ddc4191c19724c8805807b845d",
+    "threshold_crossings": 1,
+    "total_homes": 93
+  },
+  "mode": "retained_core_rating_ablation",
+  "model_configurations": 27,
+  "model_ratings": {
+    "2": 6,
+    "3": 367,
+    "4": 182
+  },
+  "notification_policy": {
+    "min_fit_score": 60,
+    "version": "owner_notifications_v1"
+  },
+  "observed_weight_percent": {
+    "0": 27,
+    "20": 2,
+    "50": 13,
+    "65": 25,
+    "70": 86,
+    "80": 1,
+    "85": 275,
+    "100": 126
+  },
+  "original_provider_disagreements": [
+    {
+      "arm": "sol61-low",
+      "baseline_selection": {
+        "disposition": "alert",
+        "fit_score": 62,
+        "fit_score_version": 3,
+        "kind": "discovery",
+        "min_fit_score": 60,
+        "policy_version": "owner_notifications_v1",
+        "reason": "eligible_fit"
+      },
+      "candidate_selection": {
+        "disposition": "alert",
+        "fit_score": 64,
+        "fit_score_version": 3,
+        "kind": "discovery",
+        "min_fit_score": 60,
+        "policy_version": "owner_notifications_v1",
+        "reason": "eligible_fit"
+      },
+      "case_id": "cabafe00bcb",
+      "model_rating": 3,
+      "rep": 0,
+      "selection_changed": false,
+      "shadow": {
+        "candidate_rating": 4,
+        "coverage": "complete",
+        "missing_components": [],
+        "observed_components": [
+          "condition",
+          "kitchen",
+          "bathroom",
+          "light",
+          "space"
+        ],
+        "observed_weight_percent": 100,
+        "policy_version": "opus_visual_weighted_2026_10_21_v1"
+      },
+      "threshold_crossed": false
+    },
+    {
+      "arm": "sol61-low",
+      "baseline_selection": {
+        "disposition": "dashboard_only",
+        "fit_score": 57,
+        "fit_score_version": 3,
+        "kind": "discovery",
+        "min_fit_score": 60,
+        "policy_version": "owner_notifications_v1",
+        "reason": "below_min_fit"
+      },
+      "candidate_selection": {
+        "disposition": "dashboard_only",
+        "fit_score": 57,
+        "fit_score_version": 3,
+        "kind": "discovery",
+        "min_fit_score": 60,
+        "policy_version": "owner_notifications_v1",
+        "reason": "below_min_fit"
+      },
+      "case_id": "ce8b8d1130c",
+      "model_rating": 4,
+      "rep": 0,
+      "selection_changed": false,
+      "shadow": {
+        "candidate_rating": 4,
+        "coverage": "partial",
+        "missing_components": [
+          "space"
+        ],
+        "observed_components": [
+          "condition",
+          "kitchen",
+          "bathroom",
+          "light"
+        ],
+        "observed_weight_percent": 85,
+        "policy_version": "opus_visual_weighted_2026_10_21_v1"
+      },
+      "threshold_crossed": false
+    },
+    {
+      "arm": "sonnet55-low",
+      "baseline_selection": {
+        "disposition": "dashboard_only",
+        "fit_score": 51,
+        "fit_score_version": 3,
+        "kind": "discovery",
+        "min_fit_score": 60,
+        "policy_version": "owner_notifications_v1",
+        "reason": "below_min_fit"
+      },
+      "candidate_selection": {
+        "disposition": "dashboard_only",
+        "fit_score": 53,
+        "fit_score_version": 3,
+        "kind": "discovery",
+        "min_fit_score": 60,
+        "policy_version": "owner_notifications_v1",
+        "reason": "below_min_fit"
+      },
+      "case_id": "cabafe00bcb",
+      "model_rating": 3,
+      "rep": 0,
+      "selection_changed": false,
+      "shadow": {
+        "candidate_rating": 4,
+        "coverage": "complete",
+        "missing_components": [],
+        "observed_components": [
+          "condition",
+          "kitchen",
+          "bathroom",
+          "light",
+          "space"
+        ],
+        "observed_weight_percent": 100,
+        "policy_version": "opus_visual_weighted_2026_10_21_v1"
+      },
+      "threshold_crossed": false
+    },
+    {
+      "arm": "sonnet55-low",
+      "baseline_selection": {
+        "disposition": "alert",
+        "fit_score": 61,
+        "fit_score_version": 3,
+        "kind": "discovery",
+        "min_fit_score": 60,
+        "policy_version": "owner_notifications_v1",
+        "reason": "eligible_fit"
+      },
+      "candidate_selection": {
+        "disposition": "alert",
+        "fit_score": 61,
+        "fit_score_version": 3,
+        "kind": "discovery",
+        "min_fit_score": 60,
+        "policy_version": "owner_notifications_v1",
+        "reason": "eligible_fit"
+      },
+      "case_id": "ce8b8d1130c",
+      "model_rating": 4,
+      "rep": 0,
+      "selection_changed": false,
+      "shadow": {
+        "candidate_rating": 4,
+        "coverage": "complete",
+        "missing_components": [],
+        "observed_components": [
+          "condition",
+          "kitchen",
+          "bathroom",
+          "light",
+          "space"
+        ],
+        "observed_weight_percent": 100,
+        "policy_version": "opus_visual_weighted_2026_10_21_v1"
+      },
+      "threshold_crossed": false
+    }
+  ],
+  "rating_policy_version": "opus_visual_weighted_2026_10_21_v1",
+  "rating_repeatability": {
+    "core_computed_offline": {
+      "complete_three_repeat_groups": 37,
+      "eligible_groups": 40,
+      "flipping_groups": 2,
+      "valid_assessments": 117
+    },
+    "core_model": {
+      "complete_three_repeat_groups": 37,
+      "eligible_groups": 40,
+      "flipping_groups": 6,
+      "valid_assessments": 117
+    },
+    "tightened_separate_exploratory_run": {
+      "complete_three_repeat_groups": 40,
+      "eligible_groups": 40,
+      "flipping_groups": 1,
+      "valid_assessments": 120
+    }
+  },
+  "same_ratings": 406,
+  "source_core_sha256": "26314ec361342115566112319d334ca2d50d5d7ecc233612aa41669c8fbcba27",
+  "source_snapshot_context_sha256": "6da5288de15827933c3f7969587c5bf0676868d3545097fac0e2c5cfb0d221fb",
+  "source_tightened_sha256": "d71f505bc19b3e6ed0d45769a707c400cc38aa295aee533cb80b33e421017968",
+  "threshold_crossings": [
+    {
+      "arm": "sol6-none",
+      "baseline_selection": {
+        "disposition": "dashboard_only",
+        "fit_score": 55,
+        "fit_score_version": 3,
+        "kind": "discovery",
+        "min_fit_score": 60,
+        "policy_version": "owner_notifications_v1",
+        "reason": "below_min_fit"
+      },
+      "candidate_selection": {
+        "disposition": "alert",
+        "fit_score": 60,
+        "fit_score_version": 3,
+        "kind": "discovery",
+        "min_fit_score": 60,
+        "policy_version": "owner_notifications_v1",
+        "reason": "eligible_fit"
+      },
+      "case_id": "cbd500e12fe",
+      "model_rating": 3,
+      "rep": 0,
+      "selection_changed": true,
+      "shadow": {
+        "candidate_rating": 4,
+        "coverage": "partial",
+        "missing_components": [
+          "kitchen",
+          "bathroom",
+          "space"
+        ],
+        "observed_components": [
+          "condition",
+          "light"
+        ],
+        "observed_weight_percent": 50,
+        "policy_version": "opus_visual_weighted_2026_10_21_v1"
+      },
+      "threshold_crossed": true
+    },
+    {
+      "arm": "sol61-low",
+      "baseline_selection": {
+        "disposition": "dashboard_only",
+        "fit_score": 59,
+        "fit_score_version": 3,
+        "kind": "discovery",
+        "min_fit_score": 60,
+        "policy_version": "owner_notifications_v1",
+        "reason": "below_min_fit"
+      },
+      "candidate_selection": {
+        "disposition": "alert",
+        "fit_score": 61,
+        "fit_score_version": 3,
+        "kind": "discovery",
+        "min_fit_score": 60,
+        "policy_version": "owner_notifications_v1",
+        "reason": "eligible_fit"
+      },
+      "case_id": "cabafe00bcb",
+      "model_rating": 3,
+      "rep": 2,
+      "selection_changed": true,
+      "shadow": {
+        "candidate_rating": 4,
+        "coverage": "partial",
+        "missing_components": [
+          "space"
+        ],
+        "observed_components": [
+          "condition",
+          "kitchen",
+          "bathroom",
+          "light"
+        ],
+        "observed_weight_percent": 85,
+        "policy_version": "opus_visual_weighted_2026_10_21_v1"
+      },
+      "threshold_crossed": true
+    },
+    {
+      "arm": "sol61-low-flex",
+      "baseline_selection": {
+        "disposition": "dashboard_only",
+        "fit_score": 59,
+        "fit_score_version": 3,
+        "kind": "discovery",
+        "min_fit_score": 60,
+        "policy_version": "owner_notifications_v1",
+        "reason": "below_min_fit"
+      },
+      "candidate_selection": {
+        "disposition": "alert",
+        "fit_score": 61,
+        "fit_score_version": 3,
+        "kind": "discovery",
+        "min_fit_score": 60,
+        "policy_version": "owner_notifications_v1",
+        "reason": "eligible_fit"
+      },
+      "case_id": "cabafe00bcb",
+      "model_rating": 3,
+      "rep": 0,
+      "selection_changed": true,
+      "shadow": {
+        "candidate_rating": 4,
+        "coverage": "partial",
+        "missing_components": [
+          "space"
+        ],
+        "observed_components": [
+          "condition",
+          "kitchen",
+          "bathroom",
+          "light"
+        ],
+        "observed_weight_percent": 85,
+        "policy_version": "opus_visual_weighted_2026_10_21_v1"
+      },
+      "threshold_crossed": true
+    }
+  ],
+  "unique_homes": 30,
+  "valid_assessments": 555
+}
