@@ -224,3 +224,129 @@ four saved-shape retry tests first failed without recovery, and six strict-JSON
 tests first failed against Opus's proposed decoder. PR #75 was independently
 verified with 610 related tests and 64 Chromium tests. Provider calls were mocked;
 there is no new live-model quality or paid-budget qualification claim.
+
+## 2026-10-22: Versioned shadow rating and alert-crossing review
+
+**Scope:** the user authorized a versioned shadow calculation, regression tests,
+review of the saved crossings and a draft PR, with no paid calls or changes to
+live ratings or alerts. This follow-up implements an explicitly invoked offline
+report. It is not called by the collection/analysis pipeline. Production prompts,
+tool schemas, rating validation, badges, fit scoring and notification policy are
+unchanged; no stored analyses or delivery history are rewritten.
+
+### What was ported
+
+`filters/shadow_rating.py` preserves the measured formula as
+`opus_visual_weighted_2026_10_21_v1`. Its result records the candidate, observed
+and missing components, and observed weight as a percentage. Coverage describes
+available formula inputs, not confidence, complete image coverage or permission
+to use the candidate. This deliberately retains the proposal's known sparse-data
+counterexamples: no usable component yields 3; a modern kitchen alone yields 5;
+good natural light alone yields 4. Changing those rules requires a separately
+versioned candidate, not silently changing this experiment's meaning.
+
+`pipeline/rating_shadow_report.py` reads a SQLite snapshot using `mode=ro`,
+`query_only` and one read transaction. It compares the existing selection with a
+selection on an isolated copy where only `overall_rating` differs. It uses the
+same historical reader as live scoring and does not rerun evidence reconciliation
+or reinterpret floor, hosting or office fields. An invalid, unrated or failed
+assessment receives no candidate selection. Owner and off-market stops remain in
+both comparisons. Input hashes and all three policy versions accompany the output.
+There are no credentials, provider calls, migrations, writes or send operations.
+
+```bash
+uv run python -m home_finder.pipeline.rating_shadow_report --database /path/to/snapshot.db
+```
+
+The tightened prompt definitions were not ported. The hosting unknown rule remains
+as measured in the retained experiment; the suggested relaxation is still an open,
+unmeasured policy. Existing transparency, decoding and retry implementations remain
+unchanged. Historical ratings remain untouched; a backfill has not been authorized.
+
+### Independent offline replay
+
+The [audit script](2026-10-22-shadow-rating-audit.py) and
+[machine-readable result](2026-10-22-shadow-rating-audit.json) reproduce the
+comparison against the retained experiment without importing its paid runner:
+
+```bash
+PYTHONPATH=src uv run python docs/reviews/2026-10-22-shadow-rating-audit.py /path/to/model-comparison
+```
+
+On **555 valid core assessments, representing 30 homes and 27 configurations**:
+
+- The candidate matches the existing rating in **406/555 (73.2%)**.
+- **149** fit scores change. There are **three additional threshold crossings
+  across two homes**, all below-to-above at the default minimum of 60.
+- **27** assessments have no usable rating components and **two** have only the
+  light component. These are retained diagnostic results, not evidence of accuracy.
+- The two original Sonnet-versus-Sol alert disagreements survive rating replacement.
+
+For the 10 repeated homes across four arms, the original rating flips in **6/40**
+groups; applying this formula to the *same observations* reduces that to **2/40**.
+The separate `tightened` run has **1/40**. Core has 117 valid observations and only
+37 complete three-repeat groups; tightened has 120 and 40 respectively. The runs
+also occurred at different times. This supports repeatability of the candidate,
+not a claim that the new policy or prompts make better recommendations.
+
+### Review of the crossing evidence
+
+I inspected the retained listing text, structured assessments, score breakdowns,
+both available floorplans and all eight supplied photos for the case without a
+floorplan. These are Codex review judgments, not independent human labels or a
+viewing of the homes. Opaque case IDs match the experiment. No images, addresses
+or full listing/model prose are copied into regression fixtures.
+
+| Case and saved assessment | Existing fit → candidate fit | Evidence and judgment |
+| --- | --- | --- |
+| `cabafe00bcb`, Sonnet low r0 / Sol 6.1 low r0 | 51 → 53 / 62 → 64 | Both rate 3 → 4, but the original alert disagreement persists. The floorplan shows independent hall access to the room labelled reception; using it as an office is plausible. The listing markets two bedrooms with “No Lounge”, so this consumes the lounge/second-bedroom option rather than adding another room. The main policy question is that allocation trade-off. |
+| `ce8b8d1130c`, Sonnet low r0 / Sol 6.1 low r0 | 61 → 61 / 57 → 57 | Both remain rating 4. The living room has a projecting bay/irregular outline; Sonnet's 5.43 × 3.14 = approximately 17 m² is not a supported rectangular usable area. Sol withholds it. The plan supports a separately accessed second room; uncertain acoustics and value judgments also differ. A new rating formula does not resolve this crossing. |
+| `cbd500e12fe`, Sol 6 none r0 | **55 → 60** | Rating 3 → 4 uses only good condition and good light, **50% of component weight**. The supplied images show bedrooms, a desk, circulation and part of a bathroom/living room, but no kitchen or measured areas. Hall access to the possible office is visible. This crossing supplies no new evidence about the unobserved kitchen, bathroom finish or hosting capacity; it is not a justified promotion from the available record. |
+| `cabafe00bcb`, Sol 6.1 low r2 and low-flex r0 | **59 → 61**, each | Both rate 3 → 4 at **85% component weight**, with spaciousness unknown. The cosmetic-quality uplift tips the same office/lounge trade-off over the threshold. These are two assessments of one home, not two independent successful recommendations. |
+
+Two one-observation sensitivity checks explain the first pair without guessing
+at a replacement policy. Giving `cabafe00bcb` Sonnet's otherwise unchanged
+assessment a dedicated office changes fit **51 → 61**. Withholding only the
+unsupported living-room area in `ce8b8d1130c` Sonnet changes **61 → 58**. These
+are diagnostic copies, not edits to retained assessments or production scoring.
+
+For `cabafe00bcb`, the plan separately prints **47.5 m² GIA** and **3.8 m² with
+restricted head height**, with **51.3 m²** as their sum. This does not establish
+51.3 m² of normal-height usable space. The room labels, maximum dimensions and
+allocation trade-off should remain explicit in any future policy review.
+For `ce8b8d1130c`, both models identify third-floor accommodation; neither the
+plan nor the rating change establishes that it is the building's top floor.
+
+As a separate command smoke check, the historical SQLite snapshot contains 93
+homes, of which 91 have comparable assessments. It has one additional crossing:
+`c012c941ad6`, **57 → 60**, rating 3 → 4 with **65% component weight** (condition,
+bathroom and light; kitchen finish and usable space unknown). Its retained record
+also describes floor height inferred from views and uncertain second-room size.
+This is another sparse-evidence promotion, not support for changing the live
+threshold. These historical analyses are separate from the 555 core reruns and
+are reported separately in the audit. The snapshot database's SHA-256 was
+identical before and after the command.
+
+The regression fixture preserves seven redacted structured assessments, original
+record hashes and expected scores. It keeps the two original provider disagreements
+and all three new crossing instances reproducible. Tests also expose sparse-input
+inflation, isolate model-supplied ratings and `kitchen_living_layout` from the
+candidate, retain invalid/failed assessment boundaries, distinguish threshold
+crossings from selection changes, and verify an entire database remains byte-for-byte
+unchanged, including stored ratings, score caches and delivery history.
+
+### Adoption remains a separate decision
+
+Before promoting any candidate, establish an evidence-coverage policy and a
+human-reviewed outcome rubric for these cases and held-out homes. Decide how an
+office competes with lounge/hosting space, retain uncertainty about irregular
+areas and acoustics, and separate vertical floor height from accommodation above.
+The hosting relaxation and historical-rating backfill remain open. No weights,
+prompt definitions, thresholds or live values were changed to make the replay pass.
+
+Verification: **4,195 default tests pass**, including the 80 new regressions and
+the mocked runtime visual-input allowance checks for **1-20 images**, with
+**90.95% branch-inclusive coverage** (75% required). Repository Ruff lint and
+formatting, strict mypy (108 source files), and wheel/sdist builds pass. The
+retained 93-home snapshot read-only smoke check also passes with an unchanged
+database hash. No live portal, provider or notification calls were made.

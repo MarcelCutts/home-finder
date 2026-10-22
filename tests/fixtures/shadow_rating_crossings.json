@@ -1,0 +1,772 @@
+{
+  "source_core_sha256": "26314ec361342115566112319d334ca2d50d5d7ecc233612aa41669c8fbcba27",
+  "selection_context": "new, active, minimum fit score 60; retained observations held fixed",
+  "records": [
+    {
+      "case_id": "cabafe00bcb",
+      "arm": "sonnet55-low",
+      "rep": 0,
+      "source_record_sha256": "7d19532bb650839c150b9ea95ade6ac21e3ff4e08ce36761ecdcccfbce244b0a",
+      "bedrooms": 2,
+      "outcode": "E2",
+      "analysis": {
+        "kitchen": {
+          "overall_quality": "modern",
+          "hob_type": "gas",
+          "has_dishwasher": "unknown",
+          "has_washing_machine": "yes"
+        },
+        "condition": {
+          "overall_condition": "excellent",
+          "has_visible_damp": "no",
+          "has_visible_mold": "no",
+          "has_worn_fixtures": "no",
+          "confidence": "medium"
+        },
+        "light_space": {
+          "natural_light": "good",
+          "window_sizes": "medium",
+          "feels_spacious": false,
+          "ceiling_height": "standard",
+          "floor_level": "lower"
+        },
+        "space": {
+          "living_room_sqm": 13.9,
+          "total_area_sqm": 47.5,
+          "floorplan_total_area_sqm": 47.5,
+          "area_estimation_method": "stated_on_floorplan",
+          "is_spacious_enough": false,
+          "hosting_layout": "awkward"
+        },
+        "bathroom": {
+          "overall_condition": "modern",
+          "has_bathtub": "yes",
+          "shower_type": "separate_cubicle",
+          "is_ensuite": "unknown"
+        },
+        "bedroom": {
+          "primary_is_double": "yes",
+          "has_built_in_wardrobe": "no",
+          "can_fit_desk": "yes",
+          "office_separation": "unknown"
+        },
+        "outdoor_space": {
+          "availability": "unknown",
+          "has_balcony": false,
+          "has_garden": false,
+          "has_terrace": false,
+          "has_shared_garden": false
+        },
+        "storage": {
+          "has_built_in_wardrobes": "no",
+          "has_hallway_cupboard": "unknown",
+          "storage_rating": "poor"
+        },
+        "flooring_noise": {
+          "primary_flooring": "laminate",
+          "has_double_glazing": "yes",
+          "building_construction": "solid_brick",
+          "hosting_noise_risk": "high"
+        },
+        "listing_extraction": {
+          "epc_rating": "unknown",
+          "service_charge_pcm": null,
+          "deposit_weeks": null,
+          "bills_included": "unknown",
+          "pets_allowed": "unknown",
+          "parking": "unknown",
+          "council_tax_band": "unknown",
+          "property_type": "unknown",
+          "furnished_status": "unfurnished",
+          "broadband_type": "unknown"
+        },
+        "highlights": [
+          "Modern kitchen",
+          "Modern bathroom",
+          "Gas hob",
+          "Washing machine",
+          "Excellent condition"
+        ],
+        "lowlights": [
+          "Poor storage",
+          "Potential traffic noise"
+        ],
+        "condition_concerns": false,
+        "concern_severity": "none",
+        "value": {
+          "area_average": 2400,
+          "difference": -400,
+          "rating": "excellent",
+          "quality_adjusted_rating": "fair"
+        },
+        "overall_rating": 3,
+        "summary": "Retained scoring observations; free text omitted."
+      },
+      "expected": {
+        "model_rating": 3,
+        "candidate_rating": 4,
+        "observed_weight_percent": 100,
+        "baseline_fit_score": 51,
+        "candidate_fit_score": 53,
+        "baseline_alert": false,
+        "candidate_alert": false
+      }
+    },
+    {
+      "case_id": "cabafe00bcb",
+      "arm": "sol61-low",
+      "rep": 0,
+      "source_record_sha256": "23f53f011f94e35b39dfb3dd208aaea909f9589948ea6cf954c458e753fd0be8",
+      "bedrooms": 2,
+      "outcode": "E2",
+      "analysis": {
+        "kitchen": {
+          "overall_quality": "modern",
+          "hob_type": "gas",
+          "has_dishwasher": "unknown",
+          "has_washing_machine": "yes"
+        },
+        "condition": {
+          "overall_condition": "good",
+          "has_visible_damp": "no",
+          "has_visible_mold": "no",
+          "has_worn_fixtures": "no",
+          "confidence": "medium"
+        },
+        "light_space": {
+          "natural_light": "good",
+          "window_sizes": "medium",
+          "feels_spacious": false,
+          "ceiling_height": "standard",
+          "floor_level": "lower"
+        },
+        "space": {
+          "living_room_sqm": null,
+          "total_area_sqm": 51.3,
+          "floorplan_total_area_sqm": 51.3,
+          "area_estimation_method": "stated_on_floorplan",
+          "is_spacious_enough": false,
+          "hosting_layout": "poor"
+        },
+        "bathroom": {
+          "overall_condition": "modern",
+          "has_bathtub": "yes",
+          "shower_type": "separate_cubicle",
+          "is_ensuite": "no"
+        },
+        "bedroom": {
+          "primary_is_double": "yes",
+          "has_built_in_wardrobe": "unknown",
+          "can_fit_desk": "yes",
+          "office_separation": "dedicated_room"
+        },
+        "outdoor_space": {
+          "availability": "unknown",
+          "has_balcony": false,
+          "has_garden": false,
+          "has_terrace": false,
+          "has_shared_garden": false
+        },
+        "storage": {
+          "has_built_in_wardrobes": "unknown",
+          "has_hallway_cupboard": "unknown",
+          "storage_rating": "unknown"
+        },
+        "flooring_noise": {
+          "primary_flooring": "mixed",
+          "has_double_glazing": "yes",
+          "building_construction": "solid_brick",
+          "hosting_noise_risk": "moderate"
+        },
+        "listing_extraction": {
+          "epc_rating": "unknown",
+          "service_charge_pcm": null,
+          "deposit_weeks": null,
+          "bills_included": "unknown",
+          "pets_allowed": "unknown",
+          "parking": "unknown",
+          "council_tax_band": "unknown",
+          "property_type": "unknown",
+          "furnished_status": "unfurnished",
+          "broadband_type": "unknown"
+        },
+        "highlights": [
+          "Modern kitchen",
+          "Modern bathroom",
+          "Good natural light",
+          "Gas hob",
+          "Washing machine"
+        ],
+        "lowlights": [
+          "Poor hosting layout",
+          "Potential traffic noise"
+        ],
+        "condition_concerns": false,
+        "concern_severity": "none",
+        "value": {
+          "area_average": 2400,
+          "difference": -400,
+          "rating": "excellent",
+          "quality_adjusted_rating": "fair"
+        },
+        "overall_rating": 3,
+        "summary": "Retained scoring observations; free text omitted."
+      },
+      "expected": {
+        "model_rating": 3,
+        "candidate_rating": 4,
+        "observed_weight_percent": 100,
+        "baseline_fit_score": 62,
+        "candidate_fit_score": 64,
+        "baseline_alert": true,
+        "candidate_alert": true
+      }
+    },
+    {
+      "case_id": "ce8b8d1130c",
+      "arm": "sonnet55-low",
+      "rep": 0,
+      "source_record_sha256": "ea67da090a0e75403c9750a3d5c162db219da85c0fc87e15d47dbbd15a179002",
+      "bedrooms": 2,
+      "outcode": "E5",
+      "analysis": {
+        "kitchen": {
+          "overall_quality": "modern",
+          "hob_type": "electric",
+          "has_dishwasher": "unknown",
+          "has_washing_machine": "yes"
+        },
+        "condition": {
+          "overall_condition": "good",
+          "has_visible_damp": "no",
+          "has_visible_mold": "no",
+          "has_worn_fixtures": "no",
+          "confidence": "medium"
+        },
+        "light_space": {
+          "natural_light": "good",
+          "window_sizes": "medium",
+          "feels_spacious": true,
+          "ceiling_height": "standard",
+          "floor_level": "upper"
+        },
+        "space": {
+          "living_room_sqm": 17.0,
+          "total_area_sqm": 51.9,
+          "floorplan_total_area_sqm": 51.9,
+          "area_estimation_method": "stated_on_floorplan",
+          "is_spacious_enough": false,
+          "hosting_layout": "good"
+        },
+        "bathroom": {
+          "overall_condition": "modern",
+          "has_bathtub": "no",
+          "shower_type": "electric",
+          "is_ensuite": "no"
+        },
+        "bedroom": {
+          "primary_is_double": "yes",
+          "has_built_in_wardrobe": "no",
+          "can_fit_desk": "yes",
+          "office_separation": "dedicated_room"
+        },
+        "outdoor_space": {
+          "availability": "unknown",
+          "has_balcony": false,
+          "has_garden": false,
+          "has_terrace": false,
+          "has_shared_garden": false
+        },
+        "storage": {
+          "has_built_in_wardrobes": "no",
+          "has_hallway_cupboard": "yes",
+          "storage_rating": "adequate"
+        },
+        "flooring_noise": {
+          "primary_flooring": "carpet",
+          "has_double_glazing": "unknown",
+          "building_construction": "unknown",
+          "hosting_noise_risk": "moderate"
+        },
+        "listing_extraction": {
+          "epc_rating": "unknown",
+          "service_charge_pcm": null,
+          "deposit_weeks": null,
+          "bills_included": "unknown",
+          "pets_allowed": "unknown",
+          "parking": "unknown",
+          "council_tax_band": "unknown",
+          "property_type": "unknown",
+          "furnished_status": "unknown",
+          "broadband_type": "unknown"
+        },
+        "highlights": [
+          "Good natural light",
+          "Spacious living room",
+          "Washing machine",
+          "Modern kitchen",
+          "Modern bathroom"
+        ],
+        "lowlights": [
+          "Electric hob",
+          "No built-in wardrobes"
+        ],
+        "condition_concerns": false,
+        "concern_severity": "none",
+        "value": {
+          "area_average": 2200,
+          "difference": -200,
+          "rating": "good",
+          "quality_adjusted_rating": "good"
+        },
+        "overall_rating": 4,
+        "summary": "Retained scoring observations; free text omitted."
+      },
+      "expected": {
+        "model_rating": 4,
+        "candidate_rating": 4,
+        "observed_weight_percent": 100,
+        "baseline_fit_score": 61,
+        "candidate_fit_score": 61,
+        "baseline_alert": true,
+        "candidate_alert": true
+      }
+    },
+    {
+      "case_id": "ce8b8d1130c",
+      "arm": "sol61-low",
+      "rep": 0,
+      "source_record_sha256": "0e8b2b655f17014f8aa410da06fcab309072cba4f38eb31504858fc3fdb1f360",
+      "bedrooms": 2,
+      "outcode": "E5",
+      "analysis": {
+        "kitchen": {
+          "overall_quality": "modern",
+          "hob_type": "electric",
+          "has_dishwasher": "unknown",
+          "has_washing_machine": "yes"
+        },
+        "condition": {
+          "overall_condition": "good",
+          "has_visible_damp": "no",
+          "has_visible_mold": "no",
+          "has_worn_fixtures": "no",
+          "confidence": "medium"
+        },
+        "light_space": {
+          "natural_light": "good",
+          "window_sizes": "medium",
+          "feels_spacious": true,
+          "ceiling_height": "standard",
+          "floor_level": "upper"
+        },
+        "space": {
+          "living_room_sqm": null,
+          "total_area_sqm": 51.9,
+          "floorplan_total_area_sqm": 51.9,
+          "area_estimation_method": "stated_on_floorplan",
+          "is_spacious_enough": null,
+          "hosting_layout": "good"
+        },
+        "bathroom": {
+          "overall_condition": "decent",
+          "has_bathtub": "no",
+          "shower_type": "electric",
+          "is_ensuite": "no"
+        },
+        "bedroom": {
+          "primary_is_double": "yes",
+          "has_built_in_wardrobe": "unknown",
+          "can_fit_desk": "yes",
+          "office_separation": "dedicated_room"
+        },
+        "outdoor_space": {
+          "availability": "unknown",
+          "has_balcony": false,
+          "has_garden": false,
+          "has_terrace": false,
+          "has_shared_garden": false
+        },
+        "storage": {
+          "has_built_in_wardrobes": "unknown",
+          "has_hallway_cupboard": "yes",
+          "storage_rating": "unknown"
+        },
+        "flooring_noise": {
+          "primary_flooring": "carpet",
+          "has_double_glazing": "unknown",
+          "building_construction": "unknown",
+          "hosting_noise_risk": "unknown"
+        },
+        "listing_extraction": {
+          "epc_rating": "unknown",
+          "service_charge_pcm": null,
+          "deposit_weeks": null,
+          "bills_included": "unknown",
+          "pets_allowed": "unknown",
+          "parking": "unknown",
+          "council_tax_band": "unknown",
+          "property_type": "unknown",
+          "furnished_status": "unknown",
+          "broadband_type": "unknown"
+        },
+        "highlights": [
+          "Modern kitchen",
+          "Good natural light",
+          "Washing machine",
+          "Separate work area",
+          "Great hosting layout"
+        ],
+        "lowlights": [
+          "Small bedroom",
+          "Electric hob"
+        ],
+        "condition_concerns": false,
+        "concern_severity": "none",
+        "value": {
+          "area_average": 2200,
+          "difference": -200,
+          "rating": "good",
+          "quality_adjusted_rating": "fair"
+        },
+        "overall_rating": 4,
+        "summary": "Retained scoring observations; free text omitted."
+      },
+      "expected": {
+        "model_rating": 4,
+        "candidate_rating": 4,
+        "observed_weight_percent": 85,
+        "baseline_fit_score": 57,
+        "candidate_fit_score": 57,
+        "baseline_alert": false,
+        "candidate_alert": false
+      }
+    },
+    {
+      "case_id": "cbd500e12fe",
+      "arm": "sol6-none",
+      "rep": 0,
+      "source_record_sha256": "ded44a311190e8e1fbe90990f7dc517b0de2b05a3ceabedb0a9ad304566fe491",
+      "bedrooms": 2,
+      "outcode": "E8",
+      "analysis": {
+        "kitchen": {
+          "overall_quality": "unknown",
+          "hob_type": "unknown",
+          "has_dishwasher": "unknown",
+          "has_washing_machine": "unknown"
+        },
+        "condition": {
+          "overall_condition": "good",
+          "has_visible_damp": "no",
+          "has_visible_mold": "unknown",
+          "has_worn_fixtures": "no",
+          "confidence": "medium"
+        },
+        "light_space": {
+          "natural_light": "good",
+          "window_sizes": "medium",
+          "feels_spacious": false,
+          "ceiling_height": "standard",
+          "floor_level": "unknown"
+        },
+        "space": {
+          "living_room_sqm": null,
+          "total_area_sqm": null,
+          "floorplan_total_area_sqm": null,
+          "area_estimation_method": null,
+          "is_spacious_enough": null,
+          "hosting_layout": "unknown"
+        },
+        "bathroom": {
+          "overall_condition": "unknown",
+          "has_bathtub": "unknown",
+          "shower_type": "unknown",
+          "is_ensuite": "no"
+        },
+        "bedroom": {
+          "primary_is_double": "yes",
+          "has_built_in_wardrobe": "unknown",
+          "can_fit_desk": "yes",
+          "office_separation": "dedicated_room"
+        },
+        "outdoor_space": {
+          "availability": "unknown",
+          "has_balcony": false,
+          "has_garden": false,
+          "has_terrace": false,
+          "has_shared_garden": false
+        },
+        "storage": {
+          "has_built_in_wardrobes": "unknown",
+          "has_hallway_cupboard": "unknown",
+          "storage_rating": "unknown"
+        },
+        "flooring_noise": {
+          "primary_flooring": "laminate",
+          "has_double_glazing": "unknown",
+          "building_construction": "unknown",
+          "hosting_noise_risk": "unknown"
+        },
+        "listing_extraction": {
+          "epc_rating": "unknown",
+          "service_charge_pcm": null,
+          "deposit_weeks": 5,
+          "bills_included": "unknown",
+          "pets_allowed": "unknown",
+          "parking": "unknown",
+          "council_tax_band": "unknown",
+          "property_type": "unknown",
+          "furnished_status": "furnished",
+          "broadband_type": "unknown"
+        },
+        "highlights": [
+          "Good natural light",
+          "Dedicated office room",
+          "Separate work area"
+        ],
+        "lowlights": [
+          "No bathroom photos supplied",
+          "Key rooms not shown in supplied photos"
+        ],
+        "condition_concerns": false,
+        "concern_severity": "none",
+        "value": {
+          "area_average": 2350,
+          "difference": -190,
+          "rating": "good",
+          "quality_adjusted_rating": "fair"
+        },
+        "overall_rating": 3,
+        "summary": "Retained scoring observations; free text omitted."
+      },
+      "expected": {
+        "model_rating": 3,
+        "candidate_rating": 4,
+        "observed_weight_percent": 50,
+        "baseline_fit_score": 55,
+        "candidate_fit_score": 60,
+        "baseline_alert": false,
+        "candidate_alert": true
+      }
+    },
+    {
+      "case_id": "cabafe00bcb",
+      "arm": "sol61-low",
+      "rep": 2,
+      "source_record_sha256": "3097ca39143cf0fa2aae422b75e8b0312a5a106bdfea2fe2a890e26c8e6157c2",
+      "bedrooms": 2,
+      "outcode": "E2",
+      "analysis": {
+        "kitchen": {
+          "overall_quality": "modern",
+          "hob_type": "gas",
+          "has_dishwasher": "unknown",
+          "has_washing_machine": "yes"
+        },
+        "condition": {
+          "overall_condition": "good",
+          "has_visible_damp": "no",
+          "has_visible_mold": "no",
+          "has_worn_fixtures": "no",
+          "confidence": "medium"
+        },
+        "light_space": {
+          "natural_light": "good",
+          "window_sizes": "medium",
+          "feels_spacious": false,
+          "ceiling_height": "standard",
+          "floor_level": "lower"
+        },
+        "space": {
+          "living_room_sqm": null,
+          "total_area_sqm": 51.3,
+          "floorplan_total_area_sqm": 51.3,
+          "area_estimation_method": "stated_on_floorplan",
+          "is_spacious_enough": null,
+          "hosting_layout": "awkward"
+        },
+        "bathroom": {
+          "overall_condition": "modern",
+          "has_bathtub": "yes",
+          "shower_type": "separate_cubicle",
+          "is_ensuite": "no"
+        },
+        "bedroom": {
+          "primary_is_double": "yes",
+          "has_built_in_wardrobe": "unknown",
+          "can_fit_desk": "yes",
+          "office_separation": "dedicated_room"
+        },
+        "outdoor_space": {
+          "availability": "unknown",
+          "has_balcony": false,
+          "has_garden": false,
+          "has_terrace": false,
+          "has_shared_garden": false
+        },
+        "storage": {
+          "has_built_in_wardrobes": "unknown",
+          "has_hallway_cupboard": "unknown",
+          "storage_rating": "unknown"
+        },
+        "flooring_noise": {
+          "primary_flooring": "mixed",
+          "has_double_glazing": "yes",
+          "building_construction": "solid_brick",
+          "hosting_noise_risk": "moderate"
+        },
+        "listing_extraction": {
+          "epc_rating": "unknown",
+          "service_charge_pcm": null,
+          "deposit_weeks": null,
+          "bills_included": "unknown",
+          "pets_allowed": "unknown",
+          "parking": "unknown",
+          "council_tax_band": "unknown",
+          "property_type": "unknown",
+          "furnished_status": "unfurnished",
+          "broadband_type": "unknown"
+        },
+        "highlights": [
+          "Modern kitchen",
+          "Gas hob",
+          "Modern bathroom",
+          "Good natural light",
+          "Double glazing"
+        ],
+        "lowlights": [
+          "Potential traffic noise"
+        ],
+        "condition_concerns": false,
+        "concern_severity": "none",
+        "value": {
+          "area_average": 2400,
+          "difference": -400,
+          "rating": "excellent",
+          "quality_adjusted_rating": "fair"
+        },
+        "overall_rating": 3,
+        "summary": "Retained scoring observations; free text omitted."
+      },
+      "expected": {
+        "model_rating": 3,
+        "candidate_rating": 4,
+        "observed_weight_percent": 85,
+        "baseline_fit_score": 59,
+        "candidate_fit_score": 61,
+        "baseline_alert": false,
+        "candidate_alert": true
+      }
+    },
+    {
+      "case_id": "cabafe00bcb",
+      "arm": "sol61-low-flex",
+      "rep": 0,
+      "source_record_sha256": "fba29382916e43f4b9b51b489920b06cf09e7ea20f6cd3ff8cabc3c1ed1d7bce",
+      "bedrooms": 2,
+      "outcode": "E2",
+      "analysis": {
+        "kitchen": {
+          "overall_quality": "modern",
+          "hob_type": "gas",
+          "has_dishwasher": "unknown",
+          "has_washing_machine": "yes"
+        },
+        "condition": {
+          "overall_condition": "good",
+          "has_visible_damp": "no",
+          "has_visible_mold": "no",
+          "has_worn_fixtures": "no",
+          "confidence": "medium"
+        },
+        "light_space": {
+          "natural_light": "good",
+          "window_sizes": "medium",
+          "feels_spacious": false,
+          "ceiling_height": "standard",
+          "floor_level": "lower"
+        },
+        "space": {
+          "living_room_sqm": null,
+          "total_area_sqm": 51.3,
+          "floorplan_total_area_sqm": 51.3,
+          "area_estimation_method": "stated_on_floorplan",
+          "is_spacious_enough": null,
+          "hosting_layout": "awkward"
+        },
+        "bathroom": {
+          "overall_condition": "decent",
+          "has_bathtub": "yes",
+          "shower_type": "separate_cubicle",
+          "is_ensuite": "no"
+        },
+        "bedroom": {
+          "primary_is_double": "yes",
+          "has_built_in_wardrobe": "unknown",
+          "can_fit_desk": "yes",
+          "office_separation": "dedicated_room"
+        },
+        "outdoor_space": {
+          "availability": "unknown",
+          "has_balcony": false,
+          "has_garden": false,
+          "has_terrace": false,
+          "has_shared_garden": false
+        },
+        "storage": {
+          "has_built_in_wardrobes": "unknown",
+          "has_hallway_cupboard": "unknown",
+          "storage_rating": "unknown"
+        },
+        "flooring_noise": {
+          "primary_flooring": "mixed",
+          "has_double_glazing": "yes",
+          "building_construction": "solid_brick",
+          "hosting_noise_risk": "moderate"
+        },
+        "listing_extraction": {
+          "epc_rating": "unknown",
+          "service_charge_pcm": null,
+          "deposit_weeks": null,
+          "bills_included": "unknown",
+          "pets_allowed": "unknown",
+          "parking": "unknown",
+          "council_tax_band": "unknown",
+          "property_type": "unknown",
+          "furnished_status": "unfurnished",
+          "broadband_type": "unknown"
+        },
+        "highlights": [
+          "Modern kitchen",
+          "Gas hob",
+          "Washing machine",
+          "Good natural light",
+          "Double glazing"
+        ],
+        "lowlights": [
+          "Potential traffic noise"
+        ],
+        "condition_concerns": false,
+        "concern_severity": "none",
+        "value": {
+          "area_average": 2400,
+          "difference": -400,
+          "rating": "excellent",
+          "quality_adjusted_rating": "fair"
+        },
+        "overall_rating": 3,
+        "summary": "Retained scoring observations; free text omitted."
+      },
+      "expected": {
+        "model_rating": 3,
+        "candidate_rating": 4,
+        "observed_weight_percent": 85,
+        "baseline_fit_score": 59,
+        "candidate_fit_score": 61,
+        "baseline_alert": false,
+        "candidate_alert": true
+      }
+    }
+  ]
+}
