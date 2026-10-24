@@ -31,6 +31,59 @@ from tests.test_filters.test_quality_respx import (
 pytestmark = pytest.mark.usefixtures("native_analysis_spending")
 
 
+def recorded_malformed_visual(case: str):
+    """Minimal shapes from the two failed Sonnet receipts; omit advert prose."""
+    raw = copy.deepcopy(PHASE1_VISUAL_RESPONSE["content"][0]["input"])
+    if case == "c218d61fc0d__r2":
+        # The saved space string ends at its room_areas array, without the final }.
+        raw["space"] = json.dumps(raw["space"])[:-1]
+    elif case == "c6a9db682ca__r0":
+        # Pseudo-XML starts the section; its remaining fields spill into the root.
+        kitchen = raw.pop("kitchen")
+        raw["kitchen"] = '\n<parameter name="overall_quality">modern'
+        raw.update({key: value for key, value in kitchen.items() if key != "overall_quality"})
+        raw["space"] = '\n<parameter name="living_room_sqm">null'
+    else:
+        raise AssertionError(case)
+    return raw
+
+
+@pytest.mark.parametrize("case", ["c218d61fc0d__r2", "c6a9db682ca__r0"])
+def test_recorded_malformed_sections_are_not_reconstructed(case):
+    raw = recorded_malformed_visual(case)
+    before = copy.deepcopy(raw)
+    with pytest.raises(AnalysisOutputError) as caught:
+        validate_output(raw, _VisualAnalysisResponse, "visual", None)
+    assert caught.value.failure.kind == "malformed_output"
+    assert raw == before
+
+
+@pytest.mark.parametrize("conflicting_field", ["overall_quality", "has_dishwasher"])
+def test_json_text_with_duplicate_facts_is_rejected(conflicting_field):
+    raw = copy.deepcopy(PHASE1_VISUAL_RESPONSE["content"][0]["input"])
+    section = json.dumps(raw["kitchen"])
+    # Do not silently pick the last fact, even if that one passes validation.
+    first = "dated" if conflicting_field == "overall_quality" else "no"
+    raw["kitchen"] = (
+        "{" + json.dumps(conflicting_field) + ":" + json.dumps(first) + "," + section[1:]
+    )
+    with pytest.raises(AnalysisOutputError) as caught:
+        validate_output(raw, _VisualAnalysisResponse, "visual", None)
+    assert caught.value.failure.kind == "malformed_output"
+
+
+@pytest.mark.parametrize("number", ["NaN", "Infinity", "-Infinity", "1e999"])
+def test_json_text_nonfinite_number_is_rejected(number):
+    raw = copy.deepcopy(PHASE1_VISUAL_RESPONSE["content"][0]["input"])
+    raw["space"]["living_room_sqm"] = 20
+    raw["space"] = json.dumps(raw["space"]).replace(
+        '"living_room_sqm": 20', f'"living_room_sqm": {number}'
+    )
+    with pytest.raises(AnalysisOutputError) as caught:
+        validate_output(raw, _VisualAnalysisResponse, "visual", None)
+    assert caught.value.failure.kind == "malformed_output"
+
+
 @pytest.mark.parametrize("prose", ["[Not visible in photos]", '{"source": "listing"}', " [] "])
 def test_validated_prose_survives_assembly_without_mutating_phase_inputs(prose):
     visual = copy.deepcopy(PHASE1_VISUAL_RESPONSE["content"][0]["input"])
@@ -141,8 +194,9 @@ def failed_message(phase, scenario):
 async def test_failed_required_phase_retains_usage_but_never_completed_facts(
     cached_analysis_property, phase, scenario, kind
 ):
+    repeats = 2 if phase == "visual" and kind == "malformed_output" else 1
     bodies = ([] if phase == "visual" else [copy.deepcopy(PHASE1_VISUAL_RESPONSE)]) + [
-        failed_message(phase, scenario)
+        failed_message(phase, scenario) for _ in range(repeats)
     ]
     pending = iter(bodies)
     calls = []
@@ -168,7 +222,7 @@ async def test_failed_required_phase_retains_usage_but_never_completed_facts(
     assert q.token_usage.cache_read_tokens == sum(
         b["usage"]["cache_read_input_tokens"] for b in bodies
     )
-    assert q.token_usage.cache_creation_tokens == 17
+    assert q.token_usage.cache_creation_tokens == 17 * repeats
 
 
 @pytest.mark.parametrize("phase", ["visual", "evaluation"])
@@ -365,3 +419,47 @@ async def test_rejected_evaluation_stays_pending_without_notifying(
         )
         assert failure["request_id"] == "pipeline-fixture"
     assert native.is_closed
+
+
+def test_visual_sections_sent_as_json_text_are_decoded():
+    expected = validate_output(
+        copy.deepcopy(PHASE1_VISUAL_RESPONSE["content"][0]["input"]),
+        _VisualAnalysisResponse,
+        "visual",
+        None,
+    )
+    raw = copy.deepcopy(PHASE1_VISUAL_RESPONSE["content"][0]["input"])
+    raw["kitchen"] = json.dumps(raw["kitchen"])
+    raw["listing_red_flags"] = json.dumps(raw["listing_red_flags"])
+    raw["condition"]["maintenance_concerns"] = json.dumps(["Scuffed skirting"])
+    expected["condition"]["maintenance_concerns"] = ["Scuffed skirting"]
+    assert validate_output(raw, _VisualAnalysisResponse, "visual", None) == expected
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        # Shapes seen from Claude on 2026-10-21: an object cut short inside the
+        # string with its remaining keys spilled into the parent, and a trailing comma.
+        '{"overall_quality": "modern", "hob_type": "gas"',
+        '{"overall_quality": "modern", "hob_type": "gas",}',
+        '["not", "an", "object"]',
+        "modern",
+    ],
+)
+def test_visual_json_text_that_is_not_the_expected_object_still_fails(text):
+    raw = copy.deepcopy(PHASE1_VISUAL_RESPONSE["content"][0]["input"])
+    raw["kitchen"] = text
+    with pytest.raises(AnalysisOutputError) as caught:
+        validate_output(raw, _VisualAnalysisResponse, "visual", None)
+    assert caught.value.failure.kind == "malformed_output"
+    assert caught.value.diagnostics["validation_errors"][0]["path"] == ["kitchen"]
+
+
+def test_evaluation_json_text_is_not_decoded():
+    # The evaluation phase is grammar-constrained; text in an object field is a defect.
+    raw = json.loads(PHASE2_EVALUATION_RESPONSE["content"][0]["text"])
+    raw["viewing_notes"] = json.dumps(raw["viewing_notes"])
+    with pytest.raises(AnalysisOutputError) as caught:
+        validate_output(raw, _EvaluationResponse, "evaluation", None)
+    assert caught.value.failure.kind == "malformed_output"

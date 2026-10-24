@@ -42,27 +42,52 @@ def is_valid_media_type(value: str) -> TypeGuard[ImageMediaType]:
     return value in VALID_MEDIA_TYPES
 
 
+def _has_transparency(img: Image.Image) -> bool:
+    if "transparency" in img.info:
+        return True
+    if img.mode not in ("RGBA", "LA", "PA"):
+        return False
+    low, _ = img.getchannel("A").getextrema()
+    return isinstance(low, (int, float)) and low < 255
+
+
+def _on_white(img: Image.Image) -> Image.Image:
+    """Keep black-ink transparent plans readable regardless of provider compositing."""
+    rgba = img.convert("RGBA")
+    flat = Image.new("RGBA", rgba.size, (255, 255, 255, 255))
+    flat.alpha_composite(rgba)
+    return flat.convert("RGB")
+
+
 def resize_image_bytes(data: bytes, max_dim: int = MAX_IMAGE_DIMENSION) -> bytes:
-    """Downscale static images; preserve small or animated input bytes."""
+    """Downscale static images and flatten transparency onto white.
+
+    Small opaque images and animated images retain their original bytes.
+    """
     try:
-        img = Image.open(BytesIO(data))
-        # Keep all frames for admission to check; resizing saves only the first.
-        if getattr(img, "n_frames", 1) != 1:
-            return data
-        w, h = img.size
-        if w <= max_dim and h <= max_dim:
-            return data
-        scale = max_dim / max(w, h)
-        new_size = (int(w * scale), int(h * scale))
-        # Preserve format before resize (resize clears it)
-        fmt = img.format or "JPEG"
-        resized: Image.Image = img.resize(new_size, Image.Resampling.LANCZOS, reducing_gap=3.0)
-        # JPEG cannot encode RGBA/P/CMYK — convert to RGB
-        if fmt == "JPEG" and resized.mode not in ("RGB", "L"):
-            resized = resized.convert("RGB")
-        buf = BytesIO()
-        resized.save(buf, format=fmt, quality=85)
-        return buf.getvalue()
+        with Image.open(BytesIO(data)) as img:
+            # Keep all frames for admission to check; saving could drop all but the first.
+            if getattr(img, "n_frames", 1) != 1:
+                return data
+            w, h = img.size
+            oversized = w > max_dim or h > max_dim
+            transparent = _has_transparency(img)
+            if not oversized and not transparent:
+                return data
+            # Preserve format before converting or resizing clears it.
+            fmt = img.format or "JPEG"
+            out = _on_white(img) if transparent else img
+            if oversized:
+                scale = max_dim / max(w, h)
+                new_size = (max(1, int(w * scale)), max(1, int(h * scale)))
+                out = out.resize(new_size, Image.Resampling.LANCZOS, reducing_gap=3.0)
+            # JPEG cannot encode RGBA/P/CMYK — convert to RGB.
+            if fmt == "JPEG" and out.mode not in ("RGB", "L"):
+                out = out.convert("RGB")
+            buf = BytesIO()
+            # Do not introduce lossy compression into transparent WebP line art.
+            out.save(buf, format=fmt, quality=85, lossless=transparent and fmt == "WEBP")
+            return buf.getvalue()
     except Exception:
         logger.debug("image_resize_failed", exc_info=True)
         return data

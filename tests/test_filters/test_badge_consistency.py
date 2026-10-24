@@ -21,7 +21,13 @@ from tests.test_filters.test_visual_checkpoints import checkpoint_rows, quality
 @pytest.fixture(params=["claude-sonnet-4-6", "claude-sonnet-5-5"])
 def assemble(request, tmp_path, cached_analysis_property):
     async def run(
-        *, visual=None, highlights=None, lowlights=None, bills="unknown", description=None
+        *,
+        visual=None,
+        highlights=None,
+        lowlights=None,
+        bills="unknown",
+        description=None,
+        listing=None,
     ):
         merged, images = cached_analysis_property
         merged = merged.model_copy(
@@ -39,6 +45,7 @@ def assemble(request, tmp_path, cached_analysis_property):
         eval_data = json.loads(eval_body["content"][0]["text"])
         eval_data.update(highlights=highlights or [], lowlights=lowlights or [])
         eval_data["listing_extraction"]["bills_included"] = bills
+        eval_data["listing_extraction"].update(listing or {})
         eval_body["content"][0]["text"] = json.dumps(eval_data)
         calls = []
 
@@ -70,6 +77,118 @@ def assemble(request, tmp_path, cached_analysis_property):
         return result, dropped
 
     return run
+
+
+async def test_saved_no_pets_receipt_cannot_advertise_pets_or_overstate_condition(assemble):
+    # Minimal facts from bake-off case cbfa2bd6c46; no private advert/photos needed.
+    result, logs = await assemble(
+        description="<p>Summary &amp; Exclusions:</p><br>- No Pets, sorry",
+        listing={"pets_allowed": "no"},
+        visual={
+            "condition": {"overall_condition": "good"},
+            "bathroom": {"overall_condition": "decent"},
+        },
+        highlights=["Good natural light", "Modern bathroom", "Excellent condition", "Pets allowed"],
+    )
+    assert result.listing_extraction.pets_allowed == "no"
+    assert result.highlights == ["Good natural light"]
+    assert {log["badge"] for log in logs} == {
+        "Pets allowed",
+        "Modern bathroom",
+        "Excellent condition",
+    }
+
+
+@pytest.mark.parametrize("state", ["yes", "no", "unknown"])
+async def test_pets_badge_requires_positive_extraction(assemble, state):
+    result, _ = await assemble(listing={"pets_allowed": state}, highlights=["Pets allowed"])
+    assert result.highlights == (["Pets allowed"] if state == "yes" else [])
+
+
+@pytest.mark.parametrize("layout", ["open_plan", "separate", "unknown", None])
+@pytest.mark.parametrize("hosting", ["good", "excellent"])
+async def test_open_plan_badge_requires_kitchen_living_evidence(assemble, layout, hosting):
+    space = {"hosting_layout": hosting}
+    if layout is not None:
+        space["kitchen_living_layout"] = layout
+    result, logs = await assemble(
+        visual={"space": space},
+        highlights=["Open-plan layout", "Great hosting layout"],
+    )
+    assert result.highlights == [
+        *(["Open-plan layout"] if layout == "open_plan" else []),
+        "Great hosting layout",
+    ]
+    assert result.space.kitchen_living_layout == (layout or "unknown")
+    assert len(logs) == (0 if layout == "open_plan" else 1)
+
+
+@pytest.mark.parametrize(
+    ("notes", "kitchen_quality", "highlights", "expected"),
+    [
+        pytest.param(
+            "No floorplan or dimensions supplied; area not estimated. "
+            "Living and dining share one room.",
+            "decent",
+            ["Open-plan layout", "Great hosting layout"],
+            ["Great hosting layout"],
+            id="c66220bd66a",
+        ),
+        pytest.param(
+            "No floorplan or dimensions supplied; area not estimated. "
+            "Living room appears reasonably sized, with a staircase within it.",
+            "decent",
+            ["Modern kitchen", "Open-plan layout"],
+            [],
+            id="c3416f2470a",
+        ),
+        pytest.param(
+            "Reception room is 4.85m x 3.24m. Kitchen is separate.",
+            "unknown",
+            ["Private terrace", "Open-plan layout", "Great hosting layout"],
+            ["Private terrace", "Great hosting layout"],
+            id="c7815468aad",
+        ),
+    ],
+)
+async def test_saved_separate_kitchen_receipts_do_not_gain_open_plan_badges(
+    assemble, notes, kitchen_quality, highlights, expected
+):
+    # Replayed observations predate the explicit layout field. Neither prose nor
+    # a good hosting assessment is silently promoted into open-plan evidence.
+    result, _ = await assemble(
+        visual={
+            "space": {"area_notes": notes, "hosting_layout": "good"},
+            "kitchen": {"overall_quality": kitchen_quality},
+        },
+        highlights=highlights,
+    )
+    assert result.highlights == expected
+    assert result.space.area_notes == notes
+
+
+@pytest.mark.parametrize("quality", ["modern", "decent", "dated", "unknown"])
+async def test_finish_badges_match_observations(assemble, quality):
+    result, _ = await assemble(
+        visual={
+            "kitchen": {"overall_quality": quality},
+            "bathroom": {"overall_condition": quality},
+        },
+        highlights=["Modern kitchen", "Modern bathroom"],
+        lowlights=["Dated kitchen", "Dated bathroom"],
+    )
+    assert result.highlights == (
+        ["Modern kitchen", "Modern bathroom"] if quality == "modern" else []
+    )
+    assert result.lowlights == (["Dated kitchen", "Dated bathroom"] if quality == "dated" else [])
+
+
+@pytest.mark.parametrize("condition", ["excellent", "good", "fair", "poor", "unknown"])
+async def test_excellent_condition_requires_matching_observation(assemble, condition):
+    result, _ = await assemble(
+        visual={"condition": {"overall_condition": condition}}, highlights=["Excellent condition"]
+    )
+    assert result.highlights == (["Excellent condition"] if condition == "excellent" else [])
 
 
 @pytest.mark.parametrize(
@@ -291,7 +410,16 @@ async def test_supported_facts_do_not_generate_new_badges(assemble):
 
 def test_historical_load_is_unchanged_and_explicit_guard_is_idempotent(make_quality_analysis):
     original = make_quality_analysis(
-        highlights=["Bills included", "Double glazing", "Built-in wardrobes", "Modern kitchen"],
+        highlights=[
+            "Bills included",
+            "Double glazing",
+            "Built-in wardrobes",
+            "Modern kitchen",
+            "Open-plan layout",
+            "Pets allowed",
+            "Modern bathroom",
+            "Excellent condition",
+        ],
         lowlights=["Poor hosting layout", "No built-in wardrobes", "No outdoor space"],
         listing_extraction=None,
         flooring_noise=None,
@@ -304,7 +432,7 @@ def test_historical_load_is_unchanged_and_explicit_guard_is_idempotent(make_qual
     with structlog.testing.capture_logs() as first_logs:
         checked = reconcile_analysis_badges(loaded)
     assert checked.highlights == ["Modern kitchen"] and checked.lowlights == []
-    assert len(first_logs) == 6
+    assert len(first_logs) == 10
     with structlog.testing.capture_logs() as repeat_logs:
         assert reconcile_analysis_badges(checked) is checked
     assert repeat_logs == [] and loaded.model_dump_json() == loaded_before

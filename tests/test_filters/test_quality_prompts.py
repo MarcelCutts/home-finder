@@ -710,6 +710,12 @@ class TestToolSchemaSnapshots:
                                         "enum": ["excellent", "good", "awkward", "poor", "unknown"],
                                         "type": "string",
                                     },
+                                    "kitchen_living_layout": {
+                                        "default": "unknown",
+                                        "description": "Kitchen and living room connection: open_plan only when photos or a readable floorplan show one continuous room; separate when divided into rooms. A shared living/dining room or good hosting layout alone is not evidence of an open-plan kitchen. Use unknown when unseen, unclear or sources disagree.",
+                                        "enum": ["open_plan", "separate", "unknown"],
+                                        "type": "string",
+                                    },
                                 },
                                 "required": [
                                     "living_room_sqm",

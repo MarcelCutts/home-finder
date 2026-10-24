@@ -41,12 +41,47 @@ def reconcile_analysis_badges(
     )
     require(PropertyLowlight.POOR_HOSTING_LAYOUT, "space.hosting_layout", hosting, ("poor",))
     require(
+        PropertyHighlight.OPEN_PLAN,
+        "space.kitchen_living_layout",
+        analysis.space.kitchen_living_layout if analysis.space else None,
+        ("open_plan",),
+    )
+    require(
+        PropertyHighlight.PETS_ALLOWED,
+        "listing_extraction.pets_allowed",
+        analysis.listing_extraction.pets_allowed if analysis.listing_extraction else None,
+        ("yes",),
+    )
+    require(
         PropertyHighlight.BILLS_INCLUDED,
         "listing_extraction.bills_included",
         analysis.listing_extraction.bills_included if analysis.listing_extraction else None,
         ("yes",),
     )
     kitchen = analysis.kitchen
+    bathroom = analysis.bathroom
+    for positive, negative, field, finish in (
+        (
+            PropertyHighlight.MODERN_KITCHEN,
+            PropertyLowlight.DATED_KITCHEN,
+            "kitchen.overall_quality",
+            kitchen.overall_quality if kitchen else None,
+        ),
+        (
+            PropertyHighlight.MODERN_BATHROOM,
+            PropertyLowlight.DATED_BATHROOM,
+            "bathroom.overall_condition",
+            bathroom.overall_condition if bathroom else None,
+        ),
+    ):
+        require(positive, field, finish, ("modern",))
+        require(negative, field, finish, ("dated",))
+    require(
+        PropertyHighlight.EXCELLENT_CONDITION,
+        "condition.overall_condition",
+        analysis.condition.overall_condition if analysis.condition else None,
+        ("excellent",),
+    )
     storage = analysis.storage
     for positive, negative, field, value in (
         (

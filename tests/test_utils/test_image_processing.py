@@ -2,6 +2,7 @@
 
 from io import BytesIO
 
+import pytest
 from PIL import Image
 
 from home_finder.utils.image_processing import (
@@ -11,6 +12,87 @@ from home_finder.utils.image_processing import (
     is_valid_media_type,
     resize_image_bytes,
 )
+
+
+def transparent_plan(mode: str, size: tuple[int, int] = (100, 100)) -> bytes:
+    """Reproduce cached plans: black ink with black hidden behind transparent pixels."""
+    buf = BytesIO()
+    if mode == "P":
+        img = Image.new("P", size, 0)
+        img.putpalette([0, 0, 0] * 256)
+        img.paste(1, (0, 0, size[0] // 2, size[1]))
+        img.save(buf, format="PNG", transparency=0)
+    elif mode == "RGB":
+        img = Image.new("RGB", size, "white")
+        img.paste((0, 0, 0), (0, 0, size[0] // 2, size[1]))
+        img.save(buf, format="PNG", transparency=(255, 255, 255))
+    else:
+        clear = (0, 0) if mode == "LA" else (0, 0, 0, 0)
+        ink = (0, 255) if mode == "LA" else (0, 0, 0, 255)
+        img = Image.new(mode, size, clear)
+        img.paste(ink, (0, 0, size[0] // 2, size[1]))
+        img.save(buf, format="PNG")
+    return buf.getvalue()
+
+
+class TestTransparentFloorplans:
+    @pytest.mark.parametrize("mode", ["RGBA", "LA", "P", "RGB"])
+    @pytest.mark.parametrize("size", [(100, 100), (3000, 2000)])
+    def test_white_background_and_black_ink_before_and_after_resize(self, mode, size):
+        result = resize_image_bytes(transparent_plan(mode, size))
+        with Image.open(BytesIO(result)) as img:
+            assert img.format == "PNG"  # Retain lossless line art.
+            assert img.mode == "RGB"
+            if size == (100, 100):
+                assert img.size == size
+            else:
+                assert MAX_IMAGE_DIMENSION - 1 <= max(img.size) <= MAX_IMAGE_DIMENSION
+                assert img.width / img.height == pytest.approx(size[0] / size[1], abs=0.002)
+            assert img.getpixel((5, 5)) == (0, 0, 0)
+            assert img.getpixel((img.width - 5, 5)) == (255, 255, 255)
+            assert "transparency" not in img.info
+        assert resize_image_bytes(result) == result
+
+    @pytest.mark.parametrize("mode", ["RGBA", "LA", "P"])
+    def test_partial_alpha_is_composited_not_discarded(self, mode):
+        if mode == "P":
+            img = Image.new("P", (10, 10), 0)
+            img.putpalette([0, 0, 0] * 256)
+            img.info["transparency"] = bytes([128] * 256)
+        else:
+            img = Image.new(mode, (10, 10), (0, 128) if mode == "LA" else (0, 0, 0, 128))
+        buf = BytesIO()
+        img.save(buf, format="PNG")
+        with Image.open(BytesIO(resize_image_bytes(buf.getvalue()))) as result:
+            assert result.mode == "RGB"
+            assert result.getpixel((0, 0)) == (127, 127, 127)
+
+    def test_fully_opaque_alpha_keeps_original_bytes(self):
+        buf = BytesIO()
+        Image.new("RGBA", (100, 100), (200, 10, 10, 255)).save(buf, format="PNG")
+        assert resize_image_bytes(buf.getvalue()) == buf.getvalue()
+
+    @pytest.mark.parametrize("fmt", ["GIF", "WEBP"])
+    def test_static_transparent_formats_keep_mime_and_ink(self, fmt):
+        img = Image.open(BytesIO(transparent_plan("RGBA")))
+        buf = BytesIO()
+        img.save(buf, format=fmt, lossless=True)
+        data = resize_image_bytes(buf.getvalue())
+        assert detect_media_type_from_bytes(data) == f"image/{fmt.lower()}"
+        with Image.open(BytesIO(data)) as result:
+            assert "transparency" not in result.info and "A" not in result.getbands()
+            rgb = result.convert("RGB")
+            assert rgb.getpixel((10, 50)) == (0, 0, 0)
+            assert rgb.getpixel((90, 50)) == (255, 255, 255)
+
+    @pytest.mark.parametrize("fmt", ["PNG", "GIF", "WEBP"])
+    def test_animated_input_stays_intact_for_admission(self, fmt):
+        frames = [Image.new("RGBA", (100, 100), color) for color in ("black", "white")]
+        buf = BytesIO()
+        frames[0].save(buf, format=fmt, save_all=True, append_images=frames[1:], duration=100)
+        data = buf.getvalue()
+        assert Image.open(BytesIO(data)).n_frames == 2
+        assert resize_image_bytes(data, max_dim=50) == data
 
 
 class TestIsValidMediaType:
@@ -91,6 +173,12 @@ class TestResizeImageBytes:
         result = resize_image_bytes(data, max_dim=200)
         img = Image.open(BytesIO(result))
         assert max(img.size) <= 200
+
+    def test_extreme_aspect_ratio_still_resizes(self) -> None:
+        data = self._make_image(3000, 1, fmt="PNG")
+        with Image.open(BytesIO(resize_image_bytes(data))) as img:
+            assert MAX_IMAGE_DIMENSION - 1 <= img.width <= MAX_IMAGE_DIMENSION
+            assert img.height == 1
 
 
 class TestDetectMediaTypeFromBytes:
