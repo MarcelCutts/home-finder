@@ -1050,7 +1050,7 @@ class TestMobileViewport:
         page.goto("/property/openrent:1003")
         budget = page.locator(".cost-breakdown-card")
         expect(budget).to_contain_text("Each month")
-        expect(budget).to_contain_text("To move in")
+        expect(budget).to_contain_text("Upfront costs")
         expect(budget).to_contain_text("Listing EPC: not")
         budget.locator("summary").click()
         expect(budget).to_contain_text("England: private assured periodic tenancies")
