@@ -1,20 +1,3 @@
-// Fit breakdown bar fill animation (detail page)
-{
-  const bars = document.querySelectorAll(".fit-breakdown-fill");
-  if ("IntersectionObserver" in window && bars.length > 0) {
-    const observer = new IntersectionObserver(function (entries) {
-      entries.forEach(function (entry) {
-        if (entry.isIntersecting) {
-          entry.target.classList.add("animate");
-          observer.unobserve(entry.target);
-        }
-      });
-    }, { threshold: 0.3 });
-
-    bars.forEach(function (bar) { observer.observe(bar); });
-  }
-}
-
 // Fit factor chips: tap-to-toggle on touch devices
 {
   if (window.matchMedia("(pointer: coarse)").matches) {

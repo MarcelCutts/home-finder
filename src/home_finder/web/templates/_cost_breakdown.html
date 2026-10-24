@@ -23,17 +23,18 @@
     {% if cost_breakdown.service_charge_review %}
     <p class="cost-line-note">Service charge or ground rent mentioned{% if cost_breakdown.earlier_service_charge is not none %} (earlier analysis: &pound;{{ cost_breakdown.earlier_service_charge }}/mo, unverified){% endif %}. Confirm whether this is a landlord cost, already in rent, or a permitted tenant payment. It is excluded from the subtotal. <a href="{{ rental_guidance.fees_url }}" target="_blank" rel="noopener">England fee guidance</a>.</p>
     {% endif %}
-    <p class="cost-line-note">Listing EPC: {{ cost_breakdown.epc_rating | capitalize }} · Council-tax band: {{ cost_breakdown.council_tax_band | capitalize }}. Stated bands are advert claims, not register checks.
+    {# One statement per band: the retained advert decides it; an earlier AI reading is only an aside. #}
+    {% macro band_claim(label, advert, earlier) -%}
+    {%- set advert_known = advert and advert | lower != 'unknown' -%}
+    {%- set earlier_known = earlier and earlier | lower != 'unknown' -%}
+    {{ label }}: {% if advert_known %}{{ advert | upper }}{% if earlier_known and earlier | upper != advert | upper %} (an earlier AI reading said {{ earlier | upper }}){% endif %}{% elif earlier_known %}not in the saved advert (an earlier AI reading said {{ earlier | upper }}, unconfirmed){% else %}not stated{% endif %}
+    {%- endmacro %}
+    {% set old = qa.listing_extraction if qa and qa.listing_extraction else none %}
+    <p class="cost-line-note">{{ band_claim("Listing EPC", cost_breakdown.epc_rating, old.epc_rating if old else none) }}. {{ band_claim("Council-tax band", cost_breakdown.council_tax_band, old.council_tax_band if old else none) }}. Stated bands are advert claims, not register checks.
         <a href="https://www.gov.uk/find-energy-certificate" target="_blank" rel="noopener">Check EPC</a> · <a href="https://www.gov.uk/council-tax-bands" target="_blank" rel="noopener">Check council-tax band</a>.
     </p>
-    {% if qa and qa.listing_extraction %}
-    {% set old = qa.listing_extraction %}
-    {% if old.bills_included in ['yes', 'no'] %}
+    {% if old and old.bills_included in ['yes', 'no'] %}
     <p class="cost-line-note">Earlier analysis records bills as {{ 'included' if old.bills_included == 'yes' else 'not included' }} (unverified). Confirm the named bills, coverage and any additional charges with the agent.</p>
-    {% endif %}
-    {% if (old.epc_rating and old.epc_rating != 'unknown' and old.epc_rating != cost_breakdown.epc_rating) or (old.council_tax_band and old.council_tax_band != 'unknown' and old.council_tax_band != cost_breakdown.council_tax_band) %}
-    <p class="cost-line-note">Earlier analysis claims EPC {{ old.epc_rating or 'unknown' }} and council-tax band {{ old.council_tax_band or 'unknown' }}; these claims are unverified against the retained advert and are not used as facts.</p>
-    {% endif %}
     {% endif %}
     <details class="cost-line-note"><summary>Advert wording and tenancy guidance</summary>
         {% for item in cost_breakdown.line_items %}{% for quote in item.evidence %}<p>{{ quote }}</p>{% endfor %}{% endfor %}

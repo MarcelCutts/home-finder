@@ -3,13 +3,13 @@
 
 {% block title %}{{ prop.title }} — I Hate Moving{% endblock %}
 
-{% block meta_description %}<meta name="description" content="{{ prop.bedrooms }} bed · {{ prop.address }}{% if prop.postcode %}, {{ prop.postcode }}{% endif %}">{% endblock %}
+{% block meta_description %}<meta name="description" content="{{ prop.bedrooms | bed_label }} · {{ prop.address }}{% if prop.postcode %}, {{ prop.postcode }}{% endif %}">{% endblock %}
 
 {% block og_meta %}
 <meta property="og:type" content="article">
 <meta property="og:site_name" content="I Hate Moving">
 <meta property="og:title" content="{{ prop.title }} — £{{ '{:,}'.format(prop.price_pcm) }}/mo">
-<meta property="og:description" content="{{ prop.bedrooms }} bed · {{ prop.address }}{% if prop.postcode %}, {{ prop.postcode }}{% endif %}">
+<meta property="og:description" content="{{ prop.bedrooms | bed_label }} · {{ prop.address }}{% if prop.postcode %}, {{ prop.postcode }}{% endif %}">
 {% if og_image_url %}<meta property="og:image" content="{{ og_image_url }}">{% endif %}
 {% if base_url %}<meta property="og:url" content="{{ base_url }}/property/{{ prop.unique_id }}">{% endif %}
 <meta property="og:locale" content="en_GB">
@@ -103,7 +103,7 @@
         </div>
         <div class="detail-header-row">
             <p class="detail-meta">
-                {{ prop.bedrooms }} bed
+                {{ prop.bedrooms | bed_label }}
                 {%- if prop.floor_area_sqm %} &middot; {{ prop.floor_area_sqm | round(0) | int }} m²
                 {%- if prop.floor_area_source %} <span class="meta-dim">via {{ prop.floor_area_source | title }}</span>{% endif %}
                 {%- endif %} &middot; {{ prop.address }}{% if prop.postcode %}, {{ prop.postcode }}{% endif %}
@@ -349,19 +349,13 @@
         </div>
         {% endif %}
 
-        {% if qa.listing_red_flags and qa.listing_red_flags.red_flag_count > 0 %}
+        {% set red_flags = qa.listing_red_flags.display_items if qa.listing_red_flags else [] %}
+        {% if red_flags %}
         <div class="quality-alert alert-amber">
-            <strong>Listing Red Flags ({{ qa.listing_red_flags.red_flag_count }}):</strong>
-            {% if qa.listing_red_flags.too_few_photos %}<p>Few supplied photos</p>{% endif %}
-            {% if qa.listing_red_flags.selective_angles %}<p>Limited views in supplied photos</p>{% endif %}
-            {% if qa.listing_red_flags.missing_room_photos %}
-            <p>Not seen in supplied photos: {{ qa.listing_red_flags.missing_room_photos | join(", ") }}</p>
-            {% endif %}
-            {% if qa.listing_red_flags.description_concerns %}
-            {% for concern in qa.listing_red_flags.description_concerns %}
-            <p>{{ concern }}</p>
+            <strong>Listing Red Flags ({{ red_flags | length }}):</strong>
+            {% for flag in red_flags %}
+            <p>{{ flag }}</p>
             {% endfor %}
-            {% endif %}
         </div>
         {% endif %}
     </section>
@@ -434,10 +428,27 @@
             {% for img in prop.floorplan_images %}
             <div class="floorplan-frame">
                 <p class="processing-notice">{% if img.is_source_floorplan %}Source-declared floorplan. Dimensions may be unreadable.{% else %}Unverified floorplan image. Its original designation was not recorded.{% endif %}</p>
-                <img src="{{ image_url_map.get(img.url|string, img.url) }}" alt="{{ 'Source-declared floorplan' if img.is_source_floorplan else 'Unverified floorplan image' }}" loading="lazy" class="floorplan-image" data-lightbox="floorplan">
+                <a href="{{ image_url_map.get(img.url|string, img.url) }}" data-lightbox="floorplan" aria-label="Open full-size floorplan from {{ source_names.get(img.source, img.source) }}">
+                    <img src="{{ image_url_map.get(img.url|string, img.url) }}" alt="{{ 'Source-declared floorplan' if img.is_source_floorplan else 'Unverified floorplan image' }}" loading="lazy" class="floorplan-image">
+                </a>
             </div>
             {% endfor %}
         </div>
+        {% if floorplan_repeats %}
+        <details class="floorplan-repeats">
+            <summary>Additional floorplan versions ({{ floorplan_repeats | length }})</summary>
+            <div class="floorplan-section">
+                {% for img in floorplan_repeats %}
+                <div class="floorplan-frame">
+                    <p class="processing-notice">{% if img.is_source_floorplan %}Source-declared floorplan. Dimensions may be unreadable.{% else %}Unverified floorplan image. Its original designation was not recorded.{% endif %} From {{ source_names.get(img.source, img.source) }}.</p>
+                    <a href="{{ image_url_map.get(img.url|string, img.url) }}" data-lightbox="floorplan" aria-label="Open full-size floorplan from {{ source_names.get(img.source, img.source) }}">
+                        <img src="{{ image_url_map.get(img.url|string, img.url) }}" alt="{{ 'Source-declared floorplan' if img.is_source_floorplan else 'Unverified floorplan image' }} from {{ source_names.get(img.source, img.source) }}" loading="lazy" class="floorplan-image">
+                    </a>
+                </div>
+                {% endfor %}
+            </div>
+        </details>
+        {% endif %}
     </section>
     {% endif %}
 
@@ -500,7 +511,7 @@
 
                 {% if area_context.benchmarks and prop.bedrooms in area_context.benchmarks %}
                 <div class="area-summary-stat">
-                    <span class="area-summary-stat-label">{{ prop.bedrooms }}-bed research (undated)</span>
+                    <span class="area-summary-stat-label">{{ prop.bedrooms | bed_label }} research (undated)</span>
                     <span class="area-summary-stat-detail">&pound;{{ "{:,}".format(area_context.benchmarks[prop.bedrooms]) }}/mo</span>
                 </div>
                 {% endif %}
@@ -528,7 +539,7 @@
     <div class="gallery-topbar">
         <button class="gallery-close" aria-label="Close gallery">&times;</button>
         {% set gallery_images = prop.gallery_images or [] %}
-        {% set floorplan_images = prop.floorplan_images or [] %}
+        {% set floorplan_images = (prop.floorplan_images or []) + (floorplan_repeats or []) %}
         {% if gallery_images and floorplan_images %}
         <div class="gallery-tabs" role="tablist" aria-label="Gallery tabs">
             <button class="gallery-tab active" role="tab" aria-selected="true" aria-controls="gallery-panel-photos" id="gallery-tab-photos" data-tab="photos">Photos {{ gallery_images|length }}</button>

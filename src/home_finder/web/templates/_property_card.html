@@ -7,7 +7,7 @@
     <a href="/property/{{ prop.unique_id }}" class="card-link">
         <div class="card-image-wrapper">
             {% if prop.image_url %}
-            <img src="{{ prop.image_url }}" alt="{% if prop.bedrooms == 0 %}Studio{% else %}{{ prop.bedrooms }} bed{% endif %} — {{ prop.postcode or 'Property' }}" loading="lazy" class="card-image">
+            <img src="{{ prop.image_url }}" alt="{{ prop.bedrooms | bed_label }} — {{ prop.postcode or 'Property' }}" loading="lazy" class="card-image">
             {% else %}
             <div class="card-image card-image-placeholder">Photos not available</div>
             {% endif %}
@@ -26,7 +26,7 @@
                     <span class="card-price-label">pcm</span>
                 </div>
                 {% endif %}
-                <span class="badge badge-neutral">{% if prop.bedrooms == 0 %}Studio{% else %}{{ prop.bedrooms }} bed{% endif %}</span>
+                <span class="badge badge-neutral">{{ prop.bedrooms | bed_label }}</span>
             </div>
         </div>
         <div class="card-body">
@@ -144,7 +144,8 @@
                 hx-swap="morph:outerHTML"
                 hx-target-4*="#error-toast"
                 hx-disabled-elt="this"
-                title="Interested">
+                title="Mark interested"
+                aria-label="Mark interested">
             &#9733;
         </button>
         <button class="card-action-btn card-action-skip"
@@ -154,7 +155,8 @@
                 hx-swap="morph:outerHTML"
                 hx-target-4*="#error-toast"
                 hx-disabled-elt="this"
-                title="Skip">
+                title="Archive"
+                aria-label="Archive">
             &#10005;
         </button>
     </div>

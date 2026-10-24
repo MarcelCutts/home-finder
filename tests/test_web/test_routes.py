@@ -256,6 +256,12 @@ class TestDashboard:
         resp = client.get("/?sort=evil_injection")
         assert resp.status_code == 200
 
+    def test_best_fit_is_the_default_sort(self, client: TestClient) -> None:
+        from bs4 import BeautifulSoup
+
+        soup = BeautifulSoup(client.get("/").text, "html.parser")
+        assert soup.select_one('select[name="sort"] option[selected]')["value"] == "fit_desc"
+
     def test_invalid_page_clamped(self, client: TestClient) -> None:
         resp = client.get("/?page=-5")
         assert resp.status_code == 200
@@ -318,6 +324,41 @@ class TestPropertyDetail:
         assert resp.status_code == 404
         assert "Property not found" in resp.text
         assert "Dashboard" in resp.text
+
+    @pytest.mark.parametrize("saved_count", [3, 0])
+    async def test_red_flag_heading_counts_every_flag_shown(
+        self,
+        client: TestClient,
+        storage: PropertyStorage,
+        prop_a: Property,
+        merged_a: MergedProperty,
+        base_analysis: PropertyQualityAnalysis,
+        saved_count: int,
+    ) -> None:
+        """The saved count leaves out photo flags, so the heading counts the lines."""
+        from bs4 import BeautifulSoup
+
+        flags = ListingRedFlags(
+            missing_room_photos=["Second bedroom"],
+            selective_angles=True,
+            description_concerns=["Railway beside the building", "Price above average"],
+            red_flag_count=saved_count,
+        )
+        await storage.save_merged_property(merged_a)
+        await storage.save_quality_analysis(
+            prop_a.unique_id, base_analysis.model_copy(update={"listing_red_flags": flags})
+        )
+        soup = BeautifulSoup(client.get(f"/property/{merged_a.unique_id}").text, "html.parser")
+        alert = next(
+            box for box in soup.select(".quality-alert") if "Listing Red Flags" in box.get_text()
+        )
+        assert alert.strong.get_text() == "Listing Red Flags (4):"
+        assert [p.get_text() for p in alert.select("p")] == [
+            "Limited views in supplied photos",
+            "Not seen in supplied photos: Second bedroom",
+            "Railway beside the building",
+            "Price above average",
+        ]
 
     @pytest.mark.asyncio
     async def test_area_context_populated(
@@ -673,6 +714,199 @@ class TestCachedImages:
         assert resp.status_code != 200
 
 
+def _floorplan_png(*, rooms: list[tuple[int, int, int, int]], size: tuple[int, int]) -> bytes:
+    """Draw a plan of black-outlined rooms, scaled to the requested size."""
+    import io
+
+    from PIL import Image, ImageDraw
+
+    plan = Image.new("L", (400, 300), 255)
+    draw = ImageDraw.Draw(plan)
+    for room in rooms:
+        draw.rectangle(room, outline=0, width=8)
+    buf = io.BytesIO()
+    plan.resize(size).save(buf, format="PNG")
+    return buf.getvalue()
+
+
+class TestFloorplanDedup:
+    """Reduce repetition without losing potentially different plan evidence."""
+
+    @pytest.fixture
+    def settings(self, tmp_path: Path) -> Settings:
+        return Settings(
+            telegram_bot_token=SecretStr("fake:token"),
+            telegram_chat_id=0,
+            search_areas="e8",
+            database_path=str(tmp_path / "properties.db"),
+        )
+
+    @pytest.mark.asyncio
+    async def test_repeated_plan_from_another_portal_is_shown_once(
+        self,
+        client: TestClient,
+        settings: Settings,
+        storage: PropertyStorage,
+        merged_a: MergedProperty,
+    ) -> None:
+        from bs4 import BeautifulSoup
+
+        flat = [(10, 10, 390, 150), (10, 150, 200, 290), (200, 150, 390, 290)]
+        upper_floor = [(10, 10, 130, 290), (130, 10, 390, 120), (130, 120, 390, 290)]
+        plans = {
+            # The same drawing from two portals at different resolutions.
+            "https://example.com/zoopla-plan.png": (PropertySource.ZOOPLA, flat, (800, 600)),
+            "https://example.com/rightmove-plan.png": (PropertySource.RIGHTMOVE, flat, (400, 300)),
+            "https://example.com/upper-floor.png": (
+                PropertySource.RIGHTMOVE,
+                upper_floor,
+                (400, 300),
+            ),
+        }
+        cache_dir = get_cache_dir(settings.data_dir, merged_a.unique_id)
+        images = []
+        for index, (url, (source, rooms, size)) in enumerate(plans.items()):
+            save_image_bytes(
+                cache_dir / url_to_filename(url, "floorplan", index),
+                _floorplan_png(rooms=rooms, size=size),
+            )
+            images.append(
+                PropertyImage(
+                    source=source,
+                    url=HttpUrl(url),
+                    image_type="floorplan",
+                    floorplan_origin=(
+                        "source_declared" if source == PropertySource.RIGHTMOVE else "unknown"
+                    ),
+                )
+            )
+        await storage.save_merged_property(merged_a)
+        await storage.save_property_images(merged_a.unique_id, images)
+
+        soup = BeautifulSoup(client.get(f"/property/{merged_a.unique_id}").text, "html.parser")
+        section = soup.select_one("#section-floorplan")
+        shown = [img["src"] for img in section.select(":scope > .floorplan-section img")]
+        safe_id = safe_dir_name(merged_a.unique_id)
+        assert shown == [
+            f"/images/{safe_id}/{url_to_filename(url, 'floorplan', index)}"
+            for index, url in enumerate(plans)
+            if index != 0
+        ]
+        variants = section.select_one("details.floorplan-repeats")
+        assert variants is not None
+        assert "Unverified floorplan image" in variants.get_text()
+        assert variants.img.parent["data-lightbox"] == "floorplan"
+        assert soup.select_one("#gallery-tab-floorplan").get_text() == "Floorplan 3"
+        assert len(soup.select(".gallery-floorplan-img")) == 3
+
+    @pytest.mark.asyncio
+    async def test_uncached_plan_from_another_portal_is_set_aside_not_hidden(
+        self,
+        client: TestClient,
+        settings: Settings,
+        storage: PropertyStorage,
+        merged_a: MergedProperty,
+    ) -> None:
+        """Without a local copy there is nothing to compare, so it is collapsed instead."""
+        from bs4 import BeautifulSoup
+
+        cached_url = "https://example.com/rightmove-plan.png"
+        save_image_bytes(
+            get_cache_dir(settings.data_dir, merged_a.unique_id)
+            / url_to_filename(cached_url, "floorplan", 0),
+            _floorplan_png(rooms=[(10, 10, 390, 290)], size=(400, 300)),
+        )
+        same_site_url = "https://example.com/rightmove-upper.png"
+        other_site_url = "https://example.com/zoopla-plan.png"
+        await storage.save_merged_property(merged_a)
+        await storage.save_property_images(
+            merged_a.unique_id,
+            [
+                PropertyImage(source=source, url=HttpUrl(url), image_type="floorplan")
+                for source, url in [
+                    (PropertySource.ZOOPLA, other_site_url),
+                    (PropertySource.RIGHTMOVE, cached_url),
+                    (PropertySource.RIGHTMOVE, same_site_url),
+                ]
+            ],
+        )
+
+        soup = BeautifulSoup(client.get(f"/property/{merged_a.unique_id}").text, "html.parser")
+        section = soup.select_one("#section-floorplan")
+        shown = [img["src"] for img in section.select(":scope > .floorplan-section img")]
+        assert shown == [
+            f"/images/{safe_dir_name(merged_a.unique_id)}/"
+            f"{url_to_filename(cached_url, 'floorplan', 0)}",
+            same_site_url,
+        ]
+        repeats = section.select_one("details.floorplan-repeats")
+        assert repeats.summary.get_text() == "Additional floorplan versions (1)"
+        assert [img["src"] for img in repeats.select("img")] == [other_site_url]
+        assert repeats.img.parent["data-lightbox"] == "floorplan"
+        assert other_site_url in [img["src"] for img in soup.select(".gallery-floorplan-img")]
+
+    def test_changed_dimension_with_identical_perceptual_hash_is_retained(
+        self, settings: Settings, merged_a: MergedProperty
+    ) -> None:
+        """A text change can leave the pHash identical, even at distance zero."""
+        import io
+
+        from PIL import Image, ImageDraw
+
+        from home_finder.utils.image_hash import hash_from_disk
+        from home_finder.web.routes import _split_floorplans
+
+        images = []
+        hashes = []
+        encoded = []
+        for index, dimension in enumerate(["4.2m x 3.1m", "3.2m x 3.1m"]):
+            plan = Image.new("L", (800, 600), 255)
+            draw = ImageDraw.Draw(plan)
+            for room in [(20, 20, 780, 300), (20, 300, 400, 580), (400, 300, 780, 580)]:
+                draw.rectangle(room, outline=0, width=8)
+            draw.text((80, 100), dimension, fill=0)
+            buf = io.BytesIO()
+            plan.save(buf, format="PNG")
+            encoded.append(buf.getvalue())
+            url = f"https://example.com/plan-{index}.png"
+            path = get_cache_dir(settings.data_dir, merged_a.unique_id) / url_to_filename(
+                url, "floorplan", index
+            )
+            save_image_bytes(path, encoded[-1])
+            hashes.append(hash_from_disk(path))
+            images.append(
+                PropertyImage(
+                    source=[PropertySource.RIGHTMOVE, PropertySource.ZOOPLA][index],
+                    url=HttpUrl(url),
+                    image_type="floorplan",
+                    floorplan_origin="source_declared",
+                )
+            )
+
+        assert encoded[0] != encoded[1]
+        assert hashes[0] is not None and hashes[0] == hashes[1]
+        shown, variants = _split_floorplans(settings.data_dir, merged_a.unique_id, images)
+        assert shown == images[:1]
+        assert variants == images[1:]
+
+    def test_cache_removed_during_lookup_preserves_plan(
+        self, settings: Settings, merged_a: MergedProperty, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from home_finder.web import routes
+
+        missing_path = Path(settings.data_dir) / "evicted.png"
+        monkeypatch.setattr(routes, "find_cached_file", lambda *args: missing_path)
+        image = PropertyImage(
+            source=PropertySource.RIGHTMOVE,
+            url=HttpUrl("https://example.com/plan.png"),
+            image_type="floorplan",
+        )
+        assert routes._split_floorplans(settings.data_dir, merged_a.unique_id, [image]) == (
+            [image],
+            [],
+        )
+
+
 # ---------------------------------------------------------------------------
 # Thumbnail resolution
 # ---------------------------------------------------------------------------
@@ -806,6 +1040,51 @@ class TestCardRendering:
         assert "25 min" in resp.text
         assert "25 min · estimate" in resp.text
         assert "journey date/time and location precision are unverified" in resp.text
+
+    @pytest.mark.asyncio
+    async def test_quick_actions_are_named_for_assistive_tech(
+        self, client: TestClient, storage: PropertyStorage, merged_a: MergedProperty
+    ) -> None:
+        from bs4 import BeautifulSoup
+
+        await storage.save_merged_property(merged_a)
+        soup = BeautifulSoup(client.get("/").text, "html.parser")
+        names = [btn["aria-label"] for btn in soup.select(".card-quick-actions button")]
+        assert names == ["Mark interested", "Archive"]
+
+    @pytest.mark.asyncio
+    async def test_traffic_noise_lowlight_reads_as_road_or_rail_noise(
+        self,
+        client: TestClient,
+        storage: PropertyStorage,
+        prop_a: Property,
+        merged_a: MergedProperty,
+        base_analysis: PropertyQualityAnalysis,
+    ) -> None:
+        """The stored tag also covers railways; only its displayed wording changes."""
+        from bs4 import BeautifulSoup
+
+        await storage.save_merged_property(merged_a)
+        await storage.save_quality_analysis(
+            prop_a.unique_id,
+            base_analysis.model_copy(update={"lowlights": ["Potential traffic noise"]}),
+        )
+        dashboard = BeautifulSoup(client.get("/").text, "html.parser")
+        card_tags = [chip.get_text() for chip in dashboard.select(".highlight-negative")]
+        assert card_tags == ["Potential road or rail noise"]
+        tag_input = dashboard.select_one('input[name="tag"][value="Potential traffic noise"]')
+        assert tag_input.parent.get_text(strip=True) == "Potential road or rail noise"
+
+        filtered = BeautifulSoup(
+            client.get("/", params={"tag": "Potential traffic noise"}).text, "html.parser"
+        )
+        assert filtered.select(".property-card")
+        chip = filtered.select_one(".filter-chip")
+        assert chip.get_text(" ", strip=True).startswith("Potential road or rail noise")
+
+        detail = client.get(f"/property/{merged_a.unique_id}").text
+        assert "Potential road or rail noise" in detail
+        assert "Potential traffic noise" not in detail
 
     @pytest.mark.parametrize("minutes", [None, 0])
     async def test_unknown_commute_is_not_zero_minute_success(
@@ -1298,6 +1577,22 @@ class TestStudioSupport:
         assert resp.status_code == 200
         assert "Studio" in resp.text
 
+    @pytest.mark.asyncio
+    async def test_studio_detail_page_is_not_zero_bed(
+        self,
+        client: TestClient,
+        storage: PropertyStorage,
+        merged_studio: MergedProperty,
+    ) -> None:
+        from bs4 import BeautifulSoup
+
+        await storage.save_merged_property(merged_studio)
+        resp = client.get(f"/property/{merged_studio.unique_id}")
+        soup = BeautifulSoup(resp.text, "html.parser")
+        assert soup.select_one(".detail-meta").get_text(" ", strip=True).startswith("Studio")
+        assert soup.select_one('meta[name="description"]')["content"].startswith("Studio ·")
+        assert "0 bed" not in resp.text
+
 
 # ---------------------------------------------------------------------------
 # Accessibility
@@ -1778,10 +2073,9 @@ class TestCostBreakdown:
         first = BeautifulSoup(client.get(f"/property/{merged_a.unique_id}").text, "html.parser")
         budget = first.select_one(".cost-breakdown-card").get_text(" ", strip=True)
         assert "£1,930.00/mo" in budget
-        assert "Listing EPC: B" in budget
-        assert "Council-tax band: D" in budget
+        assert "Listing EPC: B (an earlier AI reading said D)" in budget
+        assert "Council-tax band: D (an earlier AI reading said C)" in budget
         assert "earlier analysis: £450/mo, unverified" in budget
-        assert "unverified against the retained advert" in budget
         assert "From 1 May 2026" in budget
         assert "private assured periodic tenancies" in budget
         assert "England fee guidance" in budget
@@ -1802,7 +2096,10 @@ class TestCostBreakdown:
         third = BeautifulSoup(client.get(f"/property/{merged_a.unique_id}").text, "html.parser")
         cleared = third.select_one(".cost-breakdown-card").get_text(" ", strip=True)
         assert "£1,800.00/mo" in cleared
-        assert "Listing EPC: Unknown" in cleared
+        assert (
+            "Listing EPC: not in the saved advert (an earlier AI reading said D, unconfirmed)"
+            in cleared
+        )
         assert "Water: £30" not in cleared
         after = await storage.get_quality_analysis(merged_a.unique_id)
         # Existing price updates recompute ValueAnalysis deterministically; the
@@ -1821,7 +2118,7 @@ class TestCostBreakdown:
         response = client.get(f"/property/{merged_a.unique_id}")
         assert "Rent and bills" in response.text
         assert "Incomplete budget" in response.text
-        assert "Listing EPC: Unknown" in response.text
+        assert "Listing EPC: not stated. Council-tax band: not stated." in response.text
 
     @pytest.mark.asyncio
     async def test_cost_breakdown_renders(
@@ -1848,7 +2145,12 @@ class TestCostBreakdown:
         assert resp.status_code == 200
         assert "Rent and bills" in resp.text
         assert "Incomplete budget" in resp.text
-        assert "Earlier analysis claims EPC D and council-tax band C" in resp.text
+        # The advert text was not retained, so the earlier reading is the only claim.
+        assert (
+            "Council-tax band: not in the saved advert (an earlier AI reading said C, unconfirmed)"
+            in resp.text
+        )
+        assert "Earlier analysis claims" not in resp.text
         assert "True Monthly Cost" not in resp.text
 
     @pytest.mark.asyncio

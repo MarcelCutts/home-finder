@@ -27,6 +27,7 @@ from tests.test_filters.test_quality_respx import (
     PHASE1_VISUAL_RESPONSE,
     PHASE2_EVALUATION_RESPONSE,
 )
+from tests.test_utils.test_image_processing import transparent_plan
 
 CONTENT = [{"type": "text", "text": "Visual checkpoint fixture"}]
 
@@ -62,6 +63,44 @@ async def checkpoint_rows(storage):
     async with storage._read_connection() as conn:
         cursor = await conn.execute("SELECT * FROM visual_checkpoints")
         return [dict(row) for row in await cursor.fetchall()]
+
+
+async def test_transparent_plan_wire_bytes_invalidate_old_visual_checkpoint(tmp_path):
+    # A cached LA PNG served with a .jpg suffix reproduces the real black-plan failure.
+    path = tmp_path / "floorplan.jpg"
+    original = transparent_plan("LA")
+    path.write_bytes(original)
+    calls = []
+
+    def respond(request):
+        calls.append(json.loads(request.content))
+        return httpx2.Response(200, json=PHASE1_VISUAL_RESPONSE)
+
+    async with (
+        PropertyStorage(str(tmp_path / "normalisation.db")) as storage,
+        quality(storage, respond) as model,
+    ):
+        url = "https://example.com/floorplan.jpg"
+        with patch("home_finder.filters.quality._resize_image_bytes", side_effect=lambda b: b):
+            old_block = await model._build_image_block(url, cached_path=path)
+        await model._run_visual_analysis([old_block], "fixture:plan")
+        old_key = (await checkpoint_rows(storage))[0]["input_sha256"]
+
+        block = await model._build_image_block(url, cached_path=path)
+        assert block["source"]["media_type"] == "image/png"
+        decoded = base64.b64decode(block["source"]["data"])
+        with Image.open(BytesIO(decoded)) as image:
+            assert image.format == "PNG" and image.mode == "RGB"
+            assert image.getpixel((10, 50)) == (0, 0, 0)
+            assert image.getpixel((90, 50)) == (255, 255, 255)
+        assert path.read_bytes() == original
+        await model._run_visual_analysis([block], "fixture:plan")
+        assert (await checkpoint_rows(storage))[0]["input_sha256"] != old_key
+        # Repeat the same normalised request: reuse its paid observations.
+        await model._run_visual_analysis([block], "fixture:plan")
+
+    assert len(calls) == 2
+    assert calls[-1]["messages"][0]["content"] == [block]
 
 
 @pytest.mark.parametrize("refresh", [False, True])

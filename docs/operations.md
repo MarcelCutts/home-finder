@@ -104,14 +104,14 @@ reasoning follows `HOME_FINDER_ENABLE_EXTENDED_THINKING` (adaptive by default);
 evaluation uses the lowest thinking mode. The existing gallery setting remains
 20 by default and still controls image selection.
 
-The new runtime factory sets the visual input allowance to 110,000 tokens plus
+The new runtime factory sets the visual input allowance to 111,000 tokens plus
 5,500 for each configured image and one spare floorplan slot. This covers the
 current text/schema/framing and image payloads in offline fixtures across all
 supported image counts. The actual serialized request must still fit the bound;
 unusually large text, including Unicode-heavy payloads, can defer before dispatch.
 Evaluation has a 140,000-token input allowance. At 20 images the reservations
-are **$0.64567 visual** and **$0.43192 evaluation per attempt**. At 8 images the
-visual reservation is $0.48067. These reservations are not predicted charges or
+are **$0.64817 visual** and **$0.43192 evaluation per attempt**. At 8 images the
+visual reservation is $0.48317. These reservations are not predicted charges or
 new spend authorization. Explicit caps are still required; repeated application
 attempts remain subject to the existing durable attempt and budget limits.
 
@@ -130,7 +130,7 @@ legacy full-context allowance and can raise a new reservation above $4. Historic
 To pin the complete new 20-image runtime profile against later default changes:
 
 ```dotenv
-HOME_FINDER_ANALYSIS_CONFIG={"version":1,"visual":{"model":"claude-sonnet-5-5","reasoning":"adaptive","effort":"low","input_token_limit":225500,"max_output_tokens":8192,"sdk_retries":0},"evaluation":{"model":"claude-sonnet-5-5","reasoning":"disabled","effort":"low","input_token_limit":140000,"max_output_tokens":8192,"sdk_retries":0}}
+HOME_FINDER_ANALYSIS_CONFIG={"version":1,"visual":{"model":"claude-sonnet-5-5","reasoning":"adaptive","effort":"low","input_token_limit":226500,"max_output_tokens":8192,"sdk_retries":0},"evaluation":{"model":"claude-sonnet-5-5","reasoning":"disabled","effort":"low","input_token_limit":140000,"max_output_tokens":8192,"sdk_retries":0}}
 ```
 
 Legacy reservations and stored rate-card versions are unchanged; each attempt
@@ -271,6 +271,30 @@ Those are different questions: the shadow report is not the next-send count.
 Review and reconcile specific intents under the existing runner fence; do not
 bulk-reset history to make the queue match a new threshold.
 
+The experimental rating can be reviewed offline on retained assessments:
+
+```bash
+uv run python -m home_finder.pipeline.rating_shadow_report --database /path/to/snapshot.db
+```
+
+This explicitly invoked command needs no provider credentials. It uses SQLite
+read-only mode and one consistent read transaction, without initialization,
+migrations, rating updates or delivery creation. It reports the existing rating
+and a versioned candidate, with the baseline and candidate selection decisions.
+All other retained observations and owner/market states stay fixed. No new rating
+is supplied for an unrated, malformed or failed assessment. The report records
+input hashes and the rating, fit-score and notification-policy versions.
+
+The candidate preserves Opus's measured formula, including its known defect of
+awarding five stars from a modern kitchen alone. `observed_weight_percent` measures
+how much of the formula had usable inputs; it is neither model confidence nor a
+production-readiness threshold. `threshold_crossed` records a numerical crossing;
+`selection_changed` also respects archived/rejected/off-market stops. Neither means
+an alert would now be sent: existing delivery history is never reopened. The
+live pipeline, prompts, badges and ratings do not consume this candidate. See the
+[crossing review](reviews/2026-10-21-model-bakeoff-review.md#2026-10-22-versioned-shadow-rating-and-alert-crossing-review)
+before considering a production policy or historical backfill.
+
 Price drops use independent interest rules: an already announced home, an existing
 durable discovery intent, or explicit `interested`, `enquired`, `viewing_booked`,
 `viewed`, `applied` or `offered` status. Pending discovery interest queues a price
@@ -372,7 +396,7 @@ Processing, market availability, personal decisions and delivery are independent
 | --- | --- |
 | Availability | Received source observations update market state; a parser failure or processing stop does not establish off-market status. |
 | Detail processing | Pending homes consume bounded enrichment slots; failed attempts accumulate, and reaching the configured retry limit marks details failed. Waiting at the run cap consumes no attempt. Floorplan exclusions retain their evidence. |
-| Assessment processing | Initial failures accumulate up to three. A paid operation's own retry ceiling is also terminal. Migration 13 records the reason and timestamp separately; queues skip that work. Global budgets, concurrency and unresolved charges remain deferrals. |
+| Assessment processing | A completed malformed visual response gets at most one immediate retry of the identical request, admitted and settled separately. Refusals, truncation and uncertain dispatches do not take this path. Existing per-operation attempt and spend ceilings still apply. Initial failures accumulate up to three. A paid operation's own retry ceiling is also terminal. Migration 13 records the reason and timestamp separately; queues skip that work. Global budgets, concurrency and unresolved charges remain deferrals. |
 | Personal status | The owner's interested/archived/etc. decision and history survive processing failures and source merges. |
 | Delivery | An exhausted assessment never counts as sent. Existing delivery state and receipts survive a stopped refresh; acknowledged parts remain authoritative. |
 

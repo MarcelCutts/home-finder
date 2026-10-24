@@ -163,7 +163,7 @@ def test_partial_exposes_validated_state_and_history_restore_returns_a_full_page
     assert state["values"]["tags"] == ["Gas hob"]
     assert parse_qs(urlsplit(response.headers["HX-Push-Url"]).query) == {
         "page": ["1"],
-        "sort": ["newest"],
+        "sort": ["fit_desc"],
         "bedrooms": ["10"],
         "min_fit_score": ["100"],
         "off_market": ["only"],
