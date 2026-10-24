@@ -98,6 +98,7 @@ class PropertyDetailItem(PropertyListItem, total=False):
     description: str | None
     ward: str | None
     quality_analysis: PropertyQualityAnalysis | None
+    analysed_at: str | None
     gallery_images: list[PropertyImage]
     floorplan_images: list[PropertyImage]
     listing_evidence: dict[PropertySource, ListingTextEvidence]

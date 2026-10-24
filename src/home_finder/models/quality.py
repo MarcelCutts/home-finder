@@ -466,9 +466,9 @@ class ListingRedFlags(_LenientLiteralModel):
 
     @property
     def display_items(self) -> list[str]:
-        """Every flag the listing page shows, so its heading can count them.
+        """Every flag as a line for the listing page.
 
-        The saved ``red_flag_count`` can leave out the photo flags.
+        The saved ``red_flag_count`` can leave out the photo flags, so count these.
         """
         items: list[str] = []
         if self.too_few_photos:

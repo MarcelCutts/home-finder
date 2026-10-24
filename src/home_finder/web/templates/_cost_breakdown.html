@@ -1,27 +1,30 @@
+{# Two totals a tenant plans around; the bill-by-bill evidence sits behind a disclosure. #}
+{% set bill_items = cost_breakdown.line_items %}
+{% set priced_bills = bill_items | rejectattr("low", "none") | list %}
+{% set included_bills = bill_items | selectattr("state", "equalto", "included") | map(attribute="label") | list %}
+{% set unpriced_bills = bill_items | rejectattr("state", "equalto", "included") | selectattr("low", "none") | map(attribute="label") | list %}
 <div class="overview-card cost-breakdown-card">
-    <div class="cost-header"><h4>Rent and bills</h4><span class="badge badge-amber">Incomplete budget</span></div>
-    <div class="cost-receipt">
-        <div class="cost-line cost-line-rent">
-            <span class="cost-line-label">Advertised rent</span>
-            <span class="cost-line-amount">&pound;{{ "{:,}".format(cost_breakdown.rent) }}/mo</span>
+    <div class="money-totals">
+        <div class="money-total">
+            <span class="money-total-label">Each month</span>
+            <strong class="money-total-amount">{{ cost_breakdown.subtotal_low | gbp }}{% if cost_breakdown.subtotal_high != cost_breakdown.subtotal_low %}&ndash;{{ cost_breakdown.subtotal_high | gbp }}{% endif %}</strong>
+            <p class="money-total-note">
+                Rent{% for item in priced_bills %}, {{ item.label | lower }} {{ item.low | gbp }}{% if item.high != item.low %}&ndash;{{ item.high | gbp }}{% endif %}{% endfor %} as advertised.
+                {% if included_bills %}Included in rent: {{ included_bills | join(", ") | lower }}.{% endif %}
+                {% if unpriced_bills %}Not priced: {{ unpriced_bills | join(", ") | lower }}.{% endif %}
+            </p>
         </div>
-        {% for item in cost_breakdown.line_items %}
-        <div class="cost-line">
-            <span class="cost-line-label">{{ item.label }}
-                <span class="cost-line-note">{% if item.state == 'included' %}Advert says included; confirm limits{% elif item.state == 'excluded' %}Advert says separate{% elif item.state == 'conflicting' %}Conflicting advert claims{% else %}Coverage and amount unknown{% endif %}</span>
-            </span>
-            <span class="cost-line-amount">{% if item.low is not none %}&pound;{{ "{:,.2f}".format(item.low) }}{% if item.high != item.low %}&ndash;{{ "{:,.2f}".format(item.high) }}{% endif %}{% elif item.state == 'included' %}In rent{% else %}Unpriced{% endif %}</span>
+        {% if move_in %}
+        <div class="money-total">
+            <span class="money-total-label">To move in</span>
+            <strong class="money-total-amount">up to {{ move_in.total | gbp }}</strong>
+            <p class="money-total-note">A deposit of up to {{ move_in.deposit_weeks }} weeks' rent ({{ move_in.deposit | gbp }}, the legal cap) plus the first month. A holding deposit of up to {{ move_in.holding_deposit | gbp }} counts towards this.</p>
         </div>
-        {% endfor %}
-        <div class="cost-line cost-line-total">
-            <span class="cost-line-label">Advertised subtotal</span>
-            <span class="cost-line-amount">&pound;{{ "{:,.2f}".format(cost_breakdown.subtotal_low) }}{% if cost_breakdown.subtotal_high != cost_breakdown.subtotal_low %}&ndash;{{ "{:,.2f}".format(cost_breakdown.subtotal_high) }}{% endif %}/mo</span>
-        </div>
+        {% endif %}
     </div>
-    <p class="cost-line-note">{{ cost_breakdown.assumptions }}</p>
     {% if cost_breakdown.general_bills_claim %}<p class="cost-line-note">The advert mentions bills included or excluded. Ask for a written list; that phrase alone does not establish each bill's treatment.</p>{% endif %}
     {% if cost_breakdown.service_charge_review %}
-    <p class="cost-line-note">Service charge or ground rent mentioned{% if cost_breakdown.earlier_service_charge is not none %} (earlier analysis: &pound;{{ cost_breakdown.earlier_service_charge }}/mo, unverified){% endif %}. Confirm whether this is a landlord cost, already in rent, or a permitted tenant payment. It is excluded from the subtotal. <a href="{{ rental_guidance.fees_url }}" target="_blank" rel="noopener">England fee guidance</a>.</p>
+    <p class="cost-line-note">Service charge or ground rent mentioned{% if cost_breakdown.earlier_service_charge is not none %} (earlier analysis: &pound;{{ cost_breakdown.earlier_service_charge }}/mo, unverified){% endif %}. Confirm whether this is a landlord cost, already in rent, or a permitted tenant payment. It isn't in the monthly figure. <a href="{{ rental_guidance.fees_url }}" target="_blank" rel="noopener">England fee guidance</a>.</p>
     {% endif %}
     {# One statement per band: the retained advert decides it; an earlier AI reading is only an aside. #}
     {% macro band_claim(label, advert, earlier) -%}
@@ -36,8 +39,20 @@
     {% if old and old.bills_included in ['yes', 'no'] %}
     <p class="cost-line-note">Earlier analysis records bills as {{ 'included' if old.bills_included == 'yes' else 'not included' }} (unverified). Confirm the named bills, coverage and any additional charges with the agent.</p>
     {% endif %}
-    <details class="cost-line-note"><summary>Advert wording and tenancy guidance</summary>
-        {% for item in cost_breakdown.line_items %}{% for quote in item.evidence %}<p>{{ quote }}</p>{% endfor %}{% endfor %}
+    <details class="cost-line-note"><summary>Bill by bill, advert wording and tenancy guidance</summary>
+        <table class="cost-bills">
+            <tbody>
+                {% for item in bill_items %}
+                <tr>
+                    <th scope="row">{{ item.label }}</th>
+                    <td>{% if item.state == 'included' %}Advert says included; confirm limits{% elif item.state == 'excluded' %}Advert says separate{% elif item.state == 'conflicting' %}Conflicting advert claims{% else %}Coverage and amount unknown{% endif %}</td>
+                    <td class="cost-bills-amount">{% if item.low is not none %}{{ item.low | gbp }}{% if item.high != item.low %}&ndash;{{ item.high | gbp }}{% endif %}{% elif item.state == 'included' %}In rent{% else %}&mdash;{% endif %}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        <p>{{ cost_breakdown.assumptions }}</p>
+        {% for item in bill_items %}{% for quote in item.evidence %}<p>{{ quote }}</p>{% endfor %}{% endfor %}
         <p>{{ rental_guidance.scope }} · From {{ rental_guidance.effective_from }} · Checked {{ rental_guidance.checked_on }}.</p>
         <p>{{ rental_guidance.text }} <a href="{{ rental_guidance.bidding_url }}" target="_blank" rel="noopener">Rental bidding rules</a> · <a href="{{ rental_guidance.overview_url }}" target="_blank" rel="noopener">Tenancy overview</a>.</p>
     </details>
