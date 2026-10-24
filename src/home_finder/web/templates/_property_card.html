@@ -54,6 +54,12 @@
                 </div>
             </div>
 
+            {# The one thing against the brief: a broken must-have, a gap, or all clear #}
+            {% if prop.lead %}
+            <p class="card-lead card-lead-{{ prop.lead.kind }}">{{ prop.lead.title }}{% if prop.lead.detail %} <span class="card-lead-detail">{{ prop.lead.detail }}</span>{% endif %}</p>
+            <p class="card-must">must-haves {{ prop.brief_check.must_met }}/{{ prop.brief_check.must_total }}{% if prop.brief_check.must_broken %} &middot; {{ prop.brief_check.must_broken }} broken{% endif %}{% if prop.brief_check.must_unknown %} &middot; {{ prop.brief_check.must_unknown }} unknown{% endif %}</p>
+            {% endif %}
+
             {# AI summary text (2-line clamp) #}
             {% if prop.quality_summary %}
             <p class="card-summary">{{ prop.quality_summary }}</p>

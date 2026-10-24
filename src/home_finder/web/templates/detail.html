@@ -98,6 +98,14 @@
         {% if prop.notification_label %}
         <p class="processing-notice">{{ prop.notification_label }}.</p>
         {% endif %}
+        {% if lead %}
+        {# The one thing: the first must-have this listing breaks, or can't be checked, or none #}
+        <section class="detail-lead detail-lead-{{ lead.kind }}" aria-label="Against your brief">
+            <p class="detail-lead-kicker">{{ lead.kicker }}</p>
+            <p class="detail-lead-title">{{ lead.title }}</p>
+            {% if lead.detail %}<p class="detail-lead-detail">{{ lead.detail }}</p>{% endif %}
+        </section>
+        {% endif %}
         <div class="detail-header-row">
             <h1>{{ prop.title }}</h1>
             <div class="detail-header-meta">
@@ -201,37 +209,43 @@
                 {{ verdict_list("What's unknown", verdict.find_out, "find", "Nothing left open.") }}
             </div>
 
-            {% if fit_score is not none and fit_breakdown %}
+            {% if brief_check %}
+            {# The brief, line by line, then the score with its working shown #}
             <div class="overview-card fit-breakdown-card" id="section-fit">
                 <h4>
-                    Marcel Fit
-                    <span class="fit-breakdown-donut-wrap">
-                        <span class="fit-breakdown-donut {{ fit_color_class(fit_score) }}" style="--score-pct: {{ fit_score }}"></span>
-                        <span class="fit-breakdown-donut-value">{{ fit_score }}</span>
-                    </span>
-                    <span class="fit-breakdown-tier {{ fit_tier_class(fit_score) }}">{{ fit_tier_label(fit_score) }}</span>
+                    Fit with your brief
+                    {% if fit_score is not none %}
+                    <span class="fit-brief-score">{{ fit_score }}</span>
+                    <span class="fit-breakdown-band">&middot; {{ fit_tier_label(fit_score) | lower | capitalize }}</span>
+                    {% endif %}
                 </h4>
-                <div class="fit-breakdown-bars">
-                    {% for dim in fit_breakdown %}
-                    <div class="fit-breakdown-group">
-                        <div class="fit-breakdown-row{% if dim.confidence is defined and dim.confidence < 0.5 %} fit-dim-low-conf{% endif %}">
-                            <span class="fit-breakdown-label">{{ dim.label }}</span>
-                            <div class="fit-breakdown-track"><div class="fit-breakdown-fill {% if dim.score >= 70 %}fit-dim-green{% elif dim.score >= 40 %}fit-dim-accent{% else %}fit-dim-low{% endif %}" style="--bar-pct: {{ dim.score }}%"></div></div>
-                            <span class="fit-breakdown-value">{{ dim.score }}</span>
-                            <span class="fit-breakdown-weight">{{ dim.weight }}%</span>
-                            {% if dim.confidence is defined and dim.confidence < 0.5 %}<span class="fit-dim-conf-hint" title="Limited data for this dimension">?</span>{% endif %}
-                        </div>
-                        {% if dim.factors and dim.factors | length >= 2 %}
-                        <div class="fit-factors">
-                            {% for f in dim.factors %}
-                            <span class="fit-factor fit-factor-{{ f.state }}">{{ "✓" if f.state == "earned" else ("–" if f.state == "missed" else "?") }} {{ f.label }}</span>
-                            {% endfor %}
-                        </div>
-                        {% endif %}
-                    </div>
+                {% set ns = namespace(group=none) %}
+                <ul class="brief-check" aria-label="Your brief">
+                    {% for item in brief_check['items'] %}
+                    {% set group = "Must-haves" if item.must else "Nice-to-haves" %}
+                    {% if group != ns.group %}
+                    {% set ns.group = group %}
+                    <li class="brief-group">{{ group }}</li>
+                    {% endif %}
+                    <li class="brief-item brief-{{ item.state }}">
+                        <span class="brief-label">{{ item.label }}</span>
+                        <span class="brief-found">{{ "✓" if item.state == "met" else ("✗" if item.state == "broken" else "?") }} {{ item.found }}</span>
+                    </li>
                     {% endfor %}
-                </div>
-                <p class="fit-breakdown-legend">Score 0-100 per dimension, weighted by importance to Marcel's WFH + hosting lifestyle. ✓ earned · – missing · ? not detected.</p>
+                </ul>
+                {% if working and fit_score is not none %}
+                <table class="fit-working">
+                    <caption>How the {{ fit_score }} is made</caption>
+                    <thead><tr><th scope="col">Dimension</th><th scope="col">Share</th><th scope="col">Score</th><th scope="col">Points</th></tr></thead>
+                    <tbody>
+                        {% for row in working.rows %}
+                        <tr class="fit-breakdown-row"><td class="fit-breakdown-label">{{ row.label }}</td><td>{{ row.share }}%</td><td class="fit-breakdown-value">{{ row.score }}</td><td>{{ row.points }}</td></tr>
+                        {% endfor %}
+                    </tbody>
+                    <tfoot><tr><td colspan="3">= {{ working.total }}, rounded</td><td>{{ fit_score }}</td></tr></tfoot>
+                </table>
+                <p class="fit-breakdown-legend">{% if working.lowest %}Lowest: {{ working.lowest.label | lower }} {{ working.lowest.score }}. {% endif %}{% if working.adjusted %}Shares differ from the weights where the photos gave less to go on. {% endif %}{{ FIT_TIERS[1]['min'] }} and above counts as a good fit.</p>
+                {% endif %}
             </div>
             {% endif %}
         </div>
@@ -313,6 +327,22 @@
     {% endif %}
 
     {# 3. Costs: the two totals first, then what the advert and research say about price #}
+    {# The agent's words as written, with the analysis attached as numbered notes #}
+    {% if annotated %}
+    <section id="section-description" class="detail-section annotated-section">
+        <h3>The agent's words, with our notes</h3>
+        <div class="annotated">
+            <p class="annotated-text">{% for seg in annotated.segments %}{% if seg.mark %}<span class="mark-{{ seg.mark }}">{{ seg.text }}</span><sup class="note-ref">{{ seg.note }}</sup>{% else %}{{ seg.text | e | replace("\n", "<br>") | safe }}{% endif %}{% endfor %}</p>
+            {% if annotated.notes %}
+            <ol class="annotated-notes" aria-label="Our notes">
+                {% for note in annotated.notes %}<li>{{ note }}</li>{% endfor %}
+            </ol>
+            <p class="provenance-note">Notes generated by AI from the listing photos{% if qa.listing_text_inputs %} and text{% endif %}.</p>
+            {% endif %}
+        </div>
+    </section>
+    {% endif %}
+
     <section id="section-costs" class="detail-section">
         <h3>What it costs</h3>
         {% include "_cost_breakdown.html" %}
@@ -479,8 +509,8 @@
     {% endif %}
     {% endif %}
 
-    {# 6. Description — agent copy, lower priority #}
-    {% if best_description %}
+    {# 6. Description, plain, only when there was no analysis to annotate it with #}
+    {% if best_description and not annotated %}
     <section id="section-description" class="detail-section">
         <h3>Description</h3>
         <div class="description-container">

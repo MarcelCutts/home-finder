@@ -182,6 +182,14 @@ class Settings(BaseSettings):
     max_bedrooms: int = Field(default=2, ge=0)
     destination_postcode: str = Field(default="N1 5AA")
     max_commute_minutes: int = Field(default=30, ge=1, le=120)
+    brief_must_haves: str = Field(
+        default="workspace,hosting",
+        description=(
+            "Comma-separated fit dimensions that are must-haves, so a weak one leads the "
+            "listing page: workspace, hosting, sound, kitchen, vibe, condition. The rest "
+            "are nice-to-haves. Rent, bedrooms and commute are always must-haves."
+        ),
+    )
 
     # Scraper filters
     furnish_types: str = Field(

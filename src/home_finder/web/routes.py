@@ -61,7 +61,9 @@ from home_finder.utils.image_cache import (
 )
 from home_finder.utils.image_hash import hash_from_disk, hashes_match
 from home_finder.utils.negotiation import generate_negotiation_brief
+from home_finder.web.annotate import annotate_listing
 from home_finder.web.app import _compute_static_version
+from home_finder.web.brief import brief_lead, check_brief
 from home_finder.web.deliveries import DELIVERY_STATES, delivery_view
 from home_finder.web.filters import (
     ADDED_OPTIONS,
@@ -71,6 +73,7 @@ from home_finder.web.filters import (
     _parse_optional_int,
 )
 from home_finder.web.verdict import build_verdict
+from home_finder.web.working import fit_working
 
 logger = get_logger(__name__)
 
@@ -270,13 +273,27 @@ DataDirDep = Annotated[str, Depends(get_data_dir)]
 BaseUrlDep = Annotated[str, Depends(get_base_url)]
 
 
-def _enrich_fit_scores(properties: list[Any]) -> None:
-    """Compute fit_score, fit_breakdown, and lifestyle_icons for each property.
+def _brief_limits(settings: Settings) -> dict[str, Any]:
+    """The brief's hard limits and must-have dimensions, as check_brief wants them."""
+    return {
+        "min_bedrooms": settings.min_bedrooms,
+        "max_bedrooms": settings.max_bedrooms,
+        "max_price": settings.max_price,
+        "max_commute_minutes": settings.max_commute_minutes,
+        "must_haves": settings.brief_must_haves,
+    }
+
+
+def _enrich_fit_scores(properties: list[Any], settings: Settings | None = None) -> None:
+    """Compute fit_score, fit_breakdown, lifestyle_icons and the brief lead for each property.
 
     Mutates dicts in place. Reads analysis_json from each property dict.
-    Sets None defaults for properties without analysis data.
+    Sets None defaults for properties without analysis data. The brief lead needs
+    the settings; without them it is left out.
     """
     for prop in properties:
+        prop["lead"] = None
+        prop["brief_check"] = None
         analysis_json = prop.get("analysis_json")
         if not prop.get("is_assessed") or not analysis_json:
             prop["fit_score"] = None
@@ -298,6 +315,10 @@ def _enrich_fit_scores(properties: list[Any]) -> None:
         prop["fit_score"] = fit_score
         prop["fit_breakdown"] = fit_breakdown
         prop["lifestyle_icons"] = compute_lifestyle_icons(analysis, bedrooms, postcode=postcode)
+        if settings is not None:
+            check = check_brief(prop, analysis, fit_breakdown, **_brief_limits(settings))
+            prop["brief_check"] = check
+            prop["lead"] = brief_lead(check, analysis)
 
 
 @router.get("/count")
@@ -413,7 +434,7 @@ async def dashboard(
             properties, total = await storage.web.get_properties_paginated(
                 filters, sort=sort, page=page_val, per_page=per_page
             )
-        _enrich_fit_scores(properties)
+        _enrich_fit_scores(properties, request.app.state.settings)
 
         # Rewrite external CDN thumbnail URLs to locally cached images.
         # The DB image_url is often a different CDN resolution than the
@@ -553,7 +574,7 @@ async def property_card(
     if not prop:
         return HTMLResponse("", status_code=404)
 
-    _enrich_fit_scores([prop])
+    _enrich_fit_scores([prop], request.app.state.settings)
     resolved = _resolve_cached_thumbnail(prop["unique_id"], prop.get("image_url"), data_dir)
     if resolved:
         prop["image_url"] = resolved
@@ -721,6 +742,16 @@ async def property_detail(
 
     verdict = build_verdict(qa, fit_breakdown) if qa is not None else None
 
+    # The brief: what was asked for, measured against this listing; its first gap
+    # opens the page. The agent's words get notes from the same analysis.
+    settings = request.app.state.settings
+    brief_check = check_brief(prop, qa, fit_breakdown, **_brief_limits(settings))
+    lead = brief_lead(brief_check, qa) if qa is not None else None
+    annotated = (
+        annotate_listing(best_description, qa, outcode=outcode) if best_description and qa else None
+    )
+    working = fit_working(fit_breakdown) if fit_breakdown else None
+
     # Rebuild from current retained listing evidence and rent, without model work.
     extraction = qa.listing_extraction if qa else None
     cost_breakdown = build_monthly_budget(
@@ -789,6 +820,10 @@ async def property_detail(
             "rental_guidance": GUIDANCE,
             "verdict": verdict,
             "move_in": move_in,
+            "brief_check": brief_check,
+            "lead": lead,
+            "annotated": annotated,
+            "working": working,
         },
     )
 
@@ -871,7 +906,7 @@ async def update_property_status(
     if form.get("source") == "card":
         prop = await storage.web.get_property_card(unique_id)
         if prop:
-            _enrich_fit_scores([prop])
+            _enrich_fit_scores([prop], request.app.state.settings)
             resolved = _resolve_cached_thumbnail(prop["unique_id"], prop.get("image_url"), data_dir)
             if resolved:
                 prop["image_url"] = resolved
