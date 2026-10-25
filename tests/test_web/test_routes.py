@@ -404,8 +404,11 @@ class TestPropertyDetail:
         ]
         assert fits.select_one(".verdict-more summary").get_text() == "1 more"
         assert verdict.select_one(".verdict-watch .verdict-empty").get_text() == "Nothing flagged."
+        # The service charge is the landlord's cost, so the unstated-charge lowlight is dropped.
         find_out = [li.get_text() for li in verdict.select(".verdict-find li")]
-        assert find_out[0] == "Service charge"
+        assert "Service charge" not in find_out
+        headings = [h3.get_text(strip=True) for h3 in verdict.select(".verdict-list h3")]
+        assert headings == ["What fits", "What doesn't", "What's unknown"]
         assert verdict.select_one("#section-fit") is not None
 
         order = [

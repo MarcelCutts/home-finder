@@ -62,9 +62,10 @@ def test_epc_highlight_is_left_to_the_costs_when_the_listing_states_a_band(make_
     assert build_verdict(unstated, None)["fits"] == highlights
 
 
-def test_find_out_collects_unknowns_once_and_service_charge_leaves_watch_out(
+def test_find_out_collects_unknowns_once_and_service_charge_is_dropped(
     make_quality_analysis,
 ):
+    # A service charge is the landlord's cost, so an unstated one belongs in no list.
     analysis = make_quality_analysis(lowlights=["Service charge unstated", "No dishwasher"])
     breakdown = [
         dimension(("Dishwasher", "unknown"), ("Gas/induction hob", "earned")),
@@ -72,4 +73,4 @@ def test_find_out_collects_unknowns_once_and_service_charge_leaves_watch_out(
     ]
     verdict = build_verdict(analysis, breakdown)
     assert verdict["watch"] == ["No dishwasher"]
-    assert verdict["find_out"] == ["Service charge", "Dishwasher", "Broadband"]
+    assert verdict["find_out"] == ["Dishwasher", "Broadband"]

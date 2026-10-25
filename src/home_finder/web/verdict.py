@@ -1,4 +1,4 @@
-"""The three short lists that lead a listing page: what fits, what to watch, what to find out."""
+"""The three short lists that lead a listing page: what fits, what doesn't, what's unknown."""
 
 from typing import Final, TypedDict
 
@@ -58,7 +58,9 @@ def build_verdict(
     if flags is not None:
         watch.extend(flags.display_items)
 
-    find_out = ["Service charge"] if PropertyLowlight.SERVICE_CHARGE_UNSTATED in lowlights else []
+    # A service charge is the landlord's cost, so an unstated one is nothing for the tenant
+    # to find out; the lowlight stays out of every list.
+    find_out: list[str] = []
     for dimension in fit_breakdown or []:
         find_out.extend(f["label"] for f in dimension["factors"] if f["state"] == "unknown")
 

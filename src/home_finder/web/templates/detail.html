@@ -196,9 +196,9 @@
         <p class="provenance-note">AI reading of {% if coverage and coverage.reviewed_gallery_count == coverage.available_gallery_count %}all {{ coverage.available_gallery_count }} photos{% elif coverage %}{{ coverage.reviewed_gallery_count }} of {{ coverage.available_gallery_count }} photos{% else %}the listing photos{% endif %}{% if qa.listing_text_inputs %} and listing text{% endif %}{% if prop.analysed_at %}, {{ prop.analysed_at | short_date }}{% endif %}. {% if qa.listing_text_inputs %}Confirm anything important with the agent.{% else %}It didn't have the listing text, so check details at the viewing.{% endif %}</p>
         <div class="verdict-body">
             <div class="verdict-lists">
-                {{ verdict_list("Fits your brief", verdict.fits, "fits", "Nothing stood out.") }}
-                {{ verdict_list("Watch out", verdict.watch, "watch", "Nothing flagged.") }}
-                {{ verdict_list("Find out", verdict.find_out, "find", "Nothing left open.") }}
+                {{ verdict_list("What fits", verdict.fits, "fits", "Nothing stood out.") }}
+                {{ verdict_list("What doesn't", verdict.watch, "watch", "Nothing flagged.") }}
+                {{ verdict_list("What's unknown", verdict.find_out, "find", "Nothing left open.") }}
             </div>
 
             {% if fit_score is not none and fit_breakdown %}
