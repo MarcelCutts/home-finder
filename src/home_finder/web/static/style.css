@@ -235,8 +235,9 @@ body {
 h1, h2, h3, h4, h5, h6 {
     font-family: var(--font-heading);
 }
-/* The figures face: the numbers the tool quotes. Elements that are nothing but a figure are
-   listed here; a figure inside a sentence is wrapped in .figure by the template. */
+/* The figures face: the figures the tool sets apart (rents, scores, the working table, counts,
+   dates, map prices). Elements that are nothing but a figure are listed here; one inside a
+   sentence is wrapped in .figure by the template. Digits in running prose keep the tool face. */
 .figure,
 .card-overlay .card-price,
 .card-area,
@@ -269,14 +270,19 @@ h1, h2, h3, h4, h5, h6 {
     font-family: var(--font-listing);
 }
 /* Every focusable thing gets the same ring. Pico gives form fields their own box-shadow
-   ring width on the element, so it is zeroed here too. (The beds and tag inputs are
-   visually hidden behind their labels and show no ring; that predates this look.) */
+   ring width on the element, so it is zeroed here too. The beds and tag inputs are
+   visually hidden behind their labels, so the label draws the ring for them. */
 :focus-visible {
     outline: var(--focus-ring);
     outline-offset: 2px;
 }
 :where(select, textarea, input) {
     --pico-outline-width: 0;
+}
+.beds-toggle input:focus-visible + label,
+.tag-chip:has(input:focus-visible) {
+    outline: var(--focus-ring);
+    outline-offset: 2px;
 }
 
 .site-footer {

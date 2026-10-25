@@ -176,7 +176,9 @@ class UserStatus(StrEnum):
 USER_STATUS_META: Final[dict[str, dict[str, str]]] = {
     # Colours are CSS tokens from style.css: the look keeps red for deal-breakers and
     # green for met must-haves, so a status is told apart by its word, not its colour.
-    "new": {"label": "New", "color": "var(--dim)"},
+    # The status control tints its fill with the same colour it sets its text in, so
+    # the colour has to pass 4.5:1 over that tint: ink and muted do, dim does not.
+    "new": {"label": "New", "color": "var(--muted)"},
     "interested": {"label": "Interested", "color": "var(--ink)"},
     "enquired": {"label": "Enquired", "color": "var(--ink)"},
     "viewing_booked": {"label": "Viewing", "color": "var(--ink)"},
@@ -184,7 +186,7 @@ USER_STATUS_META: Final[dict[str, dict[str, str]]] = {
     "applied": {"label": "Applied", "color": "var(--ink)"},
     "offered": {"label": "Offered", "color": "var(--ink)"},
     "rejected": {"label": "Rejected", "color": "var(--muted)"},
-    "archived": {"label": "Archived", "color": "var(--dim)"},
+    "archived": {"label": "Archived", "color": "var(--muted)"},
 }
 
 

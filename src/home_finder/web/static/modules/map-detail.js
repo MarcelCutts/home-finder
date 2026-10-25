@@ -30,8 +30,8 @@ if (el && typeof L !== "undefined") {
       map.scrollWheelZoom.disable();
     });
 
-    // Subtle area radius, in the page's ink (Leaflet writes the colour as an SVG
-    // attribute, which cannot read a CSS variable, so resolve it here).
+    // Subtle area radius, in the page's ink. Resolved here rather than passed as
+    // var(--ink): the SVG renderer would accept that, a canvas renderer would not.
     const ink = getComputedStyle(document.documentElement).getPropertyValue("--ink").trim();
     L.circle([lat, lon], {
       radius: 500,
