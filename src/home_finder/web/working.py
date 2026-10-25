@@ -15,7 +15,8 @@ class WorkingRow(TypedDict):
 
 class FitWorking(TypedDict):
     rows: list[WorkingRow]
-    total: float  # the unrounded score; the points add up to it before display rounding
+    total: float  # the unrounded score shown to one decimal; the points add up to it
+    score: int  # the unrounded score rounded the way the scorer rounds it
     adjusted: bool  # True when confidence changed any share from its weight
     lowest: WorkingRow | None
 
@@ -59,4 +60,6 @@ def fit_working(breakdown: list[FitDimension]) -> FitWorking:
     total = total / denominator if denominator else 0.0
     scored = [row for row in rows if row["share"] > 0]
     lowest = min(scored, key=lambda row: row["score"]) if scored else None
-    return FitWorking(rows=rows, total=round(total, 1), adjusted=adjusted, lowest=lowest)
+    return FitWorking(
+        rows=rows, total=round(total, 1), score=round(total), adjusted=adjusted, lowest=lowest
+    )

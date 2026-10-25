@@ -49,4 +49,5 @@ def test_total_rounds_to_the_real_score(make_quality_analysis, bedrooms, living_
     score, breakdown = compute_fit_score_and_breakdown(analysis, bedrooms, postcode="E8 3RH")
     assert score is not None and breakdown is not None
     working = fit_working(breakdown)
-    assert round(working["total"]) == score
+    # Same unrounded value, same rounding: the working's score is the scorer's score.
+    assert working["score"] == score

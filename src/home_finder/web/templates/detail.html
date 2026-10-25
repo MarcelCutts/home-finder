@@ -244,7 +244,7 @@
                         <tr class="fit-working-row"><td class="fit-working-label">{{ row.label }}</td><td>{{ row.share }}%</td><td>{{ row.score }}</td><td>{{ row.points }}</td></tr>
                         {% endfor %}
                     </tbody>
-                    <tfoot><tr><td colspan="3">= {{ working.total }}, rounded</td><td>{{ fit_score }}</td></tr></tfoot>
+                    <tfoot><tr><td colspan="3">= {{ working.total }}, rounded</td><td>{{ working.score }}</td></tr></tfoot>
                 </table>
                 </div>
                 <p class="fit-breakdown-legend">{% if working.lowest %}Lowest: {{ working.lowest.label | lower }} {{ working.lowest.score }}. {% endif %}Share of total is the weight after confidence: a dimension the photos barely showed counts for less. Points are shown to one decimal, so they can differ from the total by a tenth. {{ FIT_TIERS[1]['min'] }} and above counts as a good fit.</p>
