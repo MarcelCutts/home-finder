@@ -253,7 +253,7 @@ def _pipeline_mocks(
         scrape_return: Static return value for scrape_all_platforms.
         scrape_side_effect: Side effect for scrape_all_platforms (overrides scrape_return).
         enrich_side_effect: Side effect for enrich_merged_properties.
-        quality_side_effect: Side effect for quality filter analyze.
+        quality_side_effect: Side effect for the property analyzer.
         notify_return: Whether notification succeeds.
         shared_storage: If provided, reuse this storage instance across pipeline calls.
     """
@@ -417,7 +417,7 @@ def settings_quality_off() -> Settings:
 
 
 # ---------------------------------------------------------------------------
-# Class 1: TestCoreReanalysisFlow
+# TestCoreReanalysisFlow
 # ---------------------------------------------------------------------------
 
 
@@ -470,13 +470,13 @@ class TestCoreReanalysisFlow:
         assert row["notification_status"] == "sent"
 
         # -- Drain reanalysis queue --
-        with patch("home_finder.pipeline.assessment.PropertyQualityAnalyzer") as mock_qf_cls:
-            mock_qf = MagicMock()
-            mock_qf.analyze_single_merged = AsyncMock(side_effect=lambda m, **kw: (m, quality_v2))
-            mock_qf.close = AsyncMock()
-            mock_qf.__aenter__ = AsyncMock(return_value=mock_qf)
-            mock_qf.__aexit__ = AsyncMock(return_value=False)
-            mock_qf_cls.return_value = mock_qf
+        with patch("home_finder.pipeline.assessment.PropertyQualityAnalyzer") as analyzer_factory:
+            analyzer = MagicMock()
+            analyzer.analyze_single_merged = AsyncMock(side_effect=lambda m, **kw: (m, quality_v2))
+            analyzer.close = AsyncMock()
+            analyzer.__aenter__ = AsyncMock(return_value=analyzer)
+            analyzer.__aexit__ = AsyncMock(return_value=False)
+            analyzer_factory.return_value = analyzer
 
             count = (await process_reanalysis_queue(settings_quality_on, storage)).completed
 
@@ -581,7 +581,7 @@ class TestCoreReanalysisFlow:
 
 
 # ---------------------------------------------------------------------------
-# Class 2: TestSourceVariety
+# TestSourceVariety
 # ---------------------------------------------------------------------------
 
 
@@ -695,7 +695,7 @@ class TestSourceVariety:
 
 
 # ---------------------------------------------------------------------------
-# Class 3: TestDBStateEdgeCases
+# TestDBStateEdgeCases
 # ---------------------------------------------------------------------------
 
 
@@ -800,7 +800,7 @@ class TestDBStateEdgeCases:
 
 
 # ---------------------------------------------------------------------------
-# Class 4: TestImageCacheConsolidation
+# TestImageCacheConsolidation
 # ---------------------------------------------------------------------------
 
 
@@ -867,7 +867,7 @@ class TestImageCacheConsolidation:
 
 
 # ---------------------------------------------------------------------------
-# Class 5: TestDrainReanalysisQueue
+# TestDrainReanalysisQueue
 # ---------------------------------------------------------------------------
 
 
@@ -879,7 +879,7 @@ class TestDrainReanalysisQueue:
         storage: PropertyStorage,
         settings_quality_on: Settings,
     ):
-        """No flagged properties → returns 0, quality filter never constructed."""
+        """An empty queue completes no reassessments and never constructs the analyzer."""
         with patch("home_finder.pipeline.assessment.PropertyQualityAnalyzer") as mock_cls:
             count = (await process_reanalysis_queue(settings_quality_on, storage)).completed
 
@@ -893,7 +893,7 @@ class TestDrainReanalysisQueue:
         quality_v1: PropertyQualityAnalysis,
         settings_quality_off: Settings,
     ):
-        """Returns 0 when quality filter is disabled. Flag NOT cleared."""
+        """Disabled analysis leaves reassessment requests queued."""
         anchor = make_property(source=PropertySource.OPENRENT, postcode="E8 3RH", price_pcm=1800)
         await _populate_run1(storage, anchor, quality_v1)
         await storage.processing.request_reanalysis([anchor.unique_id])
@@ -925,12 +925,12 @@ class TestDrainReanalysisQueue:
             anchors.append(prop)
 
         with patch("home_finder.pipeline.assessment.PropertyQualityAnalyzer") as mock_cls:
-            mock_qf = MagicMock()
-            mock_qf.analyze_single_merged = AsyncMock(side_effect=lambda m, **kw: (m, quality_v2))
-            mock_qf.close = AsyncMock()
-            mock_qf.__aenter__ = AsyncMock(return_value=mock_qf)
-            mock_qf.__aexit__ = AsyncMock(return_value=False)
-            mock_cls.return_value = mock_qf
+            analyzer = MagicMock()
+            analyzer.analyze_single_merged = AsyncMock(side_effect=lambda m, **kw: (m, quality_v2))
+            analyzer.close = AsyncMock()
+            analyzer.__aenter__ = AsyncMock(return_value=analyzer)
+            analyzer.__aexit__ = AsyncMock(return_value=False)
+            mock_cls.return_value = analyzer
 
             count = (await process_reanalysis_queue(settings_quality_on, storage)).completed
 
@@ -989,12 +989,12 @@ class TestDrainReanalysisQueue:
             return (merged, quality_v2)
 
         with patch("home_finder.pipeline.assessment.PropertyQualityAnalyzer") as mock_cls:
-            mock_qf = MagicMock()
-            mock_qf.analyze_single_merged = AsyncMock(side_effect=_flaky_analyze)
-            mock_qf.close = AsyncMock()
-            mock_qf.__aenter__ = AsyncMock(return_value=mock_qf)
-            mock_qf.__aexit__ = AsyncMock(return_value=False)
-            mock_cls.return_value = mock_qf
+            analyzer = MagicMock()
+            analyzer.analyze_single_merged = AsyncMock(side_effect=_flaky_analyze)
+            analyzer.close = AsyncMock()
+            analyzer.__aenter__ = AsyncMock(return_value=analyzer)
+            analyzer.__aexit__ = AsyncMock(return_value=False)
+            mock_cls.return_value = analyzer
 
             count = (await process_reanalysis_queue(settings_quality_on, storage)).completed
 
@@ -1003,7 +1003,7 @@ class TestDrainReanalysisQueue:
 
 
 # ---------------------------------------------------------------------------
-# Class 6: TestNoMergeScenarios
+# TestNoMergeScenarios
 # ---------------------------------------------------------------------------
 
 
@@ -1117,7 +1117,7 @@ class TestNoMergeScenarios:
 
 
 # ---------------------------------------------------------------------------
-# Class 7: TestRescrapeSubsetRegression
+# TestRescrapeSubsetRegression
 # ---------------------------------------------------------------------------
 
 
@@ -1233,7 +1233,7 @@ class TestRescrapeSubsetRegression:
 
 
 # ---------------------------------------------------------------------------
-# Class 8: TestDryRunPath
+# TestDryRunPath
 # ---------------------------------------------------------------------------
 
 
@@ -1401,7 +1401,7 @@ def _make_real_image_cache_distinct(
 
 
 # ---------------------------------------------------------------------------
-# Class 9: TestSameBuildingDisambiguation
+# TestSameBuildingDisambiguation
 # ---------------------------------------------------------------------------
 
 
@@ -1410,7 +1410,7 @@ class TestSameBuildingDisambiguation:
 
     When image hashing is active, the gallery rejection guard prevents
     merging when both properties have gallery hashes but zero images match.
-    F1 hardened the cross-run path to always enable image hashing.
+    Cross-run consolidation always enables this check when cached galleries are available.
     """
 
     async def test_same_building_different_flats_not_merged(
@@ -1450,7 +1450,7 @@ class TestSameBuildingDisambiguation:
         _make_real_image_cache_matching(tmp_path, anchor.unique_id, count=3)
         _make_real_image_cache_distinct(tmp_path, new.unique_id, count=3)
 
-        # Cross-run dedup with image hashing enabled (F1 fix)
+        # Cross-run matching always checks available gallery hashes.
         deduplicator = Deduplicator(
             enable_cross_platform=True,
             enable_image_hashing=True,
@@ -1527,10 +1527,10 @@ class TestSameBuildingDisambiguation:
         quality_v1: PropertyQualityAnalysis,
         tmp_path: Any,
     ):
-        """F1 integration: _consolidate_and_admit uses image hashing even when
+        """Cross-run admission uses image hashing even when
         the global enable_image_hash_matching setting is False.
 
-        This is the core F1 scenario — if someone disables image hashing for
+        If someone disables image hashing for
         performance, same-building disambiguation must still work in cross-run
         dedup because _consolidate_and_admit unconditionally enables it.
         """
@@ -1577,7 +1577,7 @@ class TestSameBuildingDisambiguation:
         # rather than constructing a Deduplicator manually.
         post_result = await _consolidate_and_admit([_wrap_merged(new)], storage, settings, set())
 
-        # Should NOT merge — F1 ensures cross-run dedup always hashes
+        # Distinct cached galleries prevent merging these flats.
         assert post_result is not None
         analysis_candidates = post_result.candidates
         anchors_updated = post_result.anchors_updated
@@ -1642,12 +1642,12 @@ class TestSameBuildingDisambiguation:
 
 
 # ---------------------------------------------------------------------------
-# Class 10: TestCrossPlatformPriceDropDetection
+# TestCrossPlatformPriceDropDetection
 # ---------------------------------------------------------------------------
 
 
 class TestCrossPlatformPriceDropDetection:
-    """F2: Price drops detected when a new platform lists at a lower price."""
+    """A newly matched platform can reveal a lower price for the stored home."""
 
     async def test_new_source_lower_price_records_drop(
         self,
@@ -1833,11 +1833,11 @@ class TestCrossPlatformPriceDropDetection:
         quality_v1: PropertyQualityAnalysis,
     ):
         """Rescraping a known source at the same price should NOT create a
-        price_history entry via the F2 path.
+        price_history entry during consolidation.
 
-        truly_new_sources is empty for known sources, so the F2 price
-        detection block is never entered. Step 3b (_detect_price_changes)
-        handles same-source price changes separately.
+        truly_new_sources is empty for known sources, so consolidation does not
+        compare platform prices again. Observation-time price detection
+        handles changes from an already known source.
         """
         anchor, new = _make_matching_pair(
             make_property,

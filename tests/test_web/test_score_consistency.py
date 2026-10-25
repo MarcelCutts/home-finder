@@ -5,10 +5,7 @@ import json
 
 import pytest
 from bs4 import BeautifulSoup
-from fastapi import FastAPI
-from fastapi.testclient import TestClient
 
-from home_finder.config import Settings
 from home_finder.db import PropertyStorage
 from home_finder.filters.fit_score import (
     FIT_SCORE_VERSION,
@@ -29,16 +26,8 @@ from home_finder.notifiers.telegram import (
     format_property_message,
 )
 from home_finder.web.filters import PropertyFilter
-from home_finder.web.routes import router
-from tests.test_filters.test_fit_score import _full_analysis
-
-
-def web_client(storage):
-    app = FastAPI()
-    app.state.storage = storage
-    app.state.settings = Settings(_env_file=None, database_path=storage.db_path)
-    app.include_router(router)
-    return TestClient(app)
+from tests.support.fit_score import make_fit_analysis
+from tests.support.web import web_client
 
 
 @pytest.mark.parametrize("postcode", ["N15 3RH", " n16 3rh ", "E8 3RH", None])
@@ -47,7 +36,7 @@ async def test_saved_score_matches_card_detail_map_messages_and_plan(
     make_merged_property, make_quality_analysis, postcode, assessment
 ):
     merged = make_merged_property(bedrooms=2, postcode=postcode)
-    analysis = make_quality_analysis(**_full_analysis())
+    analysis = make_quality_analysis(**make_fit_analysis())
     if assessment == "unrated":
         analysis = analysis.model_copy(update={"overall_rating": None})
     elif assessment == "failed":
@@ -104,7 +93,7 @@ async def test_saved_score_matches_card_detail_map_messages_and_plan(
 
 @pytest.mark.parametrize("rating", [None, True, False, 0, 6, "4", 4.5])
 def test_unrated_and_invalid_ratings_cannot_acquire_default_recommendations(rating):
-    analysis = _full_analysis(overall_rating=rating)
+    analysis = make_fit_analysis(overall_rating=rating)
     assert normalized_fit_inputs(analysis, postcode="N15 3RH") is None
     assert compute_fit_score_and_breakdown(analysis, 2, postcode="N15 3RH") == (None, None)
     assert compute_fit_breakdown(analysis, 2) is None
@@ -116,7 +105,7 @@ def test_unrated_and_invalid_ratings_cannot_acquire_default_recommendations(rati
     [[], ["No obvious noise concerns"], ["Busy road visible"], ["Insulation cannot be assessed"]],
 )
 def test_prose_or_its_absence_does_not_change_score_or_claim_acoustic_evidence(notes):
-    baseline = _full_analysis(
+    baseline = make_fit_analysis(
         space={"is_spacious_enough": False},
         flooring_noise={"hosting_noise_risk": "unknown"},
     )
@@ -134,7 +123,7 @@ def test_prose_or_its_absence_does_not_change_score_or_claim_acoustic_evidence(n
 
 
 def test_context_is_derived_from_the_property_without_mutating_evidence():
-    analysis = _full_analysis(_area_hosting_tolerance="high")
+    analysis = make_fit_analysis(_area_hosting_tolerance="high")
     before = copy.deepcopy(analysis)
     assert normalized_fit_inputs(analysis)["_area_hosting_tolerance"] is None
     assert normalized_fit_inputs(analysis, postcode=" n16 3rh ")["_area_hosting_tolerance"] == "low"
@@ -142,7 +131,7 @@ def test_context_is_derived_from_the_property_without_mutating_evidence():
 
 
 def test_historical_literal_coercions_are_shared_without_mutating_original_json():
-    raw = _full_analysis(flooring_noise={"hosting_noise_risk": "unsure"})
+    raw = make_fit_analysis(flooring_noise={"hosting_noise_risk": "unsure"})
     before = copy.deepcopy(raw)
     decoded = PropertyQualityAnalysis.model_validate(copy.deepcopy(raw))
     assert decoded.flooring_noise.hosting_noise_risk == "unknown"

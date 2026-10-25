@@ -193,8 +193,7 @@ class TestPropertyTimeoutError:
         err = _PropertyTimeoutError("prop-123")
         assert err.property_id == "prop-123"
 
-    def test_is_not_base_exception(self) -> None:
-        """Timeout error extends Exception, not BaseException."""
+    def test_timeout_is_an_ordinary_exception(self) -> None:
+        """A per-property timeout follows ordinary error handling, not process interruption."""
         err = _PropertyTimeoutError("prop-123")
         assert isinstance(err, Exception)
-        assert not isinstance(err, KeyboardInterrupt)

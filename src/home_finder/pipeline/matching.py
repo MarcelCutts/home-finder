@@ -44,9 +44,8 @@ async def consolidate_candidates(
     Returns:
         ConsolidationResult with unmatched properties and update count.
     """
-    # Ensure source_listings exist for new properties (may already exist
-    # from Step 1b; upsert is idempotent).  This is needed so that
-    # update_merged_sources can rebuild from source_listings.
+    # Consolidation rebuilds projections from source rows. Retain these
+    # inputs even when collection has not already persisted them.
     await storage.upsert_source_listings([mp.canonical for mp in analysis_candidates])
 
     db_anchors = await storage.get_recent_properties_for_dedup(days=30)
@@ -154,14 +153,14 @@ async def consolidate_candidates(
                 new_sources_added=new_sources_added,
             )
 
-            # Only copy images + reanalyze when unmatched sources added
+            # Refresh cached media and compare prices when another platform joins.
             truly_new_sources = set(merged.sources) - set(original_anchor.sources)
             if truly_new_sources:
                 # Detect cross-platform price drops: if a new source lists at
                 # a lower price than the anchor's DB price, record the change.
-                # _detect_price_changes (Step 3b) uses single-source unique_ids
-                # that don't match DB anchors, so this is the only path for
-                # cross-platform price detection.
+                # Observation-time price checks use source listing IDs, so a
+                # newly matched platform needs this comparison against
+                # the stored anchor.
                 new_source_prices: list[int] = []
                 for url in merged.source_urls.values():
                     url_str = str(url)

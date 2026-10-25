@@ -1,7 +1,6 @@
 """Spending admission must survive races, ambiguous outcomes and process exit."""
 
 import asyncio
-import hashlib
 import json
 import subprocess
 import sys
@@ -12,68 +11,27 @@ from decimal import Decimal
 import pytest
 from pydantic import ValidationError
 
-from home_finder.analysis.analyzer import PropertyQualityAnalyzer
 from home_finder.db import PropertyStorage
 from home_finder.db.spend import AttemptTransitionError, SpendDeferred, SpendRepository
 from home_finder.models.spend import (
     SONNET_46_FIVE_MINUTE_RATES,
     SONNET_STANDARD_RATES,
-    AttemptSpec,
     BillableUsage,
     ConfirmedCost,
     ProviderRejection,
     RateCard,
-    SpendPolicy,
     UsageSettlement,
     nanousd,
     usd_text,
 )
 from home_finder.pipeline.spend_report import read_report
+from tests.support.spend import policy, settlement, spec
 
 
 @pytest.fixture
 async def in_memory_storage():
     async with PropertyStorage(":memory:") as storage:
         yield storage
-
-
-def spec(key="fixture", phase="visual"):
-    digest = hashlib.sha256(key.encode()).hexdigest()
-    return AttemptSpec(
-        operation_key=digest,
-        request_sha256=digest,
-        property_id="fixture:1",
-        phase=phase,
-        provenance=PropertyQualityAnalyzer("fixture")._analysis_provenance(),
-    )
-
-
-def policy(**overrides):
-    return SpendPolicy(
-        **{
-            "per_call_usd": "7",
-            "daily_usd": "20",
-            "monthly_usd": "100",
-            "max_in_flight": 5,
-            **overrides,
-        }
-    )
-
-
-def settlement(**overrides):
-    return UsageSettlement(
-        usage=BillableUsage(
-            input_tokens=100,
-            output_tokens=200,
-            cache_write_5m_tokens=10,
-            cache_write_1h_tokens=20,
-            cache_read_tokens=300,
-        ),
-        result="refusal",
-        request_id="fixture-request",
-        stop_reason="refusal",
-        **overrides,
-    )
 
 
 def test_rates_use_nonoverlapping_exact_units_and_conservative_bound():

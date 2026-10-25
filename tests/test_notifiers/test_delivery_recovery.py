@@ -3,8 +3,6 @@
 import asyncio
 import json
 from datetime import UTC, datetime, timedelta
-from types import SimpleNamespace
-from unittest.mock import AsyncMock
 
 import aiosqlite
 import pytest
@@ -18,6 +16,7 @@ from home_finder.notifiers.delivery import deliver, discovery_plan
 from home_finder.notifiers.telegram import TelegramNotifier
 from home_finder.pipeline.delivery_admin import administer, read_report
 from home_finder.pipeline.run_lock import runner_lock
+from tests.support.delivery import notifier, receipt, status
 
 METHOD = SendMessage(chat_id=123, text="fixture")
 
@@ -39,26 +38,6 @@ def delivery_analysis(sample_quality_analysis):
     )
 
 
-def receipt(i):
-    return SimpleNamespace(message_id=i, chat=SimpleNamespace(id=123))
-
-
-def notifier(storage, *, data_dir="", chat_id=123):
-    bot = AsyncMock()
-    bot.send_photo.return_value = receipt(11)
-    bot.send_media_group.return_value = [receipt(i) for i in [11, 12, 13]]
-    bot.send_message.return_value = receipt(14)
-    bot.send_venue.return_value = receipt(15)
-    sender = TelegramNotifier(
-        bot_token="123456:fixture",
-        chat_id=chat_id,
-        data_dir=data_dir,
-        delivery_repository=storage.deliveries,
-    )
-    sender._bot = bot
-    return sender, bot
-
-
 async def seed(storage, merged, analysis):
     await storage.processing.save_pre_analysis_properties([merged], {})
     await storage.save_property_images(merged.unique_id, list(merged.images))
@@ -67,14 +46,6 @@ async def seed(storage, merged, analysis):
         merged.unique_id, analysis, notification_policy=NotificationPolicy(min_fit_score=0)
     )
     return f"discovery:{merged.unique_id}"
-
-
-async def status(storage, uid):
-    async with storage._read_connection() as conn:
-        cur = await conn.execute(
-            "SELECT notification_status FROM properties WHERE unique_id=?", (uid,)
-        )
-        return (await cur.fetchone())[0]
 
 
 async def test_photo_receipt_survives_venue_rate_limit_and_restart(
@@ -730,8 +701,8 @@ async def test_schema_upgrade_and_backup_preserve_spending_holds_and_checkpoint(
     from home_finder.db.backup import create_backup, restore_backup, verify_backup
     from home_finder.db.migrations import MIGRATIONS
     from home_finder.models.spend import VisualCheckpointWrite
-    from tests.test_analysis.test_quality_respx import PHASE1_VISUAL_RESPONSE
-    from tests.test_db.test_spend import policy, settlement, spec
+    from tests.support.analysis_responses import PHASE1_VISUAL_RESPONSE
+    from tests.support.spend import policy, settlement, spec
 
     path = tmp_path / "schema11.db"
     with patch("home_finder.db.migrations.MIGRATIONS", MIGRATIONS[:11]):

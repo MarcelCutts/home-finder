@@ -35,7 +35,7 @@ class TestScraperMetrics:
         assert m.is_healthy is True
         assert m.error_message is None
 
-    def test_asdict_round_trip(self) -> None:
+    def test_serializes_scraper_metrics(self) -> None:
         m = ScraperMetrics(
             scraper_name="openrent",
             started_at="2026-02-23T10:00:00+00:00",

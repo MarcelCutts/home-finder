@@ -10,13 +10,10 @@ from home_finder.analysis.analyzer import APIUnavailableError
 from home_finder.analysis.prompts import build_evaluation_prompt, build_user_prompt
 from home_finder.db import PropertyStorage
 from home_finder.models import PropertyImage, PropertySource
-from tests.test_analysis.test_analyzer import _populate_image_cache
-from tests.test_analysis.test_quality_respx import (
-    PHASE1_VISUAL_RESPONSE,
-    PHASE2_EVALUATION_RESPONSE,
-)
-from tests.test_analysis.test_sonnet55 import configuration
-from tests.test_analysis.test_visual_checkpoints import checkpoint_rows, quality, unavailable
+from tests.support.analysis_config import configuration
+from tests.support.analysis_responses import PHASE1_VISUAL_RESPONSE, PHASE2_EVALUATION_RESPONSE
+from tests.support.images import populate_image_cache
+from tests.support.visual_checkpoints import checkpoint_rows, quality, unavailable
 
 ADDRESS = "12 Example Crescent, London"
 POSTCODE = "E8 1AA"
@@ -39,7 +36,7 @@ def location_property(make_merged_property, tmp_path):
             ),
         ),
     )
-    _populate_image_cache(str(tmp_path), merged)
+    populate_image_cache(str(tmp_path), merged)
     return merged, str(tmp_path)
 
 

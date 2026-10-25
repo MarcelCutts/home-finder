@@ -11,16 +11,12 @@ from home_finder.analysis.analyzer import APIUnavailableError, assess_value
 from home_finder.analysis.listing_text import supported_bills_included
 from home_finder.db import PropertyStorage
 from home_finder.models import PropertyQualityAnalysis
-from tests.test_analysis.test_quality_respx import (
+from tests.support.analysis_responses import (
     PHASE1_VISUAL_RESPONSE,
     PHASE2_EVALUATION_RESPONSE,
+    evaluation_visual,
 )
-from tests.test_analysis.test_visual_checkpoints import (
-    CONTENT,
-    checkpoint_rows,
-    quality,
-    unavailable,
-)
+from tests.support.visual_checkpoints import CONTENT, checkpoint_rows, quality, unavailable
 
 
 def floorplan_response(*, reception_basis="rectangular_dimensions", reception_area=43.8):
@@ -54,16 +50,6 @@ def floorplan_response(*, reception_basis="rectangular_dimensions", reception_ar
     visual["light_space"]["notes"] = "Reception 43.8 sqm, superb for hosting."
     visual["bedroom"]["notes"] = "The 43.8 sqm reception has a desk corner."
     return body
-
-
-def evaluation_visual(request):
-    body = json.loads(request.content)
-    if "tools" in body:
-        return None
-    prompt = body["messages"][0]["content"]
-    if isinstance(prompt, list):
-        prompt = "\n".join(block.get("text", "") for block in prompt)
-    return json.loads(prompt.split("<visual_analysis>\n", 1)[1].split("\n</visual_analysis>", 1)[0])
 
 
 async def test_contradictory_areas_are_withheld_before_evaluation_and_after_restart(

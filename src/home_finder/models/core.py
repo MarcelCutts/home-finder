@@ -146,7 +146,8 @@ class NotificationStatus(StrEnum):
 
     Pending enrichment/analysis describe processing; dashboard_only/dropped
     describe selection. Actual delivery progress and receipts live separately
-    in notification_deliveries. Do not interpret FAILED as a transport outcome.
+    in notification_deliveries. FAILED can reflect blocked or uncertain
+    delivery; consult delivery state and receipts for the actual outcome.
     """
 
     PENDING = "pending"

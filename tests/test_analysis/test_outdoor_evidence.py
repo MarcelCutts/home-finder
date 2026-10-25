@@ -13,9 +13,9 @@ from home_finder.filters.fit_score import _score_hosting, compute_lifestyle_icon
 from home_finder.models import OutdoorSpaceAnalysis
 from home_finder.models.quality import OUTDOOR_SPACE_FLAGS, outdoor_availability
 from home_finder.notifiers.telegram import _format_outdoor_info, _format_quality_block
-from tests.test_analysis.test_quality_respx import PHASE1_VISUAL_RESPONSE
-from tests.test_analysis.test_sonnet55 import configuration, response
-from tests.test_analysis.test_visual_checkpoints import quality
+from tests.support.analysis_config import configuration
+from tests.support.analysis_responses import PHASE1_VISUAL_RESPONSE, response
+from tests.support.visual_checkpoints import quality
 
 NO_TYPES = dict.fromkeys(OUTDOOR_SPACE_FLAGS, False)
 

@@ -493,7 +493,7 @@ def set_crawlee_storage_dir(tmp_path: Path) -> Generator[None, None, None]:
 
 @pytest.fixture
 def cached_analysis_property(make_merged_property, tmp_path):
-    from tests.test_analysis.test_analyzer import _populate_image_cache
+    from tests.support.images import populate_image_cache
 
     merged = make_merged_property()
     merged = merged.model_copy(
@@ -507,5 +507,5 @@ def cached_analysis_property(make_merged_property, tmp_path):
             )
         }
     )
-    _populate_image_cache(str(tmp_path), merged)
+    populate_image_cache(str(tmp_path), merged)
     return merged, str(tmp_path)

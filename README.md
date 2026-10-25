@@ -243,6 +243,8 @@ Create a `.env` file with these settings (all use `HOME_FINDER_` prefix):
 
 ## Running Tests
 
+See the [test reading guide](tests/README.md) for suite boundaries, fixtures, and naming conventions.
+
 ```bash
 uv run pytest                         # Run all tests (slow tests excluded by default)
 uv run pytest tests/test_models.py    # Run specific test file

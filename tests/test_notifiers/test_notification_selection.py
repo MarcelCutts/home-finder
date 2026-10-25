@@ -21,8 +21,8 @@ from home_finder.models.delivery import DeliveryPart, DeliveryPlan
 from home_finder.models.notifications import NotificationDecision, NotificationPolicy
 from home_finder.notifiers.delivery import deliver
 from home_finder.pipeline.notification_report import read_report
-from tests.test_notifiers.test_delivery_recovery import notifier, receipt, status
-from tests.test_web.test_score_consistency import web_client
+from tests.support.delivery import notifier, receipt, status
+from tests.support.web import web_client
 
 
 @pytest.fixture

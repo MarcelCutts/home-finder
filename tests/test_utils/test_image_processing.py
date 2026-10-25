@@ -12,27 +12,7 @@ from home_finder.utils.image_processing import (
     is_valid_media_type,
     resize_image_bytes,
 )
-
-
-def transparent_plan(mode: str, size: tuple[int, int] = (100, 100)) -> bytes:
-    """Reproduce cached plans: black ink with black hidden behind transparent pixels."""
-    buf = BytesIO()
-    if mode == "P":
-        img = Image.new("P", size, 0)
-        img.putpalette([0, 0, 0] * 256)
-        img.paste(1, (0, 0, size[0] // 2, size[1]))
-        img.save(buf, format="PNG", transparency=0)
-    elif mode == "RGB":
-        img = Image.new("RGB", size, "white")
-        img.paste((0, 0, 0), (0, 0, size[0] // 2, size[1]))
-        img.save(buf, format="PNG", transparency=(255, 255, 255))
-    else:
-        clear = (0, 0) if mode == "LA" else (0, 0, 0, 0)
-        ink = (0, 255) if mode == "LA" else (0, 0, 0, 255)
-        img = Image.new(mode, size, clear)
-        img.paste(ink, (0, 0, size[0] // 2, size[1]))
-        img.save(buf, format="PNG")
-    return buf.getvalue()
+from tests.support.images import transparent_plan
 
 
 class TestTransparentFloorplans:

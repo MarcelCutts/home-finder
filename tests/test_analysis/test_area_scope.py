@@ -12,14 +12,8 @@ from home_finder.analysis.contracts import AnalysisOutputError, validate_output
 from home_finder.analysis.space_evidence import reconcile_floorplan_areas
 from home_finder.config import new_runtime_analysis_config
 from home_finder.db import PropertyStorage
-from tests.test_analysis.test_evidence_grounding import evaluation_visual
-from tests.test_analysis.test_sonnet55 import response
-from tests.test_analysis.test_visual_checkpoints import (
-    CONTENT,
-    checkpoint_rows,
-    quality,
-    unavailable,
-)
+from tests.support.analysis_responses import evaluation_visual, response
+from tests.support.visual_checkpoints import CONTENT, checkpoint_rows, quality, unavailable
 
 
 def scoped_floorplan_response():

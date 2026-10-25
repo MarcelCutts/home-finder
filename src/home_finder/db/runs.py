@@ -46,19 +46,19 @@ class RunRepository:
             )
         return cursor.lastrowid  # type: ignore[return-value]
 
-    async def update_pipeline_run(self, run_id: int, **counts: int | float) -> None:
-        """Update count columns on a pipeline run.
+    async def update_pipeline_run(self, run_id: int, **metrics: int | float) -> None:
+        """Update metrics on a pipeline run.
 
         Args:
             run_id: The pipeline run ID.
-            **counts: Column name/value pairs to update (e.g. scraped_count=42,
+            **metrics: Column name/value pairs to update (e.g. scraped_count=42,
                 scraping_seconds=12.3).
         """
-        if not counts:
+        if not metrics:
             return
         async with self._transaction() as conn:
-            set_clauses = ", ".join(f"{k} = ?" for k in counts)
-            values = list(counts.values())
+            set_clauses = ", ".join(f"{k} = ?" for k in metrics)
+            values = list(metrics.values())
             values.append(run_id)
             await conn.execute(
                 f"UPDATE pipeline_runs SET {set_clauses} WHERE id = ?",
@@ -72,7 +72,7 @@ class RunRepository:
         *,
         error_message: str | None = None,
     ) -> None:
-        """Mark a pipeline run as completed or failed.
+        """Finalize a pipeline run with its terminal status.
 
         Args:
             run_id: The pipeline run ID.

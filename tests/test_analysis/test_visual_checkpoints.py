@@ -17,52 +17,20 @@ from home_finder.analysis.spend import visual_input_key
 from home_finder.config import Settings
 from home_finder.db import PropertyStorage
 from home_finder.models import PropertyImage
-from home_finder.models.analysis import AnalysisConfig
-from home_finder.models.spend import ConfirmedCost, SpendDeferred, SpendPolicy, nanousd, usd_text
+from home_finder.models.spend import ConfirmedCost, SpendDeferred, nanousd, usd_text
 from home_finder.pipeline.assessment import process_initial_assessments
 from home_finder.pipeline.contracts import CandidateBatch
 from home_finder.pipeline.spend_admin import administer
-from tests.test_analysis.test_analyzer import _populate_image_cache
-from tests.test_analysis.test_quality_respx import (
-    PHASE1_VISUAL_RESPONSE,
-    PHASE2_EVALUATION_RESPONSE,
+from tests.support.analysis_responses import PHASE1_VISUAL_RESPONSE, PHASE2_EVALUATION_RESPONSE
+from tests.support.images import image_block, populate_image_cache, transparent_plan
+from tests.support.visual_checkpoints import (
+    CONTENT,
+    checkpoint_rows,
+    config,
+    policy,
+    quality,
+    unavailable,
 )
-from tests.test_utils.test_image_processing import transparent_plan
-
-CONTENT = [{"type": "text", "text": "Visual checkpoint fixture"}]
-
-
-def config():
-    phase = {"sdk_retries": 0, "input_token_limit": 140000, "max_output_tokens": 8192}
-    return AnalysisConfig.model_validate({"visual": phase, "evaluation": phase})
-
-
-def policy(**changes):
-    return SpendPolicy.model_validate(
-        {"per_call_usd": "1", "daily_usd": "10", "monthly_usd": "10", **changes}
-    )
-
-
-def unavailable():
-    return httpx2.Response(
-        503, json={"type": "error", "error": {"type": "api_error", "message": "fixture"}}
-    )
-
-
-def quality(storage, respond, *, settings=None, budget=None):
-    return PropertyQualityAnalyzer(
-        "fixture",
-        analysis_config=settings or config(),
-        spend_repository=storage.spend,
-        spend_policy=budget or policy(),
-        http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(respond)),
-    )
-
-
-async def checkpoint_rows(storage):
-    async with storage._read_connection() as conn:
-        cursor = await conn.execute("SELECT * FROM visual_checkpoints")
-        return [dict(row) for row in await cursor.fetchall()]
 
 
 async def test_transparent_plan_wire_bytes_invalidate_old_visual_checkpoint(tmp_path):
@@ -120,7 +88,7 @@ async def test_two_evaluation_outages_then_restart_uses_one_visual_call(
                 )
             }
         )
-        _populate_image_cache(images, merged)
+        populate_image_cache(images, merged)
     database = str(tmp_path / "restart.db")
     calls = {"visual": 0, "evaluation": 0}
 
@@ -321,19 +289,6 @@ async def test_reusing_visual_output_cannot_bypass_evaluation_holds(
             key: value for key, value in before.items() if key != "as_of"
         }
         assert len(await checkpoint_rows(storage)) == 1
-
-
-def image_block(colour):
-    stream = BytesIO()
-    Image.new("RGB", (32, 32), colour).save(stream, format="JPEG")
-    return {
-        "type": "image",
-        "source": {
-            "type": "base64",
-            "media_type": "image/jpeg",
-            "data": base64.b64encode(stream.getvalue()).decode(),
-        },
-    }
 
 
 @pytest.mark.parametrize(

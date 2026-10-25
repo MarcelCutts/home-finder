@@ -19,7 +19,7 @@ from home_finder.pipeline.run_lock import (
     exclusive_runner,
     recover_abandoned_spend,
 )
-from tests.test_db.test_spend import policy, settlement, spec
+from tests.support.spend import policy, settlement, spec
 
 
 async def ledger(storage):

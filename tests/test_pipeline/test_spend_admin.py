@@ -14,7 +14,7 @@ from home_finder.db.spend import AttemptTransitionError
 from home_finder.models.spend import ConfirmedCost
 from home_finder.pipeline.run_lock import runner_lock
 from home_finder.pipeline.spend_admin import administer
-from tests.test_db.test_spend import policy, spec
+from tests.support.spend import policy, spec
 
 
 def test_spending_requires_explicit_exact_configuration(monkeypatch):

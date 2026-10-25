@@ -1,8 +1,8 @@
 """End-to-end tests for run_pipeline() with mocked external boundaries.
 
-Tests the full pipeline path: scrape → filter → enrich → quality → save → notify,
-using a real in-memory SQLite DB and mocking all external I/O (scrapers, Telegram,
-Anthropic API, ward lookup, sleep delays).
+Exercises observation retention, candidate preparation, assessment persistence,
+delivery, and run finalization with real in-memory storage. Source, provider,
+transport, ward lookup, and sleep boundaries are replaced.
 """
 
 from collections.abc import Callable
@@ -433,11 +433,11 @@ class TestRunPipelineE2E:
 
             await storage.close()
 
-    async def test_quality_disabled_skips_analysis(
+    async def test_disabled_analysis_persists_home_and_suppresses_delivery(
         self,
         make_property: Callable[..., Property],
     ):
-        """Quality filter disabled: properties saved and notified without analysis."""
+        """Disabled analysis retains the home and suppresses its discovery alert."""
         settings_no_quality = Settings(
             telegram_bot_token=SecretStr("fake:test-token"),
             telegram_chat_id=0,
@@ -491,17 +491,17 @@ class TestRunPipelineE2E:
 
             await storage.close()
 
-    async def test_notification_failure_marks_failed(
+    async def test_forbidden_delivery_blocks_intent_and_updates_legacy_status(
         self,
         pipeline_settings: Settings,
         pipeline_properties: list[Property],
         make_quality_analysis: Callable[..., PropertyQualityAnalysis],
     ):
-        """Failed notification should mark property as 'failed' in DB."""
+        """A forbidden Bot API response blocks delivery and projects the legacy failed status."""
         with _pipeline_mocks(
             scrape_return=pipeline_properties,
             quality_side_effect=lambda merged, **kw: (merged, make_quality_analysis()),
-            notify_return=False,  # All notifications fail
+            notify_return=False,  # The Bot API fake raises TelegramForbiddenError.
         ) as ctx:
 
             async def _intercept_close(self_storage):
@@ -519,7 +519,9 @@ class TestRunPipelineE2E:
             assert run["status"] == "completed"
             assert run["notified_count"] == 0
 
-            # Properties should be marked as 'failed' notification
+            deliveries = await storage.deliveries.report()
+            assert deliveries["counts"] == {"blocked": 2}
+
             conn = await storage._get_connection()
             cursor = await conn.execute("SELECT notification_status FROM properties")
             rows = await cursor.fetchall()

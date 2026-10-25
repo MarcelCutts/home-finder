@@ -20,12 +20,8 @@ from home_finder.pipeline.assessment import process_initial_assessments, run_con
 from home_finder.pipeline.contracts import AnalysisDisposition, AnalysisOutcome, CandidateBatch
 from home_finder.pipeline.event_recorder import EventRecorder
 from home_finder.pipeline.reanalysis import process_reanalysis_queue, run_reanalysis
-from tests.test_analysis.test_quality_respx import (
-    PHASE1_VISUAL_RESPONSE,
-    PHASE2_EVALUATION_RESPONSE,
-)
-
-CONTENT = [{"type": "text", "text": "Spending fixture"}]
+from tests.support.analysis_responses import PHASE1_VISUAL_RESPONSE, PHASE2_EVALUATION_RESPONSE
+from tests.support.analysis_spend import CONTENT, quality, rows
 
 
 @pytest.fixture
@@ -33,24 +29,6 @@ async def budget():
     policy = SpendPolicy(per_call_usd="7", daily_usd="20", monthly_usd="20")
     async with PropertyStorage(":memory:") as storage:
         yield storage, policy
-
-
-def quality(storage, policy, handler, **kwargs):
-    return PropertyQualityAnalyzer(
-        "fixture",
-        spend_repository=storage.spend if storage else None,
-        spend_policy=policy,
-        http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(handler)),
-        **kwargs,
-    )
-
-
-async def rows(storage):
-    async with (
-        storage._read_connection() as conn,
-        conn.execute("SELECT * FROM paid_attempts ORDER BY admitted_at, attempt_id") as cur,
-    ):
-        return [dict(row) for row in await cur.fetchall()]
 
 
 @pytest.mark.parametrize("missing", ["ledger", "policy", "both"])

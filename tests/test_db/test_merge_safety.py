@@ -10,35 +10,14 @@ from home_finder.db import PropertyStorage
 from home_finder.db.merge_safety import MergeBlockedError
 from home_finder.models import PropertySource
 from home_finder.pipeline.matching import consolidate_candidates
-from tests.test_db.test_spend import policy, spec
-
-TABLES = (
-    "properties",
-    "source_listings",
-    "property_images",
-    "quality_analyses",
-    "price_history",
-    "status_events",
-    "viewing_messages",
-    "enquiry_log",
-    "source_aliases",
-    "paid_attempts",
-)
+from tests.support.merge_state import snapshot
+from tests.support.spend import policy, spec
 
 
 @pytest.fixture
 async def in_memory_storage():
     async with PropertyStorage(":memory:") as storage:
         yield storage
-
-
-async def snapshot(storage):
-    result = {}
-    async with storage._read_connection() as conn:
-        for table in TABLES:
-            async with conn.execute(f"SELECT * FROM {table} ORDER BY 1") as cur:
-                result[table] = [tuple(row) for row in await cur.fetchall()]
-    return result
 
 
 @pytest.fixture

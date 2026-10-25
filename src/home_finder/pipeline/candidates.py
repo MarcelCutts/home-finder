@@ -145,7 +145,6 @@ async def prepare_candidates(
             logger.info("no_new_properties")
             return batch
 
-        # Enrichment
         active_phase = "preparation_seconds"
         t0 = time.monotonic()
         merged_to_enrich = await _prepare_enrichment_batch(
@@ -530,8 +529,8 @@ async def _consolidate_and_admit(
     """Consolidate candidates and apply floorplan/photo admission, retaining counts."""
     logger.info("pipeline_started", phase="deduplication_merge")
     # Cross-run dedup always uses image hashing for same-building disambiguation,
-    # independent of the global enable_image_hash_matching flag. By this point
-    # both sides have cached gallery images on disk.
+    # independent of the global enable_image_hash_matching flag. Galleries
+    # may be missing; compare cached images wherever they are available.
     cross_run_deduplicator = Deduplicator(
         enable_cross_platform=True,
         enable_image_hashing=True,

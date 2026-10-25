@@ -25,10 +25,9 @@ from home_finder.models.spend import (
     SpendDeferred,
     SpendPolicy,
 )
-from tests.test_analysis.test_analysis_spend import CONTENT, rows
-from tests.test_analysis.test_analyzer import _populate_image_cache
-from tests.test_analysis.test_sonnet55 import response
-from tests.test_analysis.test_visual_checkpoints import image_block
+from tests.support.analysis_responses import response
+from tests.support.analysis_spend import CONTENT, rows
+from tests.support.images import image_block, populate_image_cache
 
 
 @pytest.mark.parametrize("images,bound", [(1, 122_000), (8, 160_500), (20, 226_500)])
@@ -248,7 +247,7 @@ async def test_new_settings_reach_both_native_phases_without_reducing_gallery(
             "floorplan": None,
         }
     )
-    _populate_image_cache(str(tmp_path), merged)
+    populate_image_cache(str(tmp_path), merged)
     calls = []
     async with PropertyStorage(":memory:") as storage:
 

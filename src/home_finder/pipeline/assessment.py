@@ -34,7 +34,7 @@ class _PropertyTimeoutError(Exception):
     """Raised when a single property's analysis exceeds its wall-clock timeout.
 
     Distinct from APIUnavailableError so it does NOT trigger the circuit breaker
-    or cancel the batch — only the slow property is skipped.
+    or cancel the batch. Only this attempt times out; other analyses continue.
     """
 
     def __init__(self, property_id: str) -> None:

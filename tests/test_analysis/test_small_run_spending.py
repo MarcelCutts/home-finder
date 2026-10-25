@@ -25,10 +25,7 @@ from home_finder.models.spend import (
     SpendPolicy,
     UsageSettlement,
 )
-from tests.test_analysis.test_quality_respx import (
-    PHASE1_VISUAL_RESPONSE,
-    PHASE2_EVALUATION_RESPONSE,
-)
+from tests.support.analysis_responses import PHASE1_VISUAL_RESPONSE, PHASE2_EVALUATION_RESPONSE
 
 
 def config(**overrides):

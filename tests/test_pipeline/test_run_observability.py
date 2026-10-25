@@ -1,6 +1,7 @@
 """Run accounting with real in-memory storage and synthetic work/provider boundaries."""
 
 import asyncio
+import json
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
@@ -23,6 +24,7 @@ from home_finder.pipeline.contracts import (
 from home_finder.pipeline.event_recorder import PropertyEvent
 from home_finder.pipeline.flow import _run_pipeline_with_storage
 from home_finder.pipeline.reanalysis import process_reanalysis_queue
+from tests.support.delivery import notifier
 
 
 @pytest.fixture
@@ -50,7 +52,9 @@ def boundaries(storage):
     notifier.deliver_pending.return_value = 0
     with (
         patch("home_finder.pipeline.flow.TelegramNotifier", return_value=notifier) as factory,
-        patch("home_finder.pipeline.flow.prepare_candidates", return_value=CandidateBatch()) as pre,
+        patch(
+            "home_finder.pipeline.flow.prepare_candidates", return_value=CandidateBatch()
+        ) as prepare,
         patch(
             "home_finder.pipeline.flow.process_reanalysis_queue", return_value=ReanalysisSummary()
         ) as reanalysis,
@@ -63,7 +67,7 @@ def boundaries(storage):
         yield SimpleNamespace(
             factory=factory,
             notifier=notifier,
-            pre=pre,
+            prepare=prepare,
             reanalysis=reanalysis,
             recover=recover,
             prune=prune,
@@ -113,7 +117,7 @@ async def test_dry_run_saves_analysis_events_costs_and_pending_delivery(
     analyzer.token_usage = usage
     settings.enable_quality_filter = True
     settings.anthropic_api_key = SecretStr("synthetic-test-key")
-    boundaries.pre.return_value = CandidateBatch(
+    boundaries.prepare.return_value = CandidateBatch(
         candidates=[merged],
         progress=CandidateProgress(
             observed_listing_count=1, media_ready_count=1, prepared_candidate_count=1
@@ -168,7 +172,7 @@ async def test_full_run_applies_independent_initial_and_reanalysis_limits(
     settings.anthropic_api_key = SecretStr("synthetic-test-key")
     settings.max_initial_analyses_per_run = 1
     settings.max_reanalyses_per_run = 1
-    boundaries.pre.return_value = CandidateBatch(candidates=initial)
+    boundaries.prepare.return_value = CandidateBatch(candidates=initial)
     boundaries.reanalysis.side_effect = process_reanalysis_queue
     analyzer = AsyncMock()
     analyzer.__aenter__.return_value = analyzer
@@ -199,26 +203,20 @@ async def test_full_run_applies_independent_initial_and_reanalysis_limits(
     assert_no_telegram(boundaries)
 
 
-@pytest.mark.parametrize("analysis_enabled", [True, False])
-async def test_assessment_event_precedes_delivery_and_distinguishes_skipped_analysis(
-    settings,
-    storage,
-    boundaries,
-    logs,
-    make_merged_property,
-    make_quality_analysis,
-    analysis_enabled,
+async def test_assessment_event_precedes_confirmed_delivery(
+    settings, storage, boundaries, logs, make_merged_property, make_quality_analysis
 ):
     merged = make_merged_property(image_url="https://example.com/fixture.jpg")
-    quality = make_quality_analysis()
-    settings.enable_quality_filter = analysis_enabled
+    settings.enable_quality_filter = True
     settings.anthropic_api_key = SecretStr("synthetic-test-key")
-    boundaries.pre.return_value = CandidateBatch(candidates=[merged])
-    boundaries.notifier.send_merged_property_notification.return_value = True
+    boundaries.prepare.return_value = CandidateBatch(candidates=[merged])
+    sender, bot = notifier(storage)
+    boundaries.factory.return_value = sender
     analyzer = AsyncMock()
     analyzer.__aenter__.return_value = analyzer
-    analyzer.analyze_single_merged.return_value = merged, quality
+    analyzer.analyze_single_merged.return_value = merged, make_quality_analysis()
     analyzer.token_usage = TokenUsage()
+
     with (
         patch("home_finder.pipeline.assessment.PropertyQualityAnalyzer", return_value=analyzer),
         patch("home_finder.pipeline.flow.asyncio.sleep", new_callable=AsyncMock),
@@ -226,14 +224,54 @@ async def test_assessment_event_precedes_delivery_and_distinguishes_skipped_anal
         await _run_pipeline_with_storage(settings, storage)
 
     events = await rows(storage, "property_events")
-    assert [event["event_type"] for event in events] == [
-        "assessment_completed" if analysis_enabled else "analysis_skipped",
-        "notified",
-    ]
+    assert [event["event_type"] for event in events] == ["assessment_completed", "notified"]
+    bot.send_photo.assert_awaited_once()
+    deliveries = await rows(storage, "notification_deliveries")
+    assert len(deliveries) == 1
+    assert deliveries[0]["state"] == "complete"
+    assert json.loads(deliveries[0]["receipts_json"]) == [[11]]
     terminal = next(entry for entry in logs if entry["event"] == "pipeline_complete")
-    assert terminal["assessed"] == int(analysis_enabled)
-    assert terminal["analysis_skipped"] == int(not analysis_enabled)
+    assert terminal["assessed"] == 1
+    assert terminal["analysis_skipped"] == 0
     assert terminal["initial_assessments_processed"] == 1
+    assert terminal["callback_deliveries_completed"] == 1
+
+
+async def test_disabled_analysis_persists_home_and_suppresses_discovery_delivery(
+    settings, storage, boundaries, logs, make_merged_property
+):
+    merged = make_merged_property(image_url="https://example.com/fixture.jpg")
+    boundaries.prepare.return_value = CandidateBatch(candidates=[merged])
+    sender, bot = notifier(storage)
+    boundaries.factory.return_value = sender
+
+    with patch("home_finder.pipeline.assessment.PropertyQualityAnalyzer") as analyzer_factory:
+        await _run_pipeline_with_storage(settings, storage)
+
+    analyzer_factory.assert_not_called()
+    assert await storage.get_property(merged.unique_id) is not None
+    events = await rows(storage, "property_events")
+    assert [event["event_type"] for event in events] == [
+        "analysis_skipped",
+        "notification_deferred",
+    ]
+    # This legacy diagnostic includes suppressed delivery; its metadata disambiguates it.
+    assert json.loads(events[1]["metadata_json"]) == {
+        "delivery_state": "suppressed",
+        "reason": "assessment_unavailable",
+    }
+    deliveries = await rows(storage, "notification_deliveries")
+    assert len(deliveries) == 1
+    assert deliveries[0]["state"] == "suppressed"
+    assert deliveries[0]["reason"] == "assessment_unavailable"
+    assert json.loads(deliveries[0]["receipts_json"]) == []
+    for transport in (bot.send_photo, bot.send_message, bot.send_media_group, bot.send_venue):
+        transport.assert_not_awaited()
+    terminal = next(entry for entry in logs if entry["event"] == "pipeline_complete")
+    assert terminal["assessed"] == 0
+    assert terminal["analysis_skipped"] == 1
+    assert terminal["initial_assessments_processed"] == 1
+    assert terminal["callback_deliveries_completed"] == 0
 
 
 async def test_terminal_delivery_count_only_includes_final_drain_completions(
@@ -292,7 +330,7 @@ async def test_completed_phase_keeps_deferred_property_visible(
     merged = make_merged_property()
     settings.enable_quality_filter = True
     settings.anthropic_api_key = SecretStr("synthetic-test-key")
-    boundaries.pre.return_value = CandidateBatch(candidates=[merged])
+    boundaries.prepare.return_value = CandidateBatch(candidates=[merged])
     analyzer = AsyncMock()
     analyzer.__aenter__.return_value = analyzer
     analyzer.analyze_single_merged.return_value = merged, None
@@ -321,7 +359,7 @@ async def test_completed_phase_keeps_deferred_property_visible(
 async def test_dry_run_preserves_collection_outcomes_and_scraper_metrics(
     settings, storage, boundaries, logs, healthy, found, status
 ):
-    boundaries.pre.return_value = CandidateBatch(
+    boundaries.prepare.return_value = CandidateBatch(
         progress=CandidateProgress(
             scraper_metrics=[
                 ScraperMetrics(
@@ -447,14 +485,14 @@ async def test_repeated_cancellation_settles_one_audit_insert_and_finalizes(
             await release.wait()
         return await original(*args, **kwargs)
 
-    async def pre(*args, recorder, progress, **kwargs):
+    async def prepare(*args, recorder, progress, **kwargs):
         recorder.record(
             PropertyEvent("openrent:synthetic", "openrent", "criteria_passed", "criteria")
         )
         await recorder.flush()
         return CandidateBatch(progress=progress)
 
-    boundaries.pre.side_effect = pre
+    boundaries.prepare.side_effect = prepare
 
     async def run():
         with structlog.contextvars.bound_contextvars(trial_id="cancel-trial", run_id=915):
@@ -490,7 +528,7 @@ async def test_repeated_cancellation_settles_one_audit_insert_and_finalizes(
         assert len(await rows(storage, "property_events")) == 1
     elif operation == "create_pipeline_run":
         operation_mock.assert_awaited_once()
-        boundaries.pre.assert_not_awaited()
+        boundaries.prepare.assert_not_awaited()
     assert_no_telegram(boundaries)
 
 
@@ -500,7 +538,7 @@ async def test_repeated_cancel_during_cancelled_run_finalization(
     working, finalizing, release = asyncio.Event(), asyncio.Event(), asyncio.Event()
     original = storage.runs.complete_pipeline_run
 
-    async def pre(*args, **kwargs):
+    async def prepare(*args, **kwargs):
         working.set()
         await asyncio.Future()
 
@@ -509,7 +547,7 @@ async def test_repeated_cancel_during_cancelled_run_finalization(
         await release.wait()
         await original(*args, **kwargs)
 
-    boundaries.pre.side_effect = pre
+    boundaries.prepare.side_effect = prepare
     with patch.object(storage.runs, "complete_pipeline_run", side_effect=complete) as finish:
         task = asyncio.create_task(_run_pipeline_with_storage(settings, storage, dry_run=True))
         try:
@@ -552,13 +590,13 @@ async def test_notifier_setup_or_cleanup_failure_never_reports_success(
 async def test_exit_flush_failure_is_visible_without_replaying_batch(
     settings, storage, boundaries, logs
 ):
-    async def pre(*args, recorder, progress, **kwargs):
+    async def prepare(*args, recorder, progress, **kwargs):
         recorder.record(
             PropertyEvent("openrent:synthetic", "openrent", "criteria_passed", "criteria")
         )
         return CandidateBatch(progress=progress)
 
-    boundaries.pre.side_effect = pre
+    boundaries.prepare.side_effect = prepare
     with (
         patch.object(
             storage.runs,
@@ -596,7 +634,7 @@ async def test_failed_success_finalization_is_recorded_as_failure(
 async def test_unavailable_finalization_preserves_original_failure(
     settings, storage, boundaries, logs
 ):
-    boundaries.pre.side_effect = RuntimeError("original pipeline failure")
+    boundaries.prepare.side_effect = RuntimeError("original pipeline failure")
     with (
         patch.object(
             storage.runs,
@@ -626,7 +664,7 @@ async def test_run_creation_failure_restores_context_without_provider_work(
         assert structlog.contextvars.get_contextvars() == before
     assert await rows(storage, "pipeline_runs") == []
     assert phase_outcomes(logs)["setup"] == "failed"
-    boundaries.pre.assert_not_awaited()
+    boundaries.prepare.assert_not_awaited()
     assert_no_telegram(boundaries)
 
 
@@ -634,7 +672,7 @@ async def test_run_creation_failure_restores_context_without_provider_work(
 async def test_internally_cancelled_terminal_write_does_not_claim_finalization(
     settings, storage, boundaries, logs, primary_error
 ):
-    boundaries.pre.side_effect = primary_error("original failure")
+    boundaries.prepare.side_effect = primary_error("original failure")
     with (
         patch.object(
             storage.runs, "complete_pipeline_run", side_effect=asyncio.CancelledError
@@ -683,7 +721,7 @@ async def test_phase_accounting_failure_preserves_primary_exception(
         await original_update(run_id, **counts)
 
     if phase == "candidate_preparation":
-        boundaries.pre.side_effect = primary
+        boundaries.prepare.side_effect = primary
     elif phase == "reanalysis":
         boundaries.reanalysis.side_effect = primary
     elif phase == "delivery_drain":
@@ -731,7 +769,7 @@ async def test_resource_cleanup_failure_preserves_primary_exception(
     primary = primary_type("original body failure") if primary_type is not None else None
     cleanup_error = RuntimeError("secondary resource cleanup failure")
 
-    async def pre(*args, recorder, progress, **kwargs):
+    async def prepare(*args, recorder, progress, **kwargs):
         recorder.record(
             PropertyEvent("openrent:synthetic", "openrent", "criteria_passed", "criteria")
         )
@@ -739,7 +777,7 @@ async def test_resource_cleanup_failure_preserves_primary_exception(
             raise primary
         return CandidateBatch(progress=progress)
 
-    boundaries.pre.side_effect = pre
+    boundaries.prepare.side_effect = prepare
     if resource == "notifier_exit":
         boundaries.notifier.__aexit__.side_effect = cleanup_error
     expected = primary if primary is not None else cleanup_error
@@ -830,7 +868,7 @@ async def test_first_cancellation_during_cleanup_survives_later_write_failure(
             await cleanup()
         await original_complete(run_id, status, **kwargs)
 
-    async def pre(*args, recorder, progress, **kwargs):
+    async def prepare(*args, recorder, progress, **kwargs):
         if boundary in {"event_insert", "event_exit"}:
             recorder.record(
                 PropertyEvent("openrent:synthetic", "openrent", "criteria_passed", "criteria")
@@ -842,7 +880,7 @@ async def test_first_cancellation_during_cleanup_survives_later_write_failure(
     async def exit_notifier(*args):
         await cleanup()
 
-    boundaries.pre.side_effect = pre
+    boundaries.prepare.side_effect = prepare
     if boundary == "notifier_exit":
         boundaries.notifier.__aexit__.side_effect = exit_notifier
     dry_run = boundary not in {"notification", "notifier_exit"}

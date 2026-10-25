@@ -169,7 +169,6 @@ async def _run_pipeline_with_storage(
                 dry_run=dry_run,
             )
 
-            # Build callback
             callback_delivery_count = [0]  # mutable counter for live mode
             dry_run_results: list[
                 tuple[PropertyAggregate, CommuteInfo, PropertyQualityAnalysis | None]
@@ -226,7 +225,7 @@ async def _run_pipeline_with_storage(
                         operation_name="initial_assessment_accounting",
                     )
 
-            # Re-analyze cross-run merges that gained new source data
+            # Process reassessments requested by source merges or the user.
             with _pipeline_phase("reanalysis") as phase:
                 primary_error = None
                 try:
