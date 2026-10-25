@@ -18,7 +18,7 @@
         <div class="money-total">
             <span class="money-total-label">Upfront costs</span>
             <strong class="money-total-amount">up to {{ move_in.total | gbp }}</strong>
-            <p class="money-total-note">A tenancy deposit of up to {{ move_in.deposit_weeks }} weeks' rent ({{ move_in.deposit | gbp }}, the legal cap) plus 1 month's rent in advance. A holding deposit of up to {{ move_in.holding_deposit | gbp }} counts towards this.</p>
+            <p class="money-total-note">A tenancy deposit of up to {{ move_in.deposit_weeks }} weeks' rent ({{ move_in.deposit | gbp }}, the legal cap in England, rounded down to the pound) plus 1 month's rent in advance, payable once you've signed. A holding deposit of up to {{ move_in.holding_deposit | gbp }} can be put towards these if you agree; otherwise it must be refunded.</p>
         </div>
         {% endif %}
     </div>
