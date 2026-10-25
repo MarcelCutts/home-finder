@@ -1,5 +1,6 @@
 """Tests for web dashboard routes."""
 
+import re
 from collections.abc import AsyncGenerator
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -1093,11 +1094,14 @@ class TestCardRendering:
         merged_a: MergedProperty,
     ) -> None:
         await storage.save_merged_property(merged_a, commute_minutes=25)
+        from bs4 import BeautifulSoup
+
         resp = client.get("/")
         assert resp.status_code == 200
-        assert "25 min" in resp.text
-        assert "25 min · estimate" in resp.text
-        assert "journey date/time and location precision are unverified" in resp.text
+        pill = BeautifulSoup(resp.text, "html.parser").select_one(".commute-pill")
+        assert pill.get_text() == "25 min · estimate"
+        assert pill.select_one(".figure").get_text() == "25 min"
+        assert "journey date/time and location precision are unverified" in pill["title"]
 
     @pytest.mark.asyncio
     async def test_quick_actions_are_named_for_assistive_tech(
@@ -3165,3 +3169,49 @@ async def test_two_voices_lead_brief_notes_and_working_render(
     )
     assert soup.select_one(".annotated-text .mark-strike").get_text() == "stunning"
     assert soup.select_one("#section-description .description-text") is None
+
+
+@pytest.mark.asyncio
+async def test_listing_text_keeps_its_paragraph_breaks(
+    client, storage, prop_a, merged_a, base_analysis
+) -> None:
+    """A newline in the retained text renders as a line break, not a literal "<br>".
+
+    Both renderings of the text are covered: the plain description shown when there is
+    no analysis, and the annotated one shown when there is.
+    """
+    await storage.save_merged_property(merged_a)
+    await storage.update_source_text(
+        merged_a.unique_id,
+        ListingTextEvidence.observed(
+            observed_at=datetime.now(UTC), description="First paragraph.\n\nSecond paragraph."
+        ),
+    )
+    plain = client.get(f"/property/{merged_a.unique_id}").text
+    assert "First paragraph.<br><br>Second paragraph." in plain
+    assert "&lt;br&gt;" not in plain
+
+    await storage.save_quality_analysis(prop_a.unique_id, base_analysis)
+    annotated = client.get(f"/property/{merged_a.unique_id}").text
+    assert '<p class="annotated-text">First paragraph.<br><br>Second paragraph.</p>' in annotated
+    assert "&lt;br&gt;" not in annotated
+
+
+@pytest.mark.asyncio
+async def test_figures_are_marked_for_the_mono_face(
+    client, storage, prop_a, merged_a, base_analysis
+) -> None:
+    """A number inside a sentence is wrapped in .figure, and source badges carry no colour."""
+    from bs4 import BeautifulSoup
+
+    await storage.save_merged_property(merged_a, commute_minutes=22)
+    await storage.save_quality_analysis(prop_a.unique_id, base_analysis)
+
+    queue = BeautifulSoup(client.get("/").text, "html.parser")
+    assert queue.select_one("#nav-count .figure").get_text() == "1"
+    assert re.fullmatch(r"\d/\d", queue.select_one(".card-must .figure").get_text())
+    assert all(not badge.has_attr("style") for badge in queue.select(".source-badge"))
+
+    listing = BeautifulSoup(client.get(f"/property/{merged_a.unique_id}").text, "html.parser")
+    assert listing.select_one(".money-total-qualifier").get_text() == "up to"
+    assert listing.select_one(".fit-working tfoot .figure") is not None

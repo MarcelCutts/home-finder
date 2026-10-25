@@ -618,6 +618,86 @@ class TestResponsiveBrowser:
         assert body_scroll_width <= viewport_width + 5  # 5px tolerance
 
 
+# The paper token of each theme, as style.css declares it.
+_PAPER = {"light": "#FBFAF7", "dark": "#141414"}
+# The tokens a theme sets; the two dark sets in style.css must agree on all of them.
+_THEME_TOKENS = [
+    "--paper",
+    "--paper-shade",
+    "--paper-raised",
+    "--ink",
+    "--muted",
+    "--dim",
+    "--rule",
+    "--rule-strong",
+    "--rule-control",
+    "--red",
+    "--green",
+    "--focus",
+]
+
+
+def _tokens(page) -> dict[str, str]:
+    return page.evaluate(
+        "(names) => Object.fromEntries(names.map("
+        "n => [n, getComputedStyle(document.documentElement).getPropertyValue(n).trim()]))",
+        _THEME_TOKENS,
+    )
+
+
+@pytest.mark.browser
+class TestThemes:
+    """Light is the default look; dark follows the system unless data-theme says otherwise."""
+
+    @pytest.mark.parametrize(
+        ("preference", "paper"),
+        [("no-preference", _PAPER["light"]), ("light", _PAPER["light"]), ("dark", _PAPER["dark"])],
+    )
+    def test_system_preference_picks_the_theme(self, page, preference, paper):
+        page.emulate_media(color_scheme=preference)
+        page.goto("/")
+        assert _tokens(page)["--paper"] == paper
+
+    @pytest.mark.parametrize("theme", ["light", "dark"])
+    def test_data_theme_overrides_the_system_preference(self, page, theme):
+        page.emulate_media(color_scheme=theme)
+        page.goto("/")
+        by_preference = _tokens(page)
+        assert by_preference["--paper"] == _PAPER[theme]
+
+        page.emulate_media(color_scheme="dark" if theme == "light" else "light")
+        page.evaluate(f"document.documentElement.dataset.theme = '{theme}'")
+        assert _tokens(page) == by_preference
+
+    @pytest.mark.parametrize("theme", ["light", "dark"])
+    def test_queue_and_listing_fit_a_phone(self, page, theme):
+        page.emulate_media(color_scheme=theme)
+        page.set_viewport_size({"width": 390, "height": 844})
+        page.goto("/")
+        expect(page.locator("article.property-card").first).to_be_visible()
+        page.evaluate("document.fonts.ready")
+        assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
+        # filters.js rebuilds the count on load; the mono span has to survive that.
+        expect(page.locator("#nav-count .figure")).to_have_text("5")
+
+        page.goto("/property/openrent:1003")
+        working = page.locator(".fit-working-wrap")
+        expect(working).to_be_visible()
+        page.evaluate("document.fonts.ready")
+        assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
+        # The working table's four columns fit without its scroll box having to scroll.
+        assert working.evaluate("el => el.scrollWidth <= el.clientWidth")
+
+    @pytest.mark.parametrize("theme", ["light", "dark"])
+    def test_map_tiles_follow_the_theme(self, page, theme, fixture_tiles):
+        page.emulate_media(color_scheme=theme)
+        page.goto("/")
+        page.get_by_role("button", name="Map view", exact=True).click()
+        expect(page.locator("#dashboard-map .leaflet-tile-loaded").first).to_be_visible()
+        assert fixture_tiles
+        assert all(f"/{theme}_all/" in url for url in fixture_tiles)
+
+
 @pytest.mark.browser
 class TestFilterBehavior:
     """Test filter interaction: no auto-apply, modal lifecycle, chips."""
