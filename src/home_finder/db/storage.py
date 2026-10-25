@@ -1371,6 +1371,8 @@ class PropertyStorage:
 
             from home_finder.filters.fit_score import FIT_SCORE_VERSION
 
+            # created_at is the time of the analysis this row holds, so a reanalysis
+            # moves it; nothing reads it as the first-analysed time.
             await conn.execute(
                 """
                 INSERT INTO quality_analyses (
@@ -1388,7 +1390,8 @@ class PropertyStorage:
                     has_outdoor_space = excluded.has_outdoor_space,
                     red_flag_count = excluded.red_flag_count,
                     fit_score = excluded.fit_score,
-                    fit_score_version = excluded.fit_score_version
+                    fit_score_version = excluded.fit_score_version,
+                    created_at = excluded.created_at
                 """,
                 (
                     unique_id,

@@ -5,7 +5,7 @@ from decimal import Decimal
 import pytest
 
 from home_finder.models import ListingTextEvidence, PropertySource
-from home_finder.utils.cost_calculator import build_monthly_budget
+from home_finder.utils.cost_calculator import build_monthly_budget, move_in_cash
 from home_finder.utils.listing_facts import listing_band
 
 
@@ -160,3 +160,23 @@ def test_no_service_charge_or_undated_reference_numbers_enter_budget(monkeypatch
 def test_source_bands_require_explicit_unambiguous_support(text: str, epc: str, tax: str) -> None:
     assert listing_band("epc", text, None) == epc
     assert listing_band("council_tax", text, None) == tax
+
+
+@pytest.mark.parametrize(
+    ("rent", "weeks", "deposit", "holding", "total"),
+    [
+        # £2,500 pcm is £576.92 a week: caps round down, never up.
+        (2500, 5, 2884, 576, 5384),
+        # £50,000 a year or more moves the deposit cap to 6 weeks.
+        (4166, 5, 4806, 961, 8972),
+        (4167, 6, 5769, 961, 9936),
+    ],
+)
+def test_move_in_cash_uses_tenant_fees_act_caps(rent, weeks, deposit, holding, total) -> None:
+    assert move_in_cash(rent) == {
+        "deposit_weeks": weeks,
+        "deposit": deposit,
+        "holding_deposit": holding,
+        "first_month": rent,
+        "total": total,
+    }

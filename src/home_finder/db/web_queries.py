@@ -548,6 +548,7 @@ class WebQueryService:
             cursor = await conn.execute(
                 f"""
                 SELECT p.*, q.analysis_json, q.overall_rating as quality_rating,
+                       q.created_at as analysed_at,  -- the stored analysis, updated on reanalysis
                        {_ASSESSED_SQL} as is_assessed, q.reanalysis_requested_at,
                        d.state as discovery_state, d.reason as discovery_reason, d.selection_json
                 FROM properties p

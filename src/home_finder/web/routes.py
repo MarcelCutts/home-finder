@@ -5,6 +5,7 @@ import functools
 import json
 import math
 from datetime import UTC, datetime
+from decimal import Decimal
 from html import escape as html_escape
 from pathlib import Path
 from typing import Annotated, Any, Final, Literal, cast
@@ -51,7 +52,7 @@ from home_finder.models import (
 from home_finder.models.delivery import UnfinishedDeliveryState
 from home_finder.models.quality import lowlight_display_label
 from home_finder.utils.address import extract_outcode
-from home_finder.utils.cost_calculator import build_monthly_budget
+from home_finder.utils.cost_calculator import build_monthly_budget, move_in_cash
 from home_finder.utils.image_cache import (
     find_cached_file,
     find_thumbnail,
@@ -69,6 +70,7 @@ from home_finder.web.filters import (
     FilterDep,
     _parse_optional_int,
 )
+from home_finder.web.verdict import build_verdict
 
 logger = get_logger(__name__)
 
@@ -192,8 +194,29 @@ def bed_label_filter(bedrooms: int | None) -> str:
     return "Studio" if bedrooms == 0 else f"{bedrooms} bed"
 
 
+def short_date_filter(iso_str: str | None) -> str:
+    """Format an ISO timestamp as a date such as "13 Feb 2026"."""
+    if not iso_str:
+        return ""
+    try:
+        dt = datetime.fromisoformat(iso_str)
+    except ValueError:
+        return ""
+    return f"{dt.day} {dt:%b %Y}"
+
+
+def gbp_filter(amount: int | float | Decimal) -> str:
+    """Format pounds, showing pence only when there are some."""
+    value = Decimal(str(amount))
+    if value == value.to_integral_value():
+        return f"£{int(value):,}"
+    return f"£{value:,.2f}"
+
+
 templates.env.filters["listing_age"] = listing_age_filter
 templates.env.filters["bed_label"] = bed_label_filter
+templates.env.filters["gbp"] = gbp_filter
+templates.env.filters["short_date"] = short_date_filter
 templates.env.filters["lowlight_label"] = lowlight_display_label
 templates.env.filters["json_script_safe"] = lambda s: s.replace("</", r"<\/")
 
@@ -696,6 +719,8 @@ async def property_detail(
             qa, bedrooms, postcode=prop.get("postcode")
         )
 
+    verdict = build_verdict(qa, fit_breakdown) if qa is not None else None
+
     # Rebuild from current retained listing evidence and rent, without model work.
     extraction = qa.listing_extraction if qa else None
     cost_breakdown = build_monthly_budget(
@@ -703,6 +728,7 @@ async def property_detail(
         evidence=prop.get("listing_evidence", {}),
         earlier_service_charge=extraction.service_charge_pcm if extraction else None,
     )
+    move_in = move_in_cash(prop["price_pcm"]) if prop.get("price_pcm") else None
 
     # Resolve floor area: prefer scraped, fall back to Claude estimate from floorplan
     if not prop.get("floor_area_sqm") and qa is not None:
@@ -761,6 +787,8 @@ async def property_detail(
             "price_history": price_history,
             "negotiation": negotiation,
             "rental_guidance": GUIDANCE,
+            "verdict": verdict,
+            "move_in": move_in,
         },
     )
 

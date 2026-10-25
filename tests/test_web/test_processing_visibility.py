@@ -249,11 +249,11 @@ async def test_floorplan_role_labels_preserve_uncertainty(
     response = processing_client.get("/property/openrent:details")
     assert response.status_code == 200
     if origin == "unknown":
-        assert "Unverified floorplan image" in response.text
-        assert "Source-declared floorplan" not in response.text
+        assert "Floorplan from Rightmove; the listing's own label wasn't recorded." in response.text
+        assert "as labelled on" not in response.text
     else:
-        assert "Source-declared floorplan" in response.text
-        assert "Dimensions may be unreadable" in response.text
+        assert "Floorplan as labelled on Rightmove." in response.text
+        assert "label wasn't recorded" not in response.text
 
 
 @pytest.mark.parametrize("processing", ["assessed", "unassessed"])

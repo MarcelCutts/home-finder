@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "_macros.html" import commute_pill, fit_badge %}
+{% from "_macros.html" import commute_pill %}
 
 {% block title %}{{ prop.title }} — I Hate Moving{% endblock %}
 
@@ -18,8 +18,47 @@
 
 {% block nav_info %}<a href="/">&larr; Dashboard</a>{% endblock %}
 
+{# Where a floorplan came from, and whether the listing itself called it one. #}
+{% macro plan_caption(img) -%}
+{%- set name = source_names.get(img.source, img.source) -%}
+{% if img.is_source_floorplan %}Floorplan as labelled on {{ name }}.{% else %}Floorplan from {{ name }}; the listing's own label wasn't recorded.{% endif %}
+{%- endmacro %}
+
+{# One list of the verdict: the first five items, then the rest behind a disclosure. #}
+{% macro verdict_list(title, items, kind, empty) %}
+<div class="verdict-list verdict-{{ kind }}">
+    <h3 class="verdict-list-title">
+        {% if kind == 'fits' %}
+        <svg aria-hidden="true" width="16" height="16" viewBox="0 0 14 14" fill="none"><path d="M2.5 7.5l3 3 6-7" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        {% elif kind == 'watch' %}
+        <svg aria-hidden="true" width="16" height="16" viewBox="0 0 14 14" fill="none"><path d="M7 1.8l5.6 10H1.4z" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><path d="M7 5.6v3" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><circle cx="7" cy="10.3" r="0.9" fill="currentColor"/></svg>
+        {% else %}
+        <svg aria-hidden="true" width="16" height="16" viewBox="0 0 14 14" fill="none"><circle cx="7" cy="7" r="5.6" stroke="currentColor" stroke-width="1.4"/><path d="M5.4 5.6a1.7 1.7 0 1 1 2.3 1.6c-.5.2-.7.6-.7 1.1" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/><circle cx="7" cy="10.2" r="0.8" fill="currentColor"/></svg>
+        {% endif %}
+        {{ title }}
+    </h3>
+    {% if items %}
+    <ul>
+        {% for item in items[:5] %}<li>{{ item }}</li>{% endfor %}
+    </ul>
+    {% if items | length > 5 %}
+    <details class="verdict-more">
+        <summary>{{ items | length - 5 }} more</summary>
+        <ul>
+            {% for item in items[5:] %}<li>{{ item }}</li>{% endfor %}
+        </ul>
+    </details>
+    {% endif %}
+    {% else %}
+    <p class="verdict-empty">{{ empty }}</p>
+    {% endif %}
+</div>
+{% endmacro %}
+
 {% block content %}
 {% set qa = prop.quality_analysis %}
+{% set has_photos = prop.gallery_images or prop.image_url %}
+{% set has_plan = prop.floorplan_images %}
 <article>
     {% if prop.is_off_market %}
     <div class="off-market-banner">
@@ -51,39 +90,8 @@
     </details>
     {% endif %}
 
-    {# Hero Gallery — visual anchor, full-bleed #}
-    {% if prop.gallery_images %}
-    {% set gallery = prop.gallery_images %}
-    {% set hero_count = [gallery|length, 5] | min %}
-    <div class="hero-gallery">
-        <div class="hero-main" tabindex="0" role="button" aria-label="Open photo gallery">
-            <img src="{{ image_url_map.get(gallery[0].url|string, gallery[0].url) }}" alt="{{ prop.title }}" loading="eager" fetchpriority="high" data-lightbox>
-        </div>
-        {% if gallery|length > 1 %}
-        <div class="hero-thumbs">
-            {% for img in gallery[1:hero_count] %}
-            <div class="hero-thumb" tabindex="0" role="button" aria-label="Open photo {{ loop.index + 1 }} in gallery">
-                <img src="{{ image_url_map.get(img.url|string, img.url) }}" alt="Property photo {{ loop.index + 1 }}" loading="eager" data-lightbox>
-                {% if loop.last and gallery|length > hero_count %}
-                <div class="hero-more-overlay" data-gallery-more="{{ hero_count }}">+{{ gallery|length - hero_count }} more</div>
-                {% endif %}
-            </div>
-            {% endfor %}
-        </div>
-        {% endif %}
-        <div class="hero-photo-count">{{ gallery|length }} photos</div>
-    </div>
-    {# All gallery URLs as data for JS gallery (no hidden imgs needed) #}
-    {% elif prop.image_url %}
-    <div class="hero-gallery">
-        <div class="hero-main"><img src="{{ prop.image_url }}" alt="{{ prop.title }}" loading="eager"></div>
-    </div>
-    {% else %}
-    <div class="detail-image-placeholder">Photos not available. You can still review the listing details below.</div>
-    {% endif %}
-
-    {# Header — Price is dominant (largest element), title secondary, meta tertiary #}
-    <div class="detail-header">
+    {# Header: what it is, where, and the five facts a viewing decision starts from #}
+    <header class="detail-header">
         {% if prop.processing_state != 'assessed' %}
         <p class="processing-notice">{{ prop.processing_label }}.{% if not prop.is_assessed %} A fit score is not available yet.{% endif %}</p>
         {% endif %}
@@ -92,46 +100,62 @@
         {% endif %}
         <div class="detail-header-row">
             <h1>{{ prop.title }}</h1>
-            <p class="key-price">
-                {% if prop.min_price and prop.max_price and prop.min_price != prop.max_price %}
-                &pound;{{ "{:,}".format(prop.min_price) }}&ndash;{{ "{:,}".format(prop.max_price) }}
-                {% else %}
-                &pound;{{ "{:,}".format(prop.price_pcm) }}
-                {% endif %}
-                <span class="key-price-label">/mo</span>
-            </p>
-        </div>
-        <div class="detail-header-row">
-            <p class="detail-meta">
-                {{ prop.bedrooms | bed_label }}
-                {%- if prop.floor_area_sqm %} &middot; {{ prop.floor_area_sqm | round(0) | int }} m²
-                {%- if prop.floor_area_source %} <span class="meta-dim">via {{ prop.floor_area_source | title }}</span>{% endif %}
-                {%- endif %} &middot; {{ prop.address }}{% if prop.postcode %}, {{ prop.postcode }}{% endif %}
-                {%- for source_key in prop.sources_list -%}
-                {%- set url = prop.source_urls_dict.get(source_key) -%}
-                {%- if url %}
-                <span class="meta-sep">&middot;</span>
-                <a href="{{ url }}" target="_blank" rel="noopener" class="meta-link">{{ source_names.get(source_key, source_key) }}&nbsp;&#8599;</a>
-                {%- endif -%}
-                {%- endfor -%}
-                {%- if prop.latitude and prop.longitude %}
-                <span class="meta-sep">&middot;</span>
-                <a href="https://www.google.com/maps?q={{ prop.latitude }},{{ prop.longitude }}" target="_blank" rel="noopener" class="meta-link meta-link-dim">Map&nbsp;&#8599;</a>
-                {%- endif %}
-            </p>
             <div class="detail-header-meta">
                 {% set unique_id = prop.unique_id %}
                 {% set current_status = user_status %}
                 <div class="status-selector-wrap">
                     {% include "_status_controls.html" %}
                 </div>
-                {{ commute_pill(prop.commute_minutes, prop.transport_mode) }}
                 {% if prop.first_seen %}
                 <span class="listing-age-pill" title="Collector observation, not time on the market">First seen {{ prop.first_seen | listing_age }}</span>
                 {% endif %}
             </div>
         </div>
-    </div>
+        <p class="detail-meta">
+            {{ prop.address }}{% if prop.postcode %}, {{ prop.postcode }}{% endif %}
+            {%- for source_key in prop.sources_list -%}
+            {%- set url = prop.source_urls_dict.get(source_key) -%}
+            {%- if url %}
+            <span class="meta-sep">&middot;</span>
+            <a href="{{ url }}" target="_blank" rel="noopener" class="meta-link">{{ source_names.get(source_key, source_key) }}&nbsp;&#8599;</a>
+            {%- endif -%}
+            {%- endfor -%}
+            {%- if prop.latitude and prop.longitude %}
+            <span class="meta-sep">&middot;</span>
+            <a href="https://www.google.com/maps?q={{ prop.latitude }},{{ prop.longitude }}" target="_blank" rel="noopener" class="meta-link meta-link-dim">Map&nbsp;&#8599;</a>
+            {%- endif %}
+        </p>
+        <dl class="detail-facts">
+            <div class="detail-fact detail-fact-rent">
+                <dt>Rent</dt>
+                <dd>{% if prop.min_price and prop.max_price and prop.min_price != prop.max_price %}{{ prop.min_price | gbp }}&ndash;{{ prop.max_price | gbp }}{% else %}{{ prop.price_pcm | gbp }}{% endif %} <span class="detail-fact-unit">pcm</span></dd>
+            </div>
+            <div class="detail-fact">
+                <dt>Bedrooms</dt>
+                <dd>{{ "Studio" if prop.bedrooms == 0 else prop.bedrooms }}</dd>
+            </div>
+            <div class="detail-fact">
+                <dt>Floor area</dt>
+                {% if prop.floor_area_sqm %}
+                <dd>{{ prop.floor_area_sqm | round(0) | int }} m²{% if prop.floor_area_source %} <span class="detail-fact-unit">{% if prop.floor_area_source == 'estimated' %}AI estimate{% else %}listed on {{ source_names.get(prop.floor_area_source, prop.floor_area_source) }}{% endif %}</span>{% endif %}</dd>
+                {% else %}
+                <dd class="detail-fact-missing">Not listed</dd>
+                {% endif %}
+            </div>
+            <div class="detail-fact">
+                <dt>Commute</dt>
+                <dd>{{ commute_pill(prop.commute_minutes, prop.transport_mode) }}</dd>
+            </div>
+            <div class="detail-fact">
+                <dt>Fit</dt>
+                {% if fit_score is not none %}
+                <dd><a href="#section-fit">{{ fit_score }}</a> <span class="detail-fact-unit">of 100</span></dd>
+                {% else %}
+                <dd class="detail-fact-missing">Not scored yet</dd>
+                {% endif %}
+            </div>
+        </dl>
+    </header>
 
     {# Status history (Ticket 7) — collapsible timeline #}
     {% if status_history %}
@@ -150,12 +174,13 @@
     {% endif %}
 
     {# Section Navigation — sticky anchor bar #}
-    <nav class="section-nav" id="section-nav">
+    <nav class="section-nav" id="section-nav" aria-label="Sections">
         <ul class="section-nav-links">
-            {% if qa %}<li><a href="#section-overview">Overview</a></li>{% endif %}
-            {% if qa %}<li><a href="#section-quality">Quality</a></li>{% endif %}
-            {% if qa and qa.viewing_notes and (qa.viewing_notes.check_items or qa.viewing_notes.questions_for_agent or qa.viewing_notes.deal_breaker_tests) %}<li><a href="#section-viewing">Viewing Prep</a></li>{% endif %}
-            {% if prop.floorplan_images %}<li><a href="#section-floorplan">Floorplan</a></li>{% endif %}
+            {% if qa %}<li><a href="#section-overview">Verdict</a></li>{% endif %}
+            {% if has_photos or has_plan %}<li><a href="#section-photos">Photos</a></li>{% endif %}
+            <li><a href="#section-costs">Costs</a></li>
+            {% if qa %}<li><a href="#section-quality">Rooms</a></li>{% endif %}
+            {% if qa and qa.viewing_notes and (qa.viewing_notes.check_items or qa.viewing_notes.questions_for_agent or qa.viewing_notes.deal_breaker_tests) %}<li><a href="#section-viewing">Viewing</a></li>{% endif %}
             {% if best_description %}<li><a href="#section-description">Description</a></li>{% endif %}
             {% if prop.latitude and prop.longitude %}<li><a href="#section-location">Location</a></li>{% endif %}
             {% if area_context and area_context.description %}<li><a href="#section-area">Area</a></li>{% endif %}
@@ -163,37 +188,168 @@
         </ul>
     </nav>
 
-    {# 1. Overview — the "executive summary" #}
+    {# 1. Verdict: the analysis sorted into what fits, what to watch and what is still unknown #}
     {% if qa %}
-    <section id="section-overview" class="detail-section">
-        <h3>Overview</h3>
+    <section id="section-overview" class="detail-section verdict-section">
+        <h2 class="verdict-headline">{{ (qa.one_line.one_line if qa.one_line is mapping else qa.one_line) or "Overview" }}</h2>
+        {% set coverage = qa.image_review_coverage %}
+        <p class="provenance-note">AI reading of {% if coverage and coverage.reviewed_gallery_count == coverage.available_gallery_count %}all {{ coverage.available_gallery_count }} photos{% elif coverage %}{{ coverage.reviewed_gallery_count }} of {{ coverage.available_gallery_count }} photos{% else %}the listing photos{% endif %}{% if qa.listing_text_inputs %} and listing text{% endif %}{% if prop.analysed_at %}, {{ prop.analysed_at | short_date }}{% endif %}. {% if qa.listing_text_inputs %}Confirm anything important with the agent.{% else %}It didn't have the listing text, so check details at the viewing.{% endif %}</p>
+        <div class="verdict-body">
+            <div class="verdict-lists">
+                {{ verdict_list("Fits your brief", verdict.fits, "fits", "Nothing stood out.") }}
+                {{ verdict_list("Watch out", verdict.watch, "watch", "Nothing flagged.") }}
+                {{ verdict_list("Find out", verdict.find_out, "find", "Nothing left open.") }}
+            </div>
 
-        {% if qa.one_line %}
-        <p class="overview-tagline">{{ qa.one_line.one_line if qa.one_line is mapping else qa.one_line }}</p>
+            {% if fit_score is not none and fit_breakdown %}
+            <div class="overview-card fit-breakdown-card" id="section-fit">
+                <h4>
+                    Marcel Fit
+                    <span class="fit-breakdown-donut-wrap">
+                        <span class="fit-breakdown-donut {{ fit_color_class(fit_score) }}" style="--score-pct: {{ fit_score }}"></span>
+                        <span class="fit-breakdown-donut-value">{{ fit_score }}</span>
+                    </span>
+                    <span class="fit-breakdown-tier {{ fit_tier_class(fit_score) }}">{{ fit_tier_label(fit_score) }}</span>
+                </h4>
+                <div class="fit-breakdown-bars">
+                    {% for dim in fit_breakdown %}
+                    <div class="fit-breakdown-group">
+                        <div class="fit-breakdown-row{% if dim.confidence is defined and dim.confidence < 0.5 %} fit-dim-low-conf{% endif %}">
+                            <span class="fit-breakdown-label">{{ dim.label }}</span>
+                            <div class="fit-breakdown-track"><div class="fit-breakdown-fill {% if dim.score >= 70 %}fit-dim-green{% elif dim.score >= 40 %}fit-dim-accent{% else %}fit-dim-low{% endif %}" style="--bar-pct: {{ dim.score }}%"></div></div>
+                            <span class="fit-breakdown-value">{{ dim.score }}</span>
+                            <span class="fit-breakdown-weight">{{ dim.weight }}%</span>
+                            {% if dim.confidence is defined and dim.confidence < 0.5 %}<span class="fit-dim-conf-hint" title="Limited data for this dimension">?</span>{% endif %}
+                        </div>
+                        {% if dim.factors and dim.factors | length >= 2 %}
+                        <div class="fit-factors">
+                            {% for f in dim.factors %}
+                            <span class="fit-factor fit-factor-{{ f.state }}">{{ "✓" if f.state == "earned" else ("–" if f.state == "missed" else "?") }} {{ f.label }}</span>
+                            {% endfor %}
+                        </div>
+                        {% endif %}
+                    </div>
+                    {% endfor %}
+                </div>
+                <p class="fit-breakdown-legend">Score 0-100 per dimension, weighted by importance to Marcel's WFH + hosting lifestyle. ✓ earned · – missing · ? not detected.</p>
+            </div>
+            {% endif %}
+        </div>
+
+        {% if qa.summary %}
+        <p class="verdict-summary">{{ qa.summary }}</p>
         {% endif %}
+    </section>
+    {% endif %}
 
-        <blockquote>{{ qa.summary }}</blockquote>
-        <p class="cost-line-note">AI assessment. {% if not qa.listing_text_inputs %}This earlier assessment has no retained listing-text inputs; factual claims need confirmation.{% else %}Check current listing evidence and confirm material claims with the agent.{% endif %}</p>
-
-        {% set display_lowlights = qa.display_lowlights %}
-        {% if qa.highlights or display_lowlights %}
-        <div class="overview-chips">
-            {% if qa.highlights %}
-            {% for tag in qa.highlights %}
-            {% if not (qa.listing_extraction and qa.listing_extraction.epc_rating and qa.listing_extraction.epc_rating != 'unknown' and tag[:3] | upper == "EPC") %}
-            <span class="highlight-chip highlight-positive">{{ tag }}</span>
+    {# 2. Photos with the floorplan beside them: the evidence for the verdict #}
+    {% if has_photos or has_plan %}
+    <section id="section-photos" class="detail-media{% if has_plan and has_photos %} detail-media-with-plan{% endif %}" aria-label="Photos and floorplan">
+        {% if prop.gallery_images %}
+        {% set gallery = prop.gallery_images %}
+        {% set hero_count = [gallery|length, 3 if has_plan else 5] | min %}
+        <div class="hero-gallery">
+            <div class="hero-main" tabindex="0" role="button" aria-label="Open photo gallery">
+                <img src="{{ image_url_map.get(gallery[0].url|string, gallery[0].url) }}" alt="{{ prop.title }}" loading="eager" fetchpriority="high" data-lightbox>
+            </div>
+            {% if gallery|length > 1 %}
+            <div class="hero-thumbs">
+                {% for img in gallery[1:hero_count] %}
+                <div class="hero-thumb" tabindex="0" role="button" aria-label="Open photo {{ loop.index + 1 }} in gallery">
+                    <img src="{{ image_url_map.get(img.url|string, img.url) }}" alt="Property photo {{ loop.index + 1 }}" loading="eager" data-lightbox>
+                    {% if loop.last and gallery|length > hero_count %}
+                    <div class="hero-more-overlay" data-gallery-more="{{ hero_count }}">+{{ gallery|length - hero_count }} more</div>
+                    {% endif %}
+                </div>
+                {% endfor %}
+            </div>
             {% endif %}
-            {% endfor %}
-            {% endif %}
-            {% if display_lowlights %}
-            {% for tag in display_lowlights %}
-            <span class="highlight-chip highlight-negative">{{ tag }}</span>
-            {% endfor %}
-            {% endif %}
+            <div class="hero-photo-count">{{ gallery|length }} photos</div>
+        </div>
+        {% elif prop.image_url %}
+        <div class="hero-gallery">
+            <div class="hero-main"><img src="{{ prop.image_url }}" alt="{{ prop.title }}" loading="eager"></div>
         </div>
         {% endif %}
 
-        {% if qa.value %}
+        {% if has_plan %}
+        {% set plan = prop.floorplan_images[0] %}
+        {% set plan_source = source_names.get(plan.source, plan.source) %}
+        {% set plan_count = prop.floorplan_images | length + (floorplan_repeats or []) | length %}
+        <figure id="section-floorplan" class="floorplan-panel">
+            <div class="floorplan-panel-image">
+                <a href="{{ image_url_map.get(plan.url|string, plan.url) }}" data-lightbox="floorplan" aria-label="Open full-size floorplan from {{ plan_source }}">
+                    <img src="{{ image_url_map.get(plan.url|string, plan.url) }}" alt="Floorplan from {{ plan_source }}" loading="lazy" class="floorplan-image">
+                </a>
+            </div>
+            <figcaption class="provenance-note">
+                {{ plan_caption(plan) }}
+                {% if plan_count > 1 %}
+                <button type="button" class="floorplan-all" data-lightbox="floorplan">See all {{ plan_count }} plans</button>
+                {% endif %}
+            </figcaption>
+            {% if floorplan_repeats %}
+            {# Similar-looking or uncompared versions: kept, since a changed dimension can look identical. #}
+            <details class="floorplan-repeats">
+                <summary>Additional floorplan versions ({{ floorplan_repeats | length }})</summary>
+                <div class="floorplan-section">
+                    {% for img in floorplan_repeats %}
+                    {% set img_source = source_names.get(img.source, img.source) %}
+                    <div class="floorplan-frame">
+                        <p class="provenance-note">{{ plan_caption(img) }}</p>
+                        <a href="{{ image_url_map.get(img.url|string, img.url) }}" data-lightbox="floorplan" aria-label="Open full-size floorplan from {{ img_source }}">
+                            <img src="{{ image_url_map.get(img.url|string, img.url) }}" alt="Floorplan from {{ img_source }}" loading="lazy" class="floorplan-image">
+                        </a>
+                    </div>
+                    {% endfor %}
+                </div>
+            </details>
+            {% endif %}
+        </figure>
+        {% endif %}
+    </section>
+    {% else %}
+    <div class="detail-image-placeholder">Photos not available. You can still review the listing details below.</div>
+    {% endif %}
+
+    {# 3. Costs: the two totals first, then what the advert and research say about price #}
+    <section id="section-costs" class="detail-section">
+        <h3>What it costs</h3>
+        {% include "_cost_breakdown.html" %}
+
+        {% if qa and qa.listing_extraction %}
+        {% set le = qa.listing_extraction %}
+        {% set has_listing_data = (le.epc_rating and le.epc_rating != 'unknown') or le.service_charge_pcm or le.deposit_weeks is not none or le.bills_included != 'unknown' or le.pets_allowed != 'unknown' or (le.parking and le.parking != 'unknown') or (le.council_tax_band and le.council_tax_band != 'unknown') or (le.property_type and le.property_type != 'unknown') or (le.furnished_status and le.furnished_status != 'unknown') or (le.broadband_type and le.broadband_type != 'unknown') %}
+        {% if has_listing_data %}
+        <div class="listing-details-section">
+            <h4 class="section-subhead">Listing Details</h4>
+            <div class="listing-kv-grid">
+                {% if le.property_type and le.property_type != 'unknown' %}
+                <div class="listing-kv-item"><span class="listing-kv-label">Type</span><span class="listing-kv-value">{{ le.property_type | replace("_", " ") | title }}</span></div>
+                {% endif %}
+                {% if le.deposit_weeks is not none %}
+                <div class="listing-kv-item"><span class="listing-kv-label">Deposit</span><span class="listing-kv-value">{{ le.deposit_weeks }} weeks</span></div>
+                {% endif %}
+                {% if le.pets_allowed == 'yes' %}
+                <div class="listing-kv-item"><span class="listing-kv-label">Pets</span><span class="listing-kv-value">Allowed</span></div>
+                {% elif le.pets_allowed == 'no' %}
+                <div class="listing-kv-item"><span class="listing-kv-label">Pets</span><span class="listing-kv-value">Not allowed</span></div>
+                {% endif %}
+                {% if le.parking and le.parking != 'unknown' %}
+                <div class="listing-kv-item"><span class="listing-kv-label">Parking</span><span class="listing-kv-value">{{ le.parking | capitalize }}</span></div>
+                {% endif %}
+                {% if le.furnished_status and le.furnished_status != 'unknown' %}
+                <div class="listing-kv-item"><span class="listing-kv-label">Furnished</span><span class="listing-kv-value">{{ le.furnished_status | replace("_", " ") | capitalize }}</span></div>
+                {% endif %}
+                {% if le.broadband_type and le.broadband_type != 'unknown' %}
+                <div class="listing-kv-item"><span class="listing-kv-label">Broadband</span><span class="listing-kv-value">{{ le.broadband_type | upper }}</span></div>
+                {% endif %}
+            </div>
+        </div>
+        {% endif %}
+        {% endif %}
+
+        {% if qa and qa.value %}
         <div class="overview-card value-assessment-card">
             <h4>Value Assessment</h4>
             {% if qa.value.rating %}
@@ -249,7 +405,7 @@
         {% endif %}
 
         {# Negotiation Intelligence (Ticket 10) #}
-        {% if negotiation %}
+        {% if qa and negotiation %}
         <details class="overview-card negotiation-card">
             <summary>
                 Offer preparation
@@ -263,114 +419,17 @@
             <p class="negotiation-approach">{{ negotiation.suggested_approach }}</p>
         </details>
         {% endif %}
-
-        {# Listing Details — compact KV grid (moved from quality card) #}
-        {% if qa.listing_extraction %}
-        {% set le = qa.listing_extraction %}
-        {% set has_listing_data = (le.epc_rating and le.epc_rating != 'unknown') or le.service_charge_pcm or le.deposit_weeks is not none or le.bills_included != 'unknown' or le.pets_allowed != 'unknown' or (le.parking and le.parking != 'unknown') or (le.council_tax_band and le.council_tax_band != 'unknown') or (le.property_type and le.property_type != 'unknown') or (le.furnished_status and le.furnished_status != 'unknown') or (le.broadband_type and le.broadband_type != 'unknown') %}
-        {% if has_listing_data %}
-        <div class="listing-details-section">
-            <h4 class="section-subhead">Listing Details</h4>
-            <div class="listing-kv-grid">
-                {% if le.property_type and le.property_type != 'unknown' %}
-                <div class="listing-kv-item"><span class="listing-kv-label">Type</span><span class="listing-kv-value">{{ le.property_type | replace("_", " ") | title }}</span></div>
-                {% endif %}
-                {% if le.deposit_weeks is not none %}
-                <div class="listing-kv-item"><span class="listing-kv-label">Deposit</span><span class="listing-kv-value">{{ le.deposit_weeks }} weeks</span></div>
-                {% endif %}
-                {% if le.pets_allowed == 'yes' %}
-                <div class="listing-kv-item"><span class="listing-kv-label">Pets</span><span class="listing-kv-value">Allowed</span></div>
-                {% elif le.pets_allowed == 'no' %}
-                <div class="listing-kv-item"><span class="listing-kv-label">Pets</span><span class="listing-kv-value">Not allowed</span></div>
-                {% endif %}
-                {% if le.parking and le.parking != 'unknown' %}
-                <div class="listing-kv-item"><span class="listing-kv-label">Parking</span><span class="listing-kv-value">{{ le.parking | capitalize }}</span></div>
-                {% endif %}
-                {% if le.furnished_status and le.furnished_status != 'unknown' %}
-                <div class="listing-kv-item"><span class="listing-kv-label">Furnished</span><span class="listing-kv-value">{{ le.furnished_status | replace("_", " ") | capitalize }}</span></div>
-                {% endif %}
-                {% if le.broadband_type and le.broadband_type != 'unknown' %}
-                <div class="listing-kv-item"><span class="listing-kv-label">Broadband</span><span class="listing-kv-value">{{ le.broadband_type | upper }}</span></div>
-                {% endif %}
-            </div>
-        </div>
-        {% endif %}
-        {% endif %}
-
-        {% if cost_breakdown or (fit_score is not none and fit_breakdown) %}
-        <div class="overview-pair">
-        {% if cost_breakdown %}
-        {% include "_cost_breakdown.html" %}
-        {% endif %}
-
-        {% if fit_score is not none and fit_breakdown %}
-        <div class="overview-card fit-breakdown-card">
-            <h4>
-                Marcel Fit
-                <span class="fit-breakdown-donut-wrap">
-                    <span class="fit-breakdown-donut {{ fit_color_class(fit_score) }}" style="--score-pct: {{ fit_score }}"></span>
-                    <span class="fit-breakdown-donut-value">{{ fit_score }}</span>
-                </span>
-                <span class="fit-breakdown-tier {{ fit_tier_class(fit_score) }}">{{ fit_tier_label(fit_score) }}</span>
-            </h4>
-            <div class="fit-breakdown-bars">
-                {% for dim in fit_breakdown %}
-                <div class="fit-breakdown-group">
-                    <div class="fit-breakdown-row{% if dim.confidence is defined and dim.confidence < 0.5 %} fit-dim-low-conf{% endif %}">
-                        <span class="fit-breakdown-label">{{ dim.label }}</span>
-                        <div class="fit-breakdown-track"><div class="fit-breakdown-fill {% if dim.score >= 70 %}fit-dim-green{% elif dim.score >= 40 %}fit-dim-accent{% else %}fit-dim-low{% endif %}" style="--bar-pct: {{ dim.score }}%"></div></div>
-                        <span class="fit-breakdown-value">{{ dim.score }}</span>
-                        <span class="fit-breakdown-weight">{{ dim.weight }}%</span>
-                        {% if dim.confidence is defined and dim.confidence < 0.5 %}<span class="fit-dim-conf-hint" title="Limited data for this dimension">?</span>{% endif %}
-                    </div>
-                    {% if dim.factors and dim.factors | length >= 2 %}
-                    <div class="fit-factors">
-                        {% for f in dim.factors %}
-                        <span class="fit-factor fit-factor-{{ f.state }}">{{ "✓" if f.state == "earned" else ("–" if f.state == "missed" else "?") }} {{ f.label }}</span>
-                        {% endfor %}
-                    </div>
-                    {% endif %}
-                </div>
-                {% endfor %}
-            </div>
-            <p class="fit-breakdown-legend">Score 0-100 per dimension, weighted by importance to Marcel's WFH + hosting lifestyle. ✓ earned · – missing · ? not detected.</p>
-        </div>
-        {% endif %}
-        </div>
-        {% endif %}
-
-        {% if qa.condition_concerns %}
-        <div class="quality-alert
-            {% if qa.concern_severity == 'serious' %}alert-red
-            {% elif qa.concern_severity == 'moderate' %}alert-amber
-            {% else %}alert-green{% endif %}">
-            <strong>Condition Concerns ({{ qa.concern_severity or "unknown" }}):</strong>
-            <p>{{ qa.condition.maintenance_concerns | join(", ") }}</p>
-        </div>
-        {% endif %}
-
-        {% set red_flags = qa.listing_red_flags.display_items if qa.listing_red_flags else [] %}
-        {% if red_flags %}
-        <div class="quality-alert alert-amber">
-            <strong>Listing Red Flags ({{ red_flags | length }}):</strong>
-            {% for flag in red_flags %}
-            <p>{{ flag }}</p>
-            {% endfor %}
-        </div>
-        {% endif %}
     </section>
-    {% endif %}
 
-    {# 2. Quality Analysis — room-by-room breakdown #}
-    {% if not qa %}<section class="detail-section">{% include "_cost_breakdown.html" %}</section>{% endif %}
+    {# 4. Room by room #}
     {% include "_quality_card.html" %}
 
-    {# 2b. Viewing Prep — actionable checklist promoted to top-level section #}
+    {# 5. Viewing checklist #}
     {% if qa and qa.viewing_notes %}
     {% set vn = qa.viewing_notes %}
     {% if vn.check_items or vn.questions_for_agent or vn.deal_breaker_tests %}
     <section id="section-viewing" class="detail-section">
-        <h3>Viewing Prep</h3>
+        <h3>Viewing checklist</h3>
         {% if vn.check_items %}
         <div class="viewing-checklist-group">
             <button type="button" class="viewing-group-header" aria-expanded="true">
@@ -420,39 +479,7 @@
     {% endif %}
     {% endif %}
 
-    {# 3. Floorplan — spatial understanding #}
-    {% if prop.floorplan_images %}
-    <section id="section-floorplan" class="detail-section">
-        <h3>Floorplan</h3>
-        <div class="floorplan-section">
-            {% for img in prop.floorplan_images %}
-            <div class="floorplan-frame">
-                <p class="processing-notice">{% if img.is_source_floorplan %}Source-declared floorplan. Dimensions may be unreadable.{% else %}Unverified floorplan image. Its original designation was not recorded.{% endif %}</p>
-                <a href="{{ image_url_map.get(img.url|string, img.url) }}" data-lightbox="floorplan" aria-label="Open full-size floorplan from {{ source_names.get(img.source, img.source) }}">
-                    <img src="{{ image_url_map.get(img.url|string, img.url) }}" alt="{{ 'Source-declared floorplan' if img.is_source_floorplan else 'Unverified floorplan image' }}" loading="lazy" class="floorplan-image">
-                </a>
-            </div>
-            {% endfor %}
-        </div>
-        {% if floorplan_repeats %}
-        <details class="floorplan-repeats">
-            <summary>Additional floorplan versions ({{ floorplan_repeats | length }})</summary>
-            <div class="floorplan-section">
-                {% for img in floorplan_repeats %}
-                <div class="floorplan-frame">
-                    <p class="processing-notice">{% if img.is_source_floorplan %}Source-declared floorplan. Dimensions may be unreadable.{% else %}Unverified floorplan image. Its original designation was not recorded.{% endif %} From {{ source_names.get(img.source, img.source) }}.</p>
-                    <a href="{{ image_url_map.get(img.url|string, img.url) }}" data-lightbox="floorplan" aria-label="Open full-size floorplan from {{ source_names.get(img.source, img.source) }}">
-                        <img src="{{ image_url_map.get(img.url|string, img.url) }}" alt="{{ 'Source-declared floorplan' if img.is_source_floorplan else 'Unverified floorplan image' }} from {{ source_names.get(img.source, img.source) }}" loading="lazy" class="floorplan-image">
-                    </a>
-                </div>
-                {% endfor %}
-            </div>
-        </details>
-        {% endif %}
-    </section>
-    {% endif %}
-
-    {# 4. Description — agent copy, lower priority #}
+    {# 6. Description — agent copy, lower priority #}
     {% if best_description %}
     <section id="section-description" class="detail-section">
         <h3>Description</h3>
@@ -463,7 +490,7 @@
     </section>
     {% endif %}
 
-    {# 5. Location Map #}
+    {# 7. Location Map #}
     {% if prop.latitude and prop.longitude %}
     <section id="section-location" class="detail-section">
         <h3>Location</h3>
@@ -474,11 +501,11 @@
     </section>
     {% endif %}
 
-    {# 6. Area Context — compact summary card (full details on /area/{outcode}) #}
+    {# 8. Area Context — compact summary card (full details on /area/{outcode}) #}
     {% if area_context and area_context.description %}
     <section id="section-area" class="detail-section">
-        <p class="cost-line-note">{{ area_context.reference_note }}</p>
         <h3>Area: {{ outcode }}</h3>
+        <p class="provenance-note">{{ area_context.reference_note }}</p>
         <div class="area-summary-card">
             {% if area_context.matched_micro_area %}
             {% set ma_name = area_context.matched_micro_area.name %}
@@ -585,8 +612,8 @@
         <div class="gallery-floorplan-scroll">
             {% for img in floorplan_images %}
             <div class="gallery-floorplan-frame">
-                <p class="processing-notice">{{ 'Source-declared floorplan; dimensions may be unreadable.' if img.is_source_floorplan else 'Unverified floorplan image.' }}</p>
-                <img src="{{ image_url_map.get(img.url|string, img.url) }}" alt="{{ 'Source-declared floorplan' if img.is_source_floorplan else 'Unverified floorplan image' }} {{ loop.index }}" loading="lazy" class="gallery-floorplan-img">
+                <p class="processing-notice">{{ plan_caption(img) }}</p>
+                <img src="{{ image_url_map.get(img.url|string, img.url) }}" alt="Floorplan {{ loop.index }} from {{ source_names.get(img.source, img.source) }}" loading="lazy" class="gallery-floorplan-img">
             </div>
             {% endfor %}
         </div>
