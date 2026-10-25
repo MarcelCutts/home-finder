@@ -1,5 +1,7 @@
 """The fit score with its working shown."""
 
+import pytest
+
 from home_finder.filters.fit_score import compute_fit_score_and_breakdown
 from home_finder.web.working import fit_working
 
@@ -35,9 +37,16 @@ def test_full_confidence_shares_equal_the_weights() -> None:
     assert working["total"] == 70.0
 
 
-def test_matches_the_real_score_for_a_real_analysis(make_quality_analysis) -> None:
-    score, breakdown = compute_fit_score_and_breakdown(
-        make_quality_analysis(), 2, postcode="E8 3RH"
+@pytest.mark.parametrize("bedrooms", [0, 1, 2])
+@pytest.mark.parametrize("living_room_sqm", [11.75, 14.5, 18.0, 23.25, 31.0])
+def test_total_rounds_to_the_real_score(make_quality_analysis, bedrooms, living_room_sqm) -> None:
+    """The scorer rounds the dimensions it reports; the working uses its unrounded values."""
+    from home_finder.models import SpaceAnalysis
+
+    analysis = make_quality_analysis(
+        space=SpaceAnalysis(living_room_sqm=living_room_sqm, is_spacious_enough=None)
     )
+    score, breakdown = compute_fit_score_and_breakdown(analysis, bedrooms, postcode="E8 3RH")
     assert score is not None and breakdown is not None
-    assert round(fit_working(breakdown)["total"]) == score
+    working = fit_working(breakdown)
+    assert round(working["total"]) == score

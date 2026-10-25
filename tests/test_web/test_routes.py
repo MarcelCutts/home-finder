@@ -3135,14 +3135,13 @@ async def test_two_voices_lead_brief_notes_and_working_render(
     soup = BeautifulSoup(client.get(f"/property/{merged_a.unique_id}").text, "html.parser")
 
     lead = soup.select_one(".detail-lead")
-    assert "detail-lead-broken" in lead["class"]
+    assert "detail-lead-risk" in lead["class"]
     assert (
         lead.select_one(".detail-lead-title").get_text()
         == "Railway line directly beside the building."
     )
-    assert (
-        lead.select_one(".detail-lead-detail").get_text()
-        == "Your must-have: quiet enough for calls."
+    assert lead.select_one(".detail-lead-detail").get_text() == (
+        "Your must-have: quiet enough for calls. Photos can't settle this; check it at a viewing."
     )
 
     groups = [li.get_text(strip=True) for li in soup.select(".brief-check .brief-group")]
@@ -3158,7 +3157,11 @@ async def test_two_voices_lead_brief_notes_and_working_render(
     ) == soup.select_one(".fit-brief-score").get_text(strip=True)
 
     notes = [li.get_text() for li in soup.select(".annotated-notes li")]
-    assert notes[0] == "An adjective, not a fact."
-    assert "Railway line directly beside the building. Not mentioned in the listing." in notes
+    assert notes[0] == "Marketing wording."
+    assert soup.select_one("#section-nav a[href='#section-description']") is not None
+    assert (
+        "Photo assessment: Railway line directly beside the building. Check noise at a viewing."
+        in notes
+    )
     assert soup.select_one(".annotated-text .mark-strike").get_text() == "stunning"
     assert soup.select_one("#section-description .description-text") is None

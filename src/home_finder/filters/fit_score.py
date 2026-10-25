@@ -12,7 +12,7 @@ from quality analysis data, weighted to Marcel's priorities:
 from __future__ import annotations
 
 from copy import deepcopy
-from typing import Any, Final, TypeAlias, TypedDict
+from typing import Any, Final, NotRequired, TypeAlias, TypedDict
 
 from pydantic import ValidationError
 
@@ -152,6 +152,9 @@ class FitDimension(TypedDict):
     weight: int  # 25, 20, 15, etc.
     confidence: float  # 0.0-1.0
     factors: list[FitFactor]  # inline factor breakdown
+    # The scorer's unrounded values, so a display can reproduce the score exactly.
+    raw_score: NotRequired[float]
+    raw_confidence: NotRequired[float]
 
 
 # ── Dimension weights ──────────────────────────────────────────────────────────
@@ -816,6 +819,8 @@ def compute_fit_score_and_breakdown(
                 weight=int(weight),
                 confidence=round(result.confidence, 2),
                 factors=result.factors,
+                raw_score=result.score,
+                raw_confidence=result.confidence,
             )
         )
 

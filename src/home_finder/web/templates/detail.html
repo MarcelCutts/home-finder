@@ -186,10 +186,11 @@
         <ul class="section-nav-links">
             {% if qa %}<li><a href="#section-overview">Verdict</a></li>{% endif %}
             {% if has_photos or has_plan %}<li><a href="#section-photos">Photos</a></li>{% endif %}
+            {% if annotated %}<li><a href="#section-description">Description</a></li>{% endif %}
             <li><a href="#section-costs">Costs</a></li>
             {% if qa %}<li><a href="#section-quality">Rooms</a></li>{% endif %}
             {% if qa and qa.viewing_notes and (qa.viewing_notes.check_items or qa.viewing_notes.questions_for_agent or qa.viewing_notes.deal_breaker_tests) %}<li><a href="#section-viewing">Viewing</a></li>{% endif %}
-            {% if best_description %}<li><a href="#section-description">Description</a></li>{% endif %}
+            {% if best_description and not annotated %}<li><a href="#section-description">Description</a></li>{% endif %}
             {% if prop.latitude and prop.longitude %}<li><a href="#section-location">Location</a></li>{% endif %}
             {% if area_context and area_context.description %}<li><a href="#section-area">Area</a></li>{% endif %}
             <li class="section-nav-top"><a href="#top">Top</a></li>
@@ -201,7 +202,7 @@
     <section id="section-overview" class="detail-section verdict-section">
         <h2 class="verdict-headline">{{ (qa.one_line.one_line if qa.one_line is mapping else qa.one_line) or "Overview" }}</h2>
         {% set coverage = qa.image_review_coverage %}
-        <p class="provenance-note">AI reading of {% if coverage and coverage.reviewed_gallery_count == coverage.available_gallery_count %}all {{ coverage.available_gallery_count }} photos{% elif coverage %}{{ coverage.reviewed_gallery_count }} of {{ coverage.available_gallery_count }} photos{% else %}the listing photos{% endif %}{% if qa.listing_text_inputs %} and listing text{% endif %}{% if prop.analysed_at %}, {{ prop.analysed_at | short_date }}{% endif %}. {% if qa.listing_text_inputs %}Confirm anything important with the agent.{% else %}It didn't have the listing text, so check details at the viewing.{% endif %}</p>
+        <p class="provenance-note">AI reading of {% if coverage and coverage.reviewed_gallery_count == coverage.available_gallery_count %}all {{ coverage.available_gallery_count }} photos{% elif coverage %}{{ coverage.reviewed_gallery_count }} of {{ coverage.available_gallery_count }} photos{% else %}the listing photos{% endif %}{% if qa.listing_text_inputs %} and listing text{% endif %}{% if prop.analysed_at %}, {{ prop.analysed_at | short_date }}{% endif %}. {% if qa.listing_text_inputs %}Confirm anything important with the agent.{% else %}No listing text was kept for this analysis, so check details at the viewing.{% endif %}</p>
         <div class="verdict-body">
             <div class="verdict-lists">
                 {{ verdict_list("What fits", verdict.fits, "fits", "Nothing stood out.") }}
@@ -212,13 +213,13 @@
             {% if brief_check %}
             {# The brief, line by line, then the score with its working shown #}
             <div class="overview-card fit-breakdown-card" id="section-fit">
-                <h4>
+                <h3 class="fit-brief-title">
                     Fit with your brief
                     {% if fit_score is not none %}
                     <span class="fit-brief-score">{{ fit_score }}</span>
                     <span class="fit-breakdown-band">&middot; {{ fit_tier_label(fit_score) | lower | capitalize }}</span>
                     {% endif %}
-                </h4>
+                </h3>
                 {% set ns = namespace(group=none) %}
                 <ul class="brief-check" aria-label="Your brief">
                     {% for item in brief_check['items'] %}
@@ -234,17 +235,19 @@
                     {% endfor %}
                 </ul>
                 {% if working and fit_score is not none %}
+                <div class="fit-working-wrap">
                 <table class="fit-working">
                     <caption>How the {{ fit_score }} is made</caption>
-                    <thead><tr><th scope="col">Dimension</th><th scope="col">Share</th><th scope="col">Score</th><th scope="col">Points</th></tr></thead>
+                    <thead><tr><th scope="col">Dimension</th><th scope="col">Share of total</th><th scope="col">Score</th><th scope="col">Points</th></tr></thead>
                     <tbody>
                         {% for row in working.rows %}
-                        <tr class="fit-breakdown-row"><td class="fit-breakdown-label">{{ row.label }}</td><td>{{ row.share }}%</td><td class="fit-breakdown-value">{{ row.score }}</td><td>{{ row.points }}</td></tr>
+                        <tr class="fit-working-row"><td class="fit-working-label">{{ row.label }}</td><td>{{ row.share }}%</td><td>{{ row.score }}</td><td>{{ row.points }}</td></tr>
                         {% endfor %}
                     </tbody>
                     <tfoot><tr><td colspan="3">= {{ working.total }}, rounded</td><td>{{ fit_score }}</td></tr></tfoot>
                 </table>
-                <p class="fit-breakdown-legend">{% if working.lowest %}Lowest: {{ working.lowest.label | lower }} {{ working.lowest.score }}. {% endif %}{% if working.adjusted %}Shares differ from the weights where the photos gave less to go on. {% endif %}{{ FIT_TIERS[1]['min'] }} and above counts as a good fit.</p>
+                </div>
+                <p class="fit-breakdown-legend">{% if working.lowest %}Lowest: {{ working.lowest.label | lower }} {{ working.lowest.score }}. {% endif %}Share of total is the weight after confidence: a dimension the photos barely showed counts for less. Points are shown to one decimal, so they can differ from the total by a tenth. {{ FIT_TIERS[1]['min'] }} and above counts as a good fit.</p>
                 {% endif %}
             </div>
             {% endif %}
@@ -330,14 +333,14 @@
     {# The agent's words as written, with the analysis attached as numbered notes #}
     {% if annotated %}
     <section id="section-description" class="detail-section annotated-section">
-        <h3>The agent's words, with our notes</h3>
+        <h3>The listing's words, with notes</h3>
         <div class="annotated">
             <p class="annotated-text">{% for seg in annotated.segments %}{% if seg.mark %}<span class="mark-{{ seg.mark }}">{{ seg.text }}</span><sup class="note-ref">{{ seg.note }}</sup>{% else %}{{ seg.text | e | replace("\n", "<br>") | safe }}{% endif %}{% endfor %}</p>
             {% if annotated.notes %}
             <ol class="annotated-notes" aria-label="Our notes">
                 {% for note in annotated.notes %}<li>{{ note }}</li>{% endfor %}
             </ol>
-            <p class="provenance-note">Notes generated by AI from the listing photos{% if qa.listing_text_inputs %} and text{% endif %}.</p>
+            <p class="provenance-note">Each note names its source: the AI photo assessment or the stored area reference. The wording is the tool's.</p>
             {% endif %}
         </div>
     </section>

@@ -748,7 +748,9 @@ async def property_detail(
     brief_check = check_brief(prop, qa, fit_breakdown, **_brief_limits(settings))
     lead = brief_lead(brief_check, qa) if qa is not None else None
     annotated = (
-        annotate_listing(best_description, qa, outcode=outcode) if best_description and qa else None
+        annotate_listing(best_description, qa, outcode=outcode, price_pcm=prop.get("price_pcm"))
+        if best_description and qa
+        else None
     )
     working = fit_working(fit_breakdown) if fit_breakdown else None
 
