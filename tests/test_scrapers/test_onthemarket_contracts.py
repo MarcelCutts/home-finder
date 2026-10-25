@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from tenacity import wait_none
 
-from home_finder.pipeline.scraping import scrape_all_platforms
+from home_finder.pipeline.collection import scrape_all_platforms
 from home_finder.scrapers.base import ScrapeCancelled
 from home_finder.scrapers.onthemarket import OnTheMarketScraper
 
@@ -279,7 +279,7 @@ async def test_source_block_skips_remaining_pipeline_areas(
     session = MagicMock()
     session.get = AsyncMock(return_value=MagicMock(status_code=status))
     with (
-        patch("home_finder.pipeline.scraping.OnTheMarketScraper", return_value=scraper),
+        patch("home_finder.pipeline.collection.OnTheMarketScraper", return_value=scraper),
         patch.object(scraper, "_get_session", AsyncMock(return_value=session)),
         patch.object(scraper, "area_delay", AsyncMock()),
     ):

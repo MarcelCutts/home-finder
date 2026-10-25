@@ -8,18 +8,18 @@ import pytest
 from anthropic.types import ToolUseBlock, Usage
 from pydantic import HttpUrl
 
-from home_finder.db import PropertyStorage
-from home_finder.filters.quality import (
-    PropertyQualityFilter,
+from home_finder.analysis.analyzer import (
+    PropertyQualityAnalyzer,
     assess_value,
 )
+from home_finder.db import PropertyStorage
 from home_finder.models import (
     MergedProperty,
     Property,
     PropertyImage,
     PropertySource,
 )
-from tests.test_filters.test_quality import _populate_image_cache
+from tests.test_analysis.test_analyzer import _populate_image_cache
 
 # ---------------------------------------------------------------------------
 # Shared response data and mock helpers
@@ -226,11 +226,11 @@ class TestQualityAnalysisIntegration:
 
         _populate_image_cache(str(tmp_path), merged)
 
-        quality_filter = PropertyQualityFilter(api_key="test-key")
-        quality_filter._client = MagicMock()
-        _setup_two_phase_mocks(quality_filter._client)
+        analyzer = PropertyQualityAnalyzer(api_key="test-key")
+        analyzer._client = MagicMock()
+        _setup_two_phase_mocks(analyzer._client)
 
-        results = await quality_filter.analyze_merged_properties([merged], data_dir=str(tmp_path))
+        results = await analyzer.analyze_merged_properties([merged], data_dir=str(tmp_path))
 
         assert len(results) == 1
         returned_merged, analysis = results[0]
@@ -268,11 +268,11 @@ class TestQualityAnalysisIntegration:
 
         _populate_image_cache(str(tmp_path), merged)
 
-        quality_filter = PropertyQualityFilter(api_key="test-key")
-        quality_filter._client = MagicMock()
-        _setup_two_phase_mocks(quality_filter._client)
+        analyzer = PropertyQualityAnalyzer(api_key="test-key")
+        analyzer._client = MagicMock()
+        _setup_two_phase_mocks(analyzer._client)
 
-        results = await quality_filter.analyze_merged_properties([merged], data_dir=str(tmp_path))
+        results = await analyzer.analyze_merged_properties([merged], data_dir=str(tmp_path))
         _, analysis = results[0]
 
         # Save to DB
@@ -303,11 +303,11 @@ class TestQualityAnalysisIntegration:
 
         _populate_image_cache(str(tmp_path), merged)
 
-        quality_filter = PropertyQualityFilter(api_key="test-key")
-        quality_filter._client = MagicMock()
-        _setup_two_phase_mocks(quality_filter._client)
+        analyzer = PropertyQualityAnalyzer(api_key="test-key")
+        analyzer._client = MagicMock()
+        _setup_two_phase_mocks(analyzer._client)
 
-        results = await quality_filter.analyze_merged_properties([merged], data_dir=str(tmp_path))
+        results = await analyzer.analyze_merged_properties([merged], data_dir=str(tmp_path))
         _, analysis = results[0]
 
         await in_memory_storage.save_merged_property(merged)
@@ -340,12 +340,12 @@ class TestQualityAnalysisIntegration:
 
         _populate_image_cache(str(tmp_path), merged)
 
-        quality_filter = PropertyQualityFilter(api_key="test-key")
-        quality_filter._client = MagicMock()
+        analyzer = PropertyQualityAnalyzer(api_key="test-key")
+        analyzer._client = MagicMock()
         mock_eval = _create_mock_eval_response(_sample_evaluation_response())
-        quality_filter._client.messages.create = AsyncMock(side_effect=[mock_visual, mock_eval])
+        analyzer._client.messages.create = AsyncMock(side_effect=[mock_visual, mock_eval])
 
-        results = await quality_filter.analyze_merged_properties([merged], data_dir=str(tmp_path))
+        results = await analyzer.analyze_merged_properties([merged], data_dir=str(tmp_path))
         _, analysis = results[0]
 
         # Raw assessment preserved — 2-bed preference now handled in fit_score
@@ -357,17 +357,17 @@ class TestQualityAnalysisIntegration:
         """Property without images should not call Claude API."""
         merged = make_merged_property(source_id="qa-noimg", price_pcm=1900, postcode="E8 3RH")
 
-        quality_filter = PropertyQualityFilter(api_key="test-key")
-        quality_filter._client = MagicMock()
-        quality_filter._client.messages.create = AsyncMock()
+        analyzer = PropertyQualityAnalyzer(api_key="test-key")
+        analyzer._client = MagicMock()
+        analyzer._client.messages.create = AsyncMock()
 
-        results = await quality_filter.analyze_merged_properties([merged])
+        results = await analyzer.analyze_merged_properties([merged])
 
         assert len(results) == 1
         _, analysis = results[0]
         assert analysis is None
         # API should not be called
-        quality_filter._client.messages.create.assert_not_called()
+        analyzer._client.messages.create.assert_not_called()
 
     async def test_cached_images_sent_as_base64(
         self, make_property: Callable[..., Property], tmp_path: Any
@@ -406,17 +406,17 @@ class TestQualityAnalysisIntegration:
         PILImage.new("RGB", (10, 10), color="blue").save(buf, format="JPEG")
         save_image_bytes(cache_path, buf.getvalue())
 
-        quality_filter = PropertyQualityFilter(api_key="test-key")
-        quality_filter._client = MagicMock()
-        _setup_two_phase_mocks(quality_filter._client)
+        analyzer = PropertyQualityAnalyzer(api_key="test-key")
+        analyzer._client = MagicMock()
+        _setup_two_phase_mocks(analyzer._client)
 
-        results = await quality_filter.analyze_merged_properties([merged], data_dir=data_dir)
+        results = await analyzer.analyze_merged_properties([merged], data_dir=data_dir)
 
         assert len(results) == 1
         # Verify the API was called (image was processed)
-        quality_filter._client.messages.create.assert_called()
+        analyzer._client.messages.create.assert_called()
         # Phase 1 call should have base64 image from cache
-        call_args = quality_filter._client.messages.create.call_args_list[0]
+        call_args = analyzer._client.messages.create.call_args_list[0]
         content = call_args.kwargs["messages"][0]["content"]
         image_blocks = [c for c in content if c.get("type") == "image"]
         assert len(image_blocks) == 1
@@ -440,13 +440,13 @@ class TestQualityAnalysisIntegration:
 
         _populate_image_cache(str(tmp_path), merged)
 
-        quality_filter = PropertyQualityFilter(api_key="test-key")
-        quality_filter._client = MagicMock()
-        quality_filter._client.messages.create = AsyncMock(
+        analyzer = PropertyQualityAnalyzer(api_key="test-key")
+        analyzer._client = MagicMock()
+        analyzer._client.messages.create = AsyncMock(
             side_effect=[mock_visual, Exception("Phase 2 timeout")]
         )
 
-        results = await quality_filter.analyze_merged_properties([merged], data_dir=str(tmp_path))
+        results = await analyzer.analyze_merged_properties([merged], data_dir=str(tmp_path))
 
         assert len(results) == 1
         _, analysis = results[0]

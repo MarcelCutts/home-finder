@@ -9,9 +9,9 @@ from pydantic import SecretStr
 from home_finder.config import Settings
 from home_finder.db import PropertyStorage
 from home_finder.models import CommuteResult, CommuteState, TransportMode
+from home_finder.pipeline.candidates import _assess_commutes
 from home_finder.pipeline.commands import run_backfill_commute
 from home_finder.pipeline.event_recorder import EventRecorder
-from home_finder.pipeline.stages import _geocode_and_compute_commute
 
 
 @pytest.mark.parametrize(
@@ -57,16 +57,19 @@ async def test_advisory_retention_and_durable_accounting(tmp_path, make_merged_p
 
     adapter = MagicMock()
     adapter.geocode_properties = AsyncMock(side_effect=lambda homes: homes)
-    adapter.filter_properties = AsyncMock(side_effect=outcomes)
+    adapter.assess_commutes = AsyncMock(side_effect=outcomes)
     async with PropertyStorage(str(tmp_path / "commute.db")) as storage:
-        run_id = await storage.pipeline.create_pipeline_run()
+        run_id = await storage.runs.create_pipeline_run()
         recorder = EventRecorder(storage, run_id)
         with patch(
-            "home_finder.pipeline.stages.CommuteFilter", return_value=adapter
+            "home_finder.pipeline.candidates.CommuteAssessor", return_value=adapter
         ) as constructor:
-            retained, lookup, count = await _geocode_and_compute_commute(
-                homes, criteria, settings, recorder=recorder
-            )
+            assessment = await _assess_commutes(homes, criteria, settings, recorder=recorder)
+        retained, lookup, count = (
+            assessment.candidates,
+            assessment.measured_commutes,
+            assessment.within_limit_count,
+        )
         assert retained == homes
         assert count == (1 if scenario == "mixed" else 0)
         assert lookup == (
@@ -77,7 +80,7 @@ async def test_advisory_retention_and_durable_accounting(tmp_path, make_merged_p
             if scenario == "mixed"
             else {}
         )
-        await storage.pipeline.save_pre_analysis_properties(retained, lookup)
+        await storage.processing.save_pre_analysis_properties(retained, lookup)
         async with storage._read_connection() as conn:
             events = await (
                 await conn.execute(
@@ -105,7 +108,7 @@ async def test_advisory_retention_and_durable_accounting(tmp_path, make_merged_p
             constructor.assert_not_called()
             assert all(json.loads(row[1])["reason"] == "not_configured" for row in events)
         else:
-            assert adapter.filter_properties.await_count == len(criteria.transport_modes)
+            assert adapter.assess_commutes.await_count == len(criteria.transport_modes)
 
 
 @pytest.mark.parametrize("seconds", [None, 1801])
@@ -130,8 +133,8 @@ async def test_backfill_writes_measurements_only(tmp_path, make_merged_property,
             )
         ]
 
-    adapter = MagicMock(filter_properties=AsyncMock(side_effect=outcomes))
-    with patch("home_finder.pipeline.commands.CommuteFilter", return_value=adapter):
+    adapter = MagicMock(assess_commutes=AsyncMock(side_effect=outcomes))
+    with patch("home_finder.pipeline.commands.CommuteAssessor", return_value=adapter):
         await run_backfill_commute(settings)
     async with PropertyStorage(path) as storage:
         async with storage._read_connection() as conn:

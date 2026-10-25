@@ -16,12 +16,8 @@ from pydantic import HttpUrl, SecretStr
 
 from home_finder.config import Settings
 from home_finder.db import PropertyStorage
-from home_finder.filters.deduplication import Deduplicator
-from home_finder.filters.detail_enrichment import EnrichmentResult
-from home_finder.main import (
-    run_dry_run,
-    run_pipeline,
-)
+from home_finder.enrichment.details import EnrichmentResult
+from home_finder.matching.deduplication import Deduplicator
 from home_finder.models import (
     MergedProperty,
     Property,
@@ -29,11 +25,13 @@ from home_finder.models import (
     PropertyQualityAnalysis,
     PropertySource,
 )
-from home_finder.pipeline.analysis import _drain_reanalysis_queue
-from home_finder.pipeline.stages import (
-    _cross_run_deduplicate,
-    _run_post_enrichment,
+from home_finder.pipeline.candidates import _consolidate_and_admit
+from home_finder.pipeline.flow import (
+    run_dry_run,
+    run_pipeline,
 )
+from home_finder.pipeline.matching import consolidate_candidates
+from home_finder.pipeline.reanalysis import process_reanalysis_queue
 from home_finder.utils.image_cache import get_cache_dir, save_image_bytes
 from tests.notifier_helpers import mock_durable_notifier
 
@@ -61,37 +59,37 @@ async def test_pending_duplicate_group_is_saved_and_donor_retries_retired(
         make_property, PropertySource.OPENRENT, PropertySource.ZOOPLA
     )
     if both_pending:
-        await storage.pipeline.save_unenriched_property(_wrap_merged(first))
-    await storage.pipeline.save_unenriched_property(_wrap_merged(second))
-    retries = await storage.pipeline.get_unenriched_properties()
+        await storage.processing.save_unenriched_property(_wrap_merged(first))
+    await storage.processing.save_unenriched_property(_wrap_merged(second))
+    retries = await storage.processing.get_unenriched_properties()
     inputs = retries if both_pending else [_wrap_merged(first), *retries]
 
-    result = await _cross_run_deduplicate(
+    result = await consolidate_candidates(
         Deduplicator(enable_cross_platform=True),
         inputs,
         storage,
         {retry.unique_id for retry in retries},
     )
-    assert len(result.genuinely_new) == 1
-    await storage.pipeline.save_pre_analysis_properties(result.genuinely_new, {})
-    assert await storage.pipeline.get_unenriched_properties() == []
-    pending = await storage.pipeline.get_pending_analysis_properties()
+    assert len(result.unmatched_candidates) == 1
+    await storage.processing.save_pre_analysis_properties(result.unmatched_candidates, {})
+    assert await storage.processing.get_unenriched_properties() == []
+    pending = await storage.processing.get_pending_analysis_properties()
     assert len(pending) == 1
     assert pending[0].source_urls == {first.source: first.url, second.source: second.url}
     async with storage._read_connection() as conn:
         cursor = await conn.execute("SELECT merged_id FROM source_listings")
         assert {row[0] for row in await cursor.fetchall()} == {pending[0].unique_id}
     # Replaying persistence after an interrupted analysis does not revive donors.
-    await storage.pipeline.save_pre_analysis_properties(pending, {})
-    assert await storage.pipeline.get_unenriched_properties() == []
+    await storage.processing.save_pre_analysis_properties(pending, {})
+    assert await storage.processing.get_unenriched_properties() == []
 
 
 async def test_pre_analysis_group_cannot_absorb_protected_pending_member(storage, make_property):
     first, second = _make_matching_pair(
         make_property, PropertySource.OPENRENT, PropertySource.ZOOPLA
     )
-    await storage.pipeline.save_unenriched_property(_wrap_merged(first))
-    await storage.pipeline.save_unenriched_property(_wrap_merged(second))
+    await storage.processing.save_unenriched_property(_wrap_merged(first))
+    await storage.processing.save_unenriched_property(_wrap_merged(second))
     async with storage._transaction() as conn:
         await conn.execute(
             "UPDATE properties SET user_status='interested' WHERE unique_id=?", (second.unique_id,)
@@ -101,11 +99,11 @@ async def test_pre_analysis_group_cannot_absorb_protected_pending_member(storage
         sources=(first.source, second.source),
         source_urls={first.source: first.url, second.source: second.url},
     )
-    result = await storage.pipeline.save_pre_analysis_properties([group], {})
+    result = await storage.processing.save_pre_analysis_properties([group], {})
     assert result.accepted == []
     assert "user_state" in result.refused[group.unique_id][second.unique_id]
-    assert len(await storage.pipeline.get_unenriched_properties()) == 2
-    assert await storage.pipeline.get_pending_analysis_properties() == []
+    assert len(await storage.processing.get_unenriched_properties()) == 2
+    assert await storage.processing.get_pending_analysis_properties() == []
 
 
 def _wrap_merged(prop: Property, **overrides: Any) -> MergedProperty:
@@ -236,7 +234,7 @@ async def _fake_enrich(merged_list, fetcher, *, data_dir=None, storage=None):
             }
         )
         enriched.append(enriched_m)
-    return EnrichmentResult(enriched=enriched)
+    return EnrichmentResult(with_usable_media=enriched)
 
 
 @contextmanager
@@ -273,7 +271,8 @@ def _pipeline_mocks(
             self.db_path = shared_storage.db_path
             self._conn = shared_storage._conn
             self._web = shared_storage._web
-            self._pipeline = shared_storage._pipeline
+            self._processing = shared_storage._processing
+            self.runs = shared_storage.runs
             _StorageCapture.instance = self
         else:
             original_storage_init(self, ":memory:")
@@ -293,7 +292,7 @@ def _pipeline_mocks(
     mock_fetcher_instance.__aenter__ = _fetcher_aenter
     mock_fetcher_instance.__aexit__ = _fetcher_aexit
 
-    from home_finder.filters.quality import TokenUsage
+    from home_finder.analysis.analyzer import TokenUsage
 
     mock_quality_instance = MagicMock()
     mock_quality_instance.token_usage = TokenUsage()
@@ -321,26 +320,29 @@ def _pipeline_mocks(
         scrape_mock.return_value = (scrape_return or [], [])
 
     with (
-        patch("home_finder.pipeline.scraping.scrape_all_platforms", scrape_mock),
+        patch("home_finder.pipeline.collection.scrape_all_platforms", scrape_mock),
         patch(
-            "home_finder.pipeline.stages.enrich_merged_properties",
+            "home_finder.pipeline.candidates.enrich_merged_properties",
             new_callable=AsyncMock,
             side_effect=enrich_side_effect,
         ),
         patch(
-            "home_finder.pipeline.stages.DetailFetcher",
+            "home_finder.pipeline.candidates.DetailFetcher",
             return_value=mock_fetcher_instance,
         ),
         patch(
-            "home_finder.pipeline.analysis.PropertyQualityFilter",
+            "home_finder.pipeline.assessment.PropertyQualityAnalyzer",
             return_value=mock_quality_instance,
         ) as mock_quality_cls,
         patch(
-            "home_finder.main.TelegramNotifier",
+            "home_finder.pipeline.flow.TelegramNotifier",
             side_effect=construct_notifier,
         ),
-        patch("home_finder.pipeline.analysis._lookup_wards", new_callable=AsyncMock),
-        patch("home_finder.main.asyncio.sleep", new_callable=AsyncMock),
+        patch("home_finder.pipeline.assessment._lookup_wards", new_callable=AsyncMock),
+        patch(
+            "home_finder.pipeline.image_recovery.download_missing_images", new_callable=AsyncMock
+        ),
+        patch("home_finder.pipeline.flow.asyncio.sleep", new_callable=AsyncMock),
         patch.object(PropertyStorage, "__init__", _patched_storage_init),
     ):
         ctx = type(
@@ -445,11 +447,11 @@ class TestCoreReanalysisFlow:
         new_merged = _wrap_merged(new_prop)
         deduplicator = Deduplicator(enable_cross_platform=True)
 
-        result = await _cross_run_deduplicate(deduplicator, [new_merged], storage, set())
+        result = await consolidate_candidates(deduplicator, [new_merged], storage, set())
 
         # Unconditional assertions — the merge MUST happen
         assert result.anchors_updated == 1
-        assert len(result.genuinely_new) == 0
+        assert len(result.unmatched_candidates) == 0
 
         # DB should now have both sources
         await _assert_db_sources(storage, anchor_prop.unique_id, {"rightmove", "zoopla"})
@@ -468,7 +470,7 @@ class TestCoreReanalysisFlow:
         assert row["notification_status"] == "sent"
 
         # -- Drain reanalysis queue --
-        with patch("home_finder.pipeline.analysis.PropertyQualityFilter") as mock_qf_cls:
+        with patch("home_finder.pipeline.assessment.PropertyQualityAnalyzer") as mock_qf_cls:
             mock_qf = MagicMock()
             mock_qf.analyze_single_merged = AsyncMock(side_effect=lambda m, **kw: (m, quality_v2))
             mock_qf.close = AsyncMock()
@@ -476,7 +478,7 @@ class TestCoreReanalysisFlow:
             mock_qf.__aexit__ = AsyncMock(return_value=False)
             mock_qf_cls.return_value = mock_qf
 
-            count = await _drain_reanalysis_queue(settings_quality_on, storage)
+            count = (await process_reanalysis_queue(settings_quality_on, storage)).completed
 
         assert count == 1
 
@@ -598,7 +600,7 @@ class TestSourceVariety:
         )
         await _populate_run1(storage, anchor, quality_v1)
 
-        result = await _cross_run_deduplicate(
+        result = await consolidate_candidates(
             Deduplicator(enable_cross_platform=True),
             [_wrap_merged(new)],
             storage,
@@ -606,7 +608,7 @@ class TestSourceVariety:
         )
 
         assert result.anchors_updated == 1
-        assert len(result.genuinely_new) == 0
+        assert len(result.unmatched_candidates) == 0
         await _assert_db_sources(storage, anchor.unique_id, {"openrent", "rightmove"})
         await _assert_reanalysis_state(storage, anchor.unique_id, requested=True)
 
@@ -622,7 +624,7 @@ class TestSourceVariety:
         )
         await _populate_run1(storage, anchor, quality_v1)
 
-        result = await _cross_run_deduplicate(
+        result = await consolidate_candidates(
             Deduplicator(enable_cross_platform=True),
             [_wrap_merged(new)],
             storage,
@@ -630,7 +632,7 @@ class TestSourceVariety:
         )
 
         assert result.anchors_updated == 1
-        assert len(result.genuinely_new) == 0
+        assert len(result.unmatched_candidates) == 0
         await _assert_db_sources(storage, anchor.unique_id, {"zoopla", "onthemarket"})
 
     async def test_anchor_gains_two_new_sources_in_one_run(
@@ -667,7 +669,7 @@ class TestSourceVariety:
 
         await _populate_run1(storage, anchor, quality_v1)
 
-        result = await _cross_run_deduplicate(
+        result = await consolidate_candidates(
             Deduplicator(enable_cross_platform=True),
             [_wrap_merged(new_z), _wrap_merged(new_rm)],
             storage,
@@ -676,7 +678,7 @@ class TestSourceVariety:
 
         # The two new sources get merged together first, then match anchor
         assert result.anchors_updated >= 1
-        assert len(result.genuinely_new) == 0
+        assert len(result.unmatched_candidates) == 0
         await _assert_db_sources(storage, anchor.unique_id, {"openrent", "zoopla", "rightmove"})
         await _assert_reanalysis_state(storage, anchor.unique_id, requested=True)
 
@@ -713,7 +715,7 @@ class TestDBStateEdgeCases:
         # Populate WITHOUT quality analysis (simulating crash)
         await _populate_run1(storage, anchor, quality_analysis=None)
 
-        result = await _cross_run_deduplicate(
+        result = await consolidate_candidates(
             Deduplicator(enable_cross_platform=True),
             [_wrap_merged(new)],
             storage,
@@ -721,7 +723,7 @@ class TestDBStateEdgeCases:
         )
 
         assert result.anchors_updated == 1
-        assert len(result.genuinely_new) == 0
+        assert len(result.unmatched_candidates) == 0
         await _assert_db_sources(storage, anchor.unique_id, {"rightmove", "zoopla"})
 
         # No quality_analyses row → no flag to set, but no crash
@@ -747,11 +749,11 @@ class TestDBStateEdgeCases:
         await _populate_run1(storage, anchor, quality_v1)
 
         # Pre-flag reanalysis (simulating a previous merge)
-        await storage.pipeline.request_reanalysis([anchor.unique_id])
+        await storage.processing.request_reanalysis([anchor.unique_id])
         await _assert_reanalysis_state(storage, anchor.unique_id, requested=True)
 
         # New merge arrives — request_reanalysis called again (idempotent update)
-        result = await _cross_run_deduplicate(
+        result = await consolidate_candidates(
             Deduplicator(enable_cross_platform=True),
             [_wrap_merged(new)],
             storage,
@@ -777,7 +779,7 @@ class TestDBStateEdgeCases:
         )
         await _populate_run1(storage, anchor, quality_v1)
 
-        result = await _cross_run_deduplicate(
+        result = await consolidate_candidates(
             Deduplicator(enable_cross_platform=True),
             [_wrap_merged(new)],
             storage,
@@ -824,7 +826,7 @@ class TestImageCacheConsolidation:
         # Create fake cached images for the new source
         filenames = _make_image_cache(tmp_path, new.unique_id, count=3)
 
-        result = await _cross_run_deduplicate(
+        result = await consolidate_candidates(
             Deduplicator(enable_cross_platform=True, data_dir=data_dir),
             [_wrap_merged(new)],
             storage,
@@ -852,7 +854,7 @@ class TestImageCacheConsolidation:
         )
         await _populate_run1(storage, anchor, quality_v1)
 
-        result = await _cross_run_deduplicate(
+        result = await consolidate_candidates(
             Deduplicator(enable_cross_platform=True, data_dir=""),
             [_wrap_merged(new)],
             storage,
@@ -870,7 +872,7 @@ class TestImageCacheConsolidation:
 
 
 class TestDrainReanalysisQueue:
-    """_drain_reanalysis_queue() processes flagged properties."""
+    """process_reanalysis_queue() processes flagged properties."""
 
     async def test_empty_queue_returns_zero(
         self,
@@ -878,8 +880,8 @@ class TestDrainReanalysisQueue:
         settings_quality_on: Settings,
     ):
         """No flagged properties → returns 0, quality filter never constructed."""
-        with patch("home_finder.pipeline.analysis.PropertyQualityFilter") as mock_cls:
-            count = await _drain_reanalysis_queue(settings_quality_on, storage)
+        with patch("home_finder.pipeline.assessment.PropertyQualityAnalyzer") as mock_cls:
+            count = (await process_reanalysis_queue(settings_quality_on, storage)).completed
 
         assert count == 0
         mock_cls.assert_not_called()
@@ -894,9 +896,9 @@ class TestDrainReanalysisQueue:
         """Returns 0 when quality filter is disabled. Flag NOT cleared."""
         anchor = make_property(source=PropertySource.OPENRENT, postcode="E8 3RH", price_pcm=1800)
         await _populate_run1(storage, anchor, quality_v1)
-        await storage.pipeline.request_reanalysis([anchor.unique_id])
+        await storage.processing.request_reanalysis([anchor.unique_id])
 
-        count = await _drain_reanalysis_queue(settings_quality_off, storage)
+        count = (await process_reanalysis_queue(settings_quality_off, storage)).completed
 
         assert count == 0
         # Flag should still be set (not cleared)
@@ -919,10 +921,10 @@ class TestDrainReanalysisQueue:
                 price_pcm=1800 + i * 100,
             )
             await _populate_run1(storage, prop, quality_v1)
-            await storage.pipeline.request_reanalysis([prop.unique_id])
+            await storage.processing.request_reanalysis([prop.unique_id])
             anchors.append(prop)
 
-        with patch("home_finder.pipeline.analysis.PropertyQualityFilter") as mock_cls:
+        with patch("home_finder.pipeline.assessment.PropertyQualityAnalyzer") as mock_cls:
             mock_qf = MagicMock()
             mock_qf.analyze_single_merged = AsyncMock(side_effect=lambda m, **kw: (m, quality_v2))
             mock_qf.close = AsyncMock()
@@ -930,7 +932,7 @@ class TestDrainReanalysisQueue:
             mock_qf.__aexit__ = AsyncMock(return_value=False)
             mock_cls.return_value = mock_qf
 
-            count = await _drain_reanalysis_queue(settings_quality_on, storage)
+            count = (await process_reanalysis_queue(settings_quality_on, storage)).completed
 
         assert count == 3
 
@@ -974,7 +976,7 @@ class TestDrainReanalysisQueue:
                 price_pcm=1800 + i * 100,
             )
             await _populate_run1(storage, prop, quality_v1)
-            await storage.pipeline.request_reanalysis([prop.unique_id])
+            await storage.processing.request_reanalysis([prop.unique_id])
             anchors.append(prop)
 
         call_idx = 0
@@ -986,7 +988,7 @@ class TestDrainReanalysisQueue:
                 raise RuntimeError("API timeout")
             return (merged, quality_v2)
 
-        with patch("home_finder.pipeline.analysis.PropertyQualityFilter") as mock_cls:
+        with patch("home_finder.pipeline.assessment.PropertyQualityAnalyzer") as mock_cls:
             mock_qf = MagicMock()
             mock_qf.analyze_single_merged = AsyncMock(side_effect=_flaky_analyze)
             mock_qf.close = AsyncMock()
@@ -994,9 +996,9 @@ class TestDrainReanalysisQueue:
             mock_qf.__aexit__ = AsyncMock(return_value=False)
             mock_cls.return_value = mock_qf
 
-            count = await _drain_reanalysis_queue(settings_quality_on, storage)
+            count = (await process_reanalysis_queue(settings_quality_on, storage)).completed
 
-        # 2 of 3 succeeded (drain uses _run_concurrent_analysis which continues on error)
+        # 2 of 3 succeeded (drain uses run_concurrent_analysis which continues on error)
         assert count == 2
 
 
@@ -1014,7 +1016,7 @@ class TestNoMergeScenarios:
         make_property: Callable[..., Property],
         quality_v1: PropertyQualityAnalysis,
     ):
-        """Anchor E8 3RH, new E8 4AB with different coords/address → genuinely_new=1, no merge."""
+        """Different postcodes, coordinates, and addresses leave the candidate unmatched."""
         anchor = make_property(
             source=PropertySource.RIGHTMOVE,
             postcode="E8 3RH",
@@ -1036,7 +1038,7 @@ class TestNoMergeScenarios:
 
         await _populate_run1(storage, anchor, quality_v1)
 
-        result = await _cross_run_deduplicate(
+        result = await consolidate_candidates(
             Deduplicator(enable_cross_platform=True),
             [_wrap_merged(new)],
             storage,
@@ -1044,7 +1046,7 @@ class TestNoMergeScenarios:
         )
 
         assert result.anchors_updated == 0
-        assert len(result.genuinely_new) == 1
+        assert len(result.unmatched_candidates) == 1
 
     async def test_same_postcode_different_bedrooms_no_merge(
         self,
@@ -1068,7 +1070,7 @@ class TestNoMergeScenarios:
 
         await _populate_run1(storage, anchor, quality_v1)
 
-        result = await _cross_run_deduplicate(
+        result = await consolidate_candidates(
             Deduplicator(enable_cross_platform=True),
             [_wrap_merged(new)],
             storage,
@@ -1076,7 +1078,7 @@ class TestNoMergeScenarios:
         )
 
         assert result.anchors_updated == 0
-        assert len(result.genuinely_new) == 1
+        assert len(result.unmatched_candidates) == 1
 
     async def test_same_source_no_cross_platform_merge(
         self,
@@ -1102,7 +1104,7 @@ class TestNoMergeScenarios:
 
         await _populate_run1(storage, anchor, quality_v1)
 
-        result = await _cross_run_deduplicate(
+        result = await consolidate_candidates(
             Deduplicator(enable_cross_platform=True),
             [_wrap_merged(new)],
             storage,
@@ -1111,7 +1113,7 @@ class TestNoMergeScenarios:
 
         # Same source — no cross-platform merge (scoring doesn't match same-source)
         assert result.anchors_updated == 0
-        assert len(result.genuinely_new) == 1
+        assert len(result.unmatched_candidates) == 1
 
 
 # ---------------------------------------------------------------------------
@@ -1178,17 +1180,17 @@ class TestRescrapeSubsetRegression:
         deduplicator = Deduplicator(enable_cross_platform=True)
 
         # Run 2: Rightmove merges in
-        result = await _cross_run_deduplicate(deduplicator, [_wrap_merged(rm_prop)], storage, set())
+        result = await consolidate_candidates(deduplicator, [_wrap_merged(rm_prop)], storage, set())
         assert result.anchors_updated == 1
         await _assert_db_sources(storage, or_prop.unique_id, {"openrent", "rightmove"})
 
         # Run 3: Zoopla merges in
-        result = await _cross_run_deduplicate(deduplicator, [_wrap_merged(zp_prop)], storage, set())
+        result = await consolidate_candidates(deduplicator, [_wrap_merged(zp_prop)], storage, set())
         assert result.anchors_updated == 1
         await _assert_db_sources(storage, or_prop.unique_id, {"openrent", "rightmove", "zoopla"})
 
         # Run 4: OnTheMarket merges in
-        result = await _cross_run_deduplicate(
+        result = await consolidate_candidates(
             deduplicator, [_wrap_merged(otm_prop)], storage, set()
         )
         assert result.anchors_updated == 1
@@ -1209,7 +1211,7 @@ class TestRescrapeSubsetRegression:
 
         # -- The actual regression scenario --
         # Run 5: Re-scrape only OpenRent + Rightmove (subset of 4 known sources)
-        result = await _cross_run_deduplicate(
+        result = await consolidate_candidates(
             deduplicator,
             [_wrap_merged(or_prop), _wrap_merged(rm_prop)],
             storage,
@@ -1285,7 +1287,7 @@ class TestDryRunPath:
         try:
             # Pre-seed: save anchor with quality analysis and pending reanalysis
             await _populate_run1(shared_storage, anchor, quality_v1)
-            await shared_storage.pipeline.request_reanalysis([anchor.unique_id])
+            await shared_storage.processing.request_reanalysis([anchor.unique_id])
 
             with _pipeline_mocks(
                 scrape_return=[new_prop],
@@ -1454,7 +1456,7 @@ class TestSameBuildingDisambiguation:
             enable_image_hashing=True,
             data_dir=data_dir,
         )
-        result = await _cross_run_deduplicate(
+        result = await consolidate_candidates(
             deduplicator,
             [_wrap_merged(new)],
             storage,
@@ -1464,8 +1466,8 @@ class TestSameBuildingDisambiguation:
 
         # Should NOT merge — different flats in same building
         assert result.anchors_updated == 0
-        assert len(result.genuinely_new) == 1
-        assert result.genuinely_new[0].canonical.unique_id == new.unique_id
+        assert len(result.unmatched_candidates) == 1
+        assert result.unmatched_candidates[0].canonical.unique_id == new.unique_id
 
     async def test_same_building_same_flat_merged_with_matching_images(
         self,
@@ -1505,7 +1507,7 @@ class TestSameBuildingDisambiguation:
             enable_image_hashing=True,
             data_dir=data_dir,
         )
-        result = await _cross_run_deduplicate(
+        result = await consolidate_candidates(
             deduplicator,
             [_wrap_merged(new)],
             storage,
@@ -1515,7 +1517,7 @@ class TestSameBuildingDisambiguation:
 
         # Should merge — same flat on different platforms
         assert result.anchors_updated == 1
-        assert len(result.genuinely_new) == 0
+        assert len(result.unmatched_candidates) == 0
         await _assert_db_sources(storage, anchor.unique_id, {"openrent", "zoopla"})
 
     async def test_global_image_hashing_disabled_still_prevents_merge(
@@ -1525,12 +1527,12 @@ class TestSameBuildingDisambiguation:
         quality_v1: PropertyQualityAnalysis,
         tmp_path: Any,
     ):
-        """F1 integration: _run_post_enrichment uses image hashing even when
+        """F1 integration: _consolidate_and_admit uses image hashing even when
         the global enable_image_hash_matching setting is False.
 
         This is the core F1 scenario — if someone disables image hashing for
         performance, same-building disambiguation must still work in cross-run
-        dedup because _run_post_enrichment unconditionally enables it.
+        dedup because _consolidate_and_admit unconditionally enables it.
         """
         # Settings with image hashing DISABLED globally, DB in tmp_path so
         # data_dir resolves to tmp_path for image cache lookup.
@@ -1571,16 +1573,17 @@ class TestSameBuildingDisambiguation:
         _make_real_image_cache_matching(tmp_path, anchor.unique_id, count=3)
         _make_real_image_cache_distinct(tmp_path, new.unique_id, count=3)
 
-        # Go through _run_post_enrichment (the production code path)
+        # Go through _consolidate_and_admit (the production code path)
         # rather than constructing a Deduplicator manually.
-        post_result = await _run_post_enrichment([_wrap_merged(new)], storage, settings, set())
+        post_result = await _consolidate_and_admit([_wrap_merged(new)], storage, settings, set())
 
         # Should NOT merge — F1 ensures cross-run dedup always hashes
         assert post_result is not None
-        merged_to_notify, anchors_updated, _post_dedup, _post_fp = post_result
+        analysis_candidates = post_result.candidates
+        anchors_updated = post_result.anchors_updated
         assert anchors_updated == 0
-        assert len(merged_to_notify) == 1
-        assert merged_to_notify[0].canonical.unique_id == new.unique_id
+        assert len(analysis_candidates) == 1
+        assert analysis_candidates[0].canonical.unique_id == new.unique_id
 
     async def test_no_cached_images_merges_on_location_signals(
         self,
@@ -1624,7 +1627,7 @@ class TestSameBuildingDisambiguation:
             enable_image_hashing=True,
             data_dir=data_dir,
         )
-        result = await _cross_run_deduplicate(
+        result = await consolidate_candidates(
             deduplicator,
             [_wrap_merged(new)],
             storage,
@@ -1634,7 +1637,7 @@ class TestSameBuildingDisambiguation:
 
         # DOES merge — no image evidence to reject, location signals sufficient
         assert result.anchors_updated == 1
-        assert len(result.genuinely_new) == 0
+        assert len(result.unmatched_candidates) == 0
         await _assert_db_sources(storage, anchor.unique_id, {"openrent", "zoopla"})
 
 
@@ -1662,7 +1665,7 @@ class TestCrossPlatformPriceDropDetection:
         )
         await _populate_run1(storage, anchor, quality_v1)
 
-        result = await _cross_run_deduplicate(
+        result = await consolidate_candidates(
             Deduplicator(enable_cross_platform=True),
             [_wrap_merged(new)],
             storage,
@@ -1712,7 +1715,7 @@ class TestCrossPlatformPriceDropDetection:
         )
         await _populate_run1(storage, anchor, quality_v1)
 
-        result = await _cross_run_deduplicate(
+        result = await consolidate_candidates(
             Deduplicator(enable_cross_platform=True),
             [_wrap_merged(new)],
             storage,
@@ -1745,7 +1748,7 @@ class TestCrossPlatformPriceDropDetection:
         )
         await _populate_run1(storage, anchor, quality_v1)
 
-        result = await _cross_run_deduplicate(
+        result = await consolidate_candidates(
             Deduplicator(enable_cross_platform=True),
             [_wrap_merged(new)],
             storage,
@@ -1800,7 +1803,7 @@ class TestCrossPlatformPriceDropDetection:
 
         await _populate_run1(storage, anchor, quality_v1)
 
-        result = await _cross_run_deduplicate(
+        result = await consolidate_candidates(
             Deduplicator(enable_cross_platform=True),
             [_wrap_merged(new_z), _wrap_merged(new_rm)],
             storage,
@@ -1808,7 +1811,7 @@ class TestCrossPlatformPriceDropDetection:
         )
 
         assert result.anchors_updated >= 1
-        assert len(result.genuinely_new) == 0
+        assert len(result.unmatched_candidates) == 0
 
         # Should record the drop to £1700 (lowest new source price)
         conn = await storage._get_connection()
@@ -1846,7 +1849,7 @@ class TestCrossPlatformPriceDropDetection:
         await _populate_run1(storage, anchor, quality_v1)
 
         # First cross-run: Zoopla merges in (new source)
-        await _cross_run_deduplicate(
+        await consolidate_candidates(
             Deduplicator(enable_cross_platform=True),
             [_wrap_merged(new)],
             storage,
@@ -1855,7 +1858,7 @@ class TestCrossPlatformPriceDropDetection:
         await _assert_db_sources(storage, anchor.unique_id, {"openrent", "zoopla"})
 
         # Rescrape: Zoopla arrives again at same price (no longer a new source)
-        result = await _cross_run_deduplicate(
+        result = await consolidate_candidates(
             Deduplicator(enable_cross_platform=True),
             [_wrap_merged(new)],
             storage,
@@ -1883,14 +1886,14 @@ async def test_committed_merge_keeps_reanalysis_queued_when_cache_copy_fails(
     )
     await _populate_run1(storage, anchor, quality_v1)
     pending = _wrap_merged(newcomer)
-    await storage.pipeline.save_unenriched_property(pending)
+    await storage.processing.save_unenriched_property(pending)
 
     def interrupted_copy(*args):
         raise OSError("simulated cache copy interruption")
 
-    monkeypatch.setattr("home_finder.pipeline.stages.copy_cached_images", interrupted_copy)
+    monkeypatch.setattr("home_finder.pipeline.matching.copy_cached_images", interrupted_copy)
     with pytest.raises(OSError, match="simulated cache"):
-        await _cross_run_deduplicate(
+        await consolidate_candidates(
             Deduplicator(enable_cross_platform=True),
             [pending],
             storage,
@@ -1899,7 +1902,7 @@ async def test_committed_merge_keeps_reanalysis_queued_when_cache_copy_fails(
         )
     assert await storage.get_property(newcomer.unique_id) is None
     await _assert_db_sources(storage, anchor.unique_id, {"rightmove", "zoopla"})
-    queued = await storage.pipeline.get_reanalysis_queue()
+    queued = await storage.processing.get_reanalysis_queue()
     assert [item.unique_id for item in queued] == [anchor.unique_id]
     assert queued[0].source_urls[newcomer.source] == newcomer.url
 
@@ -1911,7 +1914,7 @@ async def test_pre_analysis_retirement_preserves_unrepresented_provider_rows(
         make_property, PropertySource.OPENRENT, PropertySource.ZOOPLA
     )
     extra = make_property(source=PropertySource.RIGHTMOVE)
-    await storage.pipeline.save_unenriched_property(_wrap_merged(second))
+    await storage.processing.save_unenriched_property(_wrap_merged(second))
     await storage.upsert_source_listings([first, extra])
     await storage.link_source_listings([(extra.unique_id, second.unique_id)])
     group = _wrap_merged(
@@ -1919,7 +1922,7 @@ async def test_pre_analysis_retirement_preserves_unrepresented_provider_rows(
         sources=(first.source, second.source),
         source_urls={first.source: first.url, second.source: second.url},
     )
-    result = await storage.pipeline.save_pre_analysis_properties([group], {})
+    result = await storage.processing.save_pre_analysis_properties([group], {})
     assert result.accepted == []
     assert result.refused[group.unique_id][second.unique_id] == ["unrepresented_source_listing"]
     assert await storage.get_property(second.unique_id) is not None

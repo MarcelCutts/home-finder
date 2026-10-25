@@ -9,7 +9,7 @@ import structlog.testing
 from home_finder.db import PropertyStorage
 from home_finder.db.merge_safety import MergeBlockedError
 from home_finder.models import PropertySource
-from home_finder.pipeline.stages import _cross_run_deduplicate
+from home_finder.pipeline.matching import consolidate_candidates
 from tests.test_db.test_spend import policy, spec
 
 TABLES = (
@@ -46,7 +46,7 @@ async def proposed_merge(in_memory_storage, make_merged_property):
     anchor = make_merged_property(source_id="anchor")
     pending = make_merged_property(sources=(PropertySource.RIGHTMOVE,), source_id="pending")
     await in_memory_storage.save_merged_property(anchor)
-    await in_memory_storage.pipeline.save_unenriched_property(pending)
+    await in_memory_storage.processing.save_unenriched_property(pending)
     await in_memory_storage.upsert_source_listings([pending.canonical])
     combined = anchor.model_copy(
         update={
@@ -88,7 +88,7 @@ async def test_entire_group_remains_unchanged_when_any_member_has_history(
     anchor, pending, combined = proposed_merge
     # A safe group member must not be moved before the protected one is checked.
     safe = make_merged_property(sources=(PropertySource.ZOOPLA,), source_id="safe")
-    await db.pipeline.save_unenriched_property(safe)
+    await db.processing.save_unenriched_property(safe)
     if history == "paid_attempts":
         await db.spend.admit(spec().model_copy(update={"property_id": pending.unique_id}), policy())
     else:
@@ -207,13 +207,13 @@ async def test_unrepresented_retry_and_unrelated_retry_are_never_deleted(
     db = in_memory_storage
     anchor, pending, _ = proposed_merge
     unrelated = make_merged_property(sources=(PropertySource.ZOOPLA,), source_id="unrelated")
-    await db.pipeline.save_unenriched_property(unrelated)
+    await db.processing.save_unenriched_property(unrelated)
     dedup = AsyncMock()
     dedup.deduplicate_merged_async.return_value = [anchor]
-    result = await _cross_run_deduplicate(
+    result = await consolidate_candidates(
         dedup, [pending], db, {pending.unique_id, unrelated.unique_id}
     )
-    assert [item.unique_id for item in result.genuinely_new] == [pending.unique_id]
+    assert [item.unique_id for item in result.unmatched_candidates] == [pending.unique_id]
     assert await db.get_property(unrelated.unique_id) is not None
     assert await db.get_property(pending.unique_id) is not None
     assert result.anchors_updated == 0
@@ -236,8 +236,8 @@ async def test_ambiguous_anchor_group_preserves_each_identity_and_new_work(
     dedup.deduplicate_merged_async.return_value = [combined]
     before = (await snapshot(db))["properties"]
     with structlog.testing.capture_logs() as captured:
-        result = await _cross_run_deduplicate(dedup, [pending], db, {pending.unique_id})
-    assert [item.unique_id for item in result.genuinely_new] == [pending.unique_id]
+        result = await consolidate_candidates(dedup, [pending], db, {pending.unique_id})
+    assert [item.unique_id for item in result.unmatched_candidates] == [pending.unique_id]
     assert result.anchors_updated == 0
     assert (await snapshot(db))["properties"] == before
     refusal = next(event for event in captured if event["event"] == "canonical_merge_deferred")
@@ -255,10 +255,10 @@ async def test_cross_run_refusal_retains_pending_work_and_its_message(
     dedup = AsyncMock()
     dedup.deduplicate_merged_async.return_value = [combined]
     before = await snapshot(db)
-    result = await _cross_run_deduplicate(dedup, [pending], db, {pending.unique_id})
+    result = await consolidate_candidates(dedup, [pending], db, {pending.unique_id})
     after = await snapshot(db)
     assert result.anchors_updated == 0
-    assert [item.unique_id for item in result.genuinely_new] == [pending.unique_id]
+    assert [item.unique_id for item in result.unmatched_candidates] == [pending.unique_id]
     assert after["properties"] == before["properties"]
     assert after["viewing_messages"] == before["viewing_messages"]
 
@@ -275,10 +275,10 @@ async def test_successful_cross_run_retains_original_cache_for_recovery(
     save_image_bytes(path, b"retained fixture bytes")
     dedup = AsyncMock()
     dedup.deduplicate_merged_async.return_value = [combined]
-    result = await _cross_run_deduplicate(
+    result = await consolidate_candidates(
         dedup, [pending], db, {pending.unique_id}, data_dir=str(tmp_path)
     )
-    assert result.anchors_updated == 1 and result.genuinely_new == []
+    assert result.anchors_updated == 1 and result.unmatched_candidates == []
     assert await db.get_property(pending.unique_id) is None
     assert path.read_bytes() == b"retained fixture bytes"
     assert any(get_cache_dir(str(tmp_path), anchor.unique_id).iterdir())
@@ -287,7 +287,7 @@ async def test_successful_cross_run_retains_original_cache_for_recovery(
 async def test_rejected_proposal_never_changes_cache_files(
     in_memory_storage, proposed_merge, tmp_path
 ):
-    from home_finder.filters.deduplication import Deduplicator
+    from home_finder.matching.deduplication import Deduplicator
     from home_finder.utils.image_cache import get_cache_dir, save_image_bytes
 
     anchor, pending, _ = proposed_merge
@@ -321,9 +321,9 @@ async def test_committed_merge_repairs_cache_without_repeating_the_merge(
     def interrupted(*args):
         raise OSError("interrupted after commit")
 
-    monkeypatch.setattr("home_finder.pipeline.stages.copy_cached_images", interrupted)
+    monkeypatch.setattr("home_finder.pipeline.matching.copy_cached_images", interrupted)
     with pytest.raises(OSError, match="interrupted after commit"):
-        await _cross_run_deduplicate(
+        await consolidate_candidates(
             dedup, [pending], db, {pending.unique_id}, data_dir=str(tmp_path)
         )
     assert await db.get_property(pending.unique_id) is None

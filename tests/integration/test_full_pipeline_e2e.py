@@ -8,14 +8,14 @@ from pydantic import SecretStr
 
 from home_finder.config import Settings
 from home_finder.db import PropertyStorage
-from home_finder.filters.detail_enrichment import EnrichmentResult
+from home_finder.enrichment.details import EnrichmentResult
 from home_finder.models import (
     Property,
     PropertySource,
     TransportMode,
 )
-from home_finder.pipeline.analysis import _save_one
-from home_finder.pipeline.stages import _run_pre_analysis_pipeline
+from home_finder.pipeline.assessment import complete_initial_assessment
+from home_finder.pipeline.candidates import prepare_candidates
 
 
 @pytest.fixture
@@ -47,7 +47,7 @@ def synthetic_properties(make_property: Callable[..., Property]) -> list[Propert
 
 @pytest.mark.e2e
 class TestFullPipelineE2E:
-    """Test _run_pre_analysis_pipeline with mocked external APIs."""
+    """Test prepare_candidates with mocked external APIs."""
 
     async def test_pipeline_scrape_through_save(
         self, test_settings: Settings, synthetic_properties: list[Property]
@@ -58,40 +58,39 @@ class TestFullPipelineE2E:
 
         with (
             patch(
-                "home_finder.pipeline.scraping.scrape_all_platforms",
+                "home_finder.pipeline.collection.scrape_all_platforms",
                 new_callable=AsyncMock,
                 return_value=(synthetic_properties, []),
             ),
             patch(
-                "home_finder.pipeline.stages.enrich_merged_properties",
+                "home_finder.pipeline.candidates.enrich_merged_properties",
                 new_callable=AsyncMock,
-                side_effect=lambda merged, *a, **kw: EnrichmentResult(enriched=merged),
+                side_effect=lambda merged, *a, **kw: EnrichmentResult(with_usable_media=merged),
             ),
             patch(
-                "home_finder.pipeline.stages.DetailFetcher",
+                "home_finder.pipeline.candidates.DetailFetcher",
             ) as MockFetcher,
         ):
             mock_fetcher_instance = MagicMock()
             mock_fetcher_instance.close = AsyncMock()
             MockFetcher.return_value = mock_fetcher_instance
 
-            result = await _run_pre_analysis_pipeline(test_settings, storage)
+            result = await prepare_candidates(test_settings, storage)
 
         assert result is not None
-        assert len(result.merged_to_process) > 0
+        assert len(result.candidates) > 0
 
-        # Pre-save (as pipeline does before analysis), then update with _save_one
-        await storage.pipeline.save_pre_analysis_properties(
-            result.merged_to_process, result.commute_lookup
+        # Pre-save (as pipeline does before analysis), then update with complete_initial_assessment
+        await storage.processing.save_pre_analysis_properties(
+            result.candidates, result.commute_lookup
         )
-        for merged in result.merged_to_process:
-            commute_info = result.commute_lookup.get(merged.canonical.unique_id)
-            await _save_one(merged, commute_info, None, storage)
+        for merged in result.candidates:
+            await complete_initial_assessment(merged, None, storage)
 
         # Verify properties are in DB
         count = await storage.web.get_property_count()
         assert count > 0
-        assert count == len(result.merged_to_process)
+        assert count == len(result.candidates)
 
         await storage.close()
 
@@ -118,7 +117,7 @@ class TestFullPipelineE2E:
             traveltime_api_key=SecretStr("test-key"),
         )
 
-        # Mock CommuteFilter to return only half
+        # Mock CommuteAssessor to return only half
         from home_finder.models import CommuteResult, CommuteState
 
         mock_commute_results = [
@@ -142,20 +141,20 @@ class TestFullPipelineE2E:
 
         with (
             patch(
-                "home_finder.pipeline.scraping.scrape_all_platforms",
+                "home_finder.pipeline.collection.scrape_all_platforms",
                 new_callable=AsyncMock,
                 return_value=(synthetic_properties, []),
             ),
             patch(
-                "home_finder.pipeline.stages.enrich_merged_properties",
+                "home_finder.pipeline.candidates.enrich_merged_properties",
                 new_callable=AsyncMock,
-                side_effect=lambda merged, *a, **kw: EnrichmentResult(enriched=merged),
+                side_effect=lambda merged, *a, **kw: EnrichmentResult(with_usable_media=merged),
             ),
             patch(
-                "home_finder.pipeline.stages.DetailFetcher",
+                "home_finder.pipeline.candidates.DetailFetcher",
             ) as MockFetcher,
             patch(
-                "home_finder.pipeline.stages.CommuteFilter",
+                "home_finder.pipeline.candidates.CommuteAssessor",
             ) as MockCommuteFilter,
         ):
             mock_fetcher_instance = MagicMock()
@@ -163,37 +162,37 @@ class TestFullPipelineE2E:
             MockFetcher.return_value = mock_fetcher_instance
 
             mock_commute_instance = MagicMock()
-            mock_commute_instance.filter_properties = AsyncMock(return_value=mock_commute_results)
+            mock_commute_instance.assess_commutes = AsyncMock(return_value=mock_commute_results)
             mock_commute_instance.geocode_properties = AsyncMock(side_effect=lambda merged: merged)
             MockCommuteFilter.return_value = mock_commute_instance
 
-            result = await _run_pre_analysis_pipeline(settings_with_commute, storage)
+            result = await prepare_candidates(settings_with_commute, storage)
 
         assert result is not None
-        assert result.commute_within_limit_count == 1
+        assert result.progress.commute_within_limit_count == 1
         assert result.commute_lookup == {
             synthetic_properties[0].unique_id: (15, TransportMode.CYCLING),
             synthetic_properties[1].unique_id: (45, TransportMode.CYCLING),
         }
         assert {r.property_id for r in mock_commute_results} <= {
-            m.unique_id for m in result.merged_to_process
+            m.unique_id for m in result.candidates
         }
 
         await storage.close()
 
-    async def test_pipeline_no_results_returns_none(self, test_settings: Settings):
+    async def test_pipeline_no_results_returns_empty_batch(self, test_settings: Settings):
         """Empty scrape should return None."""
         storage = PropertyStorage(":memory:")
         await storage.initialize()
 
         with patch(
-            "home_finder.pipeline.scraping.scrape_all_platforms",
+            "home_finder.pipeline.collection.scrape_all_platforms",
             new_callable=AsyncMock,
             return_value=([], []),
         ):
-            result = await _run_pre_analysis_pipeline(test_settings, storage)
+            result = await prepare_candidates(test_settings, storage)
 
-        assert result is None
+        assert result.candidates == []
         await storage.close()
 
     async def test_pipeline_dedup_reduces_count(
@@ -232,28 +231,28 @@ class TestFullPipelineE2E:
 
         with (
             patch(
-                "home_finder.pipeline.scraping.scrape_all_platforms",
+                "home_finder.pipeline.collection.scrape_all_platforms",
                 new_callable=AsyncMock,
                 return_value=(props, []),
             ),
             patch(
-                "home_finder.pipeline.stages.enrich_merged_properties",
+                "home_finder.pipeline.candidates.enrich_merged_properties",
                 new_callable=AsyncMock,
-                side_effect=lambda merged, *a, **kw: EnrichmentResult(enriched=merged),
+                side_effect=lambda merged, *a, **kw: EnrichmentResult(with_usable_media=merged),
             ),
             patch(
-                "home_finder.pipeline.stages.DetailFetcher",
+                "home_finder.pipeline.candidates.DetailFetcher",
             ) as MockFetcher,
         ):
             mock_fetcher_instance = MagicMock()
             mock_fetcher_instance.close = AsyncMock()
             MockFetcher.return_value = mock_fetcher_instance
 
-            result = await _run_pre_analysis_pipeline(test_settings, storage)
+            result = await prepare_candidates(test_settings, storage)
 
         assert result is not None
         # 3 input props, but 2 should merge → result should be <= 3
         # (first two have same postcode+bedrooms+price+coords, should merge)
-        assert len(result.merged_to_process) <= len(props)
+        assert len(result.candidates) <= len(props)
 
         await storage.close()

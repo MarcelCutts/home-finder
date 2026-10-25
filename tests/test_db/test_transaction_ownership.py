@@ -341,14 +341,14 @@ async def test_failed_status_change_cannot_commit_through_pipeline_write(
             storage.update_user_status(sample_property.unique_id, UserStatus.INTERESTED)
         )
         await asyncio.wait_for(status_written.wait(), 2)
-        pipeline_run = asyncio.create_task(storage.pipeline.create_pipeline_run())
+        pipeline_run = asyncio.create_task(storage.runs.create_pipeline_run())
         await asyncio.wait({pipeline_run}, timeout=0.1)
         fail_status.set()
         with pytest.raises(RuntimeError, match="status event failed"):
             await status
         run_id = await pipeline_run
-    await storage.pipeline.complete_pipeline_run(run_id, "completed")
-    assert await storage.pipeline.get_last_pipeline_run() is not None
+    await storage.runs.complete_pipeline_run(run_id, "completed")
+    assert await storage.runs.get_last_pipeline_run() is not None
     detail = await storage.web.get_property_detail(sample_property.unique_id)
     assert detail is not None and detail["user_status"] == "new"
     assert await storage.get_status_history(sample_property.unique_id) == []

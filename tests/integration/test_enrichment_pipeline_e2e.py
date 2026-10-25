@@ -7,8 +7,8 @@ import pytest
 
 pytestmark = pytest.mark.usefixtures("reset_crawlee_state", "set_crawlee_storage_dir")
 
-from home_finder.filters.deduplication import Deduplicator
-from home_finder.filters.detail_enrichment import enrich_merged_properties
+from home_finder.enrichment.details import enrich_merged_properties
+from home_finder.matching.deduplication import Deduplicator
 from home_finder.scrapers import OpenRentScraper
 from home_finder.scrapers.detail_fetcher import DetailFetcher
 
@@ -48,10 +48,10 @@ class TestEnrichmentPipelineE2E:
             await fetcher.close()
 
         # Property count should be preserved
-        assert len(enriched.enriched) == len(merged)
+        assert len(enriched.with_usable_media) == len(merged)
 
         # At least some should have images after enrichment
-        with_images = [m for m in enriched.enriched if m.images]
+        with_images = [m for m in enriched.with_usable_media if m.images]
         # Don't require all — some detail pages may fail
         assert len(with_images) >= 0  # Soft assertion
 
@@ -72,7 +72,9 @@ class TestEnrichmentPipelineE2E:
 
         # Descriptions come from detail pages — check if any got populated
         # (original canonical descriptions are separate from enriched descriptions)
-        has_data = any(m.images or m.floorplan or m.descriptions for m in enriched.enriched)
+        has_data = any(
+            m.images or m.floorplan or m.descriptions for m in enriched.with_usable_media
+        )
         # At least some enrichment should have happened
         # (soft check — don't fail on transient issues)
         if not has_data:
@@ -99,7 +101,7 @@ class TestEnrichmentPipelineE2E:
         finally:
             await fetcher.close()
 
-        for m in enriched.enriched:
+        for m in enriched.with_usable_media:
             pre_price, pre_postcode, pre_bedrooms = pre_data[m.unique_id]
             assert m.canonical.price_pcm == pre_price
             assert m.canonical.postcode == pre_postcode
@@ -122,5 +124,5 @@ class TestEnrichmentPipelineE2E:
         finally:
             await fetcher.close()
 
-        post_ids = {m.unique_id for m in enriched.enriched}
+        post_ids = {m.unique_id for m in enriched.with_usable_media}
         assert pre_ids == post_ids

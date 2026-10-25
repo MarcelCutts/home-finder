@@ -2,8 +2,8 @@
 
 from typing import Final, TypedDict
 
+from home_finder.analysis.image_review import SUPPLIED_PHOTO_LOWLIGHT_LABELS
 from home_finder.filters.fit_score import FitDimension
-from home_finder.filters.image_review import SUPPLIED_PHOTO_LOWLIGHT_LABELS
 from home_finder.models import PropertyLowlight, PropertyQualityAnalysis
 
 # Photo-coverage tags say less than the red flags about which rooms are missing.

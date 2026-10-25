@@ -68,7 +68,7 @@ async def _pipeline_loop(
     Reuses the web server's storage instance to avoid dual-connection
     contention on the same SQLite database file.
     """
-    from home_finder.main import run_pipeline
+    from home_finder.pipeline.flow import run_pipeline
 
     # Initial delay so the web server can become responsive first
     logger.info("pipeline_scheduler_initial_delay", seconds=PIPELINE_INITIAL_DELAY_SECONDS)

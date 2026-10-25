@@ -11,7 +11,7 @@ from bs4 import BeautifulSoup
 from home_finder.config import Settings
 from home_finder.db import PropertyStorage
 from home_finder.models import Property
-from home_finder.pipeline.scraping import _run_scrape
+from home_finder.pipeline.collection import collect_listings
 from home_finder.scrapers.detail_fetcher import DetailFetcher
 from home_finder.scrapers.rightmove import RightmoveScraper
 from home_finder.scrapers.rightmove_payloads import (
@@ -136,11 +136,11 @@ async def test_actual_scrape_to_storage_retains_observations_beyond_selection_ca
         max_bedrooms=2,
     )
     async with PropertyStorage(":memory:") as storage:
-        result = await _run_scrape(
+        result = await collect_listings(
             settings, storage, max_per_scraper=1, only_scrapers={"rightmove"}
         )
         assert result is not None
-        selected, metrics = result
+        selected, metrics = result.listings, result.scraper_metrics
         assert len(selected) == 1 and len(seen_urls) == 1
         assert "sortType=6" in seen_urls[0] and "OUTCODE%5E762" in seen_urls[0]
         assert metrics[0].parse_errors == int(partial)

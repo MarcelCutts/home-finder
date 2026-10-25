@@ -5,7 +5,7 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from home_finder.db import PropertyStorage
-from home_finder.filters.detail_enrichment import _load_cached_property
+from home_finder.enrichment.details import _load_cached_property
 from home_finder.models import ListingTextEvidence, MergedProperty, UserStatus
 
 OBSERVED = datetime(2026, 9, 28, 10, tzinfo=UTC)
@@ -26,11 +26,11 @@ async def test_all_save_paths_retain_detail_text_across_sparse_search_and_rebuil
         if save_path == "merged":
             await db.save_merged_property(rich)
         elif save_path == "pre_analysis":
-            await db.pipeline.save_pre_analysis_properties([rich], {})
+            await db.processing.save_pre_analysis_properties([rich], {})
         elif save_path == "unenriched":
-            await db.pipeline.save_unenriched_property(rich)
+            await db.processing.save_unenriched_property(rich)
         else:
-            await db.pipeline.save_dropped_properties([rich], {})
+            await db.processing.save_dropped_properties([rich], {})
         await db.upsert_source_listings(
             [original.canonical.model_copy(update={"description": None})]
         )
@@ -196,7 +196,7 @@ async def test_detail_text_survives_cancelled_image_work_for_each_provider(make_
     import asyncio
     from unittest.mock import AsyncMock
 
-    from home_finder.filters.detail_enrichment import _enrich_single
+    from home_finder.enrichment.details import _enrich_single
     from home_finder.models import PropertySource
     from home_finder.scrapers.detail_fetcher import DetailFetcher, DetailPageData
     from home_finder.scrapers.detail_identity import requested_identity
@@ -220,7 +220,7 @@ async def test_detail_text_survives_cancelled_image_work_for_each_provider(make_
     )
     async with PropertyStorage(":memory:") as db, DetailFetcher() as fetcher:
         await db.upsert_source_listings([first, second])
-        await db.pipeline.save_unenriched_property(merged)
+        await db.processing.save_unenriched_property(merged)
         seen = []
 
         async def fetch(prop):

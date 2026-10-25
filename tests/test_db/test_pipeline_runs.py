@@ -19,7 +19,7 @@ async def storage() -> AsyncGenerator[PropertyStorage, None]:
 class TestCreatePipelineRun:
     @pytest.mark.asyncio
     async def test_creates_run_with_running_status(self, storage: PropertyStorage) -> None:
-        run_id = await storage.pipeline.create_pipeline_run()
+        run_id = await storage.runs.create_pipeline_run()
         assert run_id is not None
         assert run_id > 0
 
@@ -34,16 +34,16 @@ class TestCreatePipelineRun:
 
     @pytest.mark.asyncio
     async def test_creates_sequential_ids(self, storage: PropertyStorage) -> None:
-        id1 = await storage.pipeline.create_pipeline_run()
-        id2 = await storage.pipeline.create_pipeline_run()
+        id1 = await storage.runs.create_pipeline_run()
+        id2 = await storage.runs.create_pipeline_run()
         assert id2 == id1 + 1
 
 
 class TestUpdatePipelineRun:
     @pytest.mark.asyncio
     async def test_updates_count_columns(self, storage: PropertyStorage) -> None:
-        run_id = await storage.pipeline.create_pipeline_run()
-        await storage.pipeline.update_pipeline_run(run_id, scraped_count=42, new_count=5)
+        run_id = await storage.runs.create_pipeline_run()
+        await storage.runs.update_pipeline_run(run_id, scraped_count=42, new_count=5)
 
         conn = await storage._get_connection()
         cursor = await conn.execute(
@@ -57,15 +57,15 @@ class TestUpdatePipelineRun:
 
     @pytest.mark.asyncio
     async def test_noop_with_no_counts(self, storage: PropertyStorage) -> None:
-        run_id = await storage.pipeline.create_pipeline_run()
-        await storage.pipeline.update_pipeline_run(run_id)  # No-op
+        run_id = await storage.runs.create_pipeline_run()
+        await storage.runs.update_pipeline_run(run_id)  # No-op
 
 
 class TestCompletePipelineRun:
     @pytest.mark.asyncio
     async def test_marks_completed(self, storage: PropertyStorage) -> None:
-        run_id = await storage.pipeline.create_pipeline_run()
-        await storage.pipeline.complete_pipeline_run(run_id, "completed")
+        run_id = await storage.runs.create_pipeline_run()
+        await storage.runs.complete_pipeline_run(run_id, "completed")
 
         conn = await storage._get_connection()
         cursor = await conn.execute(
@@ -81,8 +81,8 @@ class TestCompletePipelineRun:
 
     @pytest.mark.asyncio
     async def test_marks_failed_with_error(self, storage: PropertyStorage) -> None:
-        run_id = await storage.pipeline.create_pipeline_run()
-        await storage.pipeline.complete_pipeline_run(
+        run_id = await storage.runs.create_pipeline_run()
+        await storage.runs.complete_pipeline_run(
             run_id, "failed", error_message="Connection timeout"
         )
 
@@ -102,36 +102,36 @@ class TestGetLastPipelineRun:
     async def test_latest_incomplete_run_is_not_hidden(
         self, storage: PropertyStorage, status: str
     ) -> None:
-        previous = await storage.pipeline.create_pipeline_run()
-        await storage.pipeline.complete_pipeline_run(previous, "completed")
-        latest = await storage.pipeline.create_pipeline_run()
-        await storage.pipeline.complete_pipeline_run(latest, status)
-        result = await storage.pipeline.get_last_pipeline_run()
+        previous = await storage.runs.create_pipeline_run()
+        await storage.runs.complete_pipeline_run(previous, "completed")
+        latest = await storage.runs.create_pipeline_run()
+        await storage.runs.complete_pipeline_run(latest, status)
+        result = await storage.runs.get_last_pipeline_run()
         assert result is not None
         assert (result["id"], result["status"]) == (latest, status)
 
     @pytest.mark.asyncio
     async def test_returns_none_when_no_runs(self, storage: PropertyStorage) -> None:
-        result = await storage.pipeline.get_last_pipeline_run()
+        result = await storage.runs.get_last_pipeline_run()
         assert result is None
 
     @pytest.mark.asyncio
     async def test_returns_none_when_only_running(self, storage: PropertyStorage) -> None:
-        await storage.pipeline.create_pipeline_run()  # Still running
-        result = await storage.pipeline.get_last_pipeline_run()
+        await storage.runs.create_pipeline_run()  # Still running
+        result = await storage.runs.get_last_pipeline_run()
         assert result is None
 
     @pytest.mark.asyncio
     async def test_returns_most_recent_completed(self, storage: PropertyStorage) -> None:
-        id1 = await storage.pipeline.create_pipeline_run()
-        await storage.pipeline.update_pipeline_run(id1, notified_count=3)
-        await storage.pipeline.complete_pipeline_run(id1, "completed")
+        id1 = await storage.runs.create_pipeline_run()
+        await storage.runs.update_pipeline_run(id1, notified_count=3)
+        await storage.runs.complete_pipeline_run(id1, "completed")
 
-        id2 = await storage.pipeline.create_pipeline_run()
-        await storage.pipeline.update_pipeline_run(id2, notified_count=7)
-        await storage.pipeline.complete_pipeline_run(id2, "completed")
+        id2 = await storage.runs.create_pipeline_run()
+        await storage.runs.update_pipeline_run(id2, notified_count=7)
+        await storage.runs.complete_pipeline_run(id2, "completed")
 
-        result = await storage.pipeline.get_last_pipeline_run()
+        result = await storage.runs.get_last_pipeline_run()
         assert result is not None
         assert result["id"] == id2
         assert result["notified_count"] == 7
@@ -139,10 +139,10 @@ class TestGetLastPipelineRun:
 
     @pytest.mark.asyncio
     async def test_returns_failed_runs(self, storage: PropertyStorage) -> None:
-        run_id = await storage.pipeline.create_pipeline_run()
-        await storage.pipeline.complete_pipeline_run(run_id, "failed", error_message="boom")
+        run_id = await storage.runs.create_pipeline_run()
+        await storage.runs.complete_pipeline_run(run_id, "failed", error_message="boom")
 
-        result = await storage.pipeline.get_last_pipeline_run()
+        result = await storage.runs.get_last_pipeline_run()
         assert result is not None
         assert result["status"] == "failed"
         assert result["error_message"] == "boom"
@@ -152,15 +152,15 @@ class TestPipelineRunLifecycle:
     @pytest.mark.asyncio
     async def test_full_lifecycle(self, storage: PropertyStorage) -> None:
         """Test create -> update counts -> complete flow."""
-        run_id = await storage.pipeline.create_pipeline_run()
+        run_id = await storage.runs.create_pipeline_run()
 
-        await storage.pipeline.update_pipeline_run(run_id, scraped_count=100)
-        await storage.pipeline.update_pipeline_run(run_id, new_count=10, enriched_count=8)
-        await storage.pipeline.update_pipeline_run(run_id, analyzed_count=8, notified_count=8)
+        await storage.runs.update_pipeline_run(run_id, scraped_count=100)
+        await storage.runs.update_pipeline_run(run_id, new_count=10, enriched_count=8)
+        await storage.runs.update_pipeline_run(run_id, analyzed_count=8, notified_count=8)
 
-        await storage.pipeline.complete_pipeline_run(run_id, "completed")
+        await storage.runs.complete_pipeline_run(run_id, "completed")
 
-        result = await storage.pipeline.get_last_pipeline_run()
+        result = await storage.runs.get_last_pipeline_run()
         assert result is not None
         assert result["scraped_count"] == 100
         assert result["new_count"] == 10
@@ -174,10 +174,8 @@ class TestPipelineRunLifecycle:
 class TestPerStageTimings:
     @pytest.mark.asyncio
     async def test_timing_values_stored_via_update(self, storage: PropertyStorage) -> None:
-        run_id = await storage.pipeline.create_pipeline_run()
-        await storage.pipeline.update_pipeline_run(
-            run_id, scraping_seconds=12.5, filtering_seconds=0.3
-        )
+        run_id = await storage.runs.create_pipeline_run()
+        await storage.runs.update_pipeline_run(run_id, scraping_seconds=12.5, filtering_seconds=0.3)
 
         conn = await storage._get_connection()
         cursor = await conn.execute(
@@ -191,8 +189,8 @@ class TestPerStageTimings:
 
     @pytest.mark.asyncio
     async def test_timing_values_returned_by_get_last(self, storage: PropertyStorage) -> None:
-        run_id = await storage.pipeline.create_pipeline_run()
-        await storage.pipeline.update_pipeline_run(
+        run_id = await storage.runs.create_pipeline_run()
+        await storage.runs.update_pipeline_run(
             run_id,
             scraping_seconds=10.0,
             filtering_seconds=1.5,
@@ -200,9 +198,9 @@ class TestPerStageTimings:
             analysis_seconds=45.7,
             notification_seconds=2.1,
         )
-        await storage.pipeline.complete_pipeline_run(run_id, "completed")
+        await storage.runs.complete_pipeline_run(run_id, "completed")
 
-        result = await storage.pipeline.get_last_pipeline_run()
+        result = await storage.runs.get_last_pipeline_run()
         assert result is not None
         assert result["scraping_seconds"] == pytest.approx(10.0)
         assert result["filtering_seconds"] == pytest.approx(1.5)
@@ -212,11 +210,11 @@ class TestPerStageTimings:
 
     @pytest.mark.asyncio
     async def test_timing_columns_nullable(self, storage: PropertyStorage) -> None:
-        run_id = await storage.pipeline.create_pipeline_run()
-        await storage.pipeline.update_pipeline_run(run_id, scraping_seconds=5.0)
-        await storage.pipeline.complete_pipeline_run(run_id, "completed")
+        run_id = await storage.runs.create_pipeline_run()
+        await storage.runs.update_pipeline_run(run_id, scraping_seconds=5.0)
+        await storage.runs.complete_pipeline_run(run_id, "completed")
 
-        result = await storage.pipeline.get_last_pipeline_run()
+        result = await storage.runs.get_last_pipeline_run()
         assert result is not None
         assert result["scraping_seconds"] == pytest.approx(5.0)
         assert result["filtering_seconds"] is None

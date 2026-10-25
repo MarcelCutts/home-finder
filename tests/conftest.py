@@ -75,8 +75,8 @@ def _isolate_settings_from_dotenv(monkeypatch: pytest.MonkeyPatch) -> None:
 @pytest.fixture
 async def native_analysis_spending(monkeypatch):
     """Explicit test-only budget for suites exercising the actual SDK transport."""
+    from home_finder.analysis.analyzer import PropertyQualityAnalyzer
     from home_finder.db import PropertyStorage
-    from home_finder.filters.quality import PropertyQualityFilter
     from home_finder.models.spend import SpendPolicy
 
     policy = SpendPolicy(
@@ -86,7 +86,7 @@ async def native_analysis_spending(monkeypatch):
         max_in_flight=50,
         max_attempts_per_operation=3,
     )
-    original = PropertyQualityFilter.__init__
+    original = PropertyQualityAnalyzer.__init__
     async with PropertyStorage(":memory:") as storage:
 
         def initialize(self, *args, **kwargs):
@@ -94,7 +94,7 @@ async def native_analysis_spending(monkeypatch):
                 kwargs.update(spend_repository=storage.spend, spend_policy=policy)
             original(self, *args, **kwargs)
 
-        monkeypatch.setattr(PropertyQualityFilter, "__init__", initialize)
+        monkeypatch.setattr(PropertyQualityAnalyzer, "__init__", initialize)
         yield storage, policy
 
 
@@ -493,7 +493,7 @@ def set_crawlee_storage_dir(tmp_path: Path) -> Generator[None, None, None]:
 
 @pytest.fixture
 def cached_analysis_property(make_merged_property, tmp_path):
-    from tests.test_filters.test_quality import _populate_image_cache
+    from tests.test_analysis.test_analyzer import _populate_image_cache
 
     merged = make_merged_property()
     merged = merged.model_copy(

@@ -32,8 +32,10 @@ async def storage(tmp_path):
 
 
 async def select(storage, merged, analysis, policy=None):
-    await storage.pipeline.save_pre_analysis_properties([merged], {})
-    await storage.pipeline.complete_analysis(merged.unique_id, analysis, notification_policy=policy)
+    await storage.processing.save_pre_analysis_properties([merged], {})
+    await storage.processing.complete_analysis(
+        merged.unique_id, analysis, notification_policy=policy
+    )
     return await storage.deliveries.get(f"discovery:{merged.unique_id}")
 
 
@@ -76,7 +78,7 @@ async def test_no_cutoff_can_admit_unassessed_or_failed_evidence(
         )
     merged = make_merged_property()
     if assessment == "invalid":
-        await storage.pipeline.save_pre_analysis_properties([merged], {})
+        await storage.processing.save_pre_analysis_properties([merged], {})
         await storage.save_quality_analysis(merged.unique_id, analysis)
         async with storage._transaction() as conn:
             await conn.execute("UPDATE quality_analyses SET analysis_json='not json'")
@@ -96,7 +98,7 @@ async def test_current_owner_and_availability_state_override_discovery(
     storage, make_merged_property, make_quality_analysis, stopped, reason
 ):
     merged = make_merged_property()
-    await storage.pipeline.save_pre_analysis_properties([merged], {})
+    await storage.processing.save_pre_analysis_properties([merged], {})
     if stopped == "off_market":
         await storage.mark_off_market(merged.unique_id)
     else:
@@ -111,12 +113,12 @@ async def test_selection_failure_rolls_back_assessment_status_and_intent(
     storage, make_merged_property, make_quality_analysis
 ):
     merged = make_merged_property()
-    await storage.pipeline.save_pre_analysis_properties([merged], {})
+    await storage.processing.save_pre_analysis_properties([merged], {})
     async with storage._transaction() as conn:
         await conn.execute("""CREATE TRIGGER fail_selection AFTER INSERT ON notification_deliveries
             BEGIN SELECT RAISE(ABORT,'selection crash'); END""")
     with pytest.raises(aiosqlite.IntegrityError, match="selection crash"):
-        await storage.pipeline.complete_analysis(merged.unique_id, make_quality_analysis())
+        await storage.processing.complete_analysis(merged.unique_id, make_quality_analysis())
     assert await status(storage, merged.unique_id) == "pending_analysis"
     assert await storage.get_quality_analysis(merged.unique_id) is None
     assert await storage.deliveries.get(f"discovery:{merged.unique_id}") is None
@@ -129,7 +131,7 @@ async def test_reenriched_assessment_and_selection_also_share_one_transaction(
     storage, make_merged_property, make_quality_analysis
 ):
     merged = make_merged_property()
-    await storage.pipeline.save_unenriched_property(merged)
+    await storage.processing.save_unenriched_property(merged)
     old = make_quality_analysis(summary="Earlier evidence")
     await storage.save_quality_analysis(merged.unique_id, old)
     async with storage._read_connection() as conn:
@@ -138,7 +140,7 @@ async def test_reenriched_assessment_and_selection_also_share_one_transaction(
         await conn.execute("""CREATE TRIGGER fail_selection AFTER INSERT ON notification_deliveries
             BEGIN SELECT RAISE(ABORT,'selection crash'); END""")
     with pytest.raises(aiosqlite.IntegrityError, match="selection crash"):
-        await storage.pipeline.complete_analysis(
+        await storage.processing.complete_analysis(
             merged.unique_id, make_quality_analysis(summary="New evidence")
         )
     assert await status(storage, merged.unique_id) == "pending_enrichment"
@@ -204,7 +206,7 @@ async def test_dashboard_only_is_terminal_across_reanalysis_policy_change_and_re
         row = await select(storage, merged, make_quality_analysis())
         assert row["reason"] == "below_min_fit"
         assert json.loads(row["selection_json"])["min_fit_score"] == 60
-        await storage.pipeline.complete_analysis(
+        await storage.processing.complete_analysis(
             merged.unique_id,
             make_quality_analysis(rating=5),
             notification_policy=NotificationPolicy(min_fit_score=0),

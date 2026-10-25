@@ -1,4 +1,4 @@
-"""Integration tests for commute filtering with mocked TravelTime API."""
+"""Integration tests for advisory commute assessment with mocked TravelTime API."""
 
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -6,15 +6,15 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from pydantic import HttpUrl
 
-from home_finder.filters.commute import CommuteFilter
+from home_finder.enrichment.commute import CommuteAssessor
 from home_finder.models import CommuteState, MergedProperty, Property, PropertySource, TransportMode
 
 
 @pytest.fixture(autouse=True)
 def isolated_geocoding_cache():
-    CommuteFilter._geocoding_cache.clear()
+    CommuteAssessor._geocoding_cache.clear()
     yield
-    CommuteFilter._geocoding_cache.clear()
+    CommuteAssessor._geocoding_cache.clear()
 
 
 def _make_property(
@@ -82,10 +82,10 @@ def _mock_geocoding_response(lat: float, lon: float):
 
 
 @pytest.mark.integration
-class TestCommuteFilterIntegration:
-    """Test CommuteFilter with mocked TravelTime API."""
+class TestCommuteAssessmentIntegration:
+    """Test CommuteAssessor with mocked TravelTime API."""
 
-    async def test_filter_properties_by_commute(self):
+    async def test_assess_commutes_by_commute(self):
         """Properties within commute limit should be returned."""
         props = [
             _make_property("1", "E8 3RH", 51.5465, -0.0553),
@@ -107,7 +107,7 @@ class TestCommuteFilterIntegration:
         )
         geocode_resp = _mock_geocoding_response(51.5350, -0.0900)
 
-        commute_filter = CommuteFilter(
+        commute_assessor = CommuteAssessor(
             app_id="test-app-id",
             api_key="test-api-key",
             destination_postcode="N1 5AA",
@@ -120,7 +120,7 @@ class TestCommuteFilterIntegration:
             MockClient.return_value.__aenter__ = AsyncMock(return_value=client_instance)
             MockClient.return_value.__aexit__ = AsyncMock(return_value=None)
 
-            results = await commute_filter.filter_properties(
+            results = await commute_assessor.assess_commutes(
                 props, max_minutes=30, transport_mode=TransportMode.CYCLING
             )
 
@@ -136,13 +136,13 @@ class TestCommuteFilterIntegration:
 
         geocode_resp = _mock_geocoding_response(51.5465, -0.0553)
 
-        commute_filter = CommuteFilter(
+        commute_assessor = CommuteAssessor(
             app_id="test-app-id",
             api_key="test-api-key",
             destination_postcode="N1 5AA",
         )
         # Clear cache to ensure fresh lookup
-        CommuteFilter._geocoding_cache.clear()
+        CommuteAssessor._geocoding_cache.clear()
 
         with patch("traveltimepy.AsyncClient") as MockClient:
             client_instance = AsyncMock()
@@ -150,7 +150,7 @@ class TestCommuteFilterIntegration:
             MockClient.return_value.__aenter__ = AsyncMock(return_value=client_instance)
             MockClient.return_value.__aexit__ = AsyncMock(return_value=None)
 
-            result = await commute_filter.geocode_properties([merged])
+            result = await commute_assessor.geocode_properties([merged])
 
         assert len(result) == 1
         assert result[0].canonical.latitude == pytest.approx(51.5465)
@@ -161,13 +161,13 @@ class TestCommuteFilterIntegration:
         prop_no_coords = _make_property("20", "E8 3RH")
         merged = _make_merged(prop_no_coords)
 
-        commute_filter = CommuteFilter(
+        commute_assessor = CommuteAssessor(
             app_id="test-app-id",
             api_key="test-api-key",
             destination_postcode="N1 5AA",
         )
         # Pre-populate cache
-        CommuteFilter._geocoding_cache["E8 3RH"] = (51.5465, -0.0553)
+        CommuteAssessor._geocoding_cache["E8 3RH"] = (51.5465, -0.0553)
 
         with patch("traveltimepy.AsyncClient") as MockClient:
             client_instance = AsyncMock()
@@ -175,7 +175,7 @@ class TestCommuteFilterIntegration:
             MockClient.return_value.__aenter__ = AsyncMock(return_value=client_instance)
             MockClient.return_value.__aexit__ = AsyncMock(return_value=None)
 
-            result = await commute_filter.geocode_properties([merged])
+            result = await commute_assessor.geocode_properties([merged])
 
         assert result[0].canonical.latitude == pytest.approx(51.5465)
         # Geocoding API should NOT have been called (cache hit handles it)
@@ -196,7 +196,7 @@ class TestCommuteFilterIntegration:
         )
         geocode_resp = _mock_geocoding_response(51.5350, -0.0900)
 
-        commute_filter = CommuteFilter(
+        commute_assessor = CommuteAssessor(
             app_id="test-app-id",
             api_key="test-api-key",
             destination_postcode="N1 5AA",
@@ -210,10 +210,10 @@ class TestCommuteFilterIntegration:
             MockClient.return_value.__aenter__ = AsyncMock(return_value=client_instance)
             MockClient.return_value.__aexit__ = AsyncMock(return_value=None)
 
-            cycling_results = await commute_filter.filter_properties(
+            cycling_results = await commute_assessor.assess_commutes(
                 props, max_minutes=30, transport_mode=TransportMode.CYCLING
             )
-            pt_results = await commute_filter.filter_properties(
+            pt_results = await commute_assessor.assess_commutes(
                 props, max_minutes=30, transport_mode=TransportMode.PUBLIC_TRANSPORT
             )
 
@@ -235,12 +235,12 @@ class TestCommuteFilterIntegration:
 
         geocode_resp = _mock_geocoding_response(51.5265, -0.0305)
 
-        commute_filter = CommuteFilter(
+        commute_assessor = CommuteAssessor(
             app_id="test-app-id",
             api_key="test-api-key",
             destination_postcode="N1 5AA",
         )
-        CommuteFilter._geocoding_cache.clear()
+        CommuteAssessor._geocoding_cache.clear()
 
         with patch("traveltimepy.AsyncClient") as MockClient:
             client_instance = AsyncMock()
@@ -248,7 +248,7 @@ class TestCommuteFilterIntegration:
             MockClient.return_value.__aenter__ = AsyncMock(return_value=client_instance)
             MockClient.return_value.__aexit__ = AsyncMock(return_value=None)
 
-            result = await commute_filter.geocode_properties([merged_outcode, merged_full])
+            result = await commute_assessor.geocode_properties([merged_outcode, merged_full])
 
         # Outcode-only property should still have no coordinates
         assert result[0].canonical.latitude is None
@@ -265,7 +265,7 @@ class TestCommuteFilterIntegration:
         """A failed geocoder must not impersonate a successful empty response."""
         props = [_make_property("40", "E8 3RH", 51.5465, -0.0553)]
 
-        commute_filter = CommuteFilter(
+        commute_assessor = CommuteAssessor(
             app_id="test-app-id",
             api_key="test-api-key",
             destination_postcode="N1 5AA",
@@ -277,7 +277,7 @@ class TestCommuteFilterIntegration:
             MockClient.return_value.__aenter__ = AsyncMock(return_value=client_instance)
             MockClient.return_value.__aexit__ = AsyncMock(return_value=None)
 
-            results = await commute_filter.filter_properties(
+            results = await commute_assessor.assess_commutes(
                 props, max_minutes=30, transport_mode=TransportMode.CYCLING
             )
 

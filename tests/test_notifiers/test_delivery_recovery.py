@@ -17,7 +17,7 @@ from home_finder.models.notifications import NotificationPolicy
 from home_finder.notifiers.delivery import deliver, discovery_plan
 from home_finder.notifiers.telegram import TelegramNotifier
 from home_finder.pipeline.delivery_admin import administer, read_report
-from home_finder.pipeline.runner import runner_lock
+from home_finder.pipeline.run_lock import runner_lock
 
 METHOD = SendMessage(chat_id=123, text="fixture")
 
@@ -60,10 +60,10 @@ def notifier(storage, *, data_dir="", chat_id=123):
 
 
 async def seed(storage, merged, analysis):
-    await storage.pipeline.save_pre_analysis_properties([merged], {})
+    await storage.processing.save_pre_analysis_properties([merged], {})
     await storage.save_property_images(merged.unique_id, list(merged.images))
     # Transport scenarios explicitly admit any rated fixture. Selection has its own suite.
-    await storage.pipeline.complete_analysis(
+    await storage.processing.complete_analysis(
         merged.unique_id, analysis, notification_policy=NotificationPolicy(min_fit_score=0)
     )
     return f"discovery:{merged.unique_id}"
@@ -461,13 +461,13 @@ async def test_atomic_intent_creation_and_sent_reanalysis(
 ):
     merged = enriched_merged_property
     async with PropertyStorage(str(tmp_path / "atomic.db")) as storage:
-        await storage.pipeline.save_pre_analysis_properties([merged], {})
+        await storage.processing.save_pre_analysis_properties([merged], {})
         async with storage._transaction() as conn:
             await conn.execute("""CREATE TRIGGER fail_intent
                 BEFORE INSERT ON notification_deliveries
                 BEGIN SELECT RAISE(ABORT,'fixture'); END""")
         with pytest.raises(aiosqlite.IntegrityError):
-            await storage.pipeline.complete_analysis(merged.unique_id, delivery_analysis)
+            await storage.processing.complete_analysis(merged.unique_id, delivery_analysis)
         assert await status(storage, merged.unique_id) == "pending_analysis"
         assert await storage.get_quality_analysis(merged.unique_id) is None
         async with storage._transaction() as conn:
@@ -476,8 +476,8 @@ async def test_atomic_intent_creation_and_sent_reanalysis(
         sender, _bot = notifier(storage)
         assert await deliver(sender, storage.deliveries, key)
         before = await storage.deliveries.get(key)
-        await storage.pipeline.request_reanalysis([merged.unique_id])
-        await storage.pipeline.complete_reanalysis(merged.unique_id, delivery_analysis)
+        await storage.processing.request_reanalysis([merged.unique_id])
+        await storage.processing.complete_reanalysis(merged.unique_id, delivery_analysis)
         assert await storage.deliveries.get(key) == before
         assert await status(storage, merged.unique_id) == "sent"
 
@@ -730,8 +730,8 @@ async def test_schema_upgrade_and_backup_preserve_spending_holds_and_checkpoint(
     from home_finder.db.backup import create_backup, restore_backup, verify_backup
     from home_finder.db.migrations import MIGRATIONS
     from home_finder.models.spend import VisualCheckpointWrite
+    from tests.test_analysis.test_quality_respx import PHASE1_VISUAL_RESPONSE
     from tests.test_db.test_spend import policy, settlement, spec
-    from tests.test_filters.test_quality_respx import PHASE1_VISUAL_RESPONSE
 
     path = tmp_path / "schema11.db"
     with patch("home_finder.db.migrations.MIGRATIONS", MIGRATIONS[:11]):

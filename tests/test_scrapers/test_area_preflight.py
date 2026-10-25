@@ -12,7 +12,7 @@ from home_finder.data.location_mappings import (
     resolve_area_outcodes,
 )
 from home_finder.filters.location import LocationFilter
-from home_finder.pipeline.scraping import scrape_all_platforms
+from home_finder.pipeline.collection import scrape_all_platforms
 
 
 @pytest.mark.parametrize("areas", ["hakney", "e8,hakney", "E8 3RH", "north wherever"])
@@ -43,7 +43,7 @@ async def test_direct_collection_preflights_before_creating_scrapers(monkeypatch
     constructors = []
     for name in ("OpenRentScraper", "ZooplaScraper", "RightmoveScraper", "OnTheMarketScraper"):
         constructor = Mock(side_effect=AssertionError("scraper constructed before preflight"))
-        monkeypatch.setattr(f"home_finder.pipeline.scraping.{name}", constructor)
+        monkeypatch.setattr(f"home_finder.pipeline.collection.{name}", constructor)
         constructors.append(constructor)
     with pytest.raises(ValueError, match="hakney"):
         await scrape_all_platforms(

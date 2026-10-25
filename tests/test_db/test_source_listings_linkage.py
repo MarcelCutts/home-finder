@@ -142,7 +142,7 @@ class TestSavePreAnalysisLinksNonCanonical:
             max_price=2000,
             descriptions={},
         )
-        await storage.pipeline.save_pre_analysis_properties([merged], {})
+        await storage.processing.save_pre_analysis_properties([merged], {})
 
         assert await storage.is_seen(canonical.unique_id) is True
         assert await storage.is_seen(zoopla.unique_id) is True
@@ -171,7 +171,7 @@ class TestSaveDroppedLinksNonCanonical:
             max_price=2000,
             descriptions={},
         )
-        await storage.pipeline.save_dropped_properties([merged], {})
+        await storage.processing.save_dropped_properties([merged], {})
 
         assert await storage.is_seen(canonical.unique_id) is True
         assert await storage.is_seen(zoopla.unique_id) is True

@@ -16,6 +16,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
 from starlette.responses import Response
 
+from home_finder.analysis.image_review import SUPPLIED_PHOTO_LOWLIGHT_LABELS
 from home_finder.config import Settings
 from home_finder.data.area_context import (
     ACOUSTIC_PROFILES,
@@ -38,7 +39,6 @@ from home_finder.filters.fit_score import (
     fit_tier_class,
     fit_tier_label,
 )
-from home_finder.filters.image_review import SUPPLIED_PHOTO_LOWLIGHT_LABELS
 from home_finder.logging import get_logger
 from home_finder.models import (
     SOURCE_BADGES,
@@ -338,7 +338,7 @@ async def health_check() -> JSONResponse:
 async def diagnostics(request: Request) -> JSONResponse:
     """Owner-only operational detail, protected by the application access boundary."""
     storage: PropertyStorage = request.app.state.storage
-    last_run = await storage.pipeline.get_last_pipeline_run()
+    last_run = await storage.runs.get_last_pipeline_run()
     pipeline_lock = getattr(request.app.state, "pipeline_lock", None)
     return JSONResponse(
         {
@@ -942,7 +942,7 @@ async def request_reanalysis(unique_id: str, storage: StorageDep) -> JSONRespons
 
     The actual analysis runs on next `--reanalyze` CLI invocation.
     """
-    count = await storage.pipeline.request_reanalysis([unique_id])
+    count = await storage.processing.request_reanalysis([unique_id])
     if count == 0:
         return JSONResponse(
             {"error": "not found or no existing analysis"},

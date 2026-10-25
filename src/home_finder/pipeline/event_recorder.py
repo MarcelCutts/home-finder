@@ -1,4 +1,4 @@
-"""Property event recording for pipeline audit trail (T4)."""
+"""Buffer property diagnostics and flush them with cancellation-safe cleanup."""
 
 from __future__ import annotations
 
@@ -9,15 +9,19 @@ from typing import TYPE_CHECKING, Any
 from home_finder.logging import get_logger
 from home_finder.utils.async_tasks import finish_cleanup
 
+logger = get_logger(__name__)
+
 if TYPE_CHECKING:
     from home_finder.db.storage import PropertyStorage
-
-logger = get_logger(__name__)
 
 
 @dataclass
 class PropertyEvent:
-    """A single pipeline event for a property."""
+    """A buffered diagnostic event.
+
+    The database created_at field records insertion time, not event occurrence.
+    Buffer order preserves local recording order, not a global execution clock.
+    """
 
     property_id: str
     source: str
@@ -40,11 +44,9 @@ class EventRecorder:
         self,
         storage: PropertyStorage,
         run_id: int,
-        batch_size: int = 500,
     ) -> None:
         self._storage = storage
         self._run_id = run_id
-        self._batch_size = batch_size
         self._buffer: list[PropertyEvent] = []
 
     @property
@@ -67,7 +69,7 @@ class EventRecorder:
         self._buffer = []
 
         async def insert_batch() -> None:
-            await self._storage.pipeline.insert_property_events(self._run_id, to_write)
+            await self._storage.runs.insert_property_events(self._run_id, to_write)
             logger.debug("property_events_flushed", count=len(to_write))
 
         # Finish this one insertion before propagating cancellation. Retrying a

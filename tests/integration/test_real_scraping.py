@@ -278,7 +278,8 @@ class TestRealFullPipeline:
 
     async def test_scrape_all_platforms_hackney(self) -> None:
         """Scrape from all platforms and aggregate results."""
-        from home_finder.filters import CriteriaFilter, Deduplicator
+        from home_finder.filters import CriteriaFilter
+        from home_finder.matching.deduplication import Deduplicator
         from home_finder.models import SearchCriteria
 
         scrapers = [

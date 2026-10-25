@@ -6,7 +6,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from home_finder.models import Property, PropertySource
-from home_finder.pipeline.scraping import ScraperMetrics, scrape_all_platforms
+from home_finder.pipeline.collection import scrape_all_platforms
+from home_finder.pipeline.contracts import ScraperMetrics
 from home_finder.scrapers.base import ScrapeResult
 
 
@@ -74,7 +75,7 @@ class TestScraperMetricsCollection:
         ]:
             mock_scrapers[name][1].source = source_val
 
-        _mod = "home_finder.pipeline.scraping"
+        _mod = "home_finder.pipeline.collection"
         with (
             patch(f"{_mod}.OpenRentScraper", mock_scrapers["OpenRentScraper"][0]),
             patch(f"{_mod}.RightmoveScraper", mock_scrapers["RightmoveScraper"][0]),

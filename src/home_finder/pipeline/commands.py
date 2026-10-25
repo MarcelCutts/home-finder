@@ -7,12 +7,13 @@ import time
 from home_finder.config import Settings
 from home_finder.db import PropertyStorage
 from home_finder.db.merge_safety import MergeBlockedError
-from home_finder.filters import CommuteFilter, Deduplicator
+from home_finder.enrichment.commute import CommuteAssessor
 from home_finder.logging import get_logger
+from home_finder.matching.deduplication import Deduplicator
 from home_finder.models import CommuteResult
 from home_finder.models.commute import commute_minutes_projection
 from home_finder.pipeline.cache_recovery import repair_merged_image_caches
-from home_finder.pipeline.runner import exclusive_runner
+from home_finder.pipeline.run_lock import exclusive_runner
 from home_finder.utils.image_cache import copy_cached_images
 
 logger = get_logger(__name__)
@@ -41,7 +42,7 @@ async def run_backfill_commute(settings: Settings) -> None:
 
         logger.info("commute_backfill_started", count=len(properties))
 
-        commute_filter = CommuteFilter(
+        commute_assessor = CommuteAssessor(
             app_id=settings.traveltime_app_id,
             api_key=settings.traveltime_api_key.get_secret_value(),
             destination_postcode=criteria.destination_postcode,
@@ -49,7 +50,7 @@ async def run_backfill_commute(settings: Settings) -> None:
 
         commute_results: list[CommuteResult] = []
         for mode in criteria.transport_modes:
-            results = await commute_filter.filter_properties(
+            results = await commute_assessor.assess_commutes(
                 properties,
                 max_minutes=criteria.max_commute_minutes,
                 transport_mode=mode,
@@ -262,7 +263,7 @@ async def run_dedup_existing(settings: Settings) -> None:
         established_ids = {merged.unique_id for merged in established}
         # Reuse the retry queue: these are the pending rows this command can
         # safely retire, subject to the transaction's live history checks.
-        all_properties = [*established, *await storage.pipeline.get_unenriched_properties()]
+        all_properties = [*established, *await storage.processing.get_unenriched_properties()]
         if not all_properties:
             logger.info("dedup_no_properties_in_database")
             return
