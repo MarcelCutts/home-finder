@@ -1,4 +1,4 @@
-"""Tests for property quality analysis filter."""
+"""Property assessment models, provider execution, and result assembly."""
 
 import copy
 from typing import Annotated, Any, Literal
@@ -44,29 +44,7 @@ from home_finder.models import (
 )
 from home_finder.models.spend import SpendDeferred
 from home_finder.utils.image_cache import is_valid_image_url
-
-
-def _populate_image_cache(data_dir: str, merged: MergedProperty) -> None:
-    """Create valid JPEG files in the image cache for all images in a MergedProperty."""
-    from io import BytesIO
-
-    from PIL import Image
-
-    from home_finder.utils.image_cache import get_cached_image_path, save_image_bytes
-
-    buf = BytesIO()
-    Image.new("RGB", (10, 10), color="red").save(buf, format="JPEG")
-    jpeg_bytes = buf.getvalue()
-
-    for idx, img in enumerate(merged.images):
-        path = get_cached_image_path(data_dir, merged.unique_id, str(img.url), img.image_type, idx)
-        save_image_bytes(path, jpeg_bytes)
-
-    if merged.floorplan:
-        path = get_cached_image_path(
-            data_dir, merged.unique_id, str(merged.floorplan.url), "floorplan", 0
-        )
-        save_image_bytes(path, jpeg_bytes)
+from tests.support.images import populate_image_cache
 
 
 class TestKitchenAnalysis:
@@ -743,7 +721,7 @@ def _setup_two_phase_mocks(
     client_mock.messages.create = AsyncMock(side_effect=[mock_visual, mock_eval])
 
 
-class TestPropertyQualityFilter:
+class TestPropertyQualityAnalyzer:
     """Tests for PropertyQualityAnalyzer."""
 
     def test_is_valid_image_url_accepts_images(self) -> None:
@@ -798,7 +776,7 @@ class TestPropertyQualityFilter:
         tmp_path: Any,
     ) -> None:
         """Should analyze property with gallery images using two-phase structured outputs."""
-        _populate_image_cache(str(tmp_path), sample_merged_property)
+        populate_image_cache(str(tmp_path), sample_merged_property)
 
         analyzer = PropertyQualityAnalyzer(api_key="test-key")
         analyzer._client = MagicMock()
@@ -841,7 +819,7 @@ class TestPropertyQualityFilter:
         visual_response["space"].update(living_room_sqm=15, is_spacious_enough=False)
         visual_response.update(overall_rating=3, summary="Compact living room")
 
-        _populate_image_cache(str(tmp_path), sample_merged_property)
+        populate_image_cache(str(tmp_path), sample_merged_property)
 
         analyzer = PropertyQualityAnalyzer(api_key="test-key")
         analyzer._client = MagicMock()
@@ -867,7 +845,7 @@ class TestPropertyQualityFilter:
         visual_response["space"].update(living_room_sqm=15, is_spacious_enough=False)
         visual_response.update(overall_rating=3, summary="Compact living room")
 
-        _populate_image_cache(str(tmp_path), one_bed_merged_property)
+        populate_image_cache(str(tmp_path), one_bed_merged_property)
 
         analyzer = PropertyQualityAnalyzer(api_key="test-key")
         analyzer._client = MagicMock()
@@ -887,7 +865,7 @@ class TestPropertyQualityFilter:
         tmp_path: Any,
     ) -> None:
         """Should return minimal analysis on Phase 1 LLM failure."""
-        _populate_image_cache(str(tmp_path), sample_merged_property)
+        populate_image_cache(str(tmp_path), sample_merged_property)
 
         analyzer = PropertyQualityAnalyzer(api_key="test-key")
         analyzer._client = MagicMock()
@@ -914,7 +892,7 @@ class TestPropertyQualityFilter:
         mock_response.stop_reason = "max_tokens"  # Unexpected stop reason
         mock_response.usage = Usage(input_tokens=100, output_tokens=50)
 
-        _populate_image_cache(str(tmp_path), sample_merged_property)
+        populate_image_cache(str(tmp_path), sample_merged_property)
 
         analyzer = PropertyQualityAnalyzer(api_key="test-key")
         analyzer._client = MagicMock()
@@ -939,7 +917,7 @@ class TestPropertyQualityFilter:
     ) -> None:
         """Should include gallery images and floorplan in Phase 1 API call."""
         data_dir = str(tmp_path)
-        _populate_image_cache(data_dir, sample_merged_property)
+        populate_image_cache(data_dir, sample_merged_property)
 
         analyzer = PropertyQualityAnalyzer(api_key="test-key", max_images=10)
         analyzer._client = MagicMock()
@@ -991,7 +969,7 @@ class TestPropertyQualityFilter:
         )
 
         data_dir = str(tmp_path)
-        _populate_image_cache(data_dir, many_images_merged)
+        populate_image_cache(data_dir, many_images_merged)
 
         analyzer = PropertyQualityAnalyzer(api_key="test-key", max_images=5)
         analyzer._client = MagicMock()
@@ -1022,7 +1000,7 @@ class TestPropertyQualityFilter:
         tmp_path: Any,
     ) -> None:
         """Phase 1 uses auto tool_choice with thinking; Phase 2 uses output_format."""
-        _populate_image_cache(str(tmp_path), sample_merged_property)
+        populate_image_cache(str(tmp_path), sample_merged_property)
 
         analyzer = PropertyQualityAnalyzer(api_key="test-key")
         analyzer._client = MagicMock()
@@ -1057,7 +1035,7 @@ class TestPropertyQualityFilter:
         tmp_path: Any,
     ) -> None:
         """Should use system prompt with cache_control for cost savings."""
-        _populate_image_cache(str(tmp_path), sample_merged_property)
+        populate_image_cache(str(tmp_path), sample_merged_property)
 
         analyzer = PropertyQualityAnalyzer(api_key="test-key")
         analyzer._client = MagicMock()
@@ -1092,7 +1070,7 @@ class TestPropertyQualityFilter:
         tmp_path: Any,
     ) -> None:
         """Should extract quality-adjusted value rating from Phase 2 response."""
-        _populate_image_cache(str(tmp_path), sample_merged_property)
+        populate_image_cache(str(tmp_path), sample_merged_property)
 
         analyzer = PropertyQualityAnalyzer(api_key="test-key")
         analyzer._client = MagicMock()
@@ -1122,7 +1100,7 @@ class TestPropertyQualityFilter:
 
         mock_eval = create_mock_eval_response(sample_evaluation_response)
 
-        _populate_image_cache(str(tmp_path), sample_merged_property)
+        populate_image_cache(str(tmp_path), sample_merged_property)
 
         analyzer = PropertyQualityAnalyzer(api_key="test-key")
         analyzer._client = MagicMock()
@@ -1170,7 +1148,7 @@ class TestPropertyQualityFilter:
             },
         )
 
-        _populate_image_cache(str(tmp_path), merged)
+        populate_image_cache(str(tmp_path), merged)
 
         analyzer = PropertyQualityAnalyzer(api_key="test-key")
         analyzer._client = MagicMock()
@@ -1226,7 +1204,7 @@ class TestPropertyQualityFilter:
         tmp_path: Any,
     ) -> None:
         """Phase 1 JSON output should appear in Phase 2 prompt."""
-        _populate_image_cache(str(tmp_path), sample_merged_property)
+        populate_image_cache(str(tmp_path), sample_merged_property)
 
         analyzer = PropertyQualityAnalyzer(api_key="test-key")
         analyzer._client = MagicMock()
@@ -1255,7 +1233,7 @@ class TestPropertyQualityFilter:
             sample_visual_response, tool_name="property_visual_analysis"
         )
 
-        _populate_image_cache(str(tmp_path), sample_merged_property)
+        populate_image_cache(str(tmp_path), sample_merged_property)
 
         analyzer = PropertyQualityAnalyzer(api_key="test-key")
         analyzer._client = MagicMock()
@@ -1291,7 +1269,7 @@ class TestPropertyQualityFilter:
         tmp_path: Any,
     ) -> None:
         """Phase 2 should be text-only (no images)."""
-        _populate_image_cache(str(tmp_path), sample_merged_property)
+        populate_image_cache(str(tmp_path), sample_merged_property)
 
         analyzer = PropertyQualityAnalyzer(api_key="test-key")
         analyzer._client = MagicMock()
@@ -1319,7 +1297,7 @@ class TestFloorplanNoteWiring:
                 )
             }
         )
-        _populate_image_cache(str(tmp_path), merged)
+        populate_image_cache(str(tmp_path), merged)
         analyzer = PropertyQualityAnalyzer(api_key="test-key", max_images=3)
         analyzer._client = MagicMock()
         _setup_two_phase_mocks(analyzer._client, sample_visual_response, sample_evaluation_response)
@@ -1344,7 +1322,7 @@ class TestFloorplanNoteWiring:
         from home_finder.utils.image_cache import find_cached_file
 
         data_dir = str(tmp_path)
-        _populate_image_cache(data_dir, sample_merged_property)
+        populate_image_cache(data_dir, sample_merged_property)
         floorplan_path = find_cached_file(
             data_dir,
             sample_merged_property.unique_id,
@@ -1391,7 +1369,7 @@ class TestFloorplanNoteWiring:
             max_price=sample_property.price_pcm,
         )
 
-        _populate_image_cache(str(tmp_path), merged)
+        populate_image_cache(str(tmp_path), merged)
 
         analyzer = PropertyQualityAnalyzer(api_key="test-key")
         analyzer._client = MagicMock()
@@ -1416,7 +1394,7 @@ class TestFloorplanNoteWiring:
         tmp_path: Any,
     ) -> None:
         """Property with floorplan → Phase 1 prompt does NOT contain <floorplan_note>."""
-        _populate_image_cache(str(tmp_path), sample_merged_property)
+        populate_image_cache(str(tmp_path), sample_merged_property)
 
         analyzer = PropertyQualityAnalyzer(api_key="test-key")
         analyzer._client = MagicMock()
@@ -1606,7 +1584,7 @@ class TestAnalyzeSingleMerged:
         tmp_path: Any,
     ) -> None:
         """Should return (merged, analysis) when images are present."""
-        _populate_image_cache(str(tmp_path), sample_merged_property)
+        populate_image_cache(str(tmp_path), sample_merged_property)
 
         analyzer = PropertyQualityAnalyzer(api_key="test-key")
         analyzer._client = MagicMock()
@@ -1650,7 +1628,7 @@ class TestAnalyzeSingleMerged:
         tmp_path: Any,
     ) -> None:
         """Should return minimal analysis on API failure (no raise)."""
-        _populate_image_cache(str(tmp_path), sample_merged_property)
+        populate_image_cache(str(tmp_path), sample_merged_property)
 
         analyzer = PropertyQualityAnalyzer(api_key="test-key")
         analyzer._client = MagicMock()
@@ -1696,7 +1674,7 @@ class TestInsufficientImageSkip:
     ) -> None:
         """Should proceed with analysis when all gallery images are cached."""
         data_dir = str(tmp_path)
-        _populate_image_cache(data_dir, sample_merged_property)
+        populate_image_cache(data_dir, sample_merged_property)
 
         analyzer = PropertyQualityAnalyzer(api_key="test-key")
         analyzer._client = MagicMock()
@@ -1838,11 +1816,11 @@ class TestBackwardCompatValidators:
         assert BedroomAnalysis(can_fit_desk=None).can_fit_desk == "unknown"  # type: ignore[arg-type]
 
 
-class TestNewMarcelFields:
-    """Tests for new Marcel-specific fields in schemas and models."""
+class TestWorkHostingAndBroadbandSchema:
+    """Work, hosting, and broadband evidence have explicit schema categories."""
 
-    def test_new_phase1_fields_in_visual_schema(self) -> None:
-        """New Marcel-specific fields appear in Phase 1 tool schema."""
+    def test_work_and_hosting_fields_in_visual_schema(self) -> None:
+        """The visual schema distinguishes work space, hosting layout, and noise risk."""
         visual = VISUAL_ANALYSIS_TOOL["input_schema"]["properties"]
 
         # office_separation in bedroom sub-model
@@ -1873,16 +1851,16 @@ class TestNewMarcelFields:
         assert "fttp" in le_props["broadband_type"]["enum"]
         assert "unknown" in le_props["broadband_type"]["enum"]
 
-    def test_new_fields_are_not_tristate(self) -> None:
-        """New multi-value fields should NOT be yes/no/unknown tri-states."""
+    def test_office_separation_uses_distinct_layout_categories(self) -> None:
+        """Office separation distinguishes layouts beyond a yes/no/unknown observation."""
         visual = VISUAL_ANALYSIS_TOOL["input_schema"]["properties"]
         # office_separation is 5-value, not tri-state
         sep_enum = visual["bedroom"]["properties"]["office_separation"]["enum"]
         assert len(sep_enum) == 5
         assert "yes" not in sep_enum
 
-    def test_new_highlights_in_eval_schema(self) -> None:
-        """New highlight enum values are present in Phase 2 schema."""
+    def test_work_hosting_and_broadband_highlights_in_evaluation_schema(self) -> None:
+        """The evaluation schema includes work, hosting, and broadband highlights."""
         eval_schema = _eval_schema_props()
         hl_items = eval_schema["highlights"]["items"]
         enum_values = hl_items.get("enum", [])
@@ -1891,8 +1869,8 @@ class TestNewMarcelFields:
         assert "Separate work area" in enum_values
         assert "Great hosting layout" in enum_values
 
-    def test_new_lowlights_in_eval_schema(self) -> None:
-        """New lowlight enum values are present in Phase 2 schema."""
+    def test_work_hosting_and_broadband_lowlights_in_evaluation_schema(self) -> None:
+        """The evaluation schema includes work, hosting, and broadband lowlights."""
         eval_schema = _eval_schema_props()
         ll_items = eval_schema["lowlights"]["items"]
         enum_values = ll_items.get("enum", [])
@@ -1901,8 +1879,8 @@ class TestNewMarcelFields:
         assert "Poor hosting layout" in enum_values
 
 
-class TestNewFieldBackwardCompat:
-    """New fields gracefully handle missing data from old DB rows."""
+class TestAssessmentFieldDefaults:
+    """Missing assessment fields retain their documented defaults."""
 
     def test_bedroom_without_office_separation(self) -> None:
         """Old DB rows without office_separation default to 'unknown'."""
@@ -1939,8 +1917,8 @@ class TestNewFieldBackwardCompat:
         le = ListingExtraction.model_validate(old_data)
         assert le.broadband_type is None
 
-    def test_full_analysis_roundtrip_without_new_fields(self) -> None:
-        """Full PropertyQualityAnalysis parses old JSON without new fields."""
+    def test_parses_assessment_without_work_hosting_or_broadband_fields(self) -> None:
+        """Older assessment JSON remains readable when these fields are absent."""
         old_json: dict[str, Any] = {
             "kitchen": {
                 "overall_quality": "decent",
@@ -1973,24 +1951,24 @@ class TestNewFieldBackwardCompat:
         assert analysis.summary == "Nice flat"
 
 
-class TestNewFieldsPipelineFlow:
-    """New Marcel fields pass through the two-phase pipeline."""
+class TestWorkHostingAndBroadbandAssembly:
+    """Work, hosting, and broadband fields pass through the two-phase pipeline."""
 
-    async def test_new_fields_flow_through_two_phase_pipeline(
+    async def test_assembles_work_hosting_and_broadband_evidence(
         self,
         sample_merged_property: MergedProperty,
         sample_visual_response: dict[str, Any],
         sample_evaluation_response: dict[str, Any],
         tmp_path: Any,
     ) -> None:
-        """New Marcel fields pass from API response to PropertyQualityAnalysis."""
+        """Work, hosting, and broadband fields pass from API response to PropertyQualityAnalysis."""
         visual = copy.deepcopy(sample_visual_response)
         visual["space"]["hosting_layout"] = "excellent"
         visual["flooring_noise"]["hosting_noise_risk"] = "low"
         eval_resp = copy.deepcopy(sample_evaluation_response)
         eval_resp["listing_extraction"]["broadband_type"] = "fttp"
 
-        _populate_image_cache(str(tmp_path), sample_merged_property)
+        populate_image_cache(str(tmp_path), sample_merged_property)
 
         analyzer = PropertyQualityAnalyzer(api_key="test-key")
         analyzer._client = MagicMock()
@@ -2025,7 +2003,7 @@ class TestPhase2CircuitBreakerRaise:
         mock_visual = create_mock_response(
             sample_visual_response, tool_name="property_visual_analysis"
         )
-        _populate_image_cache(str(tmp_path), sample_merged_property)
+        populate_image_cache(str(tmp_path), sample_merged_property)
 
         analyzer = PropertyQualityAnalyzer(api_key="test-key")
         analyzer._client = MagicMock()
@@ -2055,7 +2033,7 @@ class TestPhase2CircuitBreakerRaise:
         mock_visual = create_mock_response(
             sample_visual_response, tool_name="property_visual_analysis"
         )
-        _populate_image_cache(str(tmp_path), sample_merged_property)
+        populate_image_cache(str(tmp_path), sample_merged_property)
 
         analyzer = PropertyQualityAnalyzer(api_key="test-key")
         analyzer._client = MagicMock()
@@ -2078,7 +2056,7 @@ class TestCircuitBreaker:
         """Circuit should open after _CIRCUIT_BREAKER_THRESHOLD consecutive API failures."""
         from anthropic import APIConnectionError
 
-        _populate_image_cache(str(tmp_path), sample_merged_property)
+        populate_image_cache(str(tmp_path), sample_merged_property)
 
         analyzer = PropertyQualityAnalyzer(api_key="test-key")
         analyzer._client = MagicMock()
@@ -2124,7 +2102,7 @@ class TestCircuitBreaker:
         """Successful API call should reset the consecutive failure counter."""
         from anthropic import APIConnectionError
 
-        _populate_image_cache(str(tmp_path), sample_merged_property)
+        populate_image_cache(str(tmp_path), sample_merged_property)
 
         analyzer = PropertyQualityAnalyzer(api_key="test-key")
         analyzer._client = MagicMock()
@@ -2158,7 +2136,7 @@ class TestCircuitBreaker:
         mock_response = MagicMock()
         mock_response.status_code = 429
         mock_response.headers = {}
-        _populate_image_cache(str(tmp_path), sample_merged_property)
+        populate_image_cache(str(tmp_path), sample_merged_property)
 
         analyzer = PropertyQualityAnalyzer(api_key="test-key")
         analyzer._client = MagicMock()
@@ -2187,7 +2165,7 @@ class TestCircuitBreaker:
         mock_response = MagicMock()
         mock_response.status_code = 500
         mock_response.headers = {}
-        _populate_image_cache(str(tmp_path), sample_merged_property)
+        populate_image_cache(str(tmp_path), sample_merged_property)
 
         analyzer = PropertyQualityAnalyzer(api_key="test-key")
         analyzer._client = MagicMock()
@@ -2213,7 +2191,7 @@ class TestCircuitBreaker:
         """APITimeoutError (subclass of APIConnectionError) should trip circuit breaker."""
         from anthropic import APITimeoutError
 
-        _populate_image_cache(str(tmp_path), sample_merged_property)
+        populate_image_cache(str(tmp_path), sample_merged_property)
 
         analyzer = PropertyQualityAnalyzer(api_key="test-key")
         analyzer._client = MagicMock()
@@ -2238,7 +2216,7 @@ class TestCircuitBreaker:
         mock_response = MagicMock()
         mock_response.status_code = 400
         mock_response.headers = {}
-        _populate_image_cache(str(tmp_path), sample_merged_property)
+        populate_image_cache(str(tmp_path), sample_merged_property)
 
         analyzer = PropertyQualityAnalyzer(api_key="test-key")
         analyzer._client = MagicMock()
@@ -2273,7 +2251,7 @@ class TestCircuitBreaker:
         from anthropic import BadRequestError
 
         # Populate image cache so analyze_single_merged reaches the API call
-        _populate_image_cache(str(tmp_path), sample_merged_property)
+        populate_image_cache(str(tmp_path), sample_merged_property)
 
         mock_response = MagicMock()
         mock_response.status_code = 400
@@ -2298,7 +2276,7 @@ class TestCircuitBreaker:
         tmp_path: Any,
     ) -> None:
         """Generic exceptions should NOT count toward circuit breaker."""
-        _populate_image_cache(str(tmp_path), sample_merged_property)
+        populate_image_cache(str(tmp_path), sample_merged_property)
 
         analyzer = PropertyQualityAnalyzer(api_key="test-key")
         analyzer._client = MagicMock()
@@ -2341,7 +2319,7 @@ class TestCircuitBreaker:
         """After cooldown, circuit should allow one retry (half-open)."""
         import time
 
-        _populate_image_cache(str(tmp_path), sample_merged_property)
+        populate_image_cache(str(tmp_path), sample_merged_property)
 
         analyzer = PropertyQualityAnalyzer(api_key="test-key")
         analyzer._breaker._open = True
@@ -2363,7 +2341,7 @@ class TestCircuitBreaker:
         """Successful retry after half-open should fully close circuit."""
         import time
 
-        _populate_image_cache(str(tmp_path), sample_merged_property)
+        populate_image_cache(str(tmp_path), sample_merged_property)
 
         analyzer = PropertyQualityAnalyzer(api_key="test-key")
         analyzer._breaker._open = True
@@ -2386,7 +2364,7 @@ class TestCircuitBreaker:
 
         from anthropic import APIConnectionError
 
-        _populate_image_cache(str(tmp_path), sample_merged_property)
+        populate_image_cache(str(tmp_path), sample_merged_property)
 
         analyzer = PropertyQualityAnalyzer(api_key="test-key")
         analyzer._breaker._open = True
@@ -3554,7 +3532,7 @@ class TestEvalHelpers:
 
         # messages.create is called for both Phase 1 and Phase 2.
         # Return Phase 1 visual response first, then Phase 2 eval response.
-        _populate_image_cache(str(tmp_path), sample_merged_property)
+        populate_image_cache(str(tmp_path), sample_merged_property)
 
         analyzer = PropertyQualityAnalyzer(api_key="test-key")
         analyzer._client = MagicMock()

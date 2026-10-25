@@ -1,4 +1,4 @@
-"""Integration tests for the full pipeline (excluding notifications)."""
+"""Selection, matching, and persistence contracts without the run coordinator."""
 
 from collections.abc import AsyncGenerator
 from datetime import UTC, datetime, timedelta
@@ -10,7 +10,8 @@ from pydantic import HttpUrl
 from home_finder.db import PropertyStorage
 from home_finder.filters.criteria import CriteriaFilter
 from home_finder.matching.deduplication import Deduplicator
-from home_finder.models import MergedProperty, Property, PropertySource, SearchCriteria
+from home_finder.models import Property, PropertySource, SearchCriteria
+from home_finder.pipeline.matching import consolidate_candidates
 
 
 @pytest_asyncio.fixture
@@ -97,15 +98,14 @@ def criteria() -> SearchCriteria:
 
 
 @pytest.mark.integration
-class TestFullPipeline:
-    """Test the full scrape -> filter -> store pipeline."""
+class TestSelectionAndPersistence:
+    """Selected listings become distinct stored homes through filtering and matching."""
 
     @pytest.mark.asyncio
     async def test_pipeline_filters_and_dedupes(
         self, storage: PropertyStorage, mixed_properties: list[Property], criteria: SearchCriteria
     ) -> None:
         """Properties go through criteria filter, deduplication, then storage."""
-        # Step 1: Apply criteria filter
         criteria_filter = CriteriaFilter(criteria)
         filtered = criteria_filter.filter_properties(mixed_properties)
 
@@ -113,18 +113,15 @@ class TestFullPipeline:
         assert len(filtered) == 3
         assert all(p.price_pcm <= 2200 for p in filtered)
 
-        # Step 2: Deduplicate (async weighted scoring)
         deduplicator = Deduplicator(enable_cross_platform=True)
         merged = await deduplicator.deduplicate_and_merge_async(filtered)
 
         # OpenRent and Rightmove listings are same property → merged
         assert len(merged) == 2
 
-        # Step 3: Filter to new only
         new = await storage.filter_new_merged(merged)
         assert len(new) == 2
 
-        # Step 4: Save to storage
         for m in new:
             await storage.save_merged_property(m)
 
@@ -334,11 +331,11 @@ class TestFilterToStorage:
 
 
 @pytest.mark.integration
-class TestCrossPlatformPipeline:
+class TestCrossPlatformConsolidation:
     """Test cross-platform dedup across pipeline re-runs."""
 
     @pytest.mark.asyncio
-    async def test_pipeline_rerun_cross_platform_no_duplicate_notification(
+    async def test_cross_platform_consolidation_preserves_record_and_sent_status(
         self, storage: PropertyStorage, criteria: SearchCriteria
     ) -> None:
         """Run 1: OpenRent property saved. Run 2: same flat on Zoopla → no new record."""
@@ -391,50 +388,10 @@ class TestCrossPlatformPipeline:
         # Simulate scrape-time write of Zoopla source_listing
         await storage.upsert_source_listings([zoopla_prop])
 
-        # Cross-run dedup: load anchors and combine
-        db_anchors = await storage.get_recent_properties_for_dedup(days=30)
-
-        # Build URL → anchor mapping (same logic as main.py)
-        anchor_url_to_id: dict[str, str] = {}
-        anchor_by_id: dict[str, MergedProperty] = {}
-        for anchor in db_anchors:
-            anchor_by_id[anchor.canonical.unique_id] = anchor
-            for url in anchor.source_urls.values():
-                anchor_url_to_id[str(url)] = anchor.canonical.unique_id
-
-        # Map new URLs to unique_ids for absorbed_ids tracking
-        new_url_to_unique_id: dict[str, str] = {}
-        for mp in new_run2:
-            for url in mp.source_urls.values():
-                new_url_to_unique_id[str(url)] = mp.canonical.unique_id
-
-        combined = new_run2 + db_anchors
-        dedup_results = await deduplicator.deduplicate_merged_async(combined)
-
-        unmatched_candidates: list[MergedProperty] = []
-        for merged in dedup_results:
-            matched_anchor_id: str | None = None
-            for url in merged.source_urls.values():
-                aid = anchor_url_to_id.get(str(url))
-                if aid is not None:
-                    matched_anchor_id = aid
-                    break
-            if matched_anchor_id is not None:
-                original = anchor_by_id[matched_anchor_id]
-                if set(merged.sources) - set(original.sources):
-                    absorbed_ids = [
-                        new_url_to_unique_id[str(url)]
-                        for url in merged.source_urls.values()
-                        if str(url) in new_url_to_unique_id
-                    ]
-                    await storage.update_merged_sources(
-                        matched_anchor_id, merged, absorbed_ids=absorbed_ids
-                    )
-            else:
-                unmatched_candidates.append(merged)
+        result = await consolidate_candidates(deduplicator, new_run2, storage, set())
 
         # No genuinely new properties — Zoopla was absorbed into OpenRent anchor
-        assert len(unmatched_candidates) == 0
+        assert result.unmatched_candidates == []
 
         # DB still has only 1 record
         count_after_run2 = await storage.web.get_property_count()

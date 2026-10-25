@@ -1,4 +1,4 @@
-"""End-to-end tests for the full pipeline with mocked external APIs."""
+"""Candidate preparation and persistence with mocked acquisition boundaries."""
 
 from collections.abc import Callable
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -46,13 +46,13 @@ def synthetic_properties(make_property: Callable[..., Property]) -> list[Propert
 
 
 @pytest.mark.e2e
-class TestFullPipelineE2E:
+class TestCandidatePreparation:
     """Test prepare_candidates with mocked external APIs."""
 
-    async def test_pipeline_scrape_through_save(
+    async def test_prepared_candidates_can_be_persisted_without_analysis(
         self, test_settings: Settings, synthetic_properties: list[Property]
     ):
-        """Pipeline should execute all stages and save properties to DB."""
+        """Prepare candidates, then persist them through the assessment-completion contract."""
         storage = PropertyStorage(":memory:")
         await storage.initialize()
 
@@ -94,7 +94,7 @@ class TestFullPipelineE2E:
 
         await storage.close()
 
-    async def test_pipeline_commute_is_advisory(
+    async def test_commute_assessment_preserves_over_limit_candidates(
         self, test_settings: Settings, synthetic_properties: list[Property]
     ):
         """Over-limit and unknown homes remain available; only measurements are saved."""
@@ -180,7 +180,7 @@ class TestFullPipelineE2E:
 
         await storage.close()
 
-    async def test_pipeline_no_results_returns_empty_batch(self, test_settings: Settings):
+    async def test_no_observations_returns_empty_batch(self, test_settings: Settings):
         """Empty scrape should return None."""
         storage = PropertyStorage(":memory:")
         await storage.initialize()
@@ -195,7 +195,7 @@ class TestFullPipelineE2E:
         assert result.candidates == []
         await storage.close()
 
-    async def test_pipeline_dedup_reduces_count(
+    async def test_matching_listings_share_a_candidate_and_keep_the_distinct_home(
         self, test_settings: Settings, make_property: Callable[..., Property]
     ):
         """Duplicate properties should be merged, reducing count."""
@@ -251,8 +251,14 @@ class TestFullPipelineE2E:
             result = await prepare_candidates(test_settings, storage)
 
         assert result is not None
-        # 3 input props, but 2 should merge → result should be <= 3
-        # (first two have same postcode+bedrooms+price+coords, should merge)
-        assert len(result.candidates) <= len(props)
+        assert len(result.candidates) == 2
+        assert {frozenset(candidate.sources) for candidate in result.candidates} == {
+            frozenset({PropertySource.OPENRENT, PropertySource.ZOOPLA}),
+            frozenset({PropertySource.OPENRENT}),
+        }
+        represented_urls = {
+            str(url) for candidate in result.candidates for url in candidate.source_urls.values()
+        }
+        assert represented_urls == {str(prop.url) for prop in props}
 
         await storage.close()

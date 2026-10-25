@@ -10,12 +10,9 @@ import structlog.testing
 from home_finder.analysis.badge_consistency import reconcile_analysis_badges
 from home_finder.db import PropertyStorage
 from home_finder.models import PropertyQualityAnalysis
-from tests.test_analysis.test_quality_respx import (
-    PHASE1_VISUAL_RESPONSE,
-    PHASE2_EVALUATION_RESPONSE,
-)
-from tests.test_analysis.test_sonnet55 import configuration
-from tests.test_analysis.test_visual_checkpoints import checkpoint_rows, quality
+from tests.support.analysis_config import configuration
+from tests.support.analysis_responses import PHASE1_VISUAL_RESPONSE, PHASE2_EVALUATION_RESPONSE
+from tests.support.visual_checkpoints import checkpoint_rows, quality
 
 
 @pytest.fixture(params=["claude-sonnet-4-6", "claude-sonnet-5-5"])

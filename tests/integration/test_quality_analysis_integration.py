@@ -19,7 +19,7 @@ from home_finder.models import (
     PropertyImage,
     PropertySource,
 )
-from tests.test_analysis.test_analyzer import _populate_image_cache
+from tests.support.images import populate_image_cache
 
 # ---------------------------------------------------------------------------
 # Shared response data and mock helpers
@@ -224,7 +224,7 @@ class TestQualityAnalysisIntegration:
             postcode="E8 3RH",
         )
 
-        _populate_image_cache(str(tmp_path), merged)
+        populate_image_cache(str(tmp_path), merged)
 
         analyzer = PropertyQualityAnalyzer(api_key="test-key")
         analyzer._client = MagicMock()
@@ -266,7 +266,7 @@ class TestQualityAnalysisIntegration:
             postcode="E8 3RH",
         )
 
-        _populate_image_cache(str(tmp_path), merged)
+        populate_image_cache(str(tmp_path), merged)
 
         analyzer = PropertyQualityAnalyzer(api_key="test-key")
         analyzer._client = MagicMock()
@@ -301,7 +301,7 @@ class TestQualityAnalysisIntegration:
             postcode="E8 3RH",
         )
 
-        _populate_image_cache(str(tmp_path), merged)
+        populate_image_cache(str(tmp_path), merged)
 
         analyzer = PropertyQualityAnalyzer(api_key="test-key")
         analyzer._client = MagicMock()
@@ -338,7 +338,7 @@ class TestQualityAnalysisIntegration:
 
         mock_visual = _create_mock_response(visual_data, tool_name="property_visual_analysis")
 
-        _populate_image_cache(str(tmp_path), merged)
+        populate_image_cache(str(tmp_path), merged)
 
         analyzer = PropertyQualityAnalyzer(api_key="test-key")
         analyzer._client = MagicMock()
@@ -438,7 +438,7 @@ class TestQualityAnalysisIntegration:
             _sample_visual_response(), tool_name="property_visual_analysis"
         )
 
-        _populate_image_cache(str(tmp_path), merged)
+        populate_image_cache(str(tmp_path), merged)
 
         analyzer = PropertyQualityAnalyzer(api_key="test-key")
         analyzer._client = MagicMock()

@@ -9,7 +9,7 @@ from home_finder.db import PropertyStorage
 from home_finder.models import PropertySource
 from home_finder.pipeline.assessment import process_initial_assessments
 from home_finder.pipeline.contracts import CandidateBatch
-from tests.test_db.test_merge_safety import snapshot
+from tests.support.merge_state import snapshot
 
 
 @pytest.fixture

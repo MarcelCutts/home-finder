@@ -14,7 +14,6 @@ from home_finder.analysis.analyzer import (
     _VisualAnalysisResponse,
 )
 from home_finder.analysis.contracts import (
-    MAX_OUTPUT_CHARACTERS,
     AnalysisOutputError,
     validate_output,
 )
@@ -23,29 +22,14 @@ from home_finder.db import PropertyStorage
 from home_finder.pipeline.assessment import process_initial_assessments
 from home_finder.pipeline.contracts import CandidateBatch
 from home_finder.pipeline.event_recorder import EventRecorder
-from tests.test_analysis.test_quality_respx import (
+from tests.support.analysis_responses import (
     PHASE1_VISUAL_RESPONSE,
     PHASE2_EVALUATION_RESPONSE,
+    failed_message,
+    recorded_malformed_visual,
 )
 
 pytestmark = pytest.mark.usefixtures("native_analysis_spending")
-
-
-def recorded_malformed_visual(case: str):
-    """Minimal shapes from the two failed Sonnet receipts; omit advert prose."""
-    raw = copy.deepcopy(PHASE1_VISUAL_RESPONSE["content"][0]["input"])
-    if case == "c218d61fc0d__r2":
-        # The saved space string ends at its room_areas array, without the final }.
-        raw["space"] = json.dumps(raw["space"])[:-1]
-    elif case == "c6a9db682ca__r0":
-        # Pseudo-XML starts the section; its remaining fields spill into the root.
-        kitchen = raw.pop("kitchen")
-        raw["kitchen"] = '\n<parameter name="overall_quality">modern'
-        raw.update({key: value for key, value in kitchen.items() if key != "overall_quality"})
-        raw["space"] = '\n<parameter name="living_room_sqm">null'
-    else:
-        raise AssertionError(case)
-    return raw
 
 
 @pytest.mark.parametrize("case", ["c218d61fc0d__r2", "c6a9db682ca__r0"])
@@ -101,63 +85,6 @@ def test_validated_prose_survives_assembly_without_mutating_phase_inputs(prose):
         assert analysis.value.quality_adjusted_note == prose
         assert visual == before_visual
         assert evaluation == before_evaluation
-
-
-def failed_message(phase, scenario):
-    data = copy.deepcopy(
-        PHASE1_VISUAL_RESPONSE if phase == "visual" else PHASE2_EVALUATION_RESPONSE
-    )
-    data["usage"]["cache_creation_input_tokens"] = 17
-    if scenario in {"refusal", "max_tokens", "model_context_window_exceeded", "pause_turn"}:
-        # The payload is otherwise complete: the stop reason still takes precedence.
-        data["stop_reason"] = scenario
-    elif scenario == "wrong_tool":
-        data["content"][0]["name"] = "unrequested_tool"
-    elif scenario == "two_tools":
-        data["content"] *= 2
-    elif scenario == "missing_tool":
-        data["content"] = [{"type": "text", "text": "{}"}]
-    elif scenario == "missing_visual_field":
-        del data["content"][0]["input"]["kitchen"]["has_dishwasher"]
-    elif scenario == "string_boolean":
-        data["content"][0]["input"]["space"]["is_spacious_enough"] = "false"
-    elif scenario == "invalid_rating":
-        data["content"][0]["input"]["overall_rating"] = 6
-    elif scenario in {"fractional_rating", "boolean_rating", "string_rating"}:
-        data["content"][0]["input"]["overall_rating"] = {
-            "fractional_rating": 4.5,
-            "boolean_rating": True,
-            "string_rating": "4",
-        }[scenario]
-    elif scenario == "null_notes":
-        data["content"][0]["input"]["kitchen"]["notes"] = None
-    elif scenario == "missing_notes":
-        del data["content"][0]["input"]["kitchen"]["notes"]
-    elif scenario == "oversized_visual":
-        data["content"][0]["input"]["unused_extension"] = "x" * MAX_OUTPUT_CHARACTERS
-    elif scenario == "missing_eval_field":
-        payload = json.loads(data["content"][0]["text"])
-        del payload["viewing_notes"]
-        data["content"][0]["text"] = json.dumps(payload)
-    elif scenario == "invalid_enum":
-        payload = json.loads(data["content"][0]["text"])
-        payload["lowlights"] = ["Invented category"]
-        data["content"][0]["text"] = json.dumps(payload)
-    elif scenario == "wrapped_one_line":
-        payload = json.loads(data["content"][0]["text"])
-        payload["one_line"] = {"one_line": "Legacy wrapped text"}
-        data["content"][0]["text"] = json.dumps(payload)
-    elif scenario == "duplicate_field":
-        data["content"][0]["text"] = '{"one_line":"first",' + data["content"][0]["text"][1:]
-    elif scenario == "two_text_blocks":
-        data["content"] *= 2
-    elif scenario == "malformed_json":
-        data["content"][0]["text"] = '{"broken"'
-    elif scenario == "oversized_evaluation":
-        data["content"][0]["text"] = " " * (MAX_OUTPUT_CHARACTERS + 1)
-    else:
-        raise AssertionError(scenario)
-    return data
 
 
 @pytest.mark.parametrize(

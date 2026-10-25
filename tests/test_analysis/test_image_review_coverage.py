@@ -11,11 +11,8 @@ from home_finder.db import PropertyStorage
 from home_finder.models import PropertyImage, PropertyQualityAnalysis
 from home_finder.models.analysis import AnalysisConfig
 from home_finder.utils.image_cache import find_cached_file
-from tests.test_analysis.test_analyzer import _populate_image_cache
-from tests.test_analysis.test_quality_respx import (
-    PHASE1_VISUAL_RESPONSE,
-    PHASE2_EVALUATION_RESPONSE,
-)
+from tests.support.analysis_responses import PHASE1_VISUAL_RESPONSE, PHASE2_EVALUATION_RESPONSE
+from tests.support.images import populate_image_cache
 
 pytestmark = pytest.mark.usefixtures("native_analysis_spending")
 
@@ -42,7 +39,7 @@ def gallery_property(make_merged_property, tmp_path, count=8, origin="source_dec
             else None,
         }
     )
-    _populate_image_cache(str(tmp_path), merged)
+    populate_image_cache(str(tmp_path), merged)
     return merged
 
 

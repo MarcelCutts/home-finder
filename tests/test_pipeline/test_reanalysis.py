@@ -24,18 +24,18 @@ from home_finder.models import (
 from home_finder.pipeline.reanalysis import run_reanalysis
 
 
-def _make_async_cm(mock_filter: MagicMock) -> MagicMock:
+def _make_async_cm(analyzer: MagicMock) -> MagicMock:
     """Add async context manager protocol to a mock quality analyzer."""
 
     async def _aenter(*a):
-        return mock_filter
+        return analyzer
 
     async def _aexit(*a):
-        await mock_filter.close()
+        await analyzer.close()
 
-    mock_filter.__aenter__ = _aenter
-    mock_filter.__aexit__ = _aexit
-    return mock_filter
+    analyzer.__aenter__ = _aenter
+    analyzer.__aexit__ = _aexit
+    return analyzer
 
 
 # ---------------------------------------------------------------------------
@@ -111,13 +111,13 @@ class TestRunReanalysisRequestOnly:
             )
             await populated_storage.mark_notified(merged.unique_id)
 
-        with patch("home_finder.pipeline.assessment.PropertyQualityAnalyzer") as mock_qf_cls:
+        with patch("home_finder.pipeline.assessment.PropertyQualityAnalyzer") as analyzer_factory:
             await run_reanalysis(
                 reanalysis_settings,
                 outcodes=["E8"],
                 request_only=True,
             )
-            mock_qf_cls.assert_not_called()
+            analyzer_factory.assert_not_called()
 
         # Verify flags were set
         queue = await populated_storage.processing.get_reanalysis_queue()
@@ -139,13 +139,13 @@ class TestRunReanalysisRequestOnly:
             )
             await populated_storage.mark_notified(merged.unique_id)
 
-        with patch("home_finder.pipeline.assessment.PropertyQualityAnalyzer") as mock_qf_cls:
+        with patch("home_finder.pipeline.assessment.PropertyQualityAnalyzer") as analyzer_factory:
             await run_reanalysis(
                 reanalysis_settings,
                 reanalyze_all=True,
                 request_only=True,
             )
-            mock_qf_cls.assert_not_called()
+            analyzer_factory.assert_not_called()
 
         queue = await populated_storage.processing.get_reanalysis_queue()
         assert len(queue) == 3
@@ -165,10 +165,10 @@ class TestRunReanalysisEarlyReturns:
         """No flagged properties → early return without creating quality analyzer."""
         with (
             structlog.testing.capture_logs() as captured,
-            patch("home_finder.pipeline.assessment.PropertyQualityAnalyzer") as mock_qf_cls,
+            patch("home_finder.pipeline.assessment.PropertyQualityAnalyzer") as analyzer_factory,
         ):
             await run_reanalysis(reanalysis_settings)
-            mock_qf_cls.assert_not_called()
+            analyzer_factory.assert_not_called()
 
         events = [e["event"] for e in captured]
         assert "reanalysis_queue_empty" in events
@@ -192,10 +192,10 @@ class TestRunReanalysisEarlyReturns:
 
         with (
             structlog.testing.capture_logs() as captured,
-            patch("home_finder.pipeline.assessment.PropertyQualityAnalyzer") as mock_qf_cls,
+            patch("home_finder.pipeline.assessment.PropertyQualityAnalyzer") as analyzer_factory,
         ):
             await run_reanalysis(settings_no_key)
-            mock_qf_cls.assert_not_called()
+            analyzer_factory.assert_not_called()
 
         events = [e["event"] for e in captured]
         assert "quality_analysis_not_configured" in events
@@ -221,12 +221,12 @@ class TestRunReanalysisSuccess:
 
         new_analysis = make_quality_analysis(rating=5)
 
-        mock_filter = _make_async_cm(AsyncMock())
-        mock_filter.analyze_single_merged = AsyncMock(return_value=(merged, new_analysis))
-        mock_filter.close = AsyncMock()
+        analyzer = _make_async_cm(AsyncMock())
+        analyzer.analyze_single_merged = AsyncMock(return_value=(merged, new_analysis))
+        analyzer.close = AsyncMock()
 
         with patch(
-            "home_finder.pipeline.assessment.PropertyQualityAnalyzer", return_value=mock_filter
+            "home_finder.pipeline.assessment.PropertyQualityAnalyzer", return_value=analyzer
         ):
             await run_reanalysis(reanalysis_settings)
 
@@ -240,7 +240,7 @@ class TestRunReanalysisSuccess:
         assert len(queue) == 0
 
         # Verify close() called
-        mock_filter.close.assert_awaited_once()
+        analyzer.close.assert_awaited_once()
 
     async def test_multiple_properties_all_succeed(
         self,
@@ -264,15 +264,15 @@ class TestRunReanalysisSuccess:
         async def _mock_analyze(merged: MergedProperty, *, data_dir: str | None = None):
             return (merged, make_quality_analysis(rating=5))
 
-        mock_filter = _make_async_cm(AsyncMock())
-        mock_filter.analyze_single_merged = AsyncMock(side_effect=_mock_analyze)
-        mock_filter.close = AsyncMock()
+        analyzer = _make_async_cm(AsyncMock())
+        analyzer.analyze_single_merged = AsyncMock(side_effect=_mock_analyze)
+        analyzer.close = AsyncMock()
 
         with (
             structlog.testing.capture_logs() as captured,
             patch(
                 "home_finder.pipeline.assessment.PropertyQualityAnalyzer",
-                return_value=mock_filter,
+                return_value=analyzer,
             ),
         ):
             await run_reanalysis(reanalysis_settings)
@@ -299,12 +299,12 @@ class TestRunReanalysisSuccess:
         )
 
         new_analysis = make_quality_analysis(rating=5)
-        mock_filter = _make_async_cm(AsyncMock())
-        mock_filter.analyze_single_merged = AsyncMock(return_value=(merged, new_analysis))
-        mock_filter.close = AsyncMock()
+        analyzer = _make_async_cm(AsyncMock())
+        analyzer.analyze_single_merged = AsyncMock(return_value=(merged, new_analysis))
+        analyzer.close = AsyncMock()
 
         with patch(
-            "home_finder.pipeline.assessment.PropertyQualityAnalyzer", return_value=mock_filter
+            "home_finder.pipeline.assessment.PropertyQualityAnalyzer", return_value=analyzer
         ):
             await run_reanalysis(reanalysis_settings)
 
@@ -347,12 +347,12 @@ class TestRunReanalysisErrorHandling:
                 raise APIUnavailableError("overloaded")
             return (merged, make_quality_analysis(rating=5))
 
-        mock_filter = _make_async_cm(AsyncMock())
-        mock_filter.analyze_single_merged = AsyncMock(side_effect=_mock_analyze)
-        mock_filter.close = AsyncMock()
+        analyzer = _make_async_cm(AsyncMock())
+        analyzer.analyze_single_merged = AsyncMock(side_effect=_mock_analyze)
+        analyzer.close = AsyncMock()
 
         with patch(
-            "home_finder.pipeline.assessment.PropertyQualityAnalyzer", return_value=mock_filter
+            "home_finder.pipeline.assessment.PropertyQualityAnalyzer", return_value=analyzer
         ):
             await run_reanalysis(reanalysis_settings)
 
@@ -361,7 +361,7 @@ class TestRunReanalysisErrorHandling:
         completed_count = 3 - len(queue)
         assert completed_count >= 1
         # close() must still be called
-        mock_filter.close.assert_awaited_once()
+        analyzer.close.assert_awaited_once()
 
     async def test_generic_exception_continues_others(
         self,
@@ -395,15 +395,15 @@ class TestRunReanalysisErrorHandling:
                 raise RuntimeError("boom")
             return (merged, make_quality_analysis(rating=5))
 
-        mock_filter = _make_async_cm(AsyncMock())
-        mock_filter.analyze_single_merged = AsyncMock(side_effect=_mock_analyze)
-        mock_filter.close = AsyncMock()
+        analyzer = _make_async_cm(AsyncMock())
+        analyzer.analyze_single_merged = AsyncMock(side_effect=_mock_analyze)
+        analyzer.close = AsyncMock()
 
         with (
             structlog.testing.capture_logs() as captured,
             patch(
                 "home_finder.pipeline.assessment.PropertyQualityAnalyzer",
-                return_value=mock_filter,
+                return_value=analyzer,
             ),
         ):
             await run_reanalysis(reanalysis_settings)
@@ -425,15 +425,15 @@ class TestRunReanalysisErrorHandling:
             populated_storage, make_merged_property, make_quality_analysis
         )
 
-        mock_filter = _make_async_cm(AsyncMock())
-        mock_filter.analyze_single_merged = AsyncMock(return_value=(merged, None))
-        mock_filter.close = AsyncMock()
+        analyzer = _make_async_cm(AsyncMock())
+        analyzer.analyze_single_merged = AsyncMock(return_value=(merged, None))
+        analyzer.close = AsyncMock()
 
         with (
             structlog.testing.capture_logs() as captured,
             patch(
                 "home_finder.pipeline.assessment.PropertyQualityAnalyzer",
-                return_value=mock_filter,
+                return_value=analyzer,
             ),
         ):
             await run_reanalysis(reanalysis_settings)
@@ -459,13 +459,13 @@ class TestRunReanalysisErrorHandling:
         """close() is called even when every analysis raises APIUnavailableError."""
         await _save_and_flag(populated_storage, make_merged_property, make_quality_analysis)
 
-        mock_filter = _make_async_cm(AsyncMock())
-        mock_filter.analyze_single_merged = AsyncMock(side_effect=APIUnavailableError("down"))
-        mock_filter.close = AsyncMock()
+        analyzer = _make_async_cm(AsyncMock())
+        analyzer.analyze_single_merged = AsyncMock(side_effect=APIUnavailableError("down"))
+        analyzer.close = AsyncMock()
 
         with patch(
-            "home_finder.pipeline.assessment.PropertyQualityAnalyzer", return_value=mock_filter
+            "home_finder.pipeline.assessment.PropertyQualityAnalyzer", return_value=analyzer
         ):
             await run_reanalysis(reanalysis_settings)
 
-        mock_filter.close.assert_awaited_once()
+        analyzer.close.assert_awaited_once()

@@ -16,8 +16,9 @@ from home_finder.models import PropertyImage
 from home_finder.models.spend import SpendDeferred
 from home_finder.utils.image_cache import get_cached_image_path, save_image_bytes
 from home_finder.utils.image_processing import MAX_IMAGE_DIMENSION
-from tests.test_analysis.test_analysis_spend import rows
-from tests.test_analysis.test_sonnet55 import policy, response
+from tests.support.analysis_config import policy
+from tests.support.analysis_responses import response
+from tests.support.analysis_spend import rows
 
 
 def image_bytes(*, animated=False, format="GIF", size=(64, 64)):

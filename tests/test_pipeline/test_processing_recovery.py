@@ -14,7 +14,7 @@ from home_finder.pipeline.candidates import prepare_candidates
 from home_finder.pipeline.contracts import CollectedListings, CommuteAssessments
 from home_finder.pipeline.recovery_admin import request_recovery
 from home_finder.pipeline.run_lock import runner_lock
-from tests.test_db.test_spend import policy, spec
+from tests.support.spend import policy, spec
 
 
 async def property_row(storage, uid):
@@ -121,12 +121,12 @@ async def test_new_membership_recovers_original_anchor_after_restart(
         assert [m.unique_id for m in await storage.get_recent_properties_for_dedup()] == [
             anchor.unique_id
         ]
-        pre = await prepare_candidates(settings, storage)
-        assert pre is not None
-        assert [m.unique_id for m in pre.candidates] == [anchor.unique_id]
-        assert pre.candidates[0].floorplan == plan
+        batch = await prepare_candidates(settings, storage)
+        assert batch is not None
+        assert [m.unique_id for m in batch.candidates] == [anchor.unique_id]
+        assert batch.candidates[0].floorplan == plan
         callback = AsyncMock()
-        assessment = await process_initial_assessments(pre, settings, storage, callback)
+        assessment = await process_initial_assessments(batch, settings, storage, callback)
         count, _ = assessment.processed_count, assessment.token_usage
         assert count == 1
         after = await property_row(storage, anchor.unique_id)

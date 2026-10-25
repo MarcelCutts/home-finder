@@ -8,10 +8,7 @@ import httpx2
 import pytest
 
 from home_finder.analysis.analyzer import APIUnavailableError, PropertyQualityAnalyzer
-from tests.test_analysis.test_quality_respx import (
-    PHASE1_VISUAL_RESPONSE,
-    PHASE2_EVALUATION_RESPONSE,
-)
+from tests.support.analysis_responses import PHASE1_VISUAL_RESPONSE, PHASE2_EVALUATION_RESPONSE
 
 pytestmark = pytest.mark.usefixtures("native_analysis_spending")
 

@@ -12,6 +12,7 @@ import pytest
 import pytest_asyncio
 from pydantic import SecretStr
 
+from home_finder.analysis.analyzer import TokenUsage
 from home_finder.config import Settings
 from home_finder.db import PropertyStorage
 from home_finder.enrichment.details import EnrichmentResult
@@ -147,7 +148,7 @@ class TestCompleteInitialAssessment:
 
 @patch("home_finder.pipeline.assessment._lookup_wards", new_callable=AsyncMock)
 class TestInitialAssessments:
-    async def test_processes_all_properties(
+    async def test_disabled_analysis_completes_each_candidate_without_provider_calls(
         self,
         _mock_wards: AsyncMock,
         storage: PropertyStorage,
@@ -155,7 +156,7 @@ class TestInitialAssessments:
         make_merged_property: Callable[..., MergedProperty],
     ) -> None:
         props = [make_merged_property(price_pcm=1800 + i * 10) for i in range(3)]
-        pre = CandidateBatch(candidates=props, commute_lookup={})
+        batch = CandidateBatch(candidates=props, commute_lookup={})
         settings = Settings(
             telegram_bot_token=SecretStr("fake:token"),
             telegram_chat_id=0,
@@ -167,11 +168,14 @@ class TestInitialAssessments:
         )
 
         callback = AsyncMock()
-        assessment = await process_initial_assessments(pre, settings, storage, callback)
-        count, token_usage = assessment.processed_count, assessment.token_usage
+        with patch("home_finder.pipeline.assessment.PropertyQualityAnalyzer") as analyzer_factory:
+            summary = await process_initial_assessments(batch, settings, storage, callback)
+        analyzer_factory.assert_not_called()
+        assert summary.assessed == 0
+        assert summary.skipped == len(props)
 
-        assert count == 3
-        assert token_usage is None  # quality disabled
+        assert summary.processed_count == 3
+        assert summary.token_usage is None
         assert callback.await_count == 3
 
     async def test_callback_receives_correct_args(
@@ -183,7 +187,7 @@ class TestInitialAssessments:
     ) -> None:
         merged = make_merged_property()
         commute = (15, TransportMode.PUBLIC_TRANSPORT)
-        pre = CandidateBatch(
+        batch = CandidateBatch(
             candidates=[merged],
             commute_lookup={merged.canonical.unique_id: commute},
         )
@@ -202,41 +206,52 @@ class TestInitialAssessments:
         async def capture(m: Any, c: Any, q: Any) -> None:
             received.append((m, c, q))
 
-        assessment = await process_initial_assessments(pre, settings, storage, capture)
-        _count, token_usage = assessment.processed_count, assessment.token_usage
+        summary = await process_initial_assessments(batch, settings, storage, capture)
+        assert summary.assessed == 0
+        assert summary.skipped == 1
 
         assert len(received) == 1
-        assert token_usage is None  # quality disabled
+        assert summary.token_usage is None
         m, c, q = received[0]
         assert m.canonical.unique_id == merged.canonical.unique_id
         assert c == commute
         assert q is None  # quality disabled
 
-    async def test_continues_on_analysis_error(
-        self,
-        _mock_wards: AsyncMock,
-        storage: PropertyStorage,
-        make_merged_property: Callable[..., MergedProperty],
-    ) -> None:
-        """If one property's analysis fails, others should still be processed."""
-        props = [make_merged_property(price_pcm=1800 + i * 10) for i in range(3)]
-        pre = CandidateBatch(candidates=props, commute_lookup={})
-
+    async def test_one_home_analysis_failure_leaves_it_pending_and_completes_other_homes(
+        self, _mock_wards, storage, make_merged_property, make_quality_analysis
+    ):
+        homes = [make_merged_property(price_pcm=1800 + i * 10) for i in range(3)]
+        batch = CandidateBatch(candidates=homes)
         settings = Settings(
-            telegram_bot_token=SecretStr("fake:token"),
-            telegram_chat_id=0,
-            database_path=":memory:",
+            _env_file=None,
             search_areas="e8",
-            enable_quality_filter=False,
-            traveltime_app_id="",
-            traveltime_api_key=SecretStr(""),
+            enable_quality_filter=True,
+            anthropic_api_key=SecretStr("synthetic-test-key"),
         )
+        analyzer = AsyncMock()
+        analyzer.__aenter__.return_value = analyzer
+        analyzer.token_usage = TokenUsage()
 
+        async def analyze(home, **kwargs):
+            if home.unique_id == homes[0].unique_id:
+                raise ValueError("One home's evidence could not be processed")
+            return home, make_quality_analysis()
+
+        analyzer.analyze_single_merged.side_effect = analyze
         callback = AsyncMock()
-        assessment = await process_initial_assessments(pre, settings, storage, callback)
-        count, _usage = assessment.processed_count, assessment.token_usage
-        # All should process since quality is disabled (no errors)
-        assert count == 3
+        with patch(
+            "home_finder.pipeline.assessment.PropertyQualityAnalyzer", return_value=analyzer
+        ):
+            summary = await process_initial_assessments(batch, settings, storage, callback)
+
+        assert summary.assessed == 2
+        assert summary.failed == 1
+        assert summary.skipped == summary.deferred == 0
+        assert {call.args[0].unique_id for call in callback.await_args_list} == {
+            home.unique_id for home in homes[1:]
+        }
+        pending = await storage.processing.get_pending_analysis_properties()
+        assert [home.unique_id for home in pending] == [homes[0].unique_id]
 
 
 # ---------------------------------------------------------------------------

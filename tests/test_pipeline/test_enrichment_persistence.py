@@ -14,7 +14,7 @@ from home_finder.pipeline.candidates import _consolidate_and_admit, _prepare_enr
 from home_finder.pipeline.contracts import CandidateBatch
 from home_finder.scrapers.detail_fetcher import DetailFetcher, DetailPageData
 from home_finder.web.filters import PropertyFilter
-from tests.test_db.test_spend import policy, spec
+from tests.support.spend import policy, spec
 
 
 async def property_row(storage, uid):

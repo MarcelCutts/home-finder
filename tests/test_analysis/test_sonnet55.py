@@ -30,61 +30,22 @@ from home_finder.models.spend import (
     AttemptSpec,
     RateCard,
     SpendDeferred,
-    SpendPolicy,
     UsageSettlement,
     rate_card_for,
     usd_text,
 )
-from tests.test_analysis.test_analysis_output_failures import (
+from tests.support.analysis_config import configuration, policy
+from tests.support.analysis_responses import (
+    SONNET55,
+    USAGE,
     failed_message,
     recorded_malformed_visual,
+    response,
 )
-from tests.test_analysis.test_analysis_spend import CONTENT, quality, rows
-from tests.test_analysis.test_quality_respx import (
-    PHASE1_VISUAL_RESPONSE,
-    PHASE2_EVALUATION_RESPONSE,
-)
-from tests.test_analysis.test_visual_checkpoints import checkpoint_rows
+from tests.support.analysis_spend import CONTENT, quality, rows
+from tests.support.visual_checkpoints import checkpoint_rows
 
 LEGACY = "claude-sonnet-4-6"
-SONNET55 = "claude-sonnet-5-5"
-USAGE = {
-    "input_tokens": 100,
-    "output_tokens": 200,
-    "cache_creation_input_tokens": 30,
-    "cache_creation": {"ephemeral_5m_input_tokens": 10, "ephemeral_1h_input_tokens": 20},
-    "cache_read_input_tokens": 300,
-    "service_tier": "standard",
-    "inference_geo": "global",
-    "output_tokens_details": {"thinking_tokens": 70},
-}
-
-
-def configuration(visual=SONNET55, evaluation=SONNET55, **overrides):
-    phase = {"sdk_retries": 0, "input_token_limit": 140_000, "max_output_tokens": 8192}
-    return AnalysisConfig.model_validate(
-        {
-            "visual": {**phase, "model": visual, **overrides},
-            "evaluation": {**phase, "model": evaluation, **overrides},
-        }
-    )
-
-
-def policy(**overrides):
-    return SpendPolicy.model_validate(
-        {"per_call_usd": "1", "daily_usd": "10", "monthly_usd": "10", **overrides}
-    )
-
-
-def response(phase="visual", model=SONNET55, *, thinking=True):
-    output = copy.deepcopy(
-        PHASE1_VISUAL_RESPONSE if phase == "visual" else PHASE2_EVALUATION_RESPONSE
-    )
-    output["model"] = model
-    output["usage"] = copy.deepcopy(USAGE)
-    if thinking:
-        output["content"].insert(0, {"type": "thinking", "thinking": "", "signature": "fixture"})
-    return output
 
 
 @pytest.mark.parametrize("case", ["c218d61fc0d__r2", "c6a9db682ca__r0"])
