@@ -78,9 +78,7 @@ async def test_saved_score_matches_card_detail_map_messages_and_plan(
         detail = client.get(f"/property/{merged.unique_id}")
         assert card.status_code == detail.status_code == 200
         card_score = BeautifulSoup(card.text, "html.parser").select_one(".fit-badge")
-        detail_score = BeautifulSoup(detail.text, "html.parser").select_one(
-            ".fit-breakdown-donut-value"
-        )
+        detail_score = BeautifulSoup(detail.text, "html.parser").select_one(".fit-brief-score")
         if score is None:
             assert card_score is detail_score is None
         else:

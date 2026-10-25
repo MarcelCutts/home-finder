@@ -1237,7 +1237,7 @@ nav.container-fluid li {
 }
 
 /* Fit breakdown card (detail page) */
-.fit-breakdown-card h4 {
+.fit-breakdown-card h4, .fit-breakdown-card .fit-brief-title {
     display: flex;
     align-items: center;
     gap: 0.5rem;
@@ -3388,7 +3388,7 @@ nav.container-fluid li {
     .overview-card {
         padding: 0.85rem 1rem;
     }
-    .fit-breakdown-card h4 {
+    .fit-breakdown-card h4, .fit-breakdown-card .fit-brief-title {
         font-size: 0.9rem;
         flex-wrap: wrap;
     }
@@ -3947,3 +3947,43 @@ nav.container-fluid li {
         --accent-subtle: rgba(139, 92, 246, 0.15);
     }
 }
+
+/* ── The brief on a listing: the lead line, the brief check, the score's working, notes on the text ── */
+.detail-lead { margin: 0 0 1rem; display: flex; flex-direction: column; gap: 0.2rem; }
+.detail-lead-kicker { margin: 0; font-size: 0.78rem; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; color: var(--text-muted); }
+.detail-lead-broken .detail-lead-kicker { color: #e5484d; }
+.detail-lead-risk .detail-lead-kicker { color: #fbbf24; }
+.detail-lead-clear .detail-lead-kicker { color: #3dd68c; }
+.detail-lead-title { margin: 0; font-size: 1.75rem; line-height: 1.1; font-weight: 700; letter-spacing: -0.01em; max-width: 24ch; text-wrap: balance; }
+.detail-lead-detail { margin: 0.2rem 0 0; color: var(--text-muted); max-width: 60ch; }
+.card-lead { margin: 0.35rem 0 0; font-weight: 650; line-height: 1.3; }
+.card-lead-broken { color: #e5484d; }
+.card-lead-risk { color: #fbbf24; }
+.card-lead-detail { font-weight: 400; color: var(--text-muted); }
+.card-must { margin: 0.1rem 0 0; font-size: 0.78rem; font-variant-numeric: tabular-nums; color: var(--text-muted); }
+.fit-brief-title { font-size: 1.05rem; }
+.fit-brief-score { font-size: 1.6rem; font-weight: 700; font-variant-numeric: tabular-nums; margin-left: auto; }
+.fit-breakdown-band { color: var(--text-muted); font-weight: 400; font-size: 0.9rem; }
+.brief-check { list-style: none; margin: 0 0 0.9rem; padding: 0; display: flex; flex-direction: column; gap: 0.25rem; font-size: 0.9rem; }
+.brief-check li { list-style: none; margin: 0; padding: 0; }
+.brief-group { font-size: 0.75rem; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; color: var(--text-muted); padding-top: 0.4rem; }
+.brief-item { display: flex; justify-content: space-between; gap: 0.75rem; }
+.brief-found { text-align: right; color: var(--text-muted); }
+.brief-met .brief-found { color: #3dd68c; }
+.brief-broken .brief-found { color: #e5484d; }
+.fit-working-wrap { overflow-x: auto; margin: 0 0 0.5rem; }
+.detail-section table.fit-working { width: 100%; border: 0; border-radius: 0; border-collapse: collapse; font-size: 0.85rem; font-variant-numeric: tabular-nums; margin: 0; }
+.detail-section table.fit-working caption { text-align: left; font-weight: 700; padding: 0 0 0.3rem; caption-side: top; }
+.detail-section table.fit-working thead th,
+.detail-section table.fit-working tbody td,
+.detail-section table.fit-working tfoot td { background: transparent; border: 0; padding: 0.15rem 0.35rem; text-align: right; text-transform: none; letter-spacing: 0; font-size: 0.85rem; color: inherit; white-space: nowrap; }
+.detail-section table.fit-working th:first-child,
+.detail-section table.fit-working td:first-child { text-align: left; padding-left: 0; }
+.detail-section table.fit-working thead th { color: var(--text-dim); font-weight: 400; font-size: 0.78rem; }
+.detail-section table.fit-working tfoot td { border-top: 1.5px solid currentColor; font-weight: 700; padding-top: 0.3rem; }
+.annotated-text { margin: 0 0 1rem; font-size: 1.1rem; line-height: 1.6; max-width: 70ch; }
+.mark-strike { text-decoration: line-through; text-decoration-color: #e5484d; text-decoration-thickness: 2px; }
+.mark-wavy { text-decoration: underline wavy #e5484d; text-underline-offset: 4px; }
+.note-ref { color: #e5484d; font-weight: 700; font-size: 0.7em; margin-left: 0.1em; }
+.annotated-notes { margin: 0 0 0.5rem; padding-left: 1.4rem; color: #e5484d; display: flex; flex-direction: column; gap: 0.3rem; max-width: 60ch; }
+.annotated-notes li::marker { font-weight: 700; }

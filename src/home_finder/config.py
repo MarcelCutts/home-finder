@@ -182,6 +182,14 @@ class Settings(BaseSettings):
     max_bedrooms: int = Field(default=2, ge=0)
     destination_postcode: str = Field(default="N1 5AA")
     max_commute_minutes: int = Field(default=30, ge=1, le=120)
+    brief_must_haves: str = Field(
+        default="workspace,hosting",
+        description=(
+            "Comma-separated fit dimensions that are must-haves, so a weak one leads the "
+            "listing page: workspace, hosting, sound, kitchen, vibe, condition. The rest "
+            "are nice-to-haves. Rent, bedrooms and commute are always must-haves."
+        ),
+    )
 
     # Scraper filters
     furnish_types: str = Field(
@@ -248,6 +256,22 @@ class Settings(BaseSettings):
 
     # Database
     database_path: str = Field(default="data/properties.db")
+
+    @field_validator("brief_must_haves")
+    @classmethod
+    def _known_must_haves(cls, value: str) -> str:
+        """Only fit dimensions can be must-haves; a typo must not silently drop one."""
+        from home_finder.filters.fit_score import WEIGHTS
+
+        unknown = [
+            p.strip() for p in value.split(",") if p.strip() and p.strip().lower() not in WEIGHTS
+        ]
+        if unknown:
+            raise ValueError(
+                f"brief_must_haves has unknown dimension(s) {unknown}; "
+                f"choose from {', '.join(WEIGHTS)}"
+            )
+        return value
 
     @field_validator("analysis_config", mode="before")
     @classmethod

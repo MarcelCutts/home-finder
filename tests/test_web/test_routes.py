@@ -2686,7 +2686,7 @@ class TestHostingToleranceCard:
         await storage.save_quality_analysis(prop_a.unique_id, analysis)
         resp = client.get(f"/property/{merged_a.unique_id}")
         assert resp.status_code == 200
-        assert "Marcel Fit" in resp.text
+        assert "Fit with your brief" in resp.text
 
 
 # ---------------------------------------------------------------------------
@@ -3098,3 +3098,70 @@ class TestResponseTargetsAndARIA:
         # Just verify the base template has the sr-announcer.
         assert resp.status_code == 200
         assert 'id="sr-announcer"' in resp.text
+
+
+async def test_two_voices_lead_brief_notes_and_working_render(
+    client, storage, prop_a, merged_a, base_analysis
+) -> None:
+    """The listing opens with the brief's first gap, lists the brief, and annotates the text."""
+    from bs4 import BeautifulSoup
+
+    from home_finder.models import FlooringNoiseAnalysis
+
+    analysis = base_analysis.model_copy(
+        update={
+            "lowlights": ["Potential traffic noise", "No dishwasher"],
+            "highlights": ["Gas hob"],
+            "flooring_noise": FlooringNoiseAnalysis(
+                primary_flooring="wood",
+                has_double_glazing="yes",
+                hosting_noise_risk="moderate",
+                noise_indicators=["Railway line directly beside the building"],
+            ),
+        }
+    )
+    await storage.save_merged_property(merged_a, commute_minutes=22)
+    await storage.update_source_text(
+        merged_a.unique_id,
+        ListingTextEvidence.observed(
+            observed_at=datetime.now(UTC),
+            description="A stunning flat with a private balcony and a fitted kitchen.",
+        ),
+    )
+    await storage.save_quality_analysis(prop_a.unique_id, analysis)
+    client.app.state.settings = client.app.state.settings.model_copy(
+        update={"brief_must_haves": "workspace,sound"}
+    )
+    soup = BeautifulSoup(client.get(f"/property/{merged_a.unique_id}").text, "html.parser")
+
+    lead = soup.select_one(".detail-lead")
+    assert "detail-lead-risk" in lead["class"]
+    assert (
+        lead.select_one(".detail-lead-title").get_text()
+        == "Railway line directly beside the building."
+    )
+    assert lead.select_one(".detail-lead-detail").get_text() == (
+        "Your must-have: quiet enough for calls. Photos can't settle this; check it at a viewing."
+    )
+
+    groups = [li.get_text(strip=True) for li in soup.select(".brief-check .brief-group")]
+    assert groups == ["Must-haves", "Nice-to-haves"]
+    broken = soup.select_one(".brief-check .brief-broken")
+    assert broken.select_one(".brief-label").get_text() == "Quiet enough for calls"
+
+    assert soup.select_one(".fit-brief-score") is not None
+    rows = soup.select(".fit-working tbody tr")
+    assert len(rows) == 6
+    assert soup.select_one(".fit-working tfoot td:last-child").get_text(
+        strip=True
+    ) == soup.select_one(".fit-brief-score").get_text(strip=True)
+
+    notes = [li.get_text() for li in soup.select(".annotated-notes li")]
+    assert notes[0] == "Marketing wording."
+    assert soup.select_one("#section-nav a[href='#section-description']") is not None
+    assert (
+        "Photo assessment: Railway line directly beside the building. Check noise at a viewing."
+        in notes
+    )
+    assert soup.select_one(".annotated-text .mark-strike").get_text() == "stunning"
+    assert soup.select_one("#section-description .description-text") is None

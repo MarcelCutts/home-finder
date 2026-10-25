@@ -1012,12 +1012,12 @@ class TestFitScorePopover:
         breakdown = page.locator(".fit-breakdown-card")
         expect(breakdown).to_be_visible()
         # Should have 6 dimension rows
-        expect(page.locator(".fit-breakdown-row")).to_have_count(6)
+        expect(page.locator(".fit-working-row")).to_have_count(6)
 
     def test_detail_breakdown_labels(self, page):
         """Detail breakdown shows correct dimension labels."""
         page.goto("/property/openrent:1003")
-        labels = page.locator(".fit-breakdown-label")
+        labels = page.locator(".fit-working-label")
         expect(labels.first).to_be_visible()
         label_texts = [labels.nth(i).text_content().strip() for i in range(labels.count())]
         assert "Workspace" in label_texts
