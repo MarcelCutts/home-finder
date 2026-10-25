@@ -131,7 +131,14 @@ if (mapEl && resultsEl) {
     // Commute pill
     const commutePill = document.createElement("span");
     commutePill.className = "commute-pill commute-estimate";
-    commutePill.textContent = p.commute_minutes > 0 ? p.commute_minutes + " min · estimate" : "Commute unknown";
+    if (p.commute_minutes > 0) {
+      const minutes = document.createElement("span");
+      minutes.className = "figure";
+      minutes.textContent = p.commute_minutes + " min";
+      commutePill.replaceChildren(minutes, " · estimate");
+    } else {
+      commutePill.textContent = "Commute unknown";
+    }
     commutePill.title = "Saved route context is unverified. Check your route.";
     commutePill.style.marginTop = "6px";
     commutePill.style.display = "inline-block";

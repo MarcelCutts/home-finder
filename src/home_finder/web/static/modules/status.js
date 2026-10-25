@@ -10,7 +10,7 @@ function renderStatusFilter(filter) {
   if (!option) return;
 
   // Update trigger appearance
-  const color = option.style.getPropertyValue("--option-color") || "#888";
+  const color = option.style.getPropertyValue("--option-color") || "var(--muted)";
   trigger.style.setProperty("--status-color", color);
 
   function buildChevronSvg() {
@@ -38,7 +38,7 @@ function renderStatusFilter(filter) {
     trigger.appendChild(document.createTextNode(option.textContent.trim() + " "));
     trigger.appendChild(buildChevronSvg());
   } else {
-    trigger.style.setProperty("--status-color", "#888");
+    trigger.style.setProperty("--status-color", "var(--muted)");
     trigger.textContent = "Status ";
     trigger.appendChild(buildChevronSvg());
   }

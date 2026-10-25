@@ -618,9 +618,190 @@ class TestResponsiveBrowser:
         assert body_scroll_width <= viewport_width + 5  # 5px tolerance
 
 
+# The paper token of each theme, as style.css declares it.
+_PAPER = {"light": "#FBFAF7", "dark": "#141414"}
+# Everything a theme sets in style.css; its two dark sets must agree on all of it.
+_THEME_TOKENS = [
+    "--paper",
+    "--paper-shade",
+    "--paper-raised",
+    "--ink",
+    "--ink-soft",
+    "--muted",
+    "--dim",
+    "--rule",
+    "--rule-strong",
+    "--rule-control",
+    "--red",
+    "--green",
+    "--focus",
+    "--shadow-sm",
+    "--shadow-md",
+    "--shadow-lg",
+    "--backdrop",
+    "--glass",
+]
+
+
+def _rgba(css: str) -> tuple[float, float, float, float]:
+    """Parse a computed colour into 0-255 channels and alpha.
+
+    Chromium serialises plain colours as `rgb(...)` / `rgba(...)` and the result of a
+    `color-mix()` with transparent as `color(srgb r g b / a)`, whose channels are 0-1.
+    """
+    parts = [float(n) for n in re.findall(r"[\d.]+", css)]
+    scale = 255 if css.startswith("color(srgb") else 1
+    r, g, b = (c * scale for c in parts[:3])
+    return r, g, b, parts[3] if len(parts) > 3 else 1.0
+
+
+def _contrast(text: str, grounds: list[str]) -> float:
+    """WCAG contrast of `text` over `grounds` composited bottom-up (first is opaque)."""
+
+    def luminance(r: float, g: float, b: float) -> float:
+        def channel(c: float) -> float:
+            c /= 255
+            return c / 12.92 if c <= 0.03928 else ((c + 0.055) / 1.055) ** 2.4
+
+        return 0.2126 * channel(r) + 0.7152 * channel(g) + 0.0722 * channel(b)
+
+    r, g, b, _ = _rgba(grounds[0])
+    for layer in grounds[1:]:
+        lr, lg, lb, a = _rgba(layer)
+        r, g, b = r + (lr - r) * a, g + (lg - g) * a, b + (lb - b) * a
+    fg = luminance(*_rgba(text)[:3])
+    bg = luminance(r, g, b)
+    return (max(fg, bg) + 0.05) / (min(fg, bg) + 0.05)
+
+
+def _tokens(page) -> dict[str, str]:
+    """The theme's tokens plus its color-scheme, which the map tiles read."""
+    return page.evaluate(
+        "(names) => { const cs = getComputedStyle(document.documentElement);"
+        " const out = Object.fromEntries(names.map(n => [n, cs.getPropertyValue(n).trim()]));"
+        " out['color-scheme'] = cs.colorScheme; return out; }",
+        _THEME_TOKENS,
+    )
+
+
+def _wait_for_webfonts(page) -> None:
+    """Load the three faces the look needs and fail if any is missing.
+
+    `document.fonts.ready` settles even when every face failed, so a layout measured
+    after it alone could be a fallback font's. `load()` resolves with the matching faces.
+    """
+    loaded = page.evaluate(
+        "Promise.all(['1em \"Familjen Grotesk\"', '1em \"Martian Mono\"', '1em \"Newsreader\"']"
+        ".map(f => document.fonts.load(f))).then(sets => sets.map(s => s.length))"
+    )
+    assert all(loaded), f"webfonts did not load (faces per family): {loaded}"
+
+
+@pytest.mark.browser
+class TestThemes:
+    """Light is the default look; dark follows the system unless data-theme says otherwise."""
+
+    @pytest.mark.parametrize(
+        ("preference", "paper"),
+        [("no-preference", _PAPER["light"]), ("light", _PAPER["light"]), ("dark", _PAPER["dark"])],
+    )
+    def test_system_preference_picks_the_theme(self, page, preference, paper):
+        page.emulate_media(color_scheme=preference)
+        page.goto("/")
+        assert _tokens(page)["--paper"] == paper
+
+    @pytest.mark.parametrize("theme", ["light", "dark"])
+    def test_data_theme_overrides_the_system_preference(self, page, theme):
+        page.emulate_media(color_scheme=theme)
+        page.goto("/")
+        by_preference = _tokens(page)
+        assert by_preference["--paper"] == _PAPER[theme]
+
+        page.emulate_media(color_scheme="dark" if theme == "light" else "light")
+        page.evaluate(f"document.documentElement.dataset.theme = '{theme}'")
+        assert _tokens(page) == by_preference
+
+    @pytest.mark.parametrize("theme", ["light", "dark"])
+    def test_queue_and_listing_fit_a_phone(self, page, theme):
+        page.emulate_media(color_scheme=theme)
+        page.set_viewport_size({"width": 390, "height": 844})
+        page.goto("/")
+        expect(page.locator("article.property-card").first).to_be_visible()
+        _wait_for_webfonts(page)
+        assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
+
+        page.goto("/property/openrent:1003")
+        working = page.locator(".fit-working-wrap")
+        expect(working).to_be_visible()
+        _wait_for_webfonts(page)
+        assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
+        # The working table's four columns fit without its scroll box having to scroll,
+        # because the phone rules at the end of style.css (0.78rem, tighter cells) apply.
+        assert working.evaluate("el => el.scrollWidth <= el.clientWidth")
+        cell = page.locator(".fit-working tbody td:not(:first-child)").first
+        assert cell.evaluate("el => getComputedStyle(el).fontSize") == "12.48px"
+
+    @pytest.mark.parametrize("theme", ["light", "dark"])
+    def test_status_control_text_keeps_contrast_in_every_state(self, page, theme):
+        """The status control tints its fill with its text colour, over the header band."""
+        page.emulate_media(color_scheme=theme)
+        page.goto("/property/openrent:1001")
+        trigger = page.locator(".status-selector-trigger")
+        expect(trigger).to_be_visible()
+
+        def ratio() -> float:
+            text, fill = trigger.evaluate(
+                "el => [getComputedStyle(el).color, getComputedStyle(el).backgroundColor]"
+            )
+            band = page.locator(".detail-header").evaluate(
+                "el => getComputedStyle(el).backgroundColor"
+            )
+            paper = page.evaluate("getComputedStyle(document.body).backgroundColor")
+            return _contrast(text, [paper, band, fill])
+
+        assert ratio() >= 4.5
+        trigger.hover()
+        page.wait_for_timeout(300)  # the fill transitions over 150ms
+        assert ratio() >= 4.5
+        trigger.click()
+        page.wait_for_timeout(300)
+        assert ratio() >= 4.5
+
+    @pytest.mark.parametrize("theme", ["light", "dark"])
+    def test_map_tiles_follow_the_theme(self, page, theme, fixture_tiles):
+        page.emulate_media(color_scheme=theme)
+        page.goto("/")
+        page.get_by_role("button", name="Map view", exact=True).click()
+        expect(page.locator("#dashboard-map .leaflet-tile-loaded").first).to_be_visible()
+        assert fixture_tiles
+        assert all(f"/{theme}_all/" in url for url in fixture_tiles)
+
+
 @pytest.mark.browser
 class TestFilterBehavior:
     """Test filter interaction: no auto-apply, modal lifecycle, chips."""
+
+    def test_keyboard_focus_on_the_beds_toggle_is_visible(self, page):
+        """The radio is hidden behind its label, so the label has to draw the focus ring."""
+        page.goto("/")
+        for _ in range(12):
+            page.keyboard.press("Tab")
+            if page.evaluate("document.activeElement.id") == "beds-any":
+                break
+        else:
+            pytest.fail("Tab never reached the beds toggle")
+        label = page.locator("label[for='beds-any']")
+        assert label.evaluate("el => getComputedStyle(el).outlineStyle") == "solid"
+        assert label.evaluate("el => getComputedStyle(el).outlineWidth") == "3px"
+
+    def test_count_rebuilt_by_filters_js_keeps_its_figure_span(self, page):
+        """filters.js rewrites the nav count on load and after an htmx swap; the span stays."""
+        page.goto("/?bedrooms=1")
+        expect(page.locator("nav #nav-count .figure")).to_have_text("3")
+        page.locator("label[for='beds-any']").click()
+        page.get_by_role("button", name="Apply").click()
+        wait_for_htmx_settle(page)
+        expect(page.locator("nav #nav-count .figure")).to_have_text("5")
 
     # -- Group 1: No Auto-Apply --
 

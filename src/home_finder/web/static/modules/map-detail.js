@@ -30,18 +30,20 @@ if (el && typeof L !== "undefined") {
       map.scrollWheelZoom.disable();
     });
 
-    // Subtle area radius
+    // Subtle area radius, in the page's ink. Resolved here rather than passed as
+    // var(--ink): the SVG renderer would accept that, a canvas renderer would not.
+    const ink = getComputedStyle(document.documentElement).getPropertyValue("--ink").trim();
     L.circle([lat, lon], {
       radius: 500,
-      color: "#8b5cf6",
-      fillColor: "#8b5cf6",
+      color: ink,
+      fillColor: ink,
       fillOpacity: 0.04,
       weight: 1,
       opacity: 0.15,
       interactive: false,
     }).addTo(map);
 
-    // Custom accent pin marker with pulse
+    // Ink pin marker with pulse
     const markerIcon = L.divIcon({
       className: "detail-marker",
       html: '<div class="detail-marker-pin"></div><div class="detail-marker-pulse"></div>',

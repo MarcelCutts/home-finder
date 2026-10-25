@@ -2,7 +2,7 @@
 
 {% block title %}I Hate Moving — Dashboard{% endblock %}
 
-{% block nav_info %}<span id="nav-count">{{ total }} properties{% if active_filters %} <small>({{ active_filters|length }} filter{{ 's' if active_filters|length != 1 }} active)</small>{% endif %}</span>{% endblock %}
+{% block nav_info %}<span id="nav-count"><span class="figure">{{ total }}</span> properties{% if active_filters %} <small>({{ active_filters|length }} filter{{ 's' if active_filters|length != 1 }} active)</small>{% endif %}</span>{% endblock %}
 
 {% block content %}
 <div id="loading" class="htmx-indicator loading-fixed">
@@ -57,7 +57,7 @@
 
                 <div class="status-filter" id="status-filter">
                     <button type="button" class="status-filter-trigger"
-                            style="--status-color: {{ status_meta[status].color if status else '#888' }}; anchor-name: --status-filter-trigger"
+                            style="--status-color: {{ status_meta[status].color if status else 'var(--muted)' }}; anchor-name: --status-filter-trigger"
                             popovertarget="status-filter-popover"
                             aria-haspopup="true">
                         {% if status %}

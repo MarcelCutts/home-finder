@@ -115,7 +115,7 @@
                     {% include "_status_controls.html" %}
                 </div>
                 {% if prop.first_seen %}
-                <span class="listing-age-pill" title="Collector observation, not time on the market">First seen {{ prop.first_seen | listing_age }}</span>
+                <span class="listing-age-pill" title="Collector observation, not time on the market">First seen <span class="figure">{{ prop.first_seen | listing_age }}</span></span>
                 {% endif %}
             </div>
         </div>
@@ -228,7 +228,7 @@
                     {% set ns.group = group %}
                     <li class="brief-group">{{ group }}</li>
                     {% endif %}
-                    <li class="brief-item brief-{{ item.state }}">
+                    <li class="brief-item brief-{{ item.state }}{% if item.must %} brief-must{% endif %}">
                         <span class="brief-label">{{ item.label }}</span>
                         <span class="brief-found">{{ "✓" if item.state == "met" else ("✗" if item.state == "broken" else "?") }} {{ item.found }}</span>
                     </li>
@@ -237,17 +237,17 @@
                 {% if working and fit_score is not none %}
                 <div class="fit-working-wrap">
                 <table class="fit-working">
-                    <caption>How the {{ fit_score }} is made</caption>
+                    <caption>How the <span class="figure">{{ fit_score }}</span> is made</caption>
                     <thead><tr><th scope="col">Dimension</th><th scope="col">Share of total</th><th scope="col">Score</th><th scope="col">Points</th></tr></thead>
                     <tbody>
                         {% for row in working.rows %}
                         <tr class="fit-working-row"><td class="fit-working-label">{{ row.label }}</td><td>{{ row.share }}%</td><td>{{ row.score }}</td><td>{{ row.points }}</td></tr>
                         {% endfor %}
                     </tbody>
-                    <tfoot><tr><td colspan="3">= {{ working.total }}, rounded</td><td>{{ working.score }}</td></tr></tfoot>
+                    <tfoot><tr><td colspan="3">= <span class="figure">{{ working.total }}</span>, rounded</td><td>{{ working.score }}</td></tr></tfoot>
                 </table>
                 </div>
-                <p class="fit-breakdown-legend">{% if working.lowest %}Lowest: {{ working.lowest.label | lower }} {{ working.lowest.score }}. {% endif %}Share of total is the weight after confidence: a dimension the photos barely showed counts for less. Points are shown to one decimal, so they can differ from the total by a tenth. {{ FIT_TIERS[1]['min'] }} and above counts as a good fit.</p>
+                <p class="fit-breakdown-legend">{% if working.lowest %}Lowest: {{ working.lowest.label | lower }} <span class="figure">{{ working.lowest.score }}</span>. {% endif %}Share of total is the weight after confidence: a dimension the photos barely showed counts for less. Points are shown to one decimal, so they can differ from the total by a tenth. <span class="figure">{{ FIT_TIERS[1]['min'] }}</span> and above counts as a good fit.</p>
                 {% endif %}
             </div>
             {% endif %}
@@ -281,7 +281,7 @@
                 {% endfor %}
             </div>
             {% endif %}
-            <div class="hero-photo-count">{{ gallery|length }} photos</div>
+            <div class="hero-photo-count"><span class="figure">{{ gallery|length }}</span> photos</div>
         </div>
         {% elif prop.image_url %}
         <div class="hero-gallery">
@@ -335,7 +335,7 @@
     <section id="section-description" class="detail-section annotated-section">
         <h3>The listing's words, with notes</h3>
         <div class="annotated">
-            <p class="annotated-text">{% for seg in annotated.segments %}{% if seg.mark %}<span class="mark-{{ seg.mark }}">{{ seg.text }}</span><sup class="note-ref">{{ seg.note }}</sup>{% else %}{{ seg.text | e | replace("\n", "<br>") | safe }}{% endif %}{% endfor %}</p>
+            <p class="annotated-text">{% for seg in annotated.segments %}{% if seg.mark %}<span class="mark-{{ seg.mark }}">{{ seg.text }}</span><sup class="note-ref">{{ seg.note }}</sup>{% else %}{{ seg.text | e | replace("\n", "<br>" | safe) }}{% endif %}{% endfor %}</p>
             {% if annotated.notes %}
             <ol class="annotated-notes" aria-label="Our notes">
                 {% for note in annotated.notes %}<li>{{ note }}</li>{% endfor %}
@@ -517,7 +517,7 @@
     <section id="section-description" class="detail-section">
         <h3>Description</h3>
         <div class="description-container">
-            <div class="description-text" id="description-text">{{ best_description | e | replace("\n", "<br>") | safe }}</div>
+            <div class="description-text" id="description-text">{{ best_description | e | replace("\n", "<br>" | safe) }}</div>
             <button class="description-toggle" id="description-toggle" hidden aria-expanded="false">Read more</button>
         </div>
     </section>

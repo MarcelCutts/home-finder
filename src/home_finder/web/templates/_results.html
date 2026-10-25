@@ -28,7 +28,7 @@
        hx-target="#results" hx-push-url="true" hx-indicator="#loading"
        role="button" class="outline">Previous</a>
     {% endif %}
-    <span class="pagination-info">Page {{ page }} of {{ total_pages }}</span>
+    <span class="pagination-info">Page <span class="figure">{{ page }}</span> of <span class="figure">{{ total_pages }}</span></span>
     {% if page < total_pages %}
     {% set next_url = page_url(page + 1) %}
     <a href="{{ next_url }}" hx-get="{{ next_url }}"

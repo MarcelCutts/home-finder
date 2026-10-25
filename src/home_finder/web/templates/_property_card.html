@@ -57,7 +57,7 @@
             {# The one thing against the brief: a broken must-have, a gap, or all clear #}
             {% if prop.lead %}
             <p class="card-lead card-lead-{{ prop.lead.kind }}">{{ prop.lead.title }}{% if prop.lead.detail %} <span class="card-lead-detail">{{ prop.lead.detail }}</span>{% endif %}</p>
-            <p class="card-must">must-haves {{ prop.brief_check.must_met }}/{{ prop.brief_check.must_total }}{% if prop.brief_check.must_broken %} &middot; {{ prop.brief_check.must_broken }} broken{% endif %}{% if prop.brief_check.must_unknown %} &middot; {{ prop.brief_check.must_unknown }} unknown{% endif %}</p>
+            <p class="card-must">must-haves <span class="figure">{{ prop.brief_check.must_met }}/{{ prop.brief_check.must_total }}</span>{% if prop.brief_check.must_broken %} &middot; <span class="figure">{{ prop.brief_check.must_broken }}</span> broken{% endif %}{% if prop.brief_check.must_unknown %} &middot; <span class="figure">{{ prop.brief_check.must_unknown }}</span> unknown{% endif %}</p>
             {% endif %}
 
             {# AI summary text (2-line clamp) #}
@@ -125,15 +125,15 @@
         <div class="card-sources">
             {% for s in prop.sources_list %}
             {% set badge = source_badges.get(s, {}) %}
-            <span class="source-badge" style="background-color: {{ badge.get('color', '#888') }}" title="{{ badge.get('name', s) }}">{{ badge.get('abbr', s[:1]|upper) }}</span>
+            <span class="source-badge" title="{{ badge.get('name', s) }}">{{ badge.get('abbr', s[:1]|upper) }}</span>
             {% endfor %}
             {% if prop.last_price_change is defined and prop.last_price_change and prop.last_price_change < 0 %}
             <span class="badge badge-green price-change-badge">
-                Dropped &pound;{{ "{:,}".format((-prop.last_price_change)|int) }}
+                Dropped <span class="figure">&pound;{{ "{:,}".format((-prop.last_price_change)|int) }}</span>
             </span>
             {% endif %}
             {% if prop.first_seen %}
-            <span class="card-age" title="First observed by Home Finder; original listing date unknown">First seen {{ prop.first_seen | listing_age }}</span>
+            <span class="card-age" title="First observed by Home Finder; original listing date unknown">First seen <span class="figure">{{ prop.first_seen | listing_age }}</span></span>
             {% endif %}
             {% if prop.last_checked_at %}
             <span class="card-checked" title="Last checked {{ prop.last_checked_at[:10] }}">&#10003;</span>
