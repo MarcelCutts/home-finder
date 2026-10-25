@@ -48,7 +48,7 @@ function syncAppliedFilters() {
   setFilterValues(applied.values);
   const navCount = document.getElementById("nav-count");
   if (navCount) {
-    // The count keeps its mono span, as dashboard.html renders it.
+    // The count keeps its figure span, as dashboard.html renders it.
     const total = document.createElement("span");
     total.className = "figure";
     total.textContent = applied.total;

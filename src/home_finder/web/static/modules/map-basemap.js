@@ -1,7 +1,7 @@
 // Shared provider contract. This is a browser-visible key, restricted at CARTO.
 // The tiles match the page theme as it stands when the map is created. style.css
 // sets color-scheme with each token set, so reading it back is the one rule.
-function prefersDarkTiles() {
+function pageIsDark() {
   return getComputedStyle(document.documentElement).colorScheme === "dark";
 }
 
@@ -11,7 +11,7 @@ export function addBasemap(map, element, onUnavailable) {
     onUnavailable();
     return;
   }
-  const tileStyle = prefersDarkTiles() ? "dark_all" : "light_all";
+  const tileStyle = pageIsDark() ? "dark_all" : "light_all";
   const layer = L.tileLayer(
     "https://basemaps.cartocdn.com/rastertiles/" + tileStyle + "/{z}/{x}/{y}{r}.png?key=" + encodeURIComponent(key),
     {

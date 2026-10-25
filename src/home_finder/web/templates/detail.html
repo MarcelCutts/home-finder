@@ -115,7 +115,7 @@
                     {% include "_status_controls.html" %}
                 </div>
                 {% if prop.first_seen %}
-                <span class="listing-age-pill" title="Collector observation, not time on the market">First seen {{ prop.first_seen | listing_age }}</span>
+                <span class="listing-age-pill" title="Collector observation, not time on the market">First seen <span class="figure">{{ prop.first_seen | listing_age }}</span></span>
                 {% endif %}
             </div>
         </div>
@@ -228,7 +228,7 @@
                     {% set ns.group = group %}
                     <li class="brief-group">{{ group }}</li>
                     {% endif %}
-                    <li class="brief-item brief-{{ item.state }}">
+                    <li class="brief-item brief-{{ item.state }}{% if item.must %} brief-must{% endif %}">
                         <span class="brief-label">{{ item.label }}</span>
                         <span class="brief-found">{{ "✓" if item.state == "met" else ("✗" if item.state == "broken" else "?") }} {{ item.found }}</span>
                     </li>
@@ -237,7 +237,7 @@
                 {% if working and fit_score is not none %}
                 <div class="fit-working-wrap">
                 <table class="fit-working">
-                    <caption>How the {{ fit_score }} is made</caption>
+                    <caption>How the <span class="figure">{{ fit_score }}</span> is made</caption>
                     <thead><tr><th scope="col">Dimension</th><th scope="col">Share of total</th><th scope="col">Score</th><th scope="col">Points</th></tr></thead>
                     <tbody>
                         {% for row in working.rows %}
@@ -247,7 +247,7 @@
                     <tfoot><tr><td colspan="3">= <span class="figure">{{ working.total }}</span>, rounded</td><td>{{ working.score }}</td></tr></tfoot>
                 </table>
                 </div>
-                <p class="fit-breakdown-legend">{% if working.lowest %}Lowest: {{ working.lowest.label | lower }} {{ working.lowest.score }}. {% endif %}Share of total is the weight after confidence: a dimension the photos barely showed counts for less. Points are shown to one decimal, so they can differ from the total by a tenth. {{ FIT_TIERS[1]['min'] }} and above counts as a good fit.</p>
+                <p class="fit-breakdown-legend">{% if working.lowest %}Lowest: {{ working.lowest.label | lower }} <span class="figure">{{ working.lowest.score }}</span>. {% endif %}Share of total is the weight after confidence: a dimension the photos barely showed counts for less. Points are shown to one decimal, so they can differ from the total by a tenth. <span class="figure">{{ FIT_TIERS[1]['min'] }}</span> and above counts as a good fit.</p>
                 {% endif %}
             </div>
             {% endif %}

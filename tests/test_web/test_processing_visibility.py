@@ -276,5 +276,5 @@ async def test_pagination_retains_processing_and_zero_score_filters(
     assert params["processing"] == [processing]
     if processing == "assessed":
         assert params["min_fit_score"] == ["0"]
-    page_two = processing_client.get(link)
-    assert "Page 2 of 2" in page_two.text
+    page_two = BeautifulSoup(processing_client.get(link).text, "html.parser")
+    assert page_two.select_one(".pagination-info").get_text() == "Page 2 of 2"

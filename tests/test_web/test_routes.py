@@ -1093,9 +1093,9 @@ class TestCardRendering:
         storage: PropertyStorage,
         merged_a: MergedProperty,
     ) -> None:
-        await storage.save_merged_property(merged_a, commute_minutes=25)
         from bs4 import BeautifulSoup
 
+        await storage.save_merged_property(merged_a, commute_minutes=25)
         resp = client.get("/")
         assert resp.status_code == 200
         pill = BeautifulSoup(resp.text, "html.parser").select_one(".commute-pill")
@@ -3198,10 +3198,11 @@ async def test_listing_text_keeps_its_paragraph_breaks(
 
 
 @pytest.mark.asyncio
-async def test_figures_are_marked_for_the_mono_face(
+async def test_templates_mark_figures_and_drop_badge_colours(
     client, storage, prop_a, merged_a, base_analysis
 ) -> None:
-    """A number inside a sentence is wrapped in .figure, and source badges carry no colour."""
+    """Figures inside sentences are wrapped in .figure, the "up to" qualifier is wrapped the
+    other way round, and source badges carry no inline colour."""
     from bs4 import BeautifulSoup
 
     await storage.save_merged_property(merged_a, commute_minutes=22)
@@ -3210,7 +3211,8 @@ async def test_figures_are_marked_for_the_mono_face(
     queue = BeautifulSoup(client.get("/").text, "html.parser")
     assert queue.select_one("#nav-count .figure").get_text() == "1"
     assert re.fullmatch(r"\d/\d", queue.select_one(".card-must .figure").get_text())
-    assert all(not badge.has_attr("style") for badge in queue.select(".source-badge"))
+    badges = queue.select(".source-badge")
+    assert badges and all(not badge.has_attr("style") for badge in badges)
 
     listing = BeautifulSoup(client.get(f"/property/{merged_a.unique_id}").text, "html.parser")
     assert listing.select_one(".money-total-qualifier").get_text() == "up to"

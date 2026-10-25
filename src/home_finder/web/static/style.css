@@ -9,7 +9,7 @@
 
    Light is the default. The dark set below is picked by the system preference
    unless <html data-theme="light"> or <html data-theme="dark"> says otherwise.
-   A high-contrast variant of the greys sits at the end of the file. */
+   A high-contrast variant of the greys sits near the end of the file. */
 :root {
     color-scheme: light;
 
@@ -57,12 +57,10 @@
     /* Shape */
     --radius: 3px;
 
-    /* Type: the three voices */
+    /* Type: the three faces */
     --font-tool: 'Familjen Grotesk', system-ui, -apple-system, sans-serif;
     --font-figures: 'Martian Mono', ui-monospace, 'SF Mono', Menlo, monospace;
     --font-listing: 'Newsreader', Georgia, 'Times New Roman', serif;
-    --font-heading: var(--font-tool);
-    --font-body: var(--font-tool);
 
     /* Type scale, from the boards (1rem = 16px) */
     --text-body: 0.9375rem;      /* 15px */
@@ -134,6 +132,8 @@
     --text: var(--ink);
     --text-muted: var(--muted);
     --text-dim: var(--dim);
+    --font-heading: var(--font-tool);
+    --font-body: var(--font-tool);
 
     /* Status palette. Only met must-haves are green and only breakers are red, so
        the old success/info/warning/danger roles all land on ink or muted. */
@@ -152,7 +152,8 @@
     --pico-line-height: var(--leading-prose);
     --pico-border-radius: var(--radius);
     --pico-outline-width: 0;     /* Pico's own box-shadow focus rings would double the :focus-visible
-                                    ring; form fields set their own width, undone with that rule */
+                                    ring. Form fields set their own width on the element; the rule
+                                    beside :focus-visible zeroes that too. */
     --pico-background-color: var(--paper);
     --pico-color: var(--ink);
     --pico-h1-color: var(--ink);
@@ -234,7 +235,8 @@ body {
 h1, h2, h3, h4, h5, h6 {
     font-family: var(--font-heading);
 }
-/* The figures face: every number the tool quotes. A figure inside a sentence gets .figure. */
+/* The figures face: the numbers the tool quotes. Elements that are nothing but a figure are
+   listed here; a figure inside a sentence is wrapped in .figure by the template. */
 .figure,
 .card-overlay .card-price,
 .card-area,
@@ -267,7 +269,8 @@ h1, h2, h3, h4, h5, h6 {
     font-family: var(--font-listing);
 }
 /* Every focusable thing gets the same ring. Pico gives form fields their own box-shadow
-   ring width on the element, so it is zeroed here too. */
+   ring width on the element, so it is zeroed here too. (The beds and tag inputs are
+   visually hidden behind their labels and show no ring; that predates this look.) */
 :focus-visible {
     outline: var(--focus-ring);
     outline-offset: 2px;
@@ -743,10 +746,15 @@ nav.container-fluid li {
 }
 
 /* ===== Focus-visible outlines ===== */
-/* The global :focus-visible ring covers everything; photos draw it inside their edge. */
+/* The global :focus-visible ring covers everything; photos draw it inside their edge, and
+   the dialog's close button, which resets every property, gets it back. */
 .hero-main:focus-visible,
 .hero-thumb:focus-visible {
-    outline-offset: -2px;
+    outline-offset: -3px;
+}
+.filter-modal-close:focus-visible {
+    outline: var(--focus-ring);
+    outline-offset: 2px;
 }
 
 /* View toggle — compact segmented control */
@@ -1292,6 +1300,7 @@ nav.container-fluid li {
     box-sizing: border-box;
     text-align: center;
 }
+/* The fit-* names are the scorer's tiers (fit_score.py); the colours they once named are gone. */
 .fit-green,
 .fit-accent { border-color: var(--overlay-ink); }
 .fit-amber { border-color: var(--overlay-ink-soft); }
@@ -1644,6 +1653,7 @@ nav.container-fluid li {
     font-size: 0.85rem;
     font-weight: 500;
 }
+/* The badge-* names predate the look: green is now solid ink, amber a tint, red an outline. */
 .badge-green { background: var(--ink); color: var(--paper); }
 .badge-amber { background: var(--paper-shade); color: var(--ink); box-shadow: inset 0 0 0 1px var(--rule-strong); }
 .badge-red { background: transparent; color: var(--muted); box-shadow: inset 0 0 0 1px var(--rule-strong); }
@@ -4165,8 +4175,8 @@ nav.container-fluid li {
 .brief-group { font-size: var(--text-label); font-weight: 700; letter-spacing: var(--tracking-label); text-transform: uppercase; color: var(--text-muted); padding-top: 0.4rem; }
 .brief-item { display: flex; justify-content: space-between; gap: 0.75rem; }
 .brief-found { text-align: right; color: var(--text-muted); }
-.brief-met .brief-found { color: var(--green); }
-.brief-broken .brief-found { color: var(--red); }
+.brief-must.brief-met .brief-found { color: var(--green); }
+.brief-must.brief-broken .brief-found { color: var(--red); }
 .fit-working-wrap { overflow-x: auto; margin: 0 0 0.5rem; }
 .detail-section table.fit-working { width: 100%; border: 0; border-radius: 0; border-collapse: collapse; font-size: 0.85rem; font-variant-numeric: tabular-nums; margin: 0; }
 .detail-section table.fit-working caption { text-align: left; font-weight: 700; padding: 0 0 0.3rem; caption-side: top; }

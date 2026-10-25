@@ -129,11 +129,11 @@
             {% endfor %}
             {% if prop.last_price_change is defined and prop.last_price_change and prop.last_price_change < 0 %}
             <span class="badge badge-green price-change-badge">
-                Dropped &pound;{{ "{:,}".format((-prop.last_price_change)|int) }}
+                Dropped <span class="figure">&pound;{{ "{:,}".format((-prop.last_price_change)|int) }}</span>
             </span>
             {% endif %}
             {% if prop.first_seen %}
-            <span class="card-age" title="First observed by Home Finder; original listing date unknown">First seen {{ prop.first_seen | listing_age }}</span>
+            <span class="card-age" title="First observed by Home Finder; original listing date unknown">First seen <span class="figure">{{ prop.first_seen | listing_age }}</span></span>
             {% endif %}
             {% if prop.last_checked_at %}
             <span class="card-checked" title="Last checked {{ prop.last_checked_at[:10] }}">&#10003;</span>

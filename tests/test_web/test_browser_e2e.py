@@ -620,12 +620,13 @@ class TestResponsiveBrowser:
 
 # The paper token of each theme, as style.css declares it.
 _PAPER = {"light": "#FBFAF7", "dark": "#141414"}
-# The tokens a theme sets; the two dark sets in style.css must agree on all of them.
+# Everything a theme sets in style.css; its two dark sets must agree on all of it.
 _THEME_TOKENS = [
     "--paper",
     "--paper-shade",
     "--paper-raised",
     "--ink",
+    "--ink-soft",
     "--muted",
     "--dim",
     "--rule",
@@ -634,13 +635,20 @@ _THEME_TOKENS = [
     "--red",
     "--green",
     "--focus",
+    "--shadow-sm",
+    "--shadow-md",
+    "--shadow-lg",
+    "--backdrop",
+    "--glass",
 ]
 
 
 def _tokens(page) -> dict[str, str]:
+    """The theme's tokens plus its color-scheme, which the map tiles read."""
     return page.evaluate(
-        "(names) => Object.fromEntries(names.map("
-        "n => [n, getComputedStyle(document.documentElement).getPropertyValue(n).trim()]))",
+        "(names) => { const cs = getComputedStyle(document.documentElement);"
+        " const out = Object.fromEntries(names.map(n => [n, cs.getPropertyValue(n).trim()]));"
+        " out['color-scheme'] = cs.colorScheme; return out; }",
         _THEME_TOKENS,
     )
 
@@ -677,16 +685,17 @@ class TestThemes:
         expect(page.locator("article.property-card").first).to_be_visible()
         page.evaluate("document.fonts.ready")
         assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
-        # filters.js rebuilds the count on load; the mono span has to survive that.
-        expect(page.locator("#nav-count .figure")).to_have_text("5")
 
         page.goto("/property/openrent:1003")
         working = page.locator(".fit-working-wrap")
         expect(working).to_be_visible()
         page.evaluate("document.fonts.ready")
         assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
-        # The working table's four columns fit without its scroll box having to scroll.
+        # The working table's four columns fit without its scroll box having to scroll,
+        # because the phone rules at the end of style.css (0.78rem, tighter cells) apply.
         assert working.evaluate("el => el.scrollWidth <= el.clientWidth")
+        cell = page.locator(".fit-working tbody td:not(:first-child)").first
+        assert cell.evaluate("el => getComputedStyle(el).fontSize") == "12.48px"
 
     @pytest.mark.parametrize("theme", ["light", "dark"])
     def test_map_tiles_follow_the_theme(self, page, theme, fixture_tiles):
@@ -701,6 +710,15 @@ class TestThemes:
 @pytest.mark.browser
 class TestFilterBehavior:
     """Test filter interaction: no auto-apply, modal lifecycle, chips."""
+
+    def test_count_rebuilt_by_filters_js_keeps_its_figure_span(self, page):
+        """filters.js rewrites the nav count on load and after an htmx swap; the span stays."""
+        page.goto("/?bedrooms=1")
+        expect(page.locator("nav #nav-count .figure")).to_have_text("3")
+        page.locator("label[for='beds-any']").click()
+        page.get_by_role("button", name="Apply").click()
+        wait_for_htmx_settle(page)
+        expect(page.locator("nav #nav-count .figure")).to_have_text("5")
 
     # -- Group 1: No Auto-Apply --
 
