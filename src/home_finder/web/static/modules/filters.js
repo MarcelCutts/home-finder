@@ -48,7 +48,11 @@ function syncAppliedFilters() {
   setFilterValues(applied.values);
   const navCount = document.getElementById("nav-count");
   if (navCount) {
-    navCount.textContent = applied.total + " properties";
+    // The count keeps its mono span, as dashboard.html renders it.
+    const total = document.createElement("span");
+    total.className = "figure";
+    total.textContent = applied.total;
+    navCount.replaceChildren(total, " properties");
     if (applied.active_count) {
       const detail = document.createElement("small");
       detail.textContent = "(" + applied.active_count + " filter" +

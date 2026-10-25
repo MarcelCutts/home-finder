@@ -24,10 +24,10 @@ class PropertySource(StrEnum):
 
 
 _SOURCE_META: Final[dict[str, dict[str, str]]] = {
-    "openrent": {"name": "OpenRent", "abbr": "O", "color": "#00b4d8"},
-    "rightmove": {"name": "Rightmove", "abbr": "R", "color": "#00deb6"},
-    "zoopla": {"name": "Zoopla", "abbr": "Z", "color": "#8040bf"},
-    "onthemarket": {"name": "OnTheMarket", "abbr": "M", "color": "#e54b4b"},
+    "openrent": {"name": "OpenRent", "abbr": "O"},
+    "rightmove": {"name": "Rightmove", "abbr": "R"},
+    "zoopla": {"name": "Zoopla", "abbr": "Z"},
+    "onthemarket": {"name": "OnTheMarket", "abbr": "M"},
 }
 
 SOURCE_NAMES: Final[dict[str, str]] = {k: v["name"] for k, v in _SOURCE_META.items()}
@@ -174,15 +174,17 @@ class UserStatus(StrEnum):
 
 
 USER_STATUS_META: Final[dict[str, dict[str, str]]] = {
-    "new": {"label": "New", "color": "#6366f1"},
-    "interested": {"label": "Interested", "color": "#8b5cf6"},
-    "enquired": {"label": "Enquired", "color": "#3b82f6"},
-    "viewing_booked": {"label": "Viewing", "color": "#f59e0b"},
-    "viewed": {"label": "Viewed", "color": "#10b981"},
-    "applied": {"label": "Applied", "color": "#06b6d4"},
-    "offered": {"label": "Offered", "color": "#22c55e"},
-    "rejected": {"label": "Rejected", "color": "#ef4444"},
-    "archived": {"label": "Archived", "color": "#6b7280"},
+    # Colours are CSS tokens from style.css: the look keeps red for deal-breakers and
+    # green for met must-haves, so a status is told apart by its word, not its colour.
+    "new": {"label": "New", "color": "var(--dim)"},
+    "interested": {"label": "Interested", "color": "var(--ink)"},
+    "enquired": {"label": "Enquired", "color": "var(--ink)"},
+    "viewing_booked": {"label": "Viewing", "color": "var(--ink)"},
+    "viewed": {"label": "Viewed", "color": "var(--ink)"},
+    "applied": {"label": "Applied", "color": "var(--ink)"},
+    "offered": {"label": "Offered", "color": "var(--ink)"},
+    "rejected": {"label": "Rejected", "color": "var(--muted)"},
+    "archived": {"label": "Archived", "color": "var(--dim)"},
 }
 
 

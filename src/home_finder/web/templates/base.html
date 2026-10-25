@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en" data-theme="dark">
+<html lang="en">
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -10,7 +10,8 @@
     <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
     <link rel="apple-touch-icon" href="/static/apple-touch-icon.png">
     <link rel="manifest" href="/static/manifest.json">
-    <meta name="theme-color" content="#09090b">
+    <meta name="theme-color" media="(prefers-color-scheme: light)" content="#FBFAF7">
+    <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#141414">
 
     <!-- SEO & social meta (overridden per-page via blocks) -->
     {% block meta_description %}<meta name="description" content="London rental listings, filtered and analyzed.">{% endblock %}
@@ -30,7 +31,9 @@
 
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap">
+    <!-- The two voices: Familjen Grotesk for what the tool says, Martian Mono for its figures,
+         Newsreader for the listing's own words. All three are Google Fonts under the OFL. -->
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Familjen+Grotesk:ital,wght@0,400;0,500;0,600;0,700;1,400&family=Martian+Mono:wght@400;500;600;700&family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;0,6..72,600;1,6..72,400&display=swap">
     <link rel="stylesheet" href="/static/framework-imports.css?v={{ static_version }}">
     <link rel="stylesheet" href="/static/style.css?v={{ static_version }}">
 </head>
@@ -40,8 +43,7 @@
         <ul>
             <li><a href="/" class="nav-logo">
                 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="26" height="26" aria-hidden="true">
-                    <defs><linearGradient id="hg" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#8b5cf6"/><stop offset="100%" stop-color="#d946ef"/></linearGradient></defs>
-                    <path d="M12 3 L2 11 L5 11 L5 20 L10 20 L10 15 L14 15 L14 20 L19 20 L19 11 L22 11 Z" fill="url(#hg)"/>
+                    <path d="M12 3 L2 11 L5 11 L5 20 L10 20 L10 15 L14 15 L14 20 L19 20 L19 11 L22 11 Z" fill="currentColor"/>
                 </svg>
                 <strong>I Hate Moving</strong>
             </a></li>
