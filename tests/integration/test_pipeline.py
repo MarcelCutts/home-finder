@@ -9,7 +9,7 @@ from pydantic import HttpUrl
 
 from home_finder.db import PropertyStorage
 from home_finder.filters.criteria import CriteriaFilter
-from home_finder.filters.deduplication import Deduplicator
+from home_finder.matching.deduplication import Deduplicator
 from home_finder.models import MergedProperty, Property, PropertySource, SearchCriteria
 
 
@@ -411,7 +411,7 @@ class TestCrossPlatformPipeline:
         combined = new_run2 + db_anchors
         dedup_results = await deduplicator.deduplicate_merged_async(combined)
 
-        genuinely_new: list[MergedProperty] = []
+        unmatched_candidates: list[MergedProperty] = []
         for merged in dedup_results:
             matched_anchor_id: str | None = None
             for url in merged.source_urls.values():
@@ -431,10 +431,10 @@ class TestCrossPlatformPipeline:
                         matched_anchor_id, merged, absorbed_ids=absorbed_ids
                     )
             else:
-                genuinely_new.append(merged)
+                unmatched_candidates.append(merged)
 
         # No genuinely new properties — Zoopla was absorbed into OpenRent anchor
-        assert len(genuinely_new) == 0
+        assert len(unmatched_candidates) == 0
 
         # DB still has only 1 record
         count_after_run2 = await storage.web.get_property_count()

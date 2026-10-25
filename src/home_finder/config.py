@@ -71,7 +71,7 @@ class Settings(BaseSettings):
         description="Callback owner user ID; defaults to a positive private chat ID",
     )
 
-    # TravelTime API configuration (optional, needed for commute filtering)
+    # TravelTime API configuration (optional, needed for advisory commute assessment)
     traveltime_app_id: str = Field(
         default="",
         description="TravelTime API application ID",
@@ -100,7 +100,8 @@ class Settings(BaseSettings):
     )
     require_floorplan: bool = Field(
         default=True,
-        description="Drop properties without floorplans before quality analysis",
+        description="Require a source-declared floorplan, an exempt source, "
+        "or enough photos before analysis",
     )
     min_gallery_for_photo_inference: int = Field(
         default=5,
@@ -132,7 +133,22 @@ class Settings(BaseSettings):
         default=75,
         ge=1,
         le=500,
-        description="Maximum properties to analyze per pipeline run; excess deferred to next run",
+        description="Legacy default for each assessment queue cap; "
+        "use the explicit initial/reanalysis limits",
+    )
+    max_initial_analyses_per_run: int = Field(
+        default_factory=lambda data: data["max_analysis_per_run"],
+        ge=1,
+        le=500,
+        description="Maximum initial assessments admitted per run, "
+        "sharing slots between discovery and recovery",
+    )
+    max_reanalyses_per_run: int = Field(
+        default_factory=lambda data: data["max_analysis_per_run"],
+        ge=1,
+        le=500,
+        description="Maximum requested reassessments admitted per run, "
+        "independently of initial assessments",
     )
     quality_concurrency: int = Field(
         default=15,

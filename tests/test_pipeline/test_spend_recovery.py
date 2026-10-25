@@ -11,10 +11,10 @@ import pytest
 from home_finder.config import Settings
 from home_finder.db import PropertyStorage
 from home_finder.db.spend import SpendRepository
-from home_finder.main import run_pipeline
 from home_finder.models.spend import ConfirmedCost, SpendDeferred, usd_text
-from home_finder.pipeline.analysis import run_reanalysis
-from home_finder.pipeline.runner import (
+from home_finder.pipeline.flow import run_pipeline
+from home_finder.pipeline.reanalysis import run_reanalysis
+from home_finder.pipeline.run_lock import (
     RunSkipped,
     exclusive_runner,
     recover_abandoned_spend,
@@ -93,7 +93,9 @@ async def test_takeover_retains_money_history_and_cross_period_exposure(tmp_path
             await recover_abandoned_spend(storage)  # Never recover the current run twice.
             assert (await ledger(storage))[live]["state"] == "reserved"
 
-        with patch("home_finder.main._run_pipeline_with_storage", side_effect=body) as work:
+        with patch(
+            "home_finder.pipeline.flow._run_pipeline_with_storage", side_effect=body
+        ) as work:
             await run_pipeline(settings, storage=storage)
             work.assert_awaited_once()
 
@@ -129,7 +131,7 @@ async def test_competing_runner_cannot_recover_live_requests(tmp_path):
             entered.set()
             await asyncio.Future()
 
-        with patch("home_finder.main._run_pipeline_with_storage", side_effect=body):
+        with patch("home_finder.pipeline.flow._run_pipeline_with_storage", side_effect=body):
             owner = asyncio.create_task(run_pipeline(settings, storage=storage))
             try:
                 await asyncio.wait_for(entered.wait(), 3)
@@ -149,7 +151,7 @@ async def test_process_exit_then_new_owner_recovers_before_any_work(tmp_path, en
     script = """
 import asyncio, os, sys
 from home_finder.db import PropertyStorage
-from home_finder.pipeline.runner import runner_lock
+from home_finder.pipeline.run_lock import runner_lock
 from tests.test_db.test_spend import spec, policy
 async def run():
     with runner_lock(sys.argv[1]) as acquired:
@@ -175,9 +177,9 @@ asyncio.run(run())
         return []
 
     with (
-        patch("home_finder.main._run_pipeline_with_storage", side_effect=check_recovered),
+        patch("home_finder.pipeline.flow._run_pipeline_with_storage", side_effect=check_recovered),
         patch(
-            "home_finder.db.pipeline_repo.PipelineRepository.get_reanalysis_queue",
+            "home_finder.db.processing_repo.ProcessingRepository.get_reanalysis_queue",
             side_effect=check_recovered,
         ),
     ):
@@ -217,6 +219,6 @@ async def test_cancelled_recovery_rolls_back_both_transitions(tmp_path, monkeypa
                 await task
         monkeypatch.setattr(conn, "execute", execute)
         assert await ledger(storage) == before
-        with patch("home_finder.main._run_pipeline_with_storage", new_callable=AsyncMock):
+        with patch("home_finder.pipeline.flow._run_pipeline_with_storage", new_callable=AsyncMock):
             await run_pipeline(settings, storage=storage)
         assert [row["state"] for row in (await ledger(storage)).values()] == ["released", "unknown"]

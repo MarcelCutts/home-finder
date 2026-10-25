@@ -233,7 +233,7 @@ class TestGetPropertiesForOffMarketCheck:
     async def test_excludes_pending_enrichment(
         self, storage: PropertyStorage, merged_a: MergedProperty
     ):
-        await storage.pipeline.save_unenriched_property(merged_a)
+        await storage.processing.save_unenriched_property(merged_a)
 
         props = await storage.get_properties_for_off_market_check()
         assert len(props) == 0

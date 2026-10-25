@@ -7,6 +7,24 @@ from home_finder.config import Settings
 from home_finder.models import FurnishType, TransportMode
 
 
+@pytest.mark.parametrize("legacy_limit", [1, 75, 500])
+def test_legacy_analysis_limit_defaults_each_queue(monkeypatch, legacy_limit):
+    monkeypatch.setenv("HOME_FINDER_MAX_ANALYSIS_PER_RUN", str(legacy_limit))
+    monkeypatch.delenv("HOME_FINDER_MAX_INITIAL_ANALYSES_PER_RUN", raising=False)
+    monkeypatch.delenv("HOME_FINDER_MAX_REANALYSES_PER_RUN", raising=False)
+    settings = Settings(_env_file=None)
+    assert settings.max_initial_analyses_per_run == legacy_limit
+    assert settings.max_reanalyses_per_run == legacy_limit
+
+
+def test_explicit_queue_limits_override_legacy_default(monkeypatch):
+    monkeypatch.setenv("HOME_FINDER_MAX_ANALYSIS_PER_RUN", "5")
+    monkeypatch.setenv("HOME_FINDER_MAX_INITIAL_ANALYSES_PER_RUN", "3")
+    settings = Settings(_env_file=None, max_reanalyses_per_run=2)
+    assert settings.max_initial_analyses_per_run == 3
+    assert settings.max_reanalyses_per_run == 2
+
+
 @pytest.fixture
 def settings() -> Settings:
     return Settings(

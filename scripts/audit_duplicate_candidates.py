@@ -17,7 +17,7 @@ from typing import Any
 
 from pydantic import ValidationError
 
-from home_finder.filters.scoring import MatchScore, calculate_match_score
+from home_finder.matching.scoring import MatchScore, calculate_match_score
 from home_finder.models import Property
 
 LIMITATIONS = [

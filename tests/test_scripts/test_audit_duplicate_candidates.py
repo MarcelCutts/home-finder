@@ -238,7 +238,7 @@ def test_snapshot_connection_is_read_only_even_without_query_only(database: Path
 def test_audit_preserves_database_and_cache_without_image_access(
     database: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    from home_finder.filters import scoring
+    from home_finder.matching import scoring
     from home_finder.utils import image_hash
 
     def forbidden(*args, **kwargs):

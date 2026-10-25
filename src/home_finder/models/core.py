@@ -142,7 +142,12 @@ class SearchCriteria(BaseModel):
 
 
 class NotificationStatus(StrEnum):
-    """Status of property notification."""
+    """Legacy combined processing/notification projection stored on properties.
+
+    Pending enrichment/analysis describe processing; dashboard_only/dropped
+    describe selection. Actual delivery progress and receipts live separately
+    in notification_deliveries. Do not interpret FAILED as a transport outcome.
+    """
 
     PENDING = "pending"
     PENDING_ENRICHMENT = "pending_enrichment"
@@ -228,7 +233,7 @@ class MergedProperty(BaseModel):
     # Combined images from all sources
     images: tuple[PropertyImage, ...] = ()
 
-    # Best floorplan found (prefer highest resolution)
+    # Selected floorplan: prefer source-declared provenance, then source priority
     floorplan: PropertyImage | None = None
 
     # Price range if varies across platforms
@@ -273,3 +278,9 @@ class MergedProperty(BaseModel):
     def price_varies(self) -> bool:
         """Whether the price differs across platforms."""
         return self.min_price != self.max_price
+
+
+# Explicit domain names for new code. Retain the original Pydantic class names
+# and serialized contracts for stored data and existing callers.
+SourceListing = Property
+PropertyAggregate = MergedProperty

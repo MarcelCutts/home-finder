@@ -12,7 +12,7 @@ from home_finder.config import Settings
 from home_finder.db import PropertyStorage
 from home_finder.db.spend import AttemptTransitionError
 from home_finder.models.spend import ConfirmedCost
-from home_finder.pipeline.runner import runner_lock
+from home_finder.pipeline.run_lock import runner_lock
 from home_finder.pipeline.spend_admin import administer
 from tests.test_db.test_spend import policy, spec
 

@@ -9,7 +9,7 @@ import pytest
 import structlog.testing
 
 from home_finder.db import PropertyStorage
-from home_finder.filters.detail_enrichment import enrich_merged_properties
+from home_finder.enrichment.details import enrich_merged_properties
 from home_finder.models import MergedProperty, PropertySource
 from home_finder.scrapers.detail_fetcher import DetailFetcher
 
@@ -280,6 +280,6 @@ async def test_wrong_otm_response_reaches_neither_retention_nor_enrichment(
         result = await enrich_merged_properties(
             [merged], fetcher, storage=storage, data_dir=str(tmp_path)
         )
-        assert result.enriched == [] and len(result.failed) == 1
+        assert result.with_usable_media == [] and len(result.without_usable_media) == 1
         download.assert_not_awaited()
-        assert "Wrong advert" not in result.failed[0].model_dump_json()
+        assert "Wrong advert" not in result.without_usable_media[0].model_dump_json()

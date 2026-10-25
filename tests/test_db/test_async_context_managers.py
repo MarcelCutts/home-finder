@@ -4,9 +4,9 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+from home_finder.analysis.analyzer import PropertyQualityAnalyzer
 from home_finder.db.storage import PropertyStorage
 from home_finder.filters.off_market import OffMarketChecker
-from home_finder.filters.quality import PropertyQualityFilter
 from home_finder.notifiers.telegram import TelegramNotifier
 from home_finder.scrapers.detail_fetcher import DetailFetcher
 
@@ -43,7 +43,7 @@ class TestDetailFetcherContextManager:
 class TestPropertyQualityFilterContextManager:
     @pytest.mark.asyncio
     async def test_calls_close_on_exit(self) -> None:
-        qf = PropertyQualityFilter(api_key="fake-key")
+        qf = PropertyQualityAnalyzer(api_key="fake-key")
         qf.close = AsyncMock()  # type: ignore[method-assign]
         async with qf:
             pass

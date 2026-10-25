@@ -1,4 +1,4 @@
-"""Tests for the property event recorder (T4 audit trail)."""
+"""Tests for the property event recorder (buffered diagnostics)."""
 
 from collections.abc import AsyncGenerator
 
@@ -18,7 +18,7 @@ async def storage() -> AsyncGenerator[PropertyStorage, None]:
 
 @pytest_asyncio.fixture
 async def run_id(storage: PropertyStorage) -> int:
-    return await storage.pipeline.create_pipeline_run()
+    return await storage.runs.create_pipeline_run()
 
 
 class TestPropertyEvent:

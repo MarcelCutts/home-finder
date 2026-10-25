@@ -7,8 +7,8 @@ import pytest
 from home_finder.config import Settings
 from home_finder.db import PropertyStorage
 from home_finder.models import PropertySource
-from home_finder.pipeline.analysis import _run_quality_and_save
-from home_finder.pipeline.stages import PreAnalysisResult
+from home_finder.pipeline.assessment import process_initial_assessments
+from home_finder.pipeline.contracts import CandidateBatch
 from tests.test_db.test_merge_safety import snapshot
 
 
@@ -20,7 +20,7 @@ async def batch(make_merged_property):
             source_id="protected-second", sources=(PropertySource.ZOOPLA,)
         )
         for merged in (first, protected):
-            await storage.pipeline.save_unenriched_property(merged)
+            await storage.processing.save_unenriched_property(merged)
         async with storage._transaction() as conn:
             await conn.execute(
                 "UPDATE properties SET user_status='interested' WHERE unique_id=?",
@@ -40,7 +40,7 @@ async def batch(make_merged_property):
 async def test_refused_middle_group_rolls_back_completely_and_neighbors_commit(batch, writer):
     storage, group, protected, independent = batch
     before = await snapshot(storage)
-    result = await getattr(storage.pipeline, writer)([independent[0], group, independent[1]], {})
+    result = await getattr(storage.processing, writer)([independent[0], group, independent[1]], {})
     assert result.accepted == independent
     assert result.refused == {group.unique_id: {protected.unique_id: ["user_state"]}}
     # Compare every original row, including source ownership and timestamps.
@@ -53,21 +53,22 @@ async def test_refused_middle_group_rolls_back_completely_and_neighbors_commit(b
         assert saved.notification_status.value == (
             "pending_analysis" if writer == "save_pre_analysis_properties" else "dropped"
         )
-    assert len(await storage.pipeline.get_unenriched_properties()) == 2
+    assert len(await storage.processing.get_unenriched_properties()) == 2
 
 
 async def test_analysis_consumes_only_accepted_groups(batch, tmp_path, monkeypatch):
     storage, group, protected, independent = batch
     settings = Settings(_env_file=None, enable_quality_filter=False, data_dir=str(tmp_path))
     lookup = AsyncMock()
-    monkeypatch.setattr("home_finder.pipeline.analysis._lookup_wards", lookup)
+    monkeypatch.setattr("home_finder.pipeline.assessment._lookup_wards", lookup)
     callback = AsyncMock()
-    processed, _ = await _run_quality_and_save(
-        PreAnalysisResult(merged_to_process=[independent[0], group, independent[1]]),
+    assessment = await process_initial_assessments(
+        CandidateBatch(candidates=[independent[0], group, independent[1]]),
         settings,
         storage,
         callback,
     )
+    processed, _ = assessment.processed_count, assessment.token_usage
     assert processed == 2
     assert {call.args[0].unique_id for call in callback.await_args_list} == {
         m.unique_id for m in independent
@@ -99,7 +100,7 @@ async def test_stale_canonical_cannot_steal_accepted_source(batch, writer):
             (owner.unique_id, group.unique_id),
         )
     before = await snapshot(storage)
-    result = await getattr(storage.pipeline, writer)([group], {})
+    result = await getattr(storage.processing, writer)([group], {})
     assert result.accepted == []
     assert result.refused[group.unique_id][group.unique_id] == [
         "canonical_source_owned_by_other_home"

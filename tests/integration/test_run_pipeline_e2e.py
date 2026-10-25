@@ -14,8 +14,7 @@ from pydantic import HttpUrl, SecretStr
 
 from home_finder.config import Settings
 from home_finder.db import PropertyStorage
-from home_finder.filters.detail_enrichment import EnrichmentResult
-from home_finder.main import run_pipeline
+from home_finder.enrichment.details import EnrichmentResult
 from home_finder.models import (
     Property,
     PropertyImage,
@@ -23,6 +22,7 @@ from home_finder.models import (
     PropertySource,
 )
 from home_finder.models.notifications import NotificationPolicy
+from home_finder.pipeline.flow import run_pipeline
 from tests.notifier_helpers import mock_durable_notifier
 
 # ---------------------------------------------------------------------------
@@ -57,7 +57,7 @@ async def _fake_enrich(merged_list, fetcher, *, data_dir=None, storage=None):
             }
         )
         enriched.append(enriched_m)
-    return EnrichmentResult(enriched=enriched)
+    return EnrichmentResult(with_usable_media=enriched)
 
 
 @contextmanager
@@ -105,7 +105,7 @@ def _pipeline_mocks(
     mock_fetcher_instance.__aexit__ = _fetcher_aexit
 
     # -- Quality filter mock --
-    from home_finder.filters.quality import TokenUsage
+    from home_finder.analysis.analyzer import TokenUsage
 
     mock_quality_instance = MagicMock()
     mock_quality_instance.token_usage = TokenUsage()
@@ -129,29 +129,29 @@ def _pipeline_mocks(
 
     with (
         patch(
-            "home_finder.pipeline.scraping.scrape_all_platforms",
+            "home_finder.pipeline.collection.scrape_all_platforms",
             new_callable=AsyncMock,
             return_value=(scrape_return, []),
         ),
         patch(
-            "home_finder.pipeline.stages.enrich_merged_properties",
+            "home_finder.pipeline.candidates.enrich_merged_properties",
             new_callable=AsyncMock,
             side_effect=enrich_side_effect,
         ),
         patch(
-            "home_finder.pipeline.stages.DetailFetcher",
+            "home_finder.pipeline.candidates.DetailFetcher",
             return_value=mock_fetcher_instance,
         ) as mock_fetcher_cls,
         patch(
-            "home_finder.pipeline.analysis.PropertyQualityFilter",
+            "home_finder.pipeline.assessment.PropertyQualityAnalyzer",
             return_value=mock_quality_instance,
         ) as mock_quality_cls,
         patch(
-            "home_finder.main.TelegramNotifier",
+            "home_finder.pipeline.flow.TelegramNotifier",
             side_effect=construct_notifier,
         ) as mock_notifier_cls,
-        patch("home_finder.pipeline.analysis._lookup_wards", new_callable=AsyncMock),
-        patch("home_finder.main.asyncio.sleep", new_callable=AsyncMock),
+        patch("home_finder.pipeline.assessment._lookup_wards", new_callable=AsyncMock),
+        patch("home_finder.pipeline.flow.asyncio.sleep", new_callable=AsyncMock),
         patch.object(PropertyStorage, "__init__", _patched_storage_init),
     ):
         # Yield a dict of useful references
@@ -263,7 +263,7 @@ class TestRunPipelineE2E:
             assert storage is not None
 
             # Pipeline run tracking
-            run = await storage.pipeline.get_last_pipeline_run()
+            run = await storage.runs.get_last_pipeline_run()
             assert run is not None
             assert run["status"] == "completed"
             assert run["scraped_count"] == 2
@@ -310,7 +310,7 @@ class TestRunPipelineE2E:
             storage = ctx.storage_capture.instance
             assert storage is not None
 
-            run = await storage.pipeline.get_last_pipeline_run()
+            run = await storage.runs.get_last_pipeline_run()
             assert run is not None
             assert run["status"] == "completed"
 
@@ -412,7 +412,7 @@ class TestRunPipelineE2E:
             with (
                 patch.object(PropertyStorage, "close", _intercept_close),
                 patch(
-                    "home_finder.pipeline.scraping.scrape_all_platforms",
+                    "home_finder.pipeline.collection.scrape_all_platforms",
                     new_callable=AsyncMock,
                     side_effect=RuntimeError(error_msg),
                 ),
@@ -423,7 +423,7 @@ class TestRunPipelineE2E:
             storage = ctx.storage_capture.instance
             assert storage is not None
 
-            run = await storage.pipeline.get_last_pipeline_run()
+            run = await storage.runs.get_last_pipeline_run()
             assert run is not None
             assert run["status"] == "failed"
             assert error_msg in run["error_message"]
@@ -482,7 +482,7 @@ class TestRunPipelineE2E:
             # The callback runs, but an unrated home creates no sendable alert.
             assert ctx.notifier.send_merged_property_notification.call_count == 1
 
-            run = await storage.pipeline.get_last_pipeline_run()
+            run = await storage.runs.get_last_pipeline_run()
             assert run is not None
             assert run["status"] == "completed"
             assert run["notified_count"] == 0
@@ -514,7 +514,7 @@ class TestRunPipelineE2E:
             assert storage is not None
 
             # Pipeline still completes
-            run = await storage.pipeline.get_last_pipeline_run()
+            run = await storage.runs.get_last_pipeline_run()
             assert run is not None
             assert run["status"] == "completed"
             assert run["notified_count"] == 0

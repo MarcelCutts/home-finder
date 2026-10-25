@@ -16,6 +16,7 @@ from typing import Any, Final
 import aiosqlite
 
 from home_finder.db.delivery import DeliveryRepository, enqueue_price_drop
+from home_finder.db.enrichment_recovery import request_enrichment_recovery
 from home_finder.db.image_ops import upsert_property_images
 from home_finder.db.listing_text import (
     apply_source_text,
@@ -26,14 +27,14 @@ from home_finder.db.listing_text import (
 )
 from home_finder.db.merge_safety import MergeBlockedError, ensure_staging_merge, staging_blockers
 from home_finder.db.migrations import run_migrations
-from home_finder.db.pipeline_repo import PipelineRepository
-from home_finder.db.processing import request_enrichment_recovery
+from home_finder.db.processing_repo import ProcessingRepository
 from home_finder.db.row_mappers import (
     build_base_insert,
     build_merged_insert_columns,
     row_to_merged_property,
     row_to_property,
 )
+from home_finder.db.runs import RunRepository
 from home_finder.db.source_listing_ops import link_source_listings_by_url
 from home_finder.db.spend import SpendRepository
 from home_finder.db.web_queries import WebQueryService
@@ -94,7 +95,8 @@ class PropertyStorage:
     """SQLite-based storage for tracked properties.
 
     Core property CRUD and domain methods live directly on this class.
-    Pipeline operations: ``self.pipeline`` (PipelineRepository).
+    Processing transitions: ``self.processing`` (ProcessingRepository).
+    Run and event telemetry: ``self.runs`` (RunRepository).
     Web dashboard queries: ``self.web`` (WebQueryService).
     """
 
@@ -116,12 +118,13 @@ class PropertyStorage:
         self._connection_failed = False
         self._ensure_directory()
         self._web = WebQueryService(self._read_connection, self.get_property_images)
-        self._pipeline = PipelineRepository(
+        self._processing = ProcessingRepository(
             self._read_connection,
             self.get_property_images,
             self.save_quality_analysis,
             self._transaction,
         )
+        self.runs = RunRepository(self._read_connection, self._transaction)
         self.deliveries = DeliveryRepository(self._read_connection, self._transaction)
         self._spend = SpendRepository(self._read_connection, self._transaction)
 
@@ -131,9 +134,9 @@ class PropertyStorage:
         return self._spend
 
     @property
-    def pipeline(self) -> PipelineRepository:
-        """Pipeline run tracking, analysis retry, and enrichment retry operations."""
-        return self._pipeline
+    def processing(self) -> ProcessingRepository:
+        """Atomic evidence persistence, assessment completion, and recovery queues."""
+        return self._processing
 
     @property
     def web(self) -> WebQueryService:
@@ -1651,7 +1654,7 @@ class PropertyStorage:
             qa_row = await qa_cursor.fetchone()
             if qa_row and qa_row["analysis_json"]:
                 try:
-                    from home_finder.filters.quality import assess_value
+                    from home_finder.analysis.analyzer import assess_value
 
                     analysis = json.loads(qa_row["analysis_json"])
                     new_value = assess_value(new_price, qa_row["postcode"], qa_row["bedrooms"] or 0)

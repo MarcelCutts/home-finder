@@ -12,9 +12,9 @@ from decimal import Decimal
 import pytest
 from pydantic import ValidationError
 
+from home_finder.analysis.analyzer import PropertyQualityAnalyzer
 from home_finder.db import PropertyStorage
 from home_finder.db.spend import AttemptTransitionError, SpendDeferred, SpendRepository
-from home_finder.filters.quality import PropertyQualityFilter
 from home_finder.models.spend import (
     SONNET_46_FIVE_MINUTE_RATES,
     SONNET_STANDARD_RATES,
@@ -44,7 +44,7 @@ def spec(key="fixture", phase="visual"):
         request_sha256=digest,
         property_id="fixture:1",
         phase=phase,
-        provenance=PropertyQualityFilter("fixture")._analysis_provenance(),
+        provenance=PropertyQualityAnalyzer("fixture")._analysis_provenance(),
     )
 
 

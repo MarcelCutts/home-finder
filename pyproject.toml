@@ -76,7 +76,7 @@ select = ["E", "F", "I", "UP", "B", "SIM", "RUF", "C4", "PTH"]
 "src/home_finder/web/routes.py" = ["B008"]  # FastAPI Depends() in defaults
 "src/home_finder/web/filters.py" = ["B008"]  # FastAPI Query() in defaults
 "tests/integration/*.py" = ["E402"]  # imports after pytestmark for Crawlee state reset
-"tests/test_filters/test_quality_prompts.py" = ["E501", "RUF001"]  # inline-snapshot strings
+"tests/test_analysis/test_prompts.py" = ["E501", "RUF001"]  # inline-snapshot strings
 
 [tool.mypy]
 python_version = "3.11"
@@ -116,7 +116,7 @@ exclude_lines = [
 
 [tool.mutmut]
 paths_to_mutate = [
-    "src/home_finder/filters/scoring.py",
+    "src/home_finder/matching/scoring.py",
     "src/home_finder/filters/location.py",
     "src/home_finder/utils/address.py",
 ]

@@ -4,7 +4,7 @@
 ![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)
 ![Code style: ruff](https://img.shields.io/badge/code%20style-ruff-000000.svg)
 
-Multi-platform London rental property scraper with commute filtering, AI quality analysis, web dashboard, and Telegram notifications.
+Multi-platform London rental property scraper with commute guidance, AI quality analysis, web dashboard, and Telegram notifications.
 
 ## Table of Contents
 
@@ -21,7 +21,7 @@ Multi-platform London rental property scraper with commute filtering, AI quality
 ## Features
 
 - **Multi-platform scraping**: OpenRent, Rightmove, Zoopla, OnTheMarket
-- **Cross-platform deduplication**: Graduated multi-signal scoring merges the same property listed on different platforms (two-phase: pre- and post-enrichment)
+- **Cross-platform deduplication**: Evidence scoring matches listings after enrichment; consolidation preserves stored property identity and history
 - **Commute guidance**: TravelTime measurements distinguish reachable, outside-limit and unknown outcomes; API failures never become zero-minute commutes
 - **AI quality analysis**: Two-phase Claude vision analysis — Phase 1 observes images (kitchen, condition, space, light), Phase 2 evaluates value, generates viewing notes, and curates highlights
 - **Web dashboard**: FastAPI-powered dashboard with HTMX live filtering, map view with MarkerCluster, property detail pages with area context, and lightbox gallery
@@ -176,7 +176,7 @@ Create a `.env` file with these settings (all use `HOME_FINDER_` prefix):
 
 ### Optional APIs
 
-- `HOME_FINDER_TRAVELTIME_APP_ID`: TravelTime API app ID (enables commute filtering)
+- `HOME_FINDER_TRAVELTIME_APP_ID`: TravelTime API app ID (enables advisory commute measurements)
 - `HOME_FINDER_TRAVELTIME_API_KEY`: TravelTime API key
 - `HOME_FINDER_ANTHROPIC_API_KEY`: Anthropic API key; paid analysis also requires explicit `HOME_FINDER_ANALYSIS_SPEND_POLICY` caps (see [operations](docs/operations.md))
 
@@ -237,7 +237,9 @@ Create a `.env` file with these settings (all use `HOME_FINDER_` prefix):
 
 1. Get an API key at https://console.anthropic.com/
 2. Add to your `.env` as `HOME_FINDER_ANTHROPIC_API_KEY`
-3. Enables two-phase AI property quality analysis using Claude vision (~$0.05-0.07/property)
+3. Configure an explicit `HOME_FINDER_ANALYSIS_SPEND_POLICY` as described in the
+   [operations guide](docs/operations.md). Paid analysis remains deferred without
+   that policy; actual charges depend on the configured models and evidence.
 
 ## Running Tests
 
@@ -256,20 +258,32 @@ uv run pytest -m browser              # Run browser E2E tests (requires Playwrig
 
 ### Pipeline Flow
 
-The full pipeline (`uv run home-finder`) executes these steps in order:
+Start with [`pipeline/flow.py`](src/home_finder/pipeline/flow.py), then follow each
+stage into its domain implementation. The full workflow runs in this order:
 
-1. **Retry Unsent** — Resend failed notifications from previous runs
-2. **Scrape** — All scrapers run against configured search areas
-3. **Criteria Filter** — Apply price/bedroom filters
-4. **Location Filter** — Validate postcodes match search areas (catches scraper leakage)
-5. **Wrap as MergedProperty** — Wrap each property as a single-source `MergedProperty`
-6. **Persist & Recover** — Retain fetched listings before filtering and recover pending enrichment without waiting for another search receipt
-7. **Commute Guidance** — Preserve measured results and explicit unknown outcomes (if configured)
-8. **Detail Enrichment** — Fetch gallery images, floorplans, descriptions; cache images to disk
-9. **Post-Enrichment Dedup** — Cross-platform deduplication using enriched data (images, postcodes, coordinates)
-10. **Floorplan Gate** — Drop properties without floorplans (if enabled)
-11. **Quality Analysis** — Two-phase Claude vision analysis: Phase 1 (visual observations from images), Phase 2 (evaluation using Phase 1 output + listing text)
-12. **Save & Notify** — Store validated results and send Telegram notifications; provider failures leave work pending, and uncertain charges remain held for reconciliation
+1. **Set up and recover** — Acquire the run lock, reconcile abandoned spend, create
+   the run record, repair image caches, and resume eligible queued deliveries.
+2. **Collect and retain** — Scrape configured sources and persist observations
+   before selecting candidates.
+3. **Select and admit enrichment** — Apply criteria and location rules, refresh
+   known prices, and interleave discovery with pending enrichment under its cap.
+4. **Enrich and assess commutes** — Acquire detail/media evidence, then measure
+   commutes using the available coordinates. Commute results are advisory.
+5. **Consolidate and admit assessment** — Match against stored anchors, preserve
+   established identity/history, and apply floorplan/photo admission. Source
+   exemptions and sufficient gallery photos can satisfy that policy.
+6. **Process initial assessments** — Persist candidates before provider work,
+   interleave them with pending assessments, save results and notification
+   decisions, then attempt immediate delivery when eligible.
+7. **Process reanalysis** — Refresh requested assessments through the same queue
+   processor used by `--reanalyze`, preserving existing notification status.
+8. **Drain and finalize** — Attempt remaining queued deliveries, flush diagnostics,
+   clean up resources, and finalize the run record.
+
+Empty discovery still allows recovery and pending queues to advance. Dry runs
+follow the same data-processing sequence and skip notification transport.
+The [pipeline guide](docs/pipeline.md) explains the contracts, terminology,
+queue limits, reading order, and metric definitions.
 
 ### Deduplication
 
@@ -284,79 +298,50 @@ Cross-platform deduplication uses weighted multi-signal scoring:
 | Outcode match | +10 |
 | Price within 3% | +15 (graduated) |
 
-A match requires **60+ points** from **2+ signals**. Coordinates and price use graduated scoring (partial credit for near-matches). Cross-platform matching requires full postcodes to prevent false positives.
+A score-based match requires **60+ points** from **2+ signals**. Coordinates and
+price use graduated scoring. Additional postcode, image-evidence, grouping, and
+persistence checks can refuse a merge. Confidence tiers describe a heuristic;
+they are not calibrated probabilities. See
+[`matching/`](src/home_finder/matching/) for scoring and grouping, and
+[`pipeline/matching.py`](src/home_finder/pipeline/matching.py) for consolidation
+against stored anchors.
 
 ## Project Structure
 
-```
+```text
 src/home_finder/
-├── scrapers/              # Platform scrapers
-│   ├── base.py            # Abstract BaseScraper interface
-│   ├── openrent.py        # OpenRent (crawlee)
-│   ├── rightmove.py       # Rightmove (HTTPX + typeahead API)
-│   ├── zoopla.py          # Zoopla (curl_cffi for Cloudflare bypass)
-│   ├── onthemarket.py     # OnTheMarket (curl_cffi)
-│   ├── zoopla_models.py   # Pydantic models for Zoopla JSON parsing
-│   ├── detail_fetcher.py  # Gallery/floorplan extraction from detail pages
-│   └── location_utils.py  # Outcode detection utilities
-├── filters/               # Filtering and analysis
-│   ├── criteria.py        # Price/bedroom filtering
-│   ├── commute.py         # TravelTime API commute filtering
-│   ├── deduplication.py   # Weighted multi-signal cross-platform deduplication
-│   ├── location.py        # Location validation (catches scraper leakage)
-│   ├── detail_enrichment.py  # Enriches merged properties with images/descriptions
-│   ├── floorplan.py       # Floorplan analysis (legacy)
-│   ├── quality.py         # Two-phase Claude vision quality analysis (schemas, API calls, merging)
-│   └── quality_prompts.py # System prompts and user prompt builders for quality analysis
-├── web/                   # Web dashboard (FastAPI)
-│   ├── app.py             # Application factory, lifespan, security middleware
-│   ├── routes.py          # Dashboard, detail, health check routes
-│   ├── templates/         # Jinja2 templates
-│   │   ├── base.html      # Base layout (Pico CSS + Leaflet + HTMX)
-│   │   ├── dashboard.html # Main dashboard page with filters + map toggle
-│   │   ├── detail.html    # Property detail page
-│   │   ├── error.html     # Error/404 page
-│   │   ├── _results.html  # HTMX partial (card grid + pagination)
-│   │   ├── _property_card.html  # Single property card component
-│   │   ├── _quality_card.html   # Quality analysis breakdown component
-│   │   ├── _status_controls.html  # Status pill workflow component
-│   │   └── _macros.html           # Shared Jinja2 macros
-│   └── static/
-│       ├── app.js         # Lightbox, detail map, dashboard map, lazy loading
-│       └── style.css      # All custom styles
-├── notifiers/
-│   ├── telegram.py        # Telegram formatting and notifier interface
-│   └── delivery.py        # Saved plans and per-request receipt recovery
+├── main.py                # CLI parsing and dispatch
+├── pipeline/              # Workflow sequencing and durable queue coordination
+│   ├── flow.py            # Full run lifecycle and execution order
+│   ├── contracts.py       # Stage results, partial progress, outcome summaries
+│   ├── collection.py      # Scraper coordination and observation retention
+│   ├── candidates.py      # Selection, enrichment admission, commute, media admission
+│   ├── matching.py        # Coordinate matching and persistent consolidation
+│   ├── assessment.py      # Initial assessment and shared execution helpers
+│   ├── reanalysis.py      # Requested reassessment and CLI entry point
+│   ├── image_recovery.py  # Restore analysis images from stored URLs
+│   ├── run_lock.py        # Single-host run exclusion and spend recovery
+│   └── commands.py        # Maintenance entry points
+├── scrapers/              # Source adapters and detail-page fetching
+├── enrichment/            # Detail/media augmentation and advisory commute assessment
+├── matching/              # Match scoring and aggregate construction
+├── analysis/              # Provider analysis, prompts, evidence and response contracts
+├── filters/               # Criteria, location, media admission, fit and alert selection
+├── models/                # Domain, analysis, spending, and delivery contracts
 ├── db/
-│   ├── storage.py         # SQLite domain storage and owned transactions
+│   ├── storage.py         # Connection/transaction ownership and domain storage
+│   ├── processing_repo.py # Enrichment/assessment transitions and recovery queues
+│   ├── runs.py            # Run metrics and diagnostic events
 │   ├── spend.py           # Paid-attempt accounting and visual checkpoints
-│   └── delivery.py        # Bounded durable notification state
-├── utils/
-│   ├── address.py         # Address normalization for deduplication
-│   ├── image_cache.py     # Disk-based image caching for gallery/floorplan images
-│   ├── image_hash.py      # Perceptual image hashing
-│   ├── epc_detector.py    # EPC chart detection (PIL heuristics)
-│   └── floorplan_detector.py  # Offline floorplan heuristic experiments
-├── models/                # Typed property, analysis, spending and delivery models
-├── config.py              # Settings management (pydantic-settings)
-├── logging.py             # Structured logging (structlog)
-└── main.py                # Pipeline orchestration and CLI
-
-tests/
-├── test_db/               # Database storage tests
-│   ├── test_storage.py    # Core CRUD, notification tracking
-│   └── test_storage_quality.py  # Quality analysis, paginated queries, detail
-├── test_web/              # Web dashboard tests
-│   ├── test_app.py        # App factory, security headers, middleware
-│   └── test_routes.py     # Routes, filters, HTMX, XSS prevention
-├── test_filters/          # Filter tests (criteria, commute, dedup, quality, etc.)
-├── test_notifiers/
-│   ├── test_telegram.py   # Core notification formatting and sending
-│   └── test_telegram_web.py  # Web dashboard integration (inline keyboard, deep links)
-├── test_scrapers/         # Scraper tests per platform
-├── test_utils/            # Utility tests (image cache, address normalization)
-└── integration/           # Integration tests (pipeline, real scraping)
+│   └── delivery.py        # Durable notification intent and receipt state
+├── notifiers/             # Message rendering, transport, delivery recovery
+├── web/                   # Routes, templates, and static assets
+├── utils/                 # Address, image cache, and other supporting operations
+└── config.py              # Typed configuration
 ```
+
+Tests live under `tests/`, with subsystem suites, complete workflow scenarios in
+`integration/`, and saved provider responses in `fixtures/`.
 
 ## Deployment
 

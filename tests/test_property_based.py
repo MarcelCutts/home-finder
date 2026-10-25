@@ -8,7 +8,7 @@ from hypothesis import assume, given
 from hypothesis import strategies as st
 from pydantic import HttpUrl
 
-from home_finder.filters.scoring import (
+from home_finder.matching.scoring import (
     MATCH_THRESHOLD,
     MINIMUM_SIGNALS,
     MatchScore,

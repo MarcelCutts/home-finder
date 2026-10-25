@@ -7,12 +7,13 @@ import pytest
 
 from home_finder.config import Settings
 from home_finder.db import PropertyStorage
-from home_finder.pipeline.event_recorder import EventRecorder
-from home_finder.pipeline.stages import (
-    _load_unenriched,
+from home_finder.pipeline.candidates import (
+    _load_pending_enrichment,
     _prepare_enrichment_batch,
-    _run_pre_analysis_pipeline,
+    prepare_candidates,
 )
+from home_finder.pipeline.contracts import CollectedListings
+from home_finder.pipeline.event_recorder import EventRecorder
 from home_finder.utils.image_cache import get_cached_image_path, save_image_bytes
 
 
@@ -46,15 +47,15 @@ async def test_fair_cap_preserves_backlog_attempts_cache_and_restart(
     fresh = [make_merged_property() for _ in range(3)]
     async with PropertyStorage(settings.database_path) as storage:
         for merged in retries:
-            await storage.pipeline.save_unenriched_property(merged)
+            await storage.processing.save_unenriched_property(merged)
         cache = get_cached_image_path(
             settings.data_dir, retries[-1].unique_id, "https://example.com/a.jpg", "gallery", 0
         )
         save_image_bytes(cache, b"retained while waiting")
-        pending, _ = await _load_unenriched(storage, settings)
+        pending, _ = await _load_pending_enrichment(storage, settings)
         assert len(pending) == 3  # independent of the paid-analysis limit of 1
         assert cache.read_bytes() == b"retained while waiting"
-        run_id = await storage.pipeline.create_pipeline_run()
+        run_id = await storage.runs.create_pipeline_run()
         async with EventRecorder(storage, run_id) as recorder:
             selected = await _prepare_enrichment_batch(
                 fresh, pending, storage, settings, recorder=recorder
@@ -83,14 +84,17 @@ async def test_fair_cap_preserves_backlog_attempts_cache_and_restart(
             for row in events
         )
         for merged in selected:
-            await storage.pipeline.mark_enriched(merged.unique_id)
+            await storage.processing.mark_enriched(merged.unique_id)
 
     # A new process with no discovery still drains the remaining persisted homes.
     async with PropertyStorage(settings.database_path) as storage:
-        enrichment = AsyncMock(return_value=None)
-        monkeypatch.setattr("home_finder.pipeline.stages._run_scrape", AsyncMock(return_value=None))
-        monkeypatch.setattr("home_finder.pipeline.stages._run_enrichment", enrichment)
-        await _run_pre_analysis_pipeline(settings, storage)
+        enrichment = AsyncMock(return_value=[])
+        monkeypatch.setattr(
+            "home_finder.pipeline.candidates.collect_listings",
+            AsyncMock(return_value=CollectedListings()),
+        )
+        monkeypatch.setattr("home_finder.pipeline.candidates._enrich_candidates", enrichment)
+        await prepare_candidates(settings, storage)
         admitted = enrichment.await_args.args[0]
         assert {m.unique_id for m in admitted} == deferred_ids
         stored = await pending_rows(storage)
@@ -105,22 +109,23 @@ async def test_discovery_is_queued_before_bounded_enrichment_can_crash(
     settings.max_enrichment_per_run = 2
     enrichment = AsyncMock(side_effect=RuntimeError("interrupted enrichment"))
     monkeypatch.setattr(
-        "home_finder.pipeline.stages._run_scrape", AsyncMock(return_value=(properties, []))
+        "home_finder.pipeline.candidates.collect_listings",
+        AsyncMock(return_value=CollectedListings(listings=properties)),
     )
-    monkeypatch.setattr("home_finder.pipeline.stages._run_enrichment", enrichment)
+    monkeypatch.setattr("home_finder.pipeline.candidates._enrich_candidates", enrichment)
     async with PropertyStorage(settings.database_path) as storage:
         with pytest.raises(RuntimeError, match="interrupted enrichment"):
-            await _run_pre_analysis_pipeline(settings, storage)
+            await prepare_candidates(settings, storage)
         assert len(enrichment.await_args.args[0]) == 2
     async with PropertyStorage(settings.database_path) as storage:
-        pending = await storage.pipeline.get_unenriched_properties()
+        pending = await storage.processing.get_unenriched_properties()
         assert {m.unique_id for m in pending} == {p.unique_id for p in properties}
         assert all(
             row["enrichment_attempts"] == 0 for row in (await pending_rows(storage)).values()
         )
         assert await storage.filter_new_merged(pending) == []
         for merged in pending:
-            await storage.pipeline.save_unenriched_property(merged, attempted=False)
+            await storage.processing.save_unenriched_property(merged, attempted=False)
         assert all(
             row["enrichment_attempts"] == 0 for row in (await pending_rows(storage)).values()
         )

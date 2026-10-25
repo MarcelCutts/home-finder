@@ -57,7 +57,7 @@ class TestSavePreAnalysisProperties:
         make_merged_property: Callable[..., MergedProperty],
     ) -> None:
         merged = make_merged_property()
-        await storage.pipeline.save_pre_analysis_properties([merged], {})
+        await storage.processing.save_pre_analysis_properties([merged], {})
 
         conn = await storage._get_connection()
         cursor = await conn.execute(
@@ -77,7 +77,7 @@ class TestSavePreAnalysisProperties:
     ) -> None:
         merged = make_merged_property()
         commute_lookup = {merged.unique_id: (15, TransportMode.CYCLING)}
-        await storage.pipeline.save_pre_analysis_properties([merged], commute_lookup)
+        await storage.processing.save_pre_analysis_properties([merged], commute_lookup)
 
         conn = await storage._get_connection()
         cursor = await conn.execute(
@@ -108,7 +108,7 @@ class TestSavePreAnalysisProperties:
             image_type="floorplan",
         )
         merged = make_merged_property(images=images, floorplan=floorplan)
-        await storage.pipeline.save_pre_analysis_properties([merged], {})
+        await storage.processing.save_pre_analysis_properties([merged], {})
 
         stored = await storage.get_property_images(merged.unique_id)
         assert len(stored) == 2
@@ -120,7 +120,7 @@ class TestSavePreAnalysisProperties:
         make_merged_property: Callable[..., MergedProperty],
     ) -> None:
         props = [make_merged_property(source_id=f"z-{i}") for i in range(3)]
-        await storage.pipeline.save_pre_analysis_properties(props, {})
+        await storage.processing.save_pre_analysis_properties(props, {})
 
         conn = await storage._get_connection()
         cursor = await conn.execute(
@@ -146,7 +146,7 @@ class TestSavePreAnalysisProperties:
         assert tracked.notification_status == NotificationStatus.PENDING
 
         # Re-save as pre-analysis
-        await storage.pipeline.save_pre_analysis_properties([merged], {})
+        await storage.processing.save_pre_analysis_properties([merged], {})
 
         conn = await storage._get_connection()
         cursor = await conn.execute(
@@ -166,7 +166,7 @@ class TestSavePreAnalysisProperties:
         """Re-saving with commute data should update coords and commute on conflict."""
         # First save as unenriched (no coords, no commute)
         merged = make_merged_property(latitude=None, longitude=None, postcode="E8")
-        await storage.pipeline.save_unenriched_property(merged)
+        await storage.processing.save_unenriched_property(merged)
 
         # Re-save as pre-analysis with coords and commute
         enriched = make_merged_property(
@@ -176,7 +176,7 @@ class TestSavePreAnalysisProperties:
             postcode="E8 3RH",
         )
         commute_lookup = {enriched.unique_id: (12, TransportMode.CYCLING)}
-        await storage.pipeline.save_pre_analysis_properties([enriched], commute_lookup)
+        await storage.processing.save_pre_analysis_properties([enriched], commute_lookup)
 
         conn = await storage._get_connection()
         cursor = await conn.execute(
@@ -202,10 +202,10 @@ class TestSavePreAnalysisProperties:
         """Re-saving with empty commute_lookup should preserve existing commute data."""
         merged = make_merged_property()
         commute_lookup = {merged.unique_id: (15, TransportMode.CYCLING)}
-        await storage.pipeline.save_pre_analysis_properties([merged], commute_lookup)
+        await storage.processing.save_pre_analysis_properties([merged], commute_lookup)
 
         # Re-save with no commute data
-        await storage.pipeline.save_pre_analysis_properties([merged], {})
+        await storage.processing.save_pre_analysis_properties([merged], {})
 
         conn = await storage._get_connection()
         cursor = await conn.execute(
@@ -226,9 +226,9 @@ class TestGetPendingAnalysisProperties:
         make_merged_property: Callable[..., MergedProperty],
     ) -> None:
         merged = make_merged_property()
-        await storage.pipeline.save_pre_analysis_properties([merged], {})
+        await storage.processing.save_pre_analysis_properties([merged], {})
 
-        result = await storage.pipeline.get_pending_analysis_properties()
+        result = await storage.processing.get_pending_analysis_properties()
         assert len(result) == 1
         assert result[0].unique_id == merged.unique_id
 
@@ -241,7 +241,7 @@ class TestGetPendingAnalysisProperties:
         merged = make_merged_property()
         await storage.save_merged_property(merged)
 
-        result = await storage.pipeline.get_pending_analysis_properties()
+        result = await storage.processing.get_pending_analysis_properties()
         assert len(result) == 0
 
     @pytest.mark.asyncio
@@ -252,10 +252,10 @@ class TestGetPendingAnalysisProperties:
         make_quality_analysis: Callable[..., PropertyQualityAnalysis],
     ) -> None:
         merged = make_merged_property()
-        await storage.pipeline.save_pre_analysis_properties([merged], {})
-        await storage.pipeline.complete_analysis(merged.unique_id, make_quality_analysis())
+        await storage.processing.save_pre_analysis_properties([merged], {})
+        await storage.processing.complete_analysis(merged.unique_id, make_quality_analysis())
 
-        result = await storage.pipeline.get_pending_analysis_properties()
+        result = await storage.processing.get_pending_analysis_properties()
         assert len(result) == 0
 
     @pytest.mark.asyncio
@@ -277,9 +277,9 @@ class TestGetPendingAnalysisProperties:
             image_type="floorplan",
         )
         merged = make_merged_property(images=images, floorplan=floorplan)
-        await storage.pipeline.save_pre_analysis_properties([merged], {})
+        await storage.processing.save_pre_analysis_properties([merged], {})
 
-        result = await storage.pipeline.get_pending_analysis_properties()
+        result = await storage.processing.get_pending_analysis_properties()
         assert len(result) == 1
         assert len(result[0].images) == 1
         assert result[0].floorplan is not None
@@ -304,9 +304,9 @@ class TestGetPendingAnalysisProperties:
             max_price=2100,
             descriptions={PropertySource.ZOOPLA: "Nice flat"},
         )
-        await storage.pipeline.save_pre_analysis_properties([merged], {})
+        await storage.processing.save_pre_analysis_properties([merged], {})
 
-        result = await storage.pipeline.get_pending_analysis_properties()
+        result = await storage.processing.get_pending_analysis_properties()
         assert len(result) == 1
         r = result[0]
         assert set(r.sources) == {PropertySource.ZOOPLA, PropertySource.OPENRENT}
@@ -324,9 +324,9 @@ class TestCompleteAnalysis:
         make_quality_analysis: Callable[..., PropertyQualityAnalysis],
     ) -> None:
         merged = make_merged_property()
-        await storage.pipeline.save_pre_analysis_properties([merged], {})
+        await storage.processing.save_pre_analysis_properties([merged], {})
 
-        await storage.pipeline.complete_analysis(
+        await storage.processing.complete_analysis(
             merged.unique_id,
             make_quality_analysis(),
             notification_policy=NotificationPolicy(min_fit_score=0),
@@ -349,10 +349,10 @@ class TestCompleteAnalysis:
         make_quality_analysis: Callable[..., PropertyQualityAnalysis],
     ) -> None:
         merged = make_merged_property()
-        await storage.pipeline.save_pre_analysis_properties([merged], {})
+        await storage.processing.save_pre_analysis_properties([merged], {})
 
         analysis = make_quality_analysis()
-        await storage.pipeline.complete_analysis(merged.unique_id, analysis)
+        await storage.processing.complete_analysis(merged.unique_id, analysis)
 
         stored = await storage.get_quality_analysis(merged.unique_id)
         assert stored is not None
@@ -366,9 +366,9 @@ class TestCompleteAnalysis:
     ) -> None:
         """An unassessed home remains on the dashboard without a discovery alert."""
         merged = make_merged_property()
-        await storage.pipeline.save_pre_analysis_properties([merged], {})
+        await storage.processing.save_pre_analysis_properties([merged], {})
 
-        await storage.pipeline.complete_analysis(merged.unique_id, None)
+        await storage.processing.complete_analysis(merged.unique_id, None)
 
         conn = await storage._get_connection()
         cursor = await conn.execute(
@@ -391,7 +391,7 @@ class TestCompleteAnalysis:
         await storage.save_merged_property(merged)
         await storage.mark_notified(merged.unique_id)
 
-        await storage.pipeline.complete_analysis(merged.unique_id, make_quality_analysis())
+        await storage.processing.complete_analysis(merged.unique_id, make_quality_analysis())
 
         tracked = await storage.get_property(merged.unique_id)
         assert tracked is not None
@@ -408,7 +408,7 @@ class TestCompleteAnalysisAtomicity:
     ) -> None:
         """Crash during complete_analysis should roll back both writes."""
         merged = make_merged_property()
-        await storage.pipeline.save_pre_analysis_properties([merged], {})
+        await storage.processing.save_pre_analysis_properties([merged], {})
 
         # Poison save_quality_analysis so it writes then raises mid-transaction
         original_save = storage.save_quality_analysis
@@ -422,10 +422,10 @@ class TestCompleteAnalysisAtomicity:
             await original_save(uid, analysis, _conn=_conn)
             raise RuntimeError("simulated crash after quality write")
 
-        storage._pipeline._save_quality_analysis = _save_then_crash
+        storage._processing._save_quality_analysis = _save_then_crash
 
         with pytest.raises(RuntimeError, match="simulated crash"):
-            await storage.pipeline.complete_analysis(merged.unique_id, make_quality_analysis())
+            await storage.processing.complete_analysis(merged.unique_id, make_quality_analysis())
 
         # Both writes should have been rolled back
         conn = await storage._get_connection()
@@ -452,7 +452,7 @@ class TestDashboardIncludesPendingAnalysis:
         pending = make_merged_property(
             source_id="pending-1", image_url=HttpUrl("https://example.com/img.jpg")
         )
-        await storage.pipeline.save_pre_analysis_properties([pending], {})
+        await storage.processing.save_pre_analysis_properties([pending], {})
 
         # Save normal enriched
         enriched = make_merged_property(
@@ -479,7 +479,7 @@ class TestNotificationRetryExcludesPendingAnalysis:
     ) -> None:
         """pending_analysis properties should NOT be returned by get_unsent_notifications."""
         merged = make_merged_property()
-        await storage.pipeline.save_pre_analysis_properties([merged], {})
+        await storage.processing.save_pre_analysis_properties([merged], {})
 
         unsent = await storage.get_unsent_notifications()
         unsent_ids = {t.property.unique_id for t in unsent}
@@ -497,12 +497,12 @@ class TestResetFailedAnalyses:
     ) -> None:
         """Properties with fallback analysis should be reset to pending_analysis."""
         merged = make_merged_property()
-        await storage.pipeline.save_pre_analysis_properties([merged], {})
-        await storage.pipeline.complete_analysis(merged.unique_id, _make_fallback_analysis())
+        await storage.processing.save_pre_analysis_properties([merged], {})
+        await storage.processing.complete_analysis(merged.unique_id, _make_fallback_analysis())
         if delivered:
             await storage.mark_notified(merged.unique_id)
 
-        count = await storage.pipeline.reset_failed_analyses()
+        count = await storage.processing.reset_failed_analyses()
         assert count == 1
 
         conn = await storage._get_connection()
@@ -518,7 +518,7 @@ class TestResetFailedAnalyses:
         # Already-delivered fallback data remain until a successful reanalysis.
         analysis = await storage.get_quality_analysis(merged.unique_id)
         assert (analysis is not None) == delivered
-        queue = await storage.pipeline.get_reanalysis_queue()
+        queue = await storage.processing.get_reanalysis_queue()
         assert [m.unique_id for m in queue] == ([merged.unique_id] if delivered else [])
 
     @pytest.mark.asyncio
@@ -530,10 +530,10 @@ class TestResetFailedAnalyses:
     ) -> None:
         """Properties with real analysis (has overall_rating) should not be reset."""
         merged = make_merged_property()
-        await storage.pipeline.save_pre_analysis_properties([merged], {})
-        await storage.pipeline.complete_analysis(merged.unique_id, make_quality_analysis())
+        await storage.processing.save_pre_analysis_properties([merged], {})
+        await storage.processing.complete_analysis(merged.unique_id, make_quality_analysis())
 
-        count = await storage.pipeline.reset_failed_analyses()
+        count = await storage.processing.reset_failed_analyses()
         assert count == 0
 
         analysis = await storage.get_quality_analysis(merged.unique_id)
@@ -548,10 +548,10 @@ class TestResetFailedAnalyses:
     ) -> None:
         """Properties already pending_analysis should not be double-counted."""
         merged = make_merged_property()
-        await storage.pipeline.save_pre_analysis_properties([merged], {})
+        await storage.processing.save_pre_analysis_properties([merged], {})
         # Still pending_analysis, no complete_analysis called
 
-        count = await storage.pipeline.reset_failed_analyses()
+        count = await storage.processing.reset_failed_analyses()
         assert count == 0
 
     @pytest.mark.asyncio
@@ -563,10 +563,10 @@ class TestResetFailedAnalyses:
     ) -> None:
         """Should return 0 when all analyses are real."""
         merged = make_merged_property()
-        await storage.pipeline.save_pre_analysis_properties([merged], {})
-        await storage.pipeline.complete_analysis(merged.unique_id, make_quality_analysis())
+        await storage.processing.save_pre_analysis_properties([merged], {})
+        await storage.processing.complete_analysis(merged.unique_id, make_quality_analysis())
 
-        count = await storage.pipeline.reset_failed_analyses()
+        count = await storage.processing.reset_failed_analyses()
         assert count == 0
 
     @pytest.mark.asyncio
@@ -577,12 +577,12 @@ class TestResetFailedAnalyses:
     ) -> None:
         """After reset, properties appear in get_pending_analysis_properties."""
         merged = make_merged_property()
-        await storage.pipeline.save_pre_analysis_properties([merged], {})
-        await storage.pipeline.complete_analysis(merged.unique_id, _make_fallback_analysis())
+        await storage.processing.save_pre_analysis_properties([merged], {})
+        await storage.processing.complete_analysis(merged.unique_id, _make_fallback_analysis())
 
-        await storage.pipeline.reset_failed_analyses()
+        await storage.processing.reset_failed_analyses()
 
-        pending = await storage.pipeline.get_pending_analysis_properties()
+        pending = await storage.processing.get_pending_analysis_properties()
         assert len(pending) == 1
         assert pending[0].unique_id == merged.unique_id
 
@@ -600,8 +600,8 @@ class TestDashboardIncludesFallbackAnalysis:
         fallback = make_merged_property(
             source_id="fallback-1", image_url=HttpUrl("https://example.com/img.jpg")
         )
-        await storage.pipeline.save_pre_analysis_properties([fallback], {})
-        await storage.pipeline.complete_analysis(fallback.unique_id, _make_fallback_analysis())
+        await storage.processing.save_pre_analysis_properties([fallback], {})
+        await storage.processing.complete_analysis(fallback.unique_id, _make_fallback_analysis())
 
         # Save property with real analysis
         real = make_merged_property(
@@ -609,8 +609,8 @@ class TestDashboardIncludesFallbackAnalysis:
             source_id="real-1",
             image_url=HttpUrl("https://example.com/img.jpg"),
         )
-        await storage.pipeline.save_pre_analysis_properties([real], {})
-        await storage.pipeline.complete_analysis(real.unique_id, make_quality_analysis())
+        await storage.processing.save_pre_analysis_properties([real], {})
+        await storage.processing.complete_analysis(real.unique_id, make_quality_analysis())
 
         results, total = await storage.web.get_properties_paginated(PropertyFilter())
         result_ids = {r["unique_id"] for r in results}
@@ -630,16 +630,16 @@ class TestDashboardIncludesFallbackAnalysis:
         fallback = make_merged_property(
             source_id="fallback-1", image_url=HttpUrl("https://example.com/img.jpg")
         )
-        await storage.pipeline.save_pre_analysis_properties([fallback], {})
-        await storage.pipeline.complete_analysis(fallback.unique_id, _make_fallback_analysis())
+        await storage.processing.save_pre_analysis_properties([fallback], {})
+        await storage.processing.complete_analysis(fallback.unique_id, _make_fallback_analysis())
 
         real = make_merged_property(
             sources=(PropertySource.OPENRENT,),
             source_id="real-1",
             image_url=HttpUrl("https://example.com/img.jpg"),
         )
-        await storage.pipeline.save_pre_analysis_properties([real], {})
-        await storage.pipeline.complete_analysis(real.unique_id, make_quality_analysis())
+        await storage.processing.save_pre_analysis_properties([real], {})
+        await storage.processing.complete_analysis(real.unique_id, make_quality_analysis())
 
         _, total = await storage.web.get_properties_paginated(PropertyFilter())
         assert total == 2

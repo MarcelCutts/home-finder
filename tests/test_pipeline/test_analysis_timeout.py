@@ -1,4 +1,4 @@
-"""Tests for per-property wall-clock timeout in _run_concurrent_analysis."""
+"""Tests for per-property wall-clock timeout in run_concurrent_analysis."""
 
 import asyncio
 from collections.abc import Callable
@@ -9,7 +9,8 @@ from pydantic import ValidationError
 
 from home_finder.config import Settings
 from home_finder.models import MergedProperty, PropertyQualityAnalysis
-from home_finder.pipeline.analysis import _PropertyTimeoutError, _run_concurrent_analysis
+from home_finder.pipeline.assessment import _PropertyTimeoutError, run_concurrent_analysis
+from home_finder.pipeline.contracts import AnalysisDisposition, AnalysisOutcome
 
 
 @pytest.fixture
@@ -26,17 +27,19 @@ def make_items(
 
 async def _instant_analyze(
     merged: MergedProperty,
-) -> tuple[MergedProperty, PropertyQualityAnalysis | None]:
+) -> AnalysisOutcome:
     """Analyze function that returns immediately with no quality analysis."""
-    return merged, None
+    return AnalysisOutcome(merged, AnalysisDisposition.SKIPPED, reason="fixture")
 
 
 async def _slow_analyze(
     merged: MergedProperty,
-) -> tuple[MergedProperty, PropertyQualityAnalysis | None]:
+) -> AnalysisOutcome:
     """Analyze function that sleeps forever (simulates timeout)."""
     await asyncio.sleep(999)
-    return merged, None  # pragma: no cover
+    return AnalysisOutcome(
+        merged, AnalysisDisposition.SKIPPED, reason="fixture"
+    )  # pragma: no cover
 
 
 async def test_wall_clock_timeout_skips_property(
@@ -46,10 +49,10 @@ async def test_wall_clock_timeout_skips_property(
     items = make_items(1)
     results: list[tuple[MergedProperty, PropertyQualityAnalysis | None]] = []
 
-    async def _on_result(merged: MergedProperty, qa: PropertyQualityAnalysis | None) -> None:
-        results.append((merged, qa))
+    async def _on_result(outcome: AnalysisOutcome) -> None:
+        results.append((outcome.candidate, outcome.assessment))
 
-    count = await _run_concurrent_analysis(
+    count = await run_concurrent_analysis(
         items,
         _slow_analyze,
         _on_result,
@@ -68,18 +71,20 @@ async def test_timeout_does_not_cancel_batch(
 
     async def _mixed_analyze(
         merged: MergedProperty,
-    ) -> tuple[MergedProperty, PropertyQualityAnalysis | None]:
+    ) -> AnalysisOutcome:
         if merged.unique_id == slow_id:
             await asyncio.sleep(999)
-            return merged, None  # pragma: no cover
-        return merged, None
+            return AnalysisOutcome(
+                merged, AnalysisDisposition.SKIPPED, reason="fixture"
+            )  # pragma: no cover
+        return AnalysisOutcome(merged, AnalysisDisposition.SKIPPED, reason="fixture")
 
     results: list[str] = []
 
-    async def _on_result(merged: MergedProperty, qa: PropertyQualityAnalysis | None) -> None:
-        results.append(merged.unique_id)
+    async def _on_result(outcome: AnalysisOutcome) -> None:
+        results.append(outcome.candidate.unique_id)
 
-    count = await _run_concurrent_analysis(
+    count = await run_concurrent_analysis(
         items,
         _mixed_analyze,
         _on_result,
@@ -97,10 +102,10 @@ async def test_duration_logging_on_success(
     """property_analysis_duration log emitted on successful analysis."""
     items = make_items(1)
 
-    async def _on_result(merged: MergedProperty, qa: PropertyQualityAnalysis | None) -> None:
+    async def _on_result(outcome: AnalysisOutcome) -> None:
         pass
 
-    count = await _run_concurrent_analysis(
+    count = await run_concurrent_analysis(
         items,
         _instant_analyze,
         _on_result,
@@ -119,10 +124,10 @@ async def test_on_error_called_for_timeout(
     items = make_items(1)
     error_cb = MagicMock()
 
-    async def _on_result(merged: MergedProperty, qa: PropertyQualityAnalysis | None) -> None:
+    async def _on_result(outcome: AnalysisOutcome) -> None:
         pass  # pragma: no cover
 
-    count = await _run_concurrent_analysis(
+    count = await run_concurrent_analysis(
         items,
         _slow_analyze,
         _on_result,
@@ -140,10 +145,10 @@ async def test_no_timeout_when_none(
     items = make_items(2)
     results: list[str] = []
 
-    async def _on_result(merged: MergedProperty, qa: PropertyQualityAnalysis | None) -> None:
-        results.append(merged.unique_id)
+    async def _on_result(outcome: AnalysisOutcome) -> None:
+        results.append(outcome.candidate.unique_id)
 
-    count = await _run_concurrent_analysis(
+    count = await run_concurrent_analysis(
         items,
         _instant_analyze,
         _on_result,

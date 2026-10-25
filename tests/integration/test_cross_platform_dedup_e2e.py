@@ -10,8 +10,8 @@ import pytest
 
 pytestmark = pytest.mark.usefixtures("reset_crawlee_state", "set_crawlee_storage_dir")
 
-from home_finder.filters.deduplication import Deduplicator
-from home_finder.filters.detail_enrichment import enrich_merged_properties
+from home_finder.enrichment.details import enrich_merged_properties
+from home_finder.matching.deduplication import Deduplicator
 from home_finder.models import Property
 from home_finder.scrapers import (
     OnTheMarketScraper,
@@ -120,10 +120,10 @@ class TestCrossPlatformDedupE2E:
             await fetcher.close()
 
         # Then deduplicate the enriched properties
-        deduped = await deduplicator.deduplicate_merged_async(enriched.enriched)
+        deduped = await deduplicator.deduplicate_merged_async(enriched.with_usable_media)
 
         # All properties should still exist (possibly merged)
-        assert len(deduped) <= len(enriched.enriched)
+        assert len(deduped) <= len(enriched.with_usable_media)
         assert len(deduped) > 0
 
         # Multi-source merged should have images if individual sources had images

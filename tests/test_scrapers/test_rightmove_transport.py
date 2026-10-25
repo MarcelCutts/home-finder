@@ -102,10 +102,10 @@ async def test_later_page_failure_stops_and_keeps_received_observations(
 async def test_blocked_source_does_not_retry_other_pages_or_areas(
     bounded_scraper, monkeypatch, httpx_mock, fixtures_path, status, attempts, received_page
 ):
-    from home_finder.pipeline.scraping import scrape_all_platforms
+    from home_finder.pipeline.collection import scrape_all_platforms
 
-    monkeypatch.setattr("home_finder.pipeline.scraping.RightmoveScraper", lambda: bounded_scraper)
-    monkeypatch.setattr("home_finder.pipeline.scraping.random.shuffle", lambda areas: None)
+    monkeypatch.setattr("home_finder.pipeline.collection.RightmoveScraper", lambda: bounded_scraper)
+    monkeypatch.setattr("home_finder.pipeline.collection.random.shuffle", lambda areas: None)
     area_delay = AsyncMock()
     monkeypatch.setattr(bounded_scraper, "area_delay", area_delay)
     if received_page:
@@ -133,10 +133,10 @@ async def test_blocked_source_does_not_retry_other_pages_or_areas(
 async def test_transient_rate_limit_does_not_skip_the_next_area(
     bounded_scraper, monkeypatch, httpx_mock
 ):
-    from home_finder.pipeline.scraping import scrape_all_platforms
+    from home_finder.pipeline.collection import scrape_all_platforms
 
-    monkeypatch.setattr("home_finder.pipeline.scraping.RightmoveScraper", lambda: bounded_scraper)
-    monkeypatch.setattr("home_finder.pipeline.scraping.random.shuffle", lambda areas: None)
+    monkeypatch.setattr("home_finder.pipeline.collection.RightmoveScraper", lambda: bounded_scraper)
+    monkeypatch.setattr("home_finder.pipeline.collection.random.shuffle", lambda areas: None)
     monkeypatch.setattr(bounded_scraper, "area_delay", AsyncMock())
     httpx_mock.add_response(status_code=429)
     httpx_mock.add_response(text=EMPTY)
@@ -289,7 +289,7 @@ async def test_real_pipeline_cancellation_does_not_enter_enrichment_or_analysis(
 ):
     from home_finder.config import Settings
     from home_finder.db import PropertyStorage
-    from home_finder.main import _run_pipeline_with_storage
+    from home_finder.pipeline.flow import _run_pipeline_with_storage
 
     reached = asyncio.Event()
 
@@ -299,9 +299,9 @@ async def test_real_pipeline_cancellation_does_not_enter_enrichment_or_analysis(
 
     httpx_mock.add_callback(blocked)
     later_stages = [
-        "home_finder.pipeline.stages._run_enrichment",
-        "home_finder.main._run_quality_and_save",
-        "home_finder.main._drain_reanalysis_queue",
+        "home_finder.pipeline.candidates._enrich_candidates",
+        "home_finder.pipeline.flow.process_initial_assessments",
+        "home_finder.pipeline.flow.process_reanalysis_queue",
     ]
     mocks = []
     for path in later_stages:
@@ -309,7 +309,7 @@ async def test_real_pipeline_cancellation_does_not_enter_enrichment_or_analysis(
         monkeypatch.setattr(path, mock)
         mocks.append(mock)
     notifier = Mock(side_effect=AssertionError("notification reached"))
-    monkeypatch.setattr("home_finder.main.TelegramNotifier", notifier)
+    monkeypatch.setattr("home_finder.pipeline.flow.TelegramNotifier", notifier)
     settings = Settings(_env_file=None, search_areas="e8", data_dir=str(tmp_path))
     async with PropertyStorage(":memory:") as storage:
         task = asyncio.create_task(

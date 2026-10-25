@@ -7,14 +7,11 @@ import pytest
 
 from home_finder.config import Settings
 from home_finder.db import PropertyStorage
-from home_finder.filters.detail_enrichment import enrich_merged_properties
+from home_finder.enrichment.details import enrich_merged_properties
 from home_finder.models import PropertySource, TransportMode, UserStatus
-from home_finder.pipeline.analysis import _run_quality_and_save
-from home_finder.pipeline.stages import (
-    PreAnalysisResult,
-    _prepare_enrichment_batch,
-    _run_post_enrichment,
-)
+from home_finder.pipeline.assessment import process_initial_assessments
+from home_finder.pipeline.candidates import _consolidate_and_admit, _prepare_enrichment_batch
+from home_finder.pipeline.contracts import CandidateBatch
 from home_finder.scrapers.detail_fetcher import DetailFetcher, DetailPageData
 from home_finder.web.filters import PropertyFilter
 from tests.test_db.test_spend import policy, spec
@@ -45,29 +42,30 @@ async def test_scraped_area_survives_prequeue_enrichment_and_analysis_restart(
         floor_area_sqm=57.3,
         floor_area_source="rightmove",
     )
-    monkeypatch.setattr("home_finder.pipeline.analysis._lookup_wards", AsyncMock())
+    monkeypatch.setattr("home_finder.pipeline.assessment._lookup_wards", AsyncMock())
     async with PropertyStorage(settings.database_path) as storage:
         selected = await _prepare_enrichment_batch([raw], [], storage, settings)
         result = await enrich_merged_properties(selected, fetcher, storage=storage)
-        assert not result.failed
-        assert result.enriched[0].floor_area_sqm == 57.3
+        assert not result.without_usable_media
+        assert result.with_usable_media[0].floor_area_sqm == 57.3
         if complete:
-            count, _ = await _run_quality_and_save(
-                PreAnalysisResult(merged_to_process=result.enriched),
+            assessment = await process_initial_assessments(
+                CandidateBatch(candidates=result.with_usable_media),
                 settings,
                 storage,
                 AsyncMock(),
             )
+            count, _ = assessment.processed_count, assessment.token_usage
             assert count == 1
         else:
-            await storage.pipeline.save_pre_analysis_properties(result.enriched, {})
+            await storage.processing.save_pre_analysis_properties(result.with_usable_media, {})
 
     async with PropertyStorage(settings.database_path) as storage:
         row = await property_row(storage, raw.unique_id)
         assert row["floor_area_sqm"] == 57.3
         assert row["floor_area_source"] == "rightmove"
         if not complete:
-            pending = await storage.pipeline.get_pending_analysis_properties()
+            pending = await storage.processing.get_pending_analysis_properties()
             assert [(m.floor_area_sqm, m.floor_area_source) for m in pending] == [
                 (57.3, "rightmove")
             ]
@@ -120,27 +118,25 @@ async def test_dropped_merged_home_recovers_every_accepted_source_and_enriched_f
     async with PropertyStorage(settings.database_path) as storage:
         selected = await _prepare_enrichment_batch(raw, [], storage, settings)
         enriched = await enrich_merged_properties(selected, fetcher, storage=storage)
-        assert len(enriched.enriched) == 2
-        assert (
-            await _run_post_enrichment(
-                enriched.enriched,
-                storage,
-                settings,
-                set(),
-                commute_lookup={anchor.unique_id: (24, TransportMode.CYCLING)},
-            )
-            is None
-        )  # Both sources have too few photos to pass without a floorplan.
+        assert len(enriched.with_usable_media) == 2
+        admission = await _consolidate_and_admit(
+            enriched.with_usable_media,
+            storage,
+            settings,
+            set(),
+            commute_lookup={anchor.unique_id: (24, TransportMode.CYCLING)},
+        )
+        assert admission.candidates == []  # Too few photos to pass without a floorplan.
         assert await storage.get_property(raw[1].unique_id) is None
 
     async with PropertyStorage(settings.database_path) as storage:
         row = await property_row(storage, anchor.unique_id)
         assert row["notification_status"] == "dropped"
         assert (row["commute_minutes"], row["transport_mode"]) == (24, "cycling")
-        assert await storage.pipeline.request_enrichment_recovery(
+        assert await storage.processing.request_enrichment_recovery(
             [anchor.unique_id], reason="Sources now have floorplans"
         ) == {anchor.unique_id: "requested"}
-        recovered = (await storage.pipeline.get_unenriched_properties())[0]
+        recovered = (await storage.processing.get_unenriched_properties())[0]
         assert recovered.source_urls == {
             source: url for merged in raw for source, url in merged.source_urls.items()
         }
@@ -184,7 +180,7 @@ async def test_sparse_promotion_preserves_enrichment_owner_history_and_spend(
         }
     )
     async with PropertyStorage(str(tmp_path / "sparse.db")) as storage:
-        await storage.pipeline.save_unenriched_property(
+        await storage.processing.save_unenriched_property(
             rich, commute_minutes=24, transport_mode=TransportMode.CYCLING
         )
         await storage.update_user_status(rich.unique_id, UserStatus.INTERESTED, note="Keep this")
@@ -201,7 +197,7 @@ async def test_sparse_promotion_preserves_enrichment_owner_history_and_spend(
                 ]
                 for table in ("status_events", "viewing_messages", "paid_attempts")
             }
-        result = await getattr(storage.pipeline, writer)([sparse], {})
+        result = await getattr(storage.processing, writer)([sparse], {})
         assert result.accepted == [sparse]
         after = await property_row(storage, rich.unique_id)
         for field in (
@@ -242,8 +238,8 @@ async def test_promotion_keeps_floor_area_and_its_provenance_together(
     )
     incoming = original.model_copy(update={"floor_area_sqm": area, "floor_area_source": source})
     async with PropertyStorage(":memory:") as storage:
-        await storage.pipeline.save_unenriched_property(original, attempted=False)
-        result = await getattr(storage.pipeline, writer)([incoming], {})
+        await storage.processing.save_unenriched_property(original, attempted=False)
+        result = await getattr(storage.processing, writer)([incoming], {})
         assert result.accepted == [incoming]
         row = await property_row(storage, original.unique_id)
         assert (row["floor_area_sqm"], row["floor_area_source"]) == expected

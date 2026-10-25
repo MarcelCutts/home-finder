@@ -11,7 +11,7 @@ from pydantic import ValidationError
 
 from home_finder.db import PropertyStorage
 from home_finder.db.delivery import delivery_report
-from home_finder.pipeline.runner import runner_lock
+from home_finder.pipeline.run_lock import runner_lock
 
 
 async def read_report(database: Path) -> dict[str, Any]:

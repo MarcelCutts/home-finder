@@ -528,6 +528,45 @@ routing is outside the owner workflow. Logs include `notification_delivery_plann
 indices; acknowledgements include message IDs and elapsed time. No exception
 body, payload, image bytes or bot token is logged by this recovery path.
 
+The terminal `pipeline_complete.final_drain_completed_deliveries` counts deliveries
+completed by the final `delivery_drain` phase only. It excludes startup
+recovery (reported by `delivery_recovery_complete.completed`) and immediate
+analysis callbacks (reported by `pipeline_complete.callback_deliveries_completed`). It counts complete
+delivery intents, not individual Telegram messages or newly queued work. The
+former name `queued_deliveries` was misleading; log consumers should use the new
+name. Dry runs report zero because sending is skipped, even when analysis saves
+new pending intents. Inspect durable delivery states with the read-only
+`delivery_admin` report above to determine the outstanding queue.
+
+## Pipeline names and queue limits
+
+The [pipeline guide](pipeline.md) is the code reading map and metric dictionary.
+Run phases are `setup`, `delivery_recovery`, `candidate_preparation`,
+`initial_assessment`, `reanalysis`, `delivery_drain`, and `finalization`.
+`candidate_preparation` replaces `pre_analysis`; `initial_assessment` replaces
+`quality_analysis_and_save` (and the live label `quality_analysis_and_notify`).
+The delivery phases replace `notification_recovery` and `notification_delivery`.
+Update log queries that use those labels.
+
+`HOME_FINDER_MAX_INITIAL_ANALYSES_PER_RUN` bounds discovery plus pending initial
+assessments. `HOME_FINDER_MAX_REANALYSES_PER_RUN` independently bounds requested
+reassessments. Both default to 75. The legacy `HOME_FINDER_MAX_ANALYSIS_PER_RUN`
+remains a fallback for each unset queue limit, preserving the previous behavior;
+it is not a combined allowance. At one slot per queue, a full run can admit two
+properties. Count caps do not replace the monetary spend policy.
+
+Successful initial assessment records `assessment_completed` before its delivery
+callback. Disabled/unconfigured analysis records `analysis_skipped`. Both count
+in the legacy database `analyzed_count`; terminal logs distinguish `assessed`
+and `analysis_skipped`. Media readiness deferral records `enrichment_deferred`
+with reason `missing_usable_media`; acquired text/details can still be retained.
+Historical events keep their original names.
+
+Diagnostic events are buffered: their database `created_at` is insertion time.
+Their IDs preserve local recording order, not precise event occurrence times or
+an ordering across concurrent analyses. No schema migration is needed for these
+structure and naming changes.
+
 ## Release
 
 Main requires current lint, formatting, type, test/coverage and build checks;

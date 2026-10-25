@@ -8,7 +8,7 @@ from pathlib import Path
 import aiosqlite
 
 from home_finder.db import PropertyStorage
-from home_finder.pipeline.runner import runner_lock
+from home_finder.pipeline.run_lock import runner_lock
 
 
 async def request_recovery(
@@ -24,7 +24,7 @@ async def request_recovery(
         if not acquired:
             raise ValueError("Stop the active runner before requesting processing recovery")
         async with PropertyStorage(str(path)) as storage:
-            return await storage.pipeline.request_enrichment_recovery(
+            return await storage.processing.request_enrichment_recovery(
                 property_ids, reason=reason.strip()
             )
 
