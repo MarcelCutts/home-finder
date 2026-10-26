@@ -3,8 +3,8 @@
 A read-only audit of `main` at `51dd9c6`. It looks for code, tests, configuration and documents
 that can be removed, merged or corrected. Every finding is categorised and graded by the strength
 of its evidence. Nothing in the application was changed. A separate worktree trial applied the
-best-evidenced deletions and ran the project's own gates against them (see
-[trial results](trial.md)).
+32 best-evidenced deletions (net −1,881 lines) and ran the project's own gates against them.
+Everything passed and nothing needed downgrading (see [trial results](trial.md)).
 
 **Contents:** [summary](#summary) · [how findings were graded](#how-findings-were-categorised-and-graded) ·
 [why the residue exists](#why-the-residue-exists) · [bugs found on the way](#bugs-found-on-the-way) ·
@@ -43,24 +43,30 @@ predictable places, listed under [why the residue exists](#why-the-residue-exist
    `CLAUDE.md` is also listed in `.gitignore`, so ripgrep-based search (including agents' Grep)
    silently skips it. Every agent session loads this file, so it has the highest cost of any stale
    text in the repository. (REPO-1–4, ANALYSIS-1, PIPELINE-3–5, SCRAPERS-17, FILTERS-10, WEB-8, TESTS-17)
-2. **Halve the test suite's runtime.** An autouse fixture runs `gc.collect()` and scans the whole heap
-   after each of the 4,251 tests. In a measured sample it was about 70% of DB-test wall time. The
-   cheap thread scan in the same fixture covers the stated problem on its own. (TESTS-1)
+2. **Cut the test suite's runtime by about four fifths.** An autouse fixture runs `gc.collect()`
+   and scans the whole heap after each of the 4,251 tests. The cheap thread scan in the same
+   fixture covers the stated problem on its own. Measured on the same 4-CPU machine with the same
+   command, the full suite took 586 s on `main` and 124 s in the trial tree. With only this fixture
+   changed, the DB and web tests went from 91–96 s to 21–22 s. One catch: the scan was hiding a
+   leaked stdlib `sqlite3` connection, which now shows up as a fifth warning. Fix that before turning
+   leak warnings into errors. (TESTS-1)
 3. **Delete code with no references at all.** This covers enquiry and viewing-message accessors,
    `utils/union_find.py`, unused constants, dead CSS and JS for the replaced fit-breakdown
    visuals, an orphaned template partial, unread route context, dead model members and more. The
-   trial applied and verified this batch. (Batch B)
+   trial applied this batch (−558 lines) and every gate passed. (Batch B)
 4. **Drop Crawlee and declare what is actually used.** No source file imports Crawlee since 15ae399.
    Beautiful Soup and lxml arrive only as Crawlee's transitive dependencies. Its test fixtures and
-   a lint exemption exist only for it. `respx` and `dirty-equals` are also unused. (SCRAPERS-1, TESTS-5, TESTS-16)
+   a lint exemption exist only for it. `respx` and `dirty-equals` are also unused. In the trial the
+   lockfile went from 132 to 117 packages, with nothing added and no version changes. (SCRAPERS-1, TESTS-5, TESTS-16)
 5. **Stop testing code that production cannot reach.** About 20 wrappers exist only because their
    tests call them. Examples: `analyze_merged_properties`, `deduplicate_and_merge_async`,
    `compute_fit_breakdown`, the scrapers' "compatibility readers" and `run_dry_run`. Retarget
    those tests to the production entry points, then delete the wrappers. (Batch E)
 6. **Retire the pre-outbox notification writers and Telegram senders.** `PropertyStorage.mark_notified`
    and its siblings write delivery state directly, bypassing the outbox. The old senders
-   (`send_batch_notifications` and others, about 330 lines, plus an unreachable 280-line text-only format) have no production caller. Both survive
-   because the tests use them as seeding helpers, so add `tests/support/seed.py` first. (DB-1, DB-6, FILTERS-1, TESTS-6, TESTS-8)
+   (`send_batch_notifications` and others, about 330 lines) and an unreachable 280-line text-only
+   alert format have no production caller. Both survive because the tests use them as seeding
+   helpers, so add `tests/support/seed.py` first. (DB-1, DB-6, FILTERS-1, FILTERS-2, TESTS-6, TESTS-8)
 7. **Remove the plumbing of switched-off features.** Early-stop pagination is hard-disabled
    (`known_ids_by_source = None`), yet it still threads through `--full-scrape`, four scrapers and a
    storage query. The `enable_image_hash_matching` setting has no effect on normal runs. The
@@ -116,7 +122,10 @@ The research changed three rules:
 **Verification.** CERTAIN items and test-only items whose tests are exclusive to them were applied
 in a separate worktree. The [trial](trial.md) then ran ruff, strict mypy, the full suite and a
 coverage regression check: no function covered on `main` may lose all its tests. Findings that
-failed a gate were downgraded.
+failed a gate would have been downgraded; none did. 4,213 tests passed (the 38 removed were exactly
+the deleted code's exclusive tests), coverage rose from 91.13% to 91.41%, all eight operator entry
+points still answered `--help`, and vulture's list shrank from 343 to 315 lines. The browser suite
+and the Docker build were not run; the container has neither a browser nor Docker.
 
 **Cross-checking between auditors** caught at least one wrong claim. CROSS-3 says the off-market
 checker fetches Rightmove with httpx and no User-Agent. FILTERS-8 is right instead: `rightmove`
@@ -128,9 +137,10 @@ docstring at line 86 misled the first auditor.
 These six patterns explain most of the findings. Each one also suggests a guard, so the residue
 does not come back.
 
-1. **Refactors move code but not its consumers outside CI's view.** 41f499e renamed `filters/quality`
-   to `analysis/analyzer`, `CommuteFilter` to `enrichment/commute` and so on. It updated `src/` and
-   `tests/` but not `CLAUDE.md`, the experiments, the review scripts or the open draft PR.
+1. **Refactors move code but not its consumers outside CI's view.** 41f499e moved
+   `filters/quality.py` to `analysis/analyzer.py` and the prompts to `analysis/prompts.py`, moved
+   detail enrichment into `enrichment/`, and removed the `CommuteFilter` class. It updated `src/`
+   and `tests/` but not `CLAUDE.md`, the experiments, the review scripts or the open draft PR.
    *Guard:* an import smoke test for scripts, experiments and docs scripts, plus a rule that a
    rename updates `CLAUDE.md` in the same PR.
 2. **A replacement lands beside the old path, and the old path's tests keep it alive.** The outbox
@@ -187,14 +197,14 @@ without a test. Finding IDs link to the per-area files.
 | Batch | Contents | Grade | Evidence state | Approx. size | Owner? |
 |---|---|---|---|---|---|
 | **A. True instructions and docs** | Rewrite `CLAUDE.md` as agent guidance plus links, and un-ignore it and `.python-version` (REPO-1–4 and others listed above); fix the `--serve` claim in `operations.md` (REPO-5); fix `.env.example` reservation figures and the default search areas (PIPELINE-6–8); fix README, CONTRIBUTING and `docs/ci.md` (REPO-6, WEB-9, PIPELINE-10); fix `docs/sources` (SCRAPERS-18); add ADR 002 superseding ADR 001 (REPO-16) | CERTAIN | Verified against code | ~200 doc lines changed | no |
-| **B. Certain dead code** | DB-2, DB-10, DB-12, DB-14, DB-17, SCRAPERS-4 (`_extract_listings_from_parsed`), SCRAPERS-6, SCRAPERS-7, FILTERS-8, ANALYSIS-5, 7, 10, 13 and 14, WEB-1–5 (certain parts), PIPELINE-19 | CERTAIN/HIGH | See [trial](trial.md) | see trial | no |
-| **C. Dependencies** | Remove Crawlee and add `beautifulsoup4` and `lxml`; remove the Crawlee fixtures and E402 ignore; remove `respx` and `dirty-equals` (SCRAPERS-1, REPO-12, TESTS-5, TESTS-16). Coordinate with Dependabot PR #86 | CERTAIN | See [trial](trial.md) | lockfile plus ~90 lines | no |
-| **D. Test-suite speed and hygiene** | TESTS-1 (heap scan), TESTS-10/11 and SCRAPERS-15 (unused fixtures and files), TESTS-14 (markers, add `--strict-markers`), TESTS-21 (redundant asyncio markers), TESTS-12/13 (shared fixtures into `tests/support`), TESTS-18, TESTS-15, PIPELINE-24 (cache directory in the working directory) | CERTAIN/HIGH | TESTS-1 timed in the trial | ~1,100 test lines | no |
-| **E. Retire test-only APIs** | Retarget tests, then delete: SCRAPERS-3 (floorplan heuristic), FILTERS-5, ANALYSIS-3, SCRAPERS-11, PIPELINE-11/12 and DB-4 (trial verified); ANALYSIS-2, FILTERS-6/7/9, SCRAPERS-4/5/9/21, WEB-6, DB-3/8/9, CROSS-10 (need retargeting) | HIGH | Partly verified | ~600 src and ~550 test lines removed; ~150 test call sites retargeted | no |
+| **B. Certain dead code** | DB-2, DB-10, DB-12, DB-14, DB-17, SCRAPERS-4 (`_extract_listings_from_parsed`), SCRAPERS-6, SCRAPERS-7, FILTERS-8, ANALYSIS-5, 7, 10, 13 and 14, WEB-1–5 (certain parts), PIPELINE-19 | CERTAIN/HIGH | Trial: all gates passed (browser suite not run) | −558 lines | no |
+| **C. Dependencies** | Remove Crawlee and add `beautifulsoup4` and `lxml`; remove the Crawlee fixtures and E402 ignore; remove `respx` and `dirty-equals` (SCRAPERS-1, REPO-12, TESTS-5, TESTS-16). Coordinate with Dependabot PR #86 | CERTAIN | Trial: all gates passed; 15 packages removed, none added, no version changes | −342 lines, mostly lockfile | no |
+| **D. Test-suite speed and hygiene** | TESTS-1 (heap scan), TESTS-10/11 and SCRAPERS-15 (unused fixtures and files), TESTS-14 (markers, add `--strict-markers`), TESTS-21 (redundant asyncio markers), TESTS-12/13 (shared fixtures into `tests/support`), TESTS-18, TESTS-15, PIPELINE-24 (cache directory in the working directory) | CERTAIN/HIGH | Trial: TESTS-1, TESTS-10 and TESTS-11 passed (−135 lines); the rest static | ~1,100 test lines | no |
+| **E. Retire test-only APIs** | Retarget tests, then delete: SCRAPERS-3 (floorplan heuristic), FILTERS-5, ANALYSIS-3, SCRAPERS-11, PIPELINE-11/12 and DB-4 (trial verified); ANALYSIS-2, FILTERS-6/7/9, SCRAPERS-4/5/9/21, WEB-6, DB-3/8/9, CROSS-10 (need retargeting) | HIGH | Trial: the first seven passed (−846 lines); the rest need retargeting | ~600 src and ~550 test lines removed; ~150 test call sites retargeted | no |
 | **F. Superseded writers and senders** | Add `tests/support/seed.py`, then delete the old storage writers (DB-1, DB-6, TESTS-6) and the old Telegram senders and unreachable text format (FILTERS-1/2/3, TESTS-8) | HIGH | Coverage-mapped | ~970 src and ~970 test lines removed; ~500 seeding call sites rewritten | **yes**: accept the outbox qualification route (A7) |
 | **G. Switched-off feature plumbing** | Early-stop and `--full-scrape` (PIPELINE-1, SCRAPERS-2, CROSS-1, DB-5, TESTS-9); image-hash setting (PIPELINE-2, SCRAPERS-16); always-`None` prompt arguments (ANALYSIS-4, CROSS-8, ANALYSIS-11); triple retention (PIPELINE-13); ignored arguments (PIPELINE-18, CROSS-9) | HIGH | Prompt bytes unchanged (pinned snapshot) | ~200 src and ~350 test lines | **yes**: drop the CLI flag; choose an image-hash policy |
 | **H. Scripts, experiments, live tests** | Retire mutating scripts (PIPELINE-27, REPO-7–9, PIPELINE-20); fix or archive the experiments and add an import smoke test (REPO-18–20, FILTERS-11); delete or replace the live tests with an explicit smoke procedure (TESTS-2–4, REPO-15, A20); TESTS-20 | HIGH | Import failures reproduced | ~1,800 script and live-test lines removed; experiments (~7,700 lines) fixed or archived | **yes**: which scripts the owner still runs |
-| **I. Repository hygiene** | Root leftovers: `output.txt`, `crontab`, `main.py`, `mutmut_config.py`, `dedupe.json` (REPO-10); move `output/playwright` and the research note (REPO-11); archive the February documents (REPO-17); tidy config drift (REPO-14, 22, 23); delete the 40 merged remote branches (REPO-21) | HIGH | Reference-checked | ~12k lines moved | **yes**: branches |
+| **I. Repository hygiene** | Root leftovers: `output.txt`, `crontab`, `mutmut_config.py`, `dedupe.json` (REPO-10; root `main.py` is in Batch B); move `output/playwright` and the research note (REPO-11); archive the February documents (REPO-17); tidy config drift (REPO-14, 22, 23); delete the 40 merged remote branches (REPO-21) | HIGH | Reference-checked | ~12k lines moved | **yes**: branches |
 | **J. Small structural fixes** | DB-15 (image SQL ×3), DB-20 and CROSS-4 (db imports FastAPI), CROSS-5/6, ANALYSIS-16, FILTERS-12 and SCRAPERS-8 (leftover lazy imports and re-exports), CROSS-7 (one floor-area helper), CROSS-12/13 and SCRAPERS-10 (media-type and small helpers), ANALYSIS-12/19, DB-7/11, WEB-10/12/13/17, PIPELINE-21, FILTERS-13, CROSS-14/17, ANALYSIS-17, SCRAPERS-22 | HIGH | Static | ~500 lines touched | no |
 
 **Deferred until data or a decision exists.** The stored-row JSON repair and the `json-repair`

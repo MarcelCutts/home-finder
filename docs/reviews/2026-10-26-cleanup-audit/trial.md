@@ -7,6 +7,12 @@ The environment was a fresh virtual environment in the worktree (`uv sync --lock
 --python 3.13`; the pinned 3.14.7 was unavailable). **Net: 32 commits, 54 files, +31 / −1,881 lines**
 (src +16/−806, tests +7/−817, pyproject/uv.lock/.gitignore/root `main.py` +8/−258).
 
+**Full-suite comparison.** The same command
+(`HYPOTHESIS_PROFILE=ci pytest --cov --cov-report=json`, default `-n auto`, 4 CPUs) was run on
+`main` and on the trial tree, each with the machine otherwise idle. `main`: 4,251 passed in
+585.7 s. Trial: 4,213 passed in 123.5 s. The trial removed 38 small tests, so nearly all of the
+difference comes from TESTS-1 (see [GC timing](#gc-timing-item-12)).
+
 ## Gate results (on HEAD `b49ba69`, all items applied)
 
 | Gate | Result |
@@ -14,7 +20,7 @@ The environment was a fresh virtual environment in the worktree (`uv sync --lock
 | `ruff check src tests` | All checks passed |
 | `ruff format --check src tests` | 304 files already formatted |
 | `mypy src` (strict) | Success: no issues found in 120 source files |
-| Full suite `HYPOTHESIS_PROFILE=ci pytest --cov ...` | **4213 passed, 0 failed**, 5 warnings, pytest 123.5 s, wall 126 s, exit 0. Baseline main: 4251 passed, 4 warnings, 818.9 s (CPU-contended). The -38 tests are exactly the deleted exclusive tests (9+6+4+12+2+2+3). Total coverage 91.13% -> 91.41%. |
+| Full suite `HYPOTHESIS_PROFILE=ci pytest --cov ...` | **4213 passed, 0 failed**, 5 warnings, pytest 123.5 s, wall 126 s, exit 0. Baseline `main` with the same command: 4251 passed, 4 warnings, 585.7 s. The -38 tests are exactly the deleted exclusive tests (9+6+4+12+2+2+3). Total coverage 91.13% -> 91.41%. |
 | Coverage regression (functions covered in baseline, 0 covered lines in trial) | 1 hit, an artefact: `filters/off_market.py::OffMarketChecker.close` now has 0 statements (a docstring-only no-op after FILTERS-8), so it cannot have covered lines. No real regression, so no downgrade. 992 functions compared; the files missing from trial are the two deleted modules. Only per-file % drop >0.5 pt: row_mappers.py 92.3 -> 91.7 (covered dead lines removed). Output: the audit's scratch evidence. |
 | `python -m home_finder.pipeline.{backup,delivery_admin,notification_report,recovery_admin,spend_admin,spend_report,rating_shadow_report} --help` and `home-finder --help` | All 8 rc=0. Run from an empty scratch cwd, which stayed empty. |
 | vulture `src --min-confidence 60` before/after | 343 -> 315 lines; 30 items gone, 2 NEW (see cascade list) |
@@ -81,7 +87,7 @@ Command: `PYTHONUNBUFFERED=1 .venv/bin/pytest tests/test_db tests/test_web -q -p
 | gc scan present | 886 passed, pytest 94.58 s (wall 95.9 s) | 886 passed, 89.70 s (wall 91.0 s) |
 | gc scan removed | 886 passed, pytest 19.80 s (wall 21.1 s) | 886 passed, 20.36 s (wall 21.8 s) |
 
-That is roughly a 4.5x speed-up on DB/web tests. The full default suite took 123.5 s in this trial versus 818.9 s for the baseline run; the baseline machine was contended, but most of the gap is this fixture. Neither variant printed a "leaked aiosqlite" warning.
+That is roughly a 4.5x speed-up on DB/web tests. The full default suite took 123.5 s in this trial versus 585.7 s on `main` with the same command; most of the gap is this fixture. Neither variant printed a "leaked aiosqlite" warning.
 
 ## Vulture cascade candidates (not applied)
 
