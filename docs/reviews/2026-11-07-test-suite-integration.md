@@ -127,10 +127,18 @@ this report does not derive an exact overall speedup ratio from them.
 The final fast profile partitions 10.69 seconds after pytest configuration into
 4.49 seconds of startup, a 3.90-second test window and 2.31 seconds through the
 session-finish hook. Workers occupied test phases for 78% of that window. Startup
-and shutdown now dominate wall time; remaining slow cases include actual child
+and shutdown dominate this local 16-worker profile; remaining slow cases include actual child
 processes proving crash recovery, backup/CLI isolation, and the profiler's own
 failure-handling tests. Those boundaries are valuable. No further grouping or
 worker cap was added merely to improve this machine's benchmark.
+
+Hosted [CI run 42407477245](https://github.com/MarcelCutts/home-finder/actions/runs/42407477245)
+at `24bdcb0` passed all 4,160 offline cases in **72.51 seconds** with coverage and
+the CI Hypothesis profile. Automatic discovery selected **two workers**. Its
+72.57-second profiler window comprised 11.55 seconds of startup, 54.66 seconds of
+test execution and 6.37 seconds through session finish, with 94% worker phase
+occupancy. Test execution dominates there. The different worker count, host and
+settings prevent treating local timings as a CI performance promise.
 
 ## Observability and interpretation
 
@@ -214,8 +222,15 @@ or paid APIs in this integration. Experimental harnesses were not rerun.
   treated as an error. The restored extra-request mutation was rejected.
 - Eight interleaved worker/template experiments succeeded.
 - Ruff checks/formatting, mypy over 123 source files, wheel/source build and
-  `git diff --check` passed. These are local checks; hosted CI runs separately on the PR.
+  `git diff --check` passed locally. Hosted CI at `24bdcb0` also passed lint, types,
+  offline coverage and a cold dependency/build check; timing summary, test-observability,
+  coverage and distribution artifacts were produced. Optional browser/live jobs
+  were skipped as configured.
 - The quality-pass reviewed production changes, fixture ownership, real decision
   boundaries, terminology, profile units, historical/current report separation and
   coverage claims. The gaps above remain explicit rather than inferred away from
   a green suite.
+
+The subsequent [conformance review](2026-11-07-test-suite-conformance.md) checks
+these claims against the PR, records assertion/documentation corrections, and
+separates the remaining coverage limits from completed work.

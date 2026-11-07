@@ -86,8 +86,8 @@ separates startup, test execution and shutdown; see [Performance evidence](#perf
   `DELIVERY_PAUSE_SECONDS` is zeroed for every test; set a scraper's
   `PAGE_DELAY_SECONDS` to 0 or record the off-market checker's pauses. When the
   pause is the contract, record the `asyncio.sleep` call and assert its argument.
-- A fresh in-memory `PropertyStorage` starts from a schema template built once per
-  worker by the real migrations (`plugins/schema_template.py`). File databases, tests
+- A fresh in-memory `PropertyStorage` reuses a schema template per worker, built by
+  the real migrations (`plugins/schema_template.py`). File databases, tests
   that patch `MIGRATIONS` or start from an older schema, and direct `run_migrations`
   calls migrate for real. Pass `-p no:tests.plugins.schema_template` to rule the
   template out; `plugins/test_schema_template.py` proves the fast path is taken.
@@ -157,17 +157,22 @@ uv run pytest --cov --cov-report=term
 Default tests block Python network sockets and exclude `slow` and `browser` cases.
 Native `curl_cffi` transport is outside pytest-socket’s protection: replace it at
 the session boundary in offline tests. Tests marked `slow` enable sockets locally
-as well as in CI. Browser tests enable sockets for their local server; Chromium may load CDN assets. Run a
-focused module while changing its contract, then run the default suite when shared
-fixtures or import boundaries change.
-
+as well as in CI. Browser tests enable sockets for their local server; Chromium
+may load CDN assets. Run a focused module while changing its contract, then run
+the default suite when shared fixtures or import boundaries change.
 
 Run the optional lanes explicitly:
 
 ```sh
-uv run pytest -n 0 -m 'browser and not slow' --timeout=120
-uv run pytest -n 0 -m 'slow and not browser' --timeout=120
+uv run pytest -n 0 -m 'browser and not slow'
+uv run pytest -n 0 -m 'slow and not browser'
 ```
+
+Slow tests receive a 120-second timeout unless they specify their own. Browser
+tests disable pytest-timeout because its signal handler interferes with Playwright;
+they use Playwright's action and assertion timeouts instead. A command-line
+`--timeout` does not override that marker. CI also limits each optional job to
+15 minutes.
 
 Live tests depend on portal access and supply; they may skip when no suitable
 listing exists. Paid analysis probes check request/response structure, not model

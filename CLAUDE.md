@@ -44,16 +44,16 @@ uv run home-finder --check-off-market                     # Spot-check URLs for 
 uv run home-finder --check-off-market --scrapers zoopla   # Check specific platforms only
 
 # Testing — runs in parallel by default via pytest-xdist (-n auto; no repository worker cap).
-# Timeout is already configured in pyproject.toml addopts (30s default).
-# Do NOT pass --timeout on the command line; it's handled automatically.
+# Timeouts: 30s by default; slow tests get 120s unless explicitly marked otherwise.
+# Browser tests use Playwright timeouts; their timeout(0) marker overrides --timeout.
 # PYTHONUNBUFFERED=1 prevents hanging when stdout is piped (e.g. Claude Code).
 # Agent shells that set PYTHONDONTWRITEBYTECODE=1 also stop pytest writing its
 # assertion-rewrite cache; until one run with it cleared (PYTHONDONTWRITEBYTECODE=)
 # writes the cache, every worker recompiles every test module (~2x collection time).
-PYTHONUNBUFFERED=1 uv run pytest                         # Run all tests in parallel (slow and browser tests excluded)
+PYTHONUNBUFFERED=1 uv run pytest                         # Run the offline suite in parallel
 PYTHONUNBUFFERED=1 uv run pytest tests/test_models.py    # Run specific test file
 PYTHONUNBUFFERED=1 uv run pytest -k "test_openrent"      # Run tests matching pattern
-PYTHONUNBUFFERED=1 uv run pytest -n0 tests/test_foo.py   # Run single-threaded (useful for debugging)
+PYTHONUNBUFFERED=1 uv run pytest -n0 tests/test_models.py # Run without xdist (useful for debugging)
 PYTHONUNBUFFERED=1 uv run pytest --cov=src               # Run with coverage
 PYTHONUNBUFFERED=1 uv run pytest --test-profile=test-results/local.json  # Where the run's time went
 PYTHONUNBUFFERED=1 uv run pytest -m slow                 # Run slow tests (real network scraping)
@@ -200,9 +200,10 @@ async with AsyncSession() as session:
 [`tests/README.md`](tests/README.md) describes suite boundaries, naming and shared support.
 
 - `pytest-asyncio` with `asyncio_mode = "auto"`; no `@pytest.mark.asyncio` needed
-- Default runs exclude `slow` (live network) and `browser` (Playwright) tests, block sockets
+- Default runs exclude `slow` (live network) and `browser` (Playwright) tests, block Python sockets
   (`pytest-socket`) and reject unknown markers (`--strict-markers`). The root conftest gives
-  `slow` and `browser` tests real sockets, so `pytest -m slow` can reach the portals
+  `slow` and `browser` tests real sockets, so `pytest -m slow` can reach the portals.
+  Native `curl_cffi` bypasses Python socket blocking; fake its session boundary offline
 - Mock HTTP with `pytest-httpx`, `httpx2.MockTransport` for the Anthropic SDK, and `AsyncMock` for
   curl_cffi/TravelTime. Fake only the
   Telegram Bot API (`tests/support/delivery.py`), keeping real delivery planning and persistence

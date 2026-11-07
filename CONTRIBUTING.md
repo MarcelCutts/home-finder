@@ -63,7 +63,7 @@ The project uses `--strict` mode for mypy. All code must be fully typed.
 ### Running Tests
 
 ```bash
-# Run all tests
+# Run the default offline suite (live and browser tests are excluded)
 uv run pytest
 
 # Run with coverage
