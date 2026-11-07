@@ -1,423 +1,46 @@
-"""Property assessment models, provider execution, and result assembly."""
+"""PropertyQualityAnalyzer execution with a mocked SDK client.
 
+Covers request construction, phase-1 to phase-2 chaining, deferral when images are
+missing, failure handling and the circuit breaker, and result assembly. Wire-level
+request bodies are covered with the real SDK transport in test_provider_transport.py.
+"""
+
+import asyncio
 import copy
-from typing import Annotated, Any, Literal
-from unittest.mock import AsyncMock, MagicMock, patch
+import json
+from typing import Any
+from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import pytest
+from anthropic import (
+    APIConnectionError,
+    APITimeoutError,
+    AuthenticationError,
+    BadRequestError,
+    InternalServerError,
+    RateLimitError,
+)
 from anthropic.types import ToolUseBlock, Usage
-from pydantic import BaseModel as _BaseModel
-from pydantic import HttpUrl, ValidationError
+from pydantic import HttpUrl
 
 from home_finder.analysis.analyzer import (  # type: ignore[attr-defined]
-    _CIRCUIT_BREAKER_COOLDOWN,
     _CIRCUIT_BREAKER_THRESHOLD,
-    _MODEL_PAIRS,
-    VISUAL_ANALYSIS_TOOL,
+    DELAY_BETWEEN_CALLS,
     APIUnavailableError,
     PropertyQualityAnalyzer,
-    _EvaluationResponse,
     _extract_eval_json,
-    _inline_refs,
     _sanitize_eval_enums,
-    _VisualAnalysisResponse,
-    assess_value,
-    build_evaluation_prompt,
 )
+from home_finder.data.area_context import ACOUSTIC_PROFILES, build_property_context
 from home_finder.models import (
-    BathroomAnalysis,
-    BedroomAnalysis,
-    ConditionAnalysis,
-    FlooringNoiseAnalysis,
-    KitchenAnalysis,
-    LightSpaceAnalysis,
-    ListingExtraction,
-    ListingRedFlags,
     MergedProperty,
-    OutdoorSpaceAnalysis,
     Property,
     PropertyImage,
-    PropertyQualityAnalysis,
     PropertySource,
-    SpaceAnalysis,
-    ValueAnalysis,
 )
 from home_finder.models.spend import SpendDeferred
-from home_finder.utils.image_cache import is_valid_image_url
+from home_finder.utils.image_cache import find_cached_file, get_cache_dir
 from tests.support.images import populate_image_cache
-
-
-class TestKitchenAnalysis:
-    """Tests for KitchenAnalysis model."""
-
-    def test_valid_full_analysis(self) -> None:
-        """Should create analysis with all fields."""
-        analysis = KitchenAnalysis(
-            overall_quality="modern",
-            hob_type="gas",
-            has_dishwasher="yes",
-            has_washing_machine="yes",
-            notes="Modern kitchen with integrated appliances",
-        )
-        assert analysis.overall_quality == "modern"
-        assert analysis.hob_type == "gas"
-
-    def test_minimal_analysis(self) -> None:
-        """Should create analysis with only defaults."""
-        analysis = KitchenAnalysis()
-        assert analysis.overall_quality == "unknown"
-        assert analysis.notes == ""
-
-    def test_invalid_kitchen_quality(self) -> None:
-        """Invalid kitchen quality should be coerced to default."""
-        analysis = KitchenAnalysis(overall_quality="excellent")  # type: ignore[arg-type]
-        assert analysis.overall_quality == "unknown"
-
-
-def _eval_schema_props() -> dict[str, Any]:
-    """Get the evaluation response schema properties (mirrors old EVALUATION_TOOL)."""
-    schema = _inline_refs(_EvaluationResponse.model_json_schema())
-    return schema["properties"]
-
-
-class TestToolSchema:
-    """Tests for VISUAL_ANALYSIS_TOOL and _EvaluationResponse schema structure."""
-
-    def test_uses_plain_types_for_boolean_and_enum_fields(self) -> None:
-        """Strict mode: boolean and enum fields use plain types (no anyOf)."""
-        visual_schema = VISUAL_ANALYSIS_TOOL["input_schema"]["properties"]
-
-        # Kitchen hob_type should be plain enum (no anyOf)
-        hob_type = visual_schema["kitchen"]["properties"]["hob_type"]
-        assert "anyOf" not in hob_type
-        assert hob_type["type"] == "string"
-        assert "unknown" in hob_type["enum"]
-
-        # Kitchen has_dishwasher should be plain enum (tri-state like has_washing_machine)
-        has_dishwasher = visual_schema["kitchen"]["properties"]["has_dishwasher"]
-        assert "anyOf" not in has_dishwasher
-        assert has_dishwasher["type"] == "string"
-        assert has_dishwasher["enum"] == ["yes", "no", "unknown"]
-
-        # Light space window_sizes should be plain enum with "unknown" sentinel
-        window_sizes = visual_schema["light_space"]["properties"]["window_sizes"]
-        assert "anyOf" not in window_sizes
-        assert "unknown" in window_sizes["enum"]
-
-        # Concern severity should be plain enum with "none" sentinel
-        concern_severity = visual_schema["concern_severity"]
-        assert "anyOf" not in concern_severity
-        assert "none" in concern_severity["enum"]
-
-    def test_tristate_fields_use_string_enum(self) -> None:
-        """High-impact fields should use string enum yes/no/unknown."""
-        visual_schema = VISUAL_ANALYSIS_TOOL["input_schema"]["properties"]
-        eval_schema = _eval_schema_props()
-        expected_enum = ["yes", "no", "unknown"]
-
-        # condition tri-state fields (Phase 1)
-        condition_props = visual_schema["condition"]["properties"]
-        assert condition_props["has_visible_damp"]["type"] == "string"
-        assert condition_props["has_visible_damp"]["enum"] == expected_enum
-        assert condition_props["has_visible_mold"]["type"] == "string"
-        assert condition_props["has_visible_mold"]["enum"] == expected_enum
-        assert condition_props["has_worn_fixtures"]["type"] == "string"
-        assert condition_props["has_worn_fixtures"]["enum"] == expected_enum
-
-        # bathroom.has_bathtub (Phase 1)
-        bathroom_props = visual_schema["bathroom"]["properties"]
-        assert bathroom_props["has_bathtub"]["type"] == "string"
-        assert bathroom_props["has_bathtub"]["enum"] == expected_enum
-
-        # bedroom.has_built_in_wardrobe (Phase 1)
-        bedroom_props = visual_schema["bedroom"]["properties"]
-        assert bedroom_props["has_built_in_wardrobe"]["type"] == "string"
-        assert bedroom_props["has_built_in_wardrobe"]["enum"] == expected_enum
-
-        # storage tri-state fields (Phase 1)
-        storage_props = visual_schema["storage"]["properties"]
-        assert storage_props["has_built_in_wardrobes"]["type"] == "string"
-        assert storage_props["has_built_in_wardrobes"]["enum"] == expected_enum
-        assert storage_props["has_hallway_cupboard"]["type"] == "string"
-        assert storage_props["has_hallway_cupboard"]["enum"] == expected_enum
-
-        # flooring_noise.has_double_glazing (Phase 1)
-        fn_props = visual_schema["flooring_noise"]["properties"]
-        assert fn_props["has_double_glazing"]["type"] == "string"
-        assert fn_props["has_double_glazing"]["enum"] == expected_enum
-
-        # listing_extraction.bills_included and pets_allowed (Phase 2)
-        le_props = eval_schema["listing_extraction"]["properties"]
-        assert le_props["bills_included"]["type"] == "string"
-        assert le_props["bills_included"]["enum"] == expected_enum
-        assert le_props["pets_allowed"]["type"] == "string"
-        assert le_props["pets_allowed"]["enum"] == expected_enum
-
-        # kitchen.has_washing_machine (Phase 1)
-        kitchen_props = visual_schema["kitchen"]["properties"]
-        assert kitchen_props["has_washing_machine"]["type"] == "string"
-        assert kitchen_props["has_washing_machine"]["enum"] == expected_enum
-
-        # bathroom.is_ensuite (Phase 1)
-        bath_props = visual_schema["bathroom"]["properties"]
-        assert bath_props["is_ensuite"]["type"] == "string"
-        assert bath_props["is_ensuite"]["enum"] == expected_enum
-
-        # bedroom.primary_is_double and can_fit_desk (Phase 1)
-        bed_props = visual_schema["bedroom"]["properties"]
-        assert bed_props["primary_is_double"]["type"] == "string"
-        assert bed_props["primary_is_double"]["enum"] == expected_enum
-        assert bed_props["can_fit_desk"]["type"] == "string"
-        assert bed_props["can_fit_desk"]["enum"] == expected_enum
-
-    def test_keeps_anyof_for_nullable_numeric_fields(self) -> None:
-        """Numeric and uncertain space-fit fields retain explicit null support."""
-        visual_schema = VISUAL_ANALYSIS_TOOL["input_schema"]["properties"]
-        eval_schema = _eval_schema_props()
-
-        # Space living_room_sqm should still use anyOf (numeric) — Phase 1
-        living_room_sqm = visual_schema["space"]["properties"]["living_room_sqm"]
-        assert "anyOf" in living_room_sqm
-        assert {"type": "number"} in living_room_sqm["anyOf"]
-        assert {"type": "null"} in living_room_sqm["anyOf"]
-
-        # Unknown usable area must not be converted to a negative fit judgement.
-        is_spacious = visual_schema["space"]["properties"]["is_spacious_enough"]
-        assert is_spacious["anyOf"] == [{"type": "boolean"}, {"type": "null"}]
-
-        # listing_extraction.service_charge_pcm should use anyOf — Phase 2
-        service_charge = eval_schema["listing_extraction"]["properties"]["service_charge_pcm"]
-        assert "anyOf" in service_charge
-
-    def test_strict_mode_on_visual_tool(self) -> None:
-        """Phase 1 tool is non-strict (schema exceeds grammar limits)."""
-        assert "strict" not in VISUAL_ANALYSIS_TOOL
-
-    def test_visual_tool_does_not_contain_evaluation_fields(self) -> None:
-        """Visual analysis tool should not contain Phase 2 fields."""
-        visual_props = VISUAL_ANALYSIS_TOOL["input_schema"]["properties"]
-        visual_required = VISUAL_ANALYSIS_TOOL["input_schema"]["required"]
-
-        assert "listing_extraction" not in visual_props
-        assert "viewing_notes" not in visual_props
-        assert "highlights" not in visual_props
-        assert "lowlights" not in visual_props
-        assert "one_line" not in visual_props
-        assert "value_for_quality" not in visual_props
-
-        assert "listing_extraction" not in visual_required
-        assert "value_for_quality" not in visual_required
-
-    def test_evaluation_schema_does_not_contain_visual_fields(self) -> None:
-        """Evaluation response schema should not contain Phase 1 fields."""
-        eval_props = _eval_schema_props()
-
-        assert "kitchen" not in eval_props
-        assert "condition" not in eval_props
-        assert "light_space" not in eval_props
-        assert "space" not in eval_props
-        assert "bathroom" not in eval_props
-        assert "overall_rating" not in eval_props
-
-
-class TestConditionAnalysis:
-    """Tests for ConditionAnalysis model."""
-
-    def test_valid_analysis_with_concerns(self) -> None:
-        """Should create analysis with condition concerns."""
-        analysis = ConditionAnalysis(
-            overall_condition="fair",
-            has_visible_damp="yes",
-            has_visible_mold="no",
-            has_worn_fixtures="yes",
-            maintenance_concerns=["Damp near window", "Dated bathroom"],
-            confidence="high",
-        )
-        assert analysis.overall_condition == "fair"
-        assert analysis.has_visible_damp == "yes"
-        assert len(analysis.maintenance_concerns) == 2
-
-    def test_minimal_analysis(self) -> None:
-        """Should create analysis with defaults."""
-        analysis = ConditionAnalysis(overall_condition="good")
-        assert analysis.has_visible_damp == "unknown"
-        assert analysis.maintenance_concerns == []
-        assert analysis.confidence == "medium"
-
-    def test_invalid_condition(self) -> None:
-        """Invalid condition should be coerced to default."""
-        analysis = ConditionAnalysis(overall_condition="amazing")  # type: ignore[arg-type]
-        assert analysis.overall_condition == "unknown"
-
-
-class TestLightSpaceAnalysis:
-    """Tests for LightSpaceAnalysis model."""
-
-    def test_valid_full_analysis(self) -> None:
-        """Should create analysis with all fields."""
-        analysis = LightSpaceAnalysis(
-            natural_light="excellent",
-            window_sizes="large",
-            feels_spacious=True,
-            ceiling_height="high",
-            notes="South-facing with floor-to-ceiling windows",
-        )
-        assert analysis.natural_light == "excellent"
-        assert analysis.feels_spacious is True
-
-    def test_minimal_analysis(self) -> None:
-        """Should create analysis with required fields only."""
-        analysis = LightSpaceAnalysis(
-            natural_light="fair",
-            feels_spacious=False,
-        )
-        assert analysis.window_sizes is None
-        assert analysis.ceiling_height is None
-
-
-class TestSpaceAnalysis:
-    """Tests for SpaceAnalysis model."""
-
-    def test_valid_analysis_with_sqm(self) -> None:
-        """Should create analysis with square meters."""
-        analysis = SpaceAnalysis(
-            living_room_sqm=25.5,
-            is_spacious_enough=True,
-            confidence="high",
-        )
-        assert analysis.living_room_sqm == 25.5
-        assert analysis.is_spacious_enough is True
-
-    def test_analysis_without_sqm(self) -> None:
-        """Should create analysis without square meters."""
-        analysis = SpaceAnalysis(
-            is_spacious_enough=False,
-            confidence="low",
-        )
-        assert analysis.living_room_sqm is None
-
-
-class TestValueAnalysis:
-    """Tests for ValueAnalysis model and assess_value function."""
-
-    def test_value_analysis_model(self) -> None:
-        """Should create ValueAnalysis with all fields."""
-        value = ValueAnalysis(
-            area_average=1900,
-            difference=-100,
-            rating="good",
-            note="£100 below E8 average",
-            quality_adjusted_rating="excellent",
-            quality_adjusted_note="Great condition justifies price",
-        )
-        assert value.area_average == 1900
-        assert value.quality_adjusted_rating == "excellent"
-
-    def test_excellent_value_below_average(self) -> None:
-        """Property well below average should be excellent value."""
-        value = assess_value(price_pcm=1600, postcode="E8 2LX", bedrooms=1)
-        assert value.rating == "excellent"
-        assert value.difference is not None and value.difference < 0
-        assert "below" in value.note.lower()
-
-    def test_good_value_at_average(self) -> None:
-        """Property at average should be good value."""
-        value = assess_value(price_pcm=1900, postcode="E8 2LX", bedrooms=1)
-        assert value.rating == "good"
-
-    def test_fair_value_slightly_above(self) -> None:
-        """Property slightly above average should be fair value."""
-        value = assess_value(price_pcm=2050, postcode="E8 2LX", bedrooms=1)
-        assert value.rating == "fair"
-        assert "above" in value.note.lower()
-
-    def test_poor_value_well_above(self) -> None:
-        """Property well above average should be poor value."""
-        value = assess_value(price_pcm=2300, postcode="E8 2LX", bedrooms=1)
-        assert value.rating == "poor"
-
-    def test_handles_missing_postcode(self) -> None:
-        """Should handle missing postcode gracefully."""
-        value = assess_value(price_pcm=1800, postcode=None, bedrooms=1)
-        assert value.rating is None
-        assert "cannot assess" in value.note.lower()
-
-    def test_uses_default_for_unknown_area(self) -> None:
-        """Should use default benchmark for unknown areas."""
-        # W1 is not in our benchmarks, should use default
-        value = assess_value(price_pcm=1800, postcode="W1A 1AA", bedrooms=1)
-        assert value.rating is not None  # Should still produce a rating
-
-    def test_different_bedroom_benchmarks(self) -> None:
-        """Different bedroom counts should use different benchmarks."""
-        value_1bed = assess_value(price_pcm=2000, postcode="E8 2LX", bedrooms=1)
-        value_2bed = assess_value(price_pcm=2000, postcode="E8 2LX", bedrooms=2)
-
-        # 2000 is above E8 1-bed average but below 2-bed average
-        assert value_1bed.rating in ["fair", "poor"]
-        assert value_2bed.rating in ["excellent", "good"]
-
-
-class TestPropertyQualityAnalysis:
-    """Tests for PropertyQualityAnalysis model."""
-
-    def test_valid_full_analysis(self) -> None:
-        """Should create complete quality analysis."""
-        analysis = PropertyQualityAnalysis(
-            kitchen=KitchenAnalysis(overall_quality="modern", hob_type="gas"),
-            condition=ConditionAnalysis(
-                overall_condition="good",
-                has_visible_damp="no",
-                maintenance_concerns=[],
-            ),
-            light_space=LightSpaceAnalysis(
-                natural_light="good",
-                feels_spacious=True,
-            ),
-            space=SpaceAnalysis(
-                living_room_sqm=22.0,
-                is_spacious_enough=True,
-                confidence="high",
-            ),
-            condition_concerns=False,
-            summary="Well-maintained flat with good natural light",
-        )
-        assert analysis.condition_concerns is False
-        assert "Well-maintained" in analysis.summary
-
-    def test_analysis_with_concerns(self) -> None:
-        """Should create analysis with condition concerns flagged."""
-        analysis = PropertyQualityAnalysis(
-            kitchen=KitchenAnalysis(),
-            condition=ConditionAnalysis(
-                overall_condition="poor",
-                has_visible_damp="yes",
-                has_visible_mold="yes",
-                maintenance_concerns=["Significant damp", "Mold in bathroom"],
-            ),
-            light_space=LightSpaceAnalysis(
-                natural_light="fair",
-                feels_spacious=False,
-            ),
-            space=SpaceAnalysis(is_spacious_enough=False),
-            condition_concerns=True,
-            concern_severity="serious",
-            summary="Property has significant damp and mold issues",
-        )
-        assert analysis.condition_concerns is True
-        assert analysis.concern_severity == "serious"
-
-    def test_model_is_frozen(self) -> None:
-        """Should be immutable."""
-        analysis = PropertyQualityAnalysis(
-            kitchen=KitchenAnalysis(),
-            condition=ConditionAnalysis(overall_condition="good"),
-            light_space=LightSpaceAnalysis(natural_light="good", feels_spacious=True),
-            space=SpaceAnalysis(is_spacious_enough=True),
-            summary="Test",
-        )
-        with pytest.raises(ValidationError):
-            analysis.summary = "Changed"
 
 
 @pytest.fixture
@@ -721,37 +344,35 @@ def _setup_two_phase_mocks(
     client_mock.messages.create = AsyncMock(side_effect=[mock_visual, mock_eval])
 
 
-class TestPropertyQualityAnalyzer:
-    """Tests for PropertyQualityAnalyzer."""
+def _status_error(error_type: type[Exception], status_code: int) -> Exception:
+    response = MagicMock()
+    response.status_code = status_code
+    response.headers = {}
+    return error_type(message="fixture", response=response, body=None)  # type: ignore[call-arg]
 
-    def test_is_valid_image_url_accepts_images(self) -> None:
-        """Should accept valid image URLs."""
-        valid_urls = [
-            "https://example.com/image.jpg",
-            "https://example.com/image.jpeg",
-            "https://example.com/image.png",
-            "https://example.com/image.gif",
-            "https://example.com/image.webp",
-            "https://example.com/image.JPG",  # Case insensitive
-            "https://example.com/image.jpg?w=800",  # With query params
-        ]
-        for url in valid_urls:
-            assert is_valid_image_url(url), f"Should accept {url}"
 
-    def test_is_valid_image_url_rejects_pdfs(self) -> None:
-        """Should reject PDF URLs (not supported by Claude Vision API)."""
-        pdf_urls = [
-            "https://lc.zoocdn.com/abc123.pdf",
-            "https://example.com/floorplan.PDF",
-            "https://example.com/doc.pdf?download=true",
-        ]
-        for url in pdf_urls:
-            assert not is_valid_image_url(url), f"Should reject {url}"
+def _visual_content(analyzer: PropertyQualityAnalyzer) -> list[dict[str, Any]]:
+    """Content blocks of the phase-1 (visual) request."""
+    return analyzer._client.messages.create.call_args_list[0].kwargs["messages"][0]["content"]
 
-    async def test_defers_analysis_when_no_images(self, sample_property: Property) -> None:
-        """Should defer analysis when no images are available."""
-        # Merged property with no images and no floorplan
-        merged = MergedProperty(
+
+def _evaluation_prompt(analyzer: PropertyQualityAnalyzer) -> str:
+    """Text of the phase-2 (evaluation) request."""
+    return analyzer._client.messages.create.call_args_list[1].kwargs["messages"][0]["content"]
+
+
+class TestAnalyzeMergedProperties:
+    """The batch entry point analyses each property in turn and paces provider calls."""
+
+    async def test_returns_results_in_input_order_and_pauses_after_each_property(
+        self,
+        sample_property: Property,
+        sample_merged_property: MergedProperty,
+        sample_visual_response: dict[str, Any],
+        sample_evaluation_response: dict[str, Any],
+        tmp_path: Any,
+    ) -> None:
+        without_images = MergedProperty(
             canonical=sample_property,
             sources=(sample_property.source,),
             source_urls={sample_property.source: sample_property.url},
@@ -760,153 +381,31 @@ class TestPropertyQualityAnalyzer:
             min_price=sample_property.price_pcm,
             max_price=sample_property.price_pcm,
         )
-
-        analyzer = PropertyQualityAnalyzer(api_key="test-key")
-        results = await analyzer.analyze_merged_properties([merged])
-
-        assert len(results) == 1
-        _, analysis = results[0]
-        assert analysis is None
-
-    async def test_analyzes_property_with_images(
-        self,
-        sample_merged_property: MergedProperty,
-        sample_visual_response: dict[str, Any],
-        sample_evaluation_response: dict[str, Any],
-        tmp_path: Any,
-    ) -> None:
-        """Should analyze property with gallery images using two-phase structured outputs."""
         populate_image_cache(str(tmp_path), sample_merged_property)
 
         analyzer = PropertyQualityAnalyzer(api_key="test-key")
         analyzer._client = MagicMock()
         _setup_two_phase_mocks(analyzer._client, sample_visual_response, sample_evaluation_response)
 
-        results = await analyzer.analyze_merged_properties(
-            [sample_merged_property], data_dir=str(tmp_path)
-        )
+        with patch("home_finder.analysis.analyzer.asyncio.sleep", new_callable=AsyncMock) as sleep:
+            results = await analyzer.analyze_merged_properties(
+                [without_images, sample_merged_property], data_dir=str(tmp_path)
+            )
 
-        assert len(results) == 1
-        _, analysis = results[0]
+        assert len(results) == 2
+        assert results[0][0] is without_images and results[0][1] is None
+        merged, analysis = results[1]
+        assert merged is sample_merged_property
         assert analysis.kitchen.overall_quality == "modern"
         assert analysis.kitchen.hob_type == "gas"
         assert analysis.condition.overall_condition == "good"
         assert analysis.light_space.natural_light == "excellent"
         assert analysis.space.living_room_sqm == 22
+        assert sleep.await_args_list == [call(DELAY_BETWEEN_CALLS)] * 2
 
-    def test_historical_one_line_wrapped_in_object(
-        self,
-        sample_visual_response: dict[str, Any],
-        sample_evaluation_response: dict[str, Any],
-    ) -> None:
-        """Historical stored output retains bounded one_line unwrapping."""
-        sample_evaluation_response["one_line"] = {"one_line": "Bright flat with balcony"}
-        analysis = PropertyQualityAnalyzer._merge_analysis_results(
-            sample_visual_response, sample_evaluation_response, 2, "fixture:legacy"
-        )
-        assert analysis is not None and analysis.one_line == "Bright flat with balcony"
 
-    async def test_overrides_space_for_two_plus_beds(
-        self,
-        sample_merged_property: MergedProperty,
-        sample_visual_response: dict[str, Any],
-        sample_evaluation_response: dict[str, Any],
-        tmp_path: Any,
-    ) -> None:
-        """Should override space assessment for 2+ bedroom properties."""
-        # Response says not spacious enough, but 2-bed should override
-        visual_response = copy.deepcopy(sample_visual_response)
-        visual_response["space"].update(living_room_sqm=15, is_spacious_enough=False)
-        visual_response.update(overall_rating=3, summary="Compact living room")
-
-        populate_image_cache(str(tmp_path), sample_merged_property)
-
-        analyzer = PropertyQualityAnalyzer(api_key="test-key")
-        analyzer._client = MagicMock()
-        _setup_two_phase_mocks(analyzer._client, visual_response, sample_evaluation_response)
-
-        results = await analyzer.analyze_merged_properties(
-            [sample_merged_property], data_dir=str(tmp_path)
-        )
-
-        _, analysis = results[0]
-        # No override in analysis layer — Claude's raw assessment preserved
-        assert analysis.space.is_spacious_enough is False
-
-    async def test_does_not_override_space_for_one_bed(
-        self,
-        one_bed_merged_property: MergedProperty,
-        sample_visual_response: dict[str, Any],
-        sample_evaluation_response: dict[str, Any],
-        tmp_path: Any,
-    ) -> None:
-        """Should NOT override space assessment for 1-bed properties."""
-        visual_response = copy.deepcopy(sample_visual_response)
-        visual_response["space"].update(living_room_sqm=15, is_spacious_enough=False)
-        visual_response.update(overall_rating=3, summary="Compact living room")
-
-        populate_image_cache(str(tmp_path), one_bed_merged_property)
-
-        analyzer = PropertyQualityAnalyzer(api_key="test-key")
-        analyzer._client = MagicMock()
-        _setup_two_phase_mocks(analyzer._client, visual_response, sample_evaluation_response)
-
-        results = await analyzer.analyze_merged_properties(
-            [one_bed_merged_property], data_dir=str(tmp_path)
-        )
-
-        _, analysis = results[0]
-        # Should keep original assessment
-        assert analysis.space.is_spacious_enough is False
-
-    async def test_handles_llm_failure_gracefully(
-        self,
-        sample_merged_property: MergedProperty,
-        tmp_path: Any,
-    ) -> None:
-        """Should return minimal analysis on Phase 1 LLM failure."""
-        populate_image_cache(str(tmp_path), sample_merged_property)
-
-        analyzer = PropertyQualityAnalyzer(api_key="test-key")
-        analyzer._client = MagicMock()
-        analyzer._client.messages.create = AsyncMock(side_effect=Exception("API error"))
-
-        results = await analyzer.analyze_merged_properties(
-            [sample_merged_property], data_dir=str(tmp_path)
-        )
-
-        assert len(results) == 1
-        _, analysis = results[0]
-        assert "Quality analysis incomplete" in analysis.summary
-        assert analysis.overall_rating is None
-        assert analysis.analysis_failure.kind == "internal_error"
-
-    async def test_handles_unexpected_stop_reason(
-        self,
-        sample_merged_property: MergedProperty,
-        tmp_path: Any,
-    ) -> None:
-        """Should return minimal analysis on unexpected stop reason (e.g., max_tokens)."""
-        mock_response = MagicMock()
-        mock_response.content = []
-        mock_response.stop_reason = "max_tokens"  # Unexpected stop reason
-        mock_response.usage = Usage(input_tokens=100, output_tokens=50)
-
-        populate_image_cache(str(tmp_path), sample_merged_property)
-
-        analyzer = PropertyQualityAnalyzer(api_key="test-key")
-        analyzer._client = MagicMock()
-        analyzer._client.messages.create = AsyncMock(return_value=mock_response)
-
-        results = await analyzer.analyze_merged_properties(
-            [sample_merged_property], data_dir=str(tmp_path)
-        )
-
-        assert len(results) == 1
-        _, analysis = results[0]
-        assert "Quality analysis incomplete" in analysis.summary
-        assert analysis.overall_rating is None
-        assert analysis.analysis_failure.kind == "truncated"
+class TestVisualRequest:
+    """The phase-1 request carries the cached images, their labels and the listing text."""
 
     async def test_includes_all_images_in_phase1_call(
         self,
@@ -923,17 +422,15 @@ class TestPropertyQualityAnalyzer:
         analyzer._client = MagicMock()
         _setup_two_phase_mocks(analyzer._client, sample_visual_response, sample_evaluation_response)
 
-        await analyzer.analyze_merged_properties([sample_merged_property], data_dir=data_dir)
+        await analyzer.analyze_single_merged(sample_merged_property, data_dir=data_dir)
 
-        # Check the Phase 1 API call (first call)
-        call_args = analyzer._client.messages.create.call_args_list[0]
-        content = call_args.kwargs["messages"][0]["content"]
-
+        content = _visual_content(analyzer)
         # 3 gallery x (label + image) + 1 floorplan x (label + image) + 1 text = 9
         assert len(content) == 9
-        assert content[0]["type"] == "text"  # "Gallery image 1:"
+        assert content[0] == {"type": "text", "text": "Gallery image 1:"}
         assert content[1]["type"] == "image"
-        assert content[6]["type"] == "text"  # "Floorplan:"
+        assert content[6]["type"] == "text"
+        assert content[6]["text"].startswith("Source-declared floorplan.")
         assert content[7]["type"] == "image"  # floorplan
         assert content[8]["type"] == "text"  # user prompt
 
@@ -944,8 +441,7 @@ class TestPropertyQualityAnalyzer:
         sample_evaluation_response: dict[str, Any],
         tmp_path: Any,
     ) -> None:
-        """Should respect max_images configuration."""
-        # Create merged property with 20 gallery images
+        """A cached floorplan takes one of max_images; the gallery fills the rest in order."""
         many_images_merged = MergedProperty(
             canonical=sample_property,
             sources=(sample_property.source,),
@@ -975,57 +471,45 @@ class TestPropertyQualityAnalyzer:
         analyzer._client = MagicMock()
         _setup_two_phase_mocks(analyzer._client, sample_visual_response, sample_evaluation_response)
 
-        await analyzer.analyze_merged_properties([many_images_merged], data_dir=data_dir)
+        await analyzer.analyze_single_merged(many_images_merged, data_dir=data_dir)
 
-        call_args = analyzer._client.messages.create.call_args_list[0]
-        content = call_args.kwargs["messages"][0]["content"]
+        content = _visual_content(analyzer)
+        assert sum(block["type"] == "image" for block in content) == 5
+        labels = [block["text"] for block in content[:-1] if block["type"] == "text"]
+        assert labels[:4] == [f"Gallery image {n}:" for n in range(1, 5)]
+        assert len(labels) == 5 and labels[4].startswith("Source-declared floorplan.")
 
-        # With floorplan present, gallery is capped to max_images-1=4
-        # So: 4 gallery + 1 floorplan = 5 total images (stays within max_images)
-        image_blocks = [c for c in content if c.get("type") == "image"]
-        assert len(image_blocks) == 5  # 4 gallery + 1 floorplan
-        label_blocks = [
-            c
-            for c in content
-            if (c.get("type") == "text" and "image" in c.get("text", "").lower())
-            or "Floorplan" in c.get("text", "")
-        ]
-        assert len(label_blocks) >= 4  # at least 4 gallery labels
-
-    async def test_uses_tool_choice_for_structured_output(
+    async def test_pdf_floorplan_is_not_sent_and_leaves_gallery_its_allowance(
         self,
         sample_merged_property: MergedProperty,
         sample_visual_response: dict[str, Any],
         sample_evaluation_response: dict[str, Any],
         tmp_path: Any,
     ) -> None:
-        """Phase 1 uses auto tool_choice with thinking; Phase 2 uses output_format."""
-        populate_image_cache(str(tmp_path), sample_merged_property)
+        """The vision API cannot read a PDF floorplan, so every image slot goes to the gallery."""
+        assert sample_merged_property.floorplan is not None
+        merged = sample_merged_property.model_copy(
+            update={
+                "floorplan": sample_merged_property.floorplan.model_copy(
+                    update={"url": HttpUrl("https://example.com/FLOORPLAN.PDF")}
+                )
+            }
+        )
+        data_dir = str(tmp_path)
+        populate_image_cache(data_dir, merged)
+        # A decodable file is cached under the PDF URL: only the URL check can reject it.
+        assert find_cached_file(data_dir, merged.unique_id, str(merged.floorplan.url), "floorplan")
 
-        analyzer = PropertyQualityAnalyzer(api_key="test-key")
+        analyzer = PropertyQualityAnalyzer(api_key="test-key", max_images=3)
         analyzer._client = MagicMock()
         _setup_two_phase_mocks(analyzer._client, sample_visual_response, sample_evaluation_response)
 
-        await analyzer.analyze_merged_properties([sample_merged_property], data_dir=str(tmp_path))
+        await analyzer.analyze_single_merged(merged, data_dir=data_dir)
 
-        # Phase 1: auto tool_choice with extended thinking (messages.create)
-        create_calls = analyzer._client.messages.create.call_args_list
-        assert len(create_calls) == 2  # Phase 1 + Phase 2
-        phase1_kwargs = create_calls[0].kwargs
-        assert phase1_kwargs["tool_choice"] == {"type": "auto"}
-        assert phase1_kwargs["thinking"] == {
-            "type": "adaptive",
-        }
-        assert len(phase1_kwargs["tools"]) == 1
-        assert phase1_kwargs["tools"][0]["name"] == "property_visual_analysis"
-
-        # Phase 2: output_config via messages.create (no tools, no tool_choice)
-        assert len(create_calls) == 2
-        phase2_kwargs = create_calls[1].kwargs
-        assert phase2_kwargs["output_config"]["format"]["type"] == "json_schema"
-        assert "tools" not in phase2_kwargs
-        assert "tool_choice" not in phase2_kwargs
-        assert "thinking" not in phase2_kwargs
+        content = _visual_content(analyzer)
+        assert sum(block["type"] == "image" for block in content) == 3
+        labels = [block["text"] for block in content[:-1] if block["type"] == "text"]
+        assert labels == ["Gallery image 1:", "Gallery image 2:", "Gallery image 3:"]
 
     async def test_uses_cached_system_prompt(
         self,
@@ -1041,7 +525,7 @@ class TestPropertyQualityAnalyzer:
         analyzer._client = MagicMock()
         _setup_two_phase_mocks(analyzer._client, sample_visual_response, sample_evaluation_response)
 
-        await analyzer.analyze_merged_properties([sample_merged_property], data_dir=str(tmp_path))
+        await analyzer.analyze_single_merged(sample_merged_property, data_dir=str(tmp_path))
 
         # Phase 1 system prompt (messages.create)
         create_calls = analyzer._client.messages.create.call_args_list
@@ -1061,59 +545,6 @@ class TestPropertyQualityAnalyzer:
         assert system2[0]["type"] == "text"
         assert system2[0]["cache_control"] == {"type": "ephemeral"}
         assert "expert London rental property evaluator" in system2[0]["text"]
-
-    async def test_extracts_value_for_quality_from_tool_response(
-        self,
-        sample_merged_property: MergedProperty,
-        sample_visual_response: dict[str, Any],
-        sample_evaluation_response: dict[str, Any],
-        tmp_path: Any,
-    ) -> None:
-        """Should extract quality-adjusted value rating from Phase 2 response."""
-        populate_image_cache(str(tmp_path), sample_merged_property)
-
-        analyzer = PropertyQualityAnalyzer(api_key="test-key")
-        analyzer._client = MagicMock()
-        _setup_two_phase_mocks(analyzer._client, sample_visual_response, sample_evaluation_response)
-
-        results = await analyzer.analyze_merged_properties(
-            [sample_merged_property], data_dir=str(tmp_path)
-        )
-
-        _, analysis = results[0]
-        # value.quality_adjusted_rating comes from Phase 2
-        assert analysis.value is not None
-        assert analysis.value.quality_adjusted_rating == "good"
-        assert "Well-maintained" in analysis.value.quality_adjusted_note
-
-    async def test_handles_end_turn_with_tool_use(
-        self,
-        sample_merged_property: MergedProperty,
-        sample_visual_response: dict[str, Any],
-        sample_evaluation_response: dict[str, Any],
-        tmp_path: Any,
-    ) -> None:
-        """Should handle end_turn stop_reason when tool_use block is present."""
-        mock_visual = create_mock_response(
-            sample_visual_response, stop_reason="end_turn", tool_name="property_visual_analysis"
-        )
-
-        mock_eval = create_mock_eval_response(sample_evaluation_response)
-
-        populate_image_cache(str(tmp_path), sample_merged_property)
-
-        analyzer = PropertyQualityAnalyzer(api_key="test-key")
-        analyzer._client = MagicMock()
-        analyzer._client.messages.create = AsyncMock(side_effect=[mock_visual, mock_eval])
-
-        results = await analyzer.analyze_merged_properties(
-            [sample_merged_property], data_dir=str(tmp_path)
-        )
-
-        assert len(results) == 1
-        _, analysis = results[0]
-        assert analysis.kitchen.overall_quality == "modern"
-        assert analysis.kitchen.hob_type == "gas"
 
     async def test_includes_description_in_prompt(
         self,
@@ -1154,134 +585,37 @@ class TestPropertyQualityAnalyzer:
         analyzer._client = MagicMock()
         _setup_two_phase_mocks(analyzer._client, sample_visual_response, sample_evaluation_response)
 
-        await analyzer.analyze_merged_properties([merged], data_dir=str(tmp_path))
+        await analyzer.analyze_single_merged(merged, data_dir=str(tmp_path))
 
-        call_args = analyzer._client.messages.create.call_args_list[0]
-        content = call_args.kwargs["messages"][0]["content"]
-
-        # Find the text block with the user prompt (last text block, after image labels)
-        text_blocks = [c for c in content if c.get("type") == "text"]
-        prompt_text = text_blocks[-1]["text"]  # User prompt is last
+        # The user prompt is the last text block, after the image labels.
+        prompt_text = _visual_content(analyzer)[-1]["text"]
 
         # Verify description is included (XML format)
         assert "<listing_description>" in prompt_text
         assert "gas hob" in prompt_text
 
-    def test_historical_nullable_fields_remain_readable(
-        self,
-        sample_visual_response_with_nulls: dict[str, Any],
-        sample_evaluation_response_with_nulls: dict[str, Any],
-    ) -> None:
-        """Nullable legacy output remains readable outside the live API boundary."""
-        analysis = PropertyQualityAnalyzer._merge_analysis_results(
-            sample_visual_response_with_nulls,
-            sample_evaluation_response_with_nulls,
-            1,
-            "fixture:legacy",
-        )
-        assert analysis is not None
-
-        # Verify null values are handled correctly
-        assert analysis.kitchen.overall_quality == "unknown"
-        assert analysis.kitchen.hob_type is None
-        assert analysis.kitchen.has_dishwasher == "unknown"
-        assert analysis.kitchen.has_washing_machine == "unknown"
-
-        assert analysis.light_space.window_sizes == "unknown"
-        assert analysis.light_space.feels_spacious is None
-        assert analysis.light_space.ceiling_height == "unknown"
-
-        assert analysis.space.living_room_sqm is None
-        assert analysis.space.is_spacious_enough is None
-
-        assert analysis.concern_severity == "none"
-
-    async def test_phase1_output_passed_to_phase2(
+    async def test_outcode_area_context_reaches_both_requests(
         self,
         sample_merged_property: MergedProperty,
         sample_visual_response: dict[str, Any],
         sample_evaluation_response: dict[str, Any],
         tmp_path: Any,
     ) -> None:
-        """Phase 1 JSON output should appear in Phase 2 prompt."""
-        populate_image_cache(str(tmp_path), sample_merged_property)
+        """The canonical postcode's area research is offered to both phases."""
+        canonical = sample_merged_property.canonical.model_copy(update={"postcode": "E8 2LX"})
+        merged = sample_merged_property.model_copy(update={"canonical": canonical})
+        overview = build_property_context("E8 2LX", canonical.bedrooms).area_overview
+        assert overview
+        populate_image_cache(str(tmp_path), merged)
 
         analyzer = PropertyQualityAnalyzer(api_key="test-key")
         analyzer._client = MagicMock()
         _setup_two_phase_mocks(analyzer._client, sample_visual_response, sample_evaluation_response)
 
-        await analyzer.analyze_merged_properties([sample_merged_property], data_dir=str(tmp_path))
+        await analyzer.analyze_single_merged(merged, data_dir=str(tmp_path))
 
-        # Both phases via messages.create
-        create_calls = analyzer._client.messages.create.call_args_list
-        assert len(create_calls) == 2
-
-        # Phase 2 prompt (second messages.create call) should contain Phase 1 output
-        phase2_content = create_calls[1].kwargs["messages"][0]["content"]
-        assert "<visual_analysis>" in phase2_content
-        assert '"overall_quality": "modern"' in phase2_content
-        assert "</visual_analysis>" in phase2_content
-
-    async def test_phase2_failure_cannot_complete_analysis(
-        self,
-        sample_merged_property: MergedProperty,
-        sample_visual_response: dict[str, Any],
-        tmp_path: Any,
-    ) -> None:
-        """A failed required evaluation never becomes a completed visual assessment."""
-        mock_visual = create_mock_response(
-            sample_visual_response, tool_name="property_visual_analysis"
-        )
-
-        populate_image_cache(str(tmp_path), sample_merged_property)
-
-        analyzer = PropertyQualityAnalyzer(api_key="test-key")
-        analyzer._client = MagicMock()
-        # Phase 1 succeeds, Phase 2 raises
-        analyzer._client.messages.create = AsyncMock(
-            side_effect=[mock_visual, Exception("Phase 2 API error")]
-        )
-
-        results = await analyzer.analyze_merged_properties(
-            [sample_merged_property], data_dir=str(tmp_path)
-        )
-
-        assert len(results) == 1
-        _, analysis = results[0]
-        assert analysis.overall_rating is None
-        assert analysis.analysis_failure.phase == "evaluation"
-        assert analysis.analysis_failure.kind == "internal_error"
-        assert analysis.kitchen.overall_quality == "unknown"
-        assert analysis.condition.overall_condition == "unknown"
-        assert "Quality analysis incomplete" in analysis.summary
-        # Evaluation data should be absent/default
-        assert analysis.listing_extraction is None
-        assert analysis.viewing_notes is None
-        assert analysis.highlights is None
-        assert analysis.lowlights is None
-        assert analysis.one_line is None
-
-    async def test_phase2_no_images_in_call(
-        self,
-        sample_merged_property: MergedProperty,
-        sample_visual_response: dict[str, Any],
-        sample_evaluation_response: dict[str, Any],
-        tmp_path: Any,
-    ) -> None:
-        """Phase 2 should be text-only (no images)."""
-        populate_image_cache(str(tmp_path), sample_merged_property)
-
-        analyzer = PropertyQualityAnalyzer(api_key="test-key")
-        analyzer._client = MagicMock()
-        _setup_two_phase_mocks(analyzer._client, sample_visual_response, sample_evaluation_response)
-
-        await analyzer.analyze_merged_properties([sample_merged_property], data_dir=str(tmp_path))
-
-        # Phase 2 uses messages.create — content is a string (text-only)
-        create_calls = analyzer._client.messages.create.call_args_list
-        assert len(create_calls) == 2
-        phase2_content = create_calls[1].kwargs["messages"][0]["content"]
-        assert isinstance(phase2_content, str)
+        for prompt in (_visual_content(analyzer)[-1]["text"], _evaluation_prompt(analyzer)):
+            assert f'<area_context outcode="E8">\n{overview}' in prompt
 
 
 class TestFloorplanNoteWiring:
@@ -1302,9 +636,7 @@ class TestFloorplanNoteWiring:
         analyzer._client = MagicMock()
         _setup_two_phase_mocks(analyzer._client, sample_visual_response, sample_evaluation_response)
         await analyzer.analyze_single_merged(merged, data_dir=str(tmp_path))
-        content = analyzer._client.messages.create.call_args_list[0].kwargs["messages"][0][
-            "content"
-        ]
+        content = _visual_content(analyzer)
         assert sum(block["type"] == "image" for block in content) == 3
         labels = [block["text"] for block in content[:-1] if block["type"] == "text"]
         assert labels[-1] == "Gallery image 3 (historical image role unverified):"
@@ -1319,8 +651,6 @@ class TestFloorplanNoteWiring:
         sample_evaluation_response: dict[str, Any],
         tmp_path: Any,
     ) -> None:
-        from home_finder.utils.image_cache import find_cached_file
-
         data_dir = str(tmp_path)
         populate_image_cache(data_dir, sample_merged_property)
         floorplan_path = find_cached_file(
@@ -1340,8 +670,7 @@ class TestFloorplanNoteWiring:
         )
 
         assert analysis is not None and analysis.overall_rating == 4
-        call = analyzer._client.messages.create.call_args_list[0]
-        content = call.kwargs["messages"][0]["content"]
+        content = _visual_content(analyzer)
         assert sum(block["type"] == "image" for block in content) == 3
         assert "<floorplan_note>" in content[-1]["text"]
 
@@ -1375,14 +704,9 @@ class TestFloorplanNoteWiring:
         analyzer._client = MagicMock()
         _setup_two_phase_mocks(analyzer._client, sample_visual_response, sample_evaluation_response)
 
-        await analyzer.analyze_merged_properties([merged], data_dir=str(tmp_path))
+        await analyzer.analyze_single_merged(merged, data_dir=str(tmp_path))
 
-        # Inspect the Phase 1 API call's user prompt (last text block)
-        call_args = analyzer._client.messages.create.call_args_list[0]
-        content = call_args.kwargs["messages"][0]["content"]
-        text_blocks = [c for c in content if c.get("type") == "text"]
-        prompt_text = text_blocks[-1]["text"]
-
+        prompt_text = _visual_content(analyzer)[-1]["text"]
         assert "<floorplan_note>" in prompt_text
         assert "floorplan_detected_in_gallery" in prompt_text
 
@@ -1400,85 +724,156 @@ class TestFloorplanNoteWiring:
         analyzer._client = MagicMock()
         _setup_two_phase_mocks(analyzer._client, sample_visual_response, sample_evaluation_response)
 
-        await analyzer.analyze_merged_properties([sample_merged_property], data_dir=str(tmp_path))
+        await analyzer.analyze_single_merged(sample_merged_property, data_dir=str(tmp_path))
 
-        call_args = analyzer._client.messages.create.call_args_list[0]
-        content = call_args.kwargs["messages"][0]["content"]
-        text_blocks = [c for c in content if c.get("type") == "text"]
-        prompt_text = text_blocks[-1]["text"]
-
-        assert "<floorplan_note>" not in prompt_text
+        assert "<floorplan_note>" not in _visual_content(analyzer)[-1]["text"]
 
 
-class TestBuildEvaluationPrompt:
-    """Tests for the build_evaluation_prompt function."""
+class TestPhaseChaining:
+    """Phase 2 evaluates phase 1's observations; its own output completes the assessment."""
 
-    def test_includes_visual_data(self) -> None:
-        """Should include Phase 1 visual data in XML tags."""
-        visual_data = {"kitchen": {"overall_quality": "modern"}}
-        prompt = build_evaluation_prompt(
-            visual_data=visual_data,
-            price_pcm=1800,
-            bedrooms=1,
-            area_average=1900,
+    async def test_phase1_output_passed_to_phase2(
+        self,
+        sample_merged_property: MergedProperty,
+        sample_visual_response: dict[str, Any],
+        sample_evaluation_response: dict[str, Any],
+        tmp_path: Any,
+    ) -> None:
+        """Phase 1 JSON output should appear in Phase 2 prompt."""
+        populate_image_cache(str(tmp_path), sample_merged_property)
+
+        analyzer = PropertyQualityAnalyzer(api_key="test-key")
+        analyzer._client = MagicMock()
+        _setup_two_phase_mocks(analyzer._client, sample_visual_response, sample_evaluation_response)
+
+        await analyzer.analyze_single_merged(sample_merged_property, data_dir=str(tmp_path))
+
+        assert analyzer._client.messages.create.await_count == 2
+        phase2_content = _evaluation_prompt(analyzer)
+        assert "<visual_analysis>" in phase2_content
+        assert '"overall_quality": "modern"' in phase2_content
+        assert "</visual_analysis>" in phase2_content
+
+    @pytest.mark.parametrize(
+        ("construction", "profile"),
+        [
+            ("timber_frame", "victorian"),
+            ("concrete", "ex_council"),
+            ("solid_brick", "purpose_built"),
+        ],
+    )
+    async def test_building_construction_selects_acoustic_profile_for_evaluation(
+        self,
+        sample_merged_property: MergedProperty,
+        sample_visual_response: dict[str, Any],
+        sample_evaluation_response: dict[str, Any],
+        tmp_path: Any,
+        construction: str,
+        profile: str,
+    ) -> None:
+        """Phase 1's building construction selects the acoustic profile shown to phase 2."""
+        visual = copy.deepcopy(sample_visual_response)
+        visual["flooring_noise"]["building_construction"] = construction
+        populate_image_cache(str(tmp_path), sample_merged_property)
+
+        analyzer = PropertyQualityAnalyzer(api_key="test-key")
+        analyzer._client = MagicMock()
+        _setup_two_phase_mocks(analyzer._client, visual, sample_evaluation_response)
+
+        await analyzer.analyze_single_merged(sample_merged_property, data_dir=str(tmp_path))
+
+        prompt = _evaluation_prompt(analyzer)
+        block = prompt.split("<acoustic_context>\n", 1)[1].split("\n</acoustic_context>", 1)[0]
+        assert block.startswith(f"Building construction: {construction}\n")
+        assert (
+            f"Typical sound insulation: {ACOUSTIC_PROFILES[profile]['airborne_insulation_db']} "
+            "airborne\n"
+        ) in block
+        assert "dB dB" not in block
+        assert f"Hosting safety: {ACOUSTIC_PROFILES[profile]['hosting_safety']}" in block
+        assert block.endswith(ACOUSTIC_PROFILES[profile]["summary"])
+
+    @pytest.mark.parametrize("construction", ["mixed", "unknown"])
+    async def test_unmapped_building_construction_omits_acoustic_context(
+        self,
+        sample_merged_property: MergedProperty,
+        sample_visual_response: dict[str, Any],
+        sample_evaluation_response: dict[str, Any],
+        tmp_path: Any,
+        construction: str,
+    ) -> None:
+        visual = copy.deepcopy(sample_visual_response)
+        visual["flooring_noise"]["building_construction"] = construction
+        populate_image_cache(str(tmp_path), sample_merged_property)
+
+        analyzer = PropertyQualityAnalyzer(api_key="test-key")
+        analyzer._client = MagicMock()
+        _setup_two_phase_mocks(analyzer._client, visual, sample_evaluation_response)
+
+        await analyzer.analyze_single_merged(sample_merged_property, data_dir=str(tmp_path))
+
+        assert "<acoustic_context>" not in _evaluation_prompt(analyzer)
+
+    async def test_quality_adjusted_value_comes_from_evaluation(
+        self,
+        sample_merged_property: MergedProperty,
+        sample_visual_response: dict[str, Any],
+        sample_evaluation_response: dict[str, Any],
+        tmp_path: Any,
+    ) -> None:
+        """The quality-adjusted value rating and note come from the phase-2 output."""
+        populate_image_cache(str(tmp_path), sample_merged_property)
+
+        analyzer = PropertyQualityAnalyzer(api_key="test-key")
+        analyzer._client = MagicMock()
+        _setup_two_phase_mocks(analyzer._client, sample_visual_response, sample_evaluation_response)
+
+        _, analysis = await analyzer.analyze_single_merged(
+            sample_merged_property, data_dir=str(tmp_path)
         )
-        assert "<visual_analysis>" in prompt
-        assert '"overall_quality": "modern"' in prompt
-        assert "</visual_analysis>" in prompt
 
-    def test_includes_property_context(self) -> None:
-        """Should include price and bedroom context."""
-        prompt = build_evaluation_prompt(
-            visual_data={},
-            price_pcm=1800,
-            bedrooms=2,
-            area_average=1900,
-        )
-        assert "£1,800/month" in prompt
-        assert "Bedrooms: 2" in prompt
-        assert "£1,900/month" in prompt
+        assert analysis.value is not None
+        assert analysis.value.quality_adjusted_rating == "good"
+        assert "Well-maintained" in analysis.value.quality_adjusted_note
 
-    def test_includes_description(self) -> None:
-        """Should include listing description."""
-        prompt = build_evaluation_prompt(
-            visual_data={},
-            description="Lovely flat with garden",
-            price_pcm=1800,
-            bedrooms=1,
-            area_average=1900,
-        )
-        assert "<listing_description>" in prompt
-        assert "Lovely flat with garden" in prompt
+    async def test_assembles_work_hosting_and_broadband_evidence(
+        self,
+        sample_merged_property: MergedProperty,
+        sample_visual_response: dict[str, Any],
+        sample_evaluation_response: dict[str, Any],
+        tmp_path: Any,
+    ) -> None:
+        """Work, hosting, and broadband fields pass from API response to PropertyQualityAnalysis."""
+        visual = copy.deepcopy(sample_visual_response)
+        visual["space"]["hosting_layout"] = "excellent"
+        visual["flooring_noise"]["hosting_noise_risk"] = "low"
+        eval_resp = copy.deepcopy(sample_evaluation_response)
+        eval_resp["listing_extraction"]["broadband_type"] = "fttp"
 
-    def test_includes_area_context(self) -> None:
-        """Should include area context when outcode provided."""
-        prompt = build_evaluation_prompt(
-            visual_data={},
-            price_pcm=1800,
-            bedrooms=1,
-            area_average=1900,
-            area_context="Trendy East London area",
-            outcode="E8",
-        )
-        assert '<area_context outcode="E8">' in prompt
-        assert "Trendy East London area" in prompt
+        populate_image_cache(str(tmp_path), sample_merged_property)
 
-    def test_ends_with_output_instruction(self) -> None:
-        """Should end with instruction to return JSON matching output schema."""
-        prompt = build_evaluation_prompt(
-            visual_data={},
-            price_pcm=1800,
-            bedrooms=1,
-            area_average=1900,
+        analyzer = PropertyQualityAnalyzer(api_key="test-key")
+        analyzer._client = MagicMock()
+        _setup_two_phase_mocks(analyzer._client, visual, eval_resp)
+
+        _, analysis = await analyzer.analyze_single_merged(
+            sample_merged_property, data_dir=str(tmp_path)
         )
-        assert "evaluation as JSON matching the output schema" in prompt
+
+        assert analysis.bedroom is not None
+        assert analysis.bedroom.office_separation == "dedicated_room"
+        assert analysis.space.hosting_layout == "excellent"
+        assert analysis.flooring_noise is not None
+        assert analysis.flooring_noise.hosting_noise_risk == "low"
+        assert analysis.listing_extraction is not None
+        assert analysis.listing_extraction.broadband_type == "fttp"
 
 
 class TestAnalyzeSingleMerged:
     """Tests for analyze_single_merged method."""
 
     async def test_detail_text_survives_save_reload_and_reaches_both_requests(
-        self, tmp_path, make_property, sample_visual_response, sample_evaluation_response
+        self, make_property, sample_visual_response, sample_evaluation_response
     ) -> None:
         from home_finder.db import PropertyStorage
         from home_finder.enrichment.details import enrich_merged_properties
@@ -1511,7 +906,7 @@ class TestAnalyzeSingleMerged:
         async def fetch(prop):
             return details[prop.source]
 
-        async with PropertyStorage(str(tmp_path / "text.db")) as storage:
+        async with PropertyStorage(":memory:") as storage:
             await storage.upsert_source_listings([rm, otm])
             async with DetailFetcher() as fetcher:
                 with patch.object(fetcher, "fetch_detail_page", side_effect=fetch):
@@ -1583,7 +978,7 @@ class TestAnalyzeSingleMerged:
         sample_evaluation_response: dict[str, Any],
         tmp_path: Any,
     ) -> None:
-        """Should return (merged, analysis) when images are present."""
+        """Should return (merged, analysis) when every gallery image is cached."""
         populate_image_cache(str(tmp_path), sample_merged_property)
 
         analyzer = PropertyQualityAnalyzer(api_key="test-key")
@@ -1596,10 +991,70 @@ class TestAnalyzeSingleMerged:
 
         assert merged is sample_merged_property
         assert analysis.kitchen.overall_quality == "modern"
+        assert analysis.kitchen.hob_type == "gas"
         assert analysis.condition.overall_condition == "good"
+        assert analysis.light_space.natural_light == "excellent"
+        assert analysis.space.living_room_sqm == 22
         assert analysis.summary == (
             "Well-maintained flat with modern kitchen. Living room suits home office."
         )
+
+    async def test_handles_end_turn_with_tool_use(
+        self,
+        sample_merged_property: MergedProperty,
+        sample_visual_response: dict[str, Any],
+        sample_evaluation_response: dict[str, Any],
+        tmp_path: Any,
+    ) -> None:
+        """Should handle end_turn stop_reason when tool_use block is present."""
+        mock_visual = create_mock_response(
+            sample_visual_response, stop_reason="end_turn", tool_name="property_visual_analysis"
+        )
+
+        mock_eval = create_mock_eval_response(sample_evaluation_response)
+
+        populate_image_cache(str(tmp_path), sample_merged_property)
+
+        analyzer = PropertyQualityAnalyzer(api_key="test-key")
+        analyzer._client = MagicMock()
+        analyzer._client.messages.create = AsyncMock(side_effect=[mock_visual, mock_eval])
+
+        _, analysis = await analyzer.analyze_single_merged(
+            sample_merged_property, data_dir=str(tmp_path)
+        )
+
+        assert analysis.kitchen.overall_quality == "modern"
+        assert analysis.kitchen.hob_type == "gas"
+
+    @pytest.mark.parametrize(
+        "merged_fixture",
+        ["one_bed_merged_property", "sample_merged_property"],
+        ids=["one_bed", "two_bed"],
+    )
+    async def test_space_judgement_is_not_overridden_by_bedroom_count(
+        self,
+        request: pytest.FixtureRequest,
+        merged_fixture: str,
+        sample_visual_response: dict[str, Any],
+        sample_evaluation_response: dict[str, Any],
+        tmp_path: Any,
+    ) -> None:
+        """The visual phase's space judgement is kept whatever the number of bedrooms."""
+        merged = request.getfixturevalue(merged_fixture)
+        visual_response = copy.deepcopy(sample_visual_response)
+        visual_response["space"].update(living_room_sqm=15, is_spacious_enough=False)
+        visual_response.update(overall_rating=3, summary="Compact living room")
+
+        populate_image_cache(str(tmp_path), merged)
+
+        analyzer = PropertyQualityAnalyzer(api_key="test-key")
+        analyzer._client = MagicMock()
+        _setup_two_phase_mocks(analyzer._client, visual_response, sample_evaluation_response)
+
+        _, analysis = await analyzer.analyze_single_merged(merged, data_dir=str(tmp_path))
+
+        assert analysis.space.is_spacious_enough is False
+        assert analysis.space.living_room_sqm == 15
 
     async def test_without_images_defers(
         self,
@@ -1622,71 +1077,28 @@ class TestAnalyzeSingleMerged:
         assert result_merged is merged
         assert analysis is None
 
-    async def test_api_failure_returns_minimal(
-        self,
-        sample_merged_property: MergedProperty,
-        tmp_path: Any,
-    ) -> None:
-        """Should return minimal analysis on API failure (no raise)."""
-        populate_image_cache(str(tmp_path), sample_merged_property)
-
-        analyzer = PropertyQualityAnalyzer(api_key="test-key")
-        analyzer._client = MagicMock()
-        analyzer._client.messages.create = AsyncMock(side_effect=Exception("API error"))
-
-        merged, analysis = await analyzer.analyze_single_merged(
-            sample_merged_property, data_dir=str(tmp_path)
-        )
-
-        assert merged is sample_merged_property
-        assert "Quality analysis incomplete" in analysis.summary
-        assert analysis.overall_rating is None
-        assert analysis.analysis_failure.kind == "internal_error"
-        assert analysis.space.is_spacious_enough is None
-
 
 class TestInsufficientImageSkip:
-    """Tests for skipping analysis when gallery images are not fully cached."""
+    """Analysis is deferred, without a provider request, while gallery images are uncached."""
 
     async def test_skips_analysis_when_images_uncached(
         self,
         sample_merged_property: MergedProperty,
         tmp_path: Any,
     ) -> None:
-        """Should return None analysis when some gallery images are not cached."""
+        """Should return None analysis when no gallery image is cached."""
         data_dir = str(tmp_path)
 
-        # Create cache dir but do NOT populate images — all will be missing
+        # Nothing is cached under data_dir.
         analyzer = PropertyQualityAnalyzer(api_key="test-key")
+        analyzer._client = MagicMock()
         merged, analysis = await analyzer.analyze_single_merged(
             sample_merged_property, data_dir=data_dir
         )
 
         assert merged is sample_merged_property
         assert analysis is None
-
-    async def test_proceeds_when_all_images_cached(
-        self,
-        sample_merged_property: MergedProperty,
-        sample_visual_response: dict[str, Any],
-        sample_evaluation_response: dict[str, Any],
-        tmp_path: Any,
-    ) -> None:
-        """Should proceed with analysis when all gallery images are cached."""
-        data_dir = str(tmp_path)
-        populate_image_cache(data_dir, sample_merged_property)
-
-        analyzer = PropertyQualityAnalyzer(api_key="test-key")
-        analyzer._client = MagicMock()
-        _setup_two_phase_mocks(analyzer._client, sample_visual_response, sample_evaluation_response)
-
-        merged, analysis = await analyzer.analyze_single_merged(
-            sample_merged_property, data_dir=data_dir
-        )
-
-        assert merged is sample_merged_property
-        assert analysis is not None
-        assert analysis.kitchen.overall_quality == "modern"
+        analyzer._client.messages.create.assert_not_called()
 
     async def test_defers_when_data_dir_not_set(
         self,
@@ -1748,349 +1160,141 @@ class TestInsufficientImageSkip:
             save_image_bytes(path, jpeg_bytes)
 
         analyzer = PropertyQualityAnalyzer(api_key="test-key")
+        analyzer._client = MagicMock()
         merged_out, analysis = await analyzer.analyze_single_merged(merged, data_dir=data_dir)
 
         assert merged_out is merged
         assert analysis is None
+        analyzer._client.messages.create.assert_not_called()
 
 
-class TestBackwardCompatValidators:
-    """Test that bool/None values are coerced to tri-state strings."""
+class TestFailureHandling:
+    """Non-outage failures become unrated assessments that record the failure."""
 
-    def test_condition_damp_bool_coercion(self) -> None:
-        """True→'yes', False→'no', None→'unknown' for damp/mold."""
-        assert ConditionAnalysis(has_visible_damp=True).has_visible_damp == "yes"  # type: ignore[arg-type]
-        assert ConditionAnalysis(has_visible_damp=False).has_visible_damp == "no"  # type: ignore[arg-type]
-        assert ConditionAnalysis(has_visible_damp=None).has_visible_damp == "unknown"  # type: ignore[arg-type]
-        assert ConditionAnalysis(has_visible_mold=True).has_visible_mold == "yes"  # type: ignore[arg-type]
-        assert ConditionAnalysis(has_visible_mold=False).has_visible_mold == "no"  # type: ignore[arg-type]
-        assert ConditionAnalysis(has_visible_mold=None).has_visible_mold == "unknown"  # type: ignore[arg-type]
+    async def test_unexpected_visual_error_returns_unrated_internal_failure(
+        self,
+        sample_merged_property: MergedProperty,
+        tmp_path: Any,
+    ) -> None:
+        """An unexpected exception in phase 1 is recorded, not raised."""
+        populate_image_cache(str(tmp_path), sample_merged_property)
 
-    def test_condition_string_passthrough(self) -> None:
-        """String values should pass through unchanged."""
-        assert ConditionAnalysis(has_visible_damp="yes").has_visible_damp == "yes"
-        assert ConditionAnalysis(has_visible_damp="no").has_visible_damp == "no"
-        assert ConditionAnalysis(has_visible_damp="unknown").has_visible_damp == "unknown"
+        analyzer = PropertyQualityAnalyzer(api_key="test-key")
+        analyzer._client = MagicMock()
+        analyzer._client.messages.create = AsyncMock(side_effect=Exception("API error"))
 
-    def test_flooring_glazing_bool_coercion(self) -> None:
-        """True→'yes', False→'no', None→'unknown' for double glazing."""
-        from home_finder.models import FlooringNoiseAnalysis
+        merged, analysis = await analyzer.analyze_single_merged(
+            sample_merged_property, data_dir=str(tmp_path)
+        )
 
-        assert FlooringNoiseAnalysis(has_double_glazing=True).has_double_glazing == "yes"  # type: ignore[arg-type]
-        assert FlooringNoiseAnalysis(has_double_glazing=False).has_double_glazing == "no"  # type: ignore[arg-type]
-        assert FlooringNoiseAnalysis(has_double_glazing=None).has_double_glazing == "unknown"  # type: ignore[arg-type]
+        assert merged is sample_merged_property
+        assert "Quality analysis incomplete" in analysis.summary
+        assert analysis.overall_rating is None
+        assert analysis.analysis_failure.phase == "visual"
+        assert analysis.analysis_failure.kind == "internal_error"
+        assert analysis.space.is_spacious_enough is None
 
-    def test_listing_extraction_bool_coercion(self) -> None:
-        """True→'yes', False→'no', None→'unknown' for bills/pets."""
-        from home_finder.models import ListingExtraction
-
-        assert ListingExtraction(bills_included=True).bills_included == "yes"  # type: ignore[arg-type]
-        assert ListingExtraction(bills_included=False).bills_included == "no"  # type: ignore[arg-type]
-        assert ListingExtraction(bills_included=None).bills_included == "unknown"  # type: ignore[arg-type]
-        assert ListingExtraction(pets_allowed=True).pets_allowed == "yes"  # type: ignore[arg-type]
-        assert ListingExtraction(pets_allowed=False).pets_allowed == "no"  # type: ignore[arg-type]
-        assert ListingExtraction(pets_allowed=None).pets_allowed == "unknown"  # type: ignore[arg-type]
-
-    def test_kitchen_washing_machine_bool_coercion(self) -> None:
-        """True→'yes', False→'no', None→'unknown' for washing machine."""
-        assert KitchenAnalysis(has_washing_machine=True).has_washing_machine == "yes"  # type: ignore[arg-type]
-        assert KitchenAnalysis(has_washing_machine=False).has_washing_machine == "no"  # type: ignore[arg-type]
-        assert KitchenAnalysis(has_washing_machine=None).has_washing_machine == "unknown"  # type: ignore[arg-type]
-
-    def test_bathroom_ensuite_bool_coercion(self) -> None:
-        """True→'yes', False→'no', None→'unknown' for ensuite."""
-
-        assert BathroomAnalysis(is_ensuite=True).is_ensuite == "yes"  # type: ignore[arg-type]
-        assert BathroomAnalysis(is_ensuite=False).is_ensuite == "no"  # type: ignore[arg-type]
-        assert BathroomAnalysis(is_ensuite=None).is_ensuite == "unknown"  # type: ignore[arg-type]
-
-    def test_bedroom_tristate_bool_coercion(self) -> None:
-        """True→'yes', False→'no', None→'unknown' for bedroom tri-state fields."""
-        from home_finder.models import BedroomAnalysis
-
-        assert BedroomAnalysis(primary_is_double=True).primary_is_double == "yes"  # type: ignore[arg-type]
-        assert BedroomAnalysis(primary_is_double=False).primary_is_double == "no"  # type: ignore[arg-type]
-        assert BedroomAnalysis(primary_is_double=None).primary_is_double == "unknown"  # type: ignore[arg-type]
-        assert BedroomAnalysis(can_fit_desk=True).can_fit_desk == "yes"  # type: ignore[arg-type]
-        assert BedroomAnalysis(can_fit_desk=False).can_fit_desk == "no"  # type: ignore[arg-type]
-        assert BedroomAnalysis(can_fit_desk=None).can_fit_desk == "unknown"  # type: ignore[arg-type]
-
-
-class TestWorkHostingAndBroadbandSchema:
-    """Work, hosting, and broadband evidence have explicit schema categories."""
-
-    def test_work_and_hosting_fields_in_visual_schema(self) -> None:
-        """The visual schema distinguishes work space, hosting layout, and noise risk."""
-        visual = VISUAL_ANALYSIS_TOOL["input_schema"]["properties"]
-
-        # office_separation in bedroom sub-model
-        bedroom_props = visual["bedroom"]["properties"]
-        assert "office_separation" in bedroom_props
-        assert bedroom_props["office_separation"]["type"] == "string"
-        assert "dedicated_room" in bedroom_props["office_separation"]["enum"]
-        assert "unknown" in bedroom_props["office_separation"]["enum"]
-
-        # hosting_layout in space sub-model
-        space_props = visual["space"]["properties"]
-        assert "hosting_layout" in space_props
-        assert space_props["hosting_layout"]["type"] == "string"
-        assert "excellent" in space_props["hosting_layout"]["enum"]
-
-        # hosting_noise_risk in flooring_noise sub-model
-        fn_props = visual["flooring_noise"]["properties"]
-        assert "hosting_noise_risk" in fn_props
-        assert fn_props["hosting_noise_risk"]["type"] == "string"
-        assert "low" in fn_props["hosting_noise_risk"]["enum"]
-
-    def test_broadband_type_in_evaluation_schema(self) -> None:
-        """broadband_type appears in Phase 2 listing_extraction."""
-        eval_schema = _eval_schema_props()
-        le_props = eval_schema["listing_extraction"]["properties"]
-        assert "broadband_type" in le_props
-        assert le_props["broadband_type"]["type"] == "string"
-        assert "fttp" in le_props["broadband_type"]["enum"]
-        assert "unknown" in le_props["broadband_type"]["enum"]
-
-    def test_office_separation_uses_distinct_layout_categories(self) -> None:
-        """Office separation distinguishes layouts beyond a yes/no/unknown observation."""
-        visual = VISUAL_ANALYSIS_TOOL["input_schema"]["properties"]
-        # office_separation is 5-value, not tri-state
-        sep_enum = visual["bedroom"]["properties"]["office_separation"]["enum"]
-        assert len(sep_enum) == 5
-        assert "yes" not in sep_enum
-
-    def test_work_hosting_and_broadband_highlights_in_evaluation_schema(self) -> None:
-        """The evaluation schema includes work, hosting, and broadband highlights."""
-        eval_schema = _eval_schema_props()
-        hl_items = eval_schema["highlights"]["items"]
-        enum_values = hl_items.get("enum", [])
-        assert "Ultrafast broadband (FTTP)" in enum_values
-        assert "Dedicated office room" in enum_values
-        assert "Separate work area" in enum_values
-        assert "Great hosting layout" in enum_values
-
-    def test_work_hosting_and_broadband_lowlights_in_evaluation_schema(self) -> None:
-        """The evaluation schema includes work, hosting, and broadband lowlights."""
-        eval_schema = _eval_schema_props()
-        ll_items = eval_schema["lowlights"]["items"]
-        enum_values = ll_items.get("enum", [])
-        assert "Basic broadband only" in enum_values
-        assert "No work-life separation" in enum_values
-        assert "Poor hosting layout" in enum_values
-
-
-class TestAssessmentFieldDefaults:
-    """Missing assessment fields retain their documented defaults."""
-
-    def test_bedroom_without_office_separation(self) -> None:
-        """Old DB rows without office_separation default to 'unknown'."""
-        old_data = {"primary_is_double": "yes", "can_fit_desk": "yes", "notes": ""}
-        bedroom = BedroomAnalysis.model_validate(old_data)
-        assert bedroom.office_separation == "unknown"
-
-    def test_space_without_hosting_layout(self) -> None:
-        """Old DB rows without hosting_layout default to 'unknown'."""
-        old_data = {"living_room_sqm": 20, "is_spacious_enough": True}
-        space = SpaceAnalysis.model_validate(old_data)
-        assert space.hosting_layout == "unknown"
-
-    def test_flooring_without_hosting_noise_risk(self) -> None:
-        """Old DB rows without hosting_noise_risk default to 'unknown'."""
-        old_data = {
-            "primary_flooring": "hardwood",
-            "has_double_glazing": "yes",
-            "building_construction": "solid_brick",
-            "noise_indicators": [],
-            "notes": "",
-        }
-        flooring = FlooringNoiseAnalysis.model_validate(old_data)
-        assert flooring.hosting_noise_risk == "unknown"
-
-    def test_listing_extraction_without_broadband(self) -> None:
-        """Old DB rows without broadband_type default to None."""
-        old_data = {
-            "epc_rating": "C",
-            "property_type": "victorian",
-            "bills_included": "no",
-            "pets_allowed": "unknown",
-        }
-        le = ListingExtraction.model_validate(old_data)
-        assert le.broadband_type is None
-
-    def test_parses_assessment_without_work_hosting_or_broadband_fields(self) -> None:
-        """Older assessment JSON remains readable when these fields are absent."""
-        old_json: dict[str, Any] = {
-            "kitchen": {
-                "overall_quality": "decent",
-                "hob_type": "gas",
-                "has_dishwasher": "yes",
-                "has_washing_machine": "yes",
-                "notes": "",
-            },
-            "condition": {
-                "overall_condition": "good",
-                "has_visible_damp": "no",
-                "has_visible_mold": "no",
-                "has_worn_fixtures": "no",
-                "maintenance_concerns": [],
-                "confidence": "high",
-            },
-            "light_space": {
-                "natural_light": "good",
-                "feels_spacious": True,
-                "notes": "",
-            },
-            "space": {
-                "living_room_sqm": 20,
-                "is_spacious_enough": True,
-            },
-            "summary": "Nice flat",
-        }
-        analysis = PropertyQualityAnalysis.model_validate(old_json)
-        assert analysis.space.hosting_layout == "unknown"
-        assert analysis.summary == "Nice flat"
-
-
-class TestWorkHostingAndBroadbandAssembly:
-    """Work, hosting, and broadband fields pass through the two-phase pipeline."""
-
-    async def test_assembles_work_hosting_and_broadband_evidence(
+    async def test_phase2_failure_cannot_complete_analysis(
         self,
         sample_merged_property: MergedProperty,
         sample_visual_response: dict[str, Any],
-        sample_evaluation_response: dict[str, Any],
         tmp_path: Any,
     ) -> None:
-        """Work, hosting, and broadband fields pass from API response to PropertyQualityAnalysis."""
-        visual = copy.deepcopy(sample_visual_response)
-        visual["space"]["hosting_layout"] = "excellent"
-        visual["flooring_noise"]["hosting_noise_risk"] = "low"
-        eval_resp = copy.deepcopy(sample_evaluation_response)
-        eval_resp["listing_extraction"]["broadband_type"] = "fttp"
+        """A failed required evaluation never becomes a completed visual assessment."""
+        mock_visual = create_mock_response(
+            sample_visual_response, tool_name="property_visual_analysis"
+        )
 
         populate_image_cache(str(tmp_path), sample_merged_property)
 
         analyzer = PropertyQualityAnalyzer(api_key="test-key")
         analyzer._client = MagicMock()
-        _setup_two_phase_mocks(analyzer._client, visual, eval_resp)
-
-        results = await analyzer.analyze_merged_properties(
-            [sample_merged_property], data_dir=str(tmp_path)
+        # Phase 1 succeeds, Phase 2 raises
+        analyzer._client.messages.create = AsyncMock(
+            side_effect=[mock_visual, Exception("Phase 2 API error")]
         )
-        _, analysis = results[0]
 
-        assert analysis.bedroom is not None
-        assert analysis.bedroom.office_separation == "dedicated_room"
-        assert analysis.space.hosting_layout == "excellent"
-        assert analysis.flooring_noise is not None
-        assert analysis.flooring_noise.hosting_noise_risk == "low"
-        assert analysis.listing_extraction is not None
-        assert analysis.listing_extraction.broadband_type == "fttp"
+        _, analysis = await analyzer.analyze_single_merged(
+            sample_merged_property, data_dir=str(tmp_path)
+        )
 
+        assert analysis.overall_rating is None
+        assert analysis.analysis_failure.phase == "evaluation"
+        assert analysis.analysis_failure.kind == "internal_error"
+        assert analysis.kitchen.overall_quality == "unknown"
+        assert analysis.condition.overall_condition == "unknown"
+        assert "Quality analysis incomplete" in analysis.summary
+        # Evaluation data should be absent/default
+        assert analysis.listing_extraction is None
+        assert analysis.viewing_notes is None
+        assert analysis.highlights is None
+        assert analysis.lowlights is None
+        assert analysis.one_line is None
 
-class TestPhase2CircuitBreakerRaise:
-    """Phase 2 API errors must raise APIUnavailableError (matching Phase 1)."""
-
-    async def test_phase2_auth_error_raises_api_unavailable(
+    async def test_bad_request_media_type_clears_cache(
         self,
         sample_merged_property: MergedProperty,
-        sample_visual_response: dict[str, Any],
         tmp_path: Any,
     ) -> None:
-        """AuthenticationError in Phase 2 should raise APIUnavailableError."""
-        from anthropic import AuthenticationError
-
-        mock_visual = create_mock_response(
-            sample_visual_response, tool_name="property_visual_analysis"
-        )
-        populate_image_cache(str(tmp_path), sample_merged_property)
+        """An image-format rejection deletes the property's cached images for re-enrichment."""
+        data_dir = str(tmp_path)
+        populate_image_cache(data_dir, sample_merged_property)
+        assert get_cache_dir(data_dir, sample_merged_property.unique_id).is_dir()
 
         analyzer = PropertyQualityAnalyzer(api_key="test-key")
         analyzer._client = MagicMock()
         analyzer._client.messages.create = AsyncMock(
-            side_effect=[
-                mock_visual,
-                AuthenticationError(
-                    message="invalid key",
-                    response=MagicMock(status_code=401, headers={}),
-                    body=None,
-                ),
-            ]
+            side_effect=BadRequestError(
+                message="image specified using image/png media_type, but appears to be image/jpeg",
+                response=MagicMock(status_code=400, headers={}),
+                body=None,
+            )
         )
 
-        with pytest.raises(APIUnavailableError, match="Authentication failed"):
-            await analyzer.analyze_single_merged(sample_merged_property, data_dir=str(tmp_path))
-
-    async def test_phase2_transient_error_raises_api_unavailable(
-        self,
-        sample_merged_property: MergedProperty,
-        sample_visual_response: dict[str, Any],
-        tmp_path: Any,
-    ) -> None:
-        """Transient API errors in Phase 2 should raise APIUnavailableError."""
-        from anthropic import APIConnectionError
-
-        mock_visual = create_mock_response(
-            sample_visual_response, tool_name="property_visual_analysis"
-        )
-        populate_image_cache(str(tmp_path), sample_merged_property)
-
-        analyzer = PropertyQualityAnalyzer(api_key="test-key")
-        analyzer._client = MagicMock()
-        analyzer._client.messages.create = AsyncMock(
-            side_effect=[mock_visual, APIConnectionError(request=MagicMock())]
+        _, analysis = await analyzer.analyze_single_merged(
+            sample_merged_property, data_dir=data_dir
         )
 
-        with pytest.raises(APIUnavailableError):
-            await analyzer.analyze_single_merged(sample_merged_property, data_dir=str(tmp_path))
+        assert analysis.analysis_failure.kind == "request_rejected"
+        assert not get_cache_dir(data_dir, sample_merged_property.unique_id).exists()
 
 
 class TestCircuitBreaker:
-    """Tests for API circuit breaker in PropertyQualityAnalyzer."""
+    """Which provider errors count toward the analyzer's breaker, and what an open one stops."""
 
-    async def test_circuit_opens_after_consecutive_failures(
+    @pytest.mark.parametrize(
+        "make_error",
+        [
+            pytest.param(lambda: APIConnectionError(request=MagicMock()), id="connection"),
+            pytest.param(lambda: APITimeoutError(request=MagicMock()), id="timeout"),
+            pytest.param(lambda: _status_error(RateLimitError, 429), id="rate_limit"),
+            pytest.param(lambda: _status_error(InternalServerError, 500), id="server_error"),
+            pytest.param(lambda: _status_error(AuthenticationError, 401), id="authentication"),
+        ],
+    )
+    async def test_outage_errors_open_circuit_and_stop_requests(
         self,
         sample_merged_property: MergedProperty,
         tmp_path: Any,
+        make_error: Any,
     ) -> None:
-        """Circuit should open after _CIRCUIT_BREAKER_THRESHOLD consecutive API failures."""
-        from anthropic import APIConnectionError
-
+        """Each outage error counts; once the circuit opens, the next analysis sends no request."""
         populate_image_cache(str(tmp_path), sample_merged_property)
 
         analyzer = PropertyQualityAnalyzer(api_key="test-key")
         analyzer._client = MagicMock()
-        analyzer._client.messages.create = AsyncMock(
-            side_effect=APIConnectionError(request=MagicMock())
-        )
+        analyzer._client.messages.create = AsyncMock(side_effect=make_error())
 
-        assert not analyzer._breaker.is_open()
-
-        for _ in range(_CIRCUIT_BREAKER_THRESHOLD):
+        for attempt in range(1, _CIRCUIT_BREAKER_THRESHOLD + 1):
+            assert not analyzer._breaker.is_open()
             with pytest.raises(APIUnavailableError):
                 await analyzer.analyze_single_merged(sample_merged_property, data_dir=str(tmp_path))
-
+            assert analyzer._breaker.failure_count == attempt
         assert analyzer._breaker.is_open()
-        assert analyzer._breaker.failure_count == _CIRCUIT_BREAKER_THRESHOLD
 
-    async def test_circuit_open_raises_immediately(
-        self,
-        sample_merged_property: MergedProperty,
-    ) -> None:
-        """When circuit is open (within cooldown), should raise without calling API."""
-        import time
-
-        analyzer = PropertyQualityAnalyzer(api_key="test-key")
-        analyzer._breaker._open = True
-        analyzer._breaker._opened_at = time.monotonic()  # just opened
-        analyzer._client = MagicMock()
-        analyzer._client.messages.create = AsyncMock()
-
-        with pytest.raises(APIUnavailableError):
-            await analyzer.analyze_single_merged(sample_merged_property)
-
-        # Should NOT have called the API
-        analyzer._client.messages.create.assert_not_called()
+        with pytest.raises(APIUnavailableError, match="Circuit breaker is open"):
+            await analyzer.analyze_single_merged(sample_merged_property, data_dir=str(tmp_path))
+        assert analyzer._client.messages.create.await_count == _CIRCUIT_BREAKER_THRESHOLD
 
     async def test_success_resets_failure_counter(
         self,
@@ -2100,8 +1304,6 @@ class TestCircuitBreaker:
         tmp_path: Any,
     ) -> None:
         """Successful API call should reset the consecutive failure counter."""
-        from anthropic import APIConnectionError
-
         populate_image_cache(str(tmp_path), sample_merged_property)
 
         analyzer = PropertyQualityAnalyzer(api_key="test-key")
@@ -2125,113 +1327,25 @@ class TestCircuitBreaker:
         assert analyzer._breaker.failure_count == 0
         assert not analyzer._breaker.is_open()
 
-    async def test_rate_limit_error_trips_circuit(
-        self,
-        sample_merged_property: MergedProperty,
-        tmp_path: Any,
-    ) -> None:
-        """RateLimitError should count toward circuit breaker."""
-        from anthropic import RateLimitError
-
-        mock_response = MagicMock()
-        mock_response.status_code = 429
-        mock_response.headers = {}
-        populate_image_cache(str(tmp_path), sample_merged_property)
-
-        analyzer = PropertyQualityAnalyzer(api_key="test-key")
-        analyzer._client = MagicMock()
-        analyzer._client.messages.create = AsyncMock(
-            side_effect=RateLimitError(
-                message="rate limited",
-                response=mock_response,
-                body=None,
-            )
-        )
-
-        for _ in range(_CIRCUIT_BREAKER_THRESHOLD):
-            with pytest.raises(APIUnavailableError):
-                await analyzer.analyze_single_merged(sample_merged_property, data_dir=str(tmp_path))
-
-        assert analyzer._breaker.is_open()
-
-    async def test_internal_server_error_trips_circuit(
-        self,
-        sample_merged_property: MergedProperty,
-        tmp_path: Any,
-    ) -> None:
-        """InternalServerError should count toward circuit breaker."""
-        from anthropic import InternalServerError
-
-        mock_response = MagicMock()
-        mock_response.status_code = 500
-        mock_response.headers = {}
-        populate_image_cache(str(tmp_path), sample_merged_property)
-
-        analyzer = PropertyQualityAnalyzer(api_key="test-key")
-        analyzer._client = MagicMock()
-        analyzer._client.messages.create = AsyncMock(
-            side_effect=InternalServerError(
-                message="server error",
-                response=mock_response,
-                body=None,
-            )
-        )
-
-        for _ in range(_CIRCUIT_BREAKER_THRESHOLD):
-            with pytest.raises(APIUnavailableError):
-                await analyzer.analyze_single_merged(sample_merged_property, data_dir=str(tmp_path))
-
-        assert analyzer._breaker.is_open()
-
-    async def test_api_timeout_error_trips_circuit(
-        self,
-        sample_merged_property: MergedProperty,
-        tmp_path: Any,
-    ) -> None:
-        """APITimeoutError (subclass of APIConnectionError) should trip circuit breaker."""
-        from anthropic import APITimeoutError
-
-        populate_image_cache(str(tmp_path), sample_merged_property)
-
-        analyzer = PropertyQualityAnalyzer(api_key="test-key")
-        analyzer._client = MagicMock()
-        analyzer._client.messages.create = AsyncMock(
-            side_effect=APITimeoutError(request=MagicMock())
-        )
-
-        for _ in range(_CIRCUIT_BREAKER_THRESHOLD):
-            with pytest.raises(APIUnavailableError):
-                await analyzer.analyze_single_merged(sample_merged_property, data_dir=str(tmp_path))
-
-        assert analyzer._breaker.is_open()
-
     async def test_bad_request_does_not_trip_circuit(
         self,
         sample_merged_property: MergedProperty,
         tmp_path: Any,
     ) -> None:
         """BadRequestError should NOT count toward circuit breaker."""
-        from anthropic import BadRequestError
-
-        mock_response = MagicMock()
-        mock_response.status_code = 400
-        mock_response.headers = {}
-        populate_image_cache(str(tmp_path), sample_merged_property)
+        data_dir = str(tmp_path)
+        populate_image_cache(data_dir, sample_merged_property)
 
         analyzer = PropertyQualityAnalyzer(api_key="test-key")
         analyzer._client = MagicMock()
         analyzer._client.messages.create = AsyncMock(
-            side_effect=BadRequestError(
-                message="bad request",
-                response=mock_response,
-                body=None,
-            )
+            side_effect=_status_error(BadRequestError, 400)
         )
 
         # Exceed threshold — circuit should NOT open (BadRequestError is request-specific)
         for _ in range(_CIRCUIT_BREAKER_THRESHOLD + 1):
             _merged, analysis = await analyzer.analyze_single_merged(
-                sample_merged_property, data_dir=str(tmp_path)
+                sample_merged_property, data_dir=data_dir
             )
             assert "Quality analysis incomplete" in analysis.summary
             assert analysis.overall_rating is None
@@ -2239,36 +1353,8 @@ class TestCircuitBreaker:
 
         assert not analyzer._breaker.is_open()
         assert analyzer._breaker.failure_count == 0
-
-    async def test_bad_request_media_type_clears_cache(
-        self,
-        sample_merged_property: MergedProperty,
-        tmp_path: Any,
-    ) -> None:
-        """BadRequestError with 'media_type' in message should clear image cache."""
-        from unittest.mock import patch as _patch
-
-        from anthropic import BadRequestError
-
-        # Populate image cache so analyze_single_merged reaches the API call
-        populate_image_cache(str(tmp_path), sample_merged_property)
-
-        mock_response = MagicMock()
-        mock_response.status_code = 400
-        mock_response.headers = {}
-        analyzer = PropertyQualityAnalyzer(api_key="test-key")
-        analyzer._client = MagicMock()
-        analyzer._client.messages.create = AsyncMock(
-            side_effect=BadRequestError(
-                message="image specified using image/png media_type, but appears to be image/jpeg",
-                response=mock_response,
-                body=None,
-            )
-        )
-
-        with _patch("home_finder.utils.image_cache.clear_image_cache") as mock_clear:
-            await analyzer.analyze_single_merged(sample_merged_property, data_dir=str(tmp_path))
-            mock_clear.assert_called_once_with(str(tmp_path), sample_merged_property.unique_id)
+        # A rejection that does not mention the image format keeps the cached images.
+        assert get_cache_dir(data_dir, sample_merged_property.unique_id).is_dir()
 
     async def test_generic_exception_does_not_trip_circuit(
         self,
@@ -2291,469 +1377,149 @@ class TestCircuitBreaker:
             assert analysis.analysis_failure.kind == "internal_error"
 
         assert not analyzer._breaker.is_open()
-
-    async def test_circuit_stays_open_during_cooldown(
-        self,
-        sample_merged_property: MergedProperty,
-    ) -> None:
-        """Circuit should remain open before cooldown expires."""
-        import time
-
-        analyzer = PropertyQualityAnalyzer(api_key="test-key")
-        analyzer._breaker._open = True
-        analyzer._breaker._opened_at = time.monotonic()  # just opened
-        analyzer._client = MagicMock()
-        analyzer._client.messages.create = AsyncMock()
-
-        with pytest.raises(APIUnavailableError):
-            await analyzer.analyze_single_merged(sample_merged_property)
-        analyzer._client.messages.create.assert_not_called()
-
-    async def test_circuit_allows_retry_after_cooldown(
-        self,
-        sample_merged_property: MergedProperty,
-        sample_visual_response: dict[str, Any],
-        sample_evaluation_response: dict[str, Any],
-        tmp_path: Any,
-    ) -> None:
-        """After cooldown, circuit should allow one retry (half-open)."""
-        import time
-
-        populate_image_cache(str(tmp_path), sample_merged_property)
-
-        analyzer = PropertyQualityAnalyzer(api_key="test-key")
-        analyzer._breaker._open = True
-        analyzer._breaker._opened_at = time.monotonic() - (_CIRCUIT_BREAKER_COOLDOWN + 1)
-        analyzer._client = MagicMock()
-        _setup_two_phase_mocks(analyzer._client, sample_visual_response, sample_evaluation_response)
-
-        # Should NOT raise — half-open allows retry
-        await analyzer.analyze_single_merged(sample_merged_property, data_dir=str(tmp_path))
-        analyzer._client.messages.create.assert_called()
-
-    async def test_circuit_closes_on_success_after_halfopen(
-        self,
-        sample_merged_property: MergedProperty,
-        sample_visual_response: dict[str, Any],
-        sample_evaluation_response: dict[str, Any],
-        tmp_path: Any,
-    ) -> None:
-        """Successful retry after half-open should fully close circuit."""
-        import time
-
-        populate_image_cache(str(tmp_path), sample_merged_property)
-
-        analyzer = PropertyQualityAnalyzer(api_key="test-key")
-        analyzer._breaker._open = True
-        analyzer._breaker._opened_at = time.monotonic() - (_CIRCUIT_BREAKER_COOLDOWN + 1)
-        analyzer._client = MagicMock()
-        _setup_two_phase_mocks(analyzer._client, sample_visual_response, sample_evaluation_response)
-
-        await analyzer.analyze_single_merged(sample_merged_property, data_dir=str(tmp_path))
-        assert not analyzer._breaker.is_open()
-        assert analyzer._breaker._opened_at is None
         assert analyzer._breaker.failure_count == 0
 
-    async def test_circuit_reopens_on_failure_after_halfopen(
+    @pytest.mark.parametrize(
+        ("make_error", "message"),
+        [
+            pytest.param(
+                lambda: _status_error(AuthenticationError, 401),
+                "Authentication failed",
+                id="authentication",
+            ),
+            pytest.param(
+                lambda: APIConnectionError(request=MagicMock()), "Connection error", id="connection"
+            ),
+        ],
+    )
+    async def test_phase2_outage_raises_api_unavailable_and_counts_failure(
         self,
         sample_merged_property: MergedProperty,
+        sample_visual_response: dict[str, Any],
         tmp_path: Any,
+        make_error: Any,
+        message: str,
     ) -> None:
-        """Failed retry after half-open should re-open with fresh timestamp."""
-        import time
-
-        from anthropic import APIConnectionError
-
+        """Phase 2 outages propagate like phase 1's instead of becoming a failed assessment."""
+        mock_visual = create_mock_response(
+            sample_visual_response, tool_name="property_visual_analysis"
+        )
         populate_image_cache(str(tmp_path), sample_merged_property)
 
         analyzer = PropertyQualityAnalyzer(api_key="test-key")
-        analyzer._breaker._open = True
-        analyzer._breaker._consecutive_failures = _CIRCUIT_BREAKER_THRESHOLD
-        old_time = time.monotonic() - (_CIRCUIT_BREAKER_COOLDOWN + 1)
-        analyzer._breaker._opened_at = old_time
+        analyzer._client = MagicMock()
+        analyzer._client.messages.create = AsyncMock(side_effect=[mock_visual, make_error()])
+
+        with pytest.raises(APIUnavailableError, match=message):
+            await analyzer.analyze_single_merged(sample_merged_property, data_dir=str(tmp_path))
+        # The visual success reset the counter; the evaluation outage counts once.
+        assert analyzer._breaker.failure_count == 1
+
+    async def test_circuit_opened_between_phases_stops_evaluation_request(
+        self,
+        sample_merged_property: MergedProperty,
+        one_bed_merged_property: MergedProperty,
+        sample_visual_response: dict[str, Any],
+        tmp_path: Any,
+    ) -> None:
+        """Concurrent analyses can open the circuit while one property is between phases.
+
+        Reused visual observations reach phase 2 without a phase-1 success resetting the
+        breaker, so the evaluation is checked against the circuit again.
+        """
+        data_dir = str(tmp_path)
+        populate_image_cache(data_dir, sample_merged_property)
+        populate_image_cache(data_dir, one_bed_merged_property)
+
+        analyzer = PropertyQualityAnalyzer(api_key="test-key")
         analyzer._client = MagicMock()
         analyzer._client.messages.create = AsyncMock(
             side_effect=APIConnectionError(request=MagicMock())
         )
+        reading_checkpoint = asyncio.Event()
+        release_checkpoint = asyncio.Event()
 
-        with pytest.raises(APIUnavailableError):
-            await analyzer.analyze_single_merged(sample_merged_property, data_dir=str(tmp_path))
-        assert analyzer._breaker.is_open()
-        assert analyzer._breaker._opened_at > old_time  # fresh timestamp
+        async def visual_checkpoint(property_id: str, input_sha256: str) -> dict[str, Any] | None:
+            # Stands in for the ledger read that returns saved visual observations;
+            # the other property has none and sends its own visual request.
+            if property_id != sample_merged_property.unique_id:
+                return None
+            reading_checkpoint.set()
+            await release_checkpoint.wait()
+            return copy.deepcopy(sample_visual_response)
 
-
-class TestBuildImageBlockCacheOnly:
-    """Tests for cache-only image loading in _build_image_block."""
-
-    async def test_returns_none_when_cached_path_is_none(self) -> None:
-        """Should return None and not attempt download when no cached path."""
-        analyzer = PropertyQualityAnalyzer(api_key="test-key")
-        result = await analyzer._build_image_block(
-            "https://lid.zoocdn.com/u/1024/768/abc.jpg", cached_path=None
-        )
-        assert result is None
-
-    async def test_returns_none_when_cached_image_corrupt(self, tmp_path: Any) -> None:
-        """Should return None when cached image file is corrupt."""
-        corrupt_file = tmp_path / "corrupt.jpg"
-        corrupt_file.write_bytes(b"not-a-real-image")
-
-        analyzer = PropertyQualityAnalyzer(api_key="test-key")
-        result = await analyzer._build_image_block(
-            "https://example.com/img.jpg", cached_path=corrupt_file
-        )
-        assert result is None
-
-    async def test_returns_image_block_from_valid_cache(self, tmp_path: Any) -> None:
-        """Should return ImageBlockParam when cached image is valid."""
-        from PIL import Image
-
-        # Create a real 10x10 JPEG
-        img_path = tmp_path / "valid.jpg"
-        img = Image.new("RGB", (10, 10), color="red")
-        img.save(img_path, format="JPEG")
-
-        analyzer = PropertyQualityAnalyzer(api_key="test-key")
-        result = await analyzer._build_image_block(
-            "https://example.com/photo.jpg", cached_path=img_path
-        )
-        assert result is not None
-        assert result["type"] == "image"
-        assert result["source"]["type"] == "base64"
-
-    async def test_skips_video_urls(self) -> None:
-        """Should return None for video URLs regardless of cache."""
-        analyzer = PropertyQualityAnalyzer(api_key="test-key")
-        result = await analyzer._build_image_block(
-            "https://youtube.com/watch?v=abc", cached_path=None
-        )
-        assert result is None
-
-    async def test_jpeg_bytes_with_png_url_produces_jpeg_media_type(self, tmp_path: Any) -> None:
-        """JPEG bytes served from a .png URL should be detected as image/jpeg."""
-        from PIL import Image as _Image
-
-        img_path = tmp_path / "misleading.png"
-        _img = _Image.new("RGB", (10, 10), color="blue")
-        _img.save(img_path, format="JPEG")  # Save JPEG bytes to a .png filename
-
-        analyzer = PropertyQualityAnalyzer(api_key="test-key")
-        result = await analyzer._build_image_block(
-            "https://example.com/photo.png", cached_path=img_path
-        )
-        assert result is not None
-        assert result["source"]["media_type"] == "image/jpeg"
-
-    async def test_close_only_closes_anthropic_client(self) -> None:
-        """close() should only close the Anthropic client."""
-        analyzer = PropertyQualityAnalyzer(api_key="test-key")
-        mock_client = AsyncMock()
-        analyzer._client = mock_client
-        await analyzer.close()
-        mock_client.close.assert_called_once()
-        assert analyzer._client is None
-
-
-class TestAcousticContextMapping:
-    """Tests for building_construction → acoustic profile mapping."""
-
-    def _build_acoustic_context(self, visual_data: dict[str, Any]) -> str | None:
-        """Replicate the mapping logic from _analyze_property."""
-        from home_finder.data.area_context import ACOUSTIC_PROFILES
-
-        flooring_raw = visual_data.get("flooring_noise")
-        construction: str | None = (
-            flooring_raw.get("building_construction") if isinstance(flooring_raw, dict) else None
-        )
-        if not construction:
-            return None
-        mapping = {
-            "timber_frame": "victorian",
-            "concrete": "ex_council",
-            "solid_brick": "purpose_built",
-        }
-        profile_key = mapping.get(construction)
-        if not profile_key:
-            return None
-        profile = ACOUSTIC_PROFILES.get(profile_key)
-        if not profile:
-            return None
-        db_range = profile["airborne_insulation_db"]
-        return (
-            f"Building construction: {construction}\n"
-            f"Typical sound insulation: {db_range} dB airborne\n"
-            f"Hosting safety: {profile['hosting_safety']}\n"
-            f"{profile['summary']}"
-        )
-
-    def test_timber_frame_maps_to_victorian(self) -> None:
-        visual = {
-            "flooring_noise": {"building_construction": "timber_frame"},
-        }
-        ctx = self._build_acoustic_context(visual)
-        assert ctx is not None
-        assert "timber_frame" in ctx
-        assert "poor" in ctx  # victorian hosting_safety
-
-    def test_concrete_maps_to_ex_council(self) -> None:
-        visual = {
-            "flooring_noise": {"building_construction": "concrete"},
-        }
-        ctx = self._build_acoustic_context(visual)
-        assert ctx is not None
-        assert "concrete" in ctx
-        assert "moderate" in ctx  # ex_council hosting_safety
-
-    def test_solid_brick_maps_to_purpose_built(self) -> None:
-        visual = {
-            "flooring_noise": {"building_construction": "solid_brick"},
-        }
-        ctx = self._build_acoustic_context(visual)
-        assert ctx is not None
-        assert "solid_brick" in ctx
-        assert "moderate" in ctx  # purpose_built hosting_safety
-
-    def test_mixed_returns_none(self) -> None:
-        visual = {
-            "flooring_noise": {"building_construction": "mixed"},
-        }
-        assert self._build_acoustic_context(visual) is None
-
-    def test_unknown_returns_none(self) -> None:
-        visual = {
-            "flooring_noise": {"building_construction": "unknown"},
-        }
-        assert self._build_acoustic_context(visual) is None
-
-    def test_missing_flooring_noise_returns_none(self) -> None:
-        assert self._build_acoustic_context({}) is None
-
-    def test_flooring_noise_not_dict_returns_none(self) -> None:
-        visual = {"flooring_noise": "some string"}
-        assert self._build_acoustic_context(visual) is None
-
-    def test_context_injected_into_evaluation_prompt(self) -> None:
-        """Acoustic context flows through to build_evaluation_prompt."""
-        visual = {
-            "flooring_noise": {"building_construction": "concrete"},
-        }
-        ctx = self._build_acoustic_context(visual)
-        prompt = build_evaluation_prompt(
-            visual_data=visual,
-            price_pcm=1800,
-            bedrooms=1,
-            area_average=1900,
-            acoustic_context=ctx,
-        )
-        assert "<acoustic_context>" in prompt
-        assert "concrete" in prompt
-
-
-# ── Helpers for model-pair consistency tests ──────────────────────────
-
-
-def _extract_enum(prop: dict[str, Any], defs: dict[str, Any] | None = None) -> list[str] | None:
-    """Extract enum values from a JSON schema property.
-
-    Handles plain ``{"enum": [...]}`` as well as ``anyOf`` wrappers that
-    Pydantic generates for ``Literal[...] | None``, top-level ``$ref``
-    pointers (e.g. ``PropertyType`` StrEnum), and ``$ref`` inside
-    ``anyOf`` variants in the storage models.
-    """
-    if "enum" in prop:
-        return sorted(str(v) for v in prop["enum"] if v is not None)
-
-    # Top-level $ref (e.g. StrEnum field without | None)
-    if "$ref" in prop and defs:
-        ref_name = prop["$ref"].rsplit("/", 1)[-1]
-        ref_schema = defs.get(ref_name, {})
-        if "enum" in ref_schema:
-            return sorted(str(v) for v in ref_schema["enum"] if v is not None)
-
-    for variant in prop.get("anyOf", []):
-        if "$ref" in variant and defs:
-            ref_name = variant["$ref"].rsplit("/", 1)[-1]
-            ref_schema = defs.get(ref_name, {})
-            if "enum" in ref_schema:
-                return sorted(str(v) for v in ref_schema["enum"] if v is not None)
-        if "enum" in variant:
-            vals = [str(v) for v in variant["enum"] if v is not None]
-            if vals:
-                return sorted(vals)
-
-    return None
-
-
-_PAIR_IDS = [f"{api.__qualname__}-{storage.__name__}" for api, storage in _MODEL_PAIRS]
-
-
-class TestModelPairConsistency:
-    """Verify API response models and storage models stay in sync.
-
-    The ``_MODEL_PAIRS`` constant in ``quality.py`` maps each API
-    sub-model to its storage counterpart.  These tests mechanically
-    check that the models have matching fields, compatible enum values,
-    and that API output validates against the storage model.
-    """
-
-    @pytest.mark.parametrize("api_model,storage_model", _MODEL_PAIRS, ids=_PAIR_IDS)
-    def test_field_names_match(
-        self,
-        api_model: type[_BaseModel],
-        storage_model: type[_BaseModel],
-    ) -> None:
-        """API and storage models must have identical field names."""
-        api_fields = set(api_model.model_fields.keys())
-        storage_fields = set(storage_model.model_fields.keys())
-        assert api_fields == storage_fields, (
-            f"{api_model.__qualname__} vs {storage_model.__name__}: "
-            f"API-only={api_fields - storage_fields}, "
-            f"storage-only={storage_fields - api_fields}"
-        )
-
-    @pytest.mark.parametrize("api_model,storage_model", _MODEL_PAIRS, ids=_PAIR_IDS)
-    def test_literal_enum_values_match(
-        self,
-        api_model: type[_BaseModel],
-        storage_model: type[_BaseModel],
-    ) -> None:
-        """Literal/enum values must match for every shared field."""
-        api_schema = api_model.model_json_schema()
-        storage_schema = storage_model.model_json_schema()
-        storage_defs = storage_schema.get("$defs", {})
-
-        for field_name in api_model.model_fields:
-            api_prop = api_schema.get("properties", {}).get(field_name, {})
-            storage_prop = storage_schema.get("properties", {}).get(field_name, {})
-
-            api_enum = _extract_enum(api_prop)
-            storage_enum = _extract_enum(storage_prop, defs=storage_defs)
-
-            if api_enum is None and storage_enum is None:
-                continue
-            if api_enum is None or storage_enum is None:
-                # One has enums, the other doesn't — only flag if API has
-                # enums that storage doesn't (the reverse is OK since storage
-                # may use plain types with coercion).
-                if api_enum is not None and storage_enum is None:
-                    pytest.fail(
-                        f"{api_model.__qualname__}.{field_name}: "
-                        f"API has enum {api_enum} but storage has none"
-                    )
-                continue
-            assert api_enum == storage_enum, (
-                f"{api_model.__qualname__}.{field_name}: "
-                f"API enum {api_enum} != storage enum {storage_enum}"
+        with patch.object(analyzer._spend_meter, "get_visual_checkpoint", new=visual_checkpoint):
+            reused = asyncio.create_task(
+                analyzer.analyze_single_merged(sample_merged_property, data_dir=data_dir)
             )
+            await reading_checkpoint.wait()
+            for _ in range(_CIRCUIT_BREAKER_THRESHOLD):
+                with pytest.raises(APIUnavailableError):
+                    await analyzer.analyze_single_merged(one_bed_merged_property, data_dir=data_dir)
+            assert analyzer._breaker.is_open()
+            release_checkpoint.set()
 
-    def test_all_api_submodels_are_paired(self) -> None:
-        """Every nested BaseModel in the API responses must appear in _MODEL_PAIRS."""
-        paired_api_models = {pair[0] for pair in _MODEL_PAIRS}
-        unpaired_by_design = {_EvaluationResponse.ValueForQuality}
+            with pytest.raises(APIUnavailableError, match="opened before evaluation"):
+                await reused
 
-        missing: list[str] = []
-        for parent in (_VisualAnalysisResponse, _EvaluationResponse):
-            for attr_name in dir(parent):
-                attr = getattr(parent, attr_name)
-                if (
-                    isinstance(attr, type)
-                    and issubclass(attr, _BaseModel)
-                    and attr is not parent
-                    and attr not in paired_api_models
-                    and attr not in unpaired_by_design
-                ):
-                    missing.append(f"{parent.__name__}.{attr_name}")
-
-        assert not missing, (
-            f"API sub-models not in _MODEL_PAIRS (add them or document as "
-            f"intentionally unpaired): {missing}"
-        )
-
-    @pytest.mark.parametrize("api_model,storage_model", _MODEL_PAIRS, ids=_PAIR_IDS)
-    def test_api_data_validates_in_storage(
-        self,
-        api_model: type[_BaseModel],
-        storage_model: type[_BaseModel],
-    ) -> None:
-        """A valid API model instance must validate in the storage model."""
-        # Build a minimal valid instance with all required fields populated
-        schema = api_model.model_json_schema()
-        props = schema.get("properties", {})
-        data: dict[str, Any] = {}
-
-        for field_name, prop in props.items():
-            data[field_name] = _minimal_value(prop)
-
-        api_instance = api_model.model_validate(data)
-        dumped = api_instance.model_dump()
-
-        # This must not raise — storage model should accept API output
-        storage_model.model_validate(dumped)
+        # Only the other property's failed visual requests were sent.
+        assert analyzer._client.messages.create.await_count == _CIRCUIT_BREAKER_THRESHOLD
 
 
-def _minimal_value(prop: dict[str, Any]) -> Any:
-    """Produce a minimal valid value for a JSON schema property."""
-    if "enum" in prop:
-        return prop["enum"][0]
+class TestResultAssembly:
+    """_merge_analysis_results reads historical output shapes through the storage models.
 
-    # anyOf: pick first variant that isn't null
-    if "anyOf" in prop:
-        for variant in prop["anyOf"]:
-            if variant.get("type") == "null":
-                continue
-            return _minimal_value(variant)
-        return None
+    Live output is validated against the response models before assembly; these cases
+    exercise the tolerant reader that assembly delegates to.
+    """
 
-    typ = prop.get("type")
-    if typ == "string":
-        return ""
-    if typ == "integer":
-        return 0
-    if typ == "number":
-        return 0.0
-    if typ == "boolean":
-        return False
-    if typ == "array":
-        return []
-    if typ == "null":
-        return None
-    return ""
-
-
-class TestMergeAnalysisWithStringifiedNested:
-    """End-to-end: _merge_analysis_results succeeds when nested objects arrive as JSON strings."""
-
-    def test_bedroom_as_json_string_validates(
+    def test_historical_one_line_wrapped_in_object(
         self,
         sample_visual_response: dict[str, Any],
         sample_evaluation_response: dict[str, Any],
     ) -> None:
-        """If Claude returns bedroom as a JSON string, merge should still succeed."""
-        import json
-
-        # Stringify the bedroom dict (simulating the bug)
-        sample_visual_response["bedroom"] = json.dumps(sample_visual_response["bedroom"])
-
+        """Historical stored output retains bounded one_line unwrapping."""
+        sample_evaluation_response["one_line"] = {"one_line": "Bright flat with balcony"}
         analysis = PropertyQualityAnalyzer._merge_analysis_results(
-            sample_visual_response,
-            sample_evaluation_response,
-            bedrooms=2,
-            property_id="test-123",
+            sample_visual_response, sample_evaluation_response, 2, "fixture:legacy"
         )
+        assert analysis is not None and analysis.one_line == "Bright flat with balcony"
 
+    def test_historical_nullable_fields_remain_readable(
+        self,
+        sample_visual_response_with_nulls: dict[str, Any],
+        sample_evaluation_response_with_nulls: dict[str, Any],
+    ) -> None:
+        """Nullable legacy output remains readable outside the live API boundary."""
+        analysis = PropertyQualityAnalyzer._merge_analysis_results(
+            sample_visual_response_with_nulls,
+            sample_evaluation_response_with_nulls,
+            1,
+            "fixture:legacy",
+        )
         assert analysis is not None
-        assert analysis.bedroom is not None
-        assert analysis.bedroom.primary_is_double == "yes"
-        assert analysis.bedroom.office_separation == "dedicated_room"
+
+        # Verify null values are handled correctly
+        assert analysis.kitchen.overall_quality == "unknown"
+        assert analysis.kitchen.hob_type is None
+        assert analysis.kitchen.has_dishwasher == "unknown"
+        assert analysis.kitchen.has_washing_machine == "unknown"
+
+        assert analysis.light_space.window_sizes == "unknown"
+        assert analysis.light_space.feels_spacious is None
+        assert analysis.light_space.ceiling_height == "unknown"
+
+        assert analysis.space.living_room_sqm is None
+        assert analysis.space.is_spacious_enough is None
+
+        assert analysis.concern_severity == "none"
 
     def test_multiple_stringified_nested_objects(
         self,
         sample_visual_response: dict[str, Any],
         sample_evaluation_response: dict[str, Any],
     ) -> None:
-        """Multiple nested objects as JSON strings should all be parsed."""
-        import json
-
+        """Nested objects stored as JSON strings are all parsed."""
         sample_visual_response["bedroom"] = json.dumps(sample_visual_response["bedroom"])
         sample_visual_response["kitchen"] = json.dumps(sample_visual_response["kitchen"])
 
@@ -2767,6 +1533,7 @@ class TestMergeAnalysisWithStringifiedNested:
         assert analysis is not None
         assert analysis.bedroom is not None
         assert analysis.bedroom.primary_is_double == "yes"
+        assert analysis.bedroom.office_separation == "dedicated_room"
         assert analysis.kitchen is not None
         assert analysis.kitchen.overall_quality == "modern"
         assert analysis.kitchen.hob_type == "gas"
@@ -2777,8 +1544,6 @@ class TestMergeAnalysisWithStringifiedNested:
         sample_evaluation_response: dict[str, Any],
     ) -> None:
         """The stored-row reader repairs control characters in sub-model JSON."""
-        import json
-
         bedroom_data = sample_visual_response["bedroom"]
         bedroom_json_with_ctrl = json.dumps(bedroom_data).replace('"yes"', '"yes\x00"', 1)
         sample_visual_response["bedroom"] = bedroom_json_with_ctrl
@@ -2794,445 +1559,12 @@ class TestMergeAnalysisWithStringifiedNested:
         assert analysis.bedroom.primary_is_double == "yes"
         assert analysis.bedroom.office_separation == "dedicated_room"
 
-
-class TestUnwrapOnLineArbitraryKey:
-    """Tests for unwrap_one_line handling of arbitrary single-key dicts."""
-
-    def test_character_key_dict_unwrapped(self) -> None:
-        """one_line as {"character": "text"} should extract the string value."""
-        analysis = PropertyQualityAnalysis(
-            kitchen=KitchenAnalysis(),
-            condition=ConditionAnalysis(),
-            light_space=LightSpaceAnalysis(),
-            space=SpaceAnalysis(),
-            summary="Test",
-            one_line={"character": "Victorian flat with garden but dated throughout"},  # type: ignore[arg-type]
-        )
-        assert analysis.one_line == "Victorian flat with garden but dated throughout"
-
-    def test_tagline_key_dict_unwrapped(self) -> None:
-        """one_line as {"tagline": "text"} should extract the string value."""
-        analysis = PropertyQualityAnalysis(
-            kitchen=KitchenAnalysis(),
-            condition=ConditionAnalysis(),
-            light_space=LightSpaceAnalysis(),
-            space=SpaceAnalysis(),
-            summary="Test",
-            one_line={"tagline": "Bright corner flat in quiet street"},  # type: ignore[arg-type]
-        )
-        assert analysis.one_line == "Bright corner flat in quiet street"
-
-    def test_one_line_key_still_works(self) -> None:
-        """Original {"one_line": "text"} pattern still works."""
-        analysis = PropertyQualityAnalysis(
-            kitchen=KitchenAnalysis(),
-            condition=ConditionAnalysis(),
-            light_space=LightSpaceAnalysis(),
-            space=SpaceAnalysis(),
-            summary="Test",
-            one_line={"one_line": "Good flat"},  # type: ignore[arg-type]
-        )
-        assert analysis.one_line == "Good flat"
-
-    def test_multi_key_dict_with_one_line_extracts(self) -> None:
-        """Multi-key dict with 'one_line' key should still extract it."""
-        analysis = PropertyQualityAnalysis(
-            kitchen=KitchenAnalysis(),
-            condition=ConditionAnalysis(),
-            light_space=LightSpaceAnalysis(),
-            space=SpaceAnalysis(),
-            summary="Test",
-            one_line={"one_line": "Good flat", "extra": "junk"},  # type: ignore[arg-type]
-        )
-        assert analysis.one_line == "Good flat"
-
-    def test_json_string_with_arbitrary_key_unwrapped(self) -> None:
-        """JSON string '{"character": "text"}' should be parsed and unwrapped."""
-        analysis = PropertyQualityAnalysis(
-            kitchen=KitchenAnalysis(),
-            condition=ConditionAnalysis(),
-            light_space=LightSpaceAnalysis(),
-            space=SpaceAnalysis(),
-            summary="Test",
-            one_line='{"character": "Victorian flat"}',
-        )
-        assert analysis.one_line == "Victorian flat"
-
-    def test_plain_string_passes_through(self) -> None:
-        """Plain string should be unmodified."""
-        analysis = PropertyQualityAnalysis(
-            kitchen=KitchenAnalysis(),
-            condition=ConditionAnalysis(),
-            light_space=LightSpaceAnalysis(),
-            space=SpaceAnalysis(),
-            summary="Test",
-            one_line="Just a plain string",
-        )
-        assert analysis.one_line == "Just a plain string"
-
-    def test_empty_dict_raises(self) -> None:
-        """Empty dict passes through unwrap_one_line, Pydantic rejects the type."""
-        with pytest.raises(ValidationError):
-            PropertyQualityAnalysis(
-                kitchen=KitchenAnalysis(),
-                condition=ConditionAnalysis(),
-                light_space=LightSpaceAnalysis(),
-                space=SpaceAnalysis(),
-                summary="Test",
-                one_line={},  # type: ignore[arg-type]
-            )
-
-    def test_multi_key_dict_without_one_line_raises(self) -> None:
-        """Multi-key dict without 'one_line' key passes through, Pydantic rejects."""
-        with pytest.raises(ValidationError):
-            PropertyQualityAnalysis(
-                kitchen=KitchenAnalysis(),
-                condition=ConditionAnalysis(),
-                light_space=LightSpaceAnalysis(),
-                space=SpaceAnalysis(),
-                summary="Test",
-                one_line={"character": "x", "extra": "y"},  # type: ignore[arg-type]
-            )
-
-    def test_none_passes_through(self) -> None:
-        """None value for one_line should remain None."""
-        analysis = PropertyQualityAnalysis(
-            kitchen=KitchenAnalysis(),
-            condition=ConditionAnalysis(),
-            light_space=LightSpaceAnalysis(),
-            space=SpaceAnalysis(),
-            summary="Test",
-            one_line=None,
-        )
-        assert analysis.one_line is None
-
-
-# Minimal valid JSON strings per sub-model field for parametrized coercion tests.
-# Tuple: (json_string, attribute_to_check, expected_value)
-_SUB_MODEL_JSON_SAMPLES: dict[str, tuple[str, str, object]] = {
-    "kitchen": ('{"overall_quality": "modern", "hob_type": "gas"}', "overall_quality", "modern"),
-    "condition": (
-        '{"overall_condition": "good", "confidence": "high"}',
-        "overall_condition",
-        "good",
-    ),
-    "light_space": ('{"natural_light": "excellent"}', "natural_light", "excellent"),
-    "space": ('{"living_room_sqm": 18}', "living_room_sqm", 18),
-    "bathroom": ('{"overall_condition": "modern", "has_bathtub": "yes"}', "has_bathtub", "yes"),
-    "bedroom": (
-        '{"primary_is_double": "yes", "office_separation": "dedicated_room"}',
-        "primary_is_double",
-        "yes",
-    ),
-    "outdoor_space": ('{"has_balcony": true, "notes": "Nice"}', "has_balcony", True),
-    "storage": ('{"storage_rating": "good"}', "storage_rating", "good"),
-    "flooring_noise": ('{"primary_flooring": "hardwood"}', "primary_flooring", "hardwood"),
-    "listing_red_flags": ('{"red_flag_count": 2}', "red_flag_count", 2),
-    "listing_extraction": ('{"epc_rating": "B", "deposit_weeks": 5}', "epc_rating", "B"),
-    "viewing_notes": (
-        '{"check_items": ["Check boiler"], "questions_for_agent": []}',
-        "check_items",
-        ["Check boiler"],
-    ),
-    "value": ('{"area_average": 1800, "note": "Reasonable"}', "area_average", 1800),
-}
-
-
-class TestCoerceJsonStringsModelValidator:
-    """Tests for the coerce_json_strings model validator on PropertyQualityAnalysis."""
-
-    def test_bedroom_json_string_parsed(self) -> None:
-        """Bedroom as JSON string should be parsed to BedroomAnalysis."""
-        bedroom_json = (
-            '{"primary_is_double": "yes", "has_built_in_wardrobe": "no",'
-            ' "can_fit_desk": "yes", "office_separation": "shared_space",'
-            ' "notes": "Decent room"}'
-        )
-        analysis = PropertyQualityAnalysis(
-            kitchen=KitchenAnalysis(),
-            condition=ConditionAnalysis(),
-            light_space=LightSpaceAnalysis(),
-            space=SpaceAnalysis(),
-            summary="Test",
-            bedroom=bedroom_json,  # type: ignore[arg-type]
-        )
-        assert analysis.bedroom is not None
-        assert analysis.bedroom.primary_is_double == "yes"
-        assert analysis.bedroom.office_separation == "shared_space"
-
-    def test_bedroom_json_string_with_trailing_comma(self) -> None:
-        """Bedroom JSON string with trailing comma should still be parsed."""
-        bedroom_json = (
-            '{"primary_is_double": "yes", "has_built_in_wardrobe": "no",'
-            ' "can_fit_desk": "yes", "notes": "OK",}'
-        )
-        analysis = PropertyQualityAnalysis(
-            kitchen=KitchenAnalysis(),
-            condition=ConditionAnalysis(),
-            light_space=LightSpaceAnalysis(),
-            space=SpaceAnalysis(),
-            summary="Test",
-            bedroom=bedroom_json,  # type: ignore[arg-type]
-        )
-        assert analysis.bedroom is not None
-        assert analysis.bedroom.primary_is_double == "yes"
-
-    def test_kitchen_json_string_parsed(self) -> None:
-        """Kitchen as JSON string should be parsed to KitchenAnalysis."""
-        kitchen_json = '{"overall_quality": "modern", "hob_type": "gas", "notes": "Nice"}'
-        analysis = PropertyQualityAnalysis(
-            kitchen=kitchen_json,  # type: ignore[arg-type]
-            condition=ConditionAnalysis(),
-            light_space=LightSpaceAnalysis(),
-            space=SpaceAnalysis(),
-            summary="Test",
-        )
-        assert analysis.kitchen.overall_quality == "modern"
-        assert analysis.kitchen.hob_type == "gas"
-
-    def test_malformed_json_does_not_crash(self) -> None:
-        """Totally malformed JSON string should not crash — field fails validation."""
-        with pytest.raises(ValidationError):
-            PropertyQualityAnalysis(
-                kitchen=KitchenAnalysis(),
-                condition=ConditionAnalysis(),
-                light_space=LightSpaceAnalysis(),
-                space=SpaceAnalysis(),
-                summary="Test",
-                bedroom="{not valid json at all}",  # type: ignore[arg-type]
-            )
-
-    def test_non_json_string_left_alone(self) -> None:
-        """Non-JSON string for sub-model field should not be modified."""
-        with pytest.raises(ValidationError):
-            PropertyQualityAnalysis(
-                kitchen=KitchenAnalysis(),
-                condition=ConditionAnalysis(),
-                light_space=LightSpaceAnalysis(),
-                space=SpaceAnalysis(),
-                summary="Test",
-                bedroom="just a string",  # type: ignore[arg-type]
-            )
-
-    def test_dict_value_not_double_parsed(self) -> None:
-        """Dict values should pass through without modification."""
-        analysis = PropertyQualityAnalysis(
-            kitchen=KitchenAnalysis(),
-            condition=ConditionAnalysis(),
-            light_space=LightSpaceAnalysis(),
-            space=SpaceAnalysis(),
-            summary="Test",
-            bedroom={"primary_is_double": "yes", "notes": "Fine"},
-        )
-        assert analysis.bedroom is not None
-        assert analysis.bedroom.primary_is_double == "yes"
-
-    def test_merge_with_character_one_line_succeeds(
+    def test_out_of_vocabulary_literal_falls_back_during_assembly(
         self,
         sample_visual_response: dict[str, Any],
         sample_evaluation_response: dict[str, Any],
     ) -> None:
-        """End-to-end: _merge_analysis_results handles one_line as {"character": "..."}."""
-        sample_evaluation_response["one_line"] = {"character": "Victorian flat with garden"}
-
-        analysis = PropertyQualityAnalyzer._merge_analysis_results(
-            sample_visual_response,
-            sample_evaluation_response,
-            bedrooms=2,
-            property_id="test-123",
-        )
-
-        assert analysis is not None
-        assert analysis.one_line == "Victorian flat with garden"
-
-    def test_merge_with_bedroom_json_string_succeeds(
-        self,
-        sample_visual_response: dict[str, Any],
-        sample_evaluation_response: dict[str, Any],
-    ) -> None:
-        """End-to-end: _merge_analysis_results handles bedroom as JSON string."""
-        import json
-
-        # Historical stringified sub-models still use the tolerant model reader.
-        sample_visual_response["bedroom"] = json.dumps(sample_visual_response["bedroom"])
-
-        analysis = PropertyQualityAnalyzer._merge_analysis_results(
-            sample_visual_response,
-            sample_evaluation_response,
-            bedrooms=2,
-            property_id="test-123",
-        )
-
-        assert analysis is not None
-        assert analysis.bedroom is not None
-        assert analysis.bedroom.primary_is_double == "yes"
-
-    def test_json_string_with_control_characters(self) -> None:
-        """JSON string with embedded control characters should be parsed after stripping."""
-        # Simulate LLM returning a JSON string with a NUL byte inside a value
-        bedroom_json = (
-            '{"primary_is_double": "yes", "has_built_in_wardrobe": "no",'
-            ' "can_fit_desk": "yes", "office_separation": "shared_space",'
-            ' "notes": "Good\x00 room"}'
-        )
-        analysis = PropertyQualityAnalysis(
-            kitchen=KitchenAnalysis(),
-            condition=ConditionAnalysis(),
-            light_space=LightSpaceAnalysis(),
-            space=SpaceAnalysis(),
-            summary="Test",
-            bedroom=bedroom_json,  # type: ignore[arg-type]
-        )
-        assert analysis.bedroom is not None
-        assert analysis.bedroom.primary_is_double == "yes"
-        assert "Good" in analysis.bedroom.notes
-
-    def test_json_string_with_multiple_control_characters(self) -> None:
-        """JSON string with multiple control characters should be cleaned and parsed."""
-        bedroom_json = (
-            '{"primary_is_double": "yes",\x01 "has_built_in_wardrobe": "no",'
-            ' "can_fit_desk":\x02 "yes", "office_separation": "shared_space",'
-            ' "notes": "OK"}'
-        )
-        analysis = PropertyQualityAnalysis(
-            kitchen=KitchenAnalysis(),
-            condition=ConditionAnalysis(),
-            light_space=LightSpaceAnalysis(),
-            space=SpaceAnalysis(),
-            summary="Test",
-            bedroom=bedroom_json,  # type: ignore[arg-type]
-        )
-        assert analysis.bedroom is not None
-        assert analysis.bedroom.can_fit_desk == "yes"
-
-    @pytest.mark.parametrize("field_name", sorted(_SUB_MODEL_JSON_SAMPLES))
-    def test_json_string_parsed_for_all_sub_model_fields(self, field_name: str) -> None:
-        """Every sub-model field should be parseable from a JSON string."""
-        json_string, attr, expected = _SUB_MODEL_JSON_SAMPLES[field_name]
-
-        # Required fields need model instances when they aren't the test target
-        required_defaults: dict[str, Any] = {
-            "kitchen": KitchenAnalysis(),
-            "condition": ConditionAnalysis(),
-            "light_space": LightSpaceAnalysis(),
-            "space": SpaceAnalysis(),
-        }
-        kwargs: dict[str, Any] = {**required_defaults, "summary": "Test"}
-        kwargs[field_name] = json_string  # override with JSON string
-
-        analysis = PropertyQualityAnalysis(**kwargs)  # type: ignore[arg-type]
-        field_value = getattr(analysis, field_name)
-        assert field_value is not None, f"{field_name} should not be None after parsing"
-        assert getattr(field_value, attr) == expected
-
-    def test_whitespace_control_chars_preserved_in_json_structure(self) -> None:
-        """Tab and newline are valid JSON whitespace and must not be stripped."""
-        bedroom_json = '{\n\t"primary_is_double": "yes",\n\t"notes": "OK\x00"\n}'
-        analysis = PropertyQualityAnalysis(
-            kitchen=KitchenAnalysis(),
-            condition=ConditionAnalysis(),
-            light_space=LightSpaceAnalysis(),
-            space=SpaceAnalysis(),
-            summary="Test",
-            bedroom=bedroom_json,  # type: ignore[arg-type]
-        )
-        assert analysis.bedroom is not None
-        assert analysis.bedroom.primary_is_double == "yes"
-        # NUL stripped, but the value parsed successfully
-        assert "OK" in analysis.bedroom.notes
-
-    def test_harmful_control_chars_stripped_benign_preserved(self) -> None:
-        """Harmful C0 chars (SOH, VT, US) stripped; tab/LF/CR preserved as JSON whitespace."""
-        bedroom_json = (
-            '{\n\t"primary_is_double":\x01 "yes",\n'
-            '\t"has_built_in_wardrobe":\x0b "no",\n'
-            '\t"can_fit_desk": "yes",\x1f\n'
-            '\t"notes": "Fine"\n}'
-        )
-        analysis = PropertyQualityAnalysis(
-            kitchen=KitchenAnalysis(),
-            condition=ConditionAnalysis(),
-            light_space=LightSpaceAnalysis(),
-            space=SpaceAnalysis(),
-            summary="Test",
-            bedroom=bedroom_json,  # type: ignore[arg-type]
-        )
-        assert analysis.bedroom is not None
-        assert analysis.bedroom.primary_is_double == "yes"
-        assert analysis.bedroom.has_built_in_wardrobe == "no"
-        assert analysis.bedroom.can_fit_desk == "yes"
-
-
-class TestQualitySubModelFieldsSync:
-    """Verify _QUALITY_SUB_MODEL_FIELDS stays in sync with PropertyQualityAnalysis."""
-
-    def test_matches_actual_sub_model_fields(self) -> None:
-        """_QUALITY_SUB_MODEL_FIELDS must match the BaseModel-typed fields on the class."""
-        import typing
-
-        from pydantic import BaseModel
-
-        from home_finder.models.quality import _QUALITY_SUB_MODEL_FIELDS
-
-        expected: set[str] = set()
-        for name, field_info in PropertyQualityAnalysis.model_fields.items():
-            annotation = field_info.annotation
-            # Unwrap Optional[X] / X | None via typing.get_args
-            args = typing.get_args(annotation)
-            types_to_check = args if args else (annotation,)
-            for t in types_to_check:
-                if isinstance(t, type) and issubclass(t, BaseModel):
-                    expected.add(name)
-                    break
-
-        assert expected == _QUALITY_SUB_MODEL_FIELDS, (
-            f"_QUALITY_SUB_MODEL_FIELDS drift detected.\n"
-            f"  Missing from frozenset: {expected - _QUALITY_SUB_MODEL_FIELDS}\n"
-            f"  Extra in frozenset: {_QUALITY_SUB_MODEL_FIELDS - expected}"
-        )
-
-
-class TestLiteralCoercion:
-    """Tests for _LenientLiteralModel auto-coercion of invalid Literal values."""
-
-    def test_original_bug_office_separation_poor(self) -> None:
-        """Repro: Claude returned 'poor' for office_separation (not in Literal)."""
-        analysis = BedroomAnalysis(office_separation="poor")  # type: ignore[arg-type]
-        assert analysis.office_separation == "unknown"
-
-    def test_valid_value_passthrough(self) -> None:
-        """Valid Literal values should pass through unchanged."""
-        analysis = KitchenAnalysis(overall_quality="modern")
-        assert analysis.overall_quality == "modern"
-
-    def test_non_unknown_default(self) -> None:
-        """Field with non-'unknown' default should coerce to that default."""
-        # ConditionAnalysis.confidence defaults to "medium"
-        analysis = ConditionAnalysis(confidence="mega")  # type: ignore[arg-type]
-        assert analysis.confidence == "medium"
-
-    def test_optional_literal_fallback_to_none(self) -> None:
-        """Optional Literal field should coerce to None (field default)."""
-        analysis = ValueAnalysis(rating="superb")  # type: ignore[arg-type]
-        assert analysis.rating is None
-
-    def test_none_passthrough(self) -> None:
-        """None on an Optional Literal field should stay None."""
-        analysis = KitchenAnalysis(hob_type=None)
-        assert analysis.hob_type is None
-
-    def test_tristatebool_invalid(self) -> None:
-        """TriStateBool field with invalid string should coerce to default."""
-        analysis = KitchenAnalysis(has_dishwasher="maybe")  # type: ignore[arg-type]
-        assert analysis.has_dishwasher == "unknown"
-
-    def test_end_to_end_merge_with_invalid_literal(
-        self,
-        sample_visual_response: dict[str, Any],
-        sample_evaluation_response: dict[str, Any],
-    ) -> None:
-        """_merge_analysis_results should succeed despite invalid Literal value."""
-        # Inject the original bug: 'poor' is not a valid office_separation
+        """An office_separation outside the Literal ('poor') reads as 'unknown'."""
         sample_visual_response["bedroom"]["office_separation"] = "poor"
 
         analysis = PropertyQualityAnalyzer._merge_analysis_results(
@@ -3246,174 +1578,17 @@ class TestLiteralCoercion:
         assert analysis.bedroom is not None
         assert analysis.bedroom.office_separation == "unknown"
 
-
-class TestLiteralFieldIntrospection:
-    """Tests for _extract_literal_values and _literal_field_info helpers."""
-
-    def test_plain_literal(self) -> None:
-        """Should extract values from a plain Literal type."""
-        from home_finder.models.quality import _extract_literal_values
-
-        result = _extract_literal_values(Literal["a", "b", "c"])
-        assert result == ("a", "b", "c")
-
-    def test_optional_literal(self) -> None:
-        """Should extract values from Literal[...] | None."""
-        from home_finder.models.quality import _extract_literal_values
-
-        result = _extract_literal_values(Literal["x", "y"] | None)
-        assert result is not None
-        assert set(result) == {"x", "y"}
-
-    def test_annotated_literal(self) -> None:
-        """Should extract values from Annotated[Literal[...], ...]."""
-        from home_finder.models.quality import _extract_literal_values
-
-        result = _extract_literal_values(Annotated[Literal["a", "b"], "metadata"])
-        assert result == ("a", "b")
-
-    def test_annotated_optional_literal(self) -> None:
-        """Should extract values from Annotated[Literal[...] | None, ...]."""
-        from home_finder.models.quality import _extract_literal_values
-
-        result = _extract_literal_values(Annotated[Literal["a", "b"] | None, "meta"])
-        assert result is not None
-        assert set(result) == {"a", "b"}
-
-    def test_non_literal_types_return_none(self) -> None:
-        """Non-Literal types should return None."""
-        from home_finder.models.quality import _extract_literal_values
-
-        assert _extract_literal_values(bool) is None
-        assert _extract_literal_values(str) is None
-        assert _extract_literal_values(list[str]) is None
-
-    def test_literal_field_info_bedroom(self) -> None:
-        """_literal_field_info should include office_separation for BedroomAnalysis."""
-        from home_finder.models.quality import _literal_field_info
-
-        info = _literal_field_info(BedroomAnalysis)
-        assert "office_separation" in info
-        allowed, default = info["office_separation"]
-        assert "dedicated_room" in allowed
-        assert "poor" not in allowed
-        assert default == "unknown"
-
-
-class TestCoercedBoolStringInputs:
-    """Tests for CoercedBool handling string inputs from non-strict tool_use."""
-
-    def test_unknown_coerces_to_false(self) -> None:
-        """'unknown' should coerce to False — safe default for uncertain booleans."""
-        analysis = OutdoorSpaceAnalysis(has_shared_garden="unknown")  # type: ignore[arg-type]
-        assert analysis.has_shared_garden is False
-
-    def test_yes_coerces_to_true(self) -> None:
-        analysis = OutdoorSpaceAnalysis(has_balcony="yes")  # type: ignore[arg-type]
-        assert analysis.has_balcony is True
-
-    def test_no_coerces_to_false(self) -> None:
-        analysis = OutdoorSpaceAnalysis(has_garden="no")  # type: ignore[arg-type]
-        assert analysis.has_garden is False
-
-    def test_true_string_coerces_to_true(self) -> None:
-        analysis = OutdoorSpaceAnalysis(has_terrace="true")  # type: ignore[arg-type]
-        assert analysis.has_terrace is True
-
-    def test_false_string_coerces_to_false(self) -> None:
-        analysis = OutdoorSpaceAnalysis(has_balcony="false")  # type: ignore[arg-type]
-        assert analysis.has_balcony is False
-
-    def test_na_coerces_to_false(self) -> None:
-        analysis = OutdoorSpaceAnalysis(has_shared_garden="n/a")  # type: ignore[arg-type]
-        assert analysis.has_shared_garden is False
-
-    def test_empty_string_coerces_to_false(self) -> None:
-        analysis = OutdoorSpaceAnalysis(has_garden="")  # type: ignore[arg-type]
-        assert analysis.has_garden is False
-
-    def test_case_insensitive(self) -> None:
-        """Coercion should be case-insensitive."""
-        analysis = OutdoorSpaceAnalysis(
-            has_balcony="YES",  # type: ignore[arg-type]
-            has_garden="Unknown",  # type: ignore[arg-type]
-            has_terrace="TRUE",  # type: ignore[arg-type]
-        )
-        assert analysis.has_balcony is True
-        assert analysis.has_garden is False
-        assert analysis.has_terrace is True
-
-    def test_listing_red_flags_too_few_photos(self) -> None:
-        """CoercedBool on ListingRedFlags should also handle string inputs."""
-        flags = ListingRedFlags(too_few_photos="unknown", selective_angles="yes")  # type: ignore[arg-type]
-        assert flags.too_few_photos is False
-        assert flags.selective_angles is True
-
-    def test_none_still_coerces_to_false(self) -> None:
-        """Original None → False behavior must be preserved."""
-        analysis = OutdoorSpaceAnalysis(has_balcony=None)  # type: ignore[arg-type]
-        assert analysis.has_balcony is False
-
-    def test_bool_values_pass_through(self) -> None:
-        """Actual bool values should not be affected."""
-        analysis = OutdoorSpaceAnalysis(has_balcony=True, has_garden=False)
-        assert analysis.has_balcony is True
-        assert analysis.has_garden is False
-
-
-class TestHistoricalJsonRepair:
-    """Historical stored rows retain their bounded model-level reader."""
-
-    def test_model_validator_repairs_missing_colon(self) -> None:
-        """coerce_json_strings model validator should repair missing colons."""
-        bedroom_json = (
-            '{"primary_is_double" "yes", "has_built_in_wardrobe" "no",'
-            ' "can_fit_desk" "yes", "office_separation" "shared_space",'
-            ' "notes" "Decent room"}'
-        )
-        analysis = PropertyQualityAnalysis(
-            kitchen=KitchenAnalysis(),
-            condition=ConditionAnalysis(),
-            light_space=LightSpaceAnalysis(),
-            space=SpaceAnalysis(),
-            summary="Test",
-            bedroom=bedroom_json,  # type: ignore[arg-type]
-        )
-        assert analysis.bedroom is not None
-        assert analysis.bedroom.primary_is_double == "yes"
-        assert analysis.bedroom.office_separation == "shared_space"
-
-
-class TestSetLiteralSyntaxThroughLayers:
-    """End-to-end: set-literal syntax repair through each defense layer."""
-
-    SET_LITERAL_BEDROOM = (
-        '{"primary_is_double", "has_built_in_wardrobe": "no",'
-        ' "can_fit_desk": "yes", "office_separation": "shared_space",'
-        ' "notes": "Decent room"}'
-    )
-
-    def test_coerce_json_strings_repairs_set_literal(self) -> None:
-        """Layer 3: coerce_json_strings model validator repairs set-literal syntax."""
-        analysis = PropertyQualityAnalysis(
-            kitchen=KitchenAnalysis(),
-            condition=ConditionAnalysis(),
-            light_space=LightSpaceAnalysis(),
-            space=SpaceAnalysis(),
-            summary="Test",
-            bedroom=self.SET_LITERAL_BEDROOM,  # type: ignore[arg-type]
-        )
-        assert analysis.bedroom is not None
-        assert analysis.bedroom.can_fit_desk == "yes"
-        assert analysis.bedroom.office_separation == "shared_space"
-
     def test_merge_analysis_repairs_set_literal(
         self,
         sample_visual_response: dict[str, Any],
         sample_evaluation_response: dict[str, Any],
     ) -> None:
-        """Full pipeline: _merge_analysis_results repairs set-literal bedroom."""
-        sample_visual_response["bedroom"] = self.SET_LITERAL_BEDROOM
+        """A bedroom object in set-literal syntax is repaired during assembly."""
+        sample_visual_response["bedroom"] = (
+            '{"primary_is_double", "has_built_in_wardrobe": "no",'
+            ' "can_fit_desk": "yes", "office_separation": "shared_space",'
+            ' "notes": "Decent room"}'
+        )
 
         analysis = PropertyQualityAnalyzer._merge_analysis_results(
             sample_visual_response,
@@ -3433,8 +1608,6 @@ class TestEvalHelpers:
 
     def test_extract_eval_json_from_text_block(self) -> None:
         """Should extract JSON dict from a text content block."""
-        import json
-
         raw_data = {"one_line": "Nice flat", "highlights": ["Gas hob"]}
         mock_response = MagicMock()
         text_block = MagicMock()
@@ -3482,70 +1655,17 @@ class TestEvalHelpers:
         _sanitize_eval_enums(raw)
         assert raw == {"one_line": "Nice flat"}
 
-    async def test_invalid_live_evaluation_is_rejected(
-        self,
-        sample_merged_property: MergedProperty,
-        sample_visual_response: dict[str, Any],
-        tmp_path: Any,
-    ) -> None:
-        """A fresh invalid category fails instead of being silently removed."""
-        import json
 
-        eval_data_with_invalid = {
-            "listing_extraction": {
-                "epc_rating": "C",
-                "service_charge_pcm": None,
-                "deposit_weeks": 5,
-                "bills_included": "no",
-                "pets_allowed": "unknown",
-                "parking": "street",
-                "council_tax_band": "C",
-                "property_type": "victorian",
-                "furnished_status": "furnished",
-                "broadband_type": "fttc",
-            },
-            "value_for_quality": {"rating": "good", "reasoning": "Fair price"},
-            "viewing_notes": {
-                "check_items": ["Check windows"],
-                "questions_for_agent": ["Rent increases?"],
-                "deal_breaker_tests": ["Test water"],
-            },
-            "highlights": ["Gas hob"],
-            "lowlights": ["No dishwasher", "Completely made up lowlight"],
-            "one_line": "Nice flat",
-        }
+class TestClientLifecycle:
+    async def test_close_only_closes_anthropic_client(self) -> None:
+        """Once the SDK client exists it owns the transport; close() does not close it twice."""
+        http_client = AsyncMock()
+        analyzer = PropertyQualityAnalyzer(api_key="test-key", http_client=http_client)
+        sdk_client = AsyncMock()
+        analyzer._client = sdk_client
 
-        # Phase 1 mock (works normally)
-        mock_visual = create_mock_response(
-            sample_visual_response, tool_name="property_visual_analysis"
-        )
+        await analyzer.close()
 
-        # Phase 2 mock: messages.create returns a response with raw JSON
-        # in a text content block (including an invalid lowlight).
-        mock_eval_response = MagicMock()
-        text_block = MagicMock()
-        text_block.type = "text"
-        text_block.text = json.dumps(eval_data_with_invalid)
-        mock_eval_response.content = [text_block]
-        mock_eval_response.stop_reason = "end_turn"
-        mock_eval_response.usage = Usage(input_tokens=100, output_tokens=50)
-
-        # messages.create is called for both Phase 1 and Phase 2.
-        # Return Phase 1 visual response first, then Phase 2 eval response.
-        populate_image_cache(str(tmp_path), sample_merged_property)
-
-        analyzer = PropertyQualityAnalyzer(api_key="test-key")
-        analyzer._client = MagicMock()
-        analyzer._client.messages.create = AsyncMock(side_effect=[mock_visual, mock_eval_response])
-
-        results = await analyzer.analyze_merged_properties(
-            [sample_merged_property], data_dir=str(tmp_path)
-        )
-
-        assert len(results) == 1
-        _, analysis = results[0]
-        assert analysis is not None
-        assert analysis.overall_rating is None
-        assert analysis.analysis_failure.phase == "evaluation"
-        assert analysis.analysis_failure.kind == "malformed_output"
-        assert analysis.one_line is None and analysis.lowlights is None
+        sdk_client.close.assert_awaited_once()
+        http_client.aclose.assert_not_awaited()
+        assert analyzer._client is None

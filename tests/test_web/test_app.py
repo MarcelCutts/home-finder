@@ -16,7 +16,7 @@ from home_finder.web.routes import router
 
 
 @pytest.fixture
-def settings() -> Settings:
+def app_settings() -> Settings:
     return Settings(
         telegram_bot_token=SecretStr("fake:token"),
         telegram_chat_id=0,
@@ -26,24 +26,24 @@ def settings() -> Settings:
 
 
 class TestCreateApp:
-    async def test_default_lifespan_does_not_start_collection(self, settings: Settings) -> None:
-        app = create_app(settings)
+    async def test_default_lifespan_does_not_start_collection(self, app_settings: Settings) -> None:
+        app = create_app(app_settings)
         with patch("home_finder.web.app._pipeline_loop", new_callable=AsyncMock) as pipeline:
             async with app.router.lifespan_context(app):
                 pipeline.assert_not_called()
 
-    def test_returns_fastapi_instance(self, settings: Settings) -> None:
-        app = create_app(settings)
+    def test_returns_fastapi_instance(self, app_settings: Settings) -> None:
+        app = create_app(app_settings)
         assert isinstance(app, FastAPI)
         assert app.title == "I Hate Moving"
 
-    def test_has_routes(self, settings: Settings) -> None:
-        app = create_app(settings)
+    def test_has_routes(self, app_settings: Settings) -> None:
+        app = create_app(app_settings)
         assert app.url_path_for("dashboard") == "/"
         assert app.url_path_for("health_check") == "/health"
 
-    def test_has_static_mount(self, settings: Settings) -> None:
-        app = create_app(settings)
+    def test_has_static_mount(self, app_settings: Settings) -> None:
+        app = create_app(app_settings)
         route_names = [getattr(route, "name", None) for route in app.routes]
         assert "static" in route_names
 
@@ -59,7 +59,7 @@ class TestCreateApp:
 
 
 class TestSecurityHeaders:
-    def test_headers_present(self, settings: Settings) -> None:
+    def test_headers_present(self, app_settings: Settings) -> None:
         from fastapi.testclient import TestClient
 
         test_app = FastAPI()
@@ -67,7 +67,7 @@ class TestSecurityHeaders:
         mock_storage = AsyncMock()
         mock_storage.runs.get_last_pipeline_run.return_value = None
         test_app.state.storage = mock_storage
-        test_app.state.settings = settings
+        test_app.state.settings = app_settings
         test_app.include_router(router)
 
         client = TestClient(test_app)
@@ -76,7 +76,7 @@ class TestSecurityHeaders:
         assert resp.headers["X-Frame-Options"] == "DENY"
         assert resp.headers["Referrer-Policy"] == "strict-origin-when-cross-origin"
 
-    def test_csp_header_present(self, settings: Settings) -> None:
+    def test_csp_header_present(self, app_settings: Settings) -> None:
         from fastapi.testclient import TestClient
 
         test_app = FastAPI()
@@ -84,7 +84,7 @@ class TestSecurityHeaders:
         mock_storage = AsyncMock()
         mock_storage.runs.get_last_pipeline_run.return_value = None
         test_app.state.storage = mock_storage
-        test_app.state.settings = settings
+        test_app.state.settings = app_settings
         test_app.include_router(router)
 
         client = TestClient(test_app)
@@ -98,7 +98,7 @@ class TestSecurityHeaders:
         assert "'unsafe-inline'" not in script_src
         assert "'nonce-" in script_src
 
-    def test_csp_nonce_unique_per_request(self, settings: Settings) -> None:
+    def test_csp_nonce_unique_per_request(self, app_settings: Settings) -> None:
         import re
 
         from fastapi.testclient import TestClient
@@ -108,7 +108,7 @@ class TestSecurityHeaders:
         mock_storage = AsyncMock()
         mock_storage.runs.get_last_pipeline_run.return_value = None
         test_app.state.storage = mock_storage
-        test_app.state.settings = settings
+        test_app.state.settings = app_settings
         test_app.include_router(router)
 
         client = TestClient(test_app)

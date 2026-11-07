@@ -68,7 +68,7 @@ uv run pytest
 uv run pytest --cov=src
 
 # Run specific test file
-uv run pytest tests/test_scrapers.py
+uv run pytest tests/test_scrapers/test_openrent.py
 
 # Run tests matching a pattern
 uv run pytest -k "test_openrent"
@@ -76,7 +76,7 @@ uv run pytest -k "test_openrent"
 
 ### Writing Tests
 
-- Place tests in the `tests/` directory
+- Place tests in the `tests/` directory; [tests/README.md](tests/README.md) explains its layout and conventions
 - Use `pytest-asyncio` for async tests (asyncio_mode is set to "auto")
 - Use `hypothesis` for property-based testing where appropriate
 - Mock external services (TravelTime API, Telegram) in tests
@@ -120,7 +120,7 @@ To add support for a new property platform:
 1. Create a new file in `src/home_finder/scrapers/`
 2. Implement the scraper following the existing patterns
 3. Add the scraper to the registry in `src/home_finder/scrapers/__init__.py`
-4. Add tests in `tests/test_scrapers.py`
+4. Add tests in `tests/test_scrapers/`, parsing saved pages from `tests/fixtures/`
 5. Update the README with the new platform
 
 ## Reporting Issues

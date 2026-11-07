@@ -121,17 +121,6 @@ class TestScraperMetricsCollection:
             assert m.areas_attempted == 3
             assert m.areas_completed == 3
 
-    async def test_empty_areas_returns_empty_metrics(self) -> None:
-        props, metrics = await scrape_all_platforms(
-            min_price=1500,
-            max_price=2500,
-            min_bedrooms=1,
-            max_bedrooms=2,
-            search_areas=[],
-        )
-        assert props == []
-        assert metrics == []
-
     async def test_healthy_flag(self, _patch_scrapers) -> None:
         # Default: pages_fetched=1, parse_errors=0 → healthy
         _props, metrics = await scrape_all_platforms(

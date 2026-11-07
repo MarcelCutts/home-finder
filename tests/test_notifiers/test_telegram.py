@@ -1,4 +1,4 @@
-"""Tests for Telegram notifications."""
+"""Telegram message formatting, photo resolution and the standalone send helpers."""
 
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -43,9 +43,9 @@ from home_finder.notifiers.telegram import (
 class TestFormatPropertyMessage:
     """Tests for message formatting."""
 
-    def test_format_basic_property(self, sample_property: Property) -> None:
+    def test_format_basic_property(self, notification_property: Property) -> None:
         """Test formatting a basic property."""
-        message = format_property_message(sample_property)
+        message = format_property_message(notification_property)
 
         assert "1 Bed Flat" in message
         assert "£1,900" in message
@@ -53,12 +53,14 @@ class TestFormatPropertyMessage:
         assert "E8 3RH" in message
         assert "OpenRent" in message
 
-    def test_format_property_with_commute(self, sample_tracked_property: TrackedProperty) -> None:
+    def test_format_property_with_commute(
+        self, notification_tracked_property: TrackedProperty
+    ) -> None:
         """Test formatting a property with commute info."""
         message = format_property_message(
-            sample_tracked_property.property,
-            commute_minutes=sample_tracked_property.commute_minutes,
-            transport_mode=sample_tracked_property.transport_mode,
+            notification_tracked_property.property,
+            commute_minutes=notification_tracked_property.commute_minutes,
+            transport_mode=notification_tracked_property.transport_mode,
         )
 
         assert "18 min" in message
@@ -66,21 +68,13 @@ class TestFormatPropertyMessage:
         assert "estimate · check route" in message
 
     @pytest.mark.parametrize("minutes", [None, 0])
-    def test_unknown_commute_is_not_zero_minute_success(self, sample_property, minutes):
-        message = format_property_message(sample_property, commute_minutes=minutes)
+    def test_unknown_commute_is_not_zero_minute_success(self, notification_property, minutes):
+        message = format_property_message(notification_property, commute_minutes=minutes)
         assert "Commute unknown" in message
         assert "0 min" not in message
 
-    def test_format_property_contains_source(self, sample_property: Property) -> None:
-        """Test that message contains source name."""
-        message = format_property_message(sample_property)
-
-        # Should contain the source name
-        assert "OpenRent" in message
-
-    def test_format_property_html_safe(self, sample_property: Property) -> None:
-        """Test that message is safe for HTML parsing."""
-        # Create property with characters that need escaping
+    def test_format_property_escapes_listing_text_for_html(self) -> None:
+        """Telegram parses the message as HTML, so listing text must not add tags."""
         prop_with_special = Property(
             source=PropertySource.OPENRENT,
             source_id="1",
@@ -93,19 +87,20 @@ class TestFormatPropertyMessage:
 
         message = format_property_message(prop_with_special)
 
-        # Special chars should be escaped for HTML
-        assert "&lt;" in message or "<" not in message.replace("<a ", "").replace(
-            "<b>", ""
-        ).replace("</b>", "").replace("</a>", "")
-        assert "&amp;" in message or "& " not in message
+        assert "<b>Flat &lt;nice&gt; &amp; cozy</b>" in message
+        assert "Test &amp; Co. Ltd &lt;Building&gt;" in message
+        assert "<nice>" not in message
+        assert "<Building>" not in message
 
     def test_format_property_with_fit_score(
         self,
-        sample_property: Property,
-        sample_quality_analysis: PropertyQualityAnalysis,
+        notification_property: Property,
+        notification_quality_analysis: PropertyQualityAnalysis,
     ) -> None:
         """Test that fit score appears merged with price on same line."""
-        message = format_property_message(sample_property, quality_analysis=sample_quality_analysis)
+        message = format_property_message(
+            notification_property, quality_analysis=notification_quality_analysis
+        )
         # Fit score should appear on the same line as price (merged format)
         found = False
         for line in message.split("\n"):
@@ -116,10 +111,10 @@ class TestFormatPropertyMessage:
 
     def test_format_property_no_decorative_emoji_in_header(
         self,
-        sample_property: Property,
+        notification_property: Property,
     ) -> None:
         """Test that header uses clean formatting without decorative emoji."""
-        message = format_property_message(sample_property)
+        message = format_property_message(notification_property)
         # Title should be bold without 🏠 prefix
         assert "<b>" in message
         assert "🏠" not in message
@@ -130,11 +125,13 @@ class TestFormatPropertyMessage:
 
     def test_format_property_with_highlights_lowlights(
         self,
-        sample_property: Property,
-        sample_quality_analysis: PropertyQualityAnalysis,
+        notification_property: Property,
+        notification_quality_analysis: PropertyQualityAnalysis,
     ) -> None:
         """Test that highlights and lowlights appear in full message."""
-        message = format_property_message(sample_property, quality_analysis=sample_quality_analysis)
+        message = format_property_message(
+            notification_property, quality_analysis=notification_quality_analysis
+        )
         assert "✅" in message
         assert "Gas hob" in message
         assert "⛔" in message
@@ -142,11 +139,13 @@ class TestFormatPropertyMessage:
 
     def test_format_property_uses_text_labels_for_detail(
         self,
-        sample_property: Property,
-        sample_quality_analysis: PropertyQualityAnalysis,
+        notification_property: Property,
+        notification_quality_analysis: PropertyQualityAnalysis,
     ) -> None:
         """Test that full message uses text labels instead of emoji for detail."""
-        message = format_property_message(sample_property, quality_analysis=sample_quality_analysis)
+        message = format_property_message(
+            notification_property, quality_analysis=notification_quality_analysis
+        )
         # Should use text labels
         assert "Kitchen:" in message
         assert "Light:" in message
@@ -160,20 +159,24 @@ class TestFormatPropertyMessage:
 
     def test_format_property_with_expandable_blockquote(
         self,
-        sample_property: Property,
-        sample_quality_analysis: PropertyQualityAnalysis,
+        notification_property: Property,
+        notification_quality_analysis: PropertyQualityAnalysis,
     ) -> None:
         """Test that full message uses expandable blockquote for summary."""
-        message = format_property_message(sample_property, quality_analysis=sample_quality_analysis)
+        message = format_property_message(
+            notification_property, quality_analysis=notification_quality_analysis
+        )
         assert "<blockquote expandable>" in message
 
     def test_format_property_with_viewing_notes(
         self,
-        sample_property: Property,
-        sample_quality_analysis: PropertyQualityAnalysis,
+        notification_property: Property,
+        notification_quality_analysis: PropertyQualityAnalysis,
     ) -> None:
         """Test that viewing notes appear in full message."""
-        message = format_property_message(sample_property, quality_analysis=sample_quality_analysis)
+        message = format_property_message(
+            notification_property, quality_analysis=notification_quality_analysis
+        )
         assert "Check water pressure" in message
         assert "Ask about sound insulation" in message
         assert "Test internet speed" in message
@@ -184,27 +187,27 @@ class TestFormatMergedPropertyCaption:
 
     def test_caption_under_1024_chars(
         self,
-        sample_merged_property: MergedProperty,
-        sample_quality_analysis: PropertyQualityAnalysis,
+        notification_merged_property: MergedProperty,
+        notification_quality_analysis: PropertyQualityAnalysis,
     ) -> None:
         caption = format_merged_property_caption(
-            sample_merged_property,
+            notification_merged_property,
             commute_minutes=14,
             transport_mode=TransportMode.CYCLING,
-            quality_analysis=sample_quality_analysis,
+            quality_analysis=notification_quality_analysis,
         )
         assert len(caption) <= 1024
 
     def test_caption_contains_key_fields(
         self,
-        sample_merged_property: MergedProperty,
-        sample_quality_analysis: PropertyQualityAnalysis,
+        notification_merged_property: MergedProperty,
+        notification_quality_analysis: PropertyQualityAnalysis,
     ) -> None:
         caption = format_merged_property_caption(
-            sample_merged_property,
+            notification_merged_property,
             commute_minutes=14,
             transport_mode=TransportMode.CYCLING,
-            quality_analysis=sample_quality_analysis,
+            quality_analysis=notification_quality_analysis,
         )
         assert "1 Bed Flat" in caption
         assert "Fit " in caption
@@ -214,45 +217,40 @@ class TestFormatMergedPropertyCaption:
 
     def test_caption_brief_location(
         self,
-        sample_merged_property: MergedProperty,
+        notification_merged_property: MergedProperty,
     ) -> None:
         """Caption should use postcode only (not full address) with commute on same line."""
         caption = format_merged_property_caption(
-            sample_merged_property,
+            notification_merged_property,
             commute_minutes=14,
             transport_mode=TransportMode.CYCLING,
         )
-        assert "E8 3RH" in caption
-        # Full address should not appear in caption
         assert "123 Mare Street, Hackney" not in caption
-        # Postcode and commute on same line
-        for line in caption.split("\n"):
-            if "📍" in line:
-                assert "14 min" in line
-                break
+        location = [line for line in caption.split("\n") if line.startswith("📍")]
+        assert location == ["📍 E8 3RH · 🚴 14 min estimate · check route"]
 
     def test_caption_uses_one_line_over_summary(
         self,
-        sample_merged_property: MergedProperty,
-        sample_quality_analysis: PropertyQualityAnalysis,
+        notification_merged_property: MergedProperty,
+        notification_quality_analysis: PropertyQualityAnalysis,
     ) -> None:
         """Test that caption prefers one_line field over full summary."""
         caption = format_merged_property_caption(
-            sample_merged_property,
-            quality_analysis=sample_quality_analysis,
+            notification_merged_property,
+            quality_analysis=notification_quality_analysis,
         )
         # one_line should be used in caption, not the full summary
         assert "Bright modern flat with gas kitchen" in caption
 
     def test_caption_shows_highlights_not_lowlights(
         self,
-        sample_merged_property: MergedProperty,
-        sample_quality_analysis: PropertyQualityAnalysis,
+        notification_merged_property: MergedProperty,
+        notification_quality_analysis: PropertyQualityAnalysis,
     ) -> None:
         """Caption shows highlights but NOT lowlights (those are on web dashboard)."""
         caption = format_merged_property_caption(
-            sample_merged_property,
-            quality_analysis=sample_quality_analysis,
+            notification_merged_property,
+            quality_analysis=notification_quality_analysis,
         )
         assert "✅" in caption
         assert "Gas hob" in caption
@@ -262,7 +260,7 @@ class TestFormatMergedPropertyCaption:
 
     def test_caption_falls_back_to_summary_without_one_line(
         self,
-        sample_merged_property: MergedProperty,
+        notification_merged_property: MergedProperty,
     ) -> None:
         """Test that caption falls back to summary when one_line is absent."""
         analysis = PropertyQualityAnalysis(
@@ -273,25 +271,25 @@ class TestFormatMergedPropertyCaption:
             summary="Decent flat overall.",
         )
         caption = format_merged_property_caption(
-            sample_merged_property,
+            notification_merged_property,
             quality_analysis=analysis,
         )
         assert "Decent flat overall." in caption
 
-    def test_caption_without_quality(self, sample_merged_property: MergedProperty) -> None:
-        caption = format_merged_property_caption(sample_merged_property)
+    def test_caption_without_quality(self, notification_merged_property: MergedProperty) -> None:
+        caption = format_merged_property_caption(notification_merged_property)
         assert "£" in caption
         assert len(caption) <= 1024
 
     def test_caption_no_decorative_emoji(
         self,
-        sample_merged_property: MergedProperty,
-        sample_quality_analysis: PropertyQualityAnalysis,
+        notification_merged_property: MergedProperty,
+        notification_quality_analysis: PropertyQualityAnalysis,
     ) -> None:
         """Caption should have minimal emoji (no 🏠, 💰, 🛏)."""
         caption = format_merged_property_caption(
-            sample_merged_property,
-            quality_analysis=sample_quality_analysis,
+            notification_merged_property,
+            quality_analysis=notification_quality_analysis,
         )
         assert "🏠" not in caption
         assert "💰" not in caption
@@ -299,7 +297,7 @@ class TestFormatMergedPropertyCaption:
 
     def test_caption_critical_alerts(
         self,
-        sample_merged_property: MergedProperty,
+        notification_merged_property: MergedProperty,
     ) -> None:
         """Caption should still show critical EPC and red flags."""
         analysis = PropertyQualityAnalysis(
@@ -314,48 +312,50 @@ class TestFormatMergedPropertyCaption:
             ),
         )
         caption = format_merged_property_caption(
-            sample_merged_property,
+            notification_merged_property,
             quality_analysis=analysis,
         )
         assert "⚠️ EPC F" in caption
         assert "⚠️ 3 red flags" in caption
 
-    def test_caption_incremental_building_drops_low_priority(
+    def test_caption_over_the_limit_drops_the_value_note_first(
         self,
-        sample_merged_property: MergedProperty,
+        notification_merged_property: MergedProperty,
     ) -> None:
-        """Incremental builder should drop lower-priority sections if over 1024."""
+        """Sections join in priority order until the next would pass 1,024 characters."""
         from home_finder.models import ValueAnalysis
 
-        # Create analysis with very long highlights to push caption near limit
-        analysis = PropertyQualityAnalysis(
-            kitchen=KitchenAnalysis(),
-            condition=ConditionAnalysis(),
-            light_space=LightSpaceAnalysis(),
-            space=SpaceAnalysis(),
-            summary="Test summary",
-            one_line="A" * 300,  # Very long one-liner
-            highlights=["Highlight " + "X" * 50 for _ in range(4)],
-            value=ValueAnalysis(
-                quality_adjusted_rating="good",
-                note="Value note here",
-            ),
-        )
-        caption = format_merged_property_caption(
-            sample_merged_property,
-            quality_analysis=analysis,
-        )
-        # Should always be within limit
+        def caption_with_one_liner(length: int) -> str:
+            analysis = PropertyQualityAnalysis(
+                kitchen=KitchenAnalysis(),
+                condition=ConditionAnalysis(),
+                light_space=LightSpaceAnalysis(),
+                space=SpaceAnalysis(),
+                summary="Test summary",
+                one_line="A" * length,
+                highlights=["Highlight " + "X" * 50 for _ in range(4)],
+                value=ValueAnalysis(quality_adjusted_rating="good", note="Value note here"),
+            )
+            return format_merged_property_caption(
+                notification_merged_property, quality_analysis=analysis
+            )
+
+        assert "Value note here" in caption_with_one_liner(10)
+        # With a 670-character one-liner, the header, one-liner and highlights come to
+        # about 1,010 characters, so adding the value note would pass the limit.
+        caption = caption_with_one_liner(670)
         assert len(caption) <= 1024
-        # Header should always be present
-        assert "1 Bed Flat" in caption
+        assert caption.startswith("<b>1 Bed Flat, Mare Street</b>")
+        assert "A" * 670 in caption
+        assert "✅ Highlight" in caption
+        assert "Value note here" not in caption
 
 
 class TestGetBestImageUrl:
     """Tests for _get_best_image_url."""
 
-    def test_returns_canonical_image(self, sample_property: Property) -> None:
-        prop_with_img = sample_property.model_copy(
+    def test_returns_canonical_image(self, notification_property: Property) -> None:
+        prop_with_img = notification_property.model_copy(
             update={"image_url": HttpUrl("https://example.com/main.jpg")}
         )
         merged = MergedProperty(
@@ -367,22 +367,22 @@ class TestGetBestImageUrl:
         )
         assert _get_best_image_url(merged) == "https://example.com/main.jpg"
 
-    def test_falls_back_to_gallery(self, sample_merged_property: MergedProperty) -> None:
-        # sample_merged_property has no canonical image_url but has gallery images
+    def test_falls_back_to_gallery(self, notification_merged_property: MergedProperty) -> None:
+        # notification_merged_property has no canonical image_url but has gallery images
         merged_no_canonical_img = MergedProperty(
-            canonical=sample_merged_property.canonical.model_copy(update={"image_url": None}),
-            sources=sample_merged_property.sources,
-            source_urls=sample_merged_property.source_urls,
-            images=sample_merged_property.images,
-            min_price=sample_merged_property.min_price,
-            max_price=sample_merged_property.max_price,
+            canonical=notification_merged_property.canonical.model_copy(update={"image_url": None}),
+            sources=notification_merged_property.sources,
+            source_urls=notification_merged_property.source_urls,
+            images=notification_merged_property.images,
+            min_price=notification_merged_property.min_price,
+            max_price=notification_merged_property.max_price,
         )
         url = _get_best_image_url(merged_no_canonical_img)
         assert url is not None
         assert "img1.jpg" in url
 
-    def test_returns_none_when_no_images(self, sample_property: Property) -> None:
-        prop_no_img = sample_property.model_copy(update={"image_url": None})
+    def test_returns_none_when_no_images(self, notification_property: Property) -> None:
+        prop_no_img = notification_property.model_copy(update={"image_url": None})
         merged = MergedProperty(
             canonical=prop_no_img,
             sources=(PropertySource.OPENRENT,),
@@ -394,7 +394,15 @@ class TestGetBestImageUrl:
 
 
 class TestTelegramNotifier:
-    """Tests for TelegramNotifier."""
+    """The notifier's settings and its sends without a delivery repository.
+
+    These sends are the standalone helpers. ``send_property_notification``,
+    ``send_batch_notifications`` and ``send_price_drop_notification`` have no
+    production caller, and the pipeline always gives
+    ``send_merged_property_notification`` a repository; that saved-plan path is
+    covered in test_delivery_recovery.py. Both paths build the same discovery plan,
+    so the photo, album and venue choices asserted here hold for both.
+    """
 
     def test_init(self) -> None:
         """Test initializing notifier."""
@@ -403,9 +411,17 @@ class TestTelegramNotifier:
             chat_id=12345678,
         )
         assert notifier.chat_id == 12345678
+        assert notifier.web_base_url == ""
+
+    @pytest.mark.parametrize(
+        "web_base_url", ["https://home-finder.fly.dev", "https://home-finder.fly.dev/"]
+    )
+    def test_web_base_url_is_stored_without_a_trailing_slash(self, web_base_url: str) -> None:
+        notifier = TelegramNotifier(bot_token="123:ABC", chat_id=12345, web_base_url=web_base_url)
+        assert notifier.web_base_url == "https://home-finder.fly.dev"
 
     @pytest.mark.asyncio
-    async def test_send_notification(self, sample_property: Property) -> None:
+    async def test_send_notification(self, notification_property: Property) -> None:
         """Test sending a notification."""
         notifier = TelegramNotifier(
             bot_token="123456:ABC-DEF",
@@ -417,7 +433,7 @@ class TestTelegramNotifier:
         mock_bot.send_message = AsyncMock(return_value=MagicMock(message_id=1))
 
         with patch.object(notifier, "_get_bot", return_value=mock_bot):
-            result = await notifier.send_property_notification(sample_property)
+            result = await notifier.send_property_notification(notification_property)
 
         assert result is True
         mock_bot.send_message.assert_called_once()
@@ -429,7 +445,7 @@ class TestTelegramNotifier:
 
     @pytest.mark.asyncio
     async def test_send_notification_with_commute(
-        self, sample_tracked_property: TrackedProperty
+        self, notification_tracked_property: TrackedProperty
     ) -> None:
         """Test sending notification with commute info."""
         notifier = TelegramNotifier(
@@ -442,9 +458,9 @@ class TestTelegramNotifier:
 
         with patch.object(notifier, "_get_bot", return_value=mock_bot):
             result = await notifier.send_property_notification(
-                sample_tracked_property.property,
-                commute_minutes=sample_tracked_property.commute_minutes,
-                transport_mode=sample_tracked_property.transport_mode,
+                notification_tracked_property.property,
+                commute_minutes=notification_tracked_property.commute_minutes,
+                transport_mode=notification_tracked_property.transport_mode,
             )
 
         assert result is True
@@ -453,7 +469,7 @@ class TestTelegramNotifier:
         assert "18 min" in call_kwargs["text"]
 
     @pytest.mark.asyncio
-    async def test_send_notification_failure(self, sample_property: Property) -> None:
+    async def test_send_notification_failure(self, notification_property: Property) -> None:
         """Test handling notification failure."""
         notifier = TelegramNotifier(
             bot_token="123456:ABC-DEF",
@@ -464,35 +480,63 @@ class TestTelegramNotifier:
         mock_bot.send_message = AsyncMock(side_effect=Exception("API Error"))
 
         with patch.object(notifier, "_get_bot", return_value=mock_bot):
-            result = await notifier.send_property_notification(sample_property)
+            result = await notifier.send_property_notification(notification_property)
 
         assert result is False
 
     @pytest.mark.asyncio
-    async def test_send_batch_notifications(self, sample_property: Property) -> None:
-        """Test sending multiple notifications."""
+    async def test_send_batch_notifications_pauses_between_sends(
+        self, notification_property: Property
+    ) -> None:
+        """Each property is sent in turn, with the delay between consecutive sends only."""
         notifier = TelegramNotifier(
             bot_token="123456:ABC-DEF",
             chat_id=12345678,
         )
 
-        properties = [sample_property, sample_property, sample_property]
+        properties = [notification_property, notification_property, notification_property]
 
         mock_bot = AsyncMock()
         mock_bot.send_message = AsyncMock(return_value=MagicMock(message_id=1))
 
-        with patch.object(notifier, "_get_bot", return_value=mock_bot):
+        with (
+            patch.object(notifier, "_get_bot", return_value=mock_bot),
+            patch("home_finder.notifiers.telegram.asyncio.sleep", new_callable=AsyncMock) as pause,
+        ):
             results = await notifier.send_batch_notifications(properties)
 
-        assert len(results) == 3
-        assert all(results)
+        assert results == [True, True, True]
         assert mock_bot.send_message.call_count == 3
+        assert [call.args for call in pause.await_args_list] == [(1.0,), (1.0,)]
+
+    async def test_price_drop_message_names_the_home_and_both_prices(self) -> None:
+        notifier = TelegramNotifier(bot_token="fake:token", chat_id=123)
+        mock_bot = AsyncMock()
+        mock_bot.send_message = AsyncMock(return_value=MagicMock(message_id=1))
+
+        with patch.object(notifier, "_get_bot", return_value=mock_bot):
+            assert await notifier.send_price_drop_notification(
+                title="Nice Flat",
+                postcode="E8 3RH",
+                old_price=2000,
+                new_price=1800,
+                unique_id="openrent:123",
+                days_listed=14,
+            )
+
+        mock_bot.send_message.assert_called_once()
+        text = mock_bot.send_message.call_args.kwargs["text"]
+        assert "Price Drop" in text
+        assert "<b>Nice Flat</b>" in text
+        assert "£2,000 → £1,800/mo (<b>-£200</b>)" in text
+        assert "E8 3RH" in text
+        assert "First observed by Home Finder 14 days ago" in text
 
     @pytest.mark.asyncio
     async def test_send_merged_with_image_sends_photo(
         self,
-        sample_merged_property: MergedProperty,
-        sample_quality_analysis: PropertyQualityAnalysis,
+        notification_merged_property: MergedProperty,
+        notification_quality_analysis: PropertyQualityAnalysis,
     ) -> None:
         """Test that send_merged_property_notification uses send_photo when image available."""
         notifier = TelegramNotifier(bot_token="123456:ABC-DEF", chat_id=12345678)
@@ -502,7 +546,7 @@ class TestTelegramNotifier:
 
         with patch.object(notifier, "_get_bot", return_value=mock_bot):
             result = await notifier.send_merged_property_notification(
-                sample_merged_property, quality_analysis=sample_quality_analysis
+                notification_merged_property, quality_analysis=notification_quality_analysis
             )
 
         assert result is True
@@ -512,12 +556,19 @@ class TestTelegramNotifier:
         assert "reply_markup" in call_kwargs
 
     @pytest.mark.asyncio
-    async def test_send_merged_without_image_sends_message(self, sample_property: Property) -> None:
-        """Test fallback to send_message when no image available."""
+    async def test_send_merged_without_image_sends_message(
+        self, notification_property: Property
+    ) -> None:
+        """Without a repository, an imageless home is sent as a text message.
+
+        The pipeline never sends it: the saved-plan path defers it with the reason
+        "no_images" (see test_images_arriving_before_first_plan_unblock_delivery in
+        test_delivery_recovery.py).
+        """
         merged_no_img = MergedProperty(
-            canonical=sample_property.model_copy(update={"image_url": None}),
+            canonical=notification_property.model_copy(update={"image_url": None}),
             sources=(PropertySource.OPENRENT,),
-            source_urls={PropertySource.OPENRENT: sample_property.url},
+            source_urls={PropertySource.OPENRENT: notification_property.url},
             min_price=1900,
             max_price=1900,
         )
@@ -536,7 +587,7 @@ class TestTelegramNotifier:
     @pytest.mark.asyncio
     async def test_send_merged_venue_for_high_fit(
         self,
-        sample_merged_property: MergedProperty,
+        notification_merged_property: MergedProperty,
     ) -> None:
         """Test that venue is sent for high-fit properties (fit_score >= 70)."""
         high_fit = PropertyQualityAnalysis(
@@ -562,7 +613,7 @@ class TestTelegramNotifier:
 
         with patch.object(notifier, "_get_bot", return_value=mock_bot):
             await notifier.send_merged_property_notification(
-                sample_merged_property,
+                notification_merged_property,
                 quality_analysis=high_fit,
             )
 
@@ -574,7 +625,7 @@ class TestTelegramNotifier:
     @pytest.mark.asyncio
     async def test_send_merged_no_venue_for_low_fit(
         self,
-        sample_merged_property: MergedProperty,
+        notification_merged_property: MergedProperty,
     ) -> None:
         """Test that venue is NOT sent for low-fit properties (fit_score < 70)."""
         low_fit = PropertyQualityAnalysis(
@@ -592,7 +643,7 @@ class TestTelegramNotifier:
 
         with patch.object(notifier, "_get_bot", return_value=mock_bot):
             await notifier.send_merged_property_notification(
-                sample_merged_property, quality_analysis=low_fit
+                notification_merged_property, quality_analysis=low_fit
             )
 
         mock_bot.send_venue.assert_not_called()
@@ -600,7 +651,7 @@ class TestTelegramNotifier:
     @pytest.mark.asyncio
     async def test_send_merged_no_venue_without_quality(
         self,
-        sample_merged_property: MergedProperty,
+        notification_merged_property: MergedProperty,
     ) -> None:
         """Test that venue is NOT sent when no quality analysis."""
         notifier = TelegramNotifier(bot_token="123456:ABC-DEF", chat_id=12345678)
@@ -609,14 +660,16 @@ class TestTelegramNotifier:
         mock_bot.send_venue = AsyncMock(return_value=MagicMock(message_id=2))
 
         with patch.object(notifier, "_get_bot", return_value=mock_bot):
-            await notifier.send_merged_property_notification(sample_merged_property)
+            await notifier.send_merged_property_notification(notification_merged_property)
 
         mock_bot.send_venue.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_send_merged_no_venue_when_no_coords(self, sample_property: Property) -> None:
+    async def test_send_merged_no_venue_when_no_coords(
+        self, notification_property: Property
+    ) -> None:
         """Test that venue is NOT sent when coordinates are absent."""
-        prop_no_coords = sample_property.model_copy(
+        prop_no_coords = notification_property.model_copy(
             update={"latitude": None, "longitude": None, "image_url": None}
         )
         merged = MergedProperty(
@@ -639,7 +692,7 @@ class TestTelegramNotifier:
     @pytest.mark.asyncio
     async def test_send_merged_album_for_high_fit_many_images(
         self,
-        sample_property: Property,
+        notification_property: Property,
     ) -> None:
         """Test that album is used for high-fit (>=70) properties with 3+ images."""
         images = tuple(
@@ -651,9 +704,9 @@ class TestTelegramNotifier:
             for i in range(5)
         )
         merged = MergedProperty(
-            canonical=sample_property,
+            canonical=notification_property,
             sources=(PropertySource.OPENRENT,),
-            source_urls={PropertySource.OPENRENT: sample_property.url},
+            source_urls={PropertySource.OPENRENT: notification_property.url},
             images=images,
             min_price=1900,
             max_price=1900,
@@ -698,7 +751,7 @@ class TestTelegramNotifier:
     @pytest.mark.asyncio
     async def test_send_merged_single_photo_for_low_rated_many_images(
         self,
-        sample_property: Property,
+        notification_property: Property,
     ) -> None:
         """Test that single photo is used for low-rated properties even with many images."""
         images = tuple(
@@ -710,9 +763,9 @@ class TestTelegramNotifier:
             for i in range(5)
         )
         merged = MergedProperty(
-            canonical=sample_property,
+            canonical=notification_property,
             sources=(PropertySource.OPENRENT,),
-            source_urls={PropertySource.OPENRENT: sample_property.url},
+            source_urls={PropertySource.OPENRENT: notification_property.url},
             images=images,
             min_price=1900,
             max_price=1900,
@@ -743,7 +796,7 @@ class TestTelegramNotifier:
     @pytest.mark.asyncio
     async def test_send_merged_album_followup_has_viewing_notes(
         self,
-        sample_property: Property,
+        notification_property: Property,
     ) -> None:
         """Test that album follow-up contains viewing notes, not detail breakdown."""
         images = tuple(
@@ -755,9 +808,9 @@ class TestTelegramNotifier:
             for i in range(5)
         )
         merged = MergedProperty(
-            canonical=sample_property,
+            canonical=notification_property,
             sources=(PropertySource.OPENRENT,),
-            source_urls={PropertySource.OPENRENT: sample_property.url},
+            source_urls={PropertySource.OPENRENT: notification_property.url},
             images=images,
             min_price=1900,
             max_price=1900,
@@ -806,7 +859,7 @@ class TestTelegramNotifier:
     @pytest.mark.asyncio
     async def test_send_merged_album_followup_minimal_without_notes(
         self,
-        sample_property: Property,
+        notification_property: Property,
     ) -> None:
         """Test that album follow-up is minimal when no viewing notes."""
         images = tuple(
@@ -818,9 +871,9 @@ class TestTelegramNotifier:
             for i in range(5)
         )
         merged = MergedProperty(
-            canonical=sample_property,
+            canonical=notification_property,
             sources=(PropertySource.OPENRENT,),
-            source_urls={PropertySource.OPENRENT: sample_property.url},
+            source_urls={PropertySource.OPENRENT: notification_property.url},
             images=images,
             min_price=1900,
             max_price=1900,
@@ -856,7 +909,9 @@ class TestTelegramNotifier:
         assert "Details" in followup_text
 
     @pytest.mark.asyncio
-    async def test_send_merged_single_photo_for_few_images(self, sample_property: Property) -> None:
+    async def test_send_merged_single_photo_for_few_images(
+        self, notification_property: Property
+    ) -> None:
         """Test that send_photo is used when only 1-2 gallery images available."""
         images = (
             PropertyImage(
@@ -866,9 +921,9 @@ class TestTelegramNotifier:
             ),
         )
         merged = MergedProperty(
-            canonical=sample_property,
+            canonical=notification_property,
             sources=(PropertySource.OPENRENT,),
-            source_urls={PropertySource.OPENRENT: sample_property.url},
+            source_urls={PropertySource.OPENRENT: notification_property.url},
             images=images,
             min_price=1900,
             max_price=1900,
@@ -889,7 +944,7 @@ class TestTelegramNotifier:
 class TestGetGalleryUrls:
     """Tests for _get_gallery_urls."""
 
-    def test_returns_gallery_images(self, sample_property: Property) -> None:
+    def test_returns_gallery_images(self, notification_property: Property) -> None:
         images = tuple(
             PropertyImage(
                 url=HttpUrl(f"https://example.com/img{i}.jpg"),
@@ -899,9 +954,9 @@ class TestGetGalleryUrls:
             for i in range(3)
         )
         merged = MergedProperty(
-            canonical=sample_property,
+            canonical=notification_property,
             sources=(PropertySource.OPENRENT,),
-            source_urls={PropertySource.OPENRENT: sample_property.url},
+            source_urls={PropertySource.OPENRENT: notification_property.url},
             images=images,
             min_price=1900,
             max_price=1900,
@@ -910,7 +965,7 @@ class TestGetGalleryUrls:
         assert len(urls) == 3
         assert all("example.com" in u for u in urls)
 
-    def test_limits_to_max_images(self, sample_property: Property) -> None:
+    def test_limits_to_max_images(self, notification_property: Property) -> None:
         images = tuple(
             PropertyImage(
                 url=HttpUrl(f"https://example.com/img{i}.jpg"),
@@ -920,9 +975,9 @@ class TestGetGalleryUrls:
             for i in range(15)
         )
         merged = MergedProperty(
-            canonical=sample_property,
+            canonical=notification_property,
             sources=(PropertySource.OPENRENT,),
-            source_urls={PropertySource.OPENRENT: sample_property.url},
+            source_urls={PropertySource.OPENRENT: notification_property.url},
             images=images,
             min_price=1900,
             max_price=1900,
@@ -930,7 +985,7 @@ class TestGetGalleryUrls:
         urls = _get_gallery_urls(merged, max_images=10)
         assert len(urls) == 10
 
-    def test_skips_non_gallery_images(self, sample_property: Property) -> None:
+    def test_skips_non_gallery_images(self, notification_property: Property) -> None:
         images = (
             PropertyImage(
                 url=HttpUrl("https://example.com/floor.jpg"),
@@ -939,9 +994,9 @@ class TestGetGalleryUrls:
             ),
         )
         merged = MergedProperty(
-            canonical=sample_property.model_copy(update={"image_url": None}),
+            canonical=notification_property.model_copy(update={"image_url": None}),
             sources=(PropertySource.OPENRENT,),
-            source_urls={PropertySource.OPENRENT: sample_property.url},
+            source_urls={PropertySource.OPENRENT: notification_property.url},
             images=images,
             min_price=1900,
             max_price=1900,
@@ -949,8 +1004,8 @@ class TestGetGalleryUrls:
         urls = _get_gallery_urls(merged)
         assert urls == []
 
-    def test_falls_back_to_canonical_image(self, sample_property: Property) -> None:
-        prop_with_img = sample_property.model_copy(
+    def test_falls_back_to_canonical_image(self, notification_property: Property) -> None:
+        prop_with_img = notification_property.model_copy(
             update={"image_url": HttpUrl("https://example.com/thumb.jpg")}
         )
         merged = MergedProperty(
@@ -967,24 +1022,32 @@ class TestGetGalleryUrls:
 class TestFormatQualityBlock:
     """Tests for _format_quality_block (full detail for text messages)."""
 
-    def test_expandable_blockquote(self, sample_quality_analysis: PropertyQualityAnalysis) -> None:
+    def test_expandable_blockquote(
+        self, notification_quality_analysis: PropertyQualityAnalysis
+    ) -> None:
         """Test that quality block uses expandable blockquote."""
-        lines = _format_quality_block(sample_quality_analysis)
+        lines = _format_quality_block(notification_quality_analysis)
         text = "\n".join(lines)
         assert "<blockquote expandable>" in text
 
-    def test_includes_highlights(self, sample_quality_analysis: PropertyQualityAnalysis) -> None:
-        lines = _format_quality_block(sample_quality_analysis)
+    def test_includes_highlights(
+        self, notification_quality_analysis: PropertyQualityAnalysis
+    ) -> None:
+        lines = _format_quality_block(notification_quality_analysis)
         text = "\n".join(lines)
         assert "✅ Gas hob · Good light · Spacious living room" in text
 
-    def test_includes_lowlights(self, sample_quality_analysis: PropertyQualityAnalysis) -> None:
-        lines = _format_quality_block(sample_quality_analysis)
+    def test_includes_lowlights(
+        self, notification_quality_analysis: PropertyQualityAnalysis
+    ) -> None:
+        lines = _format_quality_block(notification_quality_analysis)
         text = "\n".join(lines)
         assert "⛔ No garden · Street noise" in text
 
-    def test_includes_viewing_notes(self, sample_quality_analysis: PropertyQualityAnalysis) -> None:
-        lines = _format_quality_block(sample_quality_analysis)
+    def test_includes_viewing_notes(
+        self, notification_quality_analysis: PropertyQualityAnalysis
+    ) -> None:
+        lines = _format_quality_block(notification_quality_analysis)
         text = "\n".join(lines)
         assert "👁" in text
         assert "Check water pressure" in text
@@ -994,10 +1057,10 @@ class TestFormatQualityBlock:
         assert "Test internet speed" in text
 
     def test_uses_text_labels_not_emoji(
-        self, sample_quality_analysis: PropertyQualityAnalysis
+        self, notification_quality_analysis: PropertyQualityAnalysis
     ) -> None:
         """Detail sections use text labels instead of emoji."""
-        lines = _format_quality_block(sample_quality_analysis)
+        lines = _format_quality_block(notification_quality_analysis)
         text = "\n".join(lines)
         assert "Kitchen:" in text
         assert "Light:" in text
@@ -1027,8 +1090,10 @@ class TestFormatQualityBlock:
 class TestFormatViewingNotes:
     """Tests for _format_viewing_notes."""
 
-    def test_formats_all_note_types(self, sample_quality_analysis: PropertyQualityAnalysis) -> None:
-        lines = _format_viewing_notes(sample_quality_analysis)
+    def test_formats_all_note_types(
+        self, notification_quality_analysis: PropertyQualityAnalysis
+    ) -> None:
+        lines = _format_viewing_notes(notification_quality_analysis)
         assert len(lines) == 3
         assert "👁" in lines[0]
         assert "❓" in lines[1]
@@ -1066,13 +1131,13 @@ class TestMergedHeaderFormat:
 
     def test_fit_score_and_price_on_same_line(
         self,
-        sample_merged_property: MergedProperty,
-        sample_quality_analysis: PropertyQualityAnalysis,
+        notification_merged_property: MergedProperty,
+        notification_quality_analysis: PropertyQualityAnalysis,
     ) -> None:
         """Fit score, price, and beds should all be on the same line."""
         message = format_merged_property_message(
-            sample_merged_property,
-            quality_analysis=sample_quality_analysis,
+            notification_merged_property,
+            quality_analysis=notification_quality_analysis,
         )
         found = False
         for line in message.split("\n"):
@@ -1082,9 +1147,11 @@ class TestMergedHeaderFormat:
                 break
         assert found, "Expected fit score on same line as price"
 
-    def test_no_rating_still_shows_price(self, sample_merged_property: MergedProperty) -> None:
+    def test_no_rating_still_shows_price(
+        self, notification_merged_property: MergedProperty
+    ) -> None:
         """Without quality analysis, price line should still work."""
-        message = format_merged_property_message(sample_merged_property)
+        message = format_merged_property_message(notification_merged_property)
         assert "£" in message
         assert "bed" in message.lower()
 
@@ -1110,14 +1177,16 @@ class TestLinkPreviewOptions:
     """Tests for LinkPreviewOptions usage."""
 
     @pytest.mark.asyncio
-    async def test_send_property_uses_link_preview_options(self, sample_property: Property) -> None:
+    async def test_send_property_uses_link_preview_options(
+        self, notification_property: Property
+    ) -> None:
         """Test that send_property_notification uses LinkPreviewOptions."""
         notifier = TelegramNotifier(bot_token="123456:ABC-DEF", chat_id=12345678)
         mock_bot = AsyncMock()
         mock_bot.send_message = AsyncMock(return_value=MagicMock(message_id=1))
 
         with patch.object(notifier, "_get_bot", return_value=mock_bot):
-            await notifier.send_property_notification(sample_property)
+            await notifier.send_property_notification(notification_property)
 
         call_kwargs = mock_bot.send_message.call_args[1]
         assert "link_preview_options" in call_kwargs
@@ -1130,10 +1199,10 @@ class TestFormatValueInfoBrief:
     """Tests for _format_value_info brief mode."""
 
     def test_brief_returns_short_benchmark(
-        self, sample_quality_analysis: PropertyQualityAnalysis
+        self, notification_quality_analysis: PropertyQualityAnalysis
     ) -> None:
         """Brief mode should return rating + benchmark note, no essay."""
-        result = _format_value_info(sample_quality_analysis, brief=True)
+        result = _format_value_info(notification_quality_analysis, brief=True)
         assert result is not None
         # Should contain the benchmark note
         assert "£300 below E8 average" in result
@@ -1182,7 +1251,7 @@ class TestFormatValueInfoBrief:
 
     def test_condensed_caption_uses_brief_value(
         self,
-        sample_merged_property: MergedProperty,
+        notification_merged_property: MergedProperty,
     ) -> None:
         """Condensed caption should use brief value (no essay)."""
         from home_finder.models import ValueAnalysis
@@ -1199,7 +1268,9 @@ class TestFormatValueInfoBrief:
                 note="£200 above average",
             ),
         )
-        caption = format_merged_property_caption(sample_merged_property, quality_analysis=analysis)
+        caption = format_merged_property_caption(
+            notification_merged_property, quality_analysis=analysis
+        )
         assert "£200 above average" in caption
         assert "very long essay" not in caption
 
@@ -1224,19 +1295,21 @@ class TestFormatValueInfoBrief:
 class TestFormatFollowupDetail:
     """Tests for _format_followup_detail."""
 
-    def test_contains_viewing_notes(self, sample_quality_analysis: PropertyQualityAnalysis) -> None:
+    def test_contains_viewing_notes(
+        self, notification_quality_analysis: PropertyQualityAnalysis
+    ) -> None:
         """Follow-up should contain viewing notes."""
-        result = _format_followup_detail(quality_analysis=sample_quality_analysis)
+        result = _format_followup_detail(quality_analysis=notification_quality_analysis)
         assert "👁" in result
         assert "Check water pressure" in result
         assert "❓" in result
         assert "Ask about sound insulation" in result
 
     def test_does_not_contain_detail_breakdown(
-        self, sample_quality_analysis: PropertyQualityAnalysis
+        self, notification_quality_analysis: PropertyQualityAnalysis
     ) -> None:
         """Follow-up should NOT contain detail breakdown (pushed to web dashboard)."""
-        result = _format_followup_detail(quality_analysis=sample_quality_analysis)
+        result = _format_followup_detail(quality_analysis=notification_quality_analysis)
         assert "Kitchen:" not in result
         assert "🍳" not in result
         assert "Light:" not in result
@@ -1245,10 +1318,10 @@ class TestFormatFollowupDetail:
         assert "Condition:" not in result
 
     def test_does_not_contain_header(
-        self, sample_quality_analysis: PropertyQualityAnalysis
+        self, notification_quality_analysis: PropertyQualityAnalysis
     ) -> None:
         """Follow-up should NOT contain title, price, address, or header emoji."""
-        result = _format_followup_detail(quality_analysis=sample_quality_analysis)
+        result = _format_followup_detail(quality_analysis=notification_quality_analysis)
         assert "💰" not in result
         assert "📍" not in result
 
@@ -1271,11 +1344,11 @@ class TestFormatFollowupDetail:
 class TestHtmlLinkEscaping:
     """Tests for _html_link and HTML escaping in source links."""
 
-    def test_ampersand_in_url_is_escaped(self, sample_property: Property) -> None:
+    def test_ampersand_in_url_is_escaped(self, notification_property: Property) -> None:
         """URLs containing & should be escaped as &amp; in href attributes."""
         url_with_amp = HttpUrl("https://example.com/property?a=1&b=2")
         merged = MergedProperty(
-            canonical=sample_property,
+            canonical=notification_property,
             sources=(PropertySource.OPENRENT, PropertySource.ZOOPLA),
             source_urls={
                 PropertySource.OPENRENT: url_with_amp,
@@ -1401,27 +1474,28 @@ class TestResolveGalleryPhotos:
 
 
 class TestNotificationWithBufferedInputFile:
-    """Tests that notifications use BufferedInputFile when data_dir is configured."""
+    """With a data_dir, cached photos are uploaded as bytes checked against the plan."""
 
     @pytest.mark.asyncio
-    async def test_send_photo_uses_fsinputfile(
+    async def test_cached_photo_is_uploaded_as_its_cached_bytes(
         self,
-        sample_merged_property: MergedProperty,
-        sample_quality_analysis: PropertyQualityAnalysis,
+        notification_merged_property: MergedProperty,
+        notification_quality_analysis: PropertyQualityAnalysis,
         tmp_path: Path,
     ) -> None:
-        """send_photo should receive BufferedInputFile when image is cached."""
+        """The plan records the cached file; the upload sends the bytes read from it."""
         from aiogram.types import BufferedInputFile
 
         from home_finder.utils.image_cache import get_cache_dir, url_to_filename
 
         # Cache the first gallery image
-        unique_id = sample_merged_property.unique_id
-        url = str(sample_merged_property.images[0].url)
+        unique_id = notification_merged_property.unique_id
+        url = str(notification_merged_property.images[0].url)
         cache_dir = get_cache_dir(str(tmp_path), unique_id)
         cache_dir.mkdir(parents=True)
         filename = url_to_filename(url, "gallery", 0)
-        (cache_dir / filename).write_bytes(b"\xff\xd8\xff" + b"\x00" * 100)
+        cached_bytes = b"\xff\xd8\xff" + b"\x00" * 100
+        (cache_dir / filename).write_bytes(cached_bytes)
 
         notifier = TelegramNotifier(
             bot_token="123456:ABC-DEF",
@@ -1434,19 +1508,21 @@ class TestNotificationWithBufferedInputFile:
 
         with patch.object(notifier, "_get_bot", return_value=mock_bot):
             result = await notifier.send_merged_property_notification(
-                sample_merged_property, quality_analysis=sample_quality_analysis
+                notification_merged_property, quality_analysis=notification_quality_analysis
             )
 
         assert result is True
         mock_bot.send_photo.assert_called_once()
         photo_arg = mock_bot.send_photo.call_args[1]["photo"]
         assert isinstance(photo_arg, BufferedInputFile)
+        assert photo_arg.data == cached_bytes
+        assert photo_arg.filename == filename
 
     @pytest.mark.asyncio
     async def test_no_data_dir_uses_url_string(
         self,
-        sample_merged_property: MergedProperty,
-        sample_quality_analysis: PropertyQualityAnalysis,
+        notification_merged_property: MergedProperty,
+        notification_quality_analysis: PropertyQualityAnalysis,
     ) -> None:
         """Without data_dir, send_photo should receive a URL string."""
         notifier = TelegramNotifier(
@@ -1459,7 +1535,7 @@ class TestNotificationWithBufferedInputFile:
 
         with patch.object(notifier, "_get_bot", return_value=mock_bot):
             result = await notifier.send_merged_property_notification(
-                sample_merged_property, quality_analysis=sample_quality_analysis
+                notification_merged_property, quality_analysis=notification_quality_analysis
             )
 
         assert result is True
@@ -1469,7 +1545,7 @@ class TestNotificationWithBufferedInputFile:
     @pytest.mark.asyncio
     async def test_album_uses_full_size_originals(
         self,
-        sample_property: Property,
+        notification_property: Property,
         tmp_path: Path,
     ) -> None:
         """Media group should use full-size originals, not thumbnails."""
@@ -1490,9 +1566,9 @@ class TestNotificationWithBufferedInputFile:
             for i in range(5)
         )
         merged = MergedProperty(
-            canonical=sample_property,
+            canonical=notification_property,
             sources=(PropertySource.OPENRENT,),
-            source_urls={PropertySource.OPENRENT: sample_property.url},
+            source_urls={PropertySource.OPENRENT: notification_property.url},
             images=images,
             min_price=1900,
             max_price=1900,

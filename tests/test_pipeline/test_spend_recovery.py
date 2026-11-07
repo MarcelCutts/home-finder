@@ -152,7 +152,7 @@ async def test_process_exit_then_new_owner_recovers_before_any_work(tmp_path, en
 import asyncio, os, sys
 from home_finder.db import PropertyStorage
 from home_finder.pipeline.run_lock import runner_lock
-from tests.test_db.test_spend import spec, policy
+from tests.support.spend import policy, spec
 async def run():
     with runner_lock(sys.argv[1]) as acquired:
         assert acquired

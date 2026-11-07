@@ -1,0 +1,298 @@
+{
+  "source": {
+    "worktree": "/home/marcel/projects/lab/home-finder/.claude/worktrees/test-suite-quality-perf-b4e787",
+    "snapshot_utc": "2026-11-07T18:59:01.786632+00:00",
+    "sha256": {
+      "docs/reviews/2026-11-07-codex-audit-assessment.md": "1905c4a44b3304d39bf9611133ec296fdebefa75346a3f350e310a5a9b035256",
+      "docs/reviews/2026-11-07-test-suite-review.md": "99baef804f7807537abf154b24cc5469b5cdfc58cc540098f9b8f477668f9097",
+      "tests/plugins/schema_template.py": "27920d083af138d141ee7a654a8a88466935ba5d28f129c44e143fc38786342f",
+      "tests/plugins/aiosqlite_leaks.py": "83a6033cda53c130605c0a44403b8d9fb68ddd0e3bb5a821f78e18fb25c5a526",
+      "tests/plugins/timing_report.py": "85ed8c47b30a3d68ed3e991180a8f1a502f4addbda3eef9576e85b27c94dd376",
+      "tests/plugins/test_schema_template.py": "e908daa7bb37a3cfa289c042aa9dad4ba67c5d508b05a28017a06d5095659a83",
+      "tests/plugins/test_aiosqlite_leaks.py": "c1651af996437a3b9ac202b2467e9c24cc8c5c93d601a2fdaa5553ba759d661f",
+      "tests/conftest.py": "b632eb5d231320e5c12b856bb41fbab25383cd2d3eeedc2cf3759ac535bdc3bf",
+      "tests/test_web/browser/test_browser_e2e.py": "9497e8148df41882a3384485e851af9ca3f516b0e3db8ac9f6808e21e27b429f",
+      "pyproject.toml": "80499576804a36381d2248270345c991d73681d61bb8561ced70e77d8059763b",
+      "uv.lock": "1ef1a8a5dd44a73024904a96c10551eac60677dea085dc479e0db306aa152791"
+    },
+    "source_files_unchanged_at_final_check": true
+  },
+  "environment": {
+    "python": "3.14.7",
+    "pytest": "9.1.1",
+    "xdist": "3.8.0",
+    "pytest_cov": "7.1.0",
+    "coverage": "7.13.2",
+    "aiosqlite": "0.22.1",
+    "same_uv_lock_as_codex": true
+  },
+  "checks": {
+    "focused": {
+      "passed": 27,
+      "seconds": 1.67
+    },
+    "full_ci_coverage": {
+      "passed": 4049,
+      "warnings": 0,
+      "pytest_seconds": 24.95,
+      "process_wall_seconds": 26.73,
+      "process_tree_cpu_seconds": 107.92,
+      "totals": {
+        "covered_lines": 12903,
+        "num_statements": 13727,
+        "percent_covered": 92.20146222583266,
+        "percent_covered_display": "92",
+        "missing_lines": 824,
+        "excluded_lines": 50,
+        "percent_statements_covered": 93.9972317330808,
+        "percent_statements_covered_display": "94",
+        "num_branches": 4738,
+        "num_partial_branches": 480,
+        "covered_branches": 4122,
+        "missing_branches": 616,
+        "percent_branches_covered": 86.99873364288729,
+        "percent_branches_covered_display": "87"
+      },
+      "backup": {
+        "covered_lines": 29,
+        "num_statements": 33,
+        "percent_covered": 89.74358974358974,
+        "percent_covered_display": "90",
+        "missing_lines": 4,
+        "excluded_lines": 2,
+        "percent_statements_covered": 87.87878787878788,
+        "percent_statements_covered_display": "88",
+        "num_branches": 6,
+        "num_partial_branches": 0,
+        "covered_branches": 6,
+        "missing_branches": 0,
+        "percent_branches_covered": 100.0,
+        "percent_branches_covered_display": "100"
+      },
+      "context": {
+        "python": "3.14.7",
+        "pytest": "9.1.1",
+        "numprocesses": 4,
+        "maxprocesses": 8,
+        "hypothesis_profile": "ci",
+        "coverage": true,
+        "schema_template": true,
+        "load_average_start": [
+          0.3662109375,
+          1.0703125,
+          3.02197265625
+        ],
+        "load_average_finish": [
+          1.34521484375,
+          1.25537109375,
+          3.03173828125
+        ],
+        "cpu_seconds": {
+          "controller": 6.93,
+          "finished_children": 99.87
+        }
+      }
+    },
+    "browser_conflicting_environment": {
+      "passed": 77,
+      "seconds": 30.77,
+      "warnings": 27,
+      "sentinels": {
+        "HOME_FINDER_WEB_HOST": "review.invalid",
+        "HOME_FINDER_TELEGRAM_WEBHOOK_SECRET": "review-sentinel",
+        "HOME_FINDER_PROXY_URL": "http://127.0.0.1:1"
+      }
+    },
+    "socket_boundary": {
+      "passed": 2,
+      "expected_warning": 1,
+      "python_tcp_socket_blocked": true,
+      "native_async_curl_local_http_succeeded": true
+    },
+    "slow_marker_socket_probe": {
+      "passed": 1
+    },
+    "template_bypass_mutation": {
+      "expected_failure": true,
+      "failed_tests": 1,
+      "caught_by": "test_fresh_in_memory_storage_takes_the_template_path"
+    },
+    "max_nodeid_characters": 893,
+    "adopted_files_identical": {
+      "tests/test_pipeline/test_admin_cli.py": true,
+      "tests/test_pipeline/test_collection_commands.py": true,
+      "tests/test_pipeline/test_ward_lookup.py": true,
+      "tests/test_web/test_telegram_setup.py": true
+    }
+  },
+  "benchmarks": [
+    {
+      "label": "n4_a",
+      "workers": 4,
+      "template": true,
+      "exit": 0,
+      "load_start": [
+        1.0126953125,
+        1.17333984375,
+        2.8359375
+      ],
+      "load_end": [
+        1.68115234375,
+        1.31298828125,
+        2.85498046875
+      ],
+      "wall_seconds": 14.51,
+      "cpu_seconds": 64.47,
+      "maxrss_kib": 505600.0,
+      "log": "/tmp/claude-response-benchmark-n4_a.log"
+    },
+    {
+      "label": "n8_a",
+      "workers": 8,
+      "template": true,
+      "exit": 0,
+      "load_start": [
+        1.68115234375,
+        1.31298828125,
+        2.85498046875
+      ],
+      "load_end": [
+        2.8134765625,
+        1.56689453125,
+        2.92138671875
+      ],
+      "wall_seconds": 12.02,
+      "cpu_seconds": 102.74,
+      "maxrss_kib": 494416.0,
+      "log": "/tmp/claude-response-benchmark-n8_a.log"
+    },
+    {
+      "label": "n8_b",
+      "workers": 8,
+      "template": true,
+      "exit": 0,
+      "load_start": [
+        2.8134765625,
+        1.56689453125,
+        2.92138671875
+      ],
+      "load_end": [
+        3.8701171875,
+        1.8525390625,
+        2.9921875
+      ],
+      "wall_seconds": 11.82,
+      "cpu_seconds": 100.12,
+      "maxrss_kib": 499040.0,
+      "log": "/tmp/claude-response-benchmark-n8_b.log"
+    },
+    {
+      "label": "n4_b",
+      "workers": 4,
+      "template": true,
+      "exit": 0,
+      "load_start": [
+        3.8701171875,
+        1.8525390625,
+        2.9921875
+      ],
+      "load_end": [
+        4.1142578125,
+        2.00732421875,
+        3.02490234375
+      ],
+      "wall_seconds": 14.4,
+      "cpu_seconds": 63.949999999999996,
+      "maxrss_kib": 501196.0,
+      "log": "/tmp/claude-response-benchmark-n4_b.log"
+    },
+    {
+      "label": "template_off_a",
+      "workers": 4,
+      "template": false,
+      "exit": 0,
+      "load_start": [
+        4.1142578125,
+        2.00732421875,
+        3.02490234375
+      ],
+      "load_end": [
+        4.16259765625,
+        2.12158203125,
+        3.04638671875
+      ],
+      "wall_seconds": 16.64,
+      "cpu_seconds": 73.05000000000001,
+      "maxrss_kib": 506564.0,
+      "log": "/tmp/claude-response-benchmark-template_off_a.log"
+    },
+    {
+      "label": "template_on_a",
+      "workers": 4,
+      "template": true,
+      "exit": 0,
+      "load_start": [
+        4.16259765625,
+        2.12158203125,
+        3.04638671875
+      ],
+      "load_end": [
+        4.50244140625,
+        2.29638671875,
+        3.08935546875
+      ],
+      "wall_seconds": 14.54,
+      "cpu_seconds": 64.98,
+      "maxrss_kib": 507196.0,
+      "log": "/tmp/claude-response-benchmark-template_on_a.log"
+    },
+    {
+      "label": "template_on_b",
+      "workers": 4,
+      "template": true,
+      "exit": 0,
+      "load_start": [
+        4.50244140625,
+        2.29638671875,
+        3.08935546875
+      ],
+      "load_end": [
+        4.54541015625,
+        2.4130859375,
+        3.115234375
+      ],
+      "wall_seconds": 14.48,
+      "cpu_seconds": 64.58,
+      "maxrss_kib": 507684.0,
+      "log": "/tmp/claude-response-benchmark-template_on_b.log"
+    },
+    {
+      "label": "template_off_b",
+      "workers": 4,
+      "template": false,
+      "exit": 0,
+      "load_start": [
+        4.54541015625,
+        2.4130859375,
+        3.115234375
+      ],
+      "load_end": [
+        4.41796875,
+        2.4912109375,
+        3.12939453125
+      ],
+      "wall_seconds": 16.57,
+      "cpu_seconds": 72.48,
+      "maxrss_kib": 505428.0,
+      "log": "/tmp/claude-response-benchmark-template_off_b.log"
+    }
+  ],
+  "limits": [
+    "No live portal or paid API run",
+    "No GitHub Actions run",
+    "No new 16-worker run",
+    "Did not repeat prior Codex/Claude side-by-side comparison",
+    "No exhaustive mapping of removed tests",
+    "No application or test edits to either worktree; experiments used /tmp"
+  ]
+}

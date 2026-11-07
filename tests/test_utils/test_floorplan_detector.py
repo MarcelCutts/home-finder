@@ -1,9 +1,10 @@
 """Tests for PIL-based floorplan detection."""
 
+import random
 from collections.abc import Callable
 from io import BytesIO
 
-from PIL import Image, ImageDraw
+from PIL import Image, ImageChops, ImageDraw
 
 from home_finder.utils.floorplan_detector import CONFIDENCE_THRESHOLD, detect_floorplan
 
@@ -63,26 +64,24 @@ def _draw_white_kitchen(img: Image.Image) -> None:
     brightness, few colors, but with smooth gradients from lighting/shadows that
     produce a unimodal (not bimodal) Laplacian distribution.
     """
-    import random
-
-    rng = random.Random(42)  # Deterministic for reproducibility
     w, h = img.size
-    pixels = img.load()
-    assert pixels is not None
-    # Build a photo-like image pixel by pixel: white kitchen with lighting gradient
-    # and per-pixel noise to simulate camera sensor noise and surface texture
-    for y in range(h):
-        # Vertical lighting gradient: brighter at top (ceiling light), darker at bottom
-        light = 250 - int(40 * (y / h))
-        for x in range(w):
-            # Horizontal vignette: slightly darker at edges
-            dx = abs(x - w / 2) / (w / 2)
-            vignette = int(15 * dx * dx)
-            # Per-pixel noise simulating sensor noise / surface texture
-            noise = rng.randint(-12, 12)
-            v = max(0, min(255, light - vignette + noise))
-            # Slight warm tint (cream-ish white, not pure white)
-            pixels[x, y] = (v, v, max(0, v - 5))
+    # Vertical lighting gradient: brighter at the ceiling light, darker at the floor.
+    light = Image.new("L", (1, h))
+    light.putdata([250 - int(40 * (y / h)) for y in range(h)])
+    # Horizontal vignette: slightly darker at the edges.
+    vignette = Image.new("L", (w, 1))
+    vignette.putdata([int(15 * (abs(x - w / 2) / (w / 2)) ** 2) for x in range(w)])
+    base = ImageChops.subtract(
+        light.resize((w, h), Image.Resampling.NEAREST),
+        vignette.resize((w, h), Image.Resampling.NEAREST),
+    )
+    # Sensor noise and surface texture: uniform from -12 to +12 per pixel, clipped.
+    rng = random.Random(42)
+    to_offset = [value * 25 // 256 for value in range(256)]
+    noise = Image.frombytes("L", (w, h), rng.randbytes(w * h)).point(to_offset)
+    value = ImageChops.add(base, noise, offset=-12)
+    # A slight warm tint: cream rather than pure white.
+    img.paste(Image.merge("RGB", (value, value, value.point(lambda v: max(0, v - 5)))))
 
 
 class TestDetectFloorplan:

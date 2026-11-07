@@ -8,8 +8,6 @@ import asyncio
 
 import pytest
 
-pytestmark = pytest.mark.usefixtures("reset_crawlee_state", "set_crawlee_storage_dir")
-
 from home_finder.enrichment.details import enrich_merged_properties
 from home_finder.matching.deduplication import Deduplicator
 from home_finder.models import Property
@@ -102,8 +100,8 @@ class TestCrossPlatformDedupE2E:
             assert 100 <= m.min_price <= 10000
             assert 100 <= m.max_price <= 10000
 
-    async def test_enrichment_after_dedup_preserves_images(self):
-        """Post-merge enrichment should keep images from all sources."""
+    async def test_media_ready_homes_remain_media_ready_after_matching(self):
+        """Matching enriched homes keeps gallery or floorplan evidence."""
         all_props = await self._scrape_all(max_results=3)
         if len(all_props) < 2:
             pytest.skip("Too few listings across platforms")
@@ -126,9 +124,4 @@ class TestCrossPlatformDedupE2E:
         assert len(deduped) <= len(enriched.with_usable_media)
         assert len(deduped) > 0
 
-        # Multi-source merged should have images if individual sources had images
-        for m in deduped:
-            if len(m.sources) > 1:
-                # Multi-source should combine images from both
-                # (soft assertion — detail pages may have failed)
-                pass  # Just verify no crash
+        assert all(m.images or m.floorplan for m in deduped)

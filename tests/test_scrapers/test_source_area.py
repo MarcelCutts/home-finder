@@ -2,7 +2,7 @@
 
 import json
 from decimal import Decimal
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import httpx
 import pytest
@@ -170,3 +170,121 @@ def test_minimum_only_quantity_never_becomes_an_exact_total():
     assert omission is None and areas is not None
     assert areas[0].kind == "minimum" and str(areas[0].lower) == "650.1250"
     assert display_area_square_metres(areas) is None
+
+
+async def _rightmove_detail(make_property, monkeypatch, raw_sizings):
+    prop = make_property(
+        source=PropertySource.RIGHTMOVE,
+        source_id="100001",
+        url="https://www.rightmove.co.uk/properties/100001",
+    )
+    response = httpx.Response(
+        200, text=rightmove_html(raw_sizings), request=httpx.Request("GET", str(prop.url))
+    )
+    async with DetailFetcher() as fetcher:
+        monkeypatch.setattr(fetcher, "_httpx_get_with_retry", AsyncMock(return_value=response))
+        detail = await fetcher.fetch_detail_page(prop)
+    assert detail is not None
+    return detail
+
+
+@pytest.mark.parametrize(
+    ("raw_sizings", "square_metres"),
+    [
+        ('[{"unit":"sqft","minimumSize":700,"maximumSize":700}]', 65.0),
+        ('[{"unit":"sqft","minimumSize":100,"maximumSize":100}]', 9.3),
+        ('[{"unit":"sqft","minimumSize":5000,"maximumSize":5000}]', 464.5),
+        ('[{"unit":"sqft","minimumSize":99,"maximumSize":99}]', None),
+        ('[{"unit":"sqft","minimumSize":5001,"maximumSize":5001}]', None),
+    ],
+    ids=["typical", "smallest-plausible", "largest-plausible", "too-small", "too-large"],
+)
+async def test_rightmove_exact_area_is_shown_only_within_100_to_5000_sq_ft(
+    make_property, monkeypatch, raw_sizings, square_metres
+):
+    detail = await _rightmove_detail(make_property, monkeypatch, raw_sizings)
+    assert detail.floor_area_sqm == square_metres
+    assert detail.floor_area_source == ("rightmove" if square_metres is not None else None)
+    # Implausible totals are hidden from display but kept as source evidence.
+    assert detail.floor_area_readings[0].kind == "point"
+
+
+@pytest.mark.parametrize("unit", ["sqft", "sqm"])
+async def test_rightmove_minimum_area_is_evidence_but_not_a_total(make_property, monkeypatch, unit):
+    detail = await _rightmove_detail(
+        make_property, monkeypatch, f'[{{"unit":"{unit}","minimumSize":600}}]'
+    )
+    assert detail.floor_area_sqm is None
+    assert detail.floor_area_readings[0].kind == "minimum"
+
+
+async def test_rightmove_without_sizings_has_no_area(make_property, monkeypatch):
+    detail = await _rightmove_detail(make_property, monkeypatch, "[]")
+    assert (detail.floor_area_sqm, detail.floor_area_source) == (None, None)
+
+
+@pytest.mark.parametrize(
+    ("raw_quantity", "square_metres"),
+    [("750", 69.7), ("50", None), ("6000", None)],
+    ids=["typical", "too-small", "too-large"],
+)
+def test_zoopla_reported_square_feet_are_shown_only_when_plausible(raw_quantity, square_metres):
+    areas, omission = _zoopla_area_from_rsc(zoopla_html(raw_quantity))
+    assert omission is None and areas is not None
+    assert str(areas[0].lower) == raw_quantity
+    assert display_area_square_metres(areas) == square_metres
+
+
+def test_zoopla_payload_without_a_size_has_no_area():
+    html = '<html><script>self.__next_f.push([1, "1:{\\"otherField\\":42}"])</script></html>'
+    assert _zoopla_area_from_rsc(html) == (None, None)
+
+
+def onthemarket_html(property_data):
+    state = {
+        "floorplans": [],
+        "images": [],
+        "description": "A flat.",
+        "id": "100001",
+        "keyFeatures": [],
+        "features": [],
+        **property_data,
+    }
+    next_data = {"props": {"initialReduxState": {"property": state}}}
+    return (
+        '<html><script id="__NEXT_DATA__" type="application/json">'
+        + json.dumps(next_data)
+        + "</script></html>"
+    )
+
+
+async def _onthemarket_detail(make_property, monkeypatch, property_data):
+    prop = make_property(
+        source=PropertySource.ONTHEMARKET,
+        source_id="100001",
+        url="https://www.onthemarket.com/details/100001/",
+    )
+    response = MagicMock(
+        text=onthemarket_html(property_data), status_code=200, url=str(prop.url), headers={}
+    )
+    async with DetailFetcher() as fetcher:
+        monkeypatch.setattr(fetcher, "_curl_get_with_retry", AsyncMock(return_value=response))
+        detail = await fetcher.fetch_detail_page(prop)
+    assert detail is not None
+    return detail
+
+
+async def test_onthemarket_minimum_area_is_evidence_but_never_a_total(make_property, monkeypatch):
+    """OnTheMarket reports only a minimum, so no OnTheMarket area is ever displayed."""
+    detail = await _onthemarket_detail(
+        make_property, monkeypatch, {"minimumAreaSqFt": 850, "minimumAreaSqM": 79}
+    )
+    assert (detail.floor_area_sqm, detail.floor_area_source) == (None, None)
+    assert detail.floor_area_readings[0].kind == "minimum"
+    assert detail.floor_area_readings[0].lower == 850
+
+
+async def test_onthemarket_without_an_area_has_no_readings(make_property, monkeypatch):
+    detail = await _onthemarket_detail(make_property, monkeypatch, {})
+    assert (detail.floor_area_sqm, detail.floor_area_source) == (None, None)
+    assert not detail.floor_area_readings

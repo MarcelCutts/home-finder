@@ -1,75 +1,21 @@
-"""Real end-to-end scraping tests that hit actual websites.
+"""Live collection probes for four rental portals.
 
-These tests are marked as 'slow' and should be run sparingly to avoid
-rate limiting and to respect the websites' resources.
+These check listing shapes and a collection/selection/matching path, without
+assessment or notification. Run serially after qualifying portal access.
 
-Run with: uv run pytest -m slow -v
+Run: uv run pytest -n 0 tests/integration/test_real_scraping.py -m slow --force-enable-socket
 """
 
 import pytest
 
-pytestmark = pytest.mark.usefixtures("reset_crawlee_state", "set_crawlee_storage_dir")
-
 from home_finder.models import PropertySource
 from home_finder.scrapers.onthemarket import OnTheMarketScraper
 from home_finder.scrapers.openrent import OpenRentScraper
-from home_finder.scrapers.rightmove import RightmoveScraper, _outcode_cache
+from home_finder.scrapers.rightmove import RightmoveScraper
 from home_finder.scrapers.zoopla import ZooplaScraper
 
 
 @pytest.mark.slow
-@pytest.mark.asyncio
-class TestRealRightmoveOutcodeMapping:
-    """Real e2e tests for Rightmove outcode mapping and scraping."""
-
-    @pytest.fixture(autouse=True)
-    def clear_cache(self) -> None:
-        """Clear the outcode cache before each test."""
-        _outcode_cache.clear()
-
-    @pytest.mark.parametrize(
-        ("outcode", "expected_id"),
-        [
-            ("E8", "OUTCODE%5E762"),
-            ("E3", "OUTCODE%5E756"),
-            ("E5", "OUTCODE%5E758"),
-            ("E9", "OUTCODE%5E763"),
-            ("E10", "OUTCODE%5E745"),
-            ("N15", "OUTCODE%5E1672"),
-        ],
-    )
-    async def test_outcode_mapping_exists(self, outcode: str, expected_id: str) -> None:
-        """Test that hardcoded outcode mappings exist and are correct."""
-        from home_finder.scrapers.rightmove import RIGHTMOVE_OUTCODES  # type: ignore[attr-defined]
-
-        location_id = RIGHTMOVE_OUTCODES.get(outcode)
-        assert location_id is not None, f"No mapping for outcode {outcode}"
-        assert location_id == expected_id, (
-            f"Expected {expected_id} for {outcode}, got {location_id}"
-        )
-        print(f"\n{outcode} -> {location_id}")
-
-    async def test_all_target_outcodes_mapped(self) -> None:
-        """Test that all target outcodes have hardcoded mappings."""
-        from home_finder.scrapers.rightmove import RIGHTMOVE_OUTCODES  # type: ignore[attr-defined]
-
-        target_outcodes = ["E3", "E5", "E8", "E9", "E10", "N15"]
-        missing = []
-
-        print("\n--- Outcode Mapping Results ---")
-        for outcode in target_outcodes:
-            location_id = RIGHTMOVE_OUTCODES.get(outcode)
-            if location_id:
-                print(f"  {outcode}: {location_id} [OK]")
-            else:
-                missing.append(outcode)
-                print(f"  {outcode}: NOT MAPPED [FAILED]")
-
-        assert not missing, f"Missing outcode mappings: {missing}"
-
-
-@pytest.mark.slow
-@pytest.mark.asyncio
 class TestRealOpenRentScraping:
     """Real scraping tests for OpenRent."""
 
@@ -77,16 +23,18 @@ class TestRealOpenRentScraping:
         """Scrape real OpenRent listings from Hackney."""
         scraper = OpenRentScraper()
 
-        properties = await scraper.scrape(
-            min_price=1500,
-            max_price=2500,
-            min_bedrooms=1,
-            max_bedrooms=2,
-            area="hackney",
-        )
+        try:
+            properties = await scraper.scrape(
+                min_price=1500,
+                max_price=2500,
+                min_bedrooms=1,
+                max_bedrooms=2,
+                area="hackney",
+            )
+        finally:
+            await scraper.close()
 
-        # Should find some properties (London always has listings)
-        # We don't assert exact count since it varies
+        # Live supply varies; an empty response cannot validate listing fields.
         properties = properties.properties
 
         assert isinstance(properties, list)
@@ -107,10 +55,11 @@ class TestRealOpenRentScraping:
             print(f"  Price: £{prop.price_pcm}/month")
             print(f"  Beds: {prop.bedrooms}")
             print(f"  URL: {prop.url}")
+        else:
+            pytest.skip("No live listings available to validate")
 
 
 @pytest.mark.slow
-@pytest.mark.asyncio
 class TestRealRightmoveScraping:
     """Real scraping tests for Rightmove."""
 
@@ -118,13 +67,16 @@ class TestRealRightmoveScraping:
         """Scrape real Rightmove listings from Hackney."""
         scraper = RightmoveScraper()
 
-        properties = await scraper.scrape(
-            min_price=1500,
-            max_price=2500,
-            min_bedrooms=1,
-            max_bedrooms=2,
-            area="hackney",
-        )
+        try:
+            properties = await scraper.scrape(
+                min_price=1500,
+                max_price=2500,
+                min_bedrooms=1,
+                max_bedrooms=2,
+                area="hackney",
+            )
+        finally:
+            await scraper.close()
 
         properties = properties.properties
 
@@ -146,6 +98,8 @@ class TestRealRightmoveScraping:
             print(f"  Price: £{prop.price_pcm}/month")
             print(f"  Beds: {prop.bedrooms}")
             print(f"  URL: {prop.url}")
+        else:
+            pytest.skip("No live listings available to validate")
 
     @pytest.mark.parametrize(
         ("outcode", "area_name"),
@@ -160,13 +114,16 @@ class TestRealRightmoveScraping:
         """Scrape real Rightmove listings by postcode outcode."""
         scraper = RightmoveScraper()
 
-        properties = await scraper.scrape(
-            min_price=1500,
-            max_price=2500,
-            min_bedrooms=1,
-            max_bedrooms=2,
-            area=outcode,
-        )
+        try:
+            properties = await scraper.scrape(
+                min_price=1500,
+                max_price=2500,
+                min_bedrooms=1,
+                max_bedrooms=2,
+                area=outcode,
+            )
+        finally:
+            await scraper.close()
 
         properties = properties.properties
 
@@ -190,10 +147,11 @@ class TestRealRightmoveScraping:
             if prop.postcode:
                 print(f"  Postcode: {prop.postcode}")
             print(f"  URL: {prop.url}")
+        else:
+            pytest.skip("No live listings available to validate")
 
 
 @pytest.mark.slow
-@pytest.mark.asyncio
 class TestRealZooplaScraping:
     """Real scraping tests for Zoopla."""
 
@@ -201,13 +159,16 @@ class TestRealZooplaScraping:
         """Scrape real Zoopla listings from Hackney."""
         scraper = ZooplaScraper()
 
-        properties = await scraper.scrape(
-            min_price=1500,
-            max_price=2500,
-            min_bedrooms=1,
-            max_bedrooms=2,
-            area="hackney",
-        )
+        try:
+            properties = await scraper.scrape(
+                min_price=1500,
+                max_price=2500,
+                min_bedrooms=1,
+                max_bedrooms=2,
+                area="hackney",
+            )
+        finally:
+            await scraper.close()
 
         properties = properties.properties
 
@@ -229,10 +190,11 @@ class TestRealZooplaScraping:
             print(f"  Price: £{prop.price_pcm}/month")
             print(f"  Beds: {prop.bedrooms}")
             print(f"  URL: {prop.url}")
+        else:
+            pytest.skip("No live listings available to validate")
 
 
 @pytest.mark.slow
-@pytest.mark.asyncio
 class TestRealOnTheMarketScraping:
     """Real scraping tests for OnTheMarket."""
 
@@ -240,13 +202,16 @@ class TestRealOnTheMarketScraping:
         """Scrape real OnTheMarket listings from Hackney."""
         scraper = OnTheMarketScraper()
 
-        properties = await scraper.scrape(
-            min_price=1500,
-            max_price=2500,
-            min_bedrooms=1,
-            max_bedrooms=2,
-            area="hackney",
-        )
+        try:
+            properties = await scraper.scrape(
+                min_price=1500,
+                max_price=2500,
+                min_bedrooms=1,
+                max_bedrooms=2,
+                area="hackney",
+            )
+        finally:
+            await scraper.close()
 
         properties = properties.properties
 
@@ -268,13 +233,14 @@ class TestRealOnTheMarketScraping:
             print(f"  Price: £{prop.price_pcm}/month")
             print(f"  Beds: {prop.bedrooms}")
             print(f"  URL: {prop.url}")
+        else:
+            pytest.skip("No live listings available to validate")
 
 
 @pytest.mark.slow
 @pytest.mark.timeout(300)
-@pytest.mark.asyncio
-class TestRealFullPipeline:
-    """Real end-to-end pipeline test."""
+class TestLiveCollectionSelectionMatching:
+    """Live collection, criteria selection, and matching; no run coordinator."""
 
     async def test_scrape_all_platforms_hackney(self) -> None:
         """Scrape from all platforms and aggregate results."""
@@ -305,6 +271,11 @@ class TestRealFullPipeline:
                 print(f"\n{scraper.source.value}: {len(properties)} properties")
             except Exception as e:
                 print(f"\n{scraper.source.value}: FAILED - {e}")
+            finally:
+                await scraper.close()
+
+        if not all_properties:
+            pytest.skip("No live observations available for selection and matching")
 
         print(f"\nTotal scraped: {len(all_properties)} properties")
 
@@ -336,7 +307,8 @@ class TestRealFullPipeline:
                 print(f"  Postcode: {prop.postcode}")
             print(f"  {prop.url}")
 
-        # Basic assertions
+        # These checks apply to the available sources; they do not establish
+        # that every portal returned usable observations.
         assert isinstance(all_properties, list)
         assert isinstance(filtered, list)
         assert isinstance(merged, list)

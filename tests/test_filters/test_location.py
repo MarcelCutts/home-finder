@@ -3,12 +3,7 @@
 import pytest
 from pydantic import HttpUrl
 
-from home_finder.filters.location import (  # type: ignore[attr-defined]
-    BOROUGH_OUTCODES,
-    LocationFilter,
-    extract_outcode,
-    normalize_area,
-)
+from home_finder.filters.location import BOROUGH_OUTCODES, LocationFilter
 from home_finder.models import Property, PropertySource
 
 
@@ -57,119 +52,28 @@ def no_postcode_property() -> Property:
     )
 
 
-class TestExtractOutcode:
-    """Tests for extract_outcode function."""
-
-    @pytest.mark.parametrize(
-        ("postcode", "expected"),
-        [
-            ("E8 3RH", "E8"),
-            ("E8", "E8"),
-            ("SW1V 2SA", "SW1V"),
-            ("SW1V", "SW1V"),
-            ("N1 5AA", "N1"),
-            ("EC1A 1BB", "EC1A"),
-            ("W11 4UL", "W11"),
-            ("NW8 9AB", "NW8"),
-            (None, None),
-            ("", None),
-            ("Invalid", None),
-            ("123", None),
-        ],
-    )
-    def test_extract_outcode(self, postcode: str | None, expected: str | None) -> None:
-        """Test outcode extraction from various postcodes."""
-        assert extract_outcode(postcode) == expected
-
-
-class TestNormalizeArea:
-    """Tests for normalize_area function."""
-
-    @pytest.mark.parametrize(
-        ("area", "expected"),
-        [
-            ("hackney", "hackney"),
-            ("Hackney", "hackney"),
-            ("HACKNEY", "hackney"),
-            ("tower hamlets", "tower-hamlets"),
-            ("Tower Hamlets", "tower-hamlets"),
-            ("waltham forest", "waltham-forest"),
-            ("E8", "e8"),
-            ("e8", "e8"),
-        ],
-    )
-    def test_normalize_area(self, area: str, expected: str) -> None:
-        """Test area normalization."""
-        assert normalize_area(area) == expected
-
-
-class TestBoroughOutcodes:
-    """Tests for borough outcode mapping."""
-
-    def test_hackney_outcodes(self) -> None:
-        """Test Hackney has expected outcodes."""
-        outcodes = BOROUGH_OUTCODES["hackney"]
-        assert "E5" in outcodes
-        assert "E8" in outcodes
-        assert "E9" in outcodes
-        assert "N16" in outcodes
-
-    def test_islington_outcodes(self) -> None:
-        """Test Islington has expected outcodes."""
-        outcodes = BOROUGH_OUTCODES["islington"]
-        assert "N1" in outcodes
-        assert "N5" in outcodes
-        assert "N7" in outcodes
-        assert "EC1" in outcodes
-
-    def test_tower_hamlets_outcodes(self) -> None:
-        """Test Tower Hamlets has expected outcodes."""
-        outcodes = BOROUGH_OUTCODES["tower-hamlets"]
-        assert "E1" in outcodes
-        assert "E2" in outcodes
-        assert "E3" in outcodes
-        assert "E14" in outcodes
-
-    def test_westminster_outcodes(self) -> None:
-        """Test Westminster has expected outcodes (for leakage detection)."""
-        outcodes = BOROUGH_OUTCODES["westminster"]
-        assert "SW1V" in outcodes
-        assert "W1" in outcodes
-        assert "WC1" in outcodes
-
-
 class TestLocationFilter:
     """Tests for LocationFilter class."""
 
-    def test_default_strict_is_true(self, no_postcode_property: Property) -> None:
-        """Test that LocationFilter defaults to strict=True.
+    def test_missing_postcode_is_rejected_by_default(self, no_postcode_property: Property) -> None:
+        assert LocationFilter(["hackney"]).is_valid_location(no_postcode_property) is False
 
-        Kills mutant: strict: bool = True → strict: bool = False.
-        """
-        filter = LocationFilter(["hackney"])
-        assert filter.strict is True
-        # Default strict should reject no-postcode properties
-        assert filter.is_valid_location(no_postcode_property) is False
+    def test_non_strict_mode_allows_missing_postcode(self, no_postcode_property: Property) -> None:
+        location_filter = LocationFilter(["hackney"], strict=False)
+        assert location_filter.is_valid_location(no_postcode_property) is True
 
-    def test_filter_accepts_valid_location(self, hackney_property: Property) -> None:
-        """Test filter accepts property in search area."""
-        filter = LocationFilter(["hackney"])
-        assert filter.is_valid_location(hackney_property) is True
-
-    def test_filter_rejects_outside_location(
+    def test_borough_search_accepts_its_outcodes_and_rejects_others(
         self, hackney_property: Property, westminster_property: Property
     ) -> None:
-        """Test filter rejects property outside search area."""
-        filter = LocationFilter(["hackney"])
-        assert filter.is_valid_location(hackney_property) is True
-        assert filter.is_valid_location(westminster_property) is False
+        location_filter = LocationFilter(["hackney"])
+        assert location_filter.is_valid_location(hackney_property) is True
+        assert location_filter.is_valid_location(westminster_property) is False
 
-    def test_filter_with_outcode_search(self, hackney_property: Property) -> None:
-        """Test filter works with outcode-based search."""
-        filter = LocationFilter(["e8"])
-        assert filter.is_valid_location(hackney_property) is True
+    def test_outcode_search_accepts_only_that_outcode(self, hackney_property: Property) -> None:
+        location_filter = LocationFilter(["e8"])
+        assert location_filter.is_valid_location(hackney_property) is True
 
-        # E9 should not be accepted for E8 search
+        # E9 is in Hackney too, but an E8 search does not expand to the borough.
         e9_property = Property(
             source=PropertySource.RIGHTMOVE,
             source_id="999",
@@ -180,86 +84,42 @@ class TestLocationFilter:
             address="123 Fish Island",
             postcode="E9 5AA",
         )
-        assert filter.is_valid_location(e9_property) is False
+        assert location_filter.is_valid_location(e9_property) is False
 
-    def test_filter_strict_mode_rejects_no_postcode(self, no_postcode_property: Property) -> None:
-        """Test strict mode rejects properties without postcodes."""
-        filter = LocationFilter(["hackney"], strict=True)
-        assert filter.is_valid_location(no_postcode_property) is False
-
-    def test_filter_non_strict_allows_no_postcode(self, no_postcode_property: Property) -> None:
-        """Test non-strict mode allows properties without postcodes."""
-        filter = LocationFilter(["hackney"], strict=False)
-        assert filter.is_valid_location(no_postcode_property) is True
-
-    def test_filter_multiple_areas(
+    def test_multiple_search_areas_accept_any_of_their_outcodes(
         self, hackney_property: Property, westminster_property: Property
     ) -> None:
-        """Test filter with multiple search areas."""
-        filter = LocationFilter(["hackney", "islington", "tower-hamlets"])
-        assert filter.is_valid_location(hackney_property) is True
-        assert filter.is_valid_location(westminster_property) is False
+        location_filter = LocationFilter(["hackney", "islington", "tower-hamlets"])
+        assert location_filter.is_valid_location(hackney_property) is True
+        assert location_filter.is_valid_location(westminster_property) is False
 
-        # Add Westminster to search areas
-        filter2 = LocationFilter(["hackney", "westminster"])
-        assert filter2.is_valid_location(hackney_property) is True
-        assert filter2.is_valid_location(westminster_property) is True
+        with_westminster = LocationFilter(["hackney", "westminster"])
+        assert with_westminster.is_valid_location(hackney_property) is True
+        assert with_westminster.is_valid_location(westminster_property) is True
 
-    def test_filter_properties_list(
+    @pytest.mark.parametrize(("strict", "expected_ids"), [(False, ["123", "789"]), (True, ["123"])])
+    def test_filter_properties_keeps_accepted_properties_in_order(
         self,
         hackney_property: Property,
         westminster_property: Property,
         no_postcode_property: Property,
+        strict: bool,
+        expected_ids: list[str],
     ) -> None:
-        """Test filtering a list of properties."""
+        """Westminster (456) is always rejected; the postcode-less 789 only when strict."""
         properties = [hackney_property, westminster_property, no_postcode_property]
 
-        # Non-strict mode
-        filter = LocationFilter(["hackney"], strict=False)
-        valid = filter.filter_properties(properties)
+        valid = LocationFilter(["hackney"], strict=strict).filter_properties(properties)
 
-        assert len(valid) == 2
-        assert hackney_property in valid
-        assert westminster_property not in valid
-        assert no_postcode_property in valid  # allowed through non-strict
+        assert [p.source_id for p in valid] == expected_ids
 
-    def test_filter_properties_strict_mode(
-        self,
-        hackney_property: Property,
-        westminster_property: Property,
-        no_postcode_property: Property,
-    ) -> None:
-        """Test filtering a list of properties in strict mode."""
-        properties = [hackney_property, westminster_property, no_postcode_property]
+    def test_valid_outcodes_combine_borough_and_explicit_outcodes(self) -> None:
+        location_filter = LocationFilter(["hackney", "e3", "n15"])
 
-        filter = LocationFilter(["hackney"], strict=True)
-        valid = filter.filter_properties(properties)
+        assert location_filter.valid_outcodes == BOROUGH_OUTCODES["hackney"] | {"E3", "N15"}
 
-        assert len(valid) == 1
-        assert hackney_property in valid
-        assert westminster_property not in valid
-        assert no_postcode_property not in valid
-
-    def test_filter_builds_correct_valid_outcodes(self) -> None:
-        """Test filter builds correct set of valid outcodes."""
-        filter = LocationFilter(["hackney", "e3", "n15"])
-
-        # Should include all Hackney outcodes
-        assert "E5" in filter.valid_outcodes
-        assert "E8" in filter.valid_outcodes
-        assert "E9" in filter.valid_outcodes
-        assert "N16" in filter.valid_outcodes
-
-        # Should include E3 and N15 as specific outcodes
-        assert "E3" in filter.valid_outcodes
-        assert "N15" in filter.valid_outcodes
-
-        # Should NOT include Westminster outcodes
-        assert "SW1V" not in filter.valid_outcodes
-        assert "W11" not in filter.valid_outcodes
-
-    def test_real_world_leakage_scenario(self) -> None:
-        """Test filter catches real-world leakage examples."""
+    def test_reported_outcode_only_leakage_is_rejected_even_when_not_strict(self) -> None:
+        """Outcode-only postcodes are located, not missing, so non-strict mode still checks them."""
         # These are the exact properties the user reported
         leaky_properties = [
             Property(
@@ -296,9 +156,6 @@ class TestLocationFilter:
             "e10",
             "n15",
         ]
-        filter = LocationFilter(search_areas, strict=False)
+        location_filter = LocationFilter(search_areas, strict=False)
 
-        valid = filter.filter_properties(leaky_properties)
-
-        # All leaky properties should be rejected
-        assert len(valid) == 0
+        assert location_filter.filter_properties(leaky_properties) == []

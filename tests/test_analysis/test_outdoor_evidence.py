@@ -117,8 +117,8 @@ async def test_new_outdoor_state_survives_native_phases_assembly_and_save(
 
     async with PropertyStorage(":memory:") as storage:
         await storage.save_merged_property(merged)
-        async with quality(storage, respond, settings=configuration()) as analyst:
-            _, result = await analyst.analyze_single_merged(merged, data_dir=images)
+        async with quality(storage, respond, settings=configuration()) as analyzer:
+            _, result = await analyzer.analyze_single_merged(merged, data_dir=images)
         assert result.analysis_failure is None
         assert result.outdoor_space.availability == availability
         assert result.outdoor_space.effective_availability == availability

@@ -5,8 +5,6 @@ These tests make real network requests and are marked as slow.
 
 import pytest
 
-pytestmark = pytest.mark.usefixtures("reset_crawlee_state", "set_crawlee_storage_dir")
-
 from home_finder.enrichment.details import enrich_merged_properties
 from home_finder.matching.deduplication import Deduplicator
 from home_finder.scrapers import OpenRentScraper
@@ -47,13 +45,10 @@ class TestEnrichmentPipelineE2E:
         finally:
             await fetcher.close()
 
-        # Property count should be preserved
-        assert len(enriched.with_usable_media) == len(merged)
-
-        # At least some should have images after enrichment
-        with_images = [m for m in enriched.with_usable_media if m.images]
-        # Don't require all — some detail pages may fail
-        assert len(with_images) >= 0  # Soft assertion
+        # Readiness partitions the batch; a missing image does not remove a home.
+        all_results = enriched.with_usable_media + enriched.without_usable_media
+        assert {m.unique_id for m in all_results} == {m.unique_id for m in merged}
+        assert any(m.images for m in enriched.with_usable_media), "No gallery evidence acquired"
 
     async def test_enriched_properties_have_descriptions(self):
         """After enrichment, some properties should have non-empty descriptions."""
@@ -70,15 +65,10 @@ class TestEnrichmentPipelineE2E:
         finally:
             await fetcher.close()
 
-        # Descriptions come from detail pages — check if any got populated
-        # (original canonical descriptions are separate from enriched descriptions)
-        has_data = any(
-            m.images or m.floorplan or m.descriptions for m in enriched.with_usable_media
-        )
-        # At least some enrichment should have happened
-        # (soft check — don't fail on transient issues)
-        if not has_data:
-            pytest.skip("No detail data returned from any listing")
+        all_results = enriched.with_usable_media + enriched.without_usable_media
+        assert any(
+            description.strip() for m in all_results for description in m.descriptions.values()
+        ), "No listing descriptions available after enrichment"
 
     async def test_enrichment_preserves_canonical_data(self):
         """Canonical property data should be unchanged after enrichment."""
@@ -101,7 +91,9 @@ class TestEnrichmentPipelineE2E:
         finally:
             await fetcher.close()
 
-        for m in enriched.with_usable_media:
+        all_results = enriched.with_usable_media + enriched.without_usable_media
+        assert {m.unique_id for m in all_results} == set(pre_data)
+        for m in all_results:
             pre_price, pre_postcode, pre_bedrooms = pre_data[m.unique_id]
             assert m.canonical.price_pcm == pre_price
             assert m.canonical.postcode == pre_postcode
@@ -124,5 +116,5 @@ class TestEnrichmentPipelineE2E:
         finally:
             await fetcher.close()
 
-        post_ids = {m.unique_id for m in enriched.with_usable_media}
+        post_ids = {m.unique_id for m in enriched.with_usable_media + enriched.without_usable_media}
         assert pre_ids == post_ids

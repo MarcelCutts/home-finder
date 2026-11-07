@@ -4,11 +4,16 @@ import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+import traveltimepy  # noqa: F401
 from pydantic import HttpUrl, ValidationError
 
 from home_finder.enrichment.commute import CommuteAssessor, CommuteResult
 from home_finder.models import CommuteState, Property, PropertySource, TransportMode
-from home_finder.models.commute import best_measured_commutes
+from home_finder.models.commute import best_measured_commutes, commute_minutes_projection
+
+# CommuteAssessor imports the TravelTime SDK lazily, and importing it loads urllib3,
+# which probes for IPv6 by opening a socket. Import it here, before sockets are
+# blocked, so the first test on each worker does not trip pytest-socket.
 
 
 @pytest.fixture(autouse=True)
@@ -154,7 +159,6 @@ class TestCommuteAssessor:
         )
         assert commute_assessor.destination_postcode == "N1 5AA"
 
-    @pytest.mark.asyncio
     async def test_assess_commutes_returns_results(self, sample_properties: list[Property]) -> None:
         """Test filtering properties returns commute results."""
         commute_assessor = CommuteAssessor(
@@ -202,7 +206,6 @@ class TestCommuteAssessor:
         assert result_by_id["zoopla:3"].travel_time_minutes == 15
         assert result_by_id["zoopla:3"].within_limit is True
 
-    @pytest.mark.asyncio
     async def test_assess_commutes_reports_missing_coords(
         self, properties_without_coords: list[Property]
     ) -> None:
@@ -225,7 +228,6 @@ class TestCommuteAssessor:
         assert results[0].within_limit is None
         assert results[0].travel_time_minutes is None
 
-    @pytest.mark.asyncio
     async def test_assess_commutes_handles_unreachable(
         self, sample_properties: list[Property]
     ) -> None:
@@ -262,7 +264,6 @@ class TestCommuteAssessor:
         assert all(r.state == CommuteState.UNREACHABLE for r in results[1:])
         assert all(r.within_limit is None for r in results[1:])
 
-    @pytest.mark.asyncio
     async def test_assess_commutes_handles_geocoding_failure(
         self, sample_properties: list[Property]
     ) -> None:
@@ -291,7 +292,6 @@ class TestCommuteAssessor:
         assert all(r.travel_time_minutes is None for r in results)
         mock_client.time_filter.assert_not_awaited()
 
-    @pytest.mark.asyncio
     async def test_client_configured_with_rate_limiting(
         self, sample_properties: list[Property]
     ) -> None:
@@ -324,7 +324,6 @@ class TestCommuteAssessor:
                 timeout=60,
             )
 
-    @pytest.mark.asyncio
     async def test_geocoding_uses_cache_on_second_call(
         self, sample_properties: list[Property]
     ) -> None:
@@ -363,7 +362,6 @@ class TestCommuteAssessor:
         # Geocoding should only be called once (first call), cached for second
         assert mock_client.geocoding.call_count == 1
 
-    @pytest.mark.asyncio
     async def test_geocoding_cache_stores_result(self, sample_properties: list[Property]) -> None:
         """Test that geocoding results are stored in cache."""
         # Clear the cache before test
@@ -393,7 +391,6 @@ class TestCommuteAssessor:
         assert "SW1A 1AA" in CommuteAssessor._geocoding_cache
         assert CommuteAssessor._geocoding_cache["SW1A 1AA"] == (51.5034, -0.1276)
 
-    @pytest.mark.asyncio
     async def test_rate_limit_error_graceful_degradation(
         self, sample_properties: list[Property]
     ) -> None:
@@ -430,7 +427,6 @@ class TestCommuteAssessor:
         assert "rate_limit_hit" in warning_events
         assert "commute_assessment_failed" in warning_events
 
-    @pytest.mark.asyncio
     async def test_general_api_error_graceful_degradation(
         self, sample_properties: list[Property]
     ) -> None:
@@ -642,3 +638,75 @@ async def test_missing_coordinates_remain_distinct_during_outage(
         CommuteState.PROVIDER_ERROR,
         CommuteState.MISSING_COORDINATES,
     ]
+
+
+async def test_minutes_projection_takes_the_faster_mode_across_assessments(sample_properties):
+    """Each mode is measured separately; the stored projection keeps the faster one."""
+    client = create_mock_client(geocoding_response=create_geocoding_response(51.54, -0.09))
+    client.time_filter.side_effect = [
+        create_time_filter_response([("openrent:1", 1200)]),
+        create_time_filter_response([("openrent:1", 900)]),
+    ]
+    commute = CommuteAssessor(app_id="test", api_key="test", destination_postcode="N1 5AA")
+    with patch("traveltimepy.AsyncClient", return_value=client):
+        results = [
+            result
+            for mode in (TransportMode.CYCLING, TransportMode.PUBLIC_TRANSPORT)
+            for result in await commute.assess_commutes(
+                sample_properties[:1], max_minutes=30, transport_mode=mode
+            )
+        ]
+    assert [r.travel_time_minutes for r in results] == [20, 15]
+    assert commute_minutes_projection(results) == {
+        "openrent:1": (15, TransportMode.PUBLIC_TRANSPORT)
+    }
+
+
+async def test_destination_geocoder_exception_is_a_provider_error(sample_properties):
+    """A failed geocoder must not look like a postcode the geocoder could not resolve."""
+    client = create_mock_client()
+    client.geocoding.side_effect = Exception("Connection failed")
+    commute = CommuteAssessor(app_id="test", api_key="test", destination_postcode="N1 5AA")
+    with patch("traveltimepy.AsyncClient", return_value=client):
+        results = await commute.assess_commutes(
+            sample_properties[:1], max_minutes=30, transport_mode=TransportMode.CYCLING
+        )
+    assert [r.state for r in results] == [CommuteState.PROVIDER_ERROR]
+    assert results[0].within_limit is None and results[0].travel_time_minutes is None
+    client.time_filter.assert_not_awaited()
+
+
+class TestGeocodeProperties:
+    """Filling missing coordinates before commutes are measured."""
+
+    async def test_full_postcode_gains_coordinates(self, make_merged_property):
+        home = make_merged_property(postcode="E8 3RH", latitude=None, longitude=None)
+        client = create_mock_client(geocoding_response=create_geocoding_response(51.5465, -0.0553))
+        commute = CommuteAssessor(app_id="test", api_key="test", destination_postcode="N1 5AA")
+        with patch("traveltimepy.AsyncClient", return_value=client):
+            (result,) = await commute.geocode_properties([home])
+        assert result.canonical.latitude == pytest.approx(51.5465)
+        assert result.canonical.longitude == pytest.approx(-0.0553)
+
+    async def test_cached_postcode_needs_no_request(self, make_merged_property):
+        home = make_merged_property(postcode="E8 3RH", latitude=None, longitude=None)
+        CommuteAssessor._geocoding_cache["E8 3RH"] = (51.5465, -0.0553)
+        client = create_mock_client()
+        commute = CommuteAssessor(app_id="test", api_key="test", destination_postcode="N1 5AA")
+        with patch("traveltimepy.AsyncClient", return_value=client):
+            (result,) = await commute.geocode_properties([home])
+        assert result.canonical.latitude == pytest.approx(51.5465)
+        client.geocoding.assert_not_awaited()
+
+    async def test_outcode_only_postcode_is_not_geocoded(self, make_merged_property):
+        """An outcode's centre point could misplace the home by kilometres."""
+        outcode_only = make_merged_property(postcode="E3", latitude=None, longitude=None)
+        full = make_merged_property(postcode="E3 4AA", latitude=None, longitude=None)
+        client = create_mock_client(geocoding_response=create_geocoding_response(51.5265, -0.0305))
+        commute = CommuteAssessor(app_id="test", api_key="test", destination_postcode="N1 5AA")
+        with patch("traveltimepy.AsyncClient", return_value=client):
+            unresolved, resolved = await commute.geocode_properties([outcode_only, full])
+        assert (unresolved.canonical.latitude, unresolved.canonical.longitude) == (None, None)
+        assert resolved.canonical.latitude == pytest.approx(51.5265)
+        assert resolved.canonical.longitude == pytest.approx(-0.0305)
+        client.geocoding.assert_awaited_once_with(query="E3 4AA", limit=1)

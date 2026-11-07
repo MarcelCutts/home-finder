@@ -24,7 +24,6 @@ MODES = (
 @pytest.fixture
 def effects(monkeypatch):
     settings = Settings(
-        _env_file=None,
         analysis_config=new_runtime_analysis_config(),
         database_path=":memory:",
         telegram_bot_token="",

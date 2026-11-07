@@ -182,3 +182,6 @@ mutants/
 
 # Experiment data
 /experiments/*/data/
+
+# Suite timing report (pytest --timing-report=PATH)
+test-timings.json

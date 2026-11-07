@@ -84,7 +84,7 @@ def configuration():
     )
 
 
-def model_for(respond, **kwargs):
+def analyzer_for(respond, **kwargs):
     return PropertyQualityAnalyzer(
         "fixture",
         max_images=8,
@@ -141,8 +141,8 @@ async def test_actual_native_image_coverage_qualifies_photo_accusations(
         requests.append(payload)
         return httpx2.Response(200, json=visual if "tools" in payload else evaluation)
 
-    async with model_for(respond) as model:
-        _, analysis = await model.analyze_single_merged(merged, data_dir=str(tmp_path))
+    async with analyzer_for(respond) as analyzer:
+        _, analysis = await analyzer.analyze_single_merged(merged, data_dir=str(tmp_path))
     assert analysis is not None and analysis.analysis_failure is None
     assert len(requests) == 2
     content = requests[0]["messages"][0]["content"]
@@ -206,8 +206,8 @@ async def test_partial_review_preserves_observation_prose_without_photo_accusati
             else PHASE2_EVALUATION_RESPONSE,
         )
 
-    async with model_for(respond) as model:
-        _, analysis = await model.analyze_single_merged(merged, data_dir=str(tmp_path))
+    async with analyzer_for(respond) as analyzer:
+        _, analysis = await analyzer.analyze_single_merged(merged, data_dir=str(tmp_path))
     raw = PHASE1_VISUAL_RESPONSE["content"][0]["input"]
     assert analysis.image_review_coverage.is_partial
     assert analysis.summary == raw["summary"]
@@ -238,8 +238,8 @@ async def test_partial_coverage_and_structured_badge_guards_survive_combined_ass
             200, json=visual if "tools" in json.loads(request.content) else evaluation
         )
 
-    async with model_for(respond) as model:
-        _, analysis = await model.analyze_single_merged(merged, data_dir=str(tmp_path))
+    async with analyzer_for(respond) as analyzer:
+        _, analysis = await analyzer.analyze_single_merged(merged, data_dir=str(tmp_path))
     assert analysis.image_review_coverage.reviewed_gallery_count == 7
     assert analysis.image_review_coverage.available_gallery_count == 8
     assert analysis.outdoor_space.effective_availability == "unknown"
@@ -272,12 +272,14 @@ async def test_checkpoint_restart_retains_raw_observations_and_persists_coverage
             )
         return httpx2.Response(200, json=evaluation)
 
-    _, budget = native_analysis_spending
+    _, policy = native_analysis_spending
     async with PropertyStorage(database) as storage:
         await storage.processing.save_pre_analysis_properties([merged], {})
-        async with model_for(respond, spend_repository=storage.spend, spend_policy=budget) as model:
+        async with analyzer_for(
+            respond, spend_repository=storage.spend, spend_policy=policy
+        ) as analyzer:
             with pytest.raises(APIUnavailableError):
-                await model.analyze_single_merged(merged, data_dir=str(tmp_path))
+                await analyzer.analyze_single_merged(merged, data_dir=str(tmp_path))
         async with storage._read_connection() as conn:
             cursor = await conn.execute("SELECT * FROM visual_checkpoints")
             checkpoint = dict(await cursor.fetchone())
@@ -292,8 +294,10 @@ async def test_checkpoint_restart_retains_raw_observations_and_persists_coverage
         assert len(recovered.images) == 8
         assert recovered.floorplan.is_source_floorplan
         assert recovered.floor_area_source == floor_area_source
-        async with model_for(respond, spend_repository=storage.spend, spend_policy=budget) as model:
-            _, analysis = await model.analyze_single_merged(recovered, data_dir=str(tmp_path))
+        async with analyzer_for(
+            respond, spend_repository=storage.spend, spend_policy=policy
+        ) as analyzer:
+            _, analysis = await analyzer.analyze_single_merged(recovered, data_dir=str(tmp_path))
         assert analysis.image_review_coverage.reviewed_gallery_count == 7
         assert analysis.image_review_coverage.available_gallery_count == 8
         assert analysis.image_review_coverage.rooms_not_seen_in_review == ("bathroom",)
@@ -336,14 +340,14 @@ async def test_changed_available_gallery_invalidates_checkpoint_even_with_same_s
             else {"type": "error", "error": {"type": "api_error", "message": "fixture"}},
         )
 
-    async with model_for(respond) as model:
+    async with analyzer_for(respond) as analyzer:
         with pytest.raises(APIUnavailableError):
-            await model.analyze_single_merged(merged, data_dir=str(tmp_path))
+            await analyzer.analyze_single_merged(merged, data_dir=str(tmp_path))
         # Remove only the unreviewed eighth gallery image; the image request is
         # otherwise identical, but its completeness claim has changed.
         complete_gallery = merged.model_copy(update={"images": merged.images[:7]})
         with pytest.raises(APIUnavailableError):
-            await model.analyze_single_merged(complete_gallery, data_dir=str(tmp_path))
+            await analyzer.analyze_single_merged(complete_gallery, data_dir=str(tmp_path))
     visual_requests = [request for request in requests if "tools" in request]
     assert len(visual_requests) == 2
     first, second = [request["messages"][0]["content"] for request in visual_requests]

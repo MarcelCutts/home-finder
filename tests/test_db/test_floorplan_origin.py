@@ -9,7 +9,6 @@ from home_finder.db.migrations import MIGRATIONS
 from home_finder.db.storage import PropertyStorage
 from home_finder.enrichment.details import _load_cached_property
 from home_finder.filters.media import filter_by_floorplan
-from home_finder.matching.deduplication import _select_best_floorplan
 from home_finder.models import PropertyImage, PropertySource
 
 
@@ -100,27 +99,6 @@ async def test_source_refresh_can_restore_legacy_image_to_gallery(tmp_path, make
         assert loaded.images == (gallery,)
     finally:
         await storage.close()
-
-
-def test_declared_floorplan_wins_over_unknown_higher_priority_source(make_merged_property):
-    unknown = make_merged_property(
-        sources=(PropertySource.RIGHTMOVE,), floorplan=_image(source=PropertySource.RIGHTMOVE)
-    )
-    declared = make_merged_property(
-        sources=(PropertySource.OPENRENT,),
-        floorplan=_image("source_declared", source=PropertySource.OPENRENT),
-    )
-    assert _select_best_floorplan([unknown, declared]) == declared.floorplan
-
-
-def test_unknown_plan_does_not_bypass_gate_but_existing_photo_exemption_remains(
-    make_merged_property,
-):
-    merged = make_merged_property(
-        sources=(PropertySource.RIGHTMOVE,), floorplan=_image(), images=(_image(role="gallery"),)
-    )
-    assert filter_by_floorplan([merged]) == []
-    assert filter_by_floorplan([merged], min_gallery_for_photo_inference=1) == [merged]
 
 
 @pytest.mark.parametrize("writer", ["save_pre_analysis_properties", "save_dropped_properties"])

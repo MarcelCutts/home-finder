@@ -14,15 +14,15 @@ PASSWORD = "fixture-owner-password-with-32-characters"
 
 
 @pytest.fixture
-def client(tmp_path):
+def app_client(tmp_path):
     settings = Settings(
         _env_file=None,
         database_path=str(tmp_path / "delivery-view.db"),
         web_owner_password=PASSWORD,
         web_base_url="http://testserver",
     )
-    with TestClient(create_app(settings, run_pipeline=False)) as client:
-        yield client
+    with TestClient(create_app(settings, run_pipeline=False)) as app_client:
+        yield app_client
 
 
 async def seed(storage, merged, *, many=False):
@@ -60,14 +60,14 @@ async def seed(storage, merged, *, many=False):
 
 
 def test_owner_can_inspect_parts_and_safe_actions_without_changing_delivery(
-    client, make_merged_property
+    app_client, make_merged_property
 ):
-    storage = client.app.state.storage
+    storage = app_client.app.state.storage
     merged = make_merged_property()
-    client.portal.call(seed, storage, merged)
-    before = client.portal.call(storage.deliveries.report)
-    assert client.get("/deliveries").status_code == 401
-    response = client.get("/deliveries", auth=("owner", PASSWORD))
+    app_client.portal.call(seed, storage, merged)
+    before = app_client.portal.call(storage.deliveries.report)
+    assert app_client.get("/deliveries").status_code == 401
+    response = app_client.get("/deliveries", auth=("owner", PASSWORD))
     assert response.status_code == 200
     assert response.headers["cache-control"] == "no-store"
     soup = BeautifulSoup(response.text, "html.parser")
@@ -92,29 +92,31 @@ def test_owner_can_inspect_parts_and_safe_actions_without_changing_delivery(
         assert private not in response.text
     for form in soup.find_all("form"):
         assert form.get("method", "get").lower() == "get"
-    assert client.portal.call(storage.deliveries.report) == before
+    assert app_client.portal.call(storage.deliveries.report) == before
 
 
-def test_state_filter_can_reach_alerts_beyond_the_bounded_first_page(client, make_merged_property):
+def test_state_filter_can_reach_alerts_beyond_the_bounded_first_page(
+    app_client, make_merged_property
+):
     from functools import partial
 
-    storage = client.app.state.storage
-    client.portal.call(partial(seed, storage, make_merged_property(), many=True))
-    first = client.get("/deliveries", auth=("owner", PASSWORD))
+    storage = app_client.app.state.storage
+    app_client.portal.call(partial(seed, storage, make_merged_property(), many=True))
+    first = app_client.get("/deliveries", auth=("owner", PASSWORD))
     assert len(BeautifulSoup(first.text, "html.parser").select(".delivery-record")) == 100
-    response = client.get("/deliveries?state=uncertain", auth=("owner", PASSWORD))
+    response = app_client.get("/deliveries?state=uncertain", auth=("owner", PASSWORD))
     soup = BeautifulSoup(response.text, "html.parser")
     assert len(soup.select(".delivery-record")) == 1
     assert "discovery:fixture-101" in response.text
     assert soup.select_one("#delivery-state option[selected]")["value"] == "uncertain"
     assert "Queued (101)" in response.text
-    assert client.get("/deliveries?state=", auth=("owner", PASSWORD)).status_code == 200
-    assert client.get("/deliveries?state=bad", auth=("owner", PASSWORD)).status_code == 422
+    assert app_client.get("/deliveries?state=", auth=("owner", PASSWORD)).status_code == 200
+    assert app_client.get("/deliveries?state=bad", auth=("owner", PASSWORD)).status_code == 422
 
 
-def test_empty_delivery_view_is_reachable_from_dashboard(client):
-    dashboard = client.get("/", auth=("owner", PASSWORD))
+def test_empty_delivery_view_is_reachable_from_dashboard(app_client):
+    dashboard = app_client.get("/", auth=("owner", PASSWORD))
     assert BeautifulSoup(dashboard.text, "html.parser").select_one('a[href="/deliveries"]')
-    response = client.get("/deliveries", auth=("owner", PASSWORD))
+    response = app_client.get("/deliveries", auth=("owner", PASSWORD))
     assert response.status_code == 200
     assert "No unfinished alerts" in response.text
