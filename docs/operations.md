@@ -11,7 +11,9 @@ Install the locked dependencies with `uv sync --locked --all-extras`. Configure 
 random ASCII `HOME_FINDER_WEB_OWNER_PASSWORD` of at least 24 characters. Hosted
 access requires HTTPS and the canonical `HOME_FINDER_WEB_BASE_URL`. Configure the
 webhook secret, Telegram chat and owner user before accepting callbacks; group
-chats require an explicit owner user ID. Start with:
+chats require an explicit owner user ID. Run `uv run home-finder --check-config` to inspect effective feature prerequisites
+without network or database access. For dotenv loading and worktree behavior, see
+[configuration](../README.md#configuration). Start with:
 
 ```bash
 uv run home-finder --serve --no-pipeline

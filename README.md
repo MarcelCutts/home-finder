@@ -43,7 +43,9 @@ Multi-platform London rental property scraper with commute guidance, AI quality 
 
    ```bash
    cp .env.example .env
-   # Edit .env with your settings
+   chmod 600 .env
+   # Set an owner password for the dashboard; add only the integrations you need.
+   uv run home-finder --check-config
    ```
 
 3. **Run**:
@@ -58,6 +60,7 @@ Multi-platform London rental property scraper with commute guidance, AI quality 
 ### Run Modes
 
 ```bash
+uv run home-finder --check-config       # Offline settings/prerequisite check
 uv run home-finder                      # Full pipeline with Telegram notifications
 uv run home-finder --dry-run            # Full pipeline, save to DB but no notifications
 uv run home-finder --scrape-only        # Just scrape and print (no filtering/storage)
@@ -117,7 +120,8 @@ The `--serve` flag starts a FastAPI web server on port 8000 without collection. 
 | `HOME_FINDER_WEB_OWNER_PASSWORD` | `""` | Required when serving; random ASCII password of at least 24 characters |
 | `HOME_FINDER_WEB_PORT` | `8000` | Web server port |
 | `HOME_FINDER_WEB_HOST` | `0.0.0.0` | Web server bind address |
-| `HOME_FINDER_PIPELINE_INTERVAL_MINUTES` | `55` | Minutes between pipeline runs in serve mode |
+| `HOME_FINDER_CARTO_BASEMAP_API_KEY` | `""` | Browser-visible, origin-restricted tile key; maps are unavailable without it |
+| `HOME_FINDER_PIPELINE_INTERVAL_MINUTES` | `55` | Delay after completion plus 0–5 minutes jitter; only with `--serve --with-pipeline` |
 
 ### Security
 
@@ -166,56 +170,80 @@ Additional protections include:
 
 ## Configuration
 
-Create a `.env` file with these settings (all use `HOME_FINDER_` prefix):
+Use [`.env.example`](.env.example) as the complete annotated reference. All 45
+application settings have defaults; configure only your preferences and the
+features you use. Advanced queue, retry and model tuning can stay commented out.
 
-### Required
+| Feature | Configuration needed |
+|---|---|
+| Owner dashboard | `HOME_FINDER_WEB_OWNER_PASSWORD` (24+ ASCII characters); canonical HTTPS `HOME_FINDER_WEB_BASE_URL` when hosted |
+| Map tiles | `HOME_FINDER_CARTO_BASEMAP_API_KEY`; this browser-visible key must be restricted to your origins |
+| Telegram delivery | `HOME_FINDER_TELEGRAM_BOT_TOKEN` and nonzero numeric `HOME_FINDER_TELEGRAM_CHAT_ID` |
+| Telegram callbacks | Delivery settings, HTTPS base URL and `HOME_FINDER_TELEGRAM_WEBHOOK_SECRET`; groups also need `HOME_FINDER_TELEGRAM_OWNER_USER_ID` |
+| Advisory commute measurements | Both `HOME_FINDER_TRAVELTIME_APP_ID` and `HOME_FINDER_TRAVELTIME_API_KEY` |
+| Paid assessments | `HOME_FINDER_ANTHROPIC_API_KEY`, enabled `HOME_FINDER_ENABLE_QUALITY_FILTER`, and explicit `HOME_FINDER_ANALYSIS_SPEND_POLICY` caps |
 
-- `HOME_FINDER_TELEGRAM_BOT_TOKEN`: Your Telegram bot token (from @BotFather)
-- `HOME_FINDER_TELEGRAM_CHAT_ID`: Your Telegram chat ID
-- `HOME_FINDER_WEB_OWNER_PASSWORD`: Owner dashboard password (24+ ASCII characters), when serving
+Discovery alerts require a rated assessment meeting `HOME_FINDER_NOTIFICATION_POLICY`.
+A Telegram token alone does not make unassessed homes eligible. An Anthropic key
+without spend caps leaves paid analysis deferred. See [operations](docs/operations.md)
+for the spending, delivery and activation contracts.
 
-### Optional APIs
+```bash
+uv run home-finder --check-config
+uv run home-finder --env-file /absolute/path/to/.env --check-config
+```
 
-- `HOME_FINDER_TRAVELTIME_APP_ID`: TravelTime API app ID (enables advisory commute measurements)
-- `HOME_FINDER_TRAVELTIME_API_KEY`: TravelTime API key
-- `HOME_FINDER_ANTHROPIC_API_KEY`: Anthropic API key; paid analysis also requires explicit `HOME_FINDER_ANALYSIS_SPEND_POLICY` caps (see [operations](docs/operations.md))
+The check parses settings and reports feature prerequisites without opening a
+database, registering a webhook, scraping, sending messages or spending money.
+Exit 0 means the configuration is valid, **not** that every optional feature is
+configured or any credential works remotely. Invalid settings or malformed dotenv
+syntax exit 1. Syntax errors identify the file and line without printing values.
+CLI usage errors or missing prerequisites for the selected run mode exit 2. `--env-file`
+also works with the normal run modes. The normal notifying pipeline and
+`--serve --with-pipeline` require both Telegram credentials before starting work.
+Use `--dry-run` to collect without sending (it can still spend on configured
+analysis), `--scrape-only` to inspect source results, or `--serve` for just the dashboard.
 
-### Feature Flags
+Settings load from the current directory's `.env`; parent directories and other
+Git worktrees are not searched. Exported `HOME_FINDER_` variables override the file,
+and omitted values use code defaults. Programmatic `Settings(...)` arguments take
+precedence over both. Relative database paths still resolve from the working
+directory, not from the selected env file. Use an absolute database path when needed.
 
-- `HOME_FINDER_ENABLE_QUALITY_FILTER`: Enable Claude vision property analysis (default: true)
-- `HOME_FINDER_REQUIRE_FLOORPLAN`: Drop properties without floorplans (default: true)
-- `HOME_FINDER_QUALITY_FILTER_MAX_IMAGES`: Max gallery images to analyze per property (default: 20, max: 20)
-- `HOME_FINDER_MIN_GALLERY_FOR_PHOTO_INFERENCE`: Minimum gallery images to bypass floorplan gate via photo inference; 0 disables (default: 5)
-- `HOME_FINDER_ENABLE_EXTENDED_THINKING`: Enable extended thinking for deeper quality analysis (default: true)
-- `HOME_FINDER_ANALYSIS_CONFIG`: Optional phase overrides merged onto the bounded Sonnet 5.5 runtime profile: low effort, 8,192 output tokens and no SDK retries. `{}` retains those defaults; top-level `null` is rejected. Stored historical profiles remain unchanged. See [paid analysis](docs/operations.md#runtime-model-defaults). Spend caps remain required.
-- `HOME_FINDER_ENABLE_IMAGE_HASH_MATCHING`: Enable perceptual image hashing for deduplication (default: true)
-- `HOME_FINDER_MAX_ENRICHMENT_ATTEMPTS`: Max enrichment retry attempts before giving up on a property, 1-10 (default: 3)
-- `HOME_FINDER_MAX_ENRICHMENT_PER_RUN`: Maximum homes to enrich per run, 1-500 (default: 75). Recovery and discovery share the slots; excess homes remain queued without consuming attempts.
+Keep one assignment per name: dotenv uses the last duplicate. Names are case
+insensitive. Unknown `HOME_FINDER_` names fail at startup; unrelated tools' keys
+are ignored. Empty strings are explicit values: comment out an optional numeric
+or JSON setting to restore its default. Boolean settings accept `true`/`false`;
+policies use JSON with double-quoted keys and exact decimal strings for USD caps.
+Do not `source .env`: it is dotenv data, and unquoted JSON/postcodes are not shell
+assignments. The example's single-line `KEY=value` format also works with
+`docker run --env-file .env`; avoid shell-style outer quotes or interpolation when
+sharing a file with Docker.
 
-### Search Criteria
+`HOME_FINDER_MAX_ANALYSIS_PER_RUN` remains a compatibility fallback for **each**
+unset initial/reanalysis cap. Prefer the two explicit queue settings.
+`HOME_FINDER_SCRAPE_INTERVAL_MINUTES` is unsupported; recurring serve-mode runs
+use `HOME_FINDER_PIPELINE_INTERVAL_MINUTES` only with `--serve --with-pipeline`.
+`HOME_FINDER_BRIEF_MUST_HAVES` controls the dashboard brief, not assessment weights
+or alert eligibility. Floorplan admission also accepts exempt sources or enough
+photos; `HOME_FINDER_REQUIRE_FLOORPLAN` does not mean every home needs a floorplan.
 
-- `HOME_FINDER_MIN_PRICE`: Minimum monthly rent (default: 1800)
-- `HOME_FINDER_MAX_PRICE`: Maximum monthly rent (default: 2500)
-- `HOME_FINDER_MIN_BEDROOMS`: Minimum bedrooms (default: 0)
-- `HOME_FINDER_MAX_BEDROOMS`: Maximum bedrooms (default: 2)
-- `HOME_FINDER_DESTINATION_POSTCODE`: Your destination postcode (default: N1 5AA)
-- `HOME_FINDER_MAX_COMMUTE_MINUTES`: Maximum commute time in minutes (default: 30)
-- `HOME_FINDER_SEARCH_AREAS`: Comma-separated outcodes/boroughs (default: e2,e3,e5,e8,e9,e10,e15,e17,n1,n5,n15,n16,n17)
+**Source-filter limitations:** `FURNISH_TYPES`, `MIN_BATHROOMS` and
+`INCLUDE_LET_AGREED` are search hints, not uniform local constraints. Rightmove
+forwards all three. Zoopla deliberately omits all three, and has no local fallback
+enforcement. OpenRent forwards browser filter state, but its server response is
+not filtered locally for these fields. OnTheMarket forwards let-agreed and a
+single furnishing value, but ignores bathroom count and multiple furnishing
+choices. Price and bedroom limits are checked locally after scraping. The current
+property model does not retain normalized furnishing/bathroom values for universal
+filtering. These limitations require a separate evidence/model change to fix;
+setting extra environment variables cannot make them guaranteed constraints.
 
-### Scraper Filters
-
-- `HOME_FINDER_FURNISH_TYPES`: Comma-separated furnishing filter (default: unfurnished,part_furnished)
-- `HOME_FINDER_MIN_BATHROOMS`: Minimum bathrooms (default: 1)
-- `HOME_FINDER_INCLUDE_LET_AGREED`: Include already-let properties (default: false)
-
-### Scraper Tuning
-
-- `HOME_FINDER_ZOOPLA_MAX_AREAS_PER_RUN`: Max search areas per Zoopla run to avoid Cloudflare blocks; rotates a subset each run (default: 4)
-
-### Other
-
-- `HOME_FINDER_PROXY_URL`: HTTP/SOCKS5 proxy URL for geo-restricted sites (e.g., `socks5://user:pass@host:port`)
-- `HOME_FINDER_DATABASE_PATH`: SQLite database path (default: data/properties.db)
+The runtime uses the prefixed Anthropic key. Unprefixed `ANTHROPIC_API_KEY` is used
+by the separate layout experiment and opt-in live evaluation tests; OpenAI,
+Gemini, Typesafe and TfL keys are not read by the application. Fly secrets are
+injected as process variables, independently of your local `.env`. The release
+workflow's `FLY_PRODUCTION_API_TOKEN` belongs in GitHub's production environment.
 
 ## Getting API Keys
 
