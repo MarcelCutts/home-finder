@@ -122,14 +122,15 @@ class TestParseListingAddress:
     def test_portal_address_formats(self, address: str, expected: ListingAddress) -> None:
         assert parse_listing_address(address) == expected
 
-    @pytest.mark.parametrize("address", ["Upper Brack, London", "London, Q9", "Q9"])
-    def test_area_only_addresses_have_nothing_to_match_on(self, address: str) -> None:
-        # Without a street, the first area name is read as a building and only
-        # narrows if a certificate carries it; postcodes and "London" never count.
-        parsed = parse_listing_address(address)
-        assert parsed.streets == ()
-        assert parsed.numbered is None
-        assert parsed.buildings in ((), ("upper brack",))
+    @pytest.mark.parametrize("address", ["London, Q9", "Q9", "Greater London"])
+    def test_postcodes_and_london_are_never_names(self, address: str) -> None:
+        assert parse_listing_address(address).is_empty
+
+    def test_an_area_without_a_street_is_read_as_a_building(self) -> None:
+        # It narrows only if some certificate carries the name (see TestMatchAddress).
+        assert parse_listing_address("Upper Brack, London") == ListingAddress(
+            buildings=("upper brack",)
+        )
 
 
 class TestGroupHomes:
@@ -153,11 +154,11 @@ class TestMatchAddress:
         result = match_address(parse_listing_address("14 Quillon Road, Q9"), POSTCODE_CERTS)
         assert result.outcome is Outcome.ONE
         assert result.evidence is Evidence.NUMBER
-        assert result.homes[0].latest.certificate_number == "c4"
+        assert result.homes[0].newest.certificate_number == "c4"
 
     def test_abbreviated_street_still_matches(self) -> None:
         result = match_address(parse_listing_address("16 Quillon Road"), POSTCODE_CERTS)
-        assert result.homes[0].latest.certificate_number == "c5"
+        assert result.homes[0].newest.certificate_number == "c5"
 
     def test_street_alone_is_ambiguous_on_a_shared_postcode(self) -> None:
         result = match_address(parse_listing_address("Quillon Road, Q9"), POSTCODE_CERTS)
@@ -168,18 +169,18 @@ class TestMatchAddress:
     def test_number_of_a_converted_house_is_ambiguous_between_its_flats(self) -> None:
         result = match_address(parse_listing_address("12 Quillon Road"), POSTCODE_CERTS)
         assert result.outcome is Outcome.AMBIGUOUS
-        assert {h.latest.certificate_number for h in result.homes} == {"c1", "c2", "c3"}
+        assert {h.newest.certificate_number for h in result.homes} == {"c1", "c2", "c3"}
 
     def test_flat_letter_picks_one_flat_in_the_house(self) -> None:
         result = match_address(parse_listing_address("Flat C, 12 Quillon Road"), POSTCODE_CERTS)
         assert result.outcome is Outcome.ONE
         assert result.evidence is Evidence.FLAT
-        assert result.homes[0].latest.certificate_number == "c3"
+        assert result.homes[0].newest.certificate_number == "c3"
 
     def test_building_name_narrows_to_its_flats(self) -> None:
         result = match_address(parse_listing_address("Vexley House, Quillon Road"), POSTCODE_CERTS)
         assert result.evidence is Evidence.BUILDING
-        assert {h.latest.certificate_number for h in result.homes} == {"c6", "c7"}
+        assert {h.newest.certificate_number for h in result.homes} == {"c6", "c7"}
 
     def test_building_name_missing_from_certificates_keeps_the_street(self) -> None:
         result = match_address(
@@ -218,7 +219,7 @@ class TestMatchListing:
     def test_the_most_specific_portal_address_wins(self) -> None:
         result = match_listing(["Quillon Road, Q9", "14 Quillon Road, Q9"], POSTCODE_CERTS)
         assert result.outcome is Outcome.ONE
-        assert result.homes[0].latest.certificate_number == "c4"
+        assert result.homes[0].newest.certificate_number == "c4"
 
     def test_portal_addresses_picking_different_homes_are_ambiguous(self) -> None:
         result = match_listing(["14 Quillon Road", "16 Quillon Road"], POSTCODE_CERTS)

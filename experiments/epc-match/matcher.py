@@ -53,8 +53,9 @@ _FULL_POSTCODE = re.compile(r"^([A-Z]{1,2}\d[A-Z\d]?)\s*(\d[A-Z]{2})$")
 _OUTCODE = re.compile(r"^[a-z]{1,2}\d[a-z\d]?$")
 _INCODE = re.compile(r"^\d[a-z]{2}$")
 _FLAT_WORDS = frozenset({"flat", "apartment", "unit", "maisonette"})
-_FLAT_LABEL = re.compile(r"[a-z]?\d+[a-z]?|[a-z]")
-_FLAT_ID = re.compile(r"\b(?:flat|apartment|unit|maisonette)\s+([a-z]?\d+[a-z]?|[a-z])\b")
+_FLAT_LABEL_PATTERN = r"[a-z]?\d+[a-z]?|[a-z]"  # "3", "3b", "b2", "c"
+_FLAT_LABEL = re.compile(_FLAT_LABEL_PATTERN)
+_FLAT_ID = re.compile(rf"\b(?:flat|apartment|unit|maisonette)\s+({_FLAT_LABEL_PATTERN})\b")
 _NUMBER = re.compile(r"^\d+[a-z]?(?:-\d+[a-z]?)?$")
 
 
@@ -309,13 +310,13 @@ class Home:
     certificates: tuple[Certificate, ...]
 
     @property
-    def latest(self) -> Certificate:
+    def newest(self) -> Certificate:
         return self.certificates[0]
 
     @property
     def key(self) -> str:
         """The normalised address and postcode the home's certificates share."""
-        return home_key(self.latest)
+        return home_key(self.newest)
 
 
 def home_key(cert: Certificate) -> str:
@@ -372,6 +373,8 @@ class NoMatchReason(StrEnum):
 
 @dataclass(frozen=True)
 class MatchResult:
+    """The outcome, the fact that decided it and the candidate homes left."""
+
     outcome: Outcome
     evidence: Evidence | None = None
     homes: tuple[Home, ...] = ()

@@ -136,3 +136,25 @@ def test_no_token_anywhere_is_an_error(tmp_path: Path, monkeypatch: pytest.Monke
     monkeypatch.delenv("EPC_API_TOKEN", raising=False)
     with pytest.raises(MissingTokenError):
         load_token(tmp_path / "absent")
+
+
+def test_old_certificate_without_a_total_sums_its_floors(tmp_path: Path) -> None:
+    body = {
+        "data": {
+            "current_energy_efficiency_band": "D",
+            "sap_building_parts": [
+                {"sap_floor_dimensions": [{"total_floor_area": 30.5}, {"total_floor_area": 29.5}]},
+                {
+                    "sap_floor_dimensions": [{"total_floor_area": {"value": 8, "quantity": "m2"}}],
+                    "sap_room_in_roof": {"floor_area": 12},
+                },
+            ],
+        }
+    }
+    recorder = Recorder(lambda _: httpx.Response(200, json=body))
+    with api(recorder, tmp_path) as client:
+        detail = client.certificate("0000-0000-0000-0000-0003")
+
+    assert detail is not None
+    assert detail.total_floor_area == 80.0
+    assert detail.floor_area_summed

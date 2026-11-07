@@ -23,6 +23,8 @@ from datetime import date
 from pathlib import Path
 from typing import Any
 
+from matcher import parse_listing_address
+
 HERE = Path(__file__).resolve().parent
 RESULTS = HERE / "data" / "results"
 NARROWED = HERE / "data" / "narrowed"
@@ -56,6 +58,30 @@ def wilson_interval(successes: int, n: int, z: float = 1.96) -> tuple[float, flo
 # --- Match outcomes -------------------------------------------------------
 
 
+def coverage_rows(records: Sequence[Record]) -> list[list[str]]:
+    """Per dataset: listings with a full postcode, flat number, house number, area, band."""
+    rows = []
+    for dataset in sorted({r["listing"]["dataset"] for r in records}):
+        listings = [r["listing"] for r in records if r["listing"]["dataset"] == dataset]
+        parsed = [[parse_listing_address(a) for a in li["addresses"]] for li in listings]
+        flat = [any(p.flat for p in ps) for ps in parsed]
+        numbered = [
+            any(p.numbered for p in ps) and not f for ps, f in zip(parsed, flat, strict=True)
+        ]
+        rows.append(
+            [
+                dataset,
+                str(len(listings)),
+                str(sum(bool(li["postcodes"]) for li in listings)),
+                str(sum(flat)),
+                str(sum(numbered)),
+                str(sum(li["floor_area_sqm"] is not None for li in listings)),
+                str(sum(li["advert_epc_band"] is not None for li in listings)),
+            ]
+        )
+    return rows
+
+
 def outcome_table(records: Sequence[Record], group: str) -> list[list[str]]:
     """Rows of one / ambiguous / none counts, split by a record field."""
     rows = []
@@ -86,7 +112,7 @@ def outcome_table(records: Sequence[Record], group: str) -> list[list[str]]:
     return rows
 
 
-def latest_band(home: Record) -> str | None:
+def newest_band(home: Record) -> str | None:
     band: str | None = home["certificates"][0].get("band")
     return band
 
@@ -108,7 +134,7 @@ def ambiguity_summary(records: Sequence[Record]) -> AmbiguitySummary | None:
         return None
     sizes = [len(r["homes"]) for r in ambiguous]
     q = statistics.quantiles(sizes, n=4) if len(sizes) > 1 else [sizes[0]] * 3
-    one_band = sum(len({latest_band(h) for h in r["homes"]} - {None}) == 1 for r in ambiguous)
+    one_band = sum(len({newest_band(h) for h in r["homes"]} - {None}) == 1 for r in ambiguous)
     return AmbiguitySummary(
         listings=len(ambiguous),
         median_homes=statistics.median(sizes),
@@ -165,9 +191,9 @@ def certificate_summary(
             disagree += 1
         if not plausible_area(r["details"][0]["total_floor_area"]):
             implausible += 1
-        date = r["details"][0].get("registration_date")
-        if date:
-            year = int(date[:4]) + (int(date[5:7]) - 1) / 12
+        lodged = r["details"][0].get("registration_date")
+        if lodged:
+            year = int(lodged[:4]) + (int(lodged[5:7]) - 1) / 12
             ages.append(snapshot_year[r["listing"]["dataset"]] - year)
     return CertificateSummary(
         matches=len(singles),
@@ -210,8 +236,8 @@ def area_pairs(
 ) -> list[tuple[str, float, float]]:
     """(listing area source, listing m², EPC m²) for single matches with both figures.
 
-    A listing area outside the plausible range (a square-foot figure stored as
-    square metres, say) is left out, as is the matching certificate's.
+    A pair is dropped when either area is outside the plausible range, such
+    as a square-foot figure stored as square metres.
     """
     pairs = []
     for r in records:
@@ -256,13 +282,52 @@ def band_agreement(records: Iterable[Record]) -> tuple[int, int, int]:
         advert = r["listing"].get("advert_epc_band")
         if r["outcome"] != "one" or not advert:
             continue
-        epc = latest_band(r["homes"][0])
+        epc = newest_band(r["homes"][0])
         if not epc:
             continue
         n += 1
         same += epc == advert
         near += abs(order.index(epc) - order.index(advert)) <= 1
     return n, same, near
+
+
+def candidate_bands(records: Iterable[Record]) -> tuple[int, int, int, int, int]:
+    """How a building-level band compares with the advert's, for ambiguous listings.
+
+    Returns (listings with an advert band, those whose candidates share one
+    band, of which agree, listings whose most common candidate band agrees,
+    and those within one band of it).
+    """
+    order = "ABCDEFG"
+    n = one_band = one_band_agree = modal_same = modal_near = 0
+    for r in records:
+        advert = r["listing"].get("advert_epc_band")
+        if r["outcome"] != "ambiguous" or not advert:
+            continue
+        bands = Counter(b for h in r["homes"] if (b := newest_band(h)))
+        if not bands:
+            continue
+        n += 1
+        modal = bands.most_common(1)[0][0]
+        modal_same += modal == advert
+        modal_near += abs(order.index(modal) - order.index(advert)) <= 1
+        if len(bands) == 1:
+            one_band += 1
+            one_band_agree += modal == advert
+    return n, one_band, one_band_agree, modal_same, modal_near
+
+
+def candidate_area_pairs(narrowed: Iterable[Record]) -> list[tuple[str, float, float]]:
+    """(source, listing m², median m² of the homes left) where rooms left several."""
+    pairs = []
+    for r in narrowed:
+        listing_area = r["listing"].get("floor_area_sqm")
+        areas = [a for a in r.get("kept_floor_areas") or [] if plausible_area(a)]
+        if r["outcome"] != "ambiguous" or not areas or not plausible_area(listing_area):
+            continue
+        source = "floorplan" if r["listing"]["floor_area_source"] == "estimated" else "advert"
+        pairs.append((source, float(listing_area), float(statistics.median(areas))))
+    return pairs
 
 
 def rooms_offsets(
@@ -301,8 +366,8 @@ def load_judgements(path: Path) -> list[dict[str, str]]:
     return rows
 
 
-def judged_correct(judgements: Iterable[dict[str, str]]) -> set[tuple[str, str]]:
-    """(dataset, unique_id) of the listings judged correct or likely."""
+def counted_correct(judgements: Iterable[dict[str, str]]) -> set[tuple[str, str]]:
+    """(dataset, unique_id) of the listings the correct-match rate counts: correct or likely."""
     return {
         (j["dataset"], j["unique_id"]) for j in judgements if j["verdict"] in ("correct", "likely")
     }
@@ -326,25 +391,67 @@ def table(header: Sequence[str], rows: Iterable[Sequence[str]]) -> str:
     return "\n".join(lines)
 
 
+# When each dataset was collected, for the age of the certificates matched:
+# the October snapshot on 21 October 2026, the February export over 13-28 February.
+SNAPSHOT_YEAR = {"october": 2026.8, "february": 2026.1}
+
+
 def main() -> int:
     paths = sorted(RESULTS.glob("*.jsonl"))
     if not paths:
         print("No results yet: run run.py first.", file=sys.stderr)
         return 2
     records = load_records(paths)
-    for r in records:
-        r["dataset"] = r["listing"]["dataset"]
-        r["full_postcode"] = "full postcode" if r["listing"]["postcodes"] else "district only"
+    narrowed = load_records(sorted(NARROWED.glob("*.jsonl")))
+    judgements = load_judgements(JUDGEMENTS)
+    narrowed_judgements = load_judgements(NARROWED_JUDGEMENTS)
+    counted = counted_correct([*judgements, *narrowed_judgements])
 
-    outcome_header = ["", "listings", "one home", "ambiguous", "none"]
-    print("## Outcomes by dataset\n")
-    print(table(outcome_header, outcome_table(records, "dataset")))
+    print_coverage(records)
+    print_outcomes(records)
+    print_no_match(records)
+    print_ambiguity(records)
+    print_certificates(records)
+    print_narrowing(narrowed)
+    print_floor_area(records, narrowed, counted)
+    print_bands(records, narrowed)
+    print_rooms(records, counted)
+    print_handcheck("Hand-check of strict matches", judgements)
+    print_handcheck("Hand-check of narrowed matches", narrowed_judgements)
+    print_handcheck("Hand-check, both together", [*judgements, *narrowed_judgements])
+    return 0
+
+
+def print_coverage(records: Sequence[Record]) -> None:
+    header = [
+        "",
+        "listings",
+        "full postcode",
+        "flat number",
+        "house or building number",
+        "floor area",
+        "advert band",
+    ]
+    print("## What the listings give\n")
+    print(table(header, coverage_rows(records)))
+
+
+def print_outcomes(records: Sequence[Record]) -> None:
+    header = ["", "listings", "one home", "ambiguous", "none"]
+    by_postcode = [
+        {**r, "postcode": "full postcode" if r["listing"]["postcodes"] else "district only"}
+        for r in records
+    ]
+    by_dataset = [{**r, "dataset": r["listing"]["dataset"]} for r in records]
+    print("\n## Outcomes by dataset\n")
+    print(table(header, outcome_table(by_dataset, "dataset")))
     print("\n## Outcomes by what the listing's postcode gives\n")
-    print(table(outcome_header, outcome_table(records, "full_postcode")))
+    print(table(header, outcome_table(by_postcode, "postcode")))
     print("\n## Outcomes by most specific evidence used\n")
-    with_evidence = [r for r in records if r["evidence"]]
-    print(table(outcome_header, outcome_table(with_evidence, "evidence")))
+    print(table(header, outcome_table([r for r in records if r["evidence"]], "evidence")))
 
+
+def print_no_match(records: Sequence[Record]) -> None:
     print("\n## Why no match\n")
     reasons = Counter(r["reason"] for r in records if r["outcome"] == "none")
     print(table(["reason", "listings"], [[k, str(v)] for k, v in reasons.most_common()]))
@@ -357,21 +464,27 @@ def main() -> int:
         "outside the district the portal gave."
     )
 
-    summary = ambiguity_summary(records)
-    if summary:
-        print("\n## Ambiguous matches\n")
-        print(
-            f"- {summary.listings} listings; median {summary.median_homes:g} candidate homes "
-            f"(quartiles {summary.quartiles[0]:g} to {summary.quartiles[1]:g})\n"
-            f"- {summary.within_two} ({pct(summary.within_two, summary.listings)}) "
-            "have only two candidates\n"
-            f"- {summary.one_band} ({pct(summary.one_band, summary.listings)}) have candidates "
-            "that all share one current band"
-        )
-        disagree = sum(r["variants_disagree"] for r in records)
-        print(f"- {disagree} are ambiguous because two portals' addresses picked different homes")
 
-    certs = certificate_summary(records, snapshot_year={"october": 2026.8, "february": 2026.1})
+def print_ambiguity(records: Sequence[Record]) -> None:
+    summary = ambiguity_summary(records)
+    if not summary:
+        return
+    disagree = sum(r["variants_disagree"] for r in records)
+    print("\n## Ambiguous matches\n")
+    print(
+        f"- {summary.listings} listings; median {summary.median_homes:g} candidate homes "
+        f"(quartiles {summary.quartiles[0]:g} to {summary.quartiles[1]:g})\n"
+        f"- {summary.within_two} ({pct(summary.within_two, summary.listings)}) "
+        "have only two candidates\n"
+        f"- {summary.one_band} ({pct(summary.one_band, summary.listings)}) have candidates "
+        "that all share one current band\n"
+        f"- {disagree} are ambiguous because two portals' addresses picked different homes"
+    )
+
+
+def print_certificates(records: Sequence[Record]) -> None:
+    certs = certificate_summary(records, SNAPSHOT_YEAR)
+    age = f"{certs.median_age_years:.1f} years" if certs.median_age_years is not None else "n/a"
     print("\n## Single matches: certificates\n")
     print(
         f"- {certs.matches} single matches, {certs.with_detail} with a full certificate fetched\n"
@@ -379,38 +492,31 @@ def main() -> int:
         f"{certs.areas_disagree} of those disagree on floor area by more than 10%\n"
         f"- {certs.implausible_area} newest certificates have an implausible floor area\n"
         f"- {certs.conflicting} homes have two certificates a month apart in different bands\n"
-        f"- median newest-certificate age: "
-        + (f"{certs.median_age_years:.1f} years" if certs.median_age_years is not None else "n/a")
+        f"- median age of the newest certificate: {age}"
     )
 
-    narrowed = load_records(sorted(NARROWED.glob("*.jsonl")))
-    if narrowed:
-        counts = Counter(r["outcome"] for r in narrowed)
-        sizes = [r["homes_before"] for r in narrowed]
-        print("\n## Narrowing ambiguous matches by rooms\n")
-        print(
-            f"- {len(narrowed)} ambiguous listings with {min(sizes)} to {max(sizes)} candidate "
-            f"homes tried: {counts['one']} ({pct(counts['one'], len(narrowed))}) left one home, "
-            f"{counts['ambiguous']} still ambiguous, {counts['none']} left none"
-        )
 
-    judgements = load_judgements(JUDGEMENTS)
-    narrowed_judgements = load_judgements(NARROWED_JUDGEMENTS)
-    correct = judged_correct([*judgements, *narrowed_judgements])
-    groups = [
-        ("strict single matches", records),
-        ("narrowed single matches", narrowed),
-        ("hand-checked correct, strict and narrowed", [*records, *narrowed]),
+def print_narrowing(narrowed: Sequence[Record]) -> None:
+    if not narrowed:
+        return
+    counts = Counter(r["outcome"] for r in narrowed)
+    sizes = [r["homes_before"] for r in narrowed]
+    print("\n## Narrowing ambiguous matches by rooms\n")
+    print(
+        f"- {len(narrowed)} ambiguous listings with {min(sizes)} to {max(sizes)} candidate "
+        f"homes tried: {counts['one']} ({pct(counts['one'], len(narrowed))}) left one home, "
+        f"{counts['ambiguous']} still ambiguous, {counts['none']} left none"
+    )
+
+
+def print_floor_area(
+    records: Sequence[Record], narrowed: Sequence[Record], counted: set[tuple[str, str]]
+) -> None:
+    groups: list[tuple[str, Sequence[Record], set[tuple[str, str]] | None]] = [
+        ("strict single matches", records, None),
+        ("narrowed single matches", narrowed, None),
+        ("hand-checked correct or likely, strict and narrowed", [*records, *narrowed], counted),
     ]
-
-    print("\n## Floor area: EPC against the listing's figure\n")
-    dropped = sum(
-        r["outcome"] == "one"
-        and r["listing"]["floor_area_sqm"] is not None
-        and not plausible_area(r["listing"]["floor_area_sqm"])
-        for r in [*records, *narrowed]
-    )
-    print(f"{dropped} single matches dropped for an implausible listing floor area.")
     header = [
         "listing figure",
         "pairs",
@@ -420,8 +526,15 @@ def main() -> int:
         "≤10%",
         "≤20%",
     ]
-    for label, group in groups:
-        only = correct if label.startswith("hand-checked") else None
+    dropped = sum(
+        r["outcome"] == "one"
+        and r["listing"]["floor_area_sqm"] is not None
+        and not plausible_area(r["listing"]["floor_area_sqm"])
+        for r in [*records, *narrowed]
+    )
+    print("\n## Floor area: EPC against the listing's figure\n")
+    print(f"{dropped} single matches dropped for an implausible listing floor area.")
+    for label, group, only in groups:
         pairs = area_pairs(group, correct_only=only)
         rows = []
         for source in ("floorplan", "advert", "all"):
@@ -442,25 +555,41 @@ def main() -> int:
             print(f"\n{label}:\n")
             print(table(header, rows))
 
+    estimate = area_agreement(candidate_area_pairs(narrowed), "all")
+    if estimate:
+        print(
+            f"\nmedian of the homes left by rooms, where several remain: {estimate.n} listings; "
+            f"median abs diff {estimate.median_abs_pct:.1f}%, "
+            f"{pct(estimate.within_5, estimate.n)} within 5%, "
+            f"{pct(estimate.within_10, estimate.n)} within 10%, "
+            f"{pct(estimate.within_20, estimate.n)} within 20%"
+        )
+
+
+def print_bands(records: Sequence[Record], narrowed: Sequence[Record]) -> None:
     print("\n## Band against the advert's stated band\n")
-    for label, group in groups[:2]:
+    for label, group in (("strict single matches", records), ("narrowed single matches", narrowed)):
         n, same, near = band_agreement(group)
         print(
             f"- {label}: {n} with an advert band; {same} ({pct(same, n)}) the same, "
             f"{near} ({pct(near, n)}) within one band"
         )
+    n, one_band, one_band_agree, modal_same, modal_near = candidate_bands(records)
+    print(
+        f"- ambiguous listings: {n} with an advert band; the candidates' most common band "
+        f"is the same for {modal_same} ({pct(modal_same, n)}), within one band for "
+        f"{modal_near} ({pct(modal_near, n)}); {one_band} have candidates all in one band, "
+        f"{one_band_agree} of them the advert's"
+    )
 
+
+def print_rooms(records: Sequence[Record], counted: set[tuple[str, str]]) -> None:
     print("\n## Rooms: habitable rooms minus bedrooms (strict single matches)\n")
-    for label, only in (("all", None), ("hand-checked correct", correct)):
+    for label, only in (("all", None), ("hand-checked correct or likely", counted)):
         offsets = rooms_offsets(records, only)
         total = sum(offsets.values())
         cells = ", ".join(f"{k:+d}: {v}" for k, v in sorted(offsets.items()))
         print(f"- {label}: {total} with rooms; {cells}; plus one in {pct(offsets[1], total)}")
-
-    print_handcheck("Hand-check of strict matches", judgements)
-    print_handcheck("Hand-check of narrowed matches", narrowed_judgements)
-    print_handcheck("Hand-check, both together", [*judgements, *narrowed_judgements])
-    return 0
 
 
 def print_handcheck(title: str, judgements: Sequence[dict[str, str]]) -> None:
@@ -471,8 +600,9 @@ def print_handcheck(title: str, judgements: Sequence[dict[str, str]]) -> None:
     print(f"\n## {title}\n")
     print(table(["verdict", "listings"], [[v, str(verdicts[v])] for v in VERDICTS]))
     print(
-        f"\nCorrect-match rate: {good}/{judged} = {pct(good, judged)} "
-        f"(95% interval {100 * lo:.0f} to {100 * hi:.0f}%)\n"
+        f"\nCorrect-match rate (correct or likely, of those decided): {good}/{judged} = "
+        f"{pct(good, judged)} (95% interval {100 * lo:.0f} to {100 * hi:.0f}%). "
+        f"Confirmed by a specific fact: {verdicts['correct']} of {len(judgements)}.\n"
     )
     reasons = Counter(j["reason"] for j in judgements if j["verdict"] in ("wrong", "unclear"))
     if reasons:

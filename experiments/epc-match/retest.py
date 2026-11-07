@@ -7,8 +7,9 @@ Usage, from this directory, after `run.py`:
 Floor area can be checked without any listing: a home assessed twice should
 get about the same area both times. This draws a seeded sample of homes with
 two or more certificates from the searches `run.py` cached (the streets and
-postcodes around the listings), fetches every certificate of each, and
-compares the newest with the one before. It prints aggregate numbers only.
+postcodes around the listings), fetches the newest certificate and the one
+before it, and compares their floor areas and bands, for flats and houses
+apart. It prints aggregate numbers only.
 """
 
 from __future__ import annotations
@@ -16,6 +17,7 @@ from __future__ import annotations
 import argparse
 import json
 import random
+import re
 import statistics
 import sys
 from collections.abc import Sequence
@@ -42,6 +44,24 @@ def cached_certificates() -> list[Certificate]:
             cert = certificate_from_search(row)
             found[cert.certificate_number] = cert
     return list(found.values())
+
+
+_UNIT = re.compile(r"\b(?:flat|floor|apartment|unit|maisonette)\b")
+
+
+def shared_uprns(certificates: Sequence[Certificate]) -> tuple[int, int]:
+    """(UPRNs on two or more different addresses, those where two or more name a unit).
+
+    The second count is why homes are grouped by address, not UPRN: a building's
+    UPRN on each of its flats would merge them.
+    """
+    addresses: dict[str, set[str]] = {}
+    for cert in certificates:
+        if cert.uprn:
+            addresses.setdefault(cert.uprn, set()).add(cert.text)
+    several = [texts for texts in addresses.values() if len(texts) > 1]
+    units = sum(sum(bool(_UNIT.search(t)) for t in texts) >= 2 for texts in several)
+    return len(several), units
 
 
 def homes_with_repeats(certificates: Sequence[Certificate]) -> list[Home]:
@@ -84,9 +104,22 @@ def repeat_summary(repeats: Sequence[Repeat]) -> dict[str, str]:
         "within 10%": pct(sum(a <= 10 for a in absolute), n),
         "within 20%": pct(sum(a <= 20 for a in absolute), n),
         "more than 20% apart": str(sum(a > 20 for a in absolute)),
-        "implausible area on either": str(len(repeats) - n),
+        "no usable area on either": str(len(repeats) - n),
+        "areas summed from floors": str(
+            sum(r.newest.floor_area_summed + r.previous.floor_area_summed for r in repeats)
+        ),
         "same band": pct(sum(r.newest.band == r.previous.band for r in bands), len(bands)),
     }
+
+
+def dwelling_kind(detail: CertificateDetail) -> str | None:
+    """Flats and maisonettes are "flat"; houses and bungalows "house"."""
+    text = (detail.dwelling_type or "").lower()
+    if "flat" in text or "maisonette" in text:
+        return "flat"
+    if "house" in text or "bungalow" in text:
+        return "house"
+    return None
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -101,7 +134,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(error, file=sys.stderr)
         return 2
 
-    homes = homes_with_repeats(cached_certificates())
+    certificates = cached_certificates()
+    several, units = shared_uprns(certificates)
+    print(
+        f"{len(certificates)} certificates in the cached searches; {several} UPRNs cover two "
+        f"or more addresses, {units} of them two or more that name a unit"
+    )
+    homes = homes_with_repeats(certificates)
     sample = random.Random(args.seed).sample(homes, min(args.homes, len(homes)))
     pairs = [(h.certificates[0], h.certificates[1]) for h in sample]
     with EpcApi(token, DATA / "cache") as api:
@@ -114,9 +153,16 @@ def main(argv: Sequence[str] | None = None) -> int:
             and (previous := api.certificate(old.certificate_number)) is not None
         ]
     print(f"{len(homes)} homes with two or more certificates in the cached searches\n")
-    print("| measure | value |\n|---|---|")
-    for key, value in repeat_summary(repeats).items():
-        print(f"| {key} | {value} |")
+    groups = {
+        "all": repeats,
+        "flats": [r for r in repeats if dwelling_kind(r.newest) == "flat"],
+        "houses": [r for r in repeats if dwelling_kind(r.newest) == "house"],
+    }
+    summaries = {name: repeat_summary(group) for name, group in groups.items()}
+    print("| measure | " + " | ".join(summaries) + " |")
+    print("|---|" + "---|" * len(summaries))
+    for key in summaries["all"]:
+        print(f"| {key} | " + " | ".join(s[key] for s in summaries.values()) + " |")
     return 0
 
 

@@ -14,9 +14,12 @@ Writes, under the gitignored data/handcheck/:
 Floor areas are left off the sheet so that judging whether a match is the
 right home never leans on the floor-area agreement being measured.
 
-Verdicts: correct (a specific fact ties them: a number, a flat, the advert's
-EPC chart); likely (consistent on type, rooms, floor, age, nothing specific);
-wrong (a fact contradicts); unclear (too little to say).
+Verdicts: correct (a fact that names the dwelling ties them, such as a flat
+number, a lettered house number or the advert's EPC chart score, and nothing
+contradicts); likely (consistent on dwelling type, rooms, floor and build age,
+nothing specific; a building number alone is not specific, since a converted
+house holds several flats); wrong (a fact contradicts); unclear (too little to
+say).
 """
 
 from __future__ import annotations

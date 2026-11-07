@@ -2,7 +2,7 @@
 
 Usage, from this directory, after `run.py`:
 
-    uv run python narrow.py --max-homes 12
+    uv run python narrow.py --max-homes 25
 
 A certificate counts habitable rooms: bedrooms, living and dining rooms,
 studies. A flat with N bedrooms and one living room has N + 1. For each
@@ -10,10 +10,12 @@ ambiguous listing with at most --max-homes candidate homes, this fetches the
 newest certificate of each candidate and keeps the homes whose habitable
 rooms equal the listing's bedrooms plus one. One home left is a narrowed
 match. Results go to data/narrowed/<dataset>.jsonl in run.py's format, with
-evidence "rooms", for `report.py` and `handcheck.py --narrowed`.
+evidence "rooms", for `report.py` and `handcheck.py --narrowed`. Each also
+keeps the newest floor area of every home left, so report.py can ask how
+close their median comes when several remain.
 
-The rule is a heuristic: report.py checks how often it holds on single
-matches before it is trusted here.
+The rule is a heuristic; report.py shows how often it holds on the strict
+single matches.
 """
 
 from __future__ import annotations
@@ -26,10 +28,8 @@ from dataclasses import asdict
 from typing import Any
 
 from epc_api import CertificateDetail, EpcApi, MissingTokenError, load_token
-from report import RESULTS, load_records
+from report import NARROWED, RESULTS, load_records
 from run import DATA, in_parallel
-
-NARROWED = DATA / "narrowed"
 
 
 def expected_rooms(bedrooms: int) -> int:
@@ -47,6 +47,7 @@ def narrow_by_rooms(
     """
     want = expected_rooms(record["listing"]["bedrooms"])
     kept = []
+    kept_areas: list[float | None] = []
     known = 0
     for home in record["homes"]:
         newest = detail(home["certificates"][0]["certificate_number"])
@@ -55,6 +56,7 @@ def narrow_by_rooms(
         known += 1
         if newest.habitable_rooms == want:
             kept.append(home)
+            kept_areas.append(newest.total_floor_area)
     if not known:
         return None
     outcome = "one" if len(kept) == 1 else "ambiguous" if kept else "none"
@@ -65,6 +67,7 @@ def narrow_by_rooms(
         "reason": "rooms_not_found" if not kept else None,
         "homes": kept,
         "homes_before": len(record["homes"]),
+        "kept_floor_areas": kept_areas,
     }
     if outcome == "one":
         certificates = kept[0]["certificates"]
@@ -76,7 +79,7 @@ def narrow_by_rooms(
 
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--max-homes", type=int, default=12)
+    parser.add_argument("--max-homes", type=int, default=25)
     parser.add_argument("--workers", type=int, default=6)
     args = parser.parse_args(argv)
     try:

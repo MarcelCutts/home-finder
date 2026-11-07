@@ -1,8 +1,10 @@
 """Tests for comparing a home's floor area across its certificates."""
 
+from dataclasses import replace
+
 from epc_api import CertificateDetail
 from matcher import Certificate
-from retest import Repeat, homes_with_repeats, repeat_summary
+from retest import Repeat, dwelling_kind, homes_with_repeats, repeat_summary, shared_uprns
 
 
 def detail(area: float | None, band: str = "C") -> CertificateDetail:
@@ -51,5 +53,23 @@ def test_summary_counts_steady_and_moved_areas() -> None:
     assert summary["within 5%"] == "33%"
     assert summary["within 10%"] == "67%"
     assert summary["more than 20% apart"] == "1"
-    assert summary["implausible area on either"] == "1"
+    assert summary["no usable area on either"] == "1"
     assert summary["same band"] == "75%"
+
+
+def test_dwelling_kind_reads_the_dwelling_type() -> None:
+    assert dwelling_kind(replace(detail(50), dwelling_type="Top-floor maisonette")) == "flat"
+    assert dwelling_kind(replace(detail(50), dwelling_type="Mid-terrace house")) == "house"
+    assert dwelling_kind(detail(50)) is None
+
+
+def test_uprns_spanning_several_named_units_are_counted() -> None:
+    certs = [
+        cert("g", "Ground Floor Flat, 2 Quillon Road", "9"),
+        cert("f", "First Floor Flat, 2 Quillon Road", "9"),
+        cert("a", "4 Quillon Road", "4"),
+        cert("b", "4, Quillon Rd", "4"),  # same address, spelt differently
+        cert("h", "6 Quillon Road", "6"),
+        cert("i", "6 Quillon Road, Upper Brack", "6"),
+    ]
+    assert shared_uprns(certs) == (2, 1)

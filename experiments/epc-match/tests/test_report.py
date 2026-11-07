@@ -1,13 +1,15 @@
-"""Tests for the aggregate numbers and the hand-check sample."""
+"""Tests for the aggregate numbers the README reports."""
 
 import pytest
-from handcheck import draw_sample
 from report import (
     ambiguity_summary,
     area_agreement,
     area_pairs,
     band_agreement,
+    candidate_area_pairs,
+    candidate_bands,
     correct_match_rate,
+    coverage_rows,
     epc_floor_area,
     has_conflicting_certificates,
     wilson_interval,
@@ -82,6 +84,16 @@ class TestFloorArea:
     def test_no_pairs_gives_no_agreement(self) -> None:
         assert area_agreement([], "all") is None
 
+    def test_estimate_is_the_median_area_of_the_homes_rooms_left(self) -> None:
+        narrowed = [
+            {
+                **record("ambiguous", listing_area=50, area_source="estimated"),
+                "kept_floor_areas": [48, 52, 0, 60],  # 0 is dropped as implausible
+            },
+            {**record("one", listing_area=50, area_source="estimated"), "kept_floor_areas": [50]},
+        ]
+        assert candidate_area_pairs(narrowed) == [("floorplan", 50.0, 52.0)]
+
 
 class TestBandsAndAmbiguity:
     def test_band_agreement_counts_exact_and_neighbouring_bands(self) -> None:
@@ -106,8 +118,43 @@ class TestBandsAndAmbiguity:
         assert summary.within_two == 1
         assert summary.median_homes == 2.5
 
+    def test_candidates_most_common_band_is_compared_with_the_advert(self) -> None:
+        records = [
+            record("ambiguous", advert_band="C", homes=[home("C"), home("C")]),
+            record("ambiguous", advert_band="C", homes=[home("B"), home("B"), home("C")]),
+            record("ambiguous", advert_band="E", homes=[home("A"), home("A"), home("C")]),
+            record("ambiguous", advert_band=None, homes=[home("C")]),
+        ]
+        # Most common bands: C (same, and the only band), B (one off), A (four off).
+        assert candidate_bands(records) == (3, 1, 1, 1, 2)
 
-class TestHandCheck:
+
+class TestCertificates:
+    def test_certificates_a_month_apart_in_different_bands_conflict(self) -> None:
+        def lodged(*pairs: tuple[str, str]) -> dict:
+            return {"certificates": [{"registration_date": d, "band": b} for d, b in pairs]}
+
+        assert has_conflicting_certificates(lodged(("2023-01-23", "C"), ("2023-01-23", "D")))
+        assert not has_conflicting_certificates(lodged(("2023-01-23", "C"), ("2023-01-30", "C")))
+        assert not has_conflicting_certificates(lodged(("2023-01-23", "C"), ("2012-11-28", "D")))
+
+
+class TestCoverage:
+    def test_each_listing_counts_once_for_its_most_specific_number(self) -> None:
+        def listing(addresses, postcodes=(), area=None, band=None):
+            r = record(listing_area=area, advert_band=band)
+            r["listing"].update(addresses=list(addresses), postcodes=list(postcodes))
+            return r
+
+        records = [
+            listing(["Flat 3, 12 Quillon Road"], ["Q9 9ZZ"], area=50.0),  # flat, not number
+            listing(["12 Quillon Road"], band="C"),
+            listing(["Quillon Road"]),
+        ]
+        assert coverage_rows(records) == [["fixture", "3", "1", "1", "1", "1", "1"]]
+
+
+class TestHandCheckRate:
     def test_unclear_verdicts_are_left_out_of_the_rate(self) -> None:
         judgements = [
             {"verdict": "correct"},
@@ -124,22 +171,3 @@ class TestHandCheck:
         assert 0.85 < lo < 1.0
         assert hi == pytest.approx(1.0)
         assert wilson_interval(0, 0) == (0.0, 0.0)
-
-    def test_sample_is_seeded_and_covers_every_stratum(self) -> None:
-        records = [record(uid=f"a{i}", evidence="number") for i in range(40)]
-        records += [record(uid="b0", evidence="flat")]
-        records += [record("ambiguous", uid="c0")]
-        first = draw_sample(records, size=10, seed=1)
-        assert first == draw_sample(records, size=10, seed=1)
-        assert {r["evidence"] for r in first} == {"number", "flat"}
-        assert all(r["outcome"] == "one" for r in first)
-        assert len(first) == 11  # ten in proportion, plus the lone flat match
-
-
-def test_certificates_a_month_apart_in_different_bands_conflict() -> None:
-    def dated(*pairs: tuple[str, str]) -> dict:
-        return {"certificates": [{"registration_date": d, "band": b} for d, b in pairs]}
-
-    assert has_conflicting_certificates(dated(("2023-01-23", "C"), ("2023-01-23", "D")))
-    assert not has_conflicting_certificates(dated(("2023-01-23", "C"), ("2023-01-30", "C")))
-    assert not has_conflicting_certificates(dated(("2023-01-23", "C"), ("2012-11-28", "D")))
