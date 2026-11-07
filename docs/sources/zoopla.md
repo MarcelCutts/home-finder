@@ -11,9 +11,9 @@
 
 ## Filter Quirks
 
-**Furnished filter is broken.** The `furnished_state` URL parameter excludes listings that lack furnishing metadata (the majority), returning "No results" even for areas with hundreds of listings. Intentionally NOT passed — filtered client-side instead.
+**Furnished filter is broken.** The `furnished_state` URL parameter excludes listings that lack furnishing metadata (the majority), returning "No results" even for areas with hundreds of listings. Intentionally NOT passed. No local furnishing filter replaces it, so Zoopla results include every furnishing type.
 
-**Bathroom filter similarly unreliable** — same metadata gap issue. Not passed as a URL param.
+**Bathroom filter similarly unreliable** — same metadata gap issue. Not passed as a URL param, and not applied locally either.
 
 ## Detail Page Extraction
 
@@ -28,7 +28,7 @@ Three extraction methods tried in order: `__NEXT_DATA__` JSON, RSC taxonomy payl
 
 ## Pipeline Implications
 
-- **Early-stop**: Supported (`results_sort=newest_listings`).
+- **Early-stop**: Not used. The scraper sorts newest first (`results_sort=newest_listings`) and accepts `known_source_ids`, but the pipeline passes none (`pipeline/collection.py`), so collection continues through known pages within its bounds.
 - **Dedup**: Full postcodes and coordinates available at scrape time → can cross-match before enrichment.
 - **Image priority**: Highest (4) — Zoopla CDN images are typically highest resolution.
 - **Quality analysis**: Images downloaded locally via curl_cffi and sent as base64 (Anthropic's servers can't fetch from zoocdn.com directly).

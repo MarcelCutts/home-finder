@@ -924,11 +924,11 @@ class PropertyQualityAnalyzer:
     ) -> "ImageBlockParam | None":
         """Build an image block from disk cache.
 
-        All images should already be cached by detail enrichment (pipeline
-        step 8).  If the cache misses, the image is skipped rather than
-        re-downloaded — the CDN download would face the same network
-        conditions that caused the enrichment miss, and skipping 1-2 of 20
-        images has negligible impact on analysis quality.
+        All images should already be cached by detail enrichment.  If the
+        cache misses, the image is skipped rather than re-downloaded — the
+        CDN download would face the same network conditions that caused the
+        enrichment miss, and skipping 1-2 of 20 images has negligible impact
+        on analysis quality.
 
         Args:
             url: Image URL (used for media-type detection and logging).

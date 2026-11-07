@@ -36,7 +36,8 @@ uv run home-finder                      # Full pipeline with Telegram notificati
 uv run home-finder --dry-run            # Full pipeline, save to DB but no notifications
 uv run home-finder --scrape-only        # Just scrape and print (no filtering/storage)
 uv run home-finder --max-per-scraper 5  # Limit results per scraper (for testing)
-uv run home-finder --serve              # Web dashboard + recurring pipeline scheduler
+uv run home-finder --serve              # Web dashboard only
+uv run home-finder --serve --with-pipeline  # Web dashboard + recurring pipeline scheduler
 uv run home-finder --debug              # Enable debug-level logging
 uv run home-finder --generate-thumbnails   # Generate missing thumbnails for cached images
 uv run home-finder --check-off-market                     # Spot-check URLs for removed/let-agreed signals
@@ -70,20 +71,29 @@ uv run mypy src                       # Type check (strict mode)
 
 See README.md for full configuration reference. All settings use `HOME_FINDER_` prefix. See `config.py` for field definitions.
 
-## Pipeline Flow (main.py)
+## Pipeline Flow (pipeline/flow.py)
 
-1. **Retry Unsent** — Resend failed notifications from previous runs
-2. **Scrape** — All scrapers run against configured `SEARCH_AREAS`
-3. **Criteria Filter** — Price/bedroom filters from `SearchCriteria`
-4. **Location Filter** — Validate postcodes match search areas (catches scraper leakage)
-5. **Wrap as MergedProperty** — `Deduplicator.properties_to_merged()` wraps each Property as single-source
-6. **New Property Filter** — Check `source_listings` table to only process unseen properties. "Seen" means the listing has a `merged_id` (was promoted to a golden record in a previous run), not merely that it was scraped. This avoids re-processing listings that were previously filtered out or failed enrichment.
-7. **Commute Filter** — TravelTime API (if configured); geocodes missing coordinates
-8. **Detail Enrichment** — Fetch gallery, floorplans, descriptions; cache images to disk; detect/remove EPC charts; detect floorplans in gallery via PIL heuristics; generate thumbnails for surviving gallery images
-9. **Post-Enrichment Dedup** — `deduplicate_merged_async()` merges cross-platform duplicates using enriched data
-10. **Floorplan Gate** — Drop properties without floorplans (if `require_floorplan=True`)
-11. **Quality Analysis** — Claude vision analyzes images (if configured)
-12. **Save & Notify** — Store in DB, send Telegram notifications
+`run_pipeline` in `pipeline/flow.py` runs the stages in this order; `main.py` only
+parses CLI options, and `pipeline/candidates.py` holds steps 3–8. A run advances
+durable queues (enrichment, assessment, reanalysis, delivery), so it does useful
+work even when it discovers nothing new. Stage contracts, vocabulary and run
+metrics are in `docs/pipeline.md`.
+
+1. **Setup** — Take the runner lock and recover abandoned spend (`pipeline/run_lock.py`), create the run row, repair image caches.
+2. **Delivery recovery** — Resume alerts left `queued`, `ready` or `waiting` (a `waiting` alert only once its `retry_at` has passed). Blocked, uncertain and review alerts wait for an operator (`pipeline/delivery_admin.py`). Skipped on dry runs.
+3. **Collect and select** — Scrape `SEARCH_AREAS`; store every parsed card in `source_listings` and record price changes before any filter. Keep listings that pass the criteria (price, bedrooms) and location (outcode) rules, each wrapped as a single-source `MergedProperty`.
+4. **Find new and admit** — A listing is "seen" once its `source_listings.merged_id` is set. Each new listing is saved as a staging row (`pending_enrichment`) and interleaved with the enrichment backlog under `max_enrichment_per_run`.
+5. **Detail enrichment** — Fetch gallery, source-declared floorplans and descriptions; cache images; remove EPC charts; generate thumbnails. A listing without usable media uses an attempt and stays queued; it expires at `max_enrichment_attempts`.
+6. **Commute** — `CommuteAssessor` geocodes missing coordinates and measures TravelTime journeys (if configured). Advisory: it annotates homes and never removes one.
+7. **Match and consolidate** — `consolidate_candidates` (`pipeline/matching.py`) matches candidates against stored homes first seen in the last 30 days; a matched listing joins the stored home, which keeps its ID and history.
+8. **Media rule** (`require_floorplan`) — Admit homes with a source-declared floorplan, OpenRent-only homes, or homes with at least `min_gallery_for_photo_inference` (default 5) photos. Save the rest as dropped.
+9. **Initial assessment** — Save each home as `pending_analysis`, then run the two Claude calls (see Quality Analysis) on this run's homes plus pending ones, under `max_initial_analyses_per_run`. The assessment and the alert decision commit in one transaction; live runs then try to send the alert at once.
+10. **Reanalysis** — Refresh assessments flagged for reanalysis, under `max_reanalyses_per_run`. Never sends an alert.
+11. **Delivery drain** — Send every `queued` or `ready` alert, and `waiting` ones whose `retry_at` has passed. A saved Telegram flood-control delay holds every alert to that recipient until it expires. Skipped on dry runs.
+12. **Finalize** — Prune old events (live runs) and record the run's status.
+
+There is no final save step: homes are written at each checkpoint above (staging
+row, dropped, `pending_analysis`, assessment).
 
 ## Gotchas & Constraints
 
@@ -93,9 +103,9 @@ See README.md for full configuration reference. All settings use `HOME_FINDER_` 
 
 | Component | HTTP Client | Reason |
 |-----------|-------------|--------|
-| Zoopla scraper | `curl_cffi` with `impersonate="chrome"` | TLS fingerprinting bypasses Cloudflare |
+| Zoopla scraper | `curl_cffi`, one of four impersonation profiles (`chrome`, `safari`, `chrome131`, `safari184`) picked at random per area | TLS fingerprinting bypasses Cloudflare |
 | OnTheMarket scraper | `curl_cffi` with `impersonate="chrome"` | TLS fingerprinting detection |
-| Rightmove scraper | `crawlee.BeautifulSoupCrawler` | Standard requests work |
+| Rightmove scraper | `httpx.AsyncClient` | Standard requests work |
 | OpenRent scraper | `curl_cffi` with `impersonate="chrome"` | TLS fingerprinting detection |
 | DetailFetcher (Zoopla/OTM/OpenRent) | `curl_cffi` with `impersonate="chrome"` | TLS fingerprinting on detail pages |
 | DetailFetcher (Rightmove) | `httpx.AsyncClient` | Standard requests work |
@@ -113,13 +123,13 @@ async with AsyncSession() as session:
 - **Match threshold:** 60 points AND 2+ signals minimum (`MATCH_THRESHOLD`, `MINIMUM_SIGNALS`)
 - **Graduated scoring:** Coordinates and price use linear interpolation (full credit at exact match, 0.5x at threshold boundary, 0x at 2x threshold). See `graduated_coordinate_score()` and `graduated_price_score()`.
 - **Scoring weights:** image hash +40, full postcode +40, coordinates +40, street +20, outcode +10, price +15
-- **Conservative matching:** Cross-platform matching requires full postcodes (e.g., "E8 3RH" not just "E8"). Rightmove only provides outcodes, so won't cross-match until after enrichment.
+- **Outcode blocking:** Matching compares listings only within an outcode + bedroom-count block. A full postcode (e.g., "E8 3RH") is one signal, not a requirement: outcode-only listings can still match on coordinates, street, price and image hashes. A listing with no outcode never cross-matches.
 - **Two-phase dedup:** Pre-enrichment wraps as single-source (`properties_to_merged`), post-enrichment `deduplicate_merged_async()` merges cross-platform dupes with image/floorplan data.
 
 ### Image Caching
 
 - Disk cache at `{data_dir}/image_cache/{safe_id}/` (see `utils/image_cache.py`)
-- Detail enrichment downloads and caches images during pipeline step 8
+- Detail enrichment downloads and caches images during pipeline step 5
 - Quality analysis reads cached images from disk (avoids re-downloading)
 - Web dashboard serves cached images via `GET /images/{unique_id}/{filename}` with immutable cache headers
 - `image_url_map` in detail template maps original CDN URLs to local `/images/` URLs for cached images
@@ -133,32 +143,36 @@ async with AsyncSession() as session:
   ratings, evidence coverage and counterfactual selection; it never replaces live ratings,
   enters either model prompt, writes a database or creates deliveries. Its sparse-evidence
   failures remain visible for review. See the 2026-10-22 follow-up in the model bake-off review.
-- Uses claude-sonnet-4-6 (`claude-sonnet-4-6`) via Anthropic API
-- **Two-phase chained analysis** (perception → evaluation):
-  - **Phase 1 (Visual)**: Images + listing text → structured observations (kitchen, condition, space, etc.). Uses adaptive thinking (`type: adaptive`), `tool_choice: auto`, `max_tokens: 21000` (total cap for thinking + response; SDK enforces ~21333 non-streaming ceiling). Non-strict (schema exceeds Anthropic's grammar complexity limit).
-  - **Phase 2 (Evaluation)**: Phase 1 JSON + listing text (no images) → value assessment, viewing notes, highlights, one-liner. Uses forced tool choice, `strict: true`, `max_tokens: 4096`.
-- Tool schemas auto-generated from Pydantic models (`_VisualAnalysisResponse`, `_EvaluationResponse`) via `_build_tool_schema()` in `quality.py`; prompts in `quality_prompts.py`
+- Both calls default to `claude-sonnet-5-5` with low effort, `max_tokens: 8192` and no SDK retries (`new_runtime_analysis_config()` in `config.py`). `HOME_FINDER_ANALYSIS_CONFIG` overrides individual phase fields.
+- **Two-phase chained analysis** (perception → evaluation), in `analysis/analyzer.py` (`PropertyQualityAnalyzer`):
+  - **Phase 1 (Visual)**: Images + listing text → structured observations (kitchen, condition, space, etc.), a 1–5 rating and a summary. Returned through one tool, `property_visual_analysis`, with adaptive thinking and `tool_choice: auto`. The tool is not strict: the provider rejected the strict schema in the 2026-10-10 trial.
+  - **Phase 2 (Evaluation)**: Phase 1 JSON + listing text (no images) → listing facts, value assessment, viewing notes, highlights, one-liner. No tools: the answer is JSON schema output (`output_config.format`). Reasoning is `disabled`, which Sonnet 5.5 sends as its lowest thinking mode, `between_tools`.
+- Response schemas come from Pydantic models: `_VisualAnalysisResponse` (visual tool, via `_build_tool_schema()`) and `_EvaluationResponse` (via `_eval_json_schema()`), both in `analysis/analyzer.py`; prompts are in `analysis/prompts.py`
 - Phase 1 output feeds Phase 2 via `build_evaluation_prompt()` (wraps Phase 1 JSON in `<visual_analysis>` XML tags)
-- Graceful degradation: Phase 1 fails → `None`; Phase 2 fails → partial analysis with visual data only
-- Post-processing strips `{"..."}` artifacts from string fields (Claude sometimes wraps text in JSON-like braces even with strict mode)
-- Rate limited: 0.2s delay between calls (Tier 2: 1,000 RPM)
-- Uses prompt caching (`cache_control: ephemeral`) for ~90% cost savings on system prompt
-- ~$0.05-0.07/property (Phase 1 ~$0.04-0.06 multimodal + thinking, Phase 2 ~$0.005-0.01 text-only)
+- No partial results: a malformed visual answer (including a missing or out-of-range rating) is sent once more as a second paid attempt; if it is still invalid, or the evaluation answer is invalid, the attempt fails and nothing is saved. A paid visual result is kept as a visual checkpoint, so retrying a failed evaluation call does not pay for vision again. Missing cached images defer the home without spending.
+- There is no blanket brace-stripping pass. Narrow repairs apply to live and stored answers alike: `validate_output` (`analysis/contracts.py`) decodes JSON text where the schema expects an object or array, and the `PropertyQualityAnalysis` validators in `models/quality.py` (e.g. `unwrap_one_line`) unwrap JSON-wrapped strings.
+- Concurrency: at most `quality_concurrency` (15) homes at once, or the spend policy's `max_in_flight` if lower, with `property_analysis_timeout` (600 s) per home for both calls. There is no delay between calls; `DELAY_BETWEEN_CALLS` is used only by `analyze_merged_properties()`, which the pipeline does not call.
+- **Spend policy**: every Anthropic request goes through `AnalysisSpendMeter` (`analysis/spend.py`), which reserves the request's worst-case cost in the `paid_attempts` ledger before sending and settles it from reported usage. Without `HOME_FINDER_ANALYSIS_SPEND_POLICY` every paid request is deferred (`spending_not_configured`), so nothing is assessed. At 20 images each attempt reserves $0.64817 (visual) and $0.43192 (evaluation); these are caps, not predicted charges. See the paid-analysis section of `docs/operations.md`.
+- Uses prompt caching (`cache_control: ephemeral`) on both system prompts and the visual tool; cache hits never reduce a reservation
 - All images read from disk cache (populated during detail enrichment) and sent as base64; no CDN re-downloads during analysis
 
 ### Proxy Support
 
 - `proxy_url` config (e.g., `socks5://user:pass@host:port`) for geo-restricted sites
-- Passed to `OnTheMarketScraper` and `DetailFetcher`
+- Passed to the OpenRent, Zoopla and OnTheMarket scrapers, to `DetailFetcher` (its `curl_cffi` requests) and to the off-market checker; Rightmove does not use it
 
 ## Architecture Pointers
 
 - **Scrapers** → `src/home_finder/scrapers/` — each implements `BaseScraper.scrape()`, see `base.py` for interface
-- **Filters** → `src/home_finder/filters/` — `CriteriaFilter`, `LocationFilter`, `CommuteFilter`, `Deduplicator`, `PropertyQualityFilter` (two-phase: `quality.py` + `quality_prompts.py`)
+- **Pipeline** → `src/home_finder/pipeline/` — `flow.py` (stage order), `candidates.py` (candidate preparation), `matching.py`, `assessment.py`, `reanalysis.py`; see `docs/pipeline.md`
+- **Filters** → `src/home_finder/filters/` — `CriteriaFilter`, `LocationFilter`, the media rule (`media.py`), fit score and notification policy
+- **Commute** → `enrichment/commute.py` — `CommuteAssessor` (advisory; never removes a home)
+- **Matching** → `matching/` — `Deduplicator` (`deduplication.py`) and pair scoring (`scoring.py`)
+- **Analysis** → `analysis/` — `PropertyQualityAnalyzer` (two-phase: `analyzer.py` + `prompts.py`), spend meter (`spend.py`)
 - **Detail Fetcher** → `scrapers/detail_fetcher.py` — per-platform extraction (Rightmove: `PAGE_MODEL` JSON, Zoopla: RSC payload, OpenRent: PhotoSwipe, OTM: Redux state)
-- **Models** → `models.py` — `Property` (frozen), `MergedProperty`, `PropertyImage`, `SearchCriteria`, `SOURCE_NAMES`
+- **Models** → `models/` package (import from `home_finder.models`) — `core.py` has `Property` (frozen), `MergedProperty`, `PropertyImage`, `SearchCriteria`, `SOURCE_NAMES`; sibling modules hold quality, spend, delivery and commute models
 - **Config** → `config.py` — `pydantic-settings` with `HOME_FINDER_` prefix, key methods: `get_search_areas()`, `get_furnish_types()`, `get_search_criteria()`
-- **Database** → `db/storage.py` — async SQLite, `properties` + `property_images` tables, paginated queries with filters
+- **Database** → `db/storage.py` — `PropertyStorage`, async SQLite with 16 tables (schema in `db/migrations.py`); repositories `processing`, `runs`, `spend` and `deliveries`; paginated dashboard queries in `db/web_queries.py`
 - **Notifier** → `notifiers/telegram.py` — aiogram 3.x, photo cards, quality display, venue pins, web dashboard deep links
 - **Image Cache** → `utils/image_cache.py` — disk-based, deterministic filenames from URL hash, thumbnail generation, EPC/floorplan file renaming, cache coverage checks
 - **Address Utils** → `utils/address.py` — `normalize_street_name`, `extract_outcode`

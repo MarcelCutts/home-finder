@@ -28,9 +28,9 @@ No significant quirks — Rightmove's server-side filters (bedrooms, price, furn
 
 ## Pipeline Implications
 
-- **Early-stop**: Supported (`sortType=6` = "Newest Listed").
+- **Early-stop**: Not used. The scraper sorts newest first (`sortType=6` = "Newest Listed") and accepts `known_source_ids`, but the pipeline passes none (`pipeline/collection.py`), so collection continues through known pages within its bounds.
 - **Dedup**: Only outcodes at scrape time → **cannot cross-match until after enrichment** backfills full postcodes and coordinates from `PAGE_MODEL`.
 - **Image priority**: Second highest (3).
-- **Quality analysis**: Images sent as URL references (Anthropic fetches directly — no anti-bot on Rightmove CDN).
+- **Quality analysis**: Images are read from the disk cache filled during detail enrichment and sent as base64; Anthropic never fetches the CDN.
 - **Floorplan gate**: Rightmove has dedicated floorplan data — no exemption needed.
 - **Coordinate backfill**: Detail enrichment extracts coordinates from `PAGE_MODEL` — critical for commute filtering.

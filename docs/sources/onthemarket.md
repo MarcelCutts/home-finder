@@ -10,7 +10,7 @@
 
 ## Filter Quirks
 
-- **No bathroom filter**: OnTheMarket's search API has no bathroom count parameter. Must rely on downstream filtering.
+- **No bathroom filter**: OnTheMarket's search API has no bathroom count parameter, and no local bathroom filter exists, so `HOME_FINDER_MIN_BATHROOMS` has no effect on OnTheMarket results.
 - **Furnished filter limitations**: Only works for single furnish type selections (not combinations like "furnished + part-furnished").
 
 ## Detail Page Extraction
@@ -26,9 +26,9 @@ Search, detail enrichment, and availability share an explicit selector for the c
 
 ## Pipeline Implications
 
-- **Early-stop**: Supported (`sort-field=update_date` = "Recent").
+- **Early-stop**: Not used. The scraper sorts by update date (`sort-field=update_date` = "Recent") and accepts `known_source_ids`, but the pipeline passes none (`pipeline/collection.py`), so collection continues through known pages within its bounds.
 - **Dedup**: Full postcodes and coordinates available at scrape time from Redux state.
 - **Image priority**: Third (2) — after Zoopla and Rightmove.
-- **Quality analysis**: Images sent as URL references (Anthropic fetches directly). Image downloads in the detail fetcher use `curl_cffi` for anti-bot CDN.
+- **Quality analysis**: Images are read from the disk cache filled during detail enrichment and sent as base64; Anthropic never fetches the CDN. Image downloads in the detail fetcher use `curl_cffi` for anti-bot CDN.
 - **Floorplan gate**: OnTheMarket has dedicated floorplan data — no exemption needed.
 - **Proxy**: Only scraper with proxy support for geo-restricted access.

@@ -25,11 +25,11 @@ Multi-platform London rental property scraper with commute guidance, AI quality 
 - **Commute guidance**: TravelTime measurements distinguish reachable, outside-limit and unknown outcomes; API failures never become zero-minute commutes
 - **AI quality analysis**: Two-phase Claude vision analysis — Phase 1 observes images (kitchen, condition, space, light), Phase 2 evaluates value, generates viewing notes, and curates highlights
 - **Web dashboard**: FastAPI-powered dashboard with HTMX live filtering, map view with MarkerCluster, property detail pages with area context, and lightbox gallery
-- **Rich Telegram notifications**: Property cards with photos, star ratings, commute times, quality summaries, and direct links (including web dashboard deep links)
+- **Rich Telegram notifications**: Property cards with photos, fit scores, commute times, quality summaries, and direct links (including web dashboard deep links)
 - **Detail enrichment**: Fetches gallery images, floorplans, and descriptions from property detail pages
 - **Disk-based image caching**: Images cached locally for reliable display in dashboard and quality analysis
 - **Proxy support**: HTTP/SOCKS5 proxy for accessing geo-restricted sites from outside the UK
-- **SQLite storage**: Track seen properties to only notify about new listings, with notification retry on failure
+- **SQLite storage**: Track seen properties to only notify about new listings; alerts held by Telegram's rate limit resume automatically, while blocked or uncertain ones wait for an operator
 
 ## Quick Start
 
@@ -71,7 +71,7 @@ uv run home-finder --reanalyze          # Re-run quality analysis on flagged pro
 uv run home-finder --reanalyze --all    # Flag ALL analyzed properties for re-analysis
 uv run home-finder --reanalyze --outcode E2,E8  # Flag specific outcodes for re-analysis
 uv run home-finder --reanalyze --request-only   # Only flag for re-analysis, don't run it
-uv run home-finder --dedup-existing     # Retroactively merge duplicates already in the DB
+uv run home-finder --dedup-existing     # Fold unused staging rows into matching stored homes; never merges established homes
 uv run home-finder --backfill-commute   # Backfill commute data for properties missing it
 uv run home-finder --generate-thumbnails   # Generate missing thumbnails for cached images
 uv run home-finder --check-off-market             # Check active properties for off-market signals
@@ -100,7 +100,7 @@ The `--serve` flag starts a FastAPI web server on port 8000 without collection. 
 
 - **Property grid**: Filterable, sortable card grid with pagination
 - **HTMX live filtering**: Filters update without full-page reload (progressive enhancement — works without JS too)
-- **Map view**: Toggle between grid and map. MarkerCluster groups nearby properties; markers are color-coded by quality rating (green 4-5, amber 3, red 1-2, grey unrated)
+- **Map view**: Toggle between grid and map. MarkerCluster groups nearby properties; markers are price pills in ink and greys (off-market homes faded), and each popup shows the fit tier
 - **Property detail pages**: Full gallery with lightbox (keyboard + touch/swipe navigation), floorplan, quality analysis breakdown, area context (rental benchmarks, council tax, crime rates, rent trends), and source links
 - **Quality summary on cards**: Condition severity badge and one-line AI summary on each card
 - **Map marker interaction**: Clicking a marker scrolls to the card if visible, or fetches and pins it at the top of results with a dismiss button
@@ -200,7 +200,7 @@ Create a `.env` file with these settings (all use `HOME_FINDER_` prefix):
 - `HOME_FINDER_MAX_BEDROOMS`: Maximum bedrooms (default: 2)
 - `HOME_FINDER_DESTINATION_POSTCODE`: Your destination postcode (default: N1 5AA)
 - `HOME_FINDER_MAX_COMMUTE_MINUTES`: Maximum commute time in minutes (default: 30)
-- `HOME_FINDER_SEARCH_AREAS`: Comma-separated outcodes/boroughs (default: e2,e3,e5,e9,e10,e15,e17,n15,n16,n17)
+- `HOME_FINDER_SEARCH_AREAS`: Comma-separated outcodes/boroughs (default: e2,e3,e5,e8,e9,e10,e15,e17,n1,n5,n15,n16,n17)
 
 ### Scraper Filters
 

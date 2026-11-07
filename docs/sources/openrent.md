@@ -4,7 +4,7 @@
 
 ## Key Decisions
 
-- **HTTP client**: `curl_cffi` with `impersonate="chrome"` for search (TLS fingerprinting detection), `httpx.AsyncClient` for detail pages, `curl_cffi` for image downloads — `imagescdn.openrent.co.uk` CDN blocks non-browser requests.
+- **HTTP client**: `curl_cffi` with `impersonate="chrome"` for search (TLS fingerprinting detection), detail pages and image downloads — `imagescdn.openrent.co.uk` CDN blocks non-browser requests.
 - **No newest sort**: Only distance/price sort available. Early-stop pagination is disabled; must paginate all pages every run.
 - **Geocoding override**: OpenRent mis-geocodes certain outcodes (e.g., E10 resolves to Buckinghamshire). `OUTCODE_SLUG_OVERRIDES` maps problem outcodes to correct neighbourhood slugs.
 
