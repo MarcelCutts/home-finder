@@ -14,6 +14,7 @@ from home_finder.filters.fit_score import (
     _score_workspace,
     compute_fit_breakdown,
     compute_fit_score,
+    compute_fit_score_and_breakdown,
     compute_lifestyle_icons,
     fit_tier_label,
 )
@@ -419,25 +420,14 @@ class TestEdgeCases:
         assert poor_score is not None
         assert excellent_score > poor_score
 
-    def test_high_area_tolerance_boosts_hosting(self):
-        """High area hosting tolerance should boost the hosting dimension."""
+    @pytest.mark.parametrize("postcode", ["N15 3RH", "N16 3RH", "E8 3RH"])
+    def test_the_postcode_no_longer_moves_the_score(self, postcode):
+        """Areas the hand-written guide called tolerant or noise-sensitive score alike."""
         analysis = make_fit_analysis()
-        high_score = compute_fit_score(analysis, 2, postcode="N15 3RH")
-        low_score = compute_fit_score(analysis, 2, postcode="N16 3RH")
-        none_score = compute_fit_score(analysis, 2)
-        assert high_score is not None and low_score is not None and none_score is not None
-        assert high_score > none_score
-        assert none_score > low_score
-
-    def test_moderate_area_tolerance_neutral(self):
-        """Moderate area hosting tolerance should not change the score vs absent."""
-        analysis = make_fit_analysis()
-        mod_score = compute_fit_score(analysis, 2, postcode="E8 3RH")
-        none_score = compute_fit_score(analysis, 2)
-        assert mod_score is not None and none_score is not None
-        # Moderate adds a signal but 0 points — score stays same or very close
-        # (confidence weighting may cause minor variation)
-        assert abs(mod_score - none_score) <= 2
+        located = compute_fit_score_and_breakdown(analysis, 2, postcode=postcode)
+        assert located == compute_fit_score_and_breakdown(analysis, 2)
+        factors = [f["label"] for dim in located[1] or [] for f in dim["factors"]]
+        assert not [label for label in factors if "Area" in label]
 
     def test_low_hosting_noise_boosts_sound_and_hosting(self):
         """Low hosting noise risk benefits both sound and hosting dimensions."""
@@ -742,42 +732,11 @@ class TestHostingScorer:
         result = _score_hosting(analysis, 2)
         assert result.score == 10
 
-    def test_area_tolerance_high_adds_10(self):
-        analysis = _hosting_analysis(_area_hosting_tolerance="high")
-        result = _score_hosting(analysis, 2)
-        assert result.score == 10
-        assert result.confidence == 0.4
-
-    def test_area_tolerance_low_subtracts_10(self):
-        analysis = _hosting_analysis(_area_hosting_tolerance="low")
-        result = _score_hosting(analysis, 2)
-        assert result.score == 0  # clamped to 0 (was -10)
-        assert result.confidence == 0.4
-
-    def test_area_tolerance_moderate_zero_points(self):
-        analysis = _hosting_analysis(_area_hosting_tolerance="moderate")
-        result = _score_hosting(analysis, 2)
-        assert result.score == 0
-        assert result.confidence == 0.4  # 1 signal
-
-    def test_area_tolerance_combined_with_spacious(self):
-        """High area tolerance + spacious = 25 + 10 = 35."""
-        analysis = _hosting_analysis(
-            space={"is_spacious_enough": True},
-            _area_hosting_tolerance="high",
-        )
-        result = _score_hosting(analysis, 2)
-        assert result.score == 35
-        assert result.confidence == 0.8  # 2 signals
-
-    def test_low_tolerance_offsets_spacious(self):
-        """Low area tolerance offsets spacious: 25 - 10 = 15."""
-        analysis = _hosting_analysis(
-            space={"is_spacious_enough": True},
-            _area_hosting_tolerance="low",
-        )
-        result = _score_hosting(analysis, 2)
-        assert result.score == 15
+    def test_area_context_in_the_assessment_is_not_scored(self):
+        """The hand-written area hosting guide no longer counts, even if supplied inline."""
+        for rating in ("high", "moderate", "low"):
+            result = _score_hosting(_hosting_analysis(_area_hosting_tolerance=rating), 2)
+            assert (result.score, result.confidence, result.factors) == (0, 0.0, [])
 
     def test_all_positive_signals(self):
         """All positive signals sum correctly."""
@@ -790,12 +749,11 @@ class TestHostingScorer:
             light_space={"feels_spacious": True},  # +10
             outdoor_space={"has_balcony": True},  # +15
             flooring_noise={"hosting_noise_risk": "low"},  # +10
-            _area_hosting_tolerance="high",  # +10
         )
         result = _score_hosting(analysis, 2)
-        # Total: 25+30+10+15+25+10+10 = 125, clamped to 100
+        # Total: 25+30+10+15+25+10 = 115, clamped to 100
         assert result.score == 100
-        assert result.confidence == 1.0  # 7 signals, capped at 1.0
+        assert result.confidence == 1.0  # 6 signals, capped at 1.0
 
     def test_confidence_scales_with_signals(self):
         """Confidence = min(1.0, signals * 0.4)."""

@@ -48,8 +48,7 @@ async def test_saved_score_matches_card_detail_map_messages_and_plan(
     original = analysis.model_dump_json()
     score = compute_fit_score(analysis, 2, postcode=postcode)
     assert (score is not None) == (assessment == "rated")
-    if postcode and postcode.strip().upper().startswith("N15") and score is not None:
-        assert score > compute_fit_score(analysis, 2)
+    assert score == compute_fit_score(analysis, 2), "the postcode no longer moves the score"
     async with PropertyStorage(":memory:") as storage:
         await storage.save_merged_property(merged)
         await storage.save_quality_analysis(merged.unique_id, analysis)
@@ -122,11 +121,13 @@ def test_prose_or_its_absence_does_not_change_score_or_claim_acoustic_evidence(n
     assert compute_lifestyle_icons(high_risk, 2)["hosting"]["state"] == "concern"
 
 
-def test_context_is_derived_from_the_property_without_mutating_evidence():
+def test_area_context_inside_old_json_is_neither_trusted_nor_mutated():
     analysis = make_fit_analysis(_area_hosting_tolerance="high")
     before = copy.deepcopy(analysis)
-    assert normalized_fit_inputs(analysis)["_area_hosting_tolerance"] is None
-    assert normalized_fit_inputs(analysis, postcode=" n16 3rh ")["_area_hosting_tolerance"] == "low"
+    assert "_area_hosting_tolerance" not in normalized_fit_inputs(analysis, postcode=" n16 3rh ")
+    assert compute_fit_score_and_breakdown(analysis, 2) == compute_fit_score_and_breakdown(
+        make_fit_analysis(), 2
+    )
     assert analysis == before
 
 
@@ -141,9 +142,13 @@ def test_historical_literal_coercions_are_shared_without_mutating_original_json(
     assert compute_fit_score({"overall_rating": 4, "kitchen": "broken"}, 2) is None
 
 
-async def test_v3_backfill_replaces_only_derived_scores_and_does_not_create_delivery(
+async def test_scores_saved_with_the_area_guide_are_replaced_without_creating_deliveries(
     tmp_path, make_merged_property, make_quality_analysis
 ):
+    """Scores saved at version 3 could carry the area guide's hosting points.
+
+    Opening the store recomputes them from the assessment alone and touches nothing else.
+    """
     path = str(tmp_path / "historical.db")
     async with PropertyStorage(path) as storage:
         for name, rating in (("rated", 4), ("fallback", None)):
@@ -152,7 +157,7 @@ async def test_v3_backfill_replaces_only_derived_scores_and_does_not_create_deli
             await storage.save_merged_property(merged)
             await storage.save_quality_analysis(merged.unique_id, analysis)
         async with storage._transaction() as conn:
-            await conn.execute("UPDATE quality_analyses SET fit_score=99, fit_score_version=2")
+            await conn.execute("UPDATE quality_analyses SET fit_score=99, fit_score_version=3")
             await conn.execute(
                 "UPDATE properties SET user_status='archived', notification_status='sent'"
             )
@@ -181,7 +186,5 @@ async def test_v3_backfill_replaces_only_derived_scores_and_does_not_create_deli
             assert {
                 k: v for k, v in old.items() if k not in {"fit_score", "fit_score_version"}
             } == {k: v for k, v in new.items() if k not in {"fit_score", "fit_score_version"}}
-            assert new["fit_score_version"] == 3
-            assert new["fit_score"] == compute_fit_score(
-                json.loads(new["analysis_json"]), 2, postcode="N15 3RH"
-            )
+            assert new["fit_score_version"] == FIT_SCORE_VERSION
+            assert new["fit_score"] == compute_fit_score(json.loads(new["analysis_json"]), 2)
