@@ -69,7 +69,7 @@ async def collect_listings(
         include_let_agreed=settings.include_let_agreed,
         max_per_scraper=max_per_scraper,
         known_ids_by_source=known_ids_by_source,
-        proxy_url=settings.proxy_url,
+        proxy_url=settings.proxy_url.get_secret_value(),
         only_scrapers=only_scrapers,
         zoopla_max_areas=settings.zoopla_max_areas_per_run,
         metrics_out=metrics_out,
@@ -121,7 +121,7 @@ async def run_scrape_only(
         min_bathrooms=settings.min_bathrooms,
         include_let_agreed=settings.include_let_agreed,
         max_per_scraper=max_per_scraper,
-        proxy_url=settings.proxy_url,
+        proxy_url=settings.proxy_url.get_secret_value(),
         only_scrapers=only_scrapers,
         zoopla_max_areas=settings.zoopla_max_areas_per_run,
     )

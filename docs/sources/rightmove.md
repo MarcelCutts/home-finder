@@ -8,7 +8,7 @@
 - **Search bounds**: Up to 20 pages, 24 results per page, with a 2-second delay between pages. Each fetch permits at most 3 attempts for transport errors, timeouts, HTTP 429 and 5xx, with exponential backoff and jitter. A 30-second total timeout per attempt also bounds responses that keep trickling data. A terminal fetch failure stops the area's pagination and retains earlier observations. HTTP 403 or exhausted retries after a 429 also skip the source's remaining areas for this run; a successful retry permits collection to continue. Unrecognized/challenge HTML counts as a parse error.
 - **Cancellation**: HTTP requests, retry waits and page delays propagate cancellation through `ScrapeCancelled`, retaining already received observations. Search must not intercept SIGINT or return success after application cancellation. Crawlee 1.7's queue scheduling and cancellation behavior are unsuitable for this one-page-at-a-time collector.
 - **Sort**: "Newest Listed" — prioritizes recent adverts; normal collection continues through known pages within its bounds.
-- **Full postcode reconstruction**: Search results only provide outcodes (e.g., `E8`). The detail fetcher combines `outcode` + `incode` from `PAGE_MODEL` to reconstruct the full postcode. This is an architectural decision — without it, Rightmove properties can't cross-platform match.
+- **Full postcode reconstruction**: Search results only provide outcodes (e.g., `E8`). The detail fetcher combines `outcode` + `incode` from `PAGE_MODEL` to reconstruct the full postcode. This is an architectural decision — without it, Rightmove listings would lose the full-postcode match signal (+40).
 
 ## Filter Quirks
 
@@ -21,16 +21,16 @@ No significant quirks — Rightmove's server-side filters (bedrooms, price, furn
 ## Known Quirks
 
 - **Availability envelopes**: The availability reader shares the bounded detail decoder for current indexed `window.__PAGE_MODEL` data and retains legacy `PAGE_MODEL` support. Only explicit status words, tags or flags on the matching main record establish lifecycle status. A malformed or mismatched indexed model remains unknown even if another page element supplies a status. Publication metadata (`published`/`archived`) is not mapped to rental availability; neither HTTP 200 nor a move-in date proves that a listing is available.
-- **Outcode-only postcodes at scrape time**: Full postcodes only available from detail pages. Rightmove properties can't cross-platform dedup match until after detail enrichment.
+- **Outcode-only postcodes at scrape time**: Full postcodes only available from detail pages. Matching runs after detail enrichment for every source, and it blocks by outcode, so the reconstructed postcode adds a signal rather than enabling matching.
 - **Dual price display**: Shows both PCM and PW in a single element (e.g., `£2,400 pcm £554 pw`). The shared `extract_price()` prefers the explicit PCM match to avoid double-conversion.
 - **Card format changes**: Rightmove periodically updates card HTML structure. The scraper has multiple fallback selectors for each field.
 - **Image lazy loading**: Real image URLs in `data-src` or `srcset`, not `src` (which may be a placeholder).
 
 ## Pipeline Implications
 
-- **Early-stop**: Supported (`sortType=6` = "Newest Listed").
-- **Dedup**: Only outcodes at scrape time → **cannot cross-match until after enrichment** backfills full postcodes and coordinates from `PAGE_MODEL`.
+- **Early-stop**: Not used. The scraper sorts newest first (`sortType=6` = "Newest Listed") and accepts `known_source_ids`, but the pipeline passes none (`pipeline/collection.py`), so collection continues through known pages within its bounds.
+- **Dedup**: Only outcodes at scrape time. Matching runs after enrichment, which backfills full postcodes and coordinates from `PAGE_MODEL`; an outcode-only listing can still match on coordinates, street, price and image hashes.
 - **Image priority**: Second highest (3).
-- **Quality analysis**: Images sent as URL references (Anthropic fetches directly — no anti-bot on Rightmove CDN).
+- **Quality analysis**: Images are read from the disk cache filled during detail enrichment and sent as base64; Anthropic never fetches the CDN.
 - **Floorplan gate**: Rightmove has dedicated floorplan data — no exemption needed.
-- **Coordinate backfill**: Detail enrichment extracts coordinates from `PAGE_MODEL` — critical for commute filtering.
+- **Coordinate backfill**: Detail enrichment extracts coordinates from `PAGE_MODEL` — critical for commute measurement (advisory; it never removes a home).

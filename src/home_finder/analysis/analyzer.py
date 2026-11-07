@@ -92,9 +92,10 @@ if TYPE_CHECKING:
 
 logger = get_logger(__name__)
 
-# Rate limit settings for Tier 2 (1,000 RPM)
-# SDK handles retry automatically, we just need a small delay to avoid bursts
-DELAY_BETWEEN_CALLS: Final = 0.2  # seconds (1000 RPM = 0.06s minimum, add buffer)
+# Pause between properties in analyze_merged_properties(), the sequential batch
+# helper. The pipeline does not call it: it bounds concurrency instead, and the
+# runtime profile uses zero SDK retries.
+DELAY_BETWEEN_CALLS: Final = 0.2  # seconds
 
 # Circuit breaker: stop hammering the API after consecutive outage-indicating errors
 _CIRCUIT_BREAKER_THRESHOLD: Final = 3
@@ -924,11 +925,11 @@ class PropertyQualityAnalyzer:
     ) -> "ImageBlockParam | None":
         """Build an image block from disk cache.
 
-        All images should already be cached by detail enrichment (pipeline
-        step 8).  If the cache misses, the image is skipped rather than
-        re-downloaded — the CDN download would face the same network
-        conditions that caused the enrichment miss, and skipping 1-2 of 20
-        images has negligible impact on analysis quality.
+        All images should already be cached by detail enrichment.  If the
+        cache misses, the image is skipped rather than re-downloaded — the
+        CDN download would face the same network conditions that caused the
+        enrichment miss, and skipping 1-2 of 20 images has negligible impact
+        on analysis quality.
 
         Args:
             url: Image URL (used for media-type detection and logging).

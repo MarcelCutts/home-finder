@@ -3,8 +3,13 @@
 import argparse
 import asyncio
 import sys
+from pathlib import Path
+
+from pydantic import ValidationError
+from pydantic_settings import SettingsError
 
 from home_finder.config import Settings
+from home_finder.config_check import configuration_summary
 from home_finder.logging import configure_logging, get_logger
 from home_finder.models import PropertySource
 from home_finder.pipeline.collection import run_scrape_only
@@ -27,6 +32,16 @@ def main() -> None:
         description="Home Finder - Multi-platform London rental property scraper"
     )
     modes = parser.add_mutually_exclusive_group()
+    modes.add_argument(
+        "--check-config",
+        action="store_true",
+        help="Validate settings and report prerequisites without network or database access",
+    )
+    parser.add_argument(
+        "--env-file",
+        type=Path,
+        help="Load a specific dotenv file (default: .env in the current directory)",
+    )
     modes.add_argument(
         "--dry-run",
         action="store_true",
@@ -120,6 +135,8 @@ def main() -> None:
     )
     args = parser.parse_args()
 
+    if args.env_file is not None and not args.env_file.is_file():
+        parser.error("--env-file must name an existing file")
     if (args.with_pipeline or args.no_pipeline) and not args.serve:
         parser.error("--with-pipeline and --no-pipeline require --serve")
     if (args.outcode is not None or args.request_only or args.reanalyze_all) and not args.reanalyze:
@@ -134,6 +151,7 @@ def main() -> None:
             args.reanalyze,
             args.check_off_market,
             args.serve,
+            args.check_config,
         )
     )
     if args.max_per_scraper is not None:
@@ -158,15 +176,52 @@ def main() -> None:
     configure_logging(json_output=False, level=logging.DEBUG if args.debug else logging.INFO)
 
     try:
-        settings = Settings()
-    except Exception as e:
+        # BaseSettings supports this runtime keyword, outside the model's typed fields.
+        settings = (
+            Settings(_env_file=args.env_file)  # type: ignore[call-arg]
+            if args.env_file is not None
+            else Settings()
+        )
+    except (ValidationError, SettingsError, OSError) as exc:
+        # Config validators use input-free messages. Omit Pydantic's raw inputs,
+        # contexts and chained tracebacks, which can contain credentials.
+        if isinstance(exc, ValidationError):
+            error = "; ".join(
+                f"{'.'.join(map(str, item['loc'])) or 'settings'}: {item['msg']}"
+                for item in exc.errors(
+                    include_input=False, include_context=False, include_url=False
+                )
+                if item["type"] != "default_factory_not_called"
+            )
+        elif isinstance(exc, SettingsError):
+            error = str(exc)
+        else:
+            error = "Unable to read environment file"
         logger.error(
             "failed_to_load_settings",
-            error=str(e),
-            hint="Ensure .env has HOME_FINDER_TELEGRAM_BOT_TOKEN and HOME_FINDER_TELEGRAM_CHAT_ID",
-            exc_info=True,
+            error=error,
+            hint="Check HOME_FINDER_ names, types and constraints in .env.example",
         )
         sys.exit(1)
+
+    if args.check_config:
+        env_file = args.env_file if args.env_file is not None else Path(".env")
+        if env_file.is_file():
+            print(f"Environment file: {env_file.resolve()} (process environment takes precedence).")
+        else:
+            print("No .env in the current directory; using process environment and defaults.")
+        print("\n".join(configuration_summary(settings)))
+        return
+
+    sends_notifications = (collection and not args.dry_run and not args.scrape_only) or (
+        args.serve and args.with_pipeline
+    )
+    if sends_notifications and not (settings.telegram_bot_token and settings.telegram_chat_id):
+        parser.error(
+            "The notifying pipeline requires HOME_FINDER_TELEGRAM_BOT_TOKEN and a nonzero "
+            "HOME_FINDER_TELEGRAM_CHAT_ID. Use --dry-run to collect without delivery, "
+            "or --serve without --with-pipeline for the dashboard."
+        )
 
     logger.info(
         "starting_home_finder",

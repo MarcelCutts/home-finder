@@ -39,7 +39,7 @@ accepted for command compatibility and does not remove the normal bounds.
 
 ## Floorplan Gate
 
-Properties without floorplans are dropped when `require_floorplan=True` (default). Exception: OpenRent-only properties are exempt because OpenRent has no dedicated floorplan section — landlords upload everything into a single gallery. See `_FLOORPLAN_EXEMPT_SOURCES`.
+When `require_floorplan=True` (default), a home goes on to assessment only if it has a source-declared floorplan, comes only from OpenRent, or has at least `min_gallery_for_photo_inference` (default 5) gallery photos; the rest are saved as dropped. OpenRent-only homes are exempt because OpenRent has no dedicated floorplan section — landlords upload everything into a single gallery. See `_FLOORPLAN_EXEMPT_SOURCES` in `filters/media.py`.
 
 Only source-declared floorplans satisfy the dedicated-floorplan requirement.
 Unknown legacy images remain available as unverified input. Gallery images are
@@ -56,7 +56,7 @@ exemption and configured photo-estimate bypass remain available.
 | OpenRent | Yes (JS arrays) | Usually full | No (already has data) |
 | OnTheMarket | Yes (Redux `location`) | Usually full | No (already has data) |
 
-Rightmove's lack of full postcodes at scrape time means cross-platform dedup won't match Rightmove properties until after detail enrichment backfills the full postcode.
+Matching runs after detail enrichment for every source and blocks by outcode, so an outcode-only Rightmove listing can still match on coordinates, street, price and image hashes. The backfilled full postcode adds the +40 full-postcode signal.
 
 ## Rate Limiting Summary
 
@@ -65,7 +65,7 @@ Rightmove's lack of full postcodes at scrape time means cross-platform dedup won
 | Zoopla | Heavy | Adaptive delays, session reset after consecutive blocks, area skipping |
 | Rightmove | Light | Fixed delays, no anti-bot on detail pages |
 | OpenRent | Moderate | Adaptive backoff based on response time |
-| OnTheMarket | Light | Short fixed delays, uses proxy if configured |
+| OnTheMarket | Light | Short fixed delays |
 
 ## See Also
 
