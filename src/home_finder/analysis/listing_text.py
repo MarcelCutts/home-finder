@@ -16,8 +16,8 @@ from home_finder.utils.listing_facts import plain_listing_text, supported_band
 def source_text_hash(evidence: ListingTextEvidence) -> str:
     """Fingerprint one source's whole text evidence, as an analysis keeps it.
 
-    The listing page compares it with the current text to tell whether a source is
-    still exactly what the analysis read.
+    The listing page compares it with the current evidence to tell whether a source
+    is unchanged since the analysis read it; observation dates count as a change.
     """
     return hashlib.sha256(evidence.model_dump_json().encode()).hexdigest()
 

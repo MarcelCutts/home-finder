@@ -19,11 +19,7 @@ ANALYSIS = {
     "value": {"area_average": 2150, "difference": 350},
     "listing_red_flags": {"missing_room_photos": ["second bedroom"]},
 }
-RIGHTMOVE, ZOOPLA, OPENRENT = (
-    PropertySource.RIGHTMOVE,
-    PropertySource.ZOOPLA,
-    PropertySource.OPENRENT,
-)
+RIGHTMOVE, ZOOPLA = PropertySource.RIGHTMOVE, PropertySource.ZOOPLA
 
 
 def marked(result):

@@ -118,7 +118,8 @@ def clean_advert_text(text: str) -> str:
     (portals send a "\\r" by each "<br/>"); any other newline in the advert is
     kept, so plain paragraphs survive a stray tag. Runs of spaces collapse to one,
     lines are trimmed and no more than one blank line is kept. The result is text,
-    never markup, so it must still be escaped when rendered.
+    never markup, so it must still be escaped when rendered. Fact extraction uses
+    its own normaliser with other rules, utils.listing_facts.plain_listing_text.
     """
     parser = _AdvertParser()
     parser.feed(text.replace("\r\n", "\n").replace("\r", "\n"))
@@ -140,10 +141,12 @@ def _field(analysis: Any, name: str) -> Any:
 
 
 def _unchanged_since_read(text: ListingTextEvidence, read_hash: str | None) -> bool:
-    """Whether a source's text is exactly what the analysis read.
+    """Whether a source's evidence is unchanged since the analysis read it.
 
-    The hash covers the whole evidence, so a refresh of the description or the
-    features breaks the match. A source the analysis kept no hash for is not hashed.
+    The hash covers the whole evidence, observation dates and origins included, so
+    a new description or features breaks the match, and so does a re-scrape that
+    observes the same words again; the page then falls back to the canonical
+    advert. A source the analysis kept no hash for is not hashed.
     """
     return read_hash is not None and read_hash == source_text_hash(text)
 
