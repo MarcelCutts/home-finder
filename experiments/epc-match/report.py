@@ -297,6 +297,14 @@ def main() -> int:
     print("\n## Why no match\n")
     reasons = Counter(r["reason"] for r in records if r["outcome"] == "none")
     print(table(["reason", "listings"], [[k, str(v)] for k, v in reasons.most_common()]))
+    elsewhere = sum(
+        r["outcome"] == "none" and r["candidate_certificates"] == 0 and r["outside_district"] > 0
+        for r in records
+    )
+    print(
+        f"\n{elsewhere} district-only listings found certificates on their street only "
+        "outside the district the portal gave."
+    )
 
     summary = ambiguity_summary(records)
     if summary:

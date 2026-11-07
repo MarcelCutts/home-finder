@@ -69,12 +69,12 @@ def test_listing_with_a_full_postcode_is_matched_at_that_postcode(tmp_path: Path
     seen: list[httpx.Request] = []
     home = listing(("Q9 9ZZ",), "Q9", "12 Quillon Road, London")
     with api(seen, tmp_path) as client:
-        retrieval, certs = candidate_certificates(home, client, tmp_path)
-        result = match_listing(home.addresses, certs)
-        record = result_record(home, retrieval, len(certs), result, client)
+        candidates = candidate_certificates(home, client, tmp_path)
+        result = match_listing(home.addresses, candidates.certificates)
+        record = result_record(home, candidates, result, client)
 
-    assert retrieval == "postcode"
-    assert {c.certificate_number for c in certs} == {"c12", "c14"}
+    assert candidates.retrieval == "postcode"
+    assert {c.certificate_number for c in candidates.certificates} == {"c12", "c14"}
     assert record["outcome"] == "one"
     assert record["evidence"] == "number"
     assert record["details"][0]["total_floor_area"] == 61.0
@@ -87,10 +87,11 @@ def test_district_only_listing_searches_its_street_in_its_councils(tmp_path: Pat
     seen: list[httpx.Request] = []
     home = listing((), "Q9", "2 Bed Flat, Quillon Road, Q9")
     with api(seen, tmp_path) as client:
-        retrieval, certs = candidate_certificates(home, client, tmp_path)
+        candidates = candidate_certificates(home, client, tmp_path)
 
-    assert retrieval == "street"
-    assert {c.certificate_number for c in certs} == {"c12", "c14"}  # Q8 dropped
+    assert candidates.retrieval == "street"
+    assert {c.certificate_number for c in candidates.certificates} == {"c12", "c14"}
+    assert candidates.outside_district == 1  # the Q8 certificate
     params = seen[0].url.params
     assert params["address"] == "quillon road"
     assert params.get_list("council[]") == ["Brack"]
@@ -99,5 +100,7 @@ def test_district_only_listing_searches_its_street_in_its_councils(tmp_path: Pat
 def test_listing_without_a_postcode_or_street_has_no_candidates(tmp_path: Path) -> None:
     seen: list[httpx.Request] = []
     with api(seen, tmp_path) as client:
-        assert candidate_certificates(listing((), "", "London"), client, tmp_path) == ("none", [])
+        candidates = candidate_certificates(listing((), "", "London"), client, tmp_path)
+    assert candidates.retrieval == "none"
+    assert candidates.certificates == []
     assert seen == []

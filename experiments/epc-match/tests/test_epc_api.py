@@ -4,7 +4,8 @@ import json
 from pathlib import Path
 
 import httpx
-from epc_api import EpcApi
+import pytest
+from epc_api import EpcApi, MissingTokenError, load_token
 
 TOKEN = "test-token-not-real"
 
@@ -56,7 +57,7 @@ def test_search_reads_every_page_into_certificates(tmp_path: Path) -> None:
 
     recorder = Recorder(handler)
     with api(recorder, tmp_path) as client:
-        certs = client.search_postcode("Q9 9ZZ")
+        certs = client.search({"postcode": "Q9 9ZZ"})
 
     assert [c.certificate_number for c in certs] == ["c1", "c2"]
     assert certs[0].address_lines == ("Flat A", "Quillon Road")
@@ -69,15 +70,15 @@ def test_search_reads_every_page_into_certificates(tmp_path: Path) -> None:
 def test_answers_are_cached_so_a_rerun_makes_no_requests(tmp_path: Path) -> None:
     recorder = Recorder(lambda _: httpx.Response(404, json={"errors": "none"}))
     with api(recorder, tmp_path) as client:
-        assert client.search_postcode("Q9 9ZZ") == []
-        assert client.search_postcode("Q9 9ZZ") == []
+        assert client.search({"postcode": "Q9 9ZZ"}) == []
+        assert client.search({"postcode": "Q9 9ZZ"}) == []
     assert len(recorder.requests) == 1
 
 
 def test_token_goes_in_the_header_and_never_into_the_cache(tmp_path: Path) -> None:
     recorder = Recorder(lambda _: httpx.Response(200, json={"data": [search_row("c1", "Flat A")]}))
     with api(recorder, tmp_path) as client:
-        client.search_postcode("Q9 9ZZ")
+        client.search({"postcode": "Q9 9ZZ"})
 
     assert recorder.requests[0].headers["Authorization"] == f"Bearer {TOKEN}"
     cached = "".join(p.read_text() for p in tmp_path.rglob("*.json"))
@@ -117,3 +118,21 @@ def test_missing_certificate_is_none(tmp_path: Path) -> None:
     with api(recorder, tmp_path) as client:
         assert client.certificate("0000-0000-0000-0000-0002") is None
     assert json.loads(next(tmp_path.rglob("*.json")).read_text())["body"] is None
+
+
+def test_token_comes_from_the_file_when_the_variable_is_unset(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("EPC_API_TOKEN", raising=False)
+    token_file = tmp_path / "epc_token"
+    token_file.write_text("from-file")
+    assert load_token(token_file) == "from-file"
+
+    monkeypatch.setenv("EPC_API_TOKEN", "from-variable")
+    assert load_token(token_file) == "from-variable"
+
+
+def test_no_token_anywhere_is_an_error(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("EPC_API_TOKEN", raising=False)
+    with pytest.raises(MissingTokenError):
+        load_token(tmp_path / "absent")

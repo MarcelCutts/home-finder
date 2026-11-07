@@ -2,7 +2,8 @@
 
 The API (https://get-energy-performance-data.communities.gov.uk) needs a
 GOV.UK One Login bearer token, read from the EPC_API_TOKEN environment
-variable. The token is sent only in the Authorization header; it is never
+variable or, when that is unset, from ~/.config/home-finder/epc_token. The
+token is sent only in the Authorization header; it is never
 logged or written to the cache.
 
 Responses hold certificate addresses, whose licence limits them to
@@ -15,6 +16,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -25,6 +27,7 @@ from matcher import Certificate
 
 API_BASE = "https://api.get-energy-performance-data.communities.gov.uk"
 TOKEN_VARIABLE = "EPC_API_TOKEN"
+TOKEN_FILE = Path("~/.config/home-finder/epc_token")
 _PAGE_SIZE = 5000
 
 Params = dict[str, str | list[str]]
@@ -35,10 +38,14 @@ class MissingTokenError(RuntimeError):
     pass
 
 
-def token_from_environment() -> str:
+def load_token(token_file: Path = TOKEN_FILE) -> str:
+    """The bearer token from the environment, else from `token_file`."""
     token = os.environ.get(TOKEN_VARIABLE, "").strip()
+    path = token_file.expanduser()
+    if not token and path.is_file():
+        token = path.read_text().strip()
     if not token:
-        raise MissingTokenError(f"Set {TOKEN_VARIABLE} to an EPC API bearer token.")
+        raise MissingTokenError(f"Set {TOKEN_VARIABLE} or write the token to {token_file}.")
     return token
 
 
@@ -111,7 +118,11 @@ def _integer(value: Any) -> int | None:
 
 
 class EpcApi:
-    """A throttled, cached client for the domestic search and certificate endpoints."""
+    """A throttled, cached client for the domestic search and certificate endpoints.
+
+    Safe to share between threads: request starts are spaced at least
+    `min_interval_s` apart across all of them.
+    """
 
     def __init__(
         self,
@@ -124,6 +135,7 @@ class EpcApi:
         self._cache_dir = cache_dir
         self._min_interval_s = min_interval_s
         self._last_request = 0.0
+        self._throttle = threading.Lock()
         self.requests_made = 0
         self._client = httpx.Client(
             base_url=API_BASE,
@@ -160,9 +172,6 @@ class EpcApi:
             page += 1
         return [certificate_from_search(row) for row in rows]
 
-    def search_postcode(self, postcode: str) -> list[Certificate]:
-        return self.search({"postcode": postcode})
-
     def certificate(self, number: str) -> CertificateDetail | None:
         body = self._get_cached("certificate", "/api/certificate", {"certificate_number": number})
         if body is None or not isinstance(body.get("data"), dict):
@@ -181,18 +190,28 @@ class EpcApi:
         if response.status_code not in (200, 404):
             response.raise_for_status()
         cache_file.parent.mkdir(parents=True, exist_ok=True)
-        cache_file.write_text(json.dumps({"path": path, "params": params, "body": body}))
+        partial = cache_file.with_suffix(f".{threading.get_ident()}.tmp")
+        partial.write_text(json.dumps({"path": path, "params": params, "body": body}))
+        partial.replace(cache_file)
         return body
 
     def _get(self, path: str, params: Params) -> httpx.Response:
-        for attempt in range(5):
-            wait = self._min_interval_s - (time.monotonic() - self._last_request)
-            if wait > 0:
-                time.sleep(wait)
-            self._last_request = time.monotonic()
-            self.requests_made += 1
-            response = self._client.get(path, params=params)
-            if response.status_code != 429:
+        """GET with spacing between requests, backing off on 429 and timeouts."""
+        for attempt in range(1, 6):
+            with self._throttle:
+                wait = self._min_interval_s - (time.monotonic() - self._last_request)
+                if wait > 0:
+                    time.sleep(wait)
+                self._last_request = time.monotonic()
+                self.requests_made += 1
+            try:
+                response = self._client.get(path, params=params)
+            except httpx.TransportError:
+                if attempt == 5:
+                    raise
+                time.sleep(10 * attempt)
+                continue
+            if response.status_code != 429 or attempt == 5:
                 return response
-            time.sleep(30 * (attempt + 1))
-        return response
+            time.sleep(30 * attempt)
+        raise AssertionError("unreachable")

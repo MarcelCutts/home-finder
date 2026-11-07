@@ -1,6 +1,7 @@
 """Match every listing in the two database copies to EPC certificates.
 
-Usage, from this directory, with EPC_API_TOKEN set:
+Usage, from this directory, with the token in EPC_API_TOKEN or
+~/.config/home-finder/epc_token:
 
     uv run python run.py
 
@@ -20,13 +21,14 @@ from __future__ import annotations
 import argparse
 import json
 import sys
-from collections.abc import Sequence
-from dataclasses import asdict
+from collections.abc import Callable, Iterable, Sequence
+from concurrent.futures import ThreadPoolExecutor
+from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, TypeVar
 
 import httpx
-from epc_api import EpcApi, MissingTokenError, token_from_environment
+from epc_api import EpcApi, MissingTokenError, Params, load_token
 from listings import Listing, load_listings
 from matcher import (
     Certificate,
@@ -44,6 +46,7 @@ DATASETS = {
     "february": DATA / "inputs" / "february.db",
 }
 POSTCODES_IO = "https://api.postcodes.io"
+T = TypeVar("T")
 
 
 def councils_for_outcode(outcode: str, cache_dir: Path) -> list[str]:
@@ -58,16 +61,23 @@ def councils_for_outcode(outcode: str, cache_dir: Path) -> list[str]:
     return list(result.get("admin_district") or []) if result else []
 
 
-def candidate_certificates(
-    listing: Listing, api: EpcApi, cache_dir: Path
-) -> tuple[str, list[Certificate]]:
-    """The certificates to match a listing against, and how they were found."""
+@dataclass(frozen=True)
+class Candidates:
+    """The certificates a listing is matched against, and how they were found."""
+
+    retrieval: str
+    """"postcode", "street" (district-only listings) or "none"."""
+    certificates: list[Certificate]
+    outside_district: int = 0
+    """Certificates on the listing's streets that lie outside its district."""
+
+
+def search_queries(listing: Listing, cache_dir: Path) -> tuple[str, list[Params]]:
+    """How to find a listing's candidates ("postcode", "street" or "none"), and the searches."""
     if listing.postcodes:
-        certs = [c for pc in listing.postcodes for c in api.search_postcode(pc)]
-        return "postcode", _unique(certs)
+        return "postcode", [{"postcode": pc} for pc in listing.postcodes]
     if not listing.outcode:
         return "none", []
-
     councils = councils_for_outcode(listing.outcode, cache_dir)
     names = dict.fromkeys(
         name
@@ -77,13 +87,25 @@ def candidate_certificates(
     )
     if not names or not councils:
         return "none", []
-    certs = [
-        cert
-        for name in names
-        for cert in api.search({"address": name, "council[]": councils})
-        if outcode_of(cert.postcode) == listing.outcode
-    ]
-    return "street", _unique(certs)
+    return "street", [{"address": name, "council[]": councils} for name in names]
+
+
+def candidate_certificates(listing: Listing, api: EpcApi, cache_dir: Path) -> Candidates:
+    retrieval, queries = search_queries(listing, cache_dir)
+    found = _unique([c for query in queries for c in api.search(query)])
+    if retrieval != "street":
+        return Candidates(retrieval, found)
+    inside = [c for c in found if outcode_of(c.postcode) == listing.outcode]
+    return Candidates(retrieval, inside, outside_district=len(found) - len(inside))
+
+
+def in_parallel(work: Callable[[T], object], items: Iterable[T], workers: int, label: str) -> None:
+    """Run `work` over `items` on a few threads, to fill the cache ahead of matching."""
+    todo = list(items)
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        for i, _ in enumerate(pool.map(work, todo), 1):
+            if i % 100 == 0 or i == len(todo):
+                print(f"  {label}: {i}/{len(todo)}", flush=True)
 
 
 def _unique(certs: Sequence[Certificate]) -> list[Certificate]:
@@ -91,13 +113,14 @@ def _unique(certs: Sequence[Certificate]) -> list[Certificate]:
 
 
 def result_record(
-    listing: Listing, retrieval: str, candidates: int, result: MatchResult, api: EpcApi
+    listing: Listing, candidates: Candidates, result: MatchResult, api: EpcApi
 ) -> dict[str, Any]:
     """One output line: the listing, its match and, for a single home, its certificates."""
     record: dict[str, Any] = {
         "listing": asdict(listing),
-        "retrieval": retrieval,
-        "candidate_certificates": candidates,
+        "retrieval": candidates.retrieval,
+        "candidate_certificates": len(candidates.certificates),
+        "outside_district": candidates.outside_district,
         "outcome": result.outcome.value,
         "evidence": result.evidence.name.lower() if result.evidence is not None else None,
         "reason": result.reason.value if result.reason else None,
@@ -120,10 +143,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--dataset", choices=sorted(DATASETS), action="append")
     parser.add_argument("--limit", type=int, help="match only the first N listings")
+    parser.add_argument("--workers", type=int, default=4, help="concurrent API requests")
     args = parser.parse_args(argv)
 
     try:
-        token = token_from_environment()
+        token = load_token()
     except MissingTokenError as error:
         print(error, file=sys.stderr)
         return 2
@@ -134,15 +158,31 @@ def main(argv: Sequence[str] | None = None) -> int:
     with EpcApi(token, cache_dir) as api:
         for dataset in args.dataset or sorted(DATASETS):
             listings = load_listings(DATASETS[dataset], dataset)[: args.limit]
+            queries = {
+                json.dumps(query, sort_keys=True): query
+                for listing in listings
+                for query in search_queries(listing, cache_dir)[1]
+            }
+            in_parallel(api.search, queries.values(), args.workers, f"{dataset} searches")
+
+            matches = []
+            for listing in listings:
+                candidates = candidate_certificates(listing, api, cache_dir)
+                matches.append(
+                    (listing, candidates, match_listing(listing.addresses, candidates.certificates))
+                )
+            singles = [
+                cert.certificate_number
+                for _, _, result in matches
+                if result.outcome is Outcome.ONE
+                for cert in result.homes[0].certificates
+            ]
+            in_parallel(api.certificate, singles, args.workers, f"{dataset} certificates")
+
             out_file = out_dir / f"{dataset}.jsonl"
             with out_file.open("w") as out:
-                for i, listing in enumerate(listings, 1):
-                    retrieval, certs = candidate_certificates(listing, api, cache_dir)
-                    result = match_listing(listing.addresses, certs)
-                    record = result_record(listing, retrieval, len(certs), result, api)
-                    out.write(json.dumps(record) + "\n")
-                    if i % 50 == 0:
-                        print(f"{dataset}: {i}/{len(listings)}, {api.requests_made} requests")
+                for listing, candidates, result in matches:
+                    out.write(json.dumps(result_record(listing, candidates, result, api)) + "\n")
             print(f"{dataset}: wrote {len(listings)} results, {api.requests_made} requests so far")
     return 0
 
