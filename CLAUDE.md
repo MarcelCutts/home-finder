@@ -76,7 +76,8 @@ uv run mypy src                       # Type check (strict mode)
 `run_pipeline` in `pipeline/flow.py` runs these stages in order; `main.py` only
 parses CLI options, and steps 3–8 live in `pipeline/candidates.py`. Each run also
 advances durable queues, so it does work even when nothing new is found. Stage
-contracts, vocabulary and run metrics are in `docs/pipeline.md`.
+contracts, vocabulary and run metrics are in `docs/pipeline.md`; a stage-by-stage
+walkthrough is in `docs/ingest-pipeline.md`.
 
 1. **Setup** — Runner lock, abandoned-spend recovery, run row, image-cache repair.
 2. **Delivery recovery** — Resume `queued`, `ready` and due `waiting` alerts; blocked, uncertain and review ones wait for an operator. Live runs only.
