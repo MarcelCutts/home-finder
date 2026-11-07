@@ -20,6 +20,7 @@ gives the listing page its opening line. A dimension's conflict rests on the ana
 photos, floorplan and text, so the lead presents it as a risk to check, not a fact.
 """
 
+import re
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 from typing import Any, Final, Literal, TypedDict
@@ -137,14 +138,32 @@ _BREAKERS: Final[dict[str, frozenset[str]]] = {
 _ROOMY_LIVING_SQM: Final = 20
 _SMALL_LIVING_SQM: Final = 10
 
+# The analysis sometimes records a room it could not see as a maintenance concern
+# ("Bathroom not photographed - condition unknown"). No typed field tells these apart,
+# so they are recognised by their wording. A misread concern only costs a claim its
+# support or its conflict and leaves it to be checked; it never makes one supported.
+_MISSING_EVIDENCE: Final = re.compile(
+    r"\bnot (?:photographed|shown|pictured)\b"
+    r"|\bno (?:(?!in\b|any\b)\w+ ){0,4}(?:photos?|images?)\b"
+    r"|\b(?:absent from|absence of) (?:\w+ ){0,3}(?:photos?|images?)"
+    r"|\bonly (?:\w+ ){1,3}(?:photos?|images?|photographed)\b"
+    r"|\b(?:cannot|can't|unable to|impossible to) (?:be )?(?:reliably )?(?:assess|verif|confirm)"
+    r"|\bunverifi(?:ed|able)\b",
+    re.IGNORECASE,
+)
 
-def _workspace_evidence(values: Mapping[str, Any]) -> _Evidence:
+
+def _workspace_evidence(values: Mapping[str, Any], bedrooms: int | None) -> _Evidence:
     """Somewhere to work: the analysis's reading of work separation and desk room.
 
     A bedroom count isn't enough: the analysis is told a second bedroom alone
     doesn't make an office. A desk in shared living space answers neither way.
+    A studio is the exception: with the bed in the only room there is nowhere
+    separate to work, which the analysis is told to record but sometimes doesn't.
     """
     evidence = _Evidence()
+    if bedrooms == 0:
+        evidence.against.append("Studio (no separation)")
     bedroom = _section(values, "bedroom")
     separation = bedroom.get("office_separation")
     if separation == "dedicated_room":
@@ -167,7 +186,7 @@ def _workspace_evidence(values: Mapping[str, Any]) -> _Evidence:
     return evidence
 
 
-def _hosting_evidence(values: Mapping[str, Any]) -> _Evidence:
+def _hosting_evidence(values: Mapping[str, Any], _bedrooms: int | None) -> _Evidence:
     """Room to host: the living room's measured size, and a layout unfit for guests.
 
     Total floor area, a general sense of space, outdoor space and a good flow all
@@ -192,7 +211,7 @@ def _hosting_evidence(values: Mapping[str, Any]) -> _Evidence:
     return evidence
 
 
-def _sound_evidence(values: Mapping[str, Any]) -> _Evidence:
+def _sound_evidence(values: Mapping[str, Any], _bedrooms: int | None) -> _Evidence:
     """Quiet enough for calls: the walls and windows, and noise the analysis tagged.
 
     Floor level and the risk of disturbing neighbours move the score only: the
@@ -221,7 +240,7 @@ def _sound_evidence(values: Mapping[str, Any]) -> _Evidence:
     return evidence
 
 
-def _kitchen_evidence(values: Mapping[str, Any]) -> _Evidence:
+def _kitchen_evidence(values: Mapping[str, Any], _bedrooms: int | None) -> _Evidence:
     """A kitchen that works: a gas or induction hob to cook on, and a kitchen not dated.
 
     A modern finish, a dishwasher and a washing machine help the score, but none
@@ -243,7 +262,7 @@ def _kitchen_evidence(values: Mapping[str, Any]) -> _Evidence:
     return evidence
 
 
-def _vibe_evidence(values: Mapping[str, Any]) -> _Evidence:
+def _vibe_evidence(values: Mapping[str, Any], _bedrooms: int | None) -> _Evidence:
     """Light and feel: the natural light.
 
     Feel has no direct observation of its own; character, ceilings and outlook
@@ -264,18 +283,28 @@ def _vibe_evidence(values: Mapping[str, Any]) -> _Evidence:
     return evidence
 
 
-def _condition_evidence(values: Mapping[str, Any]) -> _Evidence:
+def _condition_evidence(values: Mapping[str, Any], _bedrooms: int | None) -> _Evidence:
     """Good condition: the analysis's reading of condition, and concerns it rated.
 
     The overall rating is about desirability, not condition, so it doesn't count;
     nor do "Excellent condition" or "Recently refurbished" highlights, which can
-    repeat the advert. Concerns count against only once the condition was seen:
-    without that reading, they are usually about what the photos leave out.
+    repeat the advert. A concern about a room the photos leave out is a gap, not a
+    defect: it keeps a good reading from counting as support. Rated concerns count
+    against only once the condition itself was seen, and only when at least one is
+    about something other than a missing room; without a condition reading they are
+    guesses about what the photos leave out.
     """
     evidence = _Evidence()
-    condition = _section(values, "condition").get("overall_condition")
+    section = _section(values, "condition")
+    condition = section.get("overall_condition")
+    flagged = bool(values.get("condition_concerns"))
+    concerns = [str(text) for text in section.get("maintenance_concerns") or []] if flagged else []
+    unseen_rooms = [text for text in concerns if _MISSING_EVIDENCE.search(text)]
     if condition in ("excellent", "good"):
-        evidence.support.append(f"Looks {condition}")
+        if unseen_rooms:
+            evidence.unsure.append(f"looks {condition}, but not every room was shown")
+        else:
+            evidence.support.append(f"Looks {condition}")
     elif condition == "poor":
         evidence.against.append("Looks poor")
     elif condition == "fair":
@@ -284,12 +313,13 @@ def _condition_evidence(values: Mapping[str, Any]) -> _Evidence:
         evidence.unseen.append("condition")
     severity = values.get("concern_severity")
     seen = condition in ("excellent", "good", "fair", "poor")
-    if seen and values.get("condition_concerns") and severity in ("moderate", "serious"):
+    only_unseen_rooms = bool(concerns) and len(unseen_rooms) == len(concerns)
+    if seen and flagged and severity in ("moderate", "serious") and not only_unseen_rooms:
         evidence.against.append(f"{severity.title()} maintenance concerns")
     return evidence
 
 
-_EVIDENCE: Final[dict[str, Callable[[Mapping[str, Any]], _Evidence]]] = {
+_EVIDENCE: Final[dict[str, Callable[[Mapping[str, Any], int | None], _Evidence]]] = {
     "workspace": _workspace_evidence,
     "hosting": _hosting_evidence,
     "sound": _sound_evidence,
@@ -314,9 +344,11 @@ def _item(label: str, claim: Claim, found: str, must: bool, kind: Kind) -> Brief
     )
 
 
-def _dimension_item(key: str, values: Mapping[str, Any], must: bool) -> BriefItem:
+def _dimension_item(
+    key: str, values: Mapping[str, Any], bedrooms: int | None, must: bool
+) -> BriefItem:
     label = DIMENSION_NEEDS[key]
-    evidence = _EVIDENCE[key](values)
+    evidence = _EVIDENCE[key](values, bedrooms)
     breakers = [tag for tag in _tags(values, "lowlights") if tag in _BREAKERS.get(key, ())]
     # A tagged lowlight is the analysis's own verdict on the need, so it leads.
     against = [*(lowlight_display_label(tag) for tag in breakers), *evidence.against]
@@ -397,7 +429,7 @@ def check_brief(
                 label = DIMENSION_NEEDS[key]
                 items.append(_item(label, "needs_checking", "not assessed yet", True, "dimension"))
             continue
-        items.append(_dimension_item(key, values, must))
+        items.append(_dimension_item(key, values, bedrooms, must))
 
     # Must-haves first, keeping each group's order.
     items.sort(key=lambda item: not item["must"])

@@ -222,17 +222,80 @@ def test_a_measured_living_room_decides_room_to_host(living_room_sqm, expected) 
         pytest.param(
             "Good condition",
             {
-                "condition": {"overall_condition": "unknown"},
+                "condition": {
+                    "overall_condition": "good",
+                    "maintenance_concerns": [
+                        "Only 1 photo provided - cannot assess overall property condition"
+                    ],
+                },
+                "condition_concerns": True,
+                "concern_severity": "serious",
+            },
+            ("needs_checking", "looks good, but not every room was shown"),
+            id="a-missing-photo-concern-is-a-gap-not-a-defect",
+        ),
+        pytest.param(
+            "Good condition",
+            {
+                "condition": {
+                    "maintenance_concerns": [
+                        "Bathroom not photographed - condition unknown",
+                        "Damp patch on the bedroom ceiling",
+                    ],
+                },
+                "condition_concerns": True,
+                "concern_severity": "moderate",
+            },
+            ("conflict", "Moderate maintenance concerns"),
+            id="a-seen-defect-still-counts-beside-a-photo-gap",
+        ),
+        pytest.param(
+            "Good condition",
+            {
+                "condition": {
+                    "overall_condition": "unknown",
+                    "maintenance_concerns": [
+                        "No interior photos provided - condition unverifiable"
+                    ],
+                },
                 "condition_concerns": True,
                 "concern_severity": "serious",
             },
             ("needs_checking", "condition not shown"),
-            id="concerns-without-a-condition-reading-are-gaps",
+            id="concerns-only-about-missing-photos-are-gaps",
+        ),
+        pytest.param(
+            "Good condition",
+            {
+                "condition": {
+                    "overall_condition": "unknown",
+                    "maintenance_concerns": [
+                        "No interior photos provided - cannot assess condition",
+                        "Period property: risk of deferred maintenance",
+                    ],
+                },
+                "condition_concerns": True,
+                "concern_severity": "serious",
+            },
+            ("needs_checking", "condition not shown"),
+            id="without-a-condition-reading-concerns-are-guesses",
         ),
     ],
 )
 def test_each_need_rests_on_its_own_direct_evidence(label, overrides, expected) -> None:
     assert claims(check(make_fit_analysis(**overrides)))[label] == expected
+
+
+def test_a_studio_has_nowhere_separate_to_work() -> None:
+    """Even when the analysis reads the studio as shared space with room for a desk."""
+    analysis = make_fit_analysis(
+        bedroom={"office_separation": "shared_space", "can_fit_desk": "yes"}
+    )
+    studio = {**PROP, "bedrooms": 0}
+    assert claims(check(analysis, prop=studio))["Somewhere to work"] == (
+        "conflict",
+        "Studio (no separation)",
+    )
 
 
 def test_a_tagged_lowlight_leads_the_evidence_against() -> None:
