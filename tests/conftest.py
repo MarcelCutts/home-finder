@@ -63,8 +63,11 @@ settings.load_profile(os.getenv("HYPOTHESIS_PROFILE", "fast"))
 
 
 @pytest.fixture(autouse=True)
-def _isolate_settings_from_dotenv(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Prevent the local .env file from leaking into test Settings instances."""
+def _isolate_settings_from_environment(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Tests opt into configuration; neither a shell export nor .env supplies it."""
+    for name in os.environ:
+        if name.upper().startswith("HOME_FINDER_"):
+            monkeypatch.delenv(name)
     monkeypatch.setattr(
         Settings,
         "model_config",
