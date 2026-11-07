@@ -73,27 +73,26 @@ uv run mypy src                       # Type check (strict mode)
 
 ## Pipeline Flow (pipeline/flow.py)
 
-`run_pipeline` in `pipeline/flow.py` runs the stages in this order; `main.py` only
-parses CLI options, and `pipeline/candidates.py` holds steps 3–8. A run advances
-durable queues (enrichment, assessment, reanalysis, delivery), so it does useful
-work even when it discovers nothing new. Stage contracts, vocabulary and run
-metrics are in `docs/pipeline.md`.
+`run_pipeline` in `pipeline/flow.py` runs these stages in order; `main.py` only
+parses CLI options, and steps 3–8 live in `pipeline/candidates.py`. Each run also
+advances durable queues, so it does work even when nothing new is found. Stage
+contracts, vocabulary and run metrics are in `docs/pipeline.md`.
 
-1. **Setup** — Take the runner lock and recover abandoned spend (`pipeline/run_lock.py`), create the run row, repair image caches.
-2. **Delivery recovery** — Resume alerts left `queued`, `ready` or `waiting` (a `waiting` alert only once its `retry_at` has passed). Blocked, uncertain and review alerts wait for an operator (`pipeline/delivery_admin.py`). Skipped on dry runs.
-3. **Collect and select** — Scrape `SEARCH_AREAS`; store every parsed card in `source_listings` and record price changes before any filter. Keep listings that pass the criteria (price, bedrooms) and location (outcode) rules, each wrapped as a single-source `MergedProperty`.
-4. **Find new and admit** — A listing is "seen" once its `source_listings.merged_id` is set. Each new listing is saved as a staging row (`pending_enrichment`) and interleaved with the enrichment backlog under `max_enrichment_per_run`.
-5. **Detail enrichment** — Fetch gallery, source-declared floorplans and descriptions; cache images; remove EPC charts; generate thumbnails. A listing without usable media uses an attempt and stays queued; it expires at `max_enrichment_attempts`.
-6. **Commute** — `CommuteAssessor` geocodes missing coordinates and measures TravelTime journeys (if configured). Advisory: it annotates homes and never removes one.
-7. **Match and consolidate** — `consolidate_candidates` (`pipeline/matching.py`) matches candidates against stored homes first seen in the last 30 days; a matched listing joins the stored home, which keeps its ID and history.
-8. **Media rule** (`require_floorplan`) — Admit homes with a source-declared floorplan, OpenRent-only homes, or homes with at least `min_gallery_for_photo_inference` (default 5) photos. Save the rest as dropped.
-9. **Initial assessment** — Save each home as `pending_analysis`, then run the two Claude calls (see Quality Analysis) on this run's homes plus pending ones, under `max_initial_analyses_per_run`. The assessment and the alert decision commit in one transaction; live runs then try to send the alert at once.
-10. **Reanalysis** — Refresh assessments flagged for reanalysis, under `max_reanalyses_per_run`. Never sends an alert.
-11. **Delivery drain** — Send every `queued` or `ready` alert, and `waiting` ones whose `retry_at` has passed. A saved Telegram flood-control delay holds every alert to that recipient until it expires. Skipped on dry runs.
-12. **Finalize** — Prune old events (live runs) and record the run's status.
+1. **Setup** — Runner lock, abandoned-spend recovery, run row, image-cache repair.
+2. **Delivery recovery** — Resume `queued`, `ready` and due `waiting` alerts; blocked, uncertain and review ones wait for an operator. Live runs only.
+3. **Collect and select** — Scrape `SEARCH_AREAS` and store every card, then apply the price, bedroom and outcode rules.
+4. **Find new and admit** — Save each unseen listing as a staging row; it shares `max_enrichment_per_run` with the backlog.
+5. **Detail enrichment** — Gallery, source-declared floorplans, descriptions, image cache, EPC removal, thumbnails.
+6. **Commute** — Advisory TravelTime measurement (`CommuteAssessor`); never removes a home.
+7. **Match and consolidate** — Join listings to stored homes first seen in the last 30 days (`pipeline/matching.py`).
+8. **Media rule** (`require_floorplan`) — Admit a source-declared floorplan, an OpenRent-only home or enough photos; save the rest as dropped.
+9. **Initial assessment** — Two Claude calls (see Quality Analysis); the assessment and alert decision commit together, then live runs try to send.
+10. **Reanalysis** — Refresh flagged assessments; never sends an alert.
+11. **Delivery drain** — Send `queued`, `ready` and due `waiting` alerts. Live runs only.
+12. **Finalize** — Prune old events (live runs), record the run's status.
 
-There is no final save step: homes are written at each checkpoint above (staging
-row, dropped, `pending_analysis`, assessment).
+Homes are saved at each checkpoint (staging row, dropped, `pending_analysis`,
+assessment), not in a final save step.
 
 ## Gotchas & Constraints
 
@@ -150,7 +149,7 @@ async with AsyncSession() as session:
 - Response schemas come from Pydantic models: `_VisualAnalysisResponse` (visual tool, via `_build_tool_schema()`) and `_EvaluationResponse` (via `_eval_json_schema()`), both in `analysis/analyzer.py`; prompts are in `analysis/prompts.py`
 - Phase 1 output feeds Phase 2 via `build_evaluation_prompt()` (wraps Phase 1 JSON in `<visual_analysis>` XML tags)
 - No partial results: a malformed visual answer (including a missing or out-of-range rating) is sent once more as a second paid attempt; if it is still invalid, or the evaluation answer is invalid, the attempt fails and nothing is saved. A paid visual result is kept as a visual checkpoint, so retrying a failed evaluation call does not pay for vision again. Missing cached images defer the home without spending.
-- There is no blanket brace-stripping pass. Narrow repairs apply to live and stored answers alike: `validate_output` (`analysis/contracts.py`) decodes JSON text where the schema expects an object or array, and the `PropertyQualityAnalysis` validators in `models/quality.py` (e.g. `unwrap_one_line`) unwrap JSON-wrapped strings.
+- There is no blanket brace-stripping pass. Two narrow repairs exist. `validate_output` (`analysis/contracts.py`) decodes nested objects or arrays sent as JSON text, in visual answers only (live or from a visual checkpoint). The `PropertyQualityAnalysis` validators in `models/quality.py` (e.g. `unwrap_one_line`) unwrap JSON-wrapped strings in both live and stored analyses.
 - Concurrency: at most `quality_concurrency` (15) homes at once, or the spend policy's `max_in_flight` if lower, with `property_analysis_timeout` (600 s) per home for both calls. There is no delay between calls; `DELAY_BETWEEN_CALLS` is used only by `analyze_merged_properties()`, which the pipeline does not call.
 - **Spend policy**: every Anthropic request goes through `AnalysisSpendMeter` (`analysis/spend.py`), which reserves the request's worst-case cost in the `paid_attempts` ledger before sending and settles it from reported usage. Without `HOME_FINDER_ANALYSIS_SPEND_POLICY` every paid request is deferred (`spending_not_configured`), so nothing is assessed. At 20 images each attempt reserves $0.64817 (visual) and $0.43192 (evaluation); these are caps, not predicted charges. See the paid-analysis section of `docs/operations.md`.
 - Uses prompt caching (`cache_control: ephemeral`) on both system prompts and the visual tool; cache hits never reduce a reservation
@@ -198,7 +197,7 @@ async with AsyncSession() as session:
 - Mock HTTP with `pytest-httpx` and `AsyncMock` for curl_cffi/TravelTime
 - Common fixtures in `tests/conftest.py`: `sample_property`, `sample_property_no_coords`, `default_search_criteria`
 - Use `Property.model_copy()` for variations; `hypothesis` for property-based testing
-- Integration tests in `tests/integration/` reset Crawlee global state with autouse fixtures
+- Tests that drive the legacy Crawlee scrapers opt in with `@pytest.mark.usefixtures("reset_crawlee_state", "set_crawlee_storage_dir")`; the fixtures are not autouse, and `src/` no longer uses Crawlee
 - **Concurrent-safe:** All tests use in-memory SQLite, no shared state — multiple agents/processes can run `pytest` simultaneously without interference
 
 **Test structure:**
@@ -224,7 +223,7 @@ async with AsyncSession() as session:
 | `enable_quality_filter` | True | Enable Claude vision property analysis |
 | `require_floorplan` | True | Media rule before assessment: admit a source-declared floorplan, an OpenRent-only home, or one with at least `min_gallery_for_photo_inference` (5) photos; save the rest as dropped |
 | `quality_filter_max_images` | 20 | Max gallery images to analyze (1-20) |
-| `enable_image_hash_matching` | True | Perceptual image hash for dedup |
+| `enable_image_hash_matching` | True | Perceptual image hashing for `--dedup-existing`; pipeline matching always hashes, whatever this is set to |
 | `proxy_url` | `""` | HTTP/SOCKS5 proxy for geo-restricted sites |
 
 ## ADR Writing Guide

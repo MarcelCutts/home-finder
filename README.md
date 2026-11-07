@@ -92,8 +92,9 @@ properties may still be deferred or unsuccessful.
 
 Event pruning runs only in live mode, but dry runs count toward the retained run
 window when the next live cleanup occurs. Run token/cost totals cover returned
-main-analysis usage and may be incomplete after interruption; they exclude
-reanalysis usage. The paid spend ledger is authoritative for reconciled spending.
+main-analysis usage and exclude reanalysis usage. If the initial-assessment stage
+is interrupted they are not written at all; a per-home timeout leaves them
+incomplete. The paid spend ledger is authoritative for reconciled spending.
 
 ## Web Dashboard
 
