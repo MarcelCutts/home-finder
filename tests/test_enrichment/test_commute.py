@@ -1,13 +1,19 @@
 """Tests for advisory commute assessment with TravelTime API."""
 
 import asyncio
-from datetime import UTC, datetime, time
+import zoneinfo
+from datetime import UTC, datetime, time, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from pydantic import HttpUrl, ValidationError
 
-from home_finder.enrichment.commute import CommuteAssessor, CommuteResult, next_weekday_arrival
+from home_finder.enrichment.commute import (
+    LONDON,
+    CommuteAssessor,
+    CommuteResult,
+    next_weekday_arrival,
+)
 from home_finder.models import CommuteState, Property, PropertySource, TransportMode
 from home_finder.models.commute import best_measured_commutes
 
@@ -740,6 +746,12 @@ async def test_missing_coordinates_remain_distinct_during_outage(
             id="run-in-repeated-hour",
         ),
         pytest.param(
+            datetime(2026, 10, 25, 1, 30, fold=1, tzinfo=LONDON),
+            NINE_AM,
+            datetime(2026, 10, 26, 9, 0, tzinfo=UTC),
+            id="london-time-start-in-repeated-hour",
+        ),
+        pytest.param(
             datetime(2026, 11, 9, 12, 0, tzinfo=UTC),
             time(17, 45),
             datetime(2026, 11, 9, 17, 45, tzinfo=UTC),
@@ -755,6 +767,16 @@ async def test_missing_coordinates_remain_distinct_during_outage(
 )
 def test_next_weekday_arrival(run_starts, arrival_time, expected):
     assert next_weekday_arrival(arrival_time, after=run_starts) == expected
+
+
+def test_london_zone_loads_without_a_system_timezone_database():
+    """Hosts without /usr/share/zoneinfo (Windows, minimal images) use the tzdata package."""
+    zoneinfo.reset_tzpath(to=[])
+    try:
+        london = zoneinfo.ZoneInfo.no_cache("Europe/London")
+    finally:
+        zoneinfo.reset_tzpath()
+    assert datetime(2026, 6, 8, 9, 0, tzinfo=london).utcoffset() == timedelta(hours=1)
 
 
 def test_next_weekday_arrival_needs_an_aware_start():

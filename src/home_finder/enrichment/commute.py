@@ -23,18 +23,15 @@ LONDON = ZoneInfo("Europe/London")
 def next_weekday_arrival(arrival_time: time, *, after: datetime) -> datetime:
     """Return the first Monday-to-Friday ``arrival_time`` in London later than ``after``.
 
-    London's date decides which day it is, so a run at 00:30 BST is already on
-    the next day. UK clocks change only on Sundays, so a weekday clock time
-    exists exactly once and zoneinfo gives it the GMT or BST offset of its date.
+    UK clocks change only on Sundays, so a weekday clock time is never skipped
+    or repeated, and zoneinfo gives it the GMT or BST offset of its date.
     """
     if after.tzinfo is None:
         raise ValueError("after must be timezone-aware")
-    # UTC on one side makes the comparison below by instant, not London wall clock.
-    after_utc = after.astimezone(UTC)
-    day = after_utc.astimezone(LONDON).date()
+    day = after.astimezone(LONDON).date()
     while True:
         arrival = datetime.combine(day, arrival_time, tzinfo=LONDON)
-        if arrival.weekday() < 5 and arrival > after_utc:
+        if arrival.weekday() < 5 and arrival > after:
             return arrival
         day += timedelta(days=1)
 
@@ -159,6 +156,8 @@ class CommuteAssessor:
                     id="property-search",
                     arrival_location_id="destination",
                     departure_location_ids=[loc.id for loc in locations],
+                    # The same instant either way; UTC keeps the request in the
+                    # "Z" form TravelTime has always been sent.
                     arrival_time=self.arrival_at.astimezone(UTC),
                     travel_time=max_minutes * 60,
                     transportation=transportation,

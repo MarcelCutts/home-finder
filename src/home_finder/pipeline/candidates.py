@@ -425,6 +425,7 @@ async def _assess_commutes(
     Known over-limit measurements remain useful, but never remove a home.
     """
     results: list[CommuteResult] = []
+    arrival_at: str | None = None
     configured = bool(settings.traveltime_app_id and settings.traveltime_api_key)
     if configured:
         assert settings.traveltime_api_key is not None
@@ -434,6 +435,7 @@ async def _assess_commutes(
             destination_postcode=criteria.destination_postcode,
             arrival_time=settings.commute_arrival_time,
         )
+        arrival_at = commute_assessor.arrival_at.isoformat()
         merged = await commute_assessor.geocode_properties(merged)
         for mode in criteria.transport_modes:
             mode_results = await commute_assessor.assess_commutes(
@@ -495,10 +497,12 @@ async def _assess_commutes(
                 "within_limit": chosen.within_limit if chosen else None,
             }
             if chosen:
+                # The stored minutes keep no arrival, so the event records it.
                 metadata.update(
                     {
                         "minutes": chosen.travel_time_minutes,
                         "mode": chosen.transport_mode.value,
+                        "arrival_at": arrival_at,
                     }
                 )
             elif not configured or not criteria.transport_modes:

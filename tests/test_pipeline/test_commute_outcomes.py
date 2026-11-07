@@ -1,7 +1,7 @@
 """Advisory commute outcomes reach storage without false passes or lost homes."""
 
 import json
-from datetime import time
+from datetime import UTC, datetime, time
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -56,7 +56,7 @@ async def test_advisory_retention_and_durable_accounting(tmp_path, make_merged_p
             )
         return results
 
-    adapter = MagicMock()
+    adapter = MagicMock(arrival_at=datetime(2026, 11, 9, 9, 0, tzinfo=UTC))
     adapter.geocode_properties = AsyncMock(side_effect=lambda homes: homes)
     adapter.assess_commutes = AsyncMock(side_effect=outcomes)
     async with PropertyStorage(str(tmp_path / "commute.db")) as storage:
@@ -101,10 +101,13 @@ async def test_advisory_retention_and_durable_accounting(tmp_path, make_merged_p
             if scenario == "mixed"
             else ["commute_unknown"] * 3
         )
-        for _, raw_metadata in events:
+        for event_type, raw_metadata in events:
             metadata = json.loads(raw_metadata)
             assert metadata["retained"] is True
             assert metadata["policy"] == "advisory"
+            # Only a measurement has an arrival it was measured for.
+            measured = event_type != "commute_unknown"
+            assert metadata.get("arrival_at") == ("2026-11-09T09:00:00+00:00" if measured else None)
         if scenario == "no_config":
             constructor.assert_not_called()
             assert all(json.loads(row[1])["reason"] == "not_configured" for row in events)
