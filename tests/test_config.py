@@ -69,6 +69,67 @@ def test_dotenv_is_local_to_working_directory_unless_explicitly_selected(monkeyp
     assert Settings().max_price == 2300
 
 
+@pytest.mark.parametrize(
+    "assignment",
+    [
+        'HOME_FINDER_ENABLE_QUALITY_FILTER="false',
+        "HOME_FINDER_ANTHROPIC_API_KEY='private-value-must-not-appear",
+        'OTHER_TOOL_KEY="private-value-must-not-appear" trailing-text',
+    ],
+)
+def test_malformed_dotenv_reports_location_without_values(tmp_path, assignment):
+    env_file = tmp_path / ".env"
+    env_file.write_text(f"# Local configuration\n{assignment}\n")
+    with pytest.raises(SettingsError) as exc:
+        Settings(_env_file=env_file)
+    error = str(exc.value)
+    assert str(env_file) in error
+    assert "line 2" in error
+    assert "private-value-must-not-appear" not in error
+
+
+@pytest.mark.parametrize("invalid_first", [True, False])
+def test_all_dotenv_files_are_validated_even_when_environment_overrides_them(
+    monkeypatch, tmp_path, invalid_first
+):
+    valid = tmp_path / "valid.env"
+    valid.write_text("HOME_FINDER_ENABLE_QUALITY_FILTER=false\n")
+    invalid = tmp_path / "invalid.env"
+    invalid.write_text('HOME_FINDER_ENABLE_QUALITY_FILTER="false\n')
+    monkeypatch.setenv("HOME_FINDER_ENABLE_QUALITY_FILTER", "false")
+    env_files = (invalid, valid) if invalid_first else (valid, invalid)
+    with pytest.raises(SettingsError):
+        Settings(_env_file=env_files)
+
+
+@pytest.mark.parametrize("encoding", ["utf-8", "utf-16"])
+def test_valid_dotenv_quoting_comments_expansion_and_multiline_values_are_preserved(
+    tmp_path, encoding
+):
+    env_file = tmp_path / ".env"
+    env_file.write_text(
+        "# Local configuration\n\n"
+        "export HOME_FINDER_ENABLE_QUALITY_FILTER = 'false' # disabled\n"
+        "LOCAL_PASSWORD='private password # café'\n"
+        'HOME_FINDER_WEB_OWNER_PASSWORD="${LOCAL_PASSWORD}"\n'
+        "HOME_FINDER_ANALYSIS_SPEND_POLICY='{\n"
+        '  "per_call_usd": "1", "daily_usd": "2", "monthly_usd": "3"\n'
+        "}'\n",
+        encoding=encoding,
+    )
+    settings = Settings(_env_file=str(env_file), _env_file_encoding=encoding)
+    assert not settings.enable_quality_filter
+    assert settings.web_owner_password.get_secret_value() == "private password # café"
+    assert settings.analysis_spend_policy.per_call_usd == 1
+
+
+def test_disabling_dotenv_loading_ignores_malformed_default_file(monkeypatch, tmp_path):
+    (tmp_path / ".env").write_text('HOME_FINDER_ENABLE_QUALITY_FILTER="false\n')
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setitem(Settings.model_config, "env_file", ".env")
+    assert Settings(_env_file=None).enable_quality_filter
+
+
 @pytest.mark.parametrize("source", ["environment", "dotenv"])
 @pytest.mark.parametrize("name", ["HOME_FINDER_MAX_PRCE", "home_finder_scrape_interval_minutes"])
 def test_unknown_application_keys_fail_without_printing_values(monkeypatch, tmp_path, source, name):

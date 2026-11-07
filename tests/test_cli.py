@@ -289,6 +289,45 @@ def test_explicit_env_file_is_loaded_by_the_cli(monkeypatch, capsys, tmp_path):
     assert list(tmp_path.iterdir()) == [env_file]
 
 
+@pytest.mark.parametrize("mode", ["--check-config", "--dry-run"])
+@pytest.mark.parametrize("explicit_env_file", [False, True])
+def test_malformed_dotenv_exits_before_success_or_paid_work(
+    monkeypatch, capsys, caplog, tmp_path, effects, mode, explicit_env_file
+):
+    _, calls = effects
+    monkeypatch.setattr(cli, "Settings", Settings)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setitem(Settings.model_config, "env_file", ".env")
+    env_file = tmp_path / ("selected.env" if explicit_env_file else ".env")
+    env_file.write_text(
+        "HOME_FINDER_ANTHROPIC_API_KEY=private-key-must-not-appear\n"
+        'HOME_FINDER_ANALYSIS_SPEND_POLICY={"per_call_usd":"1",'
+        '"daily_usd":"2","monthly_usd":"3"}\n'
+        'HOME_FINDER_ENABLE_QUALITY_FILTER="false\n'
+    )
+    flags = [mode]
+    if explicit_env_file:
+        flags.extend(["--env-file", str(env_file)])
+    monkeypatch.setattr("sys.argv", ["home-finder", *flags])
+
+    with pytest.raises(SystemExit) as exc:
+        cli.main()
+
+    assert exc.value.code == 1
+    cli.logger.error.assert_called_once()
+    error = cli.logger.error.call_args.kwargs["error"]
+    assert env_file.name in error
+    assert "line 3" in error
+    output = capsys.readouterr()
+    assert output.out == ""
+    assert "private-key-must-not-appear" not in (
+        str(cli.logger.error.call_args) + caplog.text + output.err
+    )
+    assert "exc_info" not in cli.logger.error.call_args.kwargs
+    assert all(not mock.called for mock in calls.values())
+    assert list(tmp_path.iterdir()) == [env_file]
+
+
 def test_missing_explicit_env_file_is_not_silently_ignored(monkeypatch, effects, tmp_path):
     _, calls = effects
     monkeypatch.setattr("sys.argv", ["home-finder", "--env-file", str(tmp_path / "missing")])

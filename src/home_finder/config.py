@@ -2,13 +2,16 @@
 
 import json
 import re
+from os import PathLike
 from pathlib import Path
 from typing import Annotated, Any
 from urllib.parse import urlsplit
 
+from dotenv.parser import parse_stream
 from pydantic import Field, SecretStr, ValidationInfo, field_validator, model_validator
 from pydantic_settings import (
     BaseSettings,
+    DotEnvSettingsSource,
     EnvSettingsSource,
     NoDecode,
     PydanticBaseSettingsSource,
@@ -21,6 +24,26 @@ from home_finder.models import FurnishType, SearchCriteria, TransportMode
 from home_finder.models.analysis import AnalysisConfig, EvaluationPhaseConfig, VisualPhaseConfig
 from home_finder.models.notifications import NotificationPolicy
 from home_finder.models.spend import SpendPolicy
+
+
+def _validate_dotenv_syntax(source: DotEnvSettingsSource) -> None:
+    """Reject invalid bindings discarded by Pydantic's permissive dotenv loader."""
+    env_files = source.env_file
+    if env_files is None:
+        return
+    if isinstance(env_files, (str, PathLike)):
+        env_files = [env_files]
+    for env_file in env_files:
+        path = Path(env_file).expanduser()
+        if not path.is_file():
+            continue
+        with path.open(encoding=source.env_file_encoding or "utf-8") as stream:
+            for binding in parse_stream(stream):
+                if binding.error:
+                    raise SettingsError(
+                        f"Invalid dotenv syntax in {path} at line {binding.original.line}. "
+                        "Check quoting and assignments."
+                    )
 
 
 def new_runtime_analysis_config(
@@ -75,6 +98,8 @@ class Settings(BaseSettings):
         dotenv_settings: PydanticBaseSettingsSource,
         file_secret_settings: PydanticBaseSettingsSource,
     ) -> tuple[PydanticBaseSettingsSource, ...]:
+        if isinstance(dotenv_settings, DotEnvSettingsSource):
+            _validate_dotenv_syntax(dotenv_settings)
         # Pydantic ignores unknown process variables even with extra="forbid".
         # Check our namespace in both sources, while allowing other tools' keys.
         for source in (env_settings, dotenv_settings):

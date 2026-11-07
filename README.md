@@ -196,8 +196,9 @@ uv run home-finder --env-file /absolute/path/to/.env --check-config
 The check parses settings and reports feature prerequisites without opening a
 database, registering a webhook, scraping, sending messages or spending money.
 Exit 0 means the configuration is valid, **not** that every optional feature is
-configured or any credential works remotely. Invalid settings exit 1; CLI usage
-errors or missing prerequisites for the selected run mode exit 2. `--env-file`
+configured or any credential works remotely. Invalid settings or malformed dotenv
+syntax exit 1. Syntax errors identify the file and line without printing values.
+CLI usage errors or missing prerequisites for the selected run mode exit 2. `--env-file`
 also works with the normal run modes. The normal notifying pipeline and
 `--serve --with-pipeline` require both Telegram credentials before starting work.
 Use `--dry-run` to collect without sending (it can still spend on configured
