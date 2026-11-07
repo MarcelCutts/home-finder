@@ -109,7 +109,7 @@ def test_certificate_detail_reads_floor_area_and_dwelling(tmp_path: Path) -> Non
     assert detail.energy_rating == 66
     assert detail.dwelling_type == "Mid-floor flat"
     assert detail.habitable_rooms == 3
-    assert detail.floor_level == 2
+    assert detail.flat_position == 2
     assert detail.construction_age_band == "D"
 
 

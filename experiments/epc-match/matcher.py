@@ -314,48 +314,30 @@ class Home:
 
     @property
     def key(self) -> str:
-        """A stable identifier: the UPRN when any certificate has one."""
-        uprns = sorted({c.uprn for c in self.certificates if c.uprn})
-        if uprns:
-            return f"uprn:{uprns[0]}"
-        return f"address:{self.latest.text}|{self.latest.postcode}"
+        """The normalised address and postcode the home's certificates share."""
+        return home_key(self.latest)
+
+
+def home_key(cert: Certificate) -> str:
+    return f"{cert.text}|{cert.postcode}"
 
 
 def group_homes(certificates: Iterable[Certificate]) -> list[Home]:
-    """Group certificates into homes by UPRN, or by address when UPRN is missing.
+    """Group certificates into homes by normalised address and postcode.
 
-    Two certificates are the same home when they share a UPRN or the same
-    normalised address and postcode, so a certificate lodged without a UPRN
-    still joins its home.
+    UPRN is not used: the register often gives every flat in a converted
+    house the building's UPRN, so joining on it merges different flats. A
+    home whose certificates spell its address differently ("Flat A" and
+    "Ground Floor Flat") is split instead, which shows as ambiguity rather
+    than as a wrong match.
     """
-    certs = list(certificates)
-    parent = list(range(len(certs)))
-
-    def find(i: int) -> int:
-        while parent[i] != i:
-            parent[i] = parent[parent[i]]
-            i = parent[i]
-        return i
-
-    first_seen: dict[str, int] = {}
-    for i, cert in enumerate(certs):
-        keys = [f"address:{cert.text}|{cert.postcode}"]
-        if cert.uprn:
-            keys.append(f"uprn:{cert.uprn}")
-        for key in keys:
-            if key in first_seen:
-                parent[find(i)] = find(first_seen[key])
-            else:
-                first_seen[key] = i
-
-    groups: dict[int, list[Certificate]] = {}
-    for i, cert in enumerate(certs):
-        groups.setdefault(find(i), []).append(cert)
-    homes = [
-        Home(tuple(sorted(group, key=lambda c: c.registration_date or "", reverse=True)))
-        for group in groups.values()
+    groups: dict[str, list[Certificate]] = {}
+    for cert in certificates:
+        groups.setdefault(home_key(cert), []).append(cert)
+    return [
+        Home(tuple(sorted(groups[key], key=lambda c: c.registration_date or "", reverse=True)))
+        for key in sorted(groups)
     ]
-    return sorted(homes, key=lambda h: h.key)
 
 
 # --- Matching -------------------------------------------------------------

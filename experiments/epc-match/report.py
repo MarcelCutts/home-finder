@@ -19,12 +19,15 @@ import sys
 from collections import Counter
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
+from datetime import date
 from pathlib import Path
 from typing import Any
 
 HERE = Path(__file__).resolve().parent
 RESULTS = HERE / "data" / "results"
+NARROWED = HERE / "data" / "narrowed"
 JUDGEMENTS = HERE / "data" / "handcheck" / "judgements.csv"
+NARROWED_JUDGEMENTS = HERE / "data" / "handcheck" / "judgements-narrowed.csv"
 
 Record = dict[str, Any]
 
@@ -139,6 +142,9 @@ class CertificateSummary:
     areas_disagree: int
     """Homes whose certificates' floor areas differ by more than 10%."""
     implausible_area: int
+    conflicting: int
+    """Homes with two certificates lodged within a month of each other in different bands:
+    two dwellings sharing one address, or a corrected assessment."""
     median_age_years: float | None
     """Years from the newest certificate's lodgement to the listing snapshot."""
 
@@ -169,7 +175,21 @@ def certificate_summary(
         several_certificates=sum(len(r["homes"][0]["certificates"]) > 1 for r in singles),
         areas_disagree=disagree,
         implausible_area=implausible,
+        conflicting=sum(has_conflicting_certificates(r["homes"][0]) for r in singles),
         median_age_years=statistics.median(ages) if ages else None,
+    )
+
+
+def has_conflicting_certificates(home: Record, within_days: int = 31) -> bool:
+    lodged = [
+        (date.fromisoformat(c["registration_date"]), c.get("band"))
+        for c in home["certificates"]
+        if c.get("registration_date")
+    ]
+    return any(
+        abs((a_date - b_date).days) <= within_days and a_band != b_band
+        for i, (a_date, a_band) in enumerate(lodged)
+        for b_date, b_band in lodged[i + 1 :]
     )
 
 
@@ -188,7 +208,11 @@ class AreaAgreement:
 def area_pairs(
     records: Iterable[Record], correct_only: set[tuple[str, str]] | None = None
 ) -> list[tuple[str, float, float]]:
-    """(listing area source, listing m², EPC m²) for single matches with both figures."""
+    """(listing area source, listing m², EPC m²) for single matches with both figures.
+
+    A listing area outside the plausible range (a square-foot figure stored as
+    square metres, say) is left out, as is the matching certificate's.
+    """
     pairs = []
     for r in records:
         if r["outcome"] != "one":
@@ -200,7 +224,7 @@ def area_pairs(
         ):
             continue
         epc = epc_floor_area(r)
-        if epc is None or not listing.get("floor_area_sqm"):
+        if epc is None or not plausible_area(listing.get("floor_area_sqm")):
             continue
         source = "floorplan" if listing["floor_area_source"] == "estimated" else "advert"
         pairs.append((source, float(listing["floor_area_sqm"]), epc))
@@ -241,6 +265,26 @@ def band_agreement(records: Iterable[Record]) -> tuple[int, int, int]:
     return n, same, near
 
 
+def rooms_offsets(
+    records: Iterable[Record], only: set[tuple[str, str]] | None = None
+) -> Counter[int]:
+    """Habitable rooms minus bedrooms, over single matches whose certificate counts rooms.
+
+    `narrow.py` assumes the offset is one; this shows how often it is.
+    """
+    offsets: Counter[int] = Counter()
+    for r in records:
+        listing = r["listing"]
+        if r["outcome"] != "one" or not r.get("details"):
+            continue
+        if only is not None and (listing["dataset"], listing["unique_id"]) not in only:
+            continue
+        rooms = r["details"][0].get("habitable_rooms")
+        if rooms is not None:
+            offsets[rooms - listing["bedrooms"]] += 1
+    return offsets
+
+
 # --- Hand-check -----------------------------------------------------------
 
 VERDICTS = ("correct", "likely", "wrong", "unclear")
@@ -255,6 +299,13 @@ def load_judgements(path: Path) -> list[dict[str, str]]:
         if row["verdict"] not in VERDICTS:
             raise ValueError(f"unknown verdict {row['verdict']!r}")
     return rows
+
+
+def judged_correct(judgements: Iterable[dict[str, str]]) -> set[tuple[str, str]]:
+    """(dataset, unique_id) of the listings judged correct or likely."""
+    return {
+        (j["dataset"], j["unique_id"]) for j in judgements if j["verdict"] in ("correct", "likely")
+    }
 
 
 def correct_match_rate(
@@ -327,15 +378,39 @@ def main() -> int:
         f"- {certs.several_certificates} homes have more than one certificate; "
         f"{certs.areas_disagree} of those disagree on floor area by more than 10%\n"
         f"- {certs.implausible_area} newest certificates have an implausible floor area\n"
+        f"- {certs.conflicting} homes have two certificates a month apart in different bands\n"
         f"- median newest-certificate age: "
         + (f"{certs.median_age_years:.1f} years" if certs.median_age_years is not None else "n/a")
     )
 
+    narrowed = load_records(sorted(NARROWED.glob("*.jsonl")))
+    if narrowed:
+        counts = Counter(r["outcome"] for r in narrowed)
+        sizes = [r["homes_before"] for r in narrowed]
+        print("\n## Narrowing ambiguous matches by rooms\n")
+        print(
+            f"- {len(narrowed)} ambiguous listings with {min(sizes)} to {max(sizes)} candidate "
+            f"homes tried: {counts['one']} ({pct(counts['one'], len(narrowed))}) left one home, "
+            f"{counts['ambiguous']} still ambiguous, {counts['none']} left none"
+        )
+
     judgements = load_judgements(JUDGEMENTS)
-    correct_keys = {
-        (j["dataset"], j["unique_id"]) for j in judgements if j["verdict"] in ("correct", "likely")
-    }
-    print("\n## Floor area: EPC against the listing's figure (single matches)\n")
+    narrowed_judgements = load_judgements(NARROWED_JUDGEMENTS)
+    correct = judged_correct([*judgements, *narrowed_judgements])
+    groups = [
+        ("strict single matches", records),
+        ("narrowed single matches", narrowed),
+        ("hand-checked correct, strict and narrowed", [*records, *narrowed]),
+    ]
+
+    print("\n## Floor area: EPC against the listing's figure\n")
+    dropped = sum(
+        r["outcome"] == "one"
+        and r["listing"]["floor_area_sqm"] is not None
+        and not plausible_area(r["listing"]["floor_area_sqm"])
+        for r in [*records, *narrowed]
+    )
+    print(f"{dropped} single matches dropped for an implausible listing floor area.")
     header = [
         "listing figure",
         "pairs",
@@ -345,10 +420,9 @@ def main() -> int:
         "≤10%",
         "≤20%",
     ]
-    for label, pairs in (
-        ("all single matches", area_pairs(records)),
-        ("hand-checked correct", area_pairs(records, correct_only=correct_keys)),
-    ):
+    for label, group in groups:
+        only = correct if label.startswith("hand-checked") else None
+        pairs = area_pairs(group, correct_only=only)
         rows = []
         for source in ("floorplan", "advert", "all"):
             a = area_agreement(pairs, source)
@@ -368,30 +442,46 @@ def main() -> int:
             print(f"\n{label}:\n")
             print(table(header, rows))
 
-    n, same, near = band_agreement(records)
-    print(
-        f"\n## Band against the advert's stated band\n\n- {n} single matches with an advert band; "
-        f"{same} ({pct(same, n)}) the same, {near} ({pct(near, n)}) within one band"
-    )
-
-    if judgements:
-        good, judged, (lo, hi) = correct_match_rate(judgements)
-        verdicts = Counter(j["verdict"] for j in judgements)
-        print("\n## Hand-check\n")
-        print(table(["verdict", "listings"], [[v, str(verdicts[v])] for v in VERDICTS]))
+    print("\n## Band against the advert's stated band\n")
+    for label, group in groups[:2]:
+        n, same, near = band_agreement(group)
         print(
-            f"\nCorrect-match rate: {good}/{judged} = {pct(good, judged)} "
-            f"(95% interval {100 * lo:.0f} to {100 * hi:.0f}%)"
+            f"- {label}: {n} with an advert band; {same} ({pct(same, n)}) the same, "
+            f"{near} ({pct(near, n)}) within one band"
         )
-        reasons = Counter(j["reason"] for j in judgements if j["verdict"] in ("wrong", "unclear"))
-        if reasons:
-            print(
-                table(
-                    ["wrong or unclear because", "listings"],
-                    [[k, str(v)] for k, v in reasons.most_common()],
-                )
-            )
+
+    print("\n## Rooms: habitable rooms minus bedrooms (strict single matches)\n")
+    for label, only in (("all", None), ("hand-checked correct", correct)):
+        offsets = rooms_offsets(records, only)
+        total = sum(offsets.values())
+        cells = ", ".join(f"{k:+d}: {v}" for k, v in sorted(offsets.items()))
+        print(f"- {label}: {total} with rooms; {cells}; plus one in {pct(offsets[1], total)}")
+
+    print_handcheck("Hand-check of strict matches", judgements)
+    print_handcheck("Hand-check of narrowed matches", narrowed_judgements)
+    print_handcheck("Hand-check, both together", [*judgements, *narrowed_judgements])
     return 0
+
+
+def print_handcheck(title: str, judgements: Sequence[dict[str, str]]) -> None:
+    if not judgements:
+        return
+    good, judged, (lo, hi) = correct_match_rate(judgements)
+    verdicts = Counter(j["verdict"] for j in judgements)
+    print(f"\n## {title}\n")
+    print(table(["verdict", "listings"], [[v, str(verdicts[v])] for v in VERDICTS]))
+    print(
+        f"\nCorrect-match rate: {good}/{judged} = {pct(good, judged)} "
+        f"(95% interval {100 * lo:.0f} to {100 * hi:.0f}%)\n"
+    )
+    reasons = Counter(j["reason"] for j in judgements if j["verdict"] in ("wrong", "unclear"))
+    if reasons:
+        print(
+            table(
+                ["wrong or unclear because", "listings"],
+                [[k, str(v)] for k, v in reasons.most_common()],
+            )
+        )
 
 
 if __name__ == "__main__":

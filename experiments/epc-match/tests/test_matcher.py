@@ -133,17 +133,16 @@ class TestParseListingAddress:
 
 
 class TestGroupHomes:
-    def test_certificates_with_one_uprn_are_one_home_newest_first(self) -> None:
-        older = cert("old", "14 Quillon Road", uprn="4", date="2012-05-01")
-        newer = cert("new", "14 Quillon Road", uprn="4", date="2021-05-01")
+    def test_certificates_for_one_address_are_one_home_newest_first(self) -> None:
+        older = cert("old", "14, Quillon Road", uprn="4", date="2012-05-01")
+        newer = cert("new", "14 Quillon Rd", uprn="4", date="2021-05-01")
         (home,) = group_homes([older, newer])
         assert [c.certificate_number for c in home.certificates] == ["new", "old"]
-        assert home.key == "uprn:4"
 
-    def test_certificate_without_uprn_joins_its_home_by_address(self) -> None:
-        with_uprn = cert("a", "14 Quillon Road", uprn="4")
-        without = cert("b", "14, Quillon Rd")
-        assert len(group_homes([with_uprn, without])) == 1
+    def test_flats_sharing_the_buildings_uprn_stay_separate_homes(self) -> None:
+        ground = cert("g", "Ground Floor Flat", "2 Quillon Road", uprn="9")
+        first = cert("f", "First Floor Flat", "2 Quillon Road", uprn="9")
+        assert len(group_homes([ground, first])) == 2
 
     def test_flats_in_one_house_are_separate_homes(self) -> None:
         assert len(group_homes(POSTCODE_CERTS[:3])) == 3

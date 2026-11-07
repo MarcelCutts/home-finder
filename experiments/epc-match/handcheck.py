@@ -30,7 +30,7 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
-from report import RESULTS, load_records
+from report import NARROWED, RESULTS, load_records
 
 HERE = Path(__file__).resolve().parent
 INPUTS = HERE / "data" / "inputs"
@@ -109,7 +109,7 @@ def sheet_entry(index: int, record: dict[str, Any]) -> str:
             f"- {', '.join(cert['address_lines'])}, {cert['postcode']}; "
             f"lodged {cert['registration_date']}; band {cert['band']} "
             f"(SAP {d.get('energy_rating')}); {d.get('dwelling_type')}; "
-            f"habitable rooms {d.get('habitable_rooms')}; floor level {d.get('floor_level')}; "
+            f"habitable rooms {d.get('habitable_rooms')}; flat position {d.get('flat_position')}; "
             f"age band {d.get('construction_age_band')}; UPRN source {d.get('uprn_source')}"
         )
     return "\n".join(lines) + "\n"
@@ -119,13 +119,16 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--size", type=int, default=30)
     parser.add_argument("--seed", type=int, default=7)
+    parser.add_argument("--narrowed", action="store_true", help="sample narrow.py's matches")
     args = parser.parse_args(argv)
 
-    records = load_records(sorted(RESULTS.glob("*.jsonl")))
+    source, suffix = (NARROWED, "-narrowed") if args.narrowed else (RESULTS, "")
+    records = load_records(sorted(source.glob("*.jsonl")))
     sample = draw_sample(records, args.size, args.seed)
     OUT.mkdir(parents=True, exist_ok=True)
-    (OUT / "sheet.md").write_text("\n".join(sheet_entry(i, r) for i, r in enumerate(sample, 1)))
-    judgements = OUT / "judgements.csv"
+    sheet = "\n".join(sheet_entry(i, r) for i, r in enumerate(sample, 1))
+    (OUT / f"sheet{suffix}.md").write_text(sheet)
+    judgements = OUT / f"judgements{suffix}.csv"
     if judgements.exists():
         print(f"{judgements} exists; not overwriting it.")
     else:

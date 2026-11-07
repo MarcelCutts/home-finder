@@ -9,6 +9,7 @@ from report import (
     band_agreement,
     correct_match_rate,
     epc_floor_area,
+    has_conflicting_certificates,
     wilson_interval,
 )
 
@@ -133,3 +134,12 @@ class TestHandCheck:
         assert {r["evidence"] for r in first} == {"number", "flat"}
         assert all(r["outcome"] == "one" for r in first)
         assert len(first) == 11  # ten in proportion, plus the lone flat match
+
+
+def test_certificates_a_month_apart_in_different_bands_conflict() -> None:
+    def dated(*pairs: tuple[str, str]) -> dict:
+        return {"certificates": [{"registration_date": d, "band": b} for d, b in pairs]}
+
+    assert has_conflicting_certificates(dated(("2023-01-23", "C"), ("2023-01-23", "D")))
+    assert not has_conflicting_certificates(dated(("2023-01-23", "C"), ("2023-01-30", "C")))
+    assert not has_conflicting_certificates(dated(("2023-01-23", "C"), ("2012-11-28", "D")))

@@ -60,7 +60,12 @@ class CertificateDetail:
     """Current SAP score, 1-100+, behind the band."""
     dwelling_type: str | None
     habitable_rooms: int | None
-    floor_level: int | None
+    flat_position: int | None
+    """Where a flat sits in its block: 0 basement, 1 ground, 2 middle, 3 top floor.
+
+    Read from the certificates' own dwelling types ("Basement flat" is 0,
+    "Top-floor flat" 3); the register's code list doesn't cover it.
+    """
     registration_date: str | None
     uprn_source: str | None
     construction_age_band: str | None
@@ -96,7 +101,7 @@ def detail_from_certificate(number: str, data: dict[str, Any]) -> CertificateDet
         energy_rating=_integer(data.get("energy_rating_current")),
         dwelling_type=dwelling if isinstance(dwelling, str) else None,
         habitable_rooms=_integer(data.get("habitable_room_count")),
-        floor_level=_integer(flat.get("level")) if isinstance(flat, dict) else None,
+        flat_position=_integer(flat.get("level")) if isinstance(flat, dict) else None,
         registration_date=data.get("registration_date"),
         uprn_source=data.get("uprn_source"),
         construction_age_band=(parts[0] or {}).get("construction_age_band") if parts else None,
