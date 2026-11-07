@@ -7,7 +7,7 @@
 - **HTTP client**: `curl_cffi` with browser impersonation (a Chrome or Safari profile) — required for both search and detail pages due to Cloudflare TLS fingerprinting. Standard HTTP clients get 403s.
 - **Browser rotation**: One impersonation profile picked per area (switching mid-session is suspicious). Profile pool defined in scraper.
 - **Sort**: `newest_listings` — prioritizes recent adverts; normal collection continues through known pages within its bounds.
-- **Shared accommodation**: Listings matching flat share/house share/room patterns are silently dropped at scrape time (`_SHARED_ACCOMMODATION_PATTERNS`).
+- **Shared accommodation**: Listings matching flat share/house share/room patterns are dropped at scrape time (`_SHARED_ACCOMMODATION_PATTERNS`). Each one counts as a parse error, which marks the Zoopla scrape unhealthy and the run partial.
 
 ## Filter Quirks
 
