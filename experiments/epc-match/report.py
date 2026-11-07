@@ -24,12 +24,10 @@ from pathlib import Path
 from typing import Any
 
 from matcher import parse_listing_address
+from paths import HANDCHECK, NARROWED, RESULTS
 
-HERE = Path(__file__).resolve().parent
-RESULTS = HERE / "data" / "results"
-NARROWED = HERE / "data" / "narrowed"
-JUDGEMENTS = HERE / "data" / "handcheck" / "judgements.csv"
-NARROWED_JUDGEMENTS = HERE / "data" / "handcheck" / "judgements-narrowed.csv"
+JUDGEMENTS = HANDCHECK / "judgements.csv"
+NARROWED_JUDGEMENTS = HANDCHECK / "judgements-narrowed.csv"
 
 Record = dict[str, Any]
 
@@ -169,7 +167,7 @@ class CertificateSummary:
     """Homes whose certificates' floor areas differ by more than 10%."""
     implausible_area: int
     conflicting: int
-    """Homes with two certificates lodged within a month of each other in different bands:
+    """Homes with two certificates lodged within 31 days of each other in different bands:
     two dwellings sharing one address, or a corrected assessment."""
     median_age_years: float | None
     """Years from the newest certificate's lodgement to the listing snapshot."""
@@ -318,11 +316,12 @@ def candidate_bands(records: Iterable[Record]) -> tuple[int, int, int, int, int]
 
 
 def candidate_area_pairs(narrowed: Iterable[Record]) -> list[tuple[str, float, float]]:
-    """(source, listing m², median m² of the homes left) where rooms left several."""
+    """(source, listing m², median m² of the homes with the expected rooms), where rooms
+    left several candidates."""
     pairs = []
     for r in narrowed:
         listing_area = r["listing"].get("floor_area_sqm")
-        areas = [a for a in r.get("kept_floor_areas") or [] if plausible_area(a)]
+        areas = [a for a in r.get("matched_floor_areas") or [] if plausible_area(a)]
         if r["outcome"] != "ambiguous" or not areas or not plausible_area(listing_area):
             continue
         source = "floorplan" if r["listing"]["floor_area_source"] == "estimated" else "advert"
@@ -355,7 +354,12 @@ def rooms_offsets(
 VERDICTS = ("correct", "likely", "wrong", "unclear")
 
 
-def load_judgements(path: Path) -> list[dict[str, str]]:
+def load_judgements(path: Path, singles: Iterable[Record]) -> list[dict[str, str]]:
+    """Verdicts for listings that are still single matches in `singles`.
+
+    A rerun can change which listings are single matches; a verdict on a
+    listing that no longer is one is dropped, and said so, rather than counted.
+    """
     if not path.exists():
         return []
     with path.open() as f:
@@ -363,7 +367,18 @@ def load_judgements(path: Path) -> list[dict[str, str]]:
     for row in rows:
         if row["verdict"] not in VERDICTS:
             raise ValueError(f"unknown verdict {row['verdict']!r}")
-    return rows
+    current = {
+        (r["listing"]["dataset"], r["listing"]["unique_id"])
+        for r in singles
+        if r["outcome"] == "one"
+    }
+    kept = [row for row in rows if (row["dataset"], row["unique_id"]) in current]
+    if len(kept) < len(rows):
+        print(
+            f"(ignoring {len(rows) - len(kept)} verdicts in {path.name} "
+            "on listings no longer single)"
+        )
+    return kept
 
 
 def counted_correct(judgements: Iterable[dict[str, str]]) -> set[tuple[str, str]]:
@@ -403,8 +418,8 @@ def main() -> int:
         return 2
     records = load_records(paths)
     narrowed = load_records(sorted(NARROWED.glob("*.jsonl")))
-    judgements = load_judgements(JUDGEMENTS)
-    narrowed_judgements = load_judgements(NARROWED_JUDGEMENTS)
+    judgements = load_judgements(JUDGEMENTS, records)
+    narrowed_judgements = load_judgements(NARROWED_JUDGEMENTS, narrowed)
     counted = counted_correct([*judgements, *narrowed_judgements])
 
     print_coverage(records)
@@ -491,7 +506,7 @@ def print_certificates(records: Sequence[Record]) -> None:
         f"- {certs.several_certificates} homes have more than one certificate; "
         f"{certs.areas_disagree} of those disagree on floor area by more than 10%\n"
         f"- {certs.implausible_area} newest certificates have an implausible floor area\n"
-        f"- {certs.conflicting} homes have two certificates a month apart in different bands\n"
+        f"- {certs.conflicting} homes have two certificates within 31 days in different bands\n"
         f"- median age of the newest certificate: {age}"
     )
 
@@ -499,13 +514,16 @@ def print_certificates(records: Sequence[Record]) -> None:
 def print_narrowing(narrowed: Sequence[Record]) -> None:
     if not narrowed:
         return
-    counts = Counter(r["outcome"] for r in narrowed)
+    tried = [r for r in narrowed if r["rooms_known"]]
+    counts = Counter(r["outcome"] for r in tried)
     sizes = [r["homes_before"] for r in narrowed]
     print("\n## Narrowing ambiguous matches by rooms\n")
     print(
         f"- {len(narrowed)} ambiguous listings with {min(sizes)} to {max(sizes)} candidate "
-        f"homes tried: {counts['one']} ({pct(counts['one'], len(narrowed))}) left one home, "
-        f"{counts['ambiguous']} still ambiguous, {counts['none']} left none"
+        f"homes; {len(narrowed) - len(tried)} skipped because no candidate's certificate "
+        f"counts rooms\n"
+        f"- of the {len(tried)} tried, {counts['one']} ({pct(counts['one'], len(tried))}) "
+        f"left one home, {counts['ambiguous']} still ambiguous, {counts['none']} left none"
     )
 
 

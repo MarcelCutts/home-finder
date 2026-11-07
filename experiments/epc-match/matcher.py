@@ -112,6 +112,21 @@ def contains_phrase(text: str, phrase: str) -> bool:
     return f" {phrase} " in f" {text} "
 
 
+def contains_house_number(text: str, numbered: str) -> bool:
+    """True when `numbered` ("12 quillon road") appears with its number as a house number.
+
+    "Flat 12, Quillon Road" carries the same tokens, but its 12 is a flat.
+    """
+    padded, target = f" {text} ", f" {numbered} "
+    start = padded.find(target)
+    while start != -1:
+        before = padded[:start].split()
+        if not before or before[-1] not in _FLAT_WORDS:
+            return True
+        start = padded.find(target, start + 1)
+    return False
+
+
 # --- Listing addresses ----------------------------------------------------
 
 # A part with one of these words after its first is a street: "Quillon Street",
@@ -389,8 +404,10 @@ def match_address(address: ListingAddress, certificates: Sequence[Certificate]) 
 
     A street, number or flat the listing states but no certificate carries
     ends the match with no result: the listing's own words rule the
-    candidates out. A building name is softer, because certificates often
-    leave it out; it narrows only when some certificate has it.
+    candidates out. A building name is softer when there is a street,
+    because certificates often leave the name out: it narrows only when some
+    certificate has it. Without a street the building name is all there is,
+    so a name no certificate carries means no match.
     """
     if not certificates:
         return MatchResult(Outcome.NONE, reason=NoMatchReason.NO_CERTIFICATES)
@@ -417,7 +434,7 @@ def match_address(address: ListingAddress, certificates: Sequence[Certificate]) 
             return MatchResult(Outcome.NONE, reason=NoMatchReason.BUILDING_NOT_FOUND)
 
     if address.numbered:
-        numbered = [c for c in pool if contains_phrase(c.text, address.numbered)]
+        numbered = [c for c in pool if contains_house_number(c.text, address.numbered)]
         if not numbered:
             return MatchResult(Outcome.NONE, reason=NoMatchReason.NUMBER_NOT_FOUND)
         pool, evidence = numbered, Evidence.NUMBER
@@ -437,9 +454,10 @@ def match_listing(addresses: Sequence[str], certificates: Sequence[Certificate])
     """Match a home listed on several portals, each with its own address line.
 
     Each address is matched on its own. A single home wins over ambiguity,
-    ambiguity over no match, and more specific evidence breaks ties. Two
-    addresses that each pick a different single home make the listing
-    ambiguous.
+    and ambiguity over no match. Among single homes the most specific
+    evidence wins; among ambiguous results the fewest candidates, then the
+    most specific evidence. Two addresses that each pick a different single
+    home make the listing ambiguous.
     """
     parsed = [parse_listing_address(a) for a in dict.fromkeys(addresses)]
     usable = [p for p in parsed if not p.is_empty]

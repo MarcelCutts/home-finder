@@ -6,10 +6,12 @@ Usage, from this directory, after `run.py`:
 
 Writes, under the gitignored data/handcheck/:
 
-- sheet.md: for each sampled single match, what the listing says (from the
-  database copy only) beside what the certificate says;
-- judgements.csv: one row per sampled listing, verdict and reason blank,
-  for a person to fill in. `report.py` reads it back.
+- sheet.md (sheet-narrowed.md with --narrowed): for each sampled single
+  match, what the listing says (from the database copy only) beside what the
+  certificate says;
+- judgements.csv (judgements-narrowed.csv): one row per sampled listing,
+  verdict and reason blank, for a person to fill in. `report.py` reads it
+  back. An existing file is never overwritten.
 
 Floor areas are left off the sheet so that judging whether a match is the
 right home never leans on the floor-area agreement being measured.
@@ -30,14 +32,10 @@ import json
 import random
 import sqlite3
 from collections.abc import Sequence
-from pathlib import Path
 from typing import Any
 
-from report import NARROWED, RESULTS, load_records
-
-HERE = Path(__file__).resolve().parent
-INPUTS = HERE / "data" / "inputs"
-OUT = HERE / "data" / "handcheck"
+from paths import HANDCHECK, INPUTS, NARROWED, RESULTS
+from report import load_records
 
 
 def draw_sample(records: Sequence[dict[str, Any]], size: int, seed: int) -> list[dict[str, Any]]:
@@ -65,7 +63,7 @@ def listing_context(dataset: str, unique_id: str) -> dict[str, Any]:
     with sqlite3.connect(uri, uri=True) as conn:
         conn.row_factory = sqlite3.Row
         prop = conn.execute(
-            "SELECT title, description, price_pcm FROM properties WHERE unique_id = ?",
+            "SELECT title, description FROM properties WHERE unique_id = ?",
             (unique_id,),
         ).fetchone()
         analysis = conn.execute(
@@ -128,10 +126,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     source, suffix = (NARROWED, "-narrowed") if args.narrowed else (RESULTS, "")
     records = load_records(sorted(source.glob("*.jsonl")))
     sample = draw_sample(records, args.size, args.seed)
-    OUT.mkdir(parents=True, exist_ok=True)
+    HANDCHECK.mkdir(parents=True, exist_ok=True)
     sheet = "\n".join(sheet_entry(i, r) for i, r in enumerate(sample, 1))
-    (OUT / f"sheet{suffix}.md").write_text(sheet)
-    judgements = OUT / f"judgements{suffix}.csv"
+    (HANDCHECK / f"sheet{suffix}.md").write_text(sheet)
+    judgements = HANDCHECK / f"judgements{suffix}.csv"
     if judgements.exists():
         print(f"{judgements} exists; not overwriting it.")
     else:
@@ -141,7 +139,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             for r in sample:
                 listing = r["listing"]
                 writer.writerow([listing["dataset"], listing["unique_id"], r["evidence"], "", ""])
-    print(f"Sampled {len(sample)} single matches into {OUT}")
+    print(f"Sampled {len(sample)} single matches into {HANDCHECK}")
     return 0
 
 

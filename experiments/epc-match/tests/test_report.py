@@ -12,6 +12,7 @@ from report import (
     coverage_rows,
     epc_floor_area,
     has_conflicting_certificates,
+    load_judgements,
     wilson_interval,
 )
 
@@ -88,9 +89,12 @@ class TestFloorArea:
         narrowed = [
             {
                 **record("ambiguous", listing_area=50, area_source="estimated"),
-                "kept_floor_areas": [48, 52, 0, 60],  # 0 is dropped as implausible
+                "matched_floor_areas": [48, 52, 0, 60],  # 0 is dropped as implausible
             },
-            {**record("one", listing_area=50, area_source="estimated"), "kept_floor_areas": [50]},
+            {
+                **record("one", listing_area=50, area_source="estimated"),
+                "matched_floor_areas": [50],
+            },
         ]
         assert candidate_area_pairs(narrowed) == [("floorplan", 50.0, 52.0)]
 
@@ -130,13 +134,14 @@ class TestBandsAndAmbiguity:
 
 
 class TestCertificates:
-    def test_certificates_a_month_apart_in_different_bands_conflict(self) -> None:
+    def test_certificates_within_31_days_in_different_bands_conflict(self) -> None:
         def lodged(*pairs: tuple[str, str]) -> dict:
             return {"certificates": [{"registration_date": d, "band": b} for d, b in pairs]}
 
         assert has_conflicting_certificates(lodged(("2023-01-23", "C"), ("2023-01-23", "D")))
+        assert has_conflicting_certificates(lodged(("2023-01-03", "C"), ("2023-01-23", "D")))
         assert not has_conflicting_certificates(lodged(("2023-01-23", "C"), ("2023-01-30", "C")))
-        assert not has_conflicting_certificates(lodged(("2023-01-23", "C"), ("2012-11-28", "D")))
+        assert not has_conflicting_certificates(lodged(("2023-01-23", "C"), ("2023-03-04", "D")))
 
 
 class TestCoverage:
@@ -155,6 +160,16 @@ class TestCoverage:
 
 
 class TestHandCheckRate:
+    def test_verdicts_on_listings_no_longer_single_are_dropped(self, tmp_path) -> None:
+        path = tmp_path / "judgements.csv"
+        path.write_text(
+            "dataset,unique_id,evidence,verdict,reason\n"
+            "fixture,a,number,correct,flat number\n"
+            "fixture,b,number,likely,rooms fit\n"
+        )
+        singles = [record(uid="a"), record("ambiguous", uid="b")]
+        assert [j["unique_id"] for j in load_judgements(path, singles)] == ["a"]
+
     def test_unclear_verdicts_are_left_out_of_the_rate(self) -> None:
         judgements = [
             {"verdict": "correct"},

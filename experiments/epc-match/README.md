@@ -11,14 +11,15 @@ and house or flat number picks out a single home for **4 of 1,109 listings
 (0.4%)**. 91% are ambiguous and 9% match nothing. Listings rarely give a
 number: 6 give a flat number and 104 a house or building number, and 73% give
 only a postcode district. Adding bedrooms (against the certificate's
-habitable rooms) brings the total to **12 single matches (1.1%)**.
+habitable rooms) brings the total to **10 single matches (0.9%)**.
 
-**The matches that are made look right, but few can be proven.** All 12 were
-hand-checked against what the database already holds. 9 are consistent with
-the listing, 1 is contradicted and 2 can't be told: a **correct-match rate of
-9/10 (90%, 95% interval 60–98%)** of those decided. Only 2 of the 12 are
-confirmed by a specific fact (a flat number, a lettered house number); the
-rest are consistent without proof.
+**The matches that are made look right, but few can be proven.** Only 10
+single matches exist, so all 10 were hand-checked rather than a sample of 30.
+The **correct-match rate is 9 of the 9 decided (95% interval 70–100%)**,
+with one more that can't be told. But **only 2 of the 10 are proven** by a
+fact naming the dwelling (a flat number, a lettered house number); the other
+7 are consistent with the listing without proof. Two of those 7 are the same
+flat, listed twice, so per home it is 8 of 8.
 
 **EPC floor area is good enough to show as an approximate size, but not as an
 exact one, and it can't be attached to listings at this coverage.** A flat
@@ -43,65 +44,77 @@ rental market. See [Licence](#can-renters-be-shown-the-rating-and-floor-area).
 | February export | 1,016 | 238 | 5 | 99 | 143 | 24 |
 
 "Floor area" is the app's floorplan reading or the portal's advertised figure.
-"Advert band" is the EPC band the app's analysis read from the advert.
-Titles were checked as a second address source; they add a number for one
-listing and no new postcodes.
+"Advert band" is the EPC band the app's analysis read from the advert. A
+listing with both a flat and a house number counts under flat number.
 
 ### Outcomes
 
 | | listings | one home | ambiguous | no match |
 |---|---|---|---|---|
-| February | 1,016 | 3 | 919 (90%) | 94 (9%) |
+| February | 1,016 | 3 | 918 (90%) | 95 (9%) |
 | October | 93 | 1 | 86 (92%) | 6 (6%) |
-| **all** | **1,109** | **4 (0.4%)** | **1,005 (91%)** | **100 (9%)** |
-| with a full postcode | 299 | 4 (1%) | 251 (84%) | 44 (15%) |
+| **all** | **1,109** | **4 (0.4%)** | **1,004 (91%)** | **101 (9%)** |
+| with a full postcode | 299 | 4 (1%) | 250 (84%) | 45 (15%) |
 | district only | 810 | 0 | 754 (93%) | 56 (7%) |
 
 By the most specific fact used: street only, 772 (all ambiguous); building
-name, 167 (all ambiguous); house or building number, 69 (3 single); flat
+name, 167 (all ambiguous); house or building number, 68 (3 single); flat
 number, 1 (single).
 
 Ambiguous listings have a median of **118 candidate homes** (quartiles 48 to
 304): every certified home on the street at that postcode, or on the whole
-street in that district. Only 7 have just two.
+street in that district. Only 6 have just two.
 
-No match: 50 had no certificates to match against (36 district-only listings
-whose street search found nothing in the district, 10 with no usable district
-or street, 4 postcodes with no certificates), 34 gave a number no certificate
-carries, 13 a street not at their postcode, 3 a building not found.
+No match:
+
+- 50 had no certificates to match against: 36 district-only listings whose
+  street search found nothing in the district, 10 with no usable district or
+  street, and 4 postcodes with no certificates;
+- 35 gave a house number no certificate carries (24 of them are one block,
+  below);
+- 13 gave a street no candidate certificate carries (11 at their postcode, 2
+  in their district);
+- 3 gave only a building name no certificate carries.
 
 ### Narrowing by rooms
 
 A certificate counts habitable rooms: bedrooms, living and dining rooms,
-studies. All 4 strict matches have rooms equal to bedrooms plus one. For the
-119 ambiguous listings with 25 or fewer candidates, keeping only the
-candidates with bedrooms plus one rooms left **one home for 8 (7%)**, several
-for 104 and none for 7. Uniqueness here is among certified homes only, but
-a home offered for rent must have an EPC, so the listing's home should be
-among the candidates if its street and postcode are right.
+studies. All 4 strict matches have rooms equal to bedrooms plus one. 126
+ambiguous listings have 25 or fewer candidates. For 8 of them no candidate's
+certificate counts rooms, so the rule can't apply. For the other 118, the
+candidates left are those with bedrooms plus one rooms, plus any whose rooms
+aren't counted, since those can't be ruled out. That left **one home for 6
+(5%)**, several for 106 and none for 6.
+
+Uniqueness is among certified homes only. But a home offered for rent must
+have an EPC, so the listing's home should be among the candidates if its
+street and postcode are right.
 
 ### Hand-check
 
-All 12 single matches, laid out against the listing's title, address variants,
+All 10 single matches, laid out against the listing's title, address variants,
 bedrooms, the app's property type, floor and photo notes, and the advert text
 where the database kept it (October only). Floor areas were left off the sheet
 so the verdict couldn't lean on the agreement being measured.
 
-| | correct | likely | wrong | unclear | correct-match rate |
+| | correct (proven) | likely | wrong | unclear | correct-match rate |
 |---|---|---|---|---|---|
 | strict (postcode, street, number) | 2 | 1 | 0 | 1 | 3/3 |
-| narrowed by rooms | 0 | 6 | 1 | 1 | 6/7 |
-| **both** | **2** | **7** | **1** | **2** | **9/10 = 90% (60–98%)** |
+| narrowed by rooms | 0 | 6 | 0 | 0 | 6/6 |
+| **both** | **2** | **7** | **0** | **1** | **9/9 (70–100%)** |
 
-*Correct*: a fact naming the dwelling ties them (flat number; a lettered house
-number), and type, rooms and age agree; one also matched the advert's band.
-*Likely*: consistent on dwelling type, rooms, floor and build age, with
+*Correct*: a fact naming the dwelling ties them (a flat number; a lettered
+house number), and type, rooms and age agree; one also matched the advert's
+band. *Likely*: consistent on dwelling type, rooms, floor and build age, with
 nothing specific. A building number alone counts as likely, since a converted
-house holds several flats. *Wrong*: the certificate's build age (1976–82) contradicts
-the listing's period conversion. *Unclear*: two dwellings share one address
-(certificates lodged the same day disagree), and a listing with no photos or
-text to check against. Two of the narrowed matches are the same flat, listed
-twice on OpenRent a week apart.
+house holds several flats. *Unclear*: two dwellings share one address
+(certificates for it lodged the same day disagree). Two of the narrowed
+matches are the same flat, listed twice on OpenRent a week apart.
+
+Before the narrowing fix two more narrowed matches existed. In both, some
+candidates' certificates didn't count rooms and had been dropped; one was
+judged wrong (the certificate's 1976–82 build age contradicted a period
+conversion). Those verdicts are no longer counted.
 
 ### Floor area
 
@@ -117,13 +130,13 @@ The repeat-certificate rows are a seeded sample of 300 of the 66,263 homes
 with two or more certificates in the searches made here. They test the EPC
 figure without any listing match. Some of the difference is real (extensions,
 conversions), and some pairs may be two dwellings sharing an address.
-Certificates lodged in 2008–09 don't state a total area; for those the
-per-floor areas are summed, which on certificates that state both is within
-1% of the total 93% of the time.
+Some 2008–09 certificates (SAP schemas 12 and 13) don't state a total area;
+for those the per-floor areas are summed. Across the 2,635 certificates
+fetched here that state both, that sum is within 1% of the total for 93%.
 
-The last row asks whether, when rooms leave several candidates, their median
-floor area would do as an estimate. Half the time it lands within 10%, which
-is too loose to show as a home's size.
+The last row asks whether, when rooms leave several candidates, the median
+floor area of those with the right rooms would do as an estimate. Half the
+time it lands within 10%, which is too loose to show as a home's size.
 
 ### Rating
 
@@ -147,6 +160,12 @@ building-level band is not the home's own band.
   hand-check, so certificates are grouped by normalised address instead.
 - **Several dwellings at one address.** Certificates for the same address,
   lodged the same day, in different bands.
+- **A house number that is really a flat number.** "Flat 12" on a street
+  carries the same tokens as "12" on that street; the matcher now requires a
+  house number not to follow "flat".
+
+These came from inspecting the results rather than from a script:
+
 - **Conversions keep the house's address.** A ground floor flat's address can
   carry the pre-conversion house's certificate, with the whole house's floor
   area and rooms.
@@ -154,16 +173,16 @@ building-level band is not the home's own band.
   build-to-rent block, listed 24 times in February, has no certificate under
   its own number anywhere on its street, nor under its building name.
 - **The portal's district is wrong.** 5 district-only listings found their
-  street only in another district.
+  street only in another district (this count is in the report).
 - **Listing data errors.** One advertised floor area was 423.9 m² for a flat
   whose certificates say 44–53 m², likely square feet stored as square
-  metres. Agents' and the app's property type sometimes contradict the
-  certificate's build age.
+  metres. The app's property type sometimes contradicts the certificate's
+  build age.
 
 ## What would change the answer
 
 - **The flat number.** Both matches made on a flat or lettered house number
-  were confirmed. A renter who asks the agent for the full address, or enters it
+  were proven. A renter who asks the agent for the full address, or enters it
   after booking a viewing, would get a reliable rating and size. That's a
   user-supplied lookup, not a background fill.
 - **The advert's own EPC.** Rental adverts in commercial media must show the
@@ -224,21 +243,24 @@ postcode. No listing has a UPRN.
 - district only: a search on each street or building name, in the councils
   the district covers (from postcodes.io), kept to that district.
 
-744 searches returned 297,717 certificates; 2,811 full certificates were
-fetched for matches, narrowing and the retest.
+744 search result pages returned 297,717 certificates; 2,811 full
+certificates were fetched for matches, narrowing and the retest.
 
 **Matching** (`matcher.py`). Candidates are narrowed one listing fact at a
 time: street, building, house or building number, flat. A street, number or
-flat the listing states but no certificate carries means no match. A building
-name narrows only when some certificate carries it. Certificates are grouped
-into homes by normalised address and postcode; one home left is a match,
-several ambiguous. If two portals' addresses picked different homes, the
-listing would be ambiguous; none did.
+flat the listing states but no certificate carries means no match. With a
+street, a building name narrows only when some certificate carries it; with
+no street, a building name no certificate carries means no match. Certificates
+are grouped into homes by normalised address and postcode; one home left is a
+single match, several ambiguous. If two portals' addresses picked different
+single homes, the listing would be ambiguous; none did.
 
 **Narrowing** (`narrow.py`), **hand-check** (`handcheck.py`) and **retest**
 (`retest.py`) as described above. `report.py` prints the coverage, outcome,
-narrowing, hand-check, floor-area and rating numbers; `retest.py` prints the
-repeat-certificate and shared-UPRN ones.
+narrowing, hand-check, floor-area and rating numbers, and drops verdicts on
+listings that are no longer single matches. `retest.py` prints the
+repeat-certificate, per-floor-sum and shared-UPRN numbers. Figures listed
+above as coming from inspection were counted by hand from the results.
 
 ## Reproduce
 
@@ -251,7 +273,7 @@ uv run python run.py
 ```
 
 ```bash
-uv run python narrow.py --max-homes 25
+uv run python narrow.py
 ```
 
 ```bash

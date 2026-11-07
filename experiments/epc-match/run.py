@@ -38,13 +38,8 @@ from matcher import (
     outcode_of,
     parse_listing_address,
 )
+from paths import CACHE, DATASETS, RESULTS
 
-HERE = Path(__file__).resolve().parent
-DATA = HERE / "data"
-DATASETS = {
-    "october": DATA / "inputs" / "october.db",
-    "february": DATA / "inputs" / "february.db",
-}
 POSTCODES_IO = "https://api.postcodes.io"
 T = TypeVar("T")
 
@@ -152,22 +147,20 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(error, file=sys.stderr)
         return 2
 
-    cache_dir = DATA / "cache"
-    out_dir = DATA / "results"
-    out_dir.mkdir(parents=True, exist_ok=True)
-    with EpcApi(token, cache_dir) as api:
+    RESULTS.mkdir(parents=True, exist_ok=True)
+    with EpcApi(token, CACHE) as api:
         for dataset in args.dataset or sorted(DATASETS):
             listings = load_listings(DATASETS[dataset], dataset)[: args.limit]
             queries = {
                 json.dumps(query, sort_keys=True): query
                 for listing in listings
-                for query in search_queries(listing, cache_dir)[1]
+                for query in search_queries(listing, CACHE)[1]
             }
             in_parallel(api.search, queries.values(), args.workers, f"{dataset} searches")
 
             matches = []
             for listing in listings:
-                candidates = candidate_certificates(listing, api, cache_dir)
+                candidates = candidate_certificates(listing, api, CACHE)
                 matches.append(
                     (listing, candidates, match_listing(listing.addresses, candidates.certificates))
                 )
@@ -179,7 +172,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             ]
             in_parallel(api.certificate, singles, args.workers, f"{dataset} certificates")
 
-            out_file = out_dir / f"{dataset}.jsonl"
+            out_file = RESULTS / f"{dataset}.jsonl"
             with out_file.open("w") as out:
                 for listing, candidates, result in matches:
                     out.write(json.dumps(result_record(listing, candidates, result, api)) + "\n")

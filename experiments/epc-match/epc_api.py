@@ -66,8 +66,9 @@ class CertificateDetail:
     flat_position: int | None
     """Where a flat sits in its block: 0 basement, 1 ground, 2 middle, 3 top floor.
 
-    Read from the certificates' own dwelling types ("Basement flat" is 0,
-    "Top-floor flat" 3); the register's code list doesn't cover it.
+    From `sap_flat_details.level`. The register's code list doesn't cover it;
+    the meaning of the codes was read off the certificates' own dwelling
+    types ("Basement flat" is 0, "Top-floor flat" 3).
     """
     registration_date: str | None
     uprn_source: str | None
@@ -99,7 +100,7 @@ def detail_from_certificate(number: str, data: dict[str, Any]) -> CertificateDet
     flat = data.get("sap_flat_details")
     parts = data.get("sap_building_parts") or []
     total = _number(data.get("total_floor_area"))
-    summed = total is None and (total := _floor_area_from_parts(parts)) is not None
+    summed = total is None and (total := floor_area_from_parts(parts)) is not None
     return CertificateDetail(
         certificate_number=number,
         total_floor_area=total,
@@ -115,11 +116,10 @@ def detail_from_certificate(number: str, data: dict[str, Any]) -> CertificateDet
     )
 
 
-def _floor_area_from_parts(parts: list[dict[str, Any]]) -> float | None:
+def floor_area_from_parts(parts: list[dict[str, Any]]) -> float | None:
     """Sum each building part's floor areas and room in the roof.
 
-    Of the 2,326 certificates fetched here that state both, the sum is within
-    1% of the stated total for 93% and within 5% for 99%.
+    `retest.py` checks this against certificates that state both.
     """
     areas = []
     for part in parts:

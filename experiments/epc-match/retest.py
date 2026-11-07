@@ -28,22 +28,46 @@ from epc_api import (
     EpcApi,
     MissingTokenError,
     certificate_from_search,
+    floor_area_from_parts,
     load_token,
 )
 from matcher import Certificate, Home, group_homes
+from paths import CACHE
 from report import pct, plausible_area
-from run import DATA, in_parallel
+from run import in_parallel
 
 
 def cached_certificates() -> list[Certificate]:
     """Every certificate in the cached search answers, once each."""
     found: dict[str, Certificate] = {}
-    for path in sorted((DATA / "cache" / "search").glob("*.json")):
+    for path in sorted((CACHE / "search").glob("*.json")):
         body = json.loads(path.read_text()).get("body") or {}
         for row in body.get("data") or []:
             cert = certificate_from_search(row)
             found[cert.certificate_number] = cert
     return list(found.values())
+
+
+def floor_sum_check() -> tuple[int, int, int]:
+    """(certificates stating a total and per-floor areas, sums within 1% of it, within 5%).
+
+    Backs `epc_api`'s fallback: summing the floors of a certificate that
+    leaves the total out.
+    """
+    n = within_1 = within_5 = 0
+    for path in sorted((CACHE / "certificate").glob("*.json")):
+        data = (json.loads(path.read_text()).get("body") or {}).get("data")
+        if not isinstance(data, dict):
+            continue
+        stated = data.get("total_floor_area")
+        summed = floor_area_from_parts(data.get("sap_building_parts") or [])
+        if not isinstance(stated, int | float) or not stated or summed is None:
+            continue
+        n += 1
+        off = abs(summed - stated) / stated
+        within_1 += off <= 0.01
+        within_5 += off <= 0.05
+    return n, within_1, within_5
 
 
 _UNIT = re.compile(r"\b(?:flat|floor|apartment|unit|maisonette)\b")
@@ -140,10 +164,15 @@ def main(argv: Sequence[str] | None = None) -> int:
         f"{len(certificates)} certificates in the cached searches; {several} UPRNs cover two "
         f"or more addresses, {units} of them two or more that name a unit"
     )
+    n, within_1, within_5 = floor_sum_check()
+    print(
+        f"{n} fetched certificates state both a total and per-floor areas; the floors sum to "
+        f"within 1% of the total for {pct(within_1, n)}, within 5% for {pct(within_5, n)}"
+    )
     homes = homes_with_repeats(certificates)
     sample = random.Random(args.seed).sample(homes, min(args.homes, len(homes)))
     pairs = [(h.certificates[0], h.certificates[1]) for h in sample]
-    with EpcApi(token, DATA / "cache") as api:
+    with EpcApi(token, CACHE) as api:
         numbers = [c.certificate_number for pair in pairs for c in pair]
         in_parallel(api.certificate, numbers, args.workers, "certificates")
         repeats = [

@@ -127,7 +127,7 @@ class TestParseListingAddress:
         assert parse_listing_address(address).is_empty
 
     def test_an_area_without_a_street_is_read_as_a_building(self) -> None:
-        # It narrows only if some certificate carries the name (see TestMatchAddress).
+        # With no street, a name no certificate carries means no match (TestMatchAddress).
         assert parse_listing_address("Upper Brack, London") == ListingAddress(
             buildings=("upper brack",)
         )
@@ -158,6 +158,7 @@ class TestMatchAddress:
 
     def test_abbreviated_street_still_matches(self) -> None:
         result = match_address(parse_listing_address("16 Quillon Road"), POSTCODE_CERTS)
+        assert result.outcome is Outcome.ONE
         assert result.homes[0].newest.certificate_number == "c5"
 
     def test_street_alone_is_ambiguous_on_a_shared_postcode(self) -> None:
@@ -236,3 +237,16 @@ class TestMatchListing:
         result = match_listing(["London, Q9"], POSTCODE_CERTS)
         assert result.outcome is Outcome.NONE
         assert result.reason is NoMatchReason.NO_ADDRESS
+
+
+class TestHouseNumbers:
+    def test_a_flat_number_is_not_a_house_number(self) -> None:
+        certs = [cert("f12", "Flat 12, Quillon Road"), cert("h14", "14 Quillon Road")]
+        result = match_address(parse_listing_address("12 Quillon Road"), certs)
+        assert result.reason is NoMatchReason.NUMBER_NOT_FOUND
+
+    def test_a_house_number_after_a_flat_still_counts(self) -> None:
+        certs = [cert("a", "Flat 2, 12 Quillon Road"), cert("b", "Flat 12, Quillon Road")]
+        result = match_address(parse_listing_address("12 Quillon Road"), certs)
+        assert result.outcome is Outcome.ONE
+        assert result.homes[0].newest.certificate_number == "a"
