@@ -5,11 +5,13 @@ from itertools import combinations
 from unittest.mock import AsyncMock, Mock
 
 import pytest
+from pydantic import SecretStr
 
 from home_finder import main as cli
 from home_finder.config import Settings, new_runtime_analysis_config
 
 MODES = (
+    "--check-config",
     "--dry-run",
     "--scrape-only",
     "--backfill-commute",
@@ -21,19 +23,24 @@ MODES = (
 )
 
 
+@pytest.fixture(autouse=True)
+def _isolate_cli_logging(monkeypatch):
+    """Do not bind global cached loggers to this test's temporary capture streams."""
+    monkeypatch.setattr(cli, "configure_logging", Mock())
+
+
 @pytest.fixture
 def effects(monkeypatch):
     settings = Settings(
         _env_file=None,
         analysis_config=new_runtime_analysis_config(),
         database_path=":memory:",
-        telegram_bot_token="",
-        telegram_chat_id=0,
+        telegram_bot_token="123456:offline-fixture",
+        telegram_chat_id=123456,
         anthropic_api_key="",
     )
     effects = {"settings": Mock(return_value=settings)}
     monkeypatch.setattr(cli, "Settings", effects["settings"])
-    monkeypatch.setattr(cli, "configure_logging", Mock())
     monkeypatch.setattr(cli, "logger", Mock())
     for name in (
         "run_pipeline",
@@ -84,6 +91,8 @@ def test_modes_are_exclusive_before_initialization(monkeypatch, effects, flags, 
         ["--max-per-scraper", "-1"],
         ["--scrapers", ""],
         ["--scrapers", "openrent,typo"],
+        ["--check-config", "--scrapers", "openrent"],
+        ["--check-config", "--max-per-scraper", "1"],
     ],
 )
 def test_orphan_or_ignored_modifiers_fail_before_initialization(monkeypatch, effects, flags):
@@ -192,3 +201,121 @@ def test_help_has_no_initialization_effects(monkeypatch, effects, capsys):
     assert exc.value.code == 0
     assert "--with-pipeline" in capsys.readouterr().out
     assert all(not mock.called for mock in calls.values())
+
+
+def test_config_check_reports_missing_prerequisites_without_starting_work(
+    monkeypatch, effects, capsys, tmp_path
+):
+    settings, calls = effects
+    settings.telegram_bot_token = SecretStr("")
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("sys.argv", ["home-finder", "--check-config"])
+    cli.main()
+    output = capsys.readouterr().out
+    assert "No .env in the current directory" in output
+    assert "Dashboard: unavailable" in output
+    assert "Quality analysis: skipped" in output
+    assert "Map tiles: disabled" in output
+    assert "unverified" in output
+    assert {name for name, mock in calls.items() if mock.called} == {"settings"}
+    assert not list(tmp_path.iterdir())
+
+
+@pytest.mark.parametrize("flags", [[], ["--serve", "--with-pipeline"]])
+@pytest.mark.parametrize("missing", ["token", "chat"])
+def test_notifying_modes_require_recipient_before_any_work(monkeypatch, effects, flags, missing):
+    settings, calls = effects
+    if missing == "token":
+        settings.telegram_bot_token = SecretStr("")
+    else:
+        settings.telegram_chat_id = 0
+    monkeypatch.setattr("sys.argv", ["home-finder", *flags])
+    with pytest.raises(SystemExit) as exc:
+        cli.main()
+    assert exc.value.code == 2
+    assert {name for name, mock in calls.items() if mock.called} == {"settings"}
+
+
+@pytest.mark.parametrize(
+    "flags,entrypoint", [(["--dry-run"], "run_pipeline"), (["--scrape-only"], "run_scrape_only")]
+)
+def test_non_notifying_collection_needs_no_telegram(monkeypatch, effects, flags, entrypoint):
+    settings, calls = effects
+    settings.telegram_bot_token = SecretStr("")
+    settings.telegram_chat_id = 0
+    monkeypatch.setattr("sys.argv", ["home-finder", *flags])
+    cli.main()
+    calls[entrypoint].assert_awaited_once()
+
+
+@pytest.mark.parametrize(
+    "assignment,field",
+    [
+        ("HOME_FINDER_MIN_PRICE=3000", "min_price"),
+        ("HOME_FINDER_MIN_BEDROOMS=3", "min_bedrooms"),
+        ("HOME_FINDER_SEARCH_AREAS=private-invalid-value", "search_areas"),
+        ("HOME_FINDER_FURNISH_TYPES=private-invalid-value", "furnish_types"),
+    ],
+)
+def test_config_errors_identify_which_search_setting_to_fix(
+    monkeypatch, tmp_path, assignment, field
+):
+    env_file = tmp_path / ".env"
+    env_file.write_text(assignment)
+    monkeypatch.setattr("sys.argv", ["home-finder", "--check-config", "--env-file", str(env_file)])
+    logger = Mock()
+    monkeypatch.setattr(cli, "logger", logger)
+    with pytest.raises(SystemExit):
+        cli.main()
+    assert field in logger.error.call_args.kwargs["error"]
+    assert "private-invalid-value" not in str(logger.error.call_args)
+
+
+def test_explicit_env_file_is_loaded_by_the_cli(monkeypatch, capsys, tmp_path):
+    env_file = tmp_path / "private.env"
+    env_file.write_text(
+        "HOME_FINDER_WEB_OWNER_PASSWORD=private-password-long-enough\n"
+        "HOME_FINDER_ANTHROPIC_API_KEY=private-key\n"
+        "HOME_FINDER_MAX_INITIAL_ANALYSES_PER_RUN=7\n"
+    )
+    monkeypatch.setattr("sys.argv", ["home-finder", "--check-config", "--env-file", str(env_file)])
+    cli.main()
+    output = capsys.readouterr().out
+    assert "Dashboard: owner access configured" in output
+    assert "Quality analysis: deferred; requires explicit ANALYSIS_SPEND_POLICY" in output
+    assert "7 initial" in output
+    assert "private-password-long-enough" not in output
+    assert "private-key" not in output
+    assert list(tmp_path.iterdir()) == [env_file]
+
+
+def test_missing_explicit_env_file_is_not_silently_ignored(monkeypatch, effects, tmp_path):
+    _, calls = effects
+    monkeypatch.setattr("sys.argv", ["home-finder", "--env-file", str(tmp_path / "missing")])
+    with pytest.raises(SystemExit) as exc:
+        cli.main()
+    assert exc.value.code == 2
+    assert all(not mock.called for mock in calls.values())
+
+
+@pytest.mark.parametrize(
+    "assignment",
+    [
+        "HOME_FINDER_TELEGRAM_CHAT_ID=private-invalid-value",
+        'HOME_FINDER_ANALYSIS_SPEND_POLICY={"private-invalid-value":',
+        "HOME_FINDER_MIN_PRICE=3000\nHOME_FINDER_ANTHROPIC_API_KEY=private-invalid-value",
+    ],
+)
+def test_invalid_configuration_logs_no_values_or_tracebacks(monkeypatch, tmp_path, assignment):
+    env_file = tmp_path / ".env"
+    env_file.write_text(assignment)
+    monkeypatch.setattr("sys.argv", ["home-finder", "--env-file", str(env_file), "--check-config"])
+    logger = Mock()
+    monkeypatch.setattr(cli, "logger", logger)
+    with pytest.raises(SystemExit) as exc:
+        cli.main()
+    assert exc.value.code == 1
+    logger.error.assert_called_once()
+    assert "private-invalid-value" not in str(logger.error.call_args)
+    assert "exc_info" not in logger.error.call_args.kwargs
+    assert "default factory" not in logger.error.call_args.kwargs["error"]

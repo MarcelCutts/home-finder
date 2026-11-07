@@ -197,7 +197,7 @@ def test_failed_authentication_is_rate_limited_and_recovers(client, monkeypatch)
 
 @pytest.mark.parametrize("failed_path", ["/", "/telegram/webhook"])
 def test_anonymous_peer_limit_cannot_lock_out_owner_or_telegram(client, failed_path):
-    client.app.state.settings.telegram_webhook_secret = "test-secret"
+    client.app.state.settings.telegram_webhook_secret = SecretStr("test-secret")
     for _ in range(10):
         response = client.request("POST" if "webhook" in failed_path else "GET", failed_path)
         assert response.status_code in {401, 403}
@@ -273,7 +273,7 @@ def test_concurrent_owner_mutations_commit_separate_events(client, property_id):
 
 
 def test_webhook_needs_secret_in_full_app_even_with_owner_credentials(client):
-    client.app.state.settings.telegram_webhook_secret = "test-secret"
+    client.app.state.settings.telegram_webhook_secret = SecretStr("test-secret")
     with patch(
         "home_finder.web.telegram_webhook._answer_callback", new_callable=AsyncMock
     ) as answer:
@@ -298,7 +298,7 @@ def test_webhook_needs_secret_in_full_app_even_with_owner_credentials(client):
 
 def test_concurrent_callback_retries_commit_once(client, property_id):
     settings = client.app.state.settings
-    settings.telegram_webhook_secret = "test-secret"
+    settings.telegram_webhook_secret = SecretStr("test-secret")
     settings.telegram_chat_id = 123
     update = {
         "update_id": 1,
