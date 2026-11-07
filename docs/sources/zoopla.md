@@ -29,7 +29,7 @@ Three extraction methods tried in order: `__NEXT_DATA__` JSON, RSC taxonomy payl
 ## Pipeline Implications
 
 - **Early-stop**: Not used. The scraper sorts newest first (`results_sort=newest_listings`) and accepts `known_source_ids`, but the pipeline passes none (`pipeline/collection.py`), so collection continues through known pages within its bounds.
-- **Dedup**: Full postcodes and coordinates available at scrape time → can cross-match before enrichment.
+- **Dedup**: Full postcodes and coordinates available at scrape time. Matching still runs only after detail enrichment, as it does for every source.
 - **Image priority**: Highest (4) — Zoopla CDN images are typically highest resolution.
 - **Quality analysis**: Images downloaded locally via curl_cffi and sent as base64 (Anthropic's servers can't fetch from zoocdn.com directly).
 - **Floorplan gate**: Zoopla has dedicated floorplan media type — no exemption needed.

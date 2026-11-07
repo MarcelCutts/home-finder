@@ -5,7 +5,7 @@
 ## Key Decisions
 
 - **HTTP client**: `curl_cffi` with Chrome impersonation — required for both search and detail pages due to TLS fingerprinting detection.
-- **Proxy support**: Only scraper that accepts `proxy_url` config for geo-restricted access. Proxy is also passed to the detail fetcher.
+- **Proxy support**: Accepts `proxy_url` for geo-restricted access, as the OpenRent and Zoopla scrapers do. The proxy is also passed to the detail fetcher's `curl_cffi` requests; Rightmove does not use it.
 - **Sort**: "Recent" by update date — prioritizes updated adverts; normal collection continues through known pages within its bounds.
 
 ## Filter Quirks
@@ -31,4 +31,4 @@ Search, detail enrichment, and availability share an explicit selector for the c
 - **Image priority**: Third (2) — after Zoopla and Rightmove.
 - **Quality analysis**: Images are read from the disk cache filled during detail enrichment and sent as base64; Anthropic never fetches the CDN. Image downloads in the detail fetcher use `curl_cffi` for anti-bot CDN.
 - **Floorplan gate**: OnTheMarket has dedicated floorplan data — no exemption needed.
-- **Proxy**: Only scraper with proxy support for geo-restricted access.
+- **Proxy**: `proxy_url` applies to search and detail requests, as it does for OpenRent and Zoopla.

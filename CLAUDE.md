@@ -69,7 +69,7 @@ uv run mypy src                       # Type check (strict mode)
 
 ## Environment Setup
 
-See README.md for full configuration reference. All settings use `HOME_FINDER_` prefix. See `config.py` for field definitions.
+`.env.example` is the complete annotated settings reference; README.md's configuration table lists what each feature needs. All settings use the `HOME_FINDER_` prefix, and unknown `HOME_FINDER_` names fail at startup. `uv run home-finder --check-config` checks the configuration without network or database access. See `config.py` for field definitions.
 
 ## Pipeline Flow (pipeline/flow.py)
 
@@ -133,7 +133,7 @@ async with AsyncSession() as session:
 - Quality analysis reads cached images from disk (avoids re-downloading)
 - Web dashboard serves cached images via `GET /images/{unique_id}/{filename}` with immutable cache headers
 - `image_url_map` in detail template maps original CDN URLs to local `/images/` URLs for cached images
-- **Thumbnails**: `thumb_` prefix, max 480px (2x retina for 240px cards). Generated during enrichment *after* EPC/floorplan detection (avoids orphaned thumbnails for reclassified images). `backfill_thumbnails()` generates missing thumbnails for existing caches (`--generate-thumbnails` CLI). Web dashboard prefers `thumb_` files when available, falls back to originals.
+- **Thumbnails**: `thumb_` prefix, max 480px (2x retina for 240px cards). Generated during enrichment *after* EPC detection (avoids orphaned thumbnails for reclassified images). `backfill_thumbnails()` generates missing thumbnails for existing caches (`--generate-thumbnails` CLI). Web dashboard prefers `thumb_` files when available, falls back to originals.
 - **EPC detection**: Gallery images identified as EPC charts are renamed from `gallery_*` to `epc_*` on disk and excluded from gallery/quality analysis.
 
 ### Quality Analysis
@@ -174,7 +174,7 @@ async with AsyncSession() as session:
 - **Config** → `config.py` — `pydantic-settings` with `HOME_FINDER_` prefix, key methods: `get_search_areas()`, `get_furnish_types()`, `get_search_criteria()`
 - **Database** → `db/storage.py` — `PropertyStorage`, async SQLite with 16 tables (schema in `db/migrations.py`); repositories `processing`, `runs`, `spend` and `deliveries`; paginated dashboard queries in `db/web_queries.py`
 - **Notifier** → `notifiers/telegram.py` — aiogram 3.x, photo cards, quality display, venue pins, web dashboard deep links
-- **Image Cache** → `utils/image_cache.py` — disk-based, deterministic filenames from URL hash, thumbnail generation, EPC/floorplan file renaming, cache coverage checks
+- **Image Cache** → `utils/image_cache.py` — disk-based, deterministic filenames from URL hash, thumbnail generation, cache coverage checks (EPC renaming happens in `enrichment/details.py`)
 - **Address Utils** → `utils/address.py` — `normalize_street_name`, `extract_outcode`
 - **Source Knowledge** → `docs/sources/` — per-platform decisions, filter quirks, known bugs, pipeline implications. Update the relevant source doc when changing a scraper's HTTP client, filter params, extraction approach, or anti-bot strategy.
 
@@ -182,7 +182,7 @@ async with AsyncSession() as session:
 
 - **HTMX pattern:** Dashboard `GET /` checks `HX-Request` header — returns `_results.html` partial or full `dashboard.html`. Filter form uses `hx-get="/" hx-target="#results" hx-push-url="true"`.
 - **Image serving:** `GET /images/{unique_id}/{filename}` serves cached images with directory traversal protection and immutable cache headers.
-- **Security:** XSS: descriptions use `| e | replace("\n", "<br>") | safe` (escape first). Leaflet popups use `textContent`. All query params clamped; sort whitelisted against `VALID_SORT_OPTIONS`.
+- **Security:** XSS: descriptions use `| e | replace("\n", "<br>" | safe)`: escape the text first, then mark only the inserted `<br>` safe. Replacing with a plain string escapes the `<br>` itself, so it renders literally. Leaflet popups use `textContent`. All query params clamped; sort whitelisted against `VALID_SORT_OPTIONS`.
 - **Template variables:**
   - Dashboard: `properties`, `properties_json`, `search_areas`, `source_names`, `total`, `page`, `total_pages`, `sort`, `min_price`, `max_price`, `bedrooms`, `min_rating`, `area`
   - Detail: `prop`, `outcode`, `area_context`, `best_description`, `source_names`, `image_url_map`
@@ -202,12 +202,17 @@ async with AsyncSession() as session:
 - **Concurrent-safe:** All tests use in-memory SQLite, no shared state — multiple agents/processes can run `pytest` simultaneously without interference
 
 **Test structure:**
-- `tests/test_scrapers/` — per-platform scraper tests
-- `tests/test_filters/` — criteria, commute, dedup, quality, location, floorplan
-- `tests/test_notifiers/` — core notifications + web dashboard integration
-- `tests/test_db/` — CRUD, notification tracking, quality analysis, paginated queries
-- `tests/test_web/` — app factory, routes, HTMX partials, XSS prevention
-- `tests/test_utils/` — image cache, address utils
+- `tests/test_scrapers/` — per-platform scraper tests, pagination, detail parsing and identity
+- `tests/test_filters/` — criteria, location, fit score, availability, off-market, shadow rating
+- `tests/test_enrichment/` — detail enrichment, commute
+- `tests/test_matching/` — dedup scoring, grouping, canonical selection, image evidence
+- `tests/test_analysis/` — analyzer, prompts, output validation, spend, visual checkpoints
+- `tests/test_pipeline/` — stage orchestration, admission, recovery, run lock, spend admin
+- `tests/test_notifiers/` — Telegram messages, notification selection, delivery recovery
+- `tests/test_db/` — storage, migrations, spend ledger, transactions, pipeline runs
+- `tests/test_web/` — app factory, access, routes, HTMX partials, XSS prevention
+- `tests/test_utils/` — image cache, address utils, EPC and floorplan detectors, image hashing
+- `tests/test_data/`, `tests/test_scripts/` — area data, maintenance scripts
 - `tests/integration/` — pipeline, real scraping (slow)
 
 **Web test patterns:** FastAPI `TestClient` with in-memory SQLite. HTMX tests send `HX-Request: true` header. XSS tests save `<script>` in description, assert `&lt;script&gt;` in response.
@@ -217,7 +222,7 @@ async with AsyncSession() as session:
 | Flag | Default | Description |
 |------|---------|-------------|
 | `enable_quality_filter` | True | Enable Claude vision property analysis |
-| `require_floorplan` | True | Drop properties without floorplans |
+| `require_floorplan` | True | Media rule before assessment: admit a source-declared floorplan, an OpenRent-only home, or one with at least `min_gallery_for_photo_inference` (5) photos; save the rest as dropped |
 | `quality_filter_max_images` | 20 | Max gallery images to analyze (1-20) |
 | `enable_image_hash_matching` | True | Perceptual image hash for dedup |
 | `proxy_url` | `""` | HTTP/SOCKS5 proxy for geo-restricted sites |
