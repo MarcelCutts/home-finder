@@ -44,8 +44,9 @@ def test_must_have_dimensions_keeps_weight_order() -> None:
 
 
 def test_settings_reject_an_unknown_must_have_name() -> None:
-    with pytest.raises(ValidationError, match="workspce"):
+    with pytest.raises(ValidationError, match="brief_must_haves has unknown dimensions") as exc:
         Settings(brief_must_haves="workspce,hosting")
+    assert "workspce" not in str(exc.value)
     assert Settings(brief_must_haves=" Sound , hosting").brief_must_haves == " Sound , hosting"
     assert Settings(brief_must_haves="").brief_must_haves == ""
 

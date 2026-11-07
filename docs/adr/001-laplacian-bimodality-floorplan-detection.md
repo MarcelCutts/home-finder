@@ -2,11 +2,18 @@
 
 ## Status
 
-Accepted
+Deprecated
+
+The pipeline no longer calls `detect_floorplan()`. Commit `a021747` (2026-10-10,
+"preserve floorplan origin and stop heuristic promotion") removed it from detail
+enrichment, so gallery images are never promoted to floorplans. The media rule
+(`filters/media.py`) now counts only floorplans declared by the source.
+`utils/floorplan_detector.py` and its tests remain, but nothing in the pipeline
+uses them. The record below is unchanged.
 
 ## Date
 
-2026-02-17
+2026-11-07 (accepted 2026-02-17)
 
 ## Context
 

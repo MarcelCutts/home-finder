@@ -4,15 +4,15 @@
 
 ## Key Decisions
 
-- **HTTP client**: `curl_cffi` with `impersonate="chrome"` for search (TLS fingerprinting detection), `httpx.AsyncClient` for detail pages, `curl_cffi` for image downloads — `imagescdn.openrent.co.uk` CDN blocks non-browser requests.
+- **HTTP client**: `curl_cffi` with `impersonate="chrome"` for search (TLS fingerprinting detection), detail pages and image downloads — `imagescdn.openrent.co.uk` CDN blocks non-browser requests.
 - **No newest sort**: Only distance/price sort available. Early-stop pagination is disabled; must paginate all pages every run.
 - **Geocoding override**: OpenRent mis-geocodes certain outcodes (e.g., E10 resolves to Buckinghamshire). `OUTCODE_SLUG_OVERRIDES` maps problem outcodes to correct neighbourhood slugs.
 
 ## Filter Quirks
 
-**Client-side filtering only.** OpenRent's server returns all properties within the search radius regardless of URL filter params. The params pre-set client-side filter state in the browser but aren't enforced server-side. The scraper relies on downstream `CriteriaFilter` for accurate filtering.
+**Client-side filtering only.** OpenRent's server returns all properties within the search radius regardless of URL filter params. The params pre-set client-side filter state in the browser but aren't enforced server-side. Price and bedrooms are checked locally afterwards by `CriteriaFilter`; furnishing, bathroom and let-agreed are not checked locally, so OpenRent results can include any furnishing type or bathroom count.
 
-**Furnished filter**: Only effective for single furnish type selections (not combinations).
+**Furnished filter**: The scraper sets the browser filter state only for a single furnish type selection, and the server does not enforce it.
 
 ## Detail Page Extraction
 
