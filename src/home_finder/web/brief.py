@@ -17,7 +17,8 @@ points both ways the conflict wins, because it is the one to check at a viewing.
 
 The first must-have in conflict, or failing that the first that needs checking,
 gives the listing page its opening line. A dimension's conflict rests on the analysis of
-photos, floorplan and text, so the lead presents it as a risk to check, not a fact.
+photos, floorplan and text, or for a studio on the bedroom count; either way the
+lead presents it as a risk to check at a viewing, not a settled fact.
 """
 
 import re
@@ -113,6 +114,11 @@ def _tags(analysis: Any, name: str) -> list[str]:
     return [str(tag) for tag in tags or []]
 
 
+def describes_missing_evidence(text: str) -> bool:
+    """Whether a concern is about something the listing doesn't show, not a fault seen."""
+    return _MISSING_EVIDENCE.search(text) is not None
+
+
 # ── Direct evidence, need by need ────────────────────────────────────────────
 # Each reads the assessment as the fit scorer decodes it. A need's tagged lowlights
 # (``_BREAKERS``) count against it ahead of its own readings. Anything not named
@@ -138,10 +144,10 @@ _BREAKERS: Final[dict[str, frozenset[str]]] = {
 _ROOMY_LIVING_SQM: Final = 20
 _SMALL_LIVING_SQM: Final = 10
 
-# The analysis sometimes records a room it could not see as a maintenance concern
-# ("Bathroom not photographed - condition unknown"). No typed field tells these apart,
-# so they are recognised by their wording. A misread concern only costs a claim its
-# support or its conflict and leaves it to be checked; it never makes one supported.
+# The analysis sometimes records a room it could not see as a concern ("Bathroom not
+# photographed - condition unknown"). No typed field tells these apart, so they are
+# recognised by their wording. A misread concern only moves it from a fault to a gap,
+# costing a claim its support or its conflict; it never makes one supported.
 _MISSING_EVIDENCE: Final = re.compile(
     r"\bnot (?:photographed|shown|pictured)\b"
     r"|\bno (?:(?!in\b|any\b)\w+ ){0,4}(?:photos?|images?)\b"
@@ -290,16 +296,16 @@ def _condition_evidence(values: Mapping[str, Any], _bedrooms: int | None) -> _Ev
     nor do "Excellent condition" or "Recently refurbished" highlights, which can
     repeat the advert. A concern about a room the photos leave out is a gap, not a
     defect: it keeps a good reading from counting as support. Rated concerns count
-    against only once the condition itself was seen, and only when at least one is
-    about something other than a missing room; without a condition reading they are
-    guesses about what the photos leave out.
+    against only once the condition itself was seen, and not when every listed
+    concern is about a missing room; without a condition reading they are guesses
+    about what the photos leave out.
     """
     evidence = _Evidence()
     section = _section(values, "condition")
     condition = section.get("overall_condition")
     flagged = bool(values.get("condition_concerns"))
     concerns = [str(text) for text in section.get("maintenance_concerns") or []] if flagged else []
-    unseen_rooms = [text for text in concerns if _MISSING_EVIDENCE.search(text)]
+    unseen_rooms = [text for text in concerns if describes_missing_evidence(text)]
     if condition in ("excellent", "good"):
         if unseen_rooms:
             evidence.unsure.append(f"looks {condition}, but not every room was shown")
@@ -486,10 +492,7 @@ def brief_lead(check: BriefCheck, analysis: Any) -> Lead:
             kind="risk",
             kicker="Puts a must-have at risk",
             title=_sentence(risk["found"]),
-            detail=(
-                f"Your must-have: {risk['label'].lower()}. "
-                "The listing can't settle this; check it at a viewing."
-            ),
+            detail=f"Your must-have: {risk['label'].lower()}. Check it at a viewing.",
         )
 
     to_check = [i for i in musts if i["claim"] == "needs_checking"]

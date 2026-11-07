@@ -3148,8 +3148,7 @@ async def test_two_voices_lead_brief_notes_and_working_render(
     # The noise tag is named for itself: the first noise note may be about the floors.
     assert lead.select_one(".detail-lead-title").get_text() == "Potential road or rail noise."
     assert lead.select_one(".detail-lead-detail").get_text() == (
-        "Your must-have: quiet enough for calls. "
-        "The listing can't settle this; check it at a viewing."
+        "Your must-have: quiet enough for calls. Check it at a viewing."
     )
 
     groups = [li.get_text(strip=True) for li in soup.select(".brief-check .brief-group")]

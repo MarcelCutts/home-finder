@@ -54,6 +54,30 @@ def test_photo_tag_gives_way_to_a_red_flag_naming_the_room(make_quality_analysis
     assert verdict["watch"] == []
 
 
+def test_a_concern_written_as_a_missing_photo_is_unknown_not_a_fault(make_quality_analysis):
+    """The analysis sometimes writes a gap as a concern; it belongs with the unknowns."""
+    analysis = make_quality_analysis(
+        condition=ConditionAnalysis(
+            overall_condition="good",
+            maintenance_concerns=[
+                "Bathroom not photographed - condition unknown",
+                "Damp patch on ceiling",
+            ],
+        ),
+        condition_concerns=True,
+        concern_severity="moderate",
+        listing_red_flags=ListingRedFlags(
+            description_concerns=["Only 3 photos for entire property", "Price above average"]
+        ),
+    )
+    verdict = build_verdict(analysis, None)
+    assert verdict["watch"] == ["Damp patch on ceiling", "Price above average"]
+    assert verdict["find_out"] == [
+        "Bathroom not photographed - condition unknown",
+        "Only 3 photos for entire property",
+    ]
+
+
 def test_what_the_photos_leave_out_is_unknown_not_a_fault(make_quality_analysis):
     """Photo gaps are something to find out; the concerns the listing text raised stay faults."""
     flags = ListingRedFlags(
