@@ -181,7 +181,7 @@ async with AsyncSession() as session:
 
 - **HTMX pattern:** Dashboard `GET /` checks `HX-Request` header — returns `_results.html` partial or full `dashboard.html`. Filter form uses `hx-get="/" hx-target="#results" hx-push-url="true"`.
 - **Image serving:** `GET /images/{unique_id}/{filename}` serves cached images with directory traversal protection and immutable cache headers.
-- **Security:** XSS: descriptions use `| e | replace("\n", "<br>" | safe)`: escape the text first, then mark only the inserted `<br>` safe. Replacing with a plain string escapes the `<br>` itself, so it renders literally. Leaflet popups use `textContent`. All query params clamped; sort whitelisted against `VALID_SORT_OPTIONS`.
+- **Security:** XSS: the listing page shows one advert cleaned by `clean_advert_text` (`web/annotate.py`), which turns the portal's markup into plain text and drops script and style contents. It is still escaped when rendered: descriptions use `| e | replace("\n", "<br>" | safe)`: escape the text first, then mark only the inserted `<br>` safe. Replacing with a plain string escapes the `<br>` itself, so it renders literally. Leaflet popups use `textContent`. All query params clamped; sort whitelisted against `VALID_SORT_OPTIONS`.
 - **Template variables:**
   - Dashboard: `properties`, `properties_json`, `search_areas`, `source_names`, `total`, `page`, `total_pages`, `sort`, `min_price`, `max_price`, `bedrooms`, `min_rating`, `area`
   - Detail: `prop`, `outcode`, `area_context`, `best_description`, `source_names`, `image_url_map`
@@ -214,7 +214,7 @@ async with AsyncSession() as session:
 - `tests/test_data/`, `tests/test_scripts/` — area data, maintenance scripts
 - `tests/integration/` — pipeline, real scraping (slow)
 
-**Web test patterns:** FastAPI `TestClient` with in-memory SQLite. HTMX tests send `HX-Request: true` header. XSS tests save `<script>` in description, assert `&lt;script&gt;` in response.
+**Web test patterns:** FastAPI `TestClient` with in-memory SQLite. HTMX tests send `HX-Request: true` header. XSS tests save a raw `<script>` in the description and assert it is gone (the cleaner drops it with its contents), and save an encoded `&lt;script&gt;` and assert it comes back escaped.
 
 ## Feature Flags
 
