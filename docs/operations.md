@@ -444,8 +444,9 @@ HOME_FINDER_WEB_HOST=127.0.0.1 uv run home-finder --serve --with-pipeline
 ```
 
 Only run that command after source, notification and paid-analysis settings have
-been qualified. The serve process owns both the dashboard and its scheduled
-pipeline; a configured HTTPS reverse proxy can expose the authenticated dashboard.
+been qualified. With `--with-pipeline` the serve process owns both the dashboard
+and its scheduled pipeline; plain `--serve` runs the dashboard only and schedules
+nothing. A configured HTTPS reverse proxy can expose the authenticated dashboard.
 The current Fly dashboard stays collection-inactive until an operator deliberately
 chooses and verifies a co-located collector layout or moves the authority. Running
 a separate local collector and copying its DB to Fly is not a supported layout.
