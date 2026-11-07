@@ -82,15 +82,22 @@ def certificate_from_search(row: dict[str, Any]) -> Certificate:
         for key in ("addressLine1", "addressLine2", "addressLine3", "addressLine4")
         if row.get(key)
     )
-    uprn = row.get("uprn")
     return Certificate(
         certificate_number=str(row["certificateNumber"]),
         address_lines=lines,
         postcode=str(row.get("postcode") or "").replace("+", " ").upper(),
-        uprn=str(int(uprn)) if uprn not in (None, "") else None,
+        uprn=_uprn(row.get("uprn")),
         band=row.get("currentEnergyEfficiencyBand"),
         registration_date=row.get("registrationDate"),
     )
+
+
+def _uprn(value: Any) -> str | None:
+    """A UPRN without its zero padding; anything unexpected is kept as text, never fatal."""
+    if value in (None, ""):
+        return None
+    text = str(value).strip()
+    return str(int(text)) if text.isdigit() else text
 
 
 def detail_from_certificate(number: str, data: dict[str, Any]) -> CertificateDetail:
@@ -166,6 +173,9 @@ class EpcApi:
         self._min_interval_s = min_interval_s
         self._last_request = 0.0
         self._throttle = threading.Lock()
+        self._certificates: dict[str, CertificateDetail | None] = {}
+        """Parsed certificates already read, since narrowing and the retest reread them.
+        Search answers aren't kept: together they run to hundreds of thousands of rows."""
         self.requests_made = 0
         self._client = httpx.Client(
             base_url=API_BASE,
@@ -203,10 +213,15 @@ class EpcApi:
         return [certificate_from_search(row) for row in rows]
 
     def certificate(self, number: str) -> CertificateDetail | None:
-        body = self._get_cached("certificate", "/api/certificate", {"certificate_number": number})
-        if body is None or not isinstance(body.get("data"), dict):
-            return None
-        return detail_from_certificate(number, body["data"])
+        if number not in self._certificates:
+            body = self._get_cached(
+                "certificate", "/api/certificate", {"certificate_number": number}
+            )
+            data = body.get("data") if body is not None else None
+            self._certificates[number] = (
+                detail_from_certificate(number, data) if isinstance(data, dict) else None
+            )
+        return self._certificates[number]
 
     def _get_cached(self, kind: str, path: str, params: Params) -> dict[str, Any] | None:
         key = hashlib.sha256(json.dumps([path, sorted(params.items())]).encode()).hexdigest()

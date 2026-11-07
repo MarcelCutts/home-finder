@@ -45,10 +45,17 @@ T = TypeVar("T")
 
 
 def councils_for_outcode(outcode: str, cache_dir: Path) -> list[str]:
-    """Local authorities a postcode district covers, from postcodes.io (cached)."""
+    """Local authorities a postcode district covers, from postcodes.io (cached).
+
+    Only a definite answer is cached: the district's councils, or a 404 for a
+    district that doesn't exist. Any other failure raises, so a passing outage
+    can't become a permanent empty answer.
+    """
     cache_file = cache_dir / "outcodes" / f"{outcode}.json"
     if not cache_file.exists():
         response = httpx.get(f"{POSTCODES_IO}/outcodes/{outcode}", timeout=30)
+        if response.status_code not in (200, 404):
+            response.raise_for_status()
         result = response.json().get("result") if response.status_code == 200 else None
         cache_file.parent.mkdir(parents=True, exist_ok=True)
         cache_file.write_text(json.dumps(result))

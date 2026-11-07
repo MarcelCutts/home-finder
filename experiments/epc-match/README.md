@@ -23,8 +23,8 @@ flat, listed twice, so per home it is 8 of 8.
 
 **EPC floor area is good enough to show as an approximate size, but not as an
 exact one, and it can't be attached to listings at this coverage.** A flat
-assessed twice gets a floor area a median 3.6% different; 75% of repeats agree
-within 10%, and 10% disagree by more than 20%. The two matched homes with a
+assessed twice gets a floor area a median 3.2% different; 75% of repeats agree
+within 10%, and 9% disagree by more than 20%. The two matched homes with a
 listing figure agree within 2%. So a correctly matched EPC area is a fair
 guide to size, within 10% three times in four. The problem is the match, not
 the number: at about 1% of listings, it isn't worth building on.
@@ -84,7 +84,8 @@ ambiguous listings have 25 or fewer candidates. For 8 of them no candidate's
 certificate counts rooms, so the rule can't apply. For the other 118, the
 candidates left are those with bedrooms plus one rooms, plus any whose rooms
 aren't counted, since those can't be ruled out. That left **one home for 6
-(5%)**, several for 106 and none for 6.
+(5%)**, several for 106 and none for 6. A lone candidate whose rooms aren't
+counted would not count as a match; none came up.
 
 Uniqueness is among certified homes only. But a home offered for rent must
 have an EPC, so the listing's home should be among the candidates if its
@@ -121,13 +122,13 @@ conversion). Those verdicts are no longer counted.
 | comparison | pairs | median difference | within 10% | within 20% |
 |---|---|---|---|---|
 | matched homes against the listing's figure | 2 | 1.6% | 2 | 2 |
-| same flat, newest against previous certificate | 242 | 3.6% | 75% | 90% |
-| same house, newest against previous certificate | 56 | 5.2% | 66% | 84% |
+| same flat, newest against previous certificate | 239 | 3.2% | 75% | 91% |
+| same house, newest against previous certificate | 59 | 6.2% | 66% | 81% |
 | median of the right-room candidates against the listing's figure | 21 | 9.2% | 52% | 76% |
 
 Both listing figures in the first row are the app's floorplan readings.
-The repeat-certificate rows are a seeded sample of 300 of the 66,263 homes
-with two or more certificates in the searches made here. They test the EPC
+The repeat-certificate rows are a seeded sample of 300 of the 66,209 homes
+with two or more certificates in `run.py`'s searches. They test the EPC
 figure without any listing match. Some of the difference is real (extensions,
 conversions), and some pairs may be two dwellings sharing an address.
 Some 2008–09 certificates (SAP schemas 12 and 13) don't state a total area;
@@ -154,7 +155,7 @@ building-level band is not the home's own band.
 - **District only.** 73% of listings have no full postcode, so the
   candidates are the whole street within the district.
 - **A building's UPRN on every flat.** The register often address-matches all
-  flats of a converted house to the building's UPRN: 7,854 UPRNs in the
+  flats of a converted house to the building's UPRN: 7,851 UPRNs in the
   searches here cover two or more addresses that each name a unit. Grouping on
   UPRN merged a ground floor and first floor flat into one "home" in the first
   hand-check, so certificates are grouped by normalised address instead.
@@ -243,8 +244,9 @@ postcode. No listing has a UPRN.
 - district only: a search on each street or building name, in the councils
   the district covers (from postcodes.io), kept to that district.
 
-744 search result pages returned 297,717 certificates; 2,811 full
-certificates were fetched for matches, narrowing and the retest.
+`run.py`'s searches returned 297,520 certificates (744 cached result pages,
+a few of them one-off checks); 2,811 full certificates were fetched for
+matches, narrowing and the retest.
 
 **Matching** (`matcher.py`). Candidates are narrowed one listing fact at a
 time: street, building, house or building number, flat. A street, number or

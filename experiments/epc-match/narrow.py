@@ -45,24 +45,32 @@ def narrow_by_rooms(
     """The record narrowed to the candidate homes that could have the expected rooms.
 
     A home whose newest certificate doesn't count rooms can't be ruled out,
-    so it stays a candidate: one home left means the only one not ruled out.
-    `rooms_known` counts the homes the rule could judge; when it is zero the
-    rule wasn't applied and every candidate is left.
+    so it stays a candidate. One home left is a match ("one") only when its
+    rooms were counted and fit; a lone candidate whose rooms aren't counted
+    is "unconfirmed". `rooms_known` counts the homes the rule could judge;
+    when it is zero the rule wasn't applied and every candidate is left.
     """
     want = expected_rooms(record["listing"]["bedrooms"])
     kept = []
+    unconfirmed = 0
     matched_areas: list[float | None] = []
     known = 0
     for home in record["homes"]:
         newest = detail(home["certificates"][0]["certificate_number"])
         if newest is None or newest.habitable_rooms is None:
             kept.append(home)
+            unconfirmed += 1
             continue
         known += 1
         if newest.habitable_rooms == want:
             kept.append(home)
             matched_areas.append(newest.total_floor_area)
-    outcome = "one" if len(kept) == 1 else "ambiguous" if kept else "none"
+    if not kept:
+        outcome = "none"
+    elif len(kept) > 1:
+        outcome = "ambiguous"
+    else:
+        outcome = "unconfirmed" if unconfirmed else "one"
     narrowed = {
         **record,
         "outcome": outcome,

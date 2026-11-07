@@ -21,7 +21,7 @@ from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
-from typing import Any
+from typing import Any, TypeGuard
 
 from matcher import parse_listing_address
 from paths import HANDCHECK, NARROWED, RESULTS
@@ -145,7 +145,7 @@ def ambiguity_summary(records: Sequence[Record]) -> AmbiguitySummary | None:
 # --- Single matches: certificates and floor area -------------------------
 
 
-def plausible_area(area: float | None) -> bool:
+def plausible_area(area: float | None) -> TypeGuard[float]:
     return area is not None and PLAUSIBLE_AREA_SQM[0] <= area <= PLAUSIBLE_AREA_SQM[1]
 
 
@@ -187,9 +187,13 @@ def certificate_summary(
         ]
         if len(areas) > 1 and max(areas) > 1.1 * min(areas):
             disagree += 1
-        if not plausible_area(r["details"][0]["total_floor_area"]):
+        newest_number = r["homes"][0]["certificates"][0]["certificate_number"]
+        newest = next((d for d in r["details"] if d["certificate_number"] == newest_number), None)
+        if newest is None:
+            continue  # the newest certificate couldn't be fetched
+        if not plausible_area(newest["total_floor_area"]):
             implausible += 1
-        lodged = r["details"][0].get("registration_date")
+        lodged = newest.get("registration_date")
         if lodged:
             year = int(lodged[:4]) + (int(lodged[5:7]) - 1) / 12
             ages.append(snapshot_year[r["listing"]["dataset"]] - year)
@@ -523,7 +527,8 @@ def print_narrowing(narrowed: Sequence[Record]) -> None:
         f"homes; {len(narrowed) - len(tried)} skipped because no candidate's certificate "
         f"counts rooms\n"
         f"- of the {len(tried)} tried, {counts['one']} ({pct(counts['one'], len(tried))}) "
-        f"left one home, {counts['ambiguous']} still ambiguous, {counts['none']} left none"
+        f"left one home, {counts['ambiguous']} still ambiguous, {counts['none']} left none, "
+        f"{counts['unconfirmed']} left one home whose rooms aren't counted"
     )
 
 

@@ -415,11 +415,14 @@ def match_address(address: ListingAddress, certificates: Sequence[Certificate]) 
     pool = list(certificates)
     evidence = Evidence.POSTCODE
 
+    number_applies = True
     if address.streets:
         for street in address.streets:
             on_street = [c for c in pool if contains_phrase(c.text, street)]
             if on_street:
                 pool, evidence = on_street, Evidence.STREET
+                # The number belongs to the first street, not to a fallback.
+                number_applies = street == address.streets[0]
                 break
         else:
             return MatchResult(Outcome.NONE, reason=NoMatchReason.STREET_NOT_FOUND)
@@ -433,7 +436,7 @@ def match_address(address: ListingAddress, certificates: Sequence[Certificate]) 
         elif not address.streets:
             return MatchResult(Outcome.NONE, reason=NoMatchReason.BUILDING_NOT_FOUND)
 
-    if address.numbered:
+    if address.numbered and number_applies:
         numbered = [c for c in pool if contains_house_number(c.text, address.numbered)]
         if not numbered:
             return MatchResult(Outcome.NONE, reason=NoMatchReason.NUMBER_NOT_FOUND)

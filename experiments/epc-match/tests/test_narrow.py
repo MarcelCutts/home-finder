@@ -72,3 +72,10 @@ def test_rule_leaves_every_candidate_when_no_certificate_counts_rooms() -> None:
     assert narrowed["outcome"] == "ambiguous"
     assert len(narrowed["homes"]) == 2
     assert narrowed["rooms_known"] == 0
+
+
+def test_a_lone_candidate_whose_rooms_are_not_counted_is_unconfirmed() -> None:
+    narrowed = narrow_by_rooms(ambiguous(1, "a", "b", "c"), lookup({"a": 4, "b": 3, "c": None}))
+    assert narrowed["outcome"] == "unconfirmed"
+    assert [h["key"] for h in narrowed["homes"]] == ["c"]
+    assert "details" not in narrowed

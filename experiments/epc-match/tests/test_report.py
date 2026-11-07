@@ -8,6 +8,7 @@ from report import (
     band_agreement,
     candidate_area_pairs,
     candidate_bands,
+    certificate_summary,
     correct_match_rate,
     coverage_rows,
     epc_floor_area,
@@ -142,6 +143,15 @@ class TestCertificates:
         assert has_conflicting_certificates(lodged(("2023-01-03", "C"), ("2023-01-23", "D")))
         assert not has_conflicting_certificates(lodged(("2023-01-23", "C"), ("2023-01-30", "C")))
         assert not has_conflicting_certificates(lodged(("2023-01-23", "C"), ("2023-03-04", "D")))
+
+    def test_a_home_whose_newest_certificate_is_missing_is_left_out(self) -> None:
+        r = record(epc_areas=(0,))
+        r["homes"] = [{"key": "k", "certificates": [{"certificate_number": "new"}]}]
+        r["details"] = [{"certificate_number": "old", "total_floor_area": 0}]
+        summary = certificate_summary([r], {"fixture": 2026.0})
+        assert summary.with_detail == 1
+        assert summary.implausible_area == 0  # the old certificate isn't judged as the newest
+        assert summary.median_age_years is None
 
 
 class TestCoverage:

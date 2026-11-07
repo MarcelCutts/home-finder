@@ -250,3 +250,11 @@ class TestHouseNumbers:
         result = match_address(parse_listing_address("12 Quillon Road"), certs)
         assert result.outcome is Outcome.ONE
         assert result.homes[0].newest.certificate_number == "a"
+
+    def test_a_number_on_a_street_not_found_does_not_rule_out_the_fallback(self) -> None:
+        certs = [cert("m1", "3 Marrow Street"), cert("m2", "5 Marrow Street")]
+        address = parse_listing_address("12 Quillon Road, Marrow Street, Upper Brack")
+        result = match_address(address, certs)
+        assert result.outcome is Outcome.AMBIGUOUS
+        assert result.evidence is Evidence.STREET
+        assert len(result.homes) == 2

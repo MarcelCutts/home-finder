@@ -4,10 +4,12 @@ import json
 from pathlib import Path
 
 import httpx
+import pytest
+import run
 from epc_api import EpcApi
 from listings import Listing
 from matcher import match_listing
-from run import candidate_certificates, result_record
+from run import candidate_certificates, councils_for_outcode, result_record
 
 
 def listing(postcodes: tuple[str, ...], outcode: str, *addresses: str) -> Listing:
@@ -104,3 +106,26 @@ def test_listing_without_a_postcode_or_street_has_no_candidates(tmp_path: Path) 
     assert candidates.retrieval == "none"
     assert candidates.certificates == []
     assert seen == []
+
+
+class TestCouncilsForOutcode:
+    def test_a_district_that_does_not_exist_is_cached_as_empty(self, tmp_path, monkeypatch) -> None:
+        calls = []
+
+        def fake_get(url, timeout):
+            calls.append(url)
+            return httpx.Response(404, json={"status": 404, "error": "Outcode not found"})
+
+        monkeypatch.setattr(run.httpx, "get", fake_get)
+        assert councils_for_outcode("Q9", tmp_path) == []
+        assert councils_for_outcode("Q9", tmp_path) == []
+        assert len(calls) == 1
+
+    def test_an_outage_raises_and_leaves_nothing_cached(self, tmp_path, monkeypatch) -> None:
+        def fake_get(url, timeout):
+            return httpx.Response(502, request=httpx.Request("GET", url))
+
+        monkeypatch.setattr(run.httpx, "get", fake_get)
+        with pytest.raises(httpx.HTTPStatusError):
+            councils_for_outcode("Q9", tmp_path)
+        assert not (tmp_path / "outcodes" / "Q9.json").exists()

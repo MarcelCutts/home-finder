@@ -5,7 +5,7 @@ from pathlib import Path
 
 import httpx
 import pytest
-from epc_api import EpcApi, MissingTokenError, load_token
+from epc_api import EpcApi, MissingTokenError, certificate_from_search, load_token
 
 TOKEN = "test-token-not-real"
 
@@ -158,3 +158,14 @@ def test_old_certificate_without_a_total_sums_its_floors(tmp_path: Path) -> None
     assert detail is not None
     assert detail.total_floor_area == 80.0
     assert detail.floor_area_summed
+
+
+def test_uprns_lose_their_padding_and_odd_ones_are_kept_as_text() -> None:
+    def uprn(value: object) -> str | None:
+        return certificate_from_search({"certificateNumber": "c", "uprn": value}).uprn
+
+    assert uprn(10094703381) == "10094703381"
+    assert uprn("000001234567") == "1234567"
+    assert uprn("UPRN-12") == "UPRN-12"
+    assert uprn(None) is None
+    assert uprn("") is None
