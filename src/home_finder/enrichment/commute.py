@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, time, timedelta
 from typing import TYPE_CHECKING, ClassVar, assert_never
+from zoneinfo import ZoneInfo
 
 from home_finder.logging import get_logger
 from home_finder.models import MergedProperty, Property, TransportMode
@@ -15,6 +16,27 @@ if TYPE_CHECKING:
     from traveltimepy import AsyncClient
 
 logger = get_logger(__name__)
+
+LONDON = ZoneInfo("Europe/London")
+
+
+def next_weekday_arrival(arrival_time: time, *, after: datetime) -> datetime:
+    """Return the first Monday-to-Friday ``arrival_time`` in London later than ``after``.
+
+    London's date decides which day it is, so a run at 00:30 BST is already on
+    the next day. UK clocks change only on Sundays, so a weekday clock time
+    exists exactly once and zoneinfo gives it the GMT or BST offset of its date.
+    """
+    if after.tzinfo is None:
+        raise ValueError("after must be timezone-aware")
+    # UTC on one side makes the comparison below by instant, not London wall clock.
+    after_utc = after.astimezone(UTC)
+    day = after_utc.astimezone(LONDON).date()
+    while True:
+        arrival = datetime.combine(day, arrival_time, tzinfo=LONDON)
+        if arrival.weekday() < 5 and arrival > after_utc:
+            return arrival
+        day += timedelta(days=1)
 
 
 class CommuteAssessor:
@@ -29,6 +51,7 @@ class CommuteAssessor:
         app_id: str,
         api_key: str,
         destination_postcode: str,
+        arrival_time: time,
     ) -> None:
         """Initialize the commute assessor.
 
@@ -36,10 +59,14 @@ class CommuteAssessor:
             app_id: TravelTime API application ID.
             api_key: TravelTime API key.
             destination_postcode: Destination postcode for commute calculations.
+            arrival_time: London clock time that journeys arrive by. The assessor
+                fixes it to the first weekday that time is still ahead when built,
+                so every mode it measures shares one arrival.
         """
         self.app_id = app_id
         self.api_key = api_key
         self.destination_postcode = destination_postcode
+        self.arrival_at = next_weekday_arrival(arrival_time, after=datetime.now(UTC))
 
     async def assess_commutes(
         self,
@@ -132,7 +159,7 @@ class CommuteAssessor:
                     id="property-search",
                     arrival_location_id="destination",
                     departure_location_ids=[loc.id for loc in locations],
-                    arrival_time=datetime.now(UTC),
+                    arrival_time=self.arrival_at.astimezone(UTC),
                     travel_time=max_minutes * 60,
                     transportation=transportation,
                     properties=[TravelTimeProperty.TRAVEL_TIME],
@@ -194,6 +221,7 @@ class CommuteAssessor:
         results = [by_id[p.unique_id] for p in properties]
         logger.info(
             "commute_assessment_complete",
+            arrival_at=self.arrival_at.isoformat(),
             total_results=len(results),
             within_limit=sum(r.within_limit is True for r in results),
             over_limit=sum(r.within_limit is False for r in results),

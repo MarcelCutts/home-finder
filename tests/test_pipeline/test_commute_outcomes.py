@@ -1,6 +1,7 @@
 """Advisory commute outcomes reach storage without false passes or lost homes."""
 
 import json
+from datetime import time
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -142,3 +143,30 @@ async def test_backfill_writes_measurements_only(tmp_path, make_merged_property,
                 await conn.execute("SELECT commute_minutes, transport_mode FROM properties")
             ).fetchone()
         assert tuple(row) == ((None, None) if seconds is None else (31, "cycling"))
+
+
+async def test_pipeline_and_backfill_measure_at_the_configured_arrival(
+    tmp_path, make_merged_property
+):
+    path = str(tmp_path / "arrival.db")
+    home = make_merged_property(latitude=51.54, longitude=-0.09)
+    async with PropertyStorage(path) as storage:
+        await storage.save_merged_property(home)
+    settings = Settings(
+        database_path=path,
+        traveltime_app_id="test",
+        traveltime_api_key=SecretStr("test"),
+        commute_arrival_time=time(8, 15),
+    )
+    adapter = MagicMock(
+        geocode_properties=AsyncMock(side_effect=lambda homes: homes),
+        assess_commutes=AsyncMock(return_value=[]),
+    )
+    with (
+        patch("home_finder.pipeline.candidates.CommuteAssessor", return_value=adapter) as pipeline,
+        patch("home_finder.pipeline.commands.CommuteAssessor", return_value=adapter) as backfill,
+    ):
+        await _assess_commutes([home], settings.get_search_criteria(), settings)
+        await run_backfill_commute(settings)
+    assert pipeline.call_args.kwargs["arrival_time"] == time(8, 15)
+    assert backfill.call_args.kwargs["arrival_time"] == time(8, 15)

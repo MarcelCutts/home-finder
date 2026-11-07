@@ -432,6 +432,7 @@ async def _assess_commutes(
             app_id=settings.traveltime_app_id,
             api_key=settings.traveltime_api_key.get_secret_value(),
             destination_postcode=criteria.destination_postcode,
+            arrival_time=settings.commute_arrival_time,
         )
         merged = await commute_assessor.geocode_properties(merged)
         for mode in criteria.transport_modes:

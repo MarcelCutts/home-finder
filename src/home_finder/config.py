@@ -1,6 +1,7 @@
 """Application configuration using pydantic-settings."""
 
 import json
+from datetime import time
 from pathlib import Path
 from typing import Annotated, Any
 
@@ -198,6 +199,13 @@ class Settings(BaseSettings):
     max_bedrooms: int = Field(default=2, ge=0)
     destination_postcode: str = Field(default="N1 5AA")
     max_commute_minutes: int = Field(default=30, ge=1, le=120)
+    commute_arrival_time: time = Field(
+        default=time(9, 0),
+        description=(
+            "London clock time (HH:MM) that measured commutes arrive by, on the first "
+            "weekday that time is still ahead when the run measures commutes"
+        ),
+    )
     brief_must_haves: str = Field(
         default="workspace,hosting",
         description=(
@@ -286,6 +294,16 @@ class Settings(BaseSettings):
             raise ValueError(
                 f"brief_must_haves has unknown dimension(s) {unknown}; "
                 f"choose from {', '.join(WEIGHTS)}"
+            )
+        return value
+
+    @field_validator("commute_arrival_time")
+    @classmethod
+    def _london_clock_time(cls, value: time) -> time:
+        """An offset would contradict London's own GMT/BST switch, so refuse one."""
+        if value.tzinfo is not None:
+            raise ValueError(
+                "commute_arrival_time is a London clock time; give HH:MM without an offset"
             )
         return value
 

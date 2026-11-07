@@ -1,5 +1,6 @@
 """Integration tests for advisory commute assessment with mocked TravelTime API."""
 
+from datetime import time
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -8,6 +9,8 @@ from pydantic import HttpUrl
 
 from home_finder.enrichment.commute import CommuteAssessor
 from home_finder.models import CommuteState, MergedProperty, Property, PropertySource, TransportMode
+
+NINE_AM = time(9, 0)
 
 
 @pytest.fixture(autouse=True)
@@ -111,6 +114,7 @@ class TestCommuteAssessmentIntegration:
             app_id="test-app-id",
             api_key="test-api-key",
             destination_postcode="N1 5AA",
+            arrival_time=NINE_AM,
         )
 
         with patch("traveltimepy.AsyncClient") as MockClient:
@@ -140,6 +144,7 @@ class TestCommuteAssessmentIntegration:
             app_id="test-app-id",
             api_key="test-api-key",
             destination_postcode="N1 5AA",
+            arrival_time=NINE_AM,
         )
         # Clear cache to ensure fresh lookup
         CommuteAssessor._geocoding_cache.clear()
@@ -165,6 +170,7 @@ class TestCommuteAssessmentIntegration:
             app_id="test-app-id",
             api_key="test-api-key",
             destination_postcode="N1 5AA",
+            arrival_time=NINE_AM,
         )
         # Pre-populate cache
         CommuteAssessor._geocoding_cache["E8 3RH"] = (51.5465, -0.0553)
@@ -200,6 +206,7 @@ class TestCommuteAssessmentIntegration:
             app_id="test-app-id",
             api_key="test-api-key",
             destination_postcode="N1 5AA",
+            arrival_time=NINE_AM,
         )
 
         with patch("traveltimepy.AsyncClient") as MockClient:
@@ -239,6 +246,7 @@ class TestCommuteAssessmentIntegration:
             app_id="test-app-id",
             api_key="test-api-key",
             destination_postcode="N1 5AA",
+            arrival_time=NINE_AM,
         )
         CommuteAssessor._geocoding_cache.clear()
 
@@ -269,6 +277,7 @@ class TestCommuteAssessmentIntegration:
             app_id="test-app-id",
             api_key="test-api-key",
             destination_postcode="N1 5AA",
+            arrival_time=NINE_AM,
         )
 
         with patch("traveltimepy.AsyncClient") as MockClient:

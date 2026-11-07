@@ -1,14 +1,17 @@
 """Tests for advisory commute assessment with TravelTime API."""
 
 import asyncio
+from datetime import UTC, datetime, time
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from pydantic import HttpUrl, ValidationError
 
-from home_finder.enrichment.commute import CommuteAssessor, CommuteResult
+from home_finder.enrichment.commute import CommuteAssessor, CommuteResult, next_weekday_arrival
 from home_finder.models import CommuteState, Property, PropertySource, TransportMode
 from home_finder.models.commute import best_measured_commutes
+
+NINE_AM = time(9, 0)
 
 
 @pytest.fixture(autouse=True)
@@ -151,6 +154,7 @@ class TestCommuteAssessor:
             app_id="test-app-id",
             api_key="test-api-key",
             destination_postcode="N1 5AA",
+            arrival_time=NINE_AM,
         )
         assert commute_assessor.destination_postcode == "N1 5AA"
 
@@ -161,6 +165,7 @@ class TestCommuteAssessor:
             app_id="test-app-id",
             api_key="test-api-key",
             destination_postcode="N1 5AA",
+            arrival_time=NINE_AM,
         )
 
         # Create mock responses
@@ -211,6 +216,7 @@ class TestCommuteAssessor:
             app_id="test-app-id",
             api_key="test-api-key",
             destination_postcode="N1 5AA",
+            arrival_time=NINE_AM,
         )
 
         # No mocking needed - filter should exit early
@@ -234,6 +240,7 @@ class TestCommuteAssessor:
             app_id="test-app-id",
             api_key="test-api-key",
             destination_postcode="N1 5AA",
+            arrival_time=NINE_AM,
         )
 
         # Only one reachable location in response
@@ -271,6 +278,7 @@ class TestCommuteAssessor:
             app_id="test-app-id",
             api_key="test-api-key",
             destination_postcode="INVALID",
+            arrival_time=NINE_AM,
         )
 
         # Mock geocoding failure (no features)
@@ -300,6 +308,7 @@ class TestCommuteAssessor:
             app_id="test-app-id",
             api_key="test-api-key",
             destination_postcode="N1 5AA",
+            arrival_time=NINE_AM,
         )
 
         geocoding_response = create_geocoding_response(51.5448, -0.0934)
@@ -336,6 +345,7 @@ class TestCommuteAssessor:
             app_id="test-app-id",
             api_key="test-api-key",
             destination_postcode="N1 5AA",
+            arrival_time=NINE_AM,
         )
 
         geocoding_response = create_geocoding_response(51.5448, -0.0934)
@@ -373,6 +383,7 @@ class TestCommuteAssessor:
             app_id="test-app-id",
             api_key="test-api-key",
             destination_postcode="SW1A 1AA",
+            arrival_time=NINE_AM,
         )
 
         geocoding_response = create_geocoding_response(51.5034, -0.1276)
@@ -402,6 +413,7 @@ class TestCommuteAssessor:
             app_id="test-app-id",
             api_key="test-api-key",
             destination_postcode="N1 5AA",
+            arrival_time=NINE_AM,
         )
 
         geocoding_response = create_geocoding_response(51.5448, -0.0934)
@@ -439,6 +451,7 @@ class TestCommuteAssessor:
             app_id="test-app-id",
             api_key="test-api-key",
             destination_postcode="N1 5AA",
+            arrival_time=NINE_AM,
         )
 
         geocoding_response = create_geocoding_response(51.5448, -0.0934)
@@ -507,7 +520,9 @@ async def test_exact_second_boundary(sample_properties, seconds, minutes, within
         geocoding_response=create_geocoding_response(51.54, -0.09),
         time_filter_response=create_time_filter_response([("openrent:1", seconds)]),
     )
-    commute = CommuteAssessor(app_id="test", api_key="test", destination_postcode="N1 5AA")
+    commute = CommuteAssessor(
+        app_id="test", api_key="test", destination_postcode="N1 5AA", arrival_time=NINE_AM
+    )
     with patch("traveltimepy.AsyncClient", return_value=client):
         result = (
             await commute.assess_commutes(
@@ -526,7 +541,9 @@ async def test_malformed_measurement_is_unknown(sample_properties, bad_seconds):
     client = create_mock_client(
         geocoding_response=create_geocoding_response(51.54, -0.09), time_filter_response=response
     )
-    commute = CommuteAssessor(app_id="test", api_key="test", destination_postcode="N1 5AA")
+    commute = CommuteAssessor(
+        app_id="test", api_key="test", destination_postcode="N1 5AA", arrival_time=NINE_AM
+    )
     with patch("traveltimepy.AsyncClient", return_value=client):
         results = await commute.assess_commutes(
             sample_properties, max_minutes=30, transport_mode=TransportMode.CYCLING
@@ -547,7 +564,9 @@ async def test_incomplete_or_conflicting_response_is_unknown(sample_properties, 
     client = create_mock_client(
         geocoding_response=create_geocoding_response(51.54, -0.09), time_filter_response=response
     )
-    commute = CommuteAssessor(app_id="test", api_key="test", destination_postcode="N1 5AA")
+    commute = CommuteAssessor(
+        app_id="test", api_key="test", destination_postcode="N1 5AA", arrival_time=NINE_AM
+    )
     with patch("traveltimepy.AsyncClient", return_value=client):
         results = await commute.assess_commutes(
             sample_properties, max_minutes=30, transport_mode=TransportMode.CYCLING
@@ -562,7 +581,9 @@ async def test_zero_longitude_is_a_real_coordinate(sample_properties):
         geocoding_response=create_geocoding_response(51.54, -0.09),
         time_filter_response=create_time_filter_response([("openrent:1", 60)]),
     )
-    commute = CommuteAssessor(app_id="test", api_key="test", destination_postcode="N1 5AA")
+    commute = CommuteAssessor(
+        app_id="test", api_key="test", destination_postcode="N1 5AA", arrival_time=NINE_AM
+    )
     with patch("traveltimepy.AsyncClient", return_value=client):
         results = await commute.assess_commutes(
             [prop], max_minutes=30, transport_mode=TransportMode.CYCLING
@@ -614,7 +635,9 @@ def test_best_mode_uses_seconds_before_display_rounding():
 async def test_cancellation_propagates_instead_of_becoming_a_result(sample_properties):
     client = create_mock_client(geocoding_response=create_geocoding_response(51.54, -0.09))
     client.time_filter.side_effect = asyncio.CancelledError()
-    commute = CommuteAssessor(app_id="test", api_key="test", destination_postcode="N1 5AA")
+    commute = CommuteAssessor(
+        app_id="test", api_key="test", destination_postcode="N1 5AA", arrival_time=NINE_AM
+    )
     with (
         patch("traveltimepy.AsyncClient", return_value=client),
         pytest.raises(asyncio.CancelledError),
@@ -631,7 +654,9 @@ async def test_missing_coordinates_remain_distinct_during_outage(
         geocoding_response=create_geocoding_response(51.54, -0.09),
         time_filter_error=RuntimeError("unauthorized"),
     )
-    commute = CommuteAssessor(app_id="test", api_key="test", destination_postcode="N1 5AA")
+    commute = CommuteAssessor(
+        app_id="test", api_key="test", destination_postcode="N1 5AA", arrival_time=NINE_AM
+    )
     with patch("traveltimepy.AsyncClient", return_value=client):
         results = await commute.assess_commutes(
             [sample_properties[0], properties_without_coords[0]],
@@ -642,3 +667,148 @@ async def test_missing_coordinates_remain_distinct_during_outage(
         CommuteState.PROVIDER_ERROR,
         CommuteState.MISSING_COORDINATES,
     ]
+
+
+# 2026 dates: 9 Nov is a Monday; clocks go forward on Sunday 29 Mar and back on Sunday 25 Oct.
+@pytest.mark.parametrize(
+    "run_starts,arrival_time,expected",
+    [
+        pytest.param(
+            datetime(2026, 11, 10, 2, 0, tzinfo=UTC),
+            NINE_AM,
+            datetime(2026, 11, 10, 9, 0, tzinfo=UTC),
+            id="night-run-measures-that-morning",
+        ),
+        pytest.param(
+            datetime(2026, 11, 9, 10, 0, tzinfo=UTC),
+            NINE_AM,
+            datetime(2026, 11, 10, 9, 0, tzinfo=UTC),
+            id="weekday-after-arrival-rolls-to-next-day",
+        ),
+        pytest.param(
+            datetime(2026, 11, 9, 9, 0, tzinfo=UTC),
+            NINE_AM,
+            datetime(2026, 11, 10, 9, 0, tzinfo=UTC),
+            id="run-at-arrival-rolls-to-next-day",
+        ),
+        pytest.param(
+            datetime(2026, 11, 13, 18, 0, tzinfo=UTC),
+            NINE_AM,
+            datetime(2026, 11, 16, 9, 0, tzinfo=UTC),
+            id="friday-evening-skips-to-monday",
+        ),
+        pytest.param(
+            datetime(2026, 11, 14, 23, 0, tzinfo=UTC),
+            NINE_AM,
+            datetime(2026, 11, 16, 9, 0, tzinfo=UTC),
+            id="saturday-run-measures-monday",
+        ),
+        pytest.param(
+            datetime(2026, 11, 15, 7, 0, tzinfo=UTC),
+            NINE_AM,
+            datetime(2026, 11, 16, 9, 0, tzinfo=UTC),
+            id="sunday-before-arrival-still-measures-monday",
+        ),
+        pytest.param(
+            datetime(2026, 6, 8, 8, 30, tzinfo=UTC),
+            NINE_AM,
+            datetime(2026, 6, 9, 8, 0, tzinfo=UTC),
+            id="london-clock-not-utc-decides-arrival-has-passed",
+        ),
+        pytest.param(
+            datetime(2026, 3, 27, 12, 0, tzinfo=UTC),
+            NINE_AM,
+            datetime(2026, 3, 30, 8, 0, tzinfo=UTC),
+            id="arrival-after-clocks-go-forward-is-bst",
+        ),
+        pytest.param(
+            datetime(2026, 3, 29, 1, 30, tzinfo=UTC),
+            NINE_AM,
+            datetime(2026, 3, 30, 8, 0, tzinfo=UTC),
+            id="run-just-after-clocks-go-forward",
+        ),
+        pytest.param(
+            datetime(2026, 10, 23, 12, 0, tzinfo=UTC),
+            NINE_AM,
+            datetime(2026, 10, 26, 9, 0, tzinfo=UTC),
+            id="arrival-after-clocks-go-back-is-gmt",
+        ),
+        pytest.param(
+            datetime(2026, 10, 25, 0, 30, tzinfo=UTC),
+            NINE_AM,
+            datetime(2026, 10, 26, 9, 0, tzinfo=UTC),
+            id="run-in-repeated-hour",
+        ),
+        pytest.param(
+            datetime(2026, 11, 9, 12, 0, tzinfo=UTC),
+            time(17, 45),
+            datetime(2026, 11, 9, 17, 45, tzinfo=UTC),
+            id="configured-evening-time",
+        ),
+        pytest.param(
+            datetime(2026, 6, 8, 5, 0, tzinfo=UTC),
+            time(7, 15),
+            datetime(2026, 6, 8, 6, 15, tzinfo=UTC),
+            id="configured-early-time-in-bst",
+        ),
+    ],
+)
+def test_next_weekday_arrival(run_starts, arrival_time, expected):
+    assert next_weekday_arrival(arrival_time, after=run_starts) == expected
+
+
+def test_next_weekday_arrival_needs_an_aware_start():
+    with pytest.raises(ValueError, match="timezone-aware"):
+        next_weekday_arrival(NINE_AM, after=datetime(2026, 11, 9, 10, 0))
+
+
+def clock_reading(first: datetime, later: datetime) -> type[datetime]:
+    """A ``datetime`` whose ``now()`` returns ``first`` once, then ``later`` every time."""
+    readings = [first]
+
+    class Clock(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return readings.pop() if readings else later
+
+    return Clock
+
+
+async def test_every_mode_in_a_run_shares_the_arrival_fixed_when_built(sample_properties):
+    """Modes compare the same journey even when the clock passes the arrival mid-run.
+
+    The completion log records that arrival, since stored commute minutes do not.
+    """
+    client = create_mock_client(
+        geocoding_response=create_geocoding_response(51.54, -0.09),
+        time_filter_response=create_time_filter_response([("openrent:1", 60)]),
+    )
+    # Built at 08:00 on Monday 9 Nov (GMT); measured after the 08:15 arrival has passed.
+    clock = clock_reading(
+        datetime(2026, 11, 9, 8, 0, tzinfo=UTC), datetime(2026, 11, 9, 10, 0, tzinfo=UTC)
+    )
+    with (
+        patch("home_finder.enrichment.commute.datetime", clock),
+        patch("traveltimepy.AsyncClient", return_value=client),
+        patch("home_finder.enrichment.commute.logger") as mock_logger,
+    ):
+        commute = CommuteAssessor(
+            app_id="test", api_key="test", destination_postcode="N1 5AA", arrival_time=time(8, 15)
+        )
+        for mode in (TransportMode.CYCLING, TransportMode.PUBLIC_TRANSPORT):
+            await commute.assess_commutes(
+                sample_properties[:1], max_minutes=30, transport_mode=mode
+            )
+
+    monday_arrival = datetime(2026, 11, 9, 8, 15, tzinfo=UTC)
+    requested = [
+        call.kwargs["arrival_searches"][0].arrival_time
+        for call in client.time_filter.call_args_list
+    ]
+    assert requested == [monday_arrival, monday_arrival]
+    logged = [
+        call.kwargs["arrival_at"]
+        for call in mock_logger.info.call_args_list
+        if call.args[0] == "commute_assessment_complete"
+    ]
+    assert logged == ["2026-11-09T08:15:00+00:00"] * 2

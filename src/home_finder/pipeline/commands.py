@@ -46,6 +46,7 @@ async def run_backfill_commute(settings: Settings) -> None:
             app_id=settings.traveltime_app_id,
             api_key=settings.traveltime_api_key.get_secret_value(),
             destination_postcode=criteria.destination_postcode,
+            arrival_time=settings.commute_arrival_time,
         )
 
         commute_results: list[CommuteResult] = []
