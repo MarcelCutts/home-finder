@@ -676,7 +676,8 @@ class ZooplaScraper(BaseScraper):
         # NOTE: furnished_state, bathrooms_min, and available_only are intentionally
         # NOT passed as URL params. Zoopla's furnished_state filter excludes listings
         # that lack furnishing metadata (the majority), returning "No results" even
-        # for areas with hundreds of listings. These are filtered client-side instead.
+        # for areas with hundreds of listings. There is no local post-scrape
+        # enforcement of these three hints; see README's source-filter limitations.
 
         if page > 1:
             params["pn"] = str(page)

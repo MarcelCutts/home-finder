@@ -357,7 +357,7 @@ async def _enrich_candidates(
     logger.info("pipeline_started", phase="detail_enrichment")
     async with DetailFetcher(
         max_gallery_images=settings.quality_filter_max_images,
-        proxy_url=settings.proxy_url,
+        proxy_url=settings.proxy_url.get_secret_value(),
     ) as detail_fetcher:
         enrichment_result = await enrich_merged_properties(
             merged,

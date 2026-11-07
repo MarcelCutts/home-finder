@@ -96,7 +96,7 @@ sufficient gallery photos when that alternative is enabled.
 | Deferred | Work remains eligible but cannot proceed now |
 | Exhausted | An explicit automatic-attempt ceiling has been reached |
 | Reanalysis | Refreshing an existing assessment, including after new source evidence |
-| Delivery intent | A durable decision that a notification should be attempted |
+| Delivery intent | The durable alert decision for one event: a notification to attempt, or a dashboard-only decision stored as `suppressed` |
 | Delivery receipt | Evidence that an external send was acknowledged |
 
 Pipeline signatures use `SourceListing` and `PropertyAggregate`. These are aliases
@@ -186,8 +186,10 @@ the final delivery drain. These phase times do not isolate provider latency.
 The final drain's completed count is
 `pipeline_complete.final_drain_completed_deliveries`; startup recovery reports
 `delivery_recovery_complete.completed`. Neither is included in `notified_count`.
-Initial returned token totals exclude reanalysis and may be incomplete after an
-interruption; the spend ledger is authoritative for reconciled charges.
+Initial returned token totals exclude reanalysis. If the initial-assessment stage
+is interrupted, the token and cost columns are not written at all; a per-home
+timeout leaves them incomplete. The spend ledger is authoritative for reconciled
+charges.
 
 Counts are not a single decreasing funnel: sources can report observations beyond
 a processing cap, recovery adds work, consolidation changes identities, and

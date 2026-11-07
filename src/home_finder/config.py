@@ -1,18 +1,50 @@
 """Application configuration using pydantic-settings."""
 
 import json
+import re
 from datetime import time
+from os import PathLike
 from pathlib import Path
 from typing import Annotated, Any
+from urllib.parse import urlsplit
 
+from dotenv.parser import parse_stream
 from pydantic import Field, SecretStr, ValidationInfo, field_validator, model_validator
-from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
+from pydantic_settings import (
+    BaseSettings,
+    DotEnvSettingsSource,
+    EnvSettingsSource,
+    NoDecode,
+    PydanticBaseSettingsSource,
+    SettingsConfigDict,
+    SettingsError,
+)
 
 from home_finder.data.location_mappings import resolve_area_outcodes
 from home_finder.models import FurnishType, SearchCriteria, TransportMode
 from home_finder.models.analysis import AnalysisConfig, EvaluationPhaseConfig, VisualPhaseConfig
 from home_finder.models.notifications import NotificationPolicy
 from home_finder.models.spend import SpendPolicy
+
+
+def _validate_dotenv_syntax(source: DotEnvSettingsSource) -> None:
+    """Reject invalid bindings discarded by Pydantic's permissive dotenv loader."""
+    env_files = source.env_file
+    if env_files is None:
+        return
+    if isinstance(env_files, (str, PathLike)):
+        env_files = [env_files]
+    for env_file in env_files:
+        path = Path(env_file).expanduser()
+        if not path.is_file():
+            continue
+        with path.open(encoding=source.env_file_encoding or "utf-8") as stream:
+            for binding in parse_stream(stream):
+                if binding.error:
+                    raise SettingsError(
+                        f"Invalid dotenv syntax in {path} at line {binding.original.line}. "
+                        "Check quoting and assignments."
+                    )
 
 
 def new_runtime_analysis_config(
@@ -55,7 +87,37 @@ class Settings(BaseSettings):
         env_file_encoding="utf-8",
         env_prefix="HOME_FINDER_",
         extra="ignore",
+        hide_input_in_errors=True,
     )
+
+    @classmethod
+    def settings_customise_sources(
+        cls,
+        settings_cls: type[BaseSettings],
+        init_settings: PydanticBaseSettingsSource,
+        env_settings: PydanticBaseSettingsSource,
+        dotenv_settings: PydanticBaseSettingsSource,
+        file_secret_settings: PydanticBaseSettingsSource,
+    ) -> tuple[PydanticBaseSettingsSource, ...]:
+        if isinstance(dotenv_settings, DotEnvSettingsSource):
+            _validate_dotenv_syntax(dotenv_settings)
+        # Pydantic ignores unknown process variables even with extra="forbid".
+        # Check our namespace in both sources, while allowing other tools' keys.
+        for source in (env_settings, dotenv_settings):
+            if isinstance(source, EnvSettingsSource):
+                prefix = source.env_prefix.lower()
+                unknown = sorted(
+                    name.upper()
+                    for name in source.env_vars
+                    if name.lower().startswith(prefix)
+                    and name.lower()[len(prefix) :] not in settings_cls.model_fields
+                )
+                if unknown:
+                    raise SettingsError(
+                        f"Unknown Home Finder setting(s): {', '.join(unknown)}. "
+                        "See .env.example for supported names."
+                    )
+        return init_settings, env_settings, dotenv_settings, file_secret_settings
 
     # Telegram configuration (required for notifications)
     telegram_bot_token: SecretStr = Field(
@@ -218,16 +280,18 @@ class Settings(BaseSettings):
     # Scraper filters
     furnish_types: str = Field(
         default="unfurnished,part_furnished",
-        description="Comma-separated: furnished, unfurnished, part_furnished",
+        description="Source search hint: furnished, unfurnished, part_furnished; "
+        "support varies by portal (see README)",
     )
     min_bathrooms: int = Field(
         default=1,
         ge=0,
-        description="Minimum number of bathrooms",
+        description="Source search hint for minimum bathrooms; not enforced on every portal",
     )
     include_let_agreed: bool = Field(
         default=False,
-        description="Include properties already let agreed",
+        description="Request let-agreed search results where supported; "
+        "does not override later off-market exclusion",
     )
 
     # Search areas (boroughs or outcodes)
@@ -245,14 +309,14 @@ class Settings(BaseSettings):
     )
 
     # Proxy (for accessing geo-restricted sites like Zoopla from outside the UK)
-    proxy_url: str = Field(
-        default="",
+    proxy_url: SecretStr = Field(
+        default=SecretStr(""),
         description="HTTP/SOCKS5 proxy URL (e.g. socks5://user:pass@host:port)",
     )
 
     # Telegram webhook (enables inline button callbacks when set)
-    telegram_webhook_secret: str = Field(
-        default="",
+    telegram_webhook_secret: SecretStr = Field(
+        default=SecretStr(""),
         description="Secret token for Telegram webhook validation",
     )
 
@@ -264,9 +328,9 @@ class Settings(BaseSettings):
     )
     web_base_url: str = Field(
         default="",
-        description="Base URL for web dashboard (e.g. https://home-finder.fly.dev)",
+        description="Canonical HTTP(S) dashboard origin, without path, query or credentials",
     )
-    web_port: int = Field(default=8000, description="Web server port")
+    web_port: int = Field(default=8000, ge=1, le=65535, description="Web server port")
     carto_basemap_api_key: SecretStr = Field(
         default=SecretStr(""),
         description="CARTO browser tile key; restrict allowed origins at the provider",
@@ -281,6 +345,68 @@ class Settings(BaseSettings):
     # Database
     database_path: str = Field(default="data/properties.db")
 
+    @field_validator("web_base_url")
+    @classmethod
+    def _web_origin(cls, value: str) -> str:
+        if not value:
+            return value
+        try:
+            url = urlsplit(value)
+            port = url.port
+        except ValueError:
+            raise ValueError("web_base_url has an invalid host or port") from None
+        if (
+            url.scheme not in {"http", "https"}
+            or not url.hostname
+            or url.username is not None
+            or url.password is not None
+            or url.path not in {"", "/"}
+            or "?" in value
+            or "#" in value
+            or port == 0
+            or any(c.isspace() or ord(c) < 32 for c in value)
+        ):
+            raise ValueError("web_base_url must be an HTTP(S) origin without credentials or a path")
+        return value.rstrip("/")
+
+    @field_validator("proxy_url")
+    @classmethod
+    def _proxy_url(cls, value: SecretStr) -> SecretStr:
+        raw = value.get_secret_value()
+        if not raw:
+            return value
+        try:
+            url = urlsplit(raw)
+            port = url.port
+        except ValueError:
+            raise ValueError("proxy_url has an invalid host or port") from None
+        if (
+            url.scheme not in {"http", "https", "socks4", "socks4a", "socks5", "socks5h"}
+            or not url.hostname
+            or url.path not in {"", "/"}
+            or "?" in raw
+            or "#" in raw
+            or port == 0
+            or any(c.isspace() or ord(c) < 32 for c in raw)
+        ):
+            raise ValueError("proxy_url must be an HTTP(S) or SOCKS proxy URL")
+        return value
+
+    @field_validator("telegram_webhook_secret")
+    @classmethod
+    def _webhook_secret(cls, value: SecretStr) -> SecretStr:
+        raw = value.get_secret_value()
+        if raw and not re.fullmatch(r"[A-Za-z0-9_-]{1,256}", raw):
+            raise ValueError("telegram_webhook_secret must contain 1-256 letters, digits, _ or -")
+        return value
+
+    @field_validator("database_path", "web_host", "destination_postcode")
+    @classmethod
+    def _nonempty(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("must not be empty")
+        return value
+
     @field_validator("brief_must_haves")
     @classmethod
     def _known_must_haves(cls, value: str) -> str:
@@ -292,8 +418,7 @@ class Settings(BaseSettings):
         ]
         if unknown:
             raise ValueError(
-                f"brief_must_haves has unknown dimension(s) {unknown}; "
-                f"choose from {', '.join(WEIGHTS)}"
+                f"brief_must_haves has unknown dimensions; choose from {', '.join(WEIGHTS)}"
             )
         return value
 
@@ -334,10 +459,24 @@ class Settings(BaseSettings):
         return profile
 
     @model_validator(mode="after")
-    def _validate_csv_fields(self) -> "Settings":
-        """Eagerly validate CSV config fields at startup."""
-        self.get_search_areas()
-        self.get_furnish_types()
+    def _validate_search(self) -> "Settings":
+        """Validate the same search contract before any mode starts work."""
+        try:
+            self.get_search_areas()
+        except ValueError:
+            raise ValueError(
+                "Unknown search area in search_areas; use supported outcodes or borough names"
+            ) from None
+        try:
+            self.get_furnish_types()
+        except ValueError:
+            raise ValueError(
+                "furnish_types must contain furnished, unfurnished or part_furnished"
+            ) from None
+        if self.min_price > self.max_price:
+            raise ValueError("min_price must be <= max_price")
+        if self.min_bedrooms > self.max_bedrooms:
+            raise ValueError("min_bedrooms must be <= max_bedrooms")
         return self
 
     @property

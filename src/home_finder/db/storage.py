@@ -585,10 +585,12 @@ class PropertyStorage:
         """Filter to only merged properties not yet promoted to golden records.
 
         A merged property is considered "seen" if its canonical unique_id has
-        ``merged_id IS NOT NULL`` in ``source_listings`` — i.e. it was promoted
-        to a golden record in a prior run.  Listings that were only scraped but
-        never saved (filtered out, failed enrichment) are *not* considered seen
-        and will be re-processed.
+        ``merged_id IS NOT NULL`` in ``source_listings`` — i.e. it belongs to a
+        home, possibly its own staging row.  Listings that were only scraped but
+        never saved (filtered out by criteria or location) are *not* seen and
+        will be re-processed.  Every new selected listing gets a staging row before
+        enrichment, so one whose enrichment failed or expired stays seen; the
+        enrichment backlog or a recovery grant retries it, not rediscovery.
 
         Args:
             properties: List of merged properties to filter.
