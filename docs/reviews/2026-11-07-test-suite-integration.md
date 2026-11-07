@@ -1,7 +1,10 @@
 # Integrated test-suite review and implementation
 
 7 November 2026. This is the current account of the combined implementation in the
-Codex worktree, based on `51dd9c6e05cd36d4fe4a7cf7ea8966023d63cc16`. It supersedes the
+Codex worktree. The audit began at `51dd9c6e05cd36d4fe4a7cf7ea8966023d63cc16`;
+PR preparation integrated `main` at `914cede`, retaining its configuration
+validation and pipeline documentation. The current results below include those
+79 additional offline cases. It supersedes the
 implementation recommendations in the earlier Codex and Claude reports. Those
 reports remain historical evidence; their counts, paths and worker caps describe
 their respective snapshots.
@@ -9,14 +12,14 @@ their respective snapshots.
 The corrected Claude suite layout and performance fixes are integrated with the
 Codex profiler, CI artifacts, additional execution tests and stronger live/browser
 assertions. **The default is `-n auto`, without a repository worker cap.** The final
-default run passed **4,081 tests in 10.70 seconds** as reported by pytest. The final
-CI-profile coverage run passed the same tests in **18.74 seconds**, without
+default run passed **4,160 tests in 10.71 seconds** as reported by pytest. The final
+CI-profile coverage run passed the same tests in **18.07 seconds**, without
 warnings, including with `ResourceWarning` made visible. All **77 local Chromium
-tests** passed in **32.30 seconds** with conflicting application environment
+tests** passed in **32.75 seconds** with conflicting application environment
 variables exported; they emitted 27 dependency deprecation warnings.
 
-Coverage is **94.40% of statements** (12,958/13,727) and **87.48% of branch exits**
-(4,145/4,738). Coverage.py's combined score is 92.62%; it is a different metric.
+Coverage is **94.46% of statements** (13,109/13,878) and **87.58% of branch exits**
+(4,216/4,814). Coverage.py's combined score is 92.69%; it is a different metric.
 These figures do not establish complete user-action coverage.
 
 ## What was combined
@@ -33,7 +36,7 @@ These figures do not establish complete user-action coverage.
 | Observability | One opt-in profiler, its subprocess/worker-crash regression tests, JUnit, CI artifact retention and a readable job summary |
 | Measurement | All package modules included; child-process and abrupt-exit coverage enabled; bounded parameter IDs; worker/load context recorded |
 
-The suite now collects **4,202 cases in 193 modules**: 4,081 offline, 77 local browser,
+The suite now collects **4,281 cases in 193 modules**: 4,160 offline, 77 local browser,
 40 live non-browser and four live browser cases. The longest node ID is 893
 characters. Seven duplicated constant-mapping cases were removed from the live
 lane; offline location-mapping tests own those constants.
@@ -92,7 +95,7 @@ seconds in production, so tests can bypass pacing without replacing global
 
 Eight interleaved full offline runs used warm bytecode, the fast Hypothesis profile,
 and no coverage. These runs had 4,078 cases, before the three final template cleanup
-cases were added. All succeeded; disabling the template skipped its five then-existing
+cases and the 79 upstream configuration cases were added. All succeeded; disabling the template skipped its five then-existing
 self-tests. Whole-process time includes startup and exit; CPU is the accumulated
 CPU of the pytest subprocess and its waited-for descendants.
 
@@ -121,8 +124,8 @@ this measurement window, not a universal throughput guarantee. Earlier multi-min
 runs occurred under different host load, cache conditions and suite contents, so
 this report does not derive an exact overall speedup ratio from them.
 
-The final fast profile partitions 10.68 seconds after pytest configuration into
-4.54 seconds of startup, a 3.92-second test window and 2.22 seconds through the
+The final fast profile partitions 10.69 seconds after pytest configuration into
+4.49 seconds of startup, a 3.90-second test window and 2.31 seconds through the
 session-finish hook. Workers occupied test phases for 78% of that window. Startup
 and shutdown now dominate wall time; remaining slow cases include actual child
 processes proving crash recovery, backup/CLI isolation, and the profiler's own
@@ -155,7 +158,7 @@ worker comparison above uses an external whole-process timer instead.
 Coverage uses `patch = ["subprocess", "_exit"]`, as supported by
 [pytest-cov's migration guidance](https://pytest-cov.readthedocs.io/en/latest/subprocess-support.html)
 and [coverage.py's patch documentation](https://coverage.readthedocs.io/en/latest/config.html#run-patch).
-The denominator includes all 122 Python package files, with the existing 50 line
+The denominator includes all 123 Python package files, with the existing 50 line
 exclusions. It does not include templates, JavaScript, maintenance scripts or
 experimental projects. The detail-fetcher tests raise its statement coverage to
 91.68% and branch coverage to 79.44%; not every parsing/error path is covered.
@@ -187,7 +190,8 @@ user actions are not covered**. Prioritized follow-up findings are:
 2. Exercise storage failures on dashboard/card/detail/map fallback routes, and
    rendering of detail status/price histories, negotiation content and `og:image`.
 3. Complete remaining CLI variants, including accepted full-scrape/debug settings,
-   invalid-settings exit, thumbnail lock contention and omitted optional flags.
+   thumbnail lock contention and omitted optional flags. Upstream configuration
+   checks now cover invalid-settings exits and malformed or missing dotenv files.
 4. Establish a separate, representative assessment-quality evaluation. The live
    analysis smoke probe's synthetic images only establish request/response structure.
 5. Review compatibility exports and unused dependencies before removal. This pass
@@ -203,15 +207,15 @@ or paid APIs in this integration. Experimental harnesses were not rerun.
 
 ## Verification and review
 
-- Final default: 4,081 passed; final CI Hypothesis/coverage: 4,081 passed, no warnings.
+- Final default: 4,160 passed; final CI Hypothesis/coverage: 4,160 passed, no warnings.
 - Local Chromium: 77 passed, with hostile exported settings; 27 third-party
   deprecations from websockets/uvicorn/asyncio integration remain visible.
 - Focused infrastructure and transport checks: 38 passed with `ResourceWarning`
   treated as an error. The restored extra-request mutation was rejected.
 - Eight interleaved worker/template experiments succeeded.
-- Ruff checks/formatting, mypy over 122 source files, wheel/source build and
-  `git diff --check` passed. Hosted CI itself has not been dispatched.
+- Ruff checks/formatting, mypy over 123 source files, wheel/source build and
+  `git diff --check` passed. These are local checks; hosted CI runs separately on the PR.
 - The quality-pass reviewed production changes, fixture ownership, real decision
   boundaries, terminology, profile units, historical/current report separation and
   coverage claims. The gaps above remain explicit rather than inferred away from
-  a green suite. Nothing was committed or published.
+  a green suite.

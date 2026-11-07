@@ -1,8 +1,8 @@
 # Integrated package coverage — 7 November 2026
 
-Final CI-profile offline run: **94.40% statements** (12,958/13,727); **87.48% branch exits** (4,145/4,738). Combined coverage.py score: 92.62%.
+Final CI-profile offline run: **94.46% statements** (13,109/13,878); **87.58% branch exits** (4,216/4,814). Combined coverage.py score: 92.69%.
 
-All 122 Python files under `src/home_finder` are included, with branch and child-process measurement. The configured exclusions (50 lines) remain; nothing is omitted by source path. Templates, JavaScript, maintenance scripts and experimental projects are not part of this Python-package denominator. No coverage percentage proves assertion quality or complete user-action coverage.
+All 123 Python files under `src/home_finder` are included, with branch and child-process measurement. The configured exclusions (50 lines) remain; nothing is omitted by source path. Templates, JavaScript, maintenance scripts and experimental projects are not part of this Python-package denominator. No coverage percentage proves assertion quality or complete user-action coverage.
 
 Missing line numbers and branch pairs, plus unexecuted function names, are preserved in [the evidence](2026-11-07-test-suite-integration-evidence.json). The [report](2026-11-07-test-suite-integration.md) interprets the remaining gaps.
 
@@ -19,7 +19,8 @@ Missing line numbers and branch pairs, plus unexecuted function names, are prese
 | [src/home_finder/analysis/request_budget.py](../../src/home_finder/analysis/request_budget.py) | 93.88% | 87.50% | 3 |
 | [src/home_finder/analysis/space_evidence.py](../../src/home_finder/analysis/space_evidence.py) | 100.00% | 100.00% | 0 |
 | [src/home_finder/analysis/spend.py](../../src/home_finder/analysis/spend.py) | 95.05% | 90.91% | 11 |
-| [src/home_finder/config.py](../../src/home_finder/config.py) | 100.00% | 100.00% | 0 |
+| [src/home_finder/config.py](../../src/home_finder/config.py) | 100.00% | 96.00% | 0 |
+| [src/home_finder/config_check.py](../../src/home_finder/config_check.py) | 95.92% | 92.86% | 2 |
 | [src/home_finder/data/__init__.py](../../src/home_finder/data/__init__.py) | — | — | 0 |
 | [src/home_finder/data/area_context.py](../../src/home_finder/data/area_context.py) | 96.27% | 86.96% | 5 |
 | [src/home_finder/data/location_mappings.py](../../src/home_finder/data/location_mappings.py) | 95.38% | 95.00% | 3 |
@@ -52,7 +53,7 @@ Missing line numbers and branch pairs, plus unexecuted function names, are prese
 | [src/home_finder/filters/off_market.py](../../src/home_finder/filters/off_market.py) | 88.59% | 66.67% | 17 |
 | [src/home_finder/filters/shadow_rating.py](../../src/home_finder/filters/shadow_rating.py) | 100.00% | 100.00% | 0 |
 | [src/home_finder/logging.py](../../src/home_finder/logging.py) | 91.67% | 50.00% | 1 |
-| [src/home_finder/main.py](../../src/home_finder/main.py) | 94.51% | 97.37% | 5 |
+| [src/home_finder/main.py](../../src/home_finder/main.py) | 97.37% | 96.00% | 3 |
 | [src/home_finder/matching/__init__.py](../../src/home_finder/matching/__init__.py) | — | — | 0 |
 | [src/home_finder/matching/deduplication.py](../../src/home_finder/matching/deduplication.py) | 98.92% | 96.71% | 3 |
 | [src/home_finder/matching/scoring.py](../../src/home_finder/matching/scoring.py) | 100.00% | 100.00% | 0 |

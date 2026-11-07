@@ -1,6 +1,6 @@
 """Tests for the FastAPI application factory."""
 
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 from fastapi import FastAPI
@@ -10,6 +10,7 @@ from home_finder.config import Settings
 from home_finder.web.app import (
     PIPELINE_INITIAL_DELAY_SECONDS,
     SecurityHeadersMiddleware,
+    _register_telegram_webhook,
     create_app,
 )
 from home_finder.web.routes import router
@@ -23,6 +24,22 @@ def app_settings() -> Settings:
         database_path=":memory:",
         pipeline_interval_minutes=60,
     )
+
+
+async def test_webhook_registration_unwraps_secret_at_provider_boundary():
+    settings = Settings(
+        telegram_bot_token="123456:offline-token",
+        telegram_webhook_secret="offline-webhook-secret",
+        web_base_url="https://example.com/",
+    )
+    bot = Mock(set_webhook=AsyncMock(), session=Mock(close=AsyncMock()))
+    with patch("aiogram.Bot", return_value=bot) as constructor:
+        await _register_telegram_webhook(settings)
+    assert constructor.call_args.kwargs["token"] == "123456:offline-token"
+    bot.set_webhook.assert_awaited_once_with(
+        url="https://example.com/telegram/webhook", secret_token="offline-webhook-secret"
+    )
+    bot.session.close.assert_awaited_once()
 
 
 class TestCreateApp:

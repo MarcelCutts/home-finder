@@ -108,15 +108,16 @@ settings.load_profile(os.getenv("HYPOTHESIS_PROFILE", "fast"))
 
 
 @pytest.fixture(autouse=True)
-def _isolate_settings_from_local_config(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Keep the local .env file and exported HOME_FINDER_* variables out of test Settings."""
+def _isolate_settings_from_environment(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Tests opt into configuration; neither a shell export nor .env supplies it."""
+    for name in os.environ:
+        if name.upper().startswith("HOME_FINDER_"):
+            monkeypatch.delenv(name)
     monkeypatch.setattr(
         Settings,
         "model_config",
         {**Settings.model_config, "env_file": None},
     )
-    for name in [name for name in os.environ if name.startswith("HOME_FINDER_")]:
-        monkeypatch.delenv(name)
 
 
 def _modified_ns(path: Path) -> int | None:

@@ -233,7 +233,7 @@ def server_settings(tmp_path_factory):
     # Session fixtures run before the function-scoped isolation fixture in
     # tests/conftest.py, so keep the developer's .env and exported settings out here.
     with pytest.MonkeyPatch.context() as env:
-        for name in [name for name in os.environ if name.startswith("HOME_FINDER_")]:
+        for name in [name for name in os.environ if name.upper().startswith("HOME_FINDER_")]:
             env.delenv(name)
         settings = _browser_server_settings(db_path)
     return settings

@@ -68,7 +68,7 @@ def _origin(value: str) -> tuple[str, str, int] | None:
 
 def valid_webhook_secret(request: Request, settings: Settings) -> bool:
     """Compare bytes so a malformed non-ASCII header cannot raise TypeError."""
-    expected = settings.telegram_webhook_secret
+    expected = settings.telegram_webhook_secret.get_secret_value()
     supplied = request.headers.get("x-telegram-bot-api-secret-token", "")
     return bool(expected) and secrets.compare_digest(supplied.encode(), expected.encode())
 

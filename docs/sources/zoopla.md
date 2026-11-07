@@ -4,16 +4,16 @@
 
 ## Key Decisions
 
-- **HTTP client**: `curl_cffi` with Chrome impersonation — required for both search and detail pages due to Cloudflare TLS fingerprinting. Standard HTTP clients get 403s.
+- **HTTP client**: `curl_cffi` with browser impersonation (a Chrome or Safari profile) — required for both search and detail pages due to Cloudflare TLS fingerprinting. Standard HTTP clients get 403s.
 - **Browser rotation**: One impersonation profile picked per area (switching mid-session is suspicious). Profile pool defined in scraper.
 - **Sort**: `newest_listings` — prioritizes recent adverts; normal collection continues through known pages within its bounds.
-- **Shared accommodation**: Listings matching flat share/house share/room patterns are silently dropped at scrape time (`_SHARED_ACCOMMODATION_PATTERNS`).
+- **Shared accommodation**: Listings matching flat share/house share/room patterns are dropped at scrape time (`_SHARED_ACCOMMODATION_PATTERNS`). Each one counts as a parse error, which marks the Zoopla scrape unhealthy and the run partial.
 
 ## Filter Quirks
 
-**Furnished filter is broken.** The `furnished_state` URL parameter excludes listings that lack furnishing metadata (the majority), returning "No results" even for areas with hundreds of listings. Intentionally NOT passed — filtered client-side instead.
+**Furnished filter is broken.** The `furnished_state` URL parameter excludes listings that lack furnishing metadata (the majority), returning "No results" even for areas with hundreds of listings. Intentionally NOT passed. No local furnishing filter replaces it, so Zoopla results include every furnishing type.
 
-**Bathroom filter similarly unreliable** — same metadata gap issue. Not passed as a URL param.
+**Bathroom filter similarly unreliable** — same metadata gap issue. Not passed as a URL param, and not applied locally either.
 
 ## Detail Page Extraction
 
@@ -28,8 +28,8 @@ Three extraction methods tried in order: `__NEXT_DATA__` JSON, RSC taxonomy payl
 
 ## Pipeline Implications
 
-- **Early-stop**: Supported (`results_sort=newest_listings`).
-- **Dedup**: Full postcodes and coordinates available at scrape time → can cross-match before enrichment.
+- **Early-stop**: Not used. The scraper sorts newest first (`results_sort=newest_listings`) and accepts `known_source_ids`, but the pipeline passes none (`pipeline/collection.py`), so collection continues through known pages within its bounds.
+- **Dedup**: Full postcodes and coordinates available at scrape time. Matching still runs only after detail enrichment, as it does for every source.
 - **Image priority**: Highest (4) — Zoopla CDN images are typically highest resolution.
 - **Quality analysis**: Images downloaded locally via curl_cffi and sent as base64 (Anthropic's servers can't fetch from zoocdn.com directly).
 - **Floorplan gate**: Zoopla has dedicated floorplan media type — no exemption needed.

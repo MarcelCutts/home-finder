@@ -28,7 +28,9 @@ Thank you for your interest in contributing to Home Finder! This document provid
 5. **Set up environment**:
    ```bash
    cp .env.example .env
-   # Edit .env with your test credentials
+   chmod 600 .env
+   uv run home-finder --check-config
+   # Offline tests need no credentials and ignore HOME_FINDER_ exports and .env.
    ```
 
 ## Code Style

@@ -1,6 +1,6 @@
 # Integrated suite inventory — 7 November 2026
 
-4,202 collected cases in 193 test modules: 4,081 offline, 40 live, 4 live browser, 77 local browser. Collected with `pytest --collect-only -n 0 -m ""`. Collection is not execution.
+4,281 collected cases in 193 test modules: 4,160 offline, 40 live, 4 live browser, 77 local browser. Collected with `pytest --collect-only -n 0 -m ""`. Collection is not execution.
 
 This is the current inventory for the [integration report](2026-11-07-test-suite-integration.md). Scope descriptions come from module/class documentation; boundary and completeness limits are in that report. Counts are expanded pytest cases, including live and expected-failure cases.
 
@@ -51,8 +51,8 @@ This is the current inventory for the [integration report](2026-11-07-test-suite
 | [tests/test_analysis/test_token_usage.py](../../tests/test_analysis/test_token_usage.py) | 9 | offline: 9 | TokenUsage: the analyzer's in-memory token and cost estimate. TokenUsage |
 | [tests/test_analysis/test_value_assessment.py](../../tests/test_analysis/test_value_assessment.py) | 11 | offline: 11 | Value-for-money against historical rental benchmarks (assess_value in analysis/analyzer.py). |
 | [tests/test_analysis/test_visual_checkpoints.py](../../tests/test_analysis/test_visual_checkpoints.py) | 37 | offline: 37 | Restart and crash boundaries for paid visual observations, using the real SDK. |
-| [tests/test_cli.py](../../tests/test_cli.py) | 56 | offline: 56 | CLI intent is validated before settings, paid work or process startup. |
-| [tests/test_config.py](../../tests/test_config.py) | 24 | offline: 24 | Tests for application configuration. GetSearchAreas; GetFurnishTypes; GetSearchCriteria; DataDir; PropertyAnalysisTimeout |
+| [tests/test_cli.py](../../tests/test_cli.py) | 86 | offline: 86 | CLI intent is validated before settings, paid work or process startup. |
+| [tests/test_config.py](../../tests/test_config.py) | 72 | offline: 72 | Configuration loading, documented defaults and startup validation. |
 | [tests/test_data/test_area_context.py](../../tests/test_data/test_area_context.py) | 66 | offline: 66 | Tests for area context data loading and accessor functions. DataLoading; MicroAreaValidation; Accessors; AcousticProfiles; NoiseEnforcement |
 | [tests/test_data/test_location_mappings.py](../../tests/test_data/test_location_mappings.py) | 25 | offline: 25 | Tests for shared location mappings. RightmoveLocationsRegression; RightmoveOutcodesRegression; BoroughAreasRegression; SpotChecks; AliasCollisions |
 | [tests/test_db/test_anchor_records.py](../../tests/test_db/test_anchor_records.py) | 12 | offline: 12 | Stored anchors: homes loaded for matching, and refreshing an anchor's sources. |
@@ -175,7 +175,7 @@ This is the current inventory for the [integration report](2026-11-07-test-suite
 | [tests/test_web/browser/test_browser_e2e.py](../../tests/test_web/browser/test_browser_e2e.py) | 77 | local browser: 77 | Browser-based E2E tests using Playwright against a live FastAPI server. |
 | [tests/test_web/test_access.py](../../tests/test_web/test_access.py) | 47 | offline: 47 | Access checks against the complete application, including mounted assets. |
 | [tests/test_web/test_annotate.py](../../tests/test_web/test_annotate.py) | 6 | offline: 6 | Notes on the listing text.  |
-| [tests/test_web/test_app.py](../../tests/test_web/test_app.py) | 9 | offline: 9 | Tests for the FastAPI application factory. CreateApp; SecurityHeaders; PipelineConfig |
+| [tests/test_web/test_app.py](../../tests/test_web/test_app.py) | 10 | offline: 10 | Tests for the FastAPI application factory. CreateApp; SecurityHeaders; PipelineConfig |
 | [tests/test_web/test_area_page.py](../../tests/test_web/test_area_page.py) | 8 | offline: 8 | Area page (GET /area/{outcode}): the full area guide linked from each detail page. |
 | [tests/test_web/test_brief.py](../../tests/test_web/test_brief.py) | 11 | offline: 11 | The brief check and the lead line it gives a listing.  |
 | [tests/test_web/test_cached_images.py](../../tests/test_web/test_cached_images.py) | 11 | offline: 11 | Cached listing images: the /images route and the local URLs pages use instead of CDN ones. |

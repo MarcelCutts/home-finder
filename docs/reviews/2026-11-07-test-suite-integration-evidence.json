@@ -1,6 +1,7 @@
 {
   "base_commit": "51dd9c6e05cd36d4fe4a7cf7ea8966023d63cc16",
-  "measurement_scope": "Local integration. Benchmarks had 4078 offline cases before three template cleanup cases were added. Final offline runs have 4081. Whole-process CPU uses the difference in RUSAGE_CHILDREN around each serial subprocess.run; profiler CPU starts later, at pytest configuration, and excludes test subprocesses.",
+  "pr_base_commit": "914cede68640f15ef74bb5fdf1ee4efc7403d0c7",
+  "measurement_scope": "Local integration. Benchmarks had 4078 offline cases before three template cleanup cases were added. Original final offline runs have 4081; PR runs after integrating upstream configuration checks have 4160. Whole-process CPU uses the difference in RUSAGE_CHILDREN around each serial subprocess.run; profiler CPU starts later, at pytest configuration, and excludes test subprocesses.",
   "benchmarks": [
     {
       "label": "auto-1",
@@ -2175,13 +2176,601 @@
           "deselected": 4122
         }
       }
+    },
+    "pr-fast-profile": {
+      "started_at": "2026-11-07T19:40:09.471767+00:00",
+      "exit_code": 0,
+      "wall_seconds": 10.690645044996927,
+      "environment": {
+        "python": "3.14.7",
+        "platform": "Linux",
+        "pytest": "9.1.1",
+        "cpu_count": 32,
+        "affinity_count": 32,
+        "load_average_start": [
+          1.10498046875,
+          1.74365234375,
+          1.9462890625
+        ],
+        "load_average_end": [
+          3.78271484375,
+          2.2958984375,
+          2.1240234375
+        ],
+        "workers_requested": 16,
+        "worker_cap": null,
+        "distribution": "loadgroup",
+        "marker_expression": "not slow and not browser",
+        "coverage": false,
+        "hypothesis_profile": "fast",
+        "schema_template": true
+      },
+      "phase_outcomes": {
+        "setup:passed": 4160,
+        "call:passed": 4160,
+        "teardown:passed": 4160
+      },
+      "test_window": {
+        "startup_seconds": 4.491066217422485,
+        "seconds": 3.8956127166748047,
+        "finish_seconds": 2.3110265731811523,
+        "worker_phase_seconds": {
+          "gw5": 3.078575543961051,
+          "gw9": 3.279352157966059,
+          "gw8": 3.232790858968656,
+          "gw14": 2.927789680983551,
+          "gw0": 2.895110877954721,
+          "gw10": 2.977903461072856,
+          "gw1": 2.90366913599064,
+          "gw12": 3.10955974895478,
+          "gw7": 3.1682150779924996,
+          "gw6": 3.0786744939541677,
+          "gw11": 2.8297429549893423,
+          "gw13": 3.0409626179716724,
+          "gw15": 2.7419211660198926,
+          "gw2": 2.902436414056865,
+          "gw4": 2.8058725720256916,
+          "gw3": 3.3434638180260663
+        },
+        "worker_slots": 16,
+        "occupied_fraction": 0.7751675425485096
+      },
+      "workers_recorded": 16,
+      "phase_seconds": {
+        "setup": 8.07040572101323,
+        "call": 38.62729167890211,
+        "teardown": 1.61834318097317
+      },
+      "slowest_modules_summed_phase_seconds": [
+        [
+          "tests/test_test_support/test_pytest_profile.py",
+          2.71567941000103
+        ],
+        [
+          "tests/test_web/test_dashboard_filters.py",
+          2.333288996000192
+        ],
+        [
+          "tests/test_pipeline/test_spend_recovery.py",
+          1.913530759004061
+        ],
+        [
+          "tests/test_analysis/test_visual_checkpoints.py",
+          1.653010716989229
+        ],
+        [
+          "tests/test_web/test_access.py",
+          1.6041584609920392
+        ],
+        [
+          "tests/test_web/test_detail_page.py",
+          1.5994987180056341
+        ],
+        [
+          "tests/test_db/test_backup.py",
+          1.5336369310098235
+        ],
+        [
+          "tests/test_web/test_processing_visibility.py",
+          1.2796695489923877
+        ],
+        [
+          "tests/test_notifiers/test_delivery_recovery.py",
+          1.278284565971262
+        ],
+        [
+          "tests/test_pipeline/test_spend_admin.py",
+          1.1791843689970847
+        ]
+      ],
+      "processes": {
+        "controller": {
+          "wall_seconds": 10.690645044996927,
+          "cpu_seconds": 2.3499420019999997,
+          "peak_rss_mib": 810.55859375,
+          "collection_seconds": 1.4299999747890979e-05,
+          "selected": 0,
+          "deselected": 0
+        },
+        "gw14": {
+          "wall_seconds": 6.844046835998597,
+          "cpu_seconds": 6.213517522,
+          "peak_rss_mib": 396.30859375,
+          "collection_seconds": 3.0717225080006756,
+          "selected": 4160,
+          "deselected": 121,
+          "crashed": false
+        },
+        "gw9": {
+          "wall_seconds": 7.0996194729996205,
+          "cpu_seconds": 4.978462918,
+          "peak_rss_mib": 372.8984375,
+          "collection_seconds": 3.366558403999079,
+          "selected": 4160,
+          "deselected": 121,
+          "crashed": false
+        },
+        "gw15": {
+          "wall_seconds": 6.723842772000353,
+          "cpu_seconds": 5.803991141,
+          "peak_rss_mib": 420.08203125,
+          "collection_seconds": 2.9753304029982246,
+          "selected": 4160,
+          "deselected": 121,
+          "crashed": false
+        },
+        "gw1": {
+          "wall_seconds": 7.364495914000145,
+          "cpu_seconds": 6.456031907,
+          "peak_rss_mib": 474.5078125,
+          "collection_seconds": 3.2627197459987656,
+          "selected": 4160,
+          "deselected": 121,
+          "crashed": false
+        },
+        "gw7": {
+          "wall_seconds": 7.040606342001411,
+          "cpu_seconds": 5.639729805,
+          "peak_rss_mib": 388.078125,
+          "collection_seconds": 3.1706223039982433,
+          "selected": 4160,
+          "deselected": 121,
+          "crashed": false
+        },
+        "gw12": {
+          "wall_seconds": 6.8033399430023564,
+          "cpu_seconds": 5.083781434,
+          "peak_rss_mib": 442.81640625,
+          "collection_seconds": 3.0356460090006294,
+          "selected": 4160,
+          "deselected": 121,
+          "crashed": false
+        },
+        "gw13": {
+          "wall_seconds": 6.893448113998602,
+          "cpu_seconds": 6.396413016,
+          "peak_rss_mib": 394.078125,
+          "collection_seconds": 3.333246551999764,
+          "selected": 4160,
+          "deselected": 121,
+          "crashed": false
+        },
+        "gw5": {
+          "wall_seconds": 7.226741608999873,
+          "cpu_seconds": 5.300399618,
+          "peak_rss_mib": 375.95703125,
+          "collection_seconds": 3.48518438300016,
+          "selected": 4160,
+          "deselected": 121,
+          "crashed": false
+        },
+        "gw0": {
+          "wall_seconds": 7.394361607999599,
+          "cpu_seconds": 6.001189395,
+          "peak_rss_mib": 382.796875,
+          "collection_seconds": 3.6026943560027576,
+          "selected": 4160,
+          "deselected": 121,
+          "crashed": false
+        },
+        "gw4": {
+          "wall_seconds": 7.216437318998942,
+          "cpu_seconds": 6.389669075,
+          "peak_rss_mib": 463.421875,
+          "collection_seconds": 3.452707739001198,
+          "selected": 4160,
+          "deselected": 121,
+          "crashed": false
+        },
+        "gw2": {
+          "wall_seconds": 7.343892683999002,
+          "cpu_seconds": 5.010353399,
+          "peak_rss_mib": 374.6875,
+          "collection_seconds": 3.216628046000551,
+          "selected": 4160,
+          "deselected": 121,
+          "crashed": false
+        },
+        "gw11": {
+          "wall_seconds": 6.897760276999179,
+          "cpu_seconds": 6.4165692839999995,
+          "peak_rss_mib": 398.18359375,
+          "collection_seconds": 3.041253837000113,
+          "selected": 4160,
+          "deselected": 121,
+          "crashed": false
+        },
+        "gw10": {
+          "wall_seconds": 6.840928628000256,
+          "cpu_seconds": 4.986330274999999,
+          "peak_rss_mib": 391.3125,
+          "collection_seconds": 2.9951608659976046,
+          "selected": 4160,
+          "deselected": 121,
+          "crashed": false
+        },
+        "gw6": {
+          "wall_seconds": 7.277061064000009,
+          "cpu_seconds": 6.648274937,
+          "peak_rss_mib": 401.94140625,
+          "collection_seconds": 3.3843165449980006,
+          "selected": 4160,
+          "deselected": 121,
+          "crashed": false
+        },
+        "gw8": {
+          "wall_seconds": 7.462821763001557,
+          "cpu_seconds": 7.5874380619999995,
+          "peak_rss_mib": 478.40234375,
+          "collection_seconds": 3.3283851119995234,
+          "selected": 4160,
+          "deselected": 121,
+          "crashed": false
+        },
+        "gw3": {
+          "wall_seconds": 7.676864319997549,
+          "cpu_seconds": 7.588617355999999,
+          "peak_rss_mib": 429.953125,
+          "collection_seconds": 3.624753789998067,
+          "selected": 4160,
+          "deselected": 121,
+          "crashed": false
+        }
+      }
+    },
+    "pr-coverage-profile": {
+      "started_at": "2026-11-07T19:37:58.253634+00:00",
+      "exit_code": 0,
+      "wall_seconds": 18.051316089000466,
+      "environment": {
+        "python": "3.14.7",
+        "platform": "Linux",
+        "pytest": "9.1.1",
+        "cpu_count": 32,
+        "affinity_count": 32,
+        "load_average_start": [
+          2.06396484375,
+          1.69287109375,
+          1.9345703125
+        ],
+        "load_average_end": [
+          4.56591796875,
+          2.27685546875,
+          2.12255859375
+        ],
+        "workers_requested": 16,
+        "worker_cap": null,
+        "distribution": "loadgroup",
+        "marker_expression": "not slow and not browser",
+        "coverage": true,
+        "hypothesis_profile": "ci",
+        "schema_template": true
+      },
+      "phase_outcomes": {
+        "setup:passed": 4160,
+        "call:passed": 4160,
+        "teardown:passed": 4160
+      },
+      "test_window": {
+        "startup_seconds": 5.855589151382446,
+        "seconds": 6.870766878128052,
+        "finish_seconds": 5.3318610191345215,
+        "worker_phase_seconds": {
+          "gw5": 6.37541855695963,
+          "gw7": 6.177143141030683,
+          "gw8": 6.331081850079499,
+          "gw0": 6.1981729400395125,
+          "gw15": 6.043702358052542,
+          "gw10": 6.314311961050407,
+          "gw11": 6.260116012992512,
+          "gw12": 6.113727432912128,
+          "gw9": 6.576139419055835,
+          "gw13": 6.262884658048279,
+          "gw14": 6.150735403964063,
+          "gw3": 6.319621591970645,
+          "gw2": 6.334293575000629,
+          "gw6": 6.423272180938511,
+          "gw4": 6.11524489812291,
+          "gw1": 6.0908990369862295
+        },
+        "worker_slots": 16,
+        "occupied_fraction": 0.9104402644613593
+      },
+      "workers_recorded": 16,
+      "phase_seconds": {
+        "setup": 9.757579632088891,
+        "call": 88.61727564012108,
+        "teardown": 1.7119097449940455
+      },
+      "slowest_modules_summed_phase_seconds": [
+        [
+          "tests/test_matching/test_grouping_invariants.py",
+          4.342967115004285
+        ],
+        [
+          "tests/test_web/test_detail_costs.py",
+          4.086830190997716
+        ],
+        [
+          "tests/test_test_support/test_pytest_profile.py",
+          3.9108861980057554
+        ],
+        [
+          "tests/test_web/test_dashboard_filters.py",
+          3.8301548410126998
+        ],
+        [
+          "tests/test_web/test_detail_page.py",
+          3.7370322640526865
+        ],
+        [
+          "tests/test_matching/test_scoring_properties.py",
+          3.191054075017746
+        ],
+        [
+          "tests/test_web/test_access.py",
+          3.0015091900168045
+        ],
+        [
+          "tests/test_pipeline/test_spend_recovery.py",
+          2.762141271989094
+        ],
+        [
+          "tests/test_web/test_dashboard.py",
+          2.683951202012395
+        ],
+        [
+          "tests/test_db/test_backup.py",
+          2.578584031005448
+        ]
+      ],
+      "processes": {
+        "controller": {
+          "wall_seconds": 18.051316089000466,
+          "cpu_seconds": 5.496450867,
+          "peak_rss_mib": 810.55859375,
+          "collection_seconds": 2.9270002414705232e-05,
+          "selected": 0,
+          "deselected": 0
+        },
+        "gw6": {
+          "wall_seconds": 11.184069822997117,
+          "cpu_seconds": 8.687462669,
+          "peak_rss_mib": 462.1875,
+          "collection_seconds": 3.615696310000203,
+          "selected": 4160,
+          "deselected": 121,
+          "crashed": false
+        },
+        "gw10": {
+          "wall_seconds": 10.989012796999305,
+          "cpu_seconds": 9.828177851000001,
+          "peak_rss_mib": 468.953125,
+          "collection_seconds": 3.860326943002292,
+          "selected": 4160,
+          "deselected": 121,
+          "crashed": false
+        },
+        "gw5": {
+          "wall_seconds": 11.326161108998349,
+          "cpu_seconds": 7.092257525999999,
+          "peak_rss_mib": 447.4296875,
+          "collection_seconds": 3.7104581269995833,
+          "selected": 4160,
+          "deselected": 121,
+          "crashed": false
+        },
+        "gw4": {
+          "wall_seconds": 11.369536767000682,
+          "cpu_seconds": 10.606488673000001,
+          "peak_rss_mib": 485.65625,
+          "collection_seconds": 3.907684892998077,
+          "selected": 4160,
+          "deselected": 121,
+          "crashed": false
+        },
+        "gw12": {
+          "wall_seconds": 10.88613894199807,
+          "cpu_seconds": 10.398240149000001,
+          "peak_rss_mib": 526.84375,
+          "collection_seconds": 3.5450235509997583,
+          "selected": 4160,
+          "deselected": 121,
+          "crashed": false
+        },
+        "gw15": {
+          "wall_seconds": 10.425425569999788,
+          "cpu_seconds": 10.99914171,
+          "peak_rss_mib": 554.515625,
+          "collection_seconds": 3.7263662859986653,
+          "selected": 4160,
+          "deselected": 121,
+          "crashed": false
+        },
+        "gw2": {
+          "wall_seconds": 11.632341817999986,
+          "cpu_seconds": 10.253331931,
+          "peak_rss_mib": 475.62890625,
+          "collection_seconds": 4.129350172999693,
+          "selected": 4160,
+          "deselected": 121,
+          "crashed": false
+        },
+        "gw13": {
+          "wall_seconds": 10.748043526000401,
+          "cpu_seconds": 8.950450631,
+          "peak_rss_mib": 484.07421875,
+          "collection_seconds": 3.4487178010022035,
+          "selected": 4160,
+          "deselected": 121,
+          "crashed": false
+        },
+        "gw1": {
+          "wall_seconds": 11.593790864997572,
+          "cpu_seconds": 10.945024454999999,
+          "peak_rss_mib": 502.69140625,
+          "collection_seconds": 3.649429738001345,
+          "selected": 4160,
+          "deselected": 121,
+          "crashed": false
+        },
+        "gw11": {
+          "wall_seconds": 10.864673340998706,
+          "cpu_seconds": 10.142579087,
+          "peak_rss_mib": 492.3984375,
+          "collection_seconds": 3.5083990470011486,
+          "selected": 4160,
+          "deselected": 121,
+          "crashed": false
+        },
+        "gw7": {
+          "wall_seconds": 11.092096762000438,
+          "cpu_seconds": 10.214308099,
+          "peak_rss_mib": 483.49609375,
+          "collection_seconds": 3.584530629002984,
+          "selected": 4160,
+          "deselected": 121,
+          "crashed": false
+        },
+        "gw3": {
+          "wall_seconds": 11.421938481002144,
+          "cpu_seconds": 8.775261433,
+          "peak_rss_mib": 462.49609375,
+          "collection_seconds": 4.038589604999288,
+          "selected": 4160,
+          "deselected": 121,
+          "crashed": false
+        },
+        "gw14": {
+          "wall_seconds": 10.642031176001183,
+          "cpu_seconds": 11.029981004,
+          "peak_rss_mib": 544.44140625,
+          "collection_seconds": 3.7033715229990776,
+          "selected": 4160,
+          "deselected": 121,
+          "crashed": false
+        },
+        "gw0": {
+          "wall_seconds": 11.734330749000947,
+          "cpu_seconds": 10.614069355,
+          "peak_rss_mib": 475.34375,
+          "collection_seconds": 4.0617682470001455,
+          "selected": 4160,
+          "deselected": 121,
+          "crashed": false
+        },
+        "gw8": {
+          "wall_seconds": 11.165238249002869,
+          "cpu_seconds": 9.91717759,
+          "peak_rss_mib": 486.171875,
+          "collection_seconds": 3.5640779530003783,
+          "selected": 4160,
+          "deselected": 121,
+          "crashed": false
+        },
+        "gw9": {
+          "wall_seconds": 11.264516923001793,
+          "cpu_seconds": 8.985808762000001,
+          "peak_rss_mib": 474.453125,
+          "collection_seconds": 3.8398204680015624,
+          "selected": 4160,
+          "deselected": 121,
+          "crashed": false
+        }
+      }
+    },
+    "pr-browser-profile": {
+      "started_at": "2026-11-07T19:38:41.055795+00:00",
+      "exit_code": 0,
+      "wall_seconds": 32.73063257499962,
+      "environment": {
+        "python": "3.14.7",
+        "platform": "Linux",
+        "pytest": "9.1.1",
+        "cpu_count": 32,
+        "affinity_count": 32,
+        "load_average_start": [
+          3.12158203125,
+          2.1240234375,
+          2.0751953125
+        ],
+        "load_average_end": [
+          2.328125,
+          2.04345703125,
+          2.05078125
+        ],
+        "workers_requested": 0,
+        "worker_cap": null,
+        "distribution": "no",
+        "marker_expression": "browser and not slow",
+        "coverage": false,
+        "hypothesis_profile": "fast",
+        "schema_template": true
+      },
+      "phase_outcomes": {
+        "setup:passed": 77,
+        "call:passed": 77,
+        "teardown:passed": 77
+      },
+      "test_window": {
+        "startup_seconds": 2.75217604637146,
+        "seconds": 29.9584698677063,
+        "finish_seconds": 0.020596742630004883,
+        "worker_phase_seconds": {
+          "main": 29.919176391053043
+        },
+        "worker_slots": 1,
+        "occupied_fraction": 0.9986884017499301
+      },
+      "workers_recorded": 0,
+      "phase_seconds": {
+        "setup": 1.5459071940131253,
+        "call": 28.00822688201879,
+        "teardown": 0.36504231502112816
+      },
+      "slowest_modules_summed_phase_seconds": [
+        [
+          "tests/test_web/browser/test_browser_e2e.py",
+          29.919176391053043
+        ]
+      ],
+      "processes": {
+        "controller": {
+          "wall_seconds": 32.73063257499962,
+          "cpu_seconds": 5.359465501000001,
+          "peak_rss_mib": 810.55859375,
+          "collection_seconds": 2.7407212010002695,
+          "selected": 77,
+          "deselected": 4204
+        }
+      }
     }
   },
   "inventory": {
-    "cases": 4202,
+    "cases": 4281,
     "modules": 193,
     "lanes": {
-      "offline": 4081,
+      "offline": 4160,
       "live": 40,
       "live browser": 4,
       "local browser": 77
@@ -2190,20 +2779,20 @@
   },
   "coverage": {
     "totals": {
-      "covered_lines": 12958,
-      "num_statements": 13727,
-      "percent_covered": 92.62388302193338,
+      "covered_lines": 13109,
+      "num_statements": 13878,
+      "percent_covered": 92.68671089236037,
       "percent_covered_display": "93",
       "missing_lines": 769,
       "excluded_lines": 50,
-      "percent_statements_covered": 94.39790194507175,
+      "percent_statements_covered": 94.45885574290243,
       "percent_statements_covered_display": "94",
-      "num_branches": 4738,
-      "num_partial_branches": 481,
-      "covered_branches": 4145,
-      "missing_branches": 593,
-      "percent_branches_covered": 87.48417053609118,
-      "percent_branches_covered_display": "87"
+      "num_branches": 4814,
+      "num_partial_branches": 486,
+      "covered_branches": 4216,
+      "missing_branches": 598,
+      "percent_branches_covered": 87.57789779808891,
+      "percent_branches_covered_display": "88"
     },
     "files": {
       "src/home_finder/__init__.py": {
@@ -2266,80 +2855,80 @@
           "percent_branches_covered_display": "89"
         },
         "missing_lines": [
-          186,
-          703,
-          741,
+          187,
+          704,
           742,
-          956,
+          743,
           957,
-          1119,
+          958,
           1120,
-          1125,
-          1169,
-          1311,
+          1121,
+          1126,
+          1170,
           1312,
-          1690,
+          1313,
           1691,
-          1697,
-          1851,
-          1890
+          1692,
+          1698,
+          1852,
+          1891
         ],
         "missing_branches": [
           [
-            185,
-            186
+            186,
+            187
           ],
           [
-            702,
-            703
+            703,
+            704
           ],
           [
-            736,
-            735
+            737,
+            736
           ],
           [
-            739,
-            735
+            740,
+            736
           ],
           [
-            955,
-            956
+            956,
+            957
           ],
           [
-            1129,
-            1169
+            1130,
+            1170
           ],
           [
-            1338,
-            1352
+            1339,
+            1353
           ],
           [
-            1519,
-            1528
+            1520,
+            1529
           ],
           [
-            1591,
-            1594
+            1592,
+            1595
           ],
           [
-            1850,
-            1851
+            1851,
+            1852
           ],
           [
-            1889,
-            1890
+            1890,
+            1891
           ],
           [
-            1894,
-            1915
+            1895,
+            1916
           ],
           [
-            1899,
-            1915
+            1900,
+            1916
           ],
           [
-            1915,
-            1927
+            1916,
+            1928
           ]
         ],
         "unexecuted_functions": []
@@ -2602,23 +3191,65 @@
       },
       "src/home_finder/config.py": {
         "summary": {
-          "covered_lines": 100,
-          "num_statements": 100,
-          "percent_covered": 100.0,
-          "percent_covered_display": "100",
+          "covered_lines": 179,
+          "num_statements": 179,
+          "percent_covered": 99.12663755458516,
+          "percent_covered_display": "99",
           "missing_lines": 0,
           "excluded_lines": 0,
           "percent_statements_covered": 100.0,
           "percent_statements_covered_display": "100",
-          "num_branches": 14,
-          "num_partial_branches": 0,
-          "covered_branches": 14,
-          "missing_branches": 0,
-          "percent_branches_covered": 100.0,
-          "percent_branches_covered_display": "100"
+          "num_branches": 50,
+          "num_partial_branches": 2,
+          "covered_branches": 48,
+          "missing_branches": 2,
+          "percent_branches_covered": 96.0,
+          "percent_branches_covered_display": "96"
         },
         "missing_lines": [],
-        "missing_branches": [],
+        "missing_branches": [
+          [
+            101,
+            105
+          ],
+          [
+            106,
+            105
+          ]
+        ],
+        "unexecuted_functions": []
+      },
+      "src/home_finder/config_check.py": {
+        "summary": {
+          "covered_lines": 47,
+          "num_statements": 49,
+          "percent_covered": 94.8051948051948,
+          "percent_covered_display": "95",
+          "missing_lines": 2,
+          "excluded_lines": 0,
+          "percent_statements_covered": 95.91836734693878,
+          "percent_statements_covered_display": "96",
+          "num_branches": 28,
+          "num_partial_branches": 2,
+          "covered_branches": 26,
+          "missing_branches": 2,
+          "percent_branches_covered": 92.85714285714286,
+          "percent_branches_covered_display": "93"
+        },
+        "missing_lines": [
+          80,
+          82
+        ],
+        "missing_branches": [
+          [
+            79,
+            80
+          ],
+          [
+            81,
+            82
+          ]
+        ],
         "unexecuted_functions": []
       },
       "src/home_finder/data/__init__.py": {
@@ -3474,32 +4105,32 @@
           334,
           360,
           361,
-          1186,
-          1187,
           1188,
           1189,
-          1268,
-          1335,
-          1336,
-          1342,
-          1482,
-          1558,
-          1559,
-          1688,
-          1689,
-          1757,
-          1758,
-          1781,
-          1782,
-          1786,
-          1787,
-          1791,
-          1792,
-          1797,
-          1952,
-          1953,
-          1959,
-          1960
+          1190,
+          1191,
+          1270,
+          1337,
+          1338,
+          1344,
+          1484,
+          1560,
+          1561,
+          1690,
+          1691,
+          1759,
+          1760,
+          1783,
+          1784,
+          1788,
+          1789,
+          1793,
+          1794,
+          1799,
+          1954,
+          1955,
+          1961,
+          1962
         ],
         "missing_branches": [
           [
@@ -3527,52 +4158,52 @@
             -337
           ],
           [
-            1187,
-            1188
+            1189,
+            1190
           ],
           [
-            1187,
-            1189
+            1189,
+            1191
           ],
           [
-            1195,
-            -1134
+            1197,
+            -1136
           ],
           [
-            1267,
-            1268
+            1269,
+            1270
           ],
           [
-            1293,
-            1295
+            1295,
+            1297
           ],
           [
-            1369,
-            1375
+            1371,
+            1377
           ],
           [
-            1481,
-            1482
+            1483,
+            1484
           ],
           [
-            1738,
-            1736
+            1740,
+            1738
           ],
           [
-            1856,
-            1865
+            1858,
+            1867
           ],
           [
-            1877,
-            1879
+            1879,
+            1881
           ],
           [
-            1951,
-            1952
+            1953,
+            1954
           ],
           [
-            1954,
-            1942
+            1956,
+            1944
           ]
         ],
         "unexecuted_functions": [
@@ -4216,32 +4847,34 @@
       },
       "src/home_finder/main.py": {
         "summary": {
-          "covered_lines": 86,
-          "num_statements": 91,
-          "percent_covered": 95.34883720930233,
-          "percent_covered_display": "95",
-          "missing_lines": 5,
+          "covered_lines": 111,
+          "num_statements": 114,
+          "percent_covered": 96.95121951219512,
+          "percent_covered_display": "97",
+          "missing_lines": 3,
           "excluded_lines": 2,
-          "percent_statements_covered": 94.50549450549451,
-          "percent_statements_covered_display": "95",
-          "num_branches": 38,
-          "num_partial_branches": 1,
-          "covered_branches": 37,
-          "missing_branches": 1,
-          "percent_branches_covered": 97.36842105263158,
-          "percent_branches_covered_display": "97"
+          "percent_statements_covered": 97.36842105263158,
+          "percent_statements_covered_display": "97",
+          "num_branches": 50,
+          "num_partial_branches": 2,
+          "covered_branches": 48,
+          "missing_branches": 2,
+          "percent_branches_covered": 96.0,
+          "percent_branches_covered_display": "96"
         },
         "missing_lines": [
-          162,
-          163,
-          169,
-          190,
-          191
+          199,
+          245,
+          246
         ],
         "missing_branches": [
           [
-            189,
-            190
+            196,
+            199
+          ],
+          [
+            244,
+            245
           ]
         ],
         "unexecuted_functions": []
@@ -6847,28 +7480,28 @@
           546,
           547,
           601,
-          717,
           718,
           719,
-          732,
-          736,
-          740,
-          747,
-          753,
+          720,
+          733,
+          737,
+          741,
+          748,
           754,
-          758,
-          764,
+          755,
+          759,
           765,
           766,
           767,
           768,
           769,
           770,
-          773,
-          778,
-          781,
-          790,
-          792
+          771,
+          774,
+          779,
+          782,
+          791,
+          793
         ],
         "missing_branches": [
           [
@@ -6976,68 +7609,68 @@
             601
           ],
           [
-            731,
-            732
+            732,
+            733
           ],
           [
-            735,
-            736
+            736,
+            737
           ],
           [
-            739,
-            740
+            740,
+            741
           ],
           [
-            746,
-            747
+            747,
+            748
           ],
           [
-            752,
-            753
+            753,
+            754
           ],
           [
-            757,
-            758
+            758,
+            759
           ],
           [
-            762,
-            764
-          ],
-          [
-            765,
-            766
-          ],
-          [
-            765,
-            772
-          ],
-          [
-            768,
+            763,
             765
           ],
           [
-            768,
-            769
+            766,
+            767
           ],
           [
-            772,
+            766,
             773
           ],
           [
-            777,
-            778
+            769,
+            766
           ],
           [
-            780,
-            781
+            769,
+            770
           ],
           [
-            789,
-            790
+            773,
+            774
           ],
           [
-            791,
-            792
+            778,
+            779
+          ],
+          [
+            781,
+            782
+          ],
+          [
+            790,
+            791
+          ],
+          [
+            792,
+            793
           ]
         ],
         "unexecuted_functions": [
@@ -8088,9 +8721,9 @@
     }
   },
   "source_sha256": {
-    "pyproject.toml": "671ee88d6cc5639c11941b72a140204a6178ca619fc0bc32191cd0270f815768",
+    "pyproject.toml": "913164490c9e81964a7b3a0e41e4d26c06368f00696790dfbcfb77f54556db6f",
     "src/home_finder/scrapers/detail_fetcher.py": "c6e42d6e4652dde07493c957be14d4d06e0da441517e6d75989be0ad0f338ce7",
-    "src/home_finder/analysis/analyzer.py": "75556a1c32b3d7bb0ec613dbee4dd88e3dd9b36182396991592e4ef861d5025c",
+    "src/home_finder/analysis/analyzer.py": "5c0650b68fa95900f282e3685a6ad85ed5b34c3f2778e445723cced51407556d",
     "tests/plugins/schema_template.py": "08ed47b7c42791e71c68c7122c9a22820448a227a6d030e5cb1ba2248401de6d",
     "tests/plugins/aiosqlite_leaks.py": "83a6033cda53c130605c0a44403b8d9fb68ddd0e3bb5a821f78e18fb25c5a526",
     "tests/support/pytest_profile.py": "45ea9c63cdf297567b741db0ae95dad322e2b6c9bf5c5ebf9f6a1a7133701490",

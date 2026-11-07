@@ -20,6 +20,7 @@ async def test_scrape_only_forwards_selection_and_reports_observations(
         min_bathrooms=1,
         include_let_agreed=False,
         zoopla_max_areas_per_run=1,
+        proxy_url="http://fixture-proxy.example:8080",
     )
     home = make_property()
     scrape = AsyncMock(return_value=([home], []))
@@ -39,7 +40,7 @@ async def test_scrape_only_forwards_selection_and_reports_observations(
         min_bathrooms=1,
         include_let_agreed=False,
         max_per_scraper=2,
-        proxy_url=settings.proxy_url,
+        proxy_url="http://fixture-proxy.example:8080",
         only_scrapers={"openrent"},
         zoopla_max_areas=1,
     )

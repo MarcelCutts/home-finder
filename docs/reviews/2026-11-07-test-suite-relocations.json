@@ -1,7 +1,7 @@
 {
   "baseline": "51dd9c6e05cd36d4fe4a7cf7ea8966023d63cc16",
   "baseline_function_declarations": 2892,
-  "current_function_declarations": 2609,
+  "current_function_declarations": 2634,
   "method": "Function declarations, not expanded pytest cases. Exact-body matching ignores docstrings and the function name. Same-name matches and contract-family destinations are navigation, not proof of assertion or parameter equivalence. Families were reviewed by responsibility. Tests of local diagnostic categorization were retired; production location selection remains tested.",
   "counts": {
     "same identifier": 1523,

@@ -940,7 +940,8 @@ async def update_property_status(
 async def request_reanalysis(unique_id: str, storage: StorageDep) -> JSONResponse:
     """Flag a property for quality re-analysis.
 
-    The actual analysis runs on next `--reanalyze` CLI invocation.
+    The next pipeline run's reanalysis stage or `--reanalyze` CLI invocation,
+    whichever comes first, runs the analysis.
     """
     count = await storage.processing.request_reanalysis([unique_id])
     if count == 0:
