@@ -200,7 +200,7 @@ Create a `.env` file with these settings (all use `HOME_FINDER_` prefix):
 - `HOME_FINDER_MAX_BEDROOMS`: Maximum bedrooms (default: 2)
 - `HOME_FINDER_DESTINATION_POSTCODE`: Your destination postcode (default: N1 5AA)
 - `HOME_FINDER_MAX_COMMUTE_MINUTES`: Maximum commute time in minutes (default: 30)
-- `HOME_FINDER_COMMUTE_ARRIVAL_TIME`: London clock time (HH:MM) that measured commutes arrive by, on the first weekday that time is still ahead when the run measures commutes, so night and weekend runs still measure a weekday journey (default: 09:00)
+- `HOME_FINDER_COMMUTE_ARRIVAL_TIME`: London clock time (HH:MM) that measured commutes arrive by, on the first weekday (Monday to Friday, bank holidays included) that time is still ahead when the run measures commutes, so night and weekend runs still measure a weekday journey (default: 09:00)
 - `HOME_FINDER_SEARCH_AREAS`: Comma-separated outcodes/boroughs (default: e2,e3,e5,e9,e10,e15,e17,n15,n16,n17)
 
 ### Scraper Filters

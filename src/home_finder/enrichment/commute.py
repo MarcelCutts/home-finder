@@ -23,8 +23,9 @@ LONDON = ZoneInfo("Europe/London")
 def next_weekday_arrival(arrival_time: time, *, after: datetime) -> datetime:
     """Return the first Monday-to-Friday ``arrival_time`` in London later than ``after``.
 
-    UK clocks change only on Sundays, so a weekday clock time is never skipped
-    or repeated, and zoneinfo gives it the GMT or BST offset of its date.
+    Bank holidays count as weekdays; they are not skipped. UK clocks change only
+    on Sundays, so a weekday clock time is never skipped or repeated, and
+    zoneinfo gives it the GMT or BST offset of its date.
     """
     if after.tzinfo is None:
         raise ValueError("after must be timezone-aware")
