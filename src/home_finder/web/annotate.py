@@ -14,12 +14,12 @@ the notes numbered, in text order, so every note has exactly one anchor and ever
 anchor a note.
 """
 
-import hashlib
 import re
 from collections.abc import Mapping
 from html.parser import HTMLParser
 from typing import Any, Final, NamedTuple, TypedDict
 
+from home_finder.analysis.listing_text import source_text_hash
 from home_finder.models import ListingTextEvidence, PropertyLowlight, PropertySource
 
 # Cleaning the portal's markup
@@ -46,7 +46,8 @@ _BREAKS: Final[dict[str, _Break]] = {
 }
 # Their contents are code, never the agent's words.
 _CODE_TAGS: Final = frozenset({"script", "style"})
-_HTML_SPACE_RE: Final = re.compile(r"[ \t\n\r\f]+")
+# Collapsed after joining, so spaces either side of an inline tag become one.
+_SPACE_RUN_RE: Final = re.compile(r"[ \t\f\v]+")
 
 
 class _AdvertParser(HTMLParser):
@@ -55,15 +56,16 @@ class _AdvertParser(HTMLParser):
     def __init__(self) -> None:
         super().__init__(convert_charrefs=True)
         self.pieces: list[str | _Break] = []
-        self.has_break_tags = False
         self._in_code = False
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         self._tag(tag, opening=True)
 
     def handle_startendtag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
-        # "<br/>" is one break; the default would also count it as a closing tag.
-        self._tag(tag, opening=True)
+        # "<br/>" is one break; the default would also count it as a closing tag. An
+        # empty "<script/>" has no contents to hide, so it must not start hiding words.
+        if tag not in _CODE_TAGS:
+            self._tag(tag, opening=True)
 
     def handle_endtag(self, tag: str) -> None:
         self._tag(tag, opening=False)
@@ -76,12 +78,15 @@ class _AdvertParser(HTMLParser):
         if tag in _CODE_TAGS:
             self._in_code = opening
         elif tag in _BREAKS:
-            self.has_break_tags = True
             self.pieces.append(_BREAKS[tag])
 
 
-def _join(pieces: list[str | _Break], *, collapse_space: bool) -> str:
-    """Join words, turning each run of breaks into the newlines it stands for."""
+def _join(pieces: list[str | _Break]) -> str:
+    """Join words, turning each run of breaks into the newlines it stands for.
+
+    Whitespace beside a run, newlines included, is the source's own formatting
+    around its tags, so it goes; the run alone decides the breaks there.
+    """
     out: list[str] = []
     added = at_least = 0
     for piece in pieces:
@@ -89,11 +94,14 @@ def _join(pieces: list[str | _Break], *, collapse_space: bool) -> str:
             added += piece.added
             at_least = max(at_least, piece.at_least)
             continue
-        if collapse_space:
-            piece = _HTML_SPACE_RE.sub(" ", piece)
         if added or at_least:
-            if not piece.strip():
+            piece = piece.lstrip()
+            if not piece:
                 continue  # whitespace between two tags does not end the run
+            while out and not out[-1].strip():
+                out.pop()
+            if out:
+                out[-1] = out[-1].rstrip()
             out.append("\n" * max(added, at_least))
             added = at_least = 0
         out.append(piece)
@@ -106,16 +114,16 @@ def clean_advert_text(text: str) -> str:
     Each "<br>" is a line break, a block such as a list item or table cell starts a
     new line, and a paragraph is set off by a blank line; every other tag is
     dropped, along with the contents of scripts and styles, and entities are
-    decoded once. An advert laid out with any of these line or block tags keeps
-    only their breaks: its own newlines are whitespace, as they are on the portal.
-    One without them keeps its newlines. Lines are trimmed and no more than one
-    blank line is kept anywhere. The result is text, never markup, so it must
-    still be escaped when rendered.
+    decoded once. Newlines beside those tags are the portal's formatting and go
+    (portals send a "\\r" by each "<br/>"); any other newline in the advert is
+    kept, so plain paragraphs survive a stray tag. Runs of spaces collapse to one,
+    lines are trimmed and no more than one blank line is kept. The result is text,
+    never markup, so it must still be escaped when rendered.
     """
     parser = _AdvertParser()
     parser.feed(text.replace("\r\n", "\n").replace("\r", "\n"))
     parser.close()
-    words = _join(parser.pieces, collapse_space=parser.has_break_tags)
+    words = _SPACE_RUN_RE.sub(" ", _join(parser.pieces))
     words = re.sub(r"[^\S\n]*\n[^\S\n]*", "\n", words)  # any space but a newline, "&nbsp;" too
     return re.sub(r"\n{3,}", "\n\n", words).strip()
 
@@ -134,10 +142,10 @@ def _field(analysis: Any, name: str) -> Any:
 def _unchanged_since_read(text: ListingTextEvidence, read_hash: str | None) -> bool:
     """Whether a source's text is exactly what the analysis read.
 
-    The hash is the one select_listing_text records for each source, taken over the
-    whole evidence, so a refresh of the description or features breaks the match.
+    The hash covers the whole evidence, so a refresh of the description or the
+    features breaks the match. A source the analysis kept no hash for is not hashed.
     """
-    return read_hash == hashlib.sha256(text.model_dump_json().encode()).hexdigest()
+    return read_hash is not None and read_hash == source_text_hash(text)
 
 
 def choose_advert_text(

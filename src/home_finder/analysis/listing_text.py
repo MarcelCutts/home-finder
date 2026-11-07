@@ -9,8 +9,17 @@ from itertools import zip_longest
 from typing import Literal
 
 from home_finder.models import MergedProperty
-from home_finder.models.listing_text import ListingTextInputs
+from home_finder.models.listing_text import ListingTextEvidence, ListingTextInputs
 from home_finder.utils.listing_facts import plain_listing_text, supported_band
+
+
+def source_text_hash(evidence: ListingTextEvidence) -> str:
+    """Fingerprint one source's whole text evidence, as an analysis keeps it.
+
+    The listing page compares it with the current text to tell whether a source is
+    still exactly what the analysis read.
+    """
+    return hashlib.sha256(evidence.model_dump_json().encode()).hexdigest()
 
 
 def select_listing_text(merged: MergedProperty) -> ListingTextInputs:
@@ -50,10 +59,7 @@ def select_listing_text(merged: MergedProperty) -> ListingTextInputs:
     return ListingTextInputs(
         description="\n\n".join(description_parts) or None,
         features=tuple(features),
-        source_hashes={
-            source.value: hashlib.sha256(value.model_dump_json().encode()).hexdigest()
-            for source, value in evidence
-        },
+        source_hashes={source.value: source_text_hash(value) for source, value in evidence},
         source_urls={source.value: str(url) for source, url in merged.source_urls.items()},
     )
 

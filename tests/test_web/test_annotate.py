@@ -72,6 +72,23 @@ def test_an_advert_without_break_tags_keeps_its_own_newlines() -> None:
     )
 
 
+def test_plain_paragraphs_survive_a_stray_break_tag() -> None:
+    advert = "Para one.\n\nPara two.\n\nFeatures:<br>Gas hob"
+    assert clean_advert_text(advert) == "Para one.\n\nPara two.\n\nFeatures:\nGas hob"
+
+
+def test_spaces_either_side_of_an_inline_tag_become_one() -> None:
+    text = clean_advert_text("A private </b> <b>balcony.")
+    assert text == "A private balcony."
+    # The single space lets the whole phrase carry its note, not just "balcony".
+    noisy = {"lowlights": ["Potential traffic noise"]}
+    assert marked(annotate_listing(text, noisy)) == [("private balcony", 1)]
+
+
+def test_an_empty_script_or_style_tag_hides_nothing() -> None:
+    assert clean_advert_text("Flat <script/>with a <style/>garden") == "Flat with a garden"
+
+
 def test_lines_holding_only_non_breaking_spaces_count_as_blank() -> None:
     assert clean_advert_text("Flat.\r\n&nbsp;\r\n&nbsp;\r\nGarden.") == "Flat.\n\nGarden."
 
