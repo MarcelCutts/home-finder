@@ -113,7 +113,7 @@ async def _register_telegram_webhook(settings: Settings) -> None:
         try:
             await bot.set_webhook(
                 url=webhook_url,
-                secret_token=settings.telegram_webhook_secret,
+                secret_token=settings.telegram_webhook_secret.get_secret_value(),
             )
             logger.info("telegram_webhook_registered", url=webhook_url)
         finally:
@@ -159,7 +159,7 @@ def create_app(settings: Settings | None = None, *, run_pipeline: bool = False) 
         app.state.settings = settings
         app.state.pipeline_lock = _pipeline_lock
 
-        # Register Telegram webhook if both base URL and secret are configured
+        # Registration also needs a bot token; callback ownership is checked per update.
         if (
             settings.telegram_webhook_secret
             and settings.web_base_url

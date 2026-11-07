@@ -152,7 +152,7 @@ async def run_check_off_market(
         logger.info("off_market_checking_urls", urls=len(checks), properties=len(db_props))
 
         check_t0 = time.monotonic()
-        async with OffMarketChecker(proxy_url=settings.proxy_url) as checker:
+        async with OffMarketChecker(proxy_url=settings.proxy_url.get_secret_value()) as checker:
             batch = await checker.check_batch(checks)
         check_elapsed = round(time.monotonic() - check_t0, 1)
 

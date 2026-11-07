@@ -65,7 +65,7 @@ async def restore_missing_analysis_images(
 
     async with DetailFetcher(
         max_gallery_images=settings.quality_filter_max_images,
-        proxy_url=settings.proxy_url,
+        proxy_url=settings.proxy_url.get_secret_value(),
     ) as detail_fetcher:
         total_downloaded = 0
         for merged in incomplete:
