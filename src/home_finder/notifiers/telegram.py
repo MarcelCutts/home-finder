@@ -67,6 +67,11 @@ def _telegram_retry_exhausted(retry_state: RetryCallState) -> bool:
     return False
 
 
+# Pause between Telegram sends to stay inside its flood limits: after each plan that
+# deliver_pending delivers, and after every send attempt in the pipeline's notify step.
+# A module attribute (not Final) so tests can skip the wait.
+DELIVERY_PAUSE_SECONDS = 1.0
+
 _telegram_retry = retry(
     stop=stop_after_attempt(3),
     wait=_telegram_retry_wait,
@@ -982,7 +987,7 @@ class TelegramNotifier:
         for key in await self.delivery_repository.pending():
             if await deliver(self, self.delivery_repository, key):
                 count += 1
-                await asyncio.sleep(1)
+                await asyncio.sleep(DELIVERY_PAUSE_SECONDS)
         return count
 
     async def send_batch_notifications(

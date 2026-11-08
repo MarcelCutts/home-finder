@@ -1,4 +1,6 @@
-"""Tests for Pydantic models."""
+"""Validation and serialisation of the listing, criteria and assessment models."""
+
+from datetime import datetime
 
 import pytest
 from hypothesis import given
@@ -9,8 +11,40 @@ from home_finder.models import (
     Property,
     PropertySource,
     SearchCriteria,
+    SpaceAnalysis,
     TransportMode,
 )
+from home_finder.models.quality import RoomArea
+
+
+@pytest.fixture
+def sample_property_no_coords() -> Property:
+    """A valid sample property without coordinates."""
+    return Property(
+        source=PropertySource.RIGHTMOVE,
+        source_id="67890",
+        url=HttpUrl("https://www.rightmove.co.uk/properties/67890"),
+        title="2-bed apartment in Islington",
+        price_pcm=2100,
+        bedrooms=2,
+        address="45 Upper Street, Islington, London",
+        postcode="N1 0NY",
+        first_seen=datetime(2025, 1, 16, 14, 0),
+    )
+
+
+@pytest.fixture
+def default_search_criteria() -> SearchCriteria:
+    """Search criteria for a 1-2 bed at £1,800-2,500, within 30 minutes of N1 5AA."""
+    return SearchCriteria(
+        min_price=1800,
+        max_price=2500,
+        min_bedrooms=1,
+        max_bedrooms=2,
+        destination_postcode="N1 5AA",
+        max_commute_minutes=30,
+        transport_modes=(TransportMode.CYCLING, TransportMode.PUBLIC_TRANSPORT),
+    )
 
 
 class TestProperty:
@@ -376,3 +410,68 @@ class TestTransportMode:
         assert TransportMode.PUBLIC_TRANSPORT.value == "public_transport"
         assert TransportMode.DRIVING.value == "driving"
         assert TransportMode.WALKING.value == "walking"
+
+
+class TestSpaceAnalysisAreas:
+    """Total and per-room areas that the visual analysis estimates from a floorplan."""
+
+    def test_area_fields_default_to_unknown(self) -> None:
+        space = SpaceAnalysis(living_room_sqm=20.0)
+        assert space.total_area_sqm is None
+        assert space.room_areas == []
+        assert space.area_estimation_method is None
+        assert space.model_dump()["total_area_sqm"] is None
+
+    def test_total_area_is_kept_and_serialised(self) -> None:
+        space = SpaceAnalysis(living_room_sqm=20.0, total_area_sqm=65.0)
+        assert space.total_area_sqm == 65.0
+        assert space.model_dump()["total_area_sqm"] == 65.0
+
+    def test_room_areas_keep_their_order_and_values(self) -> None:
+        rooms = [
+            RoomArea(name="Living Room", length_m=5.0, width_m=4.0, area_sqm=20.0),
+            RoomArea(name="Bedroom 1", length_m=3.5, width_m=3.0, area_sqm=10.5),
+        ]
+        space = SpaceAnalysis(living_room_sqm=20.0, room_areas=rooms, total_area_sqm=30.5)
+        assert [room.name for room in space.room_areas] == ["Living Room", "Bedroom 1"]
+        assert space.room_areas[1].area_sqm == 10.5
+
+    def test_room_dimensions_may_be_unknown(self) -> None:
+        room = RoomArea(name="Hallway")
+        assert (room.length_m, room.width_m, room.area_sqm) == (None, None, None)
+
+    def test_known_estimation_method_is_kept(self) -> None:
+        space = SpaceAnalysis(
+            living_room_sqm=20.0, area_estimation_method="measured_from_floorplan"
+        )
+        assert space.area_estimation_method == "measured_from_floorplan"
+
+    def test_unknown_estimation_method_becomes_none(self) -> None:
+        """Lenient literals map values from a newer prompt to the field default."""
+        space = SpaceAnalysis(living_room_sqm=20.0, area_estimation_method="some_future_method")
+        assert space.area_estimation_method is None
+
+    def test_room_areas_round_trip_with_basis_and_scope_defaults(self) -> None:
+        space = SpaceAnalysis(
+            living_room_sqm=20.0,
+            total_area_sqm=27.5,
+            room_areas=[RoomArea(name="Kitchen", length_m=3.0, width_m=2.5, area_sqm=7.5)],
+            area_estimation_method="measured_from_floorplan",
+        )
+        dumped = space.model_dump()
+        assert dumped["room_areas"] == [
+            {
+                "name": "Kitchen",
+                "length_m": 3.0,
+                "width_m": 2.5,
+                "area_sqm": 7.5,
+                "area_basis": "unknown",
+                "area_scope": "unknown",
+            }
+        ]
+        assert SpaceAnalysis.model_validate(dumped) == space
+
+    def test_stored_json_without_room_fields_still_loads(self) -> None:
+        space = SpaceAnalysis.model_validate({"living_room_sqm": 20.0, "total_area_sqm": 55.0})
+        assert space.room_areas == []
+        assert space.area_estimation_method is None

@@ -1,39 +1,24 @@
-"""Tests to investigate location leakage in scrapers.
+"""Search URLs for each area, plus an opt-in live report of out-of-area results.
 
-These tests verify whether scrapers return properties only from the requested
-search area, or if they leak properties from outside the area.
+Portals return results from a radius around the searched location, so a search
+for an East/North London area can include, say, W11 or SW1V listings. The
+pipeline's location filter (``home_finder.filters.location``) removes them; its
+contract is tested in ``tests/test_filters/test_location.py``.
 
-The hypothesis is that property websites return results from a radius around
-the search location, not strictly within it. Combined with the lack of
-post-scrape location filtering, this causes properties from W11 (Kensington)
-and SW1V (Westminster) to appear when searching for East/North London areas.
+The slow ``TestLiveScraperLocationLeakage`` class only prints a breakdown of
+expected and out-of-area outcodes from live searches. It never fails on leakage.
 """
 
-import re
 from collections import defaultdict
 
 import pytest
-from pydantic import HttpUrl
 
-from home_finder.models import Property, PropertySource
+from home_finder.models import Property
 from home_finder.scrapers.onthemarket import OnTheMarketScraper
 from home_finder.scrapers.openrent import OpenRentScraper
 from home_finder.scrapers.rightmove import RightmoveScraper
 from home_finder.scrapers.zoopla import ZooplaScraper
-from home_finder.utils.address import is_outcode
-
-# Target search areas from main.py
-SEARCH_AREAS = [
-    "hackney",
-    "islington",
-    "haringey",
-    "tower-hamlets",
-    "e3",
-    "e5",
-    "e9",
-    "e10",
-    "n15",
-]
+from home_finder.utils.address import extract_outcode, is_outcode
 
 # Postcodes we expect to see for each search area
 EXPECTED_OUTCODES = {
@@ -112,24 +97,8 @@ LEAKAGE_OUTCODES = {
 }
 
 
-def extract_outcode(postcode: str | None) -> str | None:
-    """Extract the outcode (first part) from a UK postcode.
-
-    Examples:
-        E8 3RH -> E8
-        SW1V 2SA -> SW1V
-        N1 -> N1
-    """
-    if not postcode:
-        return None
-
-    # Match outcode pattern: 1-2 letters + 1-2 digits + optional letter
-    match = re.match(r"^([A-Z]{1,2}\d{1,2}[A-Z]?)", postcode.upper())
-    return match.group(1) if match else None
-
-
 def categorize_property_location(prop: Property, search_area: str) -> str:
-    """Categorize a property as 'expected', 'leakage', or 'unknown'.
+    """Categorize a live result as 'expected', 'leakage', or 'unknown' for the report.
 
     Returns:
         'expected' - property is in expected area for the search
@@ -162,7 +131,6 @@ def categorize_property_location(prop: Property, search_area: str) -> str:
 class TestScraperUrlConstruction:
     """Test that scrapers construct URLs correctly for each search area."""
 
-    @pytest.mark.asyncio
     async def test_rightmove_url_for_borough(self) -> None:
         """Test Rightmove URL construction for borough search."""
         scraper = RightmoveScraper()
@@ -177,7 +145,6 @@ class TestScraperUrlConstruction:
         assert "locationIdentifier=REGION%5E93953" in url
         assert "property-to-rent" in url
 
-    @pytest.mark.asyncio
     async def test_rightmove_url_for_outcode(self) -> None:
         """Test Rightmove URL construction for outcode search."""
         scraper = RightmoveScraper()
@@ -273,7 +240,6 @@ class TestScraperUrlConstruction:
 @pytest.mark.integration
 @pytest.mark.slow
 @pytest.mark.timeout(300)
-@pytest.mark.usefixtures("reset_crawlee_state", "set_crawlee_storage_dir")
 class TestLiveScraperLocationLeakage:
     """Live integration tests to detect location leakage.
 
@@ -283,7 +249,6 @@ class TestLiveScraperLocationLeakage:
     WARNING: These tests make real HTTP requests and may be rate-limited.
     """
 
-    @pytest.mark.asyncio
     async def test_rightmove_hackney_postcodes(self) -> None:
         """Test what postcodes Rightmove returns for hackney search."""
         scraper = RightmoveScraper()
@@ -297,7 +262,6 @@ class TestLiveScraperLocationLeakage:
 
         self._analyze_location_leakage(result.properties, "hackney", "rightmove")
 
-    @pytest.mark.asyncio
     async def test_rightmove_e8_postcodes(self) -> None:
         """Test what postcodes Rightmove returns for E8 outcode search."""
         scraper = RightmoveScraper()
@@ -311,7 +275,6 @@ class TestLiveScraperLocationLeakage:
 
         self._analyze_location_leakage(result.properties, "e8", "rightmove")
 
-    @pytest.mark.asyncio
     async def test_zoopla_hackney_postcodes(self) -> None:
         """Test what postcodes Zoopla returns for hackney search."""
         scraper = ZooplaScraper()
@@ -325,7 +288,6 @@ class TestLiveScraperLocationLeakage:
 
         self._analyze_location_leakage(result.properties, "hackney", "zoopla")
 
-    @pytest.mark.asyncio
     async def test_zoopla_e8_postcodes(self) -> None:
         """Test what postcodes Zoopla returns for E8 outcode search."""
         scraper = ZooplaScraper()
@@ -339,7 +301,6 @@ class TestLiveScraperLocationLeakage:
 
         self._analyze_location_leakage(result.properties, "e8", "zoopla")
 
-    @pytest.mark.asyncio
     async def test_openrent_hackney_postcodes(self) -> None:
         """Test what postcodes OpenRent returns for hackney search."""
         scraper = OpenRentScraper()
@@ -354,7 +315,6 @@ class TestLiveScraperLocationLeakage:
 
         self._analyze_location_leakage(result.properties, "hackney", "openrent")
 
-    @pytest.mark.asyncio
     async def test_openrent_e8_postcodes(self) -> None:
         """Test what postcodes OpenRent returns for E8 outcode search."""
         scraper = OpenRentScraper()
@@ -369,7 +329,6 @@ class TestLiveScraperLocationLeakage:
 
         self._analyze_location_leakage(result.properties, "e8", "openrent")
 
-    @pytest.mark.asyncio
     async def test_onthemarket_hackney_postcodes(self) -> None:
         """Test what postcodes OnTheMarket returns for hackney search."""
         scraper = OnTheMarketScraper()
@@ -456,86 +415,3 @@ class TestLiveScraperLocationLeakage:
             #     f"Location leakage detected: {leakage_count}/{total} properties "
             #     f"({leakage_pct}%) are from outside {search_area}"
             # )
-
-
-class TestPostcodeExtraction:
-    """Tests for postcode extraction utility."""
-
-    @pytest.mark.parametrize(
-        ("postcode", "expected_outcode"),
-        [
-            ("E8 3RH", "E8"),
-            ("E8", "E8"),
-            ("SW1V 2SA", "SW1V"),
-            ("SW1V", "SW1V"),
-            ("N1 5AA", "N1"),
-            ("EC1A 1BB", "EC1A"),
-            ("W11 4UL", "W11"),
-            (None, None),
-            ("", None),
-            ("Invalid", None),
-        ],
-    )
-    def test_extract_outcode(self, postcode: str | None, expected_outcode: str | None) -> None:
-        """Test outcode extraction from postcodes."""
-        assert extract_outcode(postcode) == expected_outcode
-
-
-class TestLocationCategorization:
-    """Tests for location categorization."""
-
-    def test_categorize_expected_borough(self, sample_property: Property) -> None:
-        """Test that property in expected borough is categorized correctly."""
-        # sample_property has postcode E8 3RH
-        category = categorize_property_location(sample_property, "hackney")
-        assert category == "expected"
-
-    def test_categorize_leakage(self) -> None:
-        """Test that property from West London is categorized as leakage."""
-        prop = Property(
-            source=PropertySource.RIGHTMOVE,
-            source_id="123",
-            url=HttpUrl("https://example.com/123"),
-            title="Flat in Notting Hill",
-            price_pcm=2000,
-            bedrooms=1,
-            address="123 Portobello Road",
-            postcode="W11 2QB",
-        )
-        category = categorize_property_location(prop, "hackney")
-        assert category == "leakage"
-
-    def test_categorize_unknown_no_postcode(self) -> None:
-        """Test that property without postcode is categorized as unknown."""
-        prop = Property(
-            source=PropertySource.RIGHTMOVE,
-            source_id="123",
-            url=HttpUrl("https://example.com/123"),
-            title="Flat somewhere",
-            price_pcm=2000,
-            bedrooms=1,
-            address="123 Some Street, London",
-            postcode=None,
-        )
-        category = categorize_property_location(prop, "hackney")
-        assert category == "unknown"
-
-    def test_categorize_outcode_search_strict(self) -> None:
-        """Test that outcode searches are strict about matching."""
-        # Property in E9 when searching for E8 should be leakage
-        prop = Property(
-            source=PropertySource.RIGHTMOVE,
-            source_id="123",
-            url=HttpUrl("https://example.com/123"),
-            title="Flat in Hackney Wick",
-            price_pcm=2000,
-            bedrooms=1,
-            address="123 Some Street",
-            postcode="E9 5AA",
-        )
-        category = categorize_property_location(prop, "e8")
-        assert category == "leakage"
-
-        # Same property should be expected for E9 search
-        category = categorize_property_location(prop, "e9")
-        assert category == "expected"

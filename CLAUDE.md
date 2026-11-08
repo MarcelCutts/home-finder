@@ -43,22 +43,26 @@ uv run home-finder --generate-thumbnails   # Generate missing thumbnails for cac
 uv run home-finder --check-off-market                     # Spot-check URLs for removed/let-agreed signals
 uv run home-finder --check-off-market --scrapers zoopla   # Check specific platforms only
 
-# Testing — runs in parallel by default via pytest-xdist (-n auto in addopts).
-# Timeout is already configured in pyproject.toml addopts (30s default).
-# Do NOT pass --timeout on the command line; it's handled automatically.
+# Testing — runs in parallel by default via pytest-xdist (-n auto; no repository worker cap).
+# Timeouts: 30s by default; slow tests get 120s unless explicitly marked otherwise.
+# Browser tests use Playwright timeouts; their timeout(0) marker overrides --timeout.
 # PYTHONUNBUFFERED=1 prevents hanging when stdout is piped (e.g. Claude Code).
-PYTHONUNBUFFERED=1 uv run pytest                         # Run all tests in parallel (slow tests excluded by default)
+# Agent shells that set PYTHONDONTWRITEBYTECODE=1 also stop pytest writing its
+# assertion-rewrite cache; until one run with it cleared (PYTHONDONTWRITEBYTECODE=)
+# writes the cache, every worker recompiles every test module (~2x collection time).
+PYTHONUNBUFFERED=1 uv run pytest                         # Run the offline suite in parallel
 PYTHONUNBUFFERED=1 uv run pytest tests/test_models.py    # Run specific test file
 PYTHONUNBUFFERED=1 uv run pytest -k "test_openrent"      # Run tests matching pattern
-PYTHONUNBUFFERED=1 uv run pytest -n0 tests/test_foo.py   # Run single-threaded (useful for debugging)
+PYTHONUNBUFFERED=1 uv run pytest -n0 tests/test_models.py # Run without xdist (useful for debugging)
 PYTHONUNBUFFERED=1 uv run pytest --cov=src               # Run with coverage
+PYTHONUNBUFFERED=1 uv run pytest --test-profile=test-results/local.json  # Where the run's time went
 PYTHONUNBUFFERED=1 uv run pytest -m slow                 # Run slow tests (real network scraping)
 
 # Browser E2E tests (excluded from normal test runs, requires Chromium)
 # xdist loadgroup scheduling keeps all browser tests on one worker automatically
-PYTHONUNBUFFERED=1 uv run pytest -m browser tests/test_web/test_browser_e2e.py -v
-PYTHONUNBUFFERED=1 uv run pytest -m browser tests/test_web/test_browser_e2e.py -v --headed  # See the browser
-PYTHONUNBUFFERED=1 uv run pytest -m browser tests/test_web/test_browser_e2e.py -v --tracing=retain-on-failure  # Save traces on failure
+PYTHONUNBUFFERED=1 uv run pytest -m browser tests/test_web/browser -v
+PYTHONUNBUFFERED=1 uv run pytest -m browser tests/test_web/browser -v --headed  # See the browser
+PYTHONUNBUFFERED=1 uv run pytest -m browser tests/test_web/browser -v --tracing=retain-on-failure  # Save traces on failure
 
 # Linting and type checking
 uv run ruff check src tests           # Check for issues
@@ -76,7 +80,8 @@ uv run mypy src                       # Type check (strict mode)
 `run_pipeline` in `pipeline/flow.py` runs these stages in order; `main.py` only
 parses CLI options, and steps 3–8 live in `pipeline/candidates.py`. Each run also
 advances durable queues, so it does work even when nothing new is found. Stage
-contracts, vocabulary and run metrics are in `docs/pipeline.md`.
+contracts, vocabulary and run metrics are in `docs/pipeline.md`; a stage-by-stage
+walkthrough is in `docs/ingest-pipeline.md`.
 
 1. **Setup** — Runner lock, abandoned-spend recovery, run row, image-cache repair.
 2. **Delivery recovery** — Resume `queued`, `ready` and due `waiting` alerts; blocked, uncertain and review ones wait for an operator. Live runs only.
@@ -128,7 +133,7 @@ async with AsyncSession() as session:
 ### Image Caching
 
 - Disk cache at `{data_dir}/image_cache/{safe_id}/` (see `utils/image_cache.py`)
-- Detail enrichment downloads and caches images during pipeline step 5
+- Detail enrichment downloads and caches images during candidate preparation
 - Quality analysis reads cached images from disk (avoids re-downloading)
 - Web dashboard serves cached images via `GET /images/{unique_id}/{filename}` with immutable cache headers
 - `image_url_map` in detail template maps original CDN URLs to local `/images/` URLs for cached images
@@ -192,27 +197,46 @@ async with AsyncSession() as session:
 
 ## Testing Patterns
 
-- `pytest-asyncio` with `asyncio_mode = "auto"`
-- Slow tests excluded by default (`-m 'not slow'`); run with `pytest -m slow`
-- Mock HTTP with `pytest-httpx` and `AsyncMock` for curl_cffi/TravelTime
-- Common fixtures in `tests/conftest.py`: `sample_property`, `sample_property_no_coords`, `default_search_criteria`
+[`tests/README.md`](tests/README.md) describes suite boundaries, naming and shared support.
+
+- `pytest-asyncio` with `asyncio_mode = "auto"`; no `@pytest.mark.asyncio` needed
+- Default runs exclude `slow` (live network) and `browser` (Playwright) tests, block Python sockets
+  (`pytest-socket`) and reject unknown markers (`--strict-markers`). The root conftest gives
+  `slow` and `browser` tests real sockets, so `pytest -m slow` can reach the portals.
+  Native `curl_cffi` bypasses Python socket blocking; fake its session boundary offline
+- Mock HTTP with `pytest-httpx`, `httpx2.MockTransport` for the Anthropic SDK, and `AsyncMock` for
+  curl_cffi/TravelTime. Fake only the
+  Telegram Bot API (`tests/support/delivery.py`), keeping real delivery planning and persistence
+- Builders in `tests/conftest.py`: `make_property`, `make_merged_property`,
+  `make_quality_analysis`, `sample_property`, `enriched_merged_property`. Reusable fakes live in
+  `tests/support/`; directory `conftest.py` files hold resource fixtures such as `storage`
+- Never wait out production pacing. Telegram's `DELIVERY_PAUSE_SECONDS` is zeroed for every
+  test; set a scraper's `PAGE_DELAY_SECONDS` to 0, or record the off-market checker's pauses. When
+  the pause is the contract, record `asyncio.sleep` and assert its argument, as
+  `test_delivery_recovery.py` and `test_off_market.py` do
 - Use `Property.model_copy()` for variations; `hypothesis` for property-based testing
-- Tests that drive the legacy Crawlee scrapers opt in with `@pytest.mark.usefixtures("reset_crawlee_state", "set_crawlee_storage_dir")`; the fixtures are not autouse, and `src/` no longer uses Crawlee
-- **Concurrent-safe:** All tests use in-memory SQLite, no shared state — multiple agents/processes can run `pytest` simultaneously without interference
+- **Concurrent-safe:** in-memory or `tmp_path` SQLite and `tmp_path` data dirs, so several agents
+  can run `pytest` at once. Fresh in-memory databases start from a migrated schema template
+  (`tests/plugins/schema_template.py`); file databases, tests that patch `MIGRATIONS` and
+  direct `run_migrations` calls still run the real migrations
+- `--test-profile=PATH` (`tests/support/pytest_profile.py`; `--timing-report` is an alias)
+  records startup, phase and fixture timings, worker balance, CPU/RSS and host load.
+  `scripts/summarize_test_profile.py PATH` prints a summary; CI uploads profiles and
+  JUnit as `test-observability`. See `tests/README.md` for measurement limits.
 
 **Test structure:**
-- `tests/test_scrapers/` — per-platform scraper tests, pagination, detail parsing and identity
-- `tests/test_filters/` — criteria, location, fit score, availability, off-market, shadow rating
-- `tests/test_enrichment/` — detail enrichment, commute
-- `tests/test_matching/` — dedup scoring, grouping, canonical selection, image evidence
-- `tests/test_analysis/` — analyzer, prompts, output validation, spend, visual checkpoints
-- `tests/test_pipeline/` — stage orchestration, admission, recovery, run lock, spend admin
-- `tests/test_notifiers/` — Telegram messages, notification selection, delivery recovery
-- `tests/test_db/` — storage, migrations, spend ledger, transactions, pipeline runs
-- `tests/test_web/` — app factory, access, routes, HTMX partials, XSS prevention
-- `tests/test_utils/` — image cache, address utils, EPC and floorplan detectors, image hashing
-- `tests/test_data/`, `tests/test_scripts/` — area data, maintenance scripts
-- `tests/integration/` — pipeline, real scraping (slow)
+- `tests/test_scrapers/` — search-page parsing and transport per portal, detail fetcher, shared parsing
+- `tests/test_filters/` — criteria, location, media gate, fit score, availability, off-market checker
+- `tests/test_enrichment/` — detail and media acquisition, commute assessment
+- `tests/test_matching/` — match scoring, grouping invariants, canonical selection, image evidence
+- `tests/test_analysis/` — provider requests, prompts, response validation, spend, assessment models
+- `tests/test_db/` — repositories and queues, migrations, transactions, backups
+- `tests/test_pipeline/` — run coordination, consolidation, recovery queues, run accounting
+- `tests/test_notifiers/` — message formatting, keyboards, delivery selection and recovery
+- `tests/test_web/` — Dashboard, detail page, status changes, images, access; `browser/` holds Playwright tests
+- `tests/test_utils/`, `tests/test_data/`, `tests/test_scripts/` — supporting modules, area data, scripts
+- `tests/integration/` — contracts across several stages; live scraping tests are marked `slow`
+- `tests/plugins/` — suite infrastructure (SQLite leak detection, schema template)
 
 **Web test patterns:** FastAPI `TestClient` with in-memory SQLite. HTMX tests send `HX-Request: true` header. XSS tests save a raw `<script>` in the description and assert it is gone (the cleaner drops it with its contents), and save an encoded `&lt;script&gt;` and assert it comes back escaped.
 

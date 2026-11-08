@@ -5,6 +5,7 @@ from datetime import UTC, datetime
 from pydantic import HttpUrl
 
 from home_finder.matching.deduplication import (
+    Deduplicator,
     _build_best_canonical,
     _select_best_floorplan,
 )
@@ -192,6 +193,34 @@ class TestBestOfCanonicalFields:
         assert result.first_seen == datetime(2025, 1, 1, tzinfo=UTC)
         assert result.title == p1.title
 
+    async def test_merged_home_backfills_coordinates_and_keeps_earliest_identity(self) -> None:
+        """Rightmove (seen first, no coordinates) and Zoopla share postcode, street and
+        rent, so they merge on 85 points without a coordinate signal."""
+        rightmove = make_listing(
+            PropertySource.RIGHTMOVE,
+            "rm1",
+            latitude=None,
+            longitude=None,
+            first_seen=datetime(2025, 1, 1, tzinfo=UTC),
+        )
+        zoopla = make_listing(
+            PropertySource.ZOOPLA,
+            "zp1",
+            latitude=51.5465,
+            longitude=-0.0553,
+            first_seen=datetime(2025, 1, 2, tzinfo=UTC),
+        )
+
+        result = await Deduplicator(enable_cross_platform=True).deduplicate_merged_async(
+            [as_aggregate(rightmove), as_aggregate(zoopla)]
+        )
+
+        assert len(result) == 1
+        canonical = result[0].canonical
+        assert (canonical.latitude, canonical.longitude) == (51.5465, -0.0553)
+        assert canonical.source == PropertySource.RIGHTMOVE
+        assert canonical.source_id == "rm1"
+
 
 class TestFloorplanQualitySelection:
     def test_zoopla_preferred_over_openrent(self) -> None:
@@ -256,3 +285,24 @@ class TestFloorplanQualitySelection:
         result = _select_best_floorplan(sorted_mps)
 
         assert result is None
+
+    def test_source_declared_floorplan_beats_a_higher_priority_unknown_one(self) -> None:
+        """A floorplan the source labels as one outranks portal priority on an unlabelled image."""
+        unknown = PropertyImage(
+            url=HttpUrl("https://rm.com/floor.jpg"),
+            source=PropertySource.RIGHTMOVE,
+            image_type="floorplan",
+            floorplan_origin="unknown",
+        )
+        declared = PropertyImage(
+            url=HttpUrl("https://or.com/floor.jpg"),
+            source=PropertySource.OPENRENT,
+            image_type="floorplan",
+            floorplan_origin="source_declared",
+        )
+        sorted_mps = [
+            as_aggregate(make_listing(PropertySource.RIGHTMOVE, "rm1"), floorplan=unknown),
+            as_aggregate(make_listing(PropertySource.OPENRENT, "or1"), floorplan=declared),
+        ]
+
+        assert _select_best_floorplan(sorted_mps) == declared

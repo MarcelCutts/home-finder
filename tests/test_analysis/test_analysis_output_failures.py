@@ -134,8 +134,8 @@ async def test_failed_required_phase_retains_usage_but_never_completed_facts(
 
     native = httpx2.AsyncClient(transport=httpx2.MockTransport(respond))
     merged, data_dir = cached_analysis_property
-    async with PropertyQualityAnalyzer("fixture", http_client=native) as q:
-        _, result = await q.analyze_single_merged(merged, data_dir=data_dir)
+    async with PropertyQualityAnalyzer("fixture", http_client=native) as analyzer:
+        _, result = await analyzer.analyze_single_merged(merged, data_dir=data_dir)
     assert result is not None and result.overall_rating is None
     assert result.analysis_failure.phase == phase and result.analysis_failure.kind == kind
     assert result.analysis_failure.request_id == "fixture-request"
@@ -144,12 +144,12 @@ async def test_failed_required_phase_retains_usage_but_never_completed_facts(
     assert result.value.quality_adjusted_rating is None
     assert "No images" not in result.summary
     assert len(calls) == len(bodies) and native.is_closed
-    assert q.token_usage.input_tokens == sum(b["usage"]["input_tokens"] for b in bodies)
-    assert q.token_usage.output_tokens == sum(b["usage"]["output_tokens"] for b in bodies)
-    assert q.token_usage.cache_read_tokens == sum(
+    assert analyzer.token_usage.input_tokens == sum(b["usage"]["input_tokens"] for b in bodies)
+    assert analyzer.token_usage.output_tokens == sum(b["usage"]["output_tokens"] for b in bodies)
+    assert analyzer.token_usage.cache_read_tokens == sum(
         b["usage"]["cache_read_input_tokens"] for b in bodies
     )
-    assert q.token_usage.cache_creation_tokens == 17 * repeats
+    assert analyzer.token_usage.cache_creation_tokens == 17 * repeats
 
 
 @pytest.mark.parametrize("phase", ["visual", "evaluation"])
@@ -179,18 +179,18 @@ async def test_bad_requests_are_typed_without_inventing_usage(
 
     native = httpx2.AsyncClient(transport=httpx2.MockTransport(respond))
     merged, data_dir = cached_analysis_property
-    async with PropertyQualityAnalyzer("fixture", http_client=native) as q:
-        _, result = await q.analyze_single_merged(merged, data_dir=data_dir)
+    async with PropertyQualityAnalyzer("fixture", http_client=native) as analyzer:
+        _, result = await analyzer.analyze_single_merged(merged, data_dir=data_dir)
     assert result.overall_rating is None and result.analysis_failure.phase == phase
     assert result.analysis_failure.kind == (
         "unsupported_schema" if schema_error else "request_rejected"
     )
     assert result.analysis_failure.request_id == "rejected-request"
     assert len(calls) == (1 if phase == "visual" else 2)
-    assert q.token_usage.input_tokens == (
+    assert analyzer.token_usage.input_tokens == (
         0 if phase == "visual" else PHASE1_VISUAL_RESPONSE["usage"]["input_tokens"]
     )
-    assert q._breaker.failure_count == 0
+    assert analyzer._breaker.failure_count == 0
 
 
 async def test_lossless_enum_casing_and_supported_nullable_fields(cached_analysis_property):
@@ -208,8 +208,8 @@ async def test_lossless_enum_casing_and_supported_nullable_fields(cached_analysi
         transport=httpx2.MockTransport(lambda _: httpx2.Response(200, json=next(bodies)))
     )
     merged, data_dir = cached_analysis_property
-    async with PropertyQualityAnalyzer("fixture", http_client=native) as q:
-        _, result = await q.analyze_single_merged(merged, data_dir=data_dir)
+    async with PropertyQualityAnalyzer("fixture", http_client=native) as analyzer:
+        _, result = await analyzer.analyze_single_merged(merged, data_dir=data_dir)
     assert result.overall_rating == 4 and result.analysis_failure is None
     assert result.kitchen.overall_quality == "modern" and result.space.living_room_sqm is None
     assert result.space.area_estimation_method == "partial_dimensions"
@@ -231,8 +231,8 @@ async def test_integral_json_numbers_complete_both_native_phases(cached_analysis
         transport=httpx2.MockTransport(lambda _: httpx2.Response(200, json=next(bodies)))
     )
     merged, data_dir = cached_analysis_property
-    async with PropertyQualityAnalyzer("fixture", http_client=native) as q:
-        _, result = await q.analyze_single_merged(merged, data_dir=data_dir)
+    async with PropertyQualityAnalyzer("fixture", http_client=native) as analyzer:
+        _, result = await analyzer.analyze_single_merged(merged, data_dir=data_dir)
     assert result.overall_rating == 4 and type(result.overall_rating) is int
     assert result.analysis_failure is None
     assert result.listing_red_flags.red_flag_count == 0
@@ -256,8 +256,8 @@ async def test_permission_error_is_a_request_rejection(cached_analysis_property,
 
     native = httpx2.AsyncClient(transport=httpx2.MockTransport(respond))
     merged, data_dir = cached_analysis_property
-    async with PropertyQualityAnalyzer("fixture", http_client=native) as q:
-        _, result = await q.analyze_single_merged(merged, data_dir=data_dir)
+    async with PropertyQualityAnalyzer("fixture", http_client=native) as analyzer:
+        _, result = await analyzer.analyze_single_merged(merged, data_dir=data_dir)
     assert result.overall_rating is None
     assert result.analysis_failure.phase == phase
     assert result.analysis_failure.kind == "request_rejected"

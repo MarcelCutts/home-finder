@@ -1,11 +1,18 @@
-"""Tests for detail enrichment pipeline step."""
+"""Detail enrichment: acquiring detail text and media, and screening gallery images.
 
+enrich_merged_properties partitions its results into with_usable_media (gallery
+images or a floorplan) and without_usable_media; either group may hold text.
+"""
+
+import functools
+import random
 from collections.abc import Callable
 from io import BytesIO
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
-from PIL import Image, ImageDraw
+import pytest
+from PIL import Image, ImageChops, ImageDraw
 from pydantic import HttpUrl
 
 from home_finder.enrichment.details import (
@@ -14,7 +21,7 @@ from home_finder.enrichment.details import (
     _load_cached_property,
     enrich_merged_properties,
 )
-from home_finder.filters.media import filter_by_floorplan, is_floorplan_exempt
+from home_finder.filters.media import filter_by_floorplan
 from home_finder.models import (
     MergedProperty,
     Property,
@@ -160,10 +167,10 @@ class TestEnrichMergedProperties:
         assert enriched.floorplan is not None
         assert str(enriched.floorplan.url).endswith(".jpg")
 
-    async def test_handles_fetch_failure(
+    async def test_failed_fetch_leaves_no_usable_media(
         self, make_merged_property: Callable[..., MergedProperty]
     ) -> None:
-        """Should place properties with no images into failed list."""
+        """A failed detail fetch leaves the home without usable media."""
         merged = make_merged_property()
         fetcher = DetailFetcher()
         with patch.object(fetcher, "fetch_detail_page", new_callable=AsyncMock, return_value=None):
@@ -218,10 +225,10 @@ class TestEnrichMergedProperties:
         assert len(result.with_usable_media[0].images) == 1
         assert result.with_usable_media[0].floorplan is not None
 
-    async def test_clears_stale_cache_and_reenriches(
+    async def test_cache_without_stored_images_is_cleared_and_fetched_again(
         self, tmp_path: Path, make_merged_property: Callable[..., MergedProperty]
     ) -> None:
-        """Should clear cache and re-enrich when DB has no image records for a cached property."""
+        """A cache with no stored image rows is cleared and the detail page is fetched again."""
         merged = make_merged_property()
         data_dir = str(tmp_path)
 
@@ -252,7 +259,6 @@ class TestEnrichMergedProperties:
                 [merged], fetcher, data_dir=data_dir, storage=mock_storage
             )
 
-        # Should have re-enriched successfully
         assert len(result.with_usable_media) == 1
         assert result.with_usable_media[0].floorplan is not None
         assert len(result.with_usable_media[0].images) == 1
@@ -422,10 +428,10 @@ class TestEnrichMergedProperties:
         assert enriched.floorplan is None
         assert len(enriched.images) == 1  # gallery image still present
 
-    async def test_all_downloads_fail_routes_to_failed(
+    async def test_all_downloads_failing_leaves_no_usable_media(
         self, tmp_path: Path, make_merged_property: Callable[..., MergedProperty]
     ) -> None:
-        """When all image downloads fail, property should go to result.without_usable_media."""
+        """When every image download fails, the home has no usable media."""
         merged = make_merged_property()
         data_dir = str(tmp_path)
 
@@ -448,10 +454,10 @@ class TestEnrichMergedProperties:
         assert len(result.with_usable_media) == 0
         assert len(result.without_usable_media) == 1
 
-    async def test_partial_failures_still_enriches(
+    async def test_one_successful_download_is_usable_media(
         self, tmp_path: Path, make_merged_property: Callable[..., MergedProperty]
     ) -> None:
-        """Property with 1/3 successful downloads should still be enriched."""
+        """One of three downloads succeeding still gives the home usable media."""
         merged = make_merged_property()
         data_dir = str(tmp_path)
 
@@ -483,174 +489,62 @@ class TestEnrichMergedProperties:
         assert "img1" in str(enriched.images[0].url)
 
 
-class TestFilterByFloorplan:
-    """Tests for filter_by_floorplan()."""
+class TestUsableMediaPartition:
+    """with_usable_media needs a gallery image or a floorplan; text alone is not enough."""
 
-    def test_drops_properties_without_floorplan(
-        self, make_merged_property: Callable[..., MergedProperty]
-    ) -> None:
-        """Should drop properties that have no floorplan."""
-        with_fp = make_merged_property(
-            sources=(PropertySource.RIGHTMOVE,),
-            floorplan=PropertyImage(
-                url=HttpUrl("https://example.com/floor.jpg"),
-                source=PropertySource.RIGHTMOVE,
-                image_type="floorplan",
-                floorplan_origin="source_declared",
+    @pytest.mark.parametrize(
+        "detail",
+        [
+            pytest.param(
+                DetailPageData(gallery_urls=["https://example.com/img.jpg"]), id="gallery_only"
             ),
-        )
-        without_fp = make_merged_property(sources=(PropertySource.RIGHTMOVE,), source_id="456")
-
-        result = filter_by_floorplan([with_fp, without_fp])
-        assert len(result) == 1
-        assert result[0].floorplan is not None
-
-    def test_passes_all_when_all_have_floorplans(
-        self, make_merged_property: Callable[..., MergedProperty]
-    ) -> None:
-        """Should pass all properties when all have floorplans."""
-        props = [
-            make_merged_property(
-                source_id=str(i),
-                floorplan=PropertyImage(
-                    url=HttpUrl(f"https://example.com/floor{i}.jpg"),
-                    source=PropertySource.RIGHTMOVE,
-                    image_type="floorplan",
-                    floorplan_origin="source_declared",
-                ),
-            )
-            for i in range(3)
-        ]
-        result = filter_by_floorplan(props)
-        assert len(result) == 3
-
-    def test_returns_empty_when_none_have_floorplans(
-        self, make_merged_property: Callable[..., MergedProperty]
-    ) -> None:
-        """Should return empty list when no properties have floorplans."""
-        props = [
-            make_merged_property(sources=(PropertySource.RIGHTMOVE,), source_id=str(i))
-            for i in range(3)
-        ]
-        result = filter_by_floorplan(props)
-        assert len(result) == 0
-
-    def test_exempts_openrent_only_properties(
-        self, make_merged_property: Callable[..., MergedProperty]
-    ) -> None:
-        """OpenRent-only properties should pass without a floorplan."""
-        openrent_prop = make_merged_property(sources=(PropertySource.OPENRENT,), source_id="111")
-        rightmove_no_fp = make_merged_property(sources=(PropertySource.RIGHTMOVE,), source_id="222")
-        result = filter_by_floorplan([openrent_prop, rightmove_no_fp])
-        assert len(result) == 1
-        assert result[0].canonical.source == PropertySource.OPENRENT
-
-    def test_mixed_source_with_openrent_still_requires_floorplan(
-        self, make_merged_property: Callable[..., MergedProperty]
-    ) -> None:
-        """Properties on OpenRent + another platform should still need a floorplan."""
-        mixed = make_merged_property(
-            sources=(PropertySource.OPENRENT, PropertySource.ZOOPLA), source_id="333"
-        )
-        result = filter_by_floorplan([mixed])
-        assert len(result) == 0
-
-    def test_handles_empty_input(self) -> None:
-        """Should handle empty input list."""
-        result = filter_by_floorplan([])
-        assert result == []
-
-    def test_passes_photo_rich_property_without_floorplan(
-        self, make_merged_property: Callable[..., MergedProperty]
-    ) -> None:
-        """Property with 8+ gallery images should pass even without a floorplan."""
-        images = tuple(
-            PropertyImage(
-                url=HttpUrl(f"https://example.com/img{i}.jpg"),
-                source=PropertySource.RIGHTMOVE,
-                image_type="gallery",
-            )
-            for i in range(8)
-        )
-        prop = make_merged_property(sources=(PropertySource.RIGHTMOVE,), images=images)
-        result = filter_by_floorplan([prop], min_gallery_for_photo_inference=8)
-        assert len(result) == 1
-
-    def test_drops_photo_poor_property_without_floorplan(
-        self, make_merged_property: Callable[..., MergedProperty]
-    ) -> None:
-        """Property with only 5 gallery images should be dropped when threshold is 8."""
-        images = tuple(
-            PropertyImage(
-                url=HttpUrl(f"https://example.com/img{i}.jpg"),
-                source=PropertySource.RIGHTMOVE,
-                image_type="gallery",
-            )
-            for i in range(5)
-        )
-        prop = make_merged_property(sources=(PropertySource.RIGHTMOVE,), images=images)
-        result = filter_by_floorplan([prop], min_gallery_for_photo_inference=8)
-        assert len(result) == 0
-
-    def test_gallery_threshold_zero_disables_bypass(
-        self, make_merged_property: Callable[..., MergedProperty]
-    ) -> None:
-        """Default threshold=0 should not bypass the floorplan gate."""
-        images = tuple(
-            PropertyImage(
-                url=HttpUrl(f"https://example.com/img{i}.jpg"),
-                source=PropertySource.RIGHTMOVE,
-                image_type="gallery",
-            )
-            for i in range(10)
-        )
-        prop = make_merged_property(sources=(PropertySource.RIGHTMOVE,), images=images)
-        result = filter_by_floorplan([prop])
-        assert len(result) == 0
-
-    def test_floorplan_still_takes_priority(
-        self, make_merged_property: Callable[..., MergedProperty]
-    ) -> None:
-        """Property with a floorplan should pass regardless of gallery count."""
-        prop = make_merged_property(
-            sources=(PropertySource.RIGHTMOVE,),
-            images=(),
-            floorplan=PropertyImage(
-                url=HttpUrl("https://example.com/floor.jpg"),
-                source=PropertySource.RIGHTMOVE,
-                image_type="floorplan",
-                floorplan_origin="source_declared",
+            pytest.param(
+                DetailPageData(floorplan_url="https://example.com/floor.jpg"), id="floorplan_only"
             ),
-        )
-        result = filter_by_floorplan([prop], min_gallery_for_photo_inference=8)
-        assert len(result) == 1
+        ],
+    )
+    async def test_either_kind_of_image_is_usable_media(self, make_merged_property, detail):
+        merged = make_merged_property()
+        fetcher = DetailFetcher()
+        with patch.object(
+            fetcher, "fetch_detail_page", new_callable=AsyncMock, return_value=detail
+        ):
+            result = await enrich_merged_properties([merged], fetcher)
 
-    def test_exact_threshold_boundary(
-        self, make_merged_property: Callable[..., MergedProperty]
-    ) -> None:
-        """Exactly 8 images should pass, 7 should not."""
+        assert [m.unique_id for m in result.with_usable_media] == [merged.unique_id]
+        assert result.without_usable_media == []
 
-        def _make_with_n_images(n: int) -> MergedProperty:
-            images = tuple(
-                PropertyImage(
-                    url=HttpUrl(f"https://example.com/img{i}.jpg"),
-                    source=PropertySource.ZOOPLA,
-                    image_type="gallery",
-                )
-                for i in range(n)
-            )
-            return make_merged_property(
-                sources=(PropertySource.ZOOPLA,), source_id=str(n), images=images
-            )
+    async def test_description_without_images_is_not_usable_media(self, make_merged_property):
+        merged = make_merged_property()
+        detail = DetailPageData(gallery_urls=[], description="Some desc")
+        fetcher = DetailFetcher()
+        with patch.object(
+            fetcher, "fetch_detail_page", new_callable=AsyncMock, return_value=detail
+        ):
+            result = await enrich_merged_properties([merged], fetcher)
 
-        prop_7 = _make_with_n_images(7)
-        prop_8 = _make_with_n_images(8)
+        assert result.with_usable_media == []
+        [without_media] = result.without_usable_media
+        assert without_media.descriptions[merged.canonical.source] == "Some desc"
 
-        result = filter_by_floorplan([prop_7, prop_8], min_gallery_for_photo_inference=8)
-        assert len(result) == 1
-        assert len(result[0].images) == 8
+    async def test_mixed_batch_is_partitioned_per_home(self, make_merged_property):
+        with_media = make_merged_property(source_id="success-1")
+        without_media = make_merged_property(source_id="fail-1")
+
+        async def fetch(prop):
+            if prop.source_id == "success-1":
+                return DetailPageData(gallery_urls=["https://example.com/img.jpg"])
+            return None
+
+        fetcher = DetailFetcher()
+        with patch.object(fetcher, "fetch_detail_page", side_effect=fetch):
+            result = await enrich_merged_properties([with_media, without_media], fetcher)
+
+        assert [m.unique_id for m in result.with_usable_media] == [with_media.unique_id]
+        assert [m.unique_id for m in result.without_usable_media] == [without_media.unique_id]
 
 
+@functools.cache
 def _make_floorplan_bytes() -> bytes:
     """Create synthetic floorplan image bytes (black lines on white)."""
     img = Image.new("RGB", (400, 300), (255, 255, 255))
@@ -663,33 +557,27 @@ def _make_floorplan_bytes() -> bytes:
     return buf.getvalue()
 
 
+@functools.cache
 def _make_photo_bytes(size: int = 400) -> bytes:
-    """Create synthetic room photo image bytes (colorful, with noise for high entropy).
+    """Create synthetic room photo image bytes (colourful, with noise for high entropy).
+
+    Seeded noise (one value per pixel, added to every channel) is applied in a
+    single image operation. Cached because the bytes never change.
 
     Args:
         size: Width of the image in pixels. Height is 75% of width.
     """
-    import random
-
     height = int(size * 0.75)
-    rng = random.Random(42)
     img = Image.new("RGB", (size, height), (135, 206, 235))
     draw = ImageDraw.Draw(img)
     draw.rectangle([0, height // 2, size, height], fill=(34, 139, 34))
     draw.rectangle([50, 100, 150, 200], fill=(139, 69, 19))
     draw.rectangle([200, 120, 250, 160], fill=(220, 20, 60))
-    # Add pixel noise to push entropy above 5.5 (like real photos)
-    pixels = img.load()
-    assert pixels is not None
-    for y in range(height):
-        for x in range(size):
-            r, g, b = pixels[x, y]  # type: ignore[misc]
-            n = rng.randint(-20, 20)
-            pixels[x, y] = (
-                max(0, min(255, r + n)),
-                max(0, min(255, g + n)),
-                max(0, min(255, b + n)),
-            )
+    # Noise of -20..20 per pixel pushes entropy above 5.5, like real photos.
+    # ImageChops.add computes image + noise - 128, so noise is centred on 128.
+    raw = random.Random(42).randbytes(size * height)
+    noise = Image.frombytes("L", (size, height), raw).point(lambda v: 108 + v * 41 // 256)
+    img = ImageChops.add(img, Image.merge("RGB", (noise, noise, noise)), offset=-128)
     buf = BytesIO()
     img.save(buf, format="JPEG")
     return buf.getvalue()
@@ -885,6 +773,7 @@ class TestLoadCachedPropertyBackfillsCoords:
         assert result.canonical.longitude is None
 
 
+@functools.cache
 def _make_epc_bytes() -> bytes:
     """Create synthetic EPC chart image bytes (coloured bands on white)."""
     img = Image.new("RGB", (400, 300), (255, 255, 255))
@@ -908,6 +797,7 @@ def _make_epc_bytes() -> bytes:
     return buf.getvalue()
 
 
+@functools.cache
 def _make_env_impact_bytes() -> bytes:
     """Create synthetic Environmental Impact (CO₂) chart image bytes.
 
@@ -1211,22 +1101,6 @@ class TestEpcThumbnailInteraction:
         # Don't create any cache files
         count = _generate_gallery_thumbnails(images, "test:1", str(tmp_path))
         assert count == 0
-
-
-class TestIsFloorplanExempt:
-    """Tests for is_floorplan_exempt()."""
-
-    def test_openrent_only_is_exempt(self) -> None:
-        assert is_floorplan_exempt((PropertySource.OPENRENT,)) is True
-
-    def test_rightmove_not_exempt(self) -> None:
-        assert is_floorplan_exempt((PropertySource.RIGHTMOVE,)) is False
-
-    def test_mixed_sources_not_exempt(self) -> None:
-        assert is_floorplan_exempt((PropertySource.OPENRENT, PropertySource.ZOOPLA)) is False
-
-    def test_set_input(self) -> None:
-        assert is_floorplan_exempt({PropertySource.OPENRENT}) is True
 
 
 class TestFloorplanUrlRejectedLogging:

@@ -7,8 +7,6 @@ the test skips rather than fails.
 
 import pytest
 
-pytestmark = pytest.mark.usefixtures("reset_crawlee_state", "set_crawlee_storage_dir")
-
 from home_finder.models import Property
 from home_finder.scrapers import (
     OnTheMarketScraper,
@@ -95,7 +93,7 @@ class TestRightmoveDetailFetcher:
 
 @pytest.mark.slow
 class TestZooplaDetailFetcher:
-    """Test detail page extraction from Zoopla (curl_cffi TLS bypass)."""
+    """Test Zoopla detail extraction using curl_cffi browser TLS fingerprinting."""
 
     async def _get_sample_listing(self) -> Property | None:
         scraper = ZooplaScraper()
@@ -245,7 +243,7 @@ class TestOpenRentDetailFetcher:
 
 @pytest.mark.slow
 class TestOnTheMarketDetailFetcher:
-    """Test detail page extraction from OnTheMarket (curl_cffi TLS bypass)."""
+    """Test OnTheMarket detail extraction using curl_cffi browser TLS fingerprinting."""
 
     async def _get_sample_listing(self) -> Property | None:
         scraper = OnTheMarketScraper()

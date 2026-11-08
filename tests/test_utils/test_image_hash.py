@@ -5,7 +5,6 @@ from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
 import imagehash
-import pytest
 from PIL import Image
 from pydantic import HttpUrl
 
@@ -79,7 +78,6 @@ class TestHashesMatch:
 class TestFetchAndHashImage:
     """Tests for fetch_and_hash_image with mocked HTTP."""
 
-    @pytest.mark.asyncio
     async def test_successful_fetch(self, httpx_mock) -> None:
         # Create a minimal valid image (1x1 red pixel PNG)
         import io
@@ -97,7 +95,6 @@ class TestFetchAndHashImage:
         assert isinstance(result, str)
         assert len(result) == 16  # 64-bit pHash = 16 hex chars
 
-    @pytest.mark.asyncio
     async def test_protocol_relative_url(self, httpx_mock) -> None:
         import io
 
@@ -112,14 +109,12 @@ class TestFetchAndHashImage:
         result = await fetch_and_hash_image("//cdn.example.com/img.jpg")
         assert result is not None
 
-    @pytest.mark.asyncio
     async def test_http_error_returns_none(self, httpx_mock) -> None:
         httpx_mock.add_response(url="https://example.com/missing.jpg", status_code=404)
 
         result = await fetch_and_hash_image("https://example.com/missing.jpg")
         assert result is None
 
-    @pytest.mark.asyncio
     async def test_invalid_image_returns_none(self, httpx_mock) -> None:
         httpx_mock.add_response(url="https://example.com/bad.jpg", content=b"not an image")
 
@@ -142,18 +137,15 @@ class TestFetchImageHashesBatch:
             image_url=HttpUrl(image_url) if image_url else None,
         )
 
-    @pytest.mark.asyncio
     async def test_empty_list_returns_empty(self) -> None:
         result = await fetch_image_hashes_batch([])
         assert result == {}
 
-    @pytest.mark.asyncio
     async def test_properties_without_images_return_empty(self) -> None:
         props = [self._make_property("1"), self._make_property("2")]
         result = await fetch_image_hashes_batch(props)
         assert result == {}
 
-    @pytest.mark.asyncio
     async def test_successful_hash_returned(self) -> None:
         props = [self._make_property("1", "https://example.com/img1.jpg")]
 
@@ -166,7 +158,6 @@ class TestFetchImageHashesBatch:
 
         assert result == {"openrent:1": "abcdef0123456789"}
 
-    @pytest.mark.asyncio
     async def test_failed_hashes_excluded(self) -> None:
         props = [
             self._make_property("1", "https://example.com/img1.jpg"),
@@ -187,7 +178,6 @@ class TestFetchImageHashesBatch:
         assert "openrent:1" in result
         assert "openrent:2" not in result
 
-    @pytest.mark.asyncio
     async def test_exception_in_fetch_excluded(self) -> None:
         props = [self._make_property("1", "https://example.com/img1.jpg")]
 
@@ -285,7 +275,6 @@ class TestHashCachedGallery:
         for filename, data in files.items():
             (cache_dir / filename).write_bytes(data)
 
-    @pytest.mark.asyncio
     async def test_full_gallery_hashing(self, tmp_path: Path) -> None:
         self._setup_gallery(
             tmp_path,
@@ -300,12 +289,10 @@ class TestHashCachedGallery:
         assert "openrent:123" in result
         assert len(result["openrent:123"]) == 2
 
-    @pytest.mark.asyncio
     async def test_missing_cache_dir(self, tmp_path: Path) -> None:
         result = await hash_cached_gallery(["openrent:999"], str(tmp_path))
         assert result == {}
 
-    @pytest.mark.asyncio
     async def test_svg_files_skipped(self, tmp_path: Path) -> None:
         self._setup_gallery(
             tmp_path,
@@ -321,7 +308,6 @@ class TestHashCachedGallery:
         assert "rightmove:456" in result
         assert len(result["rightmove:456"]) == 1  # SVG skipped
 
-    @pytest.mark.asyncio
     async def test_all_svgs_excluded(self, tmp_path: Path) -> None:
         self._setup_gallery(
             tmp_path,
@@ -335,7 +321,6 @@ class TestHashCachedGallery:
         result = await hash_cached_gallery(["rightmove:789"], str(tmp_path))
         assert "rightmove:789" not in result
 
-    @pytest.mark.asyncio
     async def test_empty_gallery_not_included(self, tmp_path: Path) -> None:
         self._setup_gallery(
             tmp_path,
@@ -349,7 +334,6 @@ class TestHashCachedGallery:
         result = await hash_cached_gallery(["openrent:123"], str(tmp_path))
         assert "openrent:123" not in result
 
-    @pytest.mark.asyncio
     async def test_multiple_properties(self, tmp_path: Path) -> None:
         self._setup_gallery(
             tmp_path,
@@ -413,7 +397,6 @@ class TestCountGalleryHashMatches:
 class TestFetchAndHashImageSVG:
     """Tests for SVG detection in fetch_and_hash_image."""
 
-    @pytest.mark.asyncio
     async def test_svg_content_returns_none(self, httpx_mock) -> None:
         """SVG content should be detected and return None."""
         svg_bytes = b'<?xml version="1.0"?><svg xmlns="http://www.w3.org/2000/svg"></svg>'
@@ -424,7 +407,6 @@ class TestFetchAndHashImageSVG:
         result = await fetch_and_hash_image("https://example.com/floorplan-white.97dae32e.svg")
         assert result is None
 
-    @pytest.mark.asyncio
     async def test_svg_tag_content_returns_none(self, httpx_mock) -> None:
         """SVG content starting with <svg> tag should return None."""
         svg_bytes = b'<svg xmlns="http://www.w3.org/2000/svg"><rect/></svg>'

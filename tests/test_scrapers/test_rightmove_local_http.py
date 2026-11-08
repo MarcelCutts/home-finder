@@ -12,16 +12,16 @@ from home_finder.scrapers.rightmove import RightmoveScraper
 
 pytestmark = pytest.mark.allow_hosts(["127.0.0.1"])
 SEARCH = {"min_price": 1800, "max_price": 2500, "min_bedrooms": 1, "max_bedrooms": 2, "area": "E8"}
+# Pads a search page to the size of the retained stall fixture (about 1 MB).
+STALL_SIZED_PADDING = b"<!--" + b"x" * 1_000_000 + b"-->"
 
 
 @pytest.fixture
 async def local_http(monkeypatch, fixtures_path):
-    html = (fixtures_path / "rightmove_next_search.html").read_bytes()
     state = SimpleNamespace(
         requests=[],
         status=200,
-        # Exercise parsing a body as large as the retained stall fixture.
-        body=html + b"<!--" + b"x" * 1_000_000 + b"-->",
+        body=(fixtures_path / "rightmove_next_search.html").read_bytes(),
         slow=False,
         started=asyncio.Event(),
         disconnected=asyncio.Event(),
@@ -82,6 +82,7 @@ async def local_http(monkeypatch, fixtures_path):
 
 
 async def test_local_large_page_completes_once_with_all_observations(local_http):
+    local_http.body += STALL_SIZED_PADDING
     result = await asyncio.wait_for(RightmoveScraper().scrape(**SEARCH, max_results=1), 3)
     assert len(local_http.requests) == 1
     assert result.is_healthy and result.pages_fetched == 1

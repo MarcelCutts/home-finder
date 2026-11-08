@@ -3,6 +3,9 @@
 **Scope:** 66 test files, ~26,900 LOC of tests against ~14,400 LOC source (81.92% reported coverage)
 **Date:** 2026-02-16
 
+This is a historical snapshot. See the [November 2026 test audit](2026-11-07-test-suite-audit.md)
+for the current layout, measured coverage, and performance findings.
+
 ## Executive Summary
 
 The test suite is **exceptionally well-structured for a personal project**, exhibiting professional-grade patterns including mutant-killing tests with explicit annotations, property-based testing via Hypothesis, prompt snapshot regression with inline-snapshot, multi-phase E2E dedup tests with realistic London rental data, and Playwright browser tests covering responsive layout, HTMX partials, and filter modal lifecycle. Test infrastructure is strong: autouse fixtures isolate `.env` leakage and detect leaked aiosqlite threads, factory fixtures with auto-incrementing IDs reduce boilerplate, and in-memory SQLite ensures test parallelism.

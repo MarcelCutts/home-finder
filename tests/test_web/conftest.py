@@ -1,15 +1,34 @@
-"""Shared Playwright fixtures and helpers for browser E2E tests."""
+"""Fixtures for the web dashboard tests.
+
+The route fixtures mount only the dashboard router on an in-memory database. The
+Playwright fixtures and collection hook live in ``browser/conftest.py``, which pytest
+loads only when it collects that directory.
+"""
 
 import logging
-import os
-import re
-from collections.abc import Generator
+from collections.abc import AsyncGenerator, Generator
+from pathlib import Path
 
 import pytest
 import structlog
-from playwright.sync_api import Page, expect
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
+from pydantic import HttpUrl, SecretStr
 
+from home_finder.config import Settings
+from home_finder.db.storage import PropertyStorage
+from home_finder.models import (
+    ConditionAnalysis,
+    KitchenAnalysis,
+    LightSpaceAnalysis,
+    MergedProperty,
+    Property,
+    PropertyQualityAnalysis,
+    PropertySource,
+    SpaceAnalysis,
+)
 from home_finder.web import app as web_app
+from home_finder.web.routes import router
 
 
 @pytest.fixture(autouse=True)
@@ -31,104 +50,133 @@ def _isolate_app_logging(monkeypatch: pytest.MonkeyPatch) -> Generator[None]:
         structlog.configure(**previous)
 
 
-def _is_xdist_active(config: pytest.Config) -> bool:
-    """Detect whether xdist is distributing tests (controller or worker)."""
-    # Worker processes have this env var set by xdist
-    if os.environ.get("PYTEST_XDIST_WORKER"):
-        return True
-    # Controller process: numprocesses is set to a positive int
-    num_workers = config.getoption("numprocesses", default=0)
-    return bool(num_workers) and str(num_workers) != "0"
-
-
-def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
-    """Auto-enable socket and disable pytest-timeout for browser-marked tests.
-
-    The global ``addopts`` includes ``--disable-socket`` to keep unit tests
-    network-free.  Browser E2E tests need real TCP sockets (server + Chromium),
-    so we piggyback on pytest-socket's ``enable_socket`` marker.
-
-    pytest-timeout's signal method (SIGALRM) corrupts Playwright's internal
-    connection state, causing deadlocks on fixture teardown.  We disable it
-    for browser tests and rely on Playwright's built-in timeouts instead.
-
-    Under xdist, all browser tests are grouped onto a single worker via
-    ``xdist_group("browser")`` so the session-scoped server fixture is shared.
-    """
-    xdist_active = _is_xdist_active(config)
-    for item in items:
-        if item.get_closest_marker("browser"):
-            item.add_marker(pytest.mark.enable_socket)
-            item.add_marker(pytest.mark.timeout(0))
-            # Group all browser tests onto a single xdist worker so the
-            # session-scoped server fixture is shared correctly.
-            if xdist_active:
-                item.add_marker(pytest.mark.xdist_group(name="browser"))
-
-
-@pytest.fixture(scope="session")
-def browser_type_launch_args(browser_type_launch_args):
-    """Prevent signal interference with Playwright's browser process."""
-    return {
-        **browser_type_launch_args,
-        "handle_sigint": False,
-        "handle_sigterm": False,
-    }
+@pytest.fixture
+def settings(tmp_path: Path) -> Settings:
+    """Routes read storage from app state; database_path only places data_dir (the image cache)."""
+    return Settings(
+        telegram_bot_token=SecretStr("fake:token"),
+        telegram_chat_id=0,
+        search_areas="e8,e3,n16",
+        database_path=str(tmp_path / "properties.db"),
+    )
 
 
 @pytest.fixture
-def console_errors(page: Page) -> Generator[list[str]]:
-    """Collect browser console errors per test; fail if unexpected errors appear.
-
-    Usage: include ``console_errors`` in your test signature, then assert at the
-    end (or let the teardown assertion catch surprises).
-    """
-    errors: list[str] = []
-    page.on("console", lambda msg: errors.append(msg.text) if msg.type == "error" else None)
-    yield errors
-    # Post-test safety net: filter out benign noise, warn if real errors remain.
-    # Tests that care should assert on ``console_errors`` explicitly; this
-    # teardown catches surprises in tests that don't check.
-    benign = re.compile(r"favicon\.ico|Failed to load resource.*favicon")
-    unexpected = [e for e in errors if not benign.search(e)]
-    if unexpected:
-        import warnings
-
-        warnings.warn(
-            f"Unexpected console errors (check with console_errors fixture): {unexpected}",
-            stacklevel=1,
-        )
+async def storage() -> AsyncGenerator[PropertyStorage]:
+    async with PropertyStorage(":memory:") as storage:
+        yield storage
 
 
-def wait_for_htmx_settle(page: Page, *, timeout: int = 5000) -> None:
-    """Wait for HTMX to finish processing and settle the DOM.
+@pytest.fixture
+def app(storage: PropertyStorage, settings: Settings) -> FastAPI:
+    app = FastAPI()
+    app.state.storage = storage
+    app.state.settings = settings
+    app.include_router(router)
+    return app
 
-    Uses polling via ``page.evaluate`` instead of ``page.wait_for_function``
-    because the latter is blocked by the app's CSP nonce policy.
-    """
-    page.evaluate(
-        """
-        window.__htmxSettled = false;
-        document.addEventListener(
-            'htmx:afterSettle',
-            () => { window.__htmxSettled = true },
-            { once: true }
-        );
-        """
+
+@pytest.fixture
+def client(app: FastAPI) -> TestClient:
+    return TestClient(app)
+
+
+@pytest.fixture
+def prop_a() -> Property:
+    """A one-bed in E8 at £1,900, matched to the Hackney Central micro-area by address."""
+    return Property(
+        source=PropertySource.OPENRENT,
+        source_id="100",
+        url=HttpUrl("https://openrent.com/100"),
+        title="1 bed in E8",
+        price_pcm=1900,
+        bedrooms=1,
+        address="10 Mare Street",
+        postcode="E8 3RH",
+        latitude=51.5465,
+        longitude=-0.0553,
+        image_url=HttpUrl("https://example.com/img.jpg"),
     )
-    import time
-
-    deadline = time.monotonic() + timeout / 1000
-    while time.monotonic() < deadline:
-        if page.evaluate("window.__htmxSettled"):
-            return
-        page.wait_for_timeout(50)
-    msg = f"HTMX did not settle within {timeout}ms"
-    raise TimeoutError(msg)
 
 
-def assert_no_dialog_visible(page: Page) -> None:
-    """Assert no <dialog> element is currently visible on the page."""
-    dialogs = page.locator("dialog")
-    for i in range(dialogs.count()):
-        expect(dialogs.nth(i)).not_to_be_visible()
+@pytest.fixture
+def merged_a(prop_a: Property) -> MergedProperty:
+    return MergedProperty(
+        canonical=prop_a,
+        sources=(PropertySource.OPENRENT,),
+        source_urls={PropertySource.OPENRENT: prop_a.url},
+        min_price=1900,
+        max_price=1900,
+        descriptions={PropertySource.OPENRENT: "A nice flat."},
+    )
+
+
+@pytest.fixture
+def prop_b() -> Property:
+    """A two-bed in N16 at £2,500."""
+    return Property(
+        source=PropertySource.RIGHTMOVE,
+        source_id="200",
+        url=HttpUrl("https://rightmove.co.uk/200"),
+        title="2 bed in N16",
+        price_pcm=2500,
+        bedrooms=2,
+        address="5 Church Street",
+        postcode="N16 0AP",
+        latitude=51.5615,
+        longitude=-0.0750,
+        image_url=HttpUrl("https://example.com/img.jpg"),
+    )
+
+
+@pytest.fixture
+def merged_b(prop_b: Property) -> MergedProperty:
+    return MergedProperty(
+        canonical=prop_b,
+        sources=(PropertySource.RIGHTMOVE,),
+        source_urls={PropertySource.RIGHTMOVE: prop_b.url},
+        min_price=2500,
+        max_price=2500,
+        descriptions={PropertySource.RIGHTMOVE: "Spacious flat."},
+    )
+
+
+@pytest.fixture
+def studio_prop() -> Property:
+    return Property(
+        source=PropertySource.OPENRENT,
+        source_id="300",
+        url=HttpUrl("https://openrent.com/300"),
+        title="Studio in E8",
+        price_pcm=1500,
+        bedrooms=0,
+        address="15 Mare Street",
+        postcode="E8 3RH",
+        latitude=51.5465,
+        longitude=-0.0553,
+        image_url=HttpUrl("https://example.com/img.jpg"),
+    )
+
+
+@pytest.fixture
+def merged_studio(studio_prop: Property) -> MergedProperty:
+    return MergedProperty(
+        canonical=studio_prop,
+        sources=(PropertySource.OPENRENT,),
+        source_urls={PropertySource.OPENRENT: studio_prop.url},
+        min_price=1500,
+        max_price=1500,
+    )
+
+
+@pytest.fixture
+def base_analysis() -> PropertyQualityAnalysis:
+    """Reusable quality analysis — tests override fields via model_copy(update={...})."""
+    return PropertyQualityAnalysis(
+        kitchen=KitchenAnalysis(overall_quality="modern", hob_type="gas", has_dishwasher="yes"),
+        condition=ConditionAnalysis(overall_condition="good", confidence="high"),
+        light_space=LightSpaceAnalysis(natural_light="good", feels_spacious=True),
+        space=SpaceAnalysis(living_room_sqm=18.0, is_spacious_enough=True),
+        overall_rating=4,
+        summary="Nice place.",
+    )

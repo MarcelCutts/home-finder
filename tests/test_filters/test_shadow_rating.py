@@ -90,20 +90,34 @@ def test_explicit_damage_caps_the_candidate_without_hiding_coverage(field):
     assert result.observed_weight_percent == 20
 
 
+_GOOD_CONDITION_DECENT_FINISHES = {
+    "condition": {"overall_condition": "good"},
+    "kitchen": {"overall_quality": "decent"},
+    "bathroom": {"overall_condition": "decent"},
+    "light_space": {"natural_light": "excellent"},
+    "space": {"is_spacious_enough": None},
+}
+_MODERN_KITCHEN_NOT_SPACIOUS = {
+    "kitchen": {"overall_quality": "modern"},
+    "space": {"is_spacious_enough": False},
+}
+
+
 @pytest.mark.parametrize(
-    "severity,rating", [("none", 4), ("minor", 3), ("moderate", 3), ("serious", 1)]
+    "visual,severity,rating",
+    [
+        # Unrounded 3.65: even a minor concern drops a star.
+        (_GOOD_CONDITION_DECENT_FINISHES, "none", 4),
+        (_GOOD_CONDITION_DECENT_FINISHES, "minor", 3),
+        (_GOOD_CONDITION_DECENT_FINISHES, "moderate", 3),
+        (_GOOD_CONDITION_DECENT_FINISHES, "serious", 1),
+        # Unrounded 3.93: a minor concern keeps the star and a moderate one drops it.
+        (_MODERN_KITCHEN_NOT_SPACIOUS, "minor", 4),
+        (_MODERN_KITCHEN_NOT_SPACIOUS, "moderate", 3),
+    ],
 )
-def test_concern_penalties_preserve_the_measured_candidate(severity, rating):
-    result = compute_shadow_rating(
-        {
-            "condition": {"overall_condition": "good"},
-            "kitchen": {"overall_quality": "decent"},
-            "bathroom": {"overall_condition": "decent"},
-            "light_space": {"natural_light": "excellent"},
-            "space": {"is_spacious_enough": None},
-            "concern_severity": severity,
-        }
-    )
+def test_concern_penalties_preserve_the_measured_candidate(visual, severity, rating):
+    result = compute_shadow_rating({**visual, "concern_severity": severity})
     assert result.candidate_rating == rating
 
 
@@ -117,3 +131,6 @@ def test_malformed_sections_do_not_turn_into_observations():
         }
     )
     assert result.coverage == "none"
+    assert result.observed_components == ()
+    # The no-evidence default; a malformed severity applies no penalty.
+    assert result.candidate_rating == 3
