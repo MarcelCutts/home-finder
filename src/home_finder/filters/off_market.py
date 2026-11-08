@@ -82,8 +82,9 @@ class BatchResult:
 class OffMarketChecker:
     """Check listing URLs for off-market signals.
 
-    Uses the same HTTP client selection as the scraper codebase:
-    curl_cffi for Zoopla/OTM/OpenRent, httpx for Rightmove.
+    Every supported source is fetched with curl_cffi browser impersonation
+    (``_CURL_SOURCES``); ``check_url`` reports any other source as UNKNOWN
+    without fetching, so the httpx client is currently unused.
     """
 
     proxy_url: str = ""

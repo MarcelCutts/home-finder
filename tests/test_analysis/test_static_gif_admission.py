@@ -74,8 +74,8 @@ async def test_cached_static_gif_floorplan_passes_native_two_phase_admission(
             spend_repository=storage.spend,
             spend_policy=policy(),
             http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(respond)),
-        ) as q:
-            _, result = await q.analyze_single_merged(merged, data_dir=data_dir)
+        ) as analyzer:
+            _, result = await analyzer.analyze_single_merged(merged, data_dir=data_dir)
         assert result.overall_rating is not None
         assert len(requests) == 2
         visual = requests[0]
@@ -130,8 +130,8 @@ async def test_cached_animation_keeps_frames_and_defers_whole_native_analysis(
             http_client=httpx2.AsyncClient(
                 transport=httpx2.MockTransport(lambda _: pytest.fail("Animation dispatched"))
             ),
-        ) as q:
-            block = await q._build_image_block(str(animated.url), cached_path=path)
+        ) as analyzer:
+            block = await analyzer._build_image_block(str(animated.url), cached_path=path)
             assert block is not None
             built_bytes = base64.b64decode(block["source"]["data"], validate=True)
             assert built_bytes == raw
@@ -141,7 +141,7 @@ async def test_cached_animation_keeps_frames_and_defers_whole_native_analysis(
             # A valid gallery photo cannot turn a dropped animation into a
             # successful complete review: defer before either model phase.
             with pytest.raises(SpendDeferred, match="unsupported_input_budget"):
-                await q.analyze_single_merged(merged, data_dir=data_dir)
+                await analyzer.analyze_single_merged(merged, data_dir=data_dir)
         assert await rows(storage) == []
         report = await storage.spend.report()
         assert report["attempts"] == report["held_nanousd"] == 0
@@ -180,9 +180,9 @@ async def test_invalid_gif_payload_stops_before_native_dispatch_or_reservation(i
             http_client=httpx2.AsyncClient(
                 transport=httpx2.MockTransport(lambda _: pytest.fail("Invalid image dispatched"))
             ),
-        ) as q:
+        ) as analyzer:
             with pytest.raises(SpendDeferred, match="unsupported_input_budget"):
-                await q._run_visual_analysis(content, "fixture:invalid-gif")
+                await analyzer._run_visual_analysis(content, "fixture:invalid-gif")
         assert await rows(storage) == []
         report = await storage.spend.report()
         assert report["attempts"] == report["held_nanousd"] == 0

@@ -18,14 +18,14 @@ PASSWORD = "local-test-owner-password-32-characters"
 
 
 @pytest.fixture
-def client(tmp_path: Path):
+def app_client(tmp_path: Path):
     settings = Settings(
         database_path=str(tmp_path / "properties.db"),
         web_owner_password=PASSWORD,
         web_base_url="http://testserver",
     )
-    with TestClient(create_app(settings, run_pipeline=False)) as client:
-        yield client
+    with TestClient(create_app(settings, run_pipeline=False)) as app_client:
+        yield app_client
 
 
 @pytest.mark.parametrize(
@@ -43,8 +43,8 @@ def client(tmp_path: Path):
         "/deliveries",
     ],
 )
-def test_anonymous_reads_are_rejected(client: TestClient, path: str) -> None:
-    response = client.get(path, headers={"HX-Request": "true"})
+def test_anonymous_reads_are_rejected(app_client: TestClient, path: str) -> None:
+    response = app_client.get(path, headers={"HX-Request": "true"})
     assert response.status_code == 401
     assert response.headers["www-authenticate"].startswith("Basic")
     assert response.headers["cache-control"] == "no-store"
@@ -53,38 +53,38 @@ def test_anonymous_reads_are_rejected(client: TestClient, path: str) -> None:
 @pytest.mark.parametrize("password", ["", "short", "秘密" * 12])
 def test_unconfigured_access_fails_closed(tmp_path: Path, password: str) -> None:
     settings = Settings(database_path=str(tmp_path / "properties.db"), web_owner_password=password)
-    with TestClient(create_app(settings, run_pipeline=False)) as client:
-        assert client.get("/").status_code == 503
-        assert client.get("/health").json() == {"status": "ok"}
+    with TestClient(create_app(settings, run_pipeline=False)) as app_client:
+        assert app_client.get("/").status_code == 503
+        assert app_client.get("/health").json() == {"status": "ok"}
     settings.web_owner_password = SecretStr(PASSWORD)
     with TestClient(create_app(settings, run_pipeline=False)) as recovered:
         assert recovered.get("/", auth=("owner", PASSWORD)).status_code == 200
 
 
-def test_health_does_not_expose_pipeline_state(client: TestClient) -> None:
-    assert client.get("/health").json() == {"status": "ok"}
+def test_health_does_not_expose_pipeline_state(app_client: TestClient) -> None:
+    assert app_client.get("/health").json() == {"status": "ok"}
 
 
 @pytest.mark.parametrize("path", ["/", "/diagnostics", "/static/style.css"])
-def test_host_cannot_select_the_health_exemption(client: TestClient, path: str) -> None:
-    assert client.get(path, headers={"Host": "attacker/health?"}).status_code == 401
+def test_host_cannot_select_the_health_exemption(app_client: TestClient, path: str) -> None:
+    assert app_client.get(path, headers={"Host": "attacker/health?"}).status_code == 401
 
 
-def test_route_exemption_does_not_depend_on_url_reconstruction(client, monkeypatch):
+def test_route_exemption_does_not_depend_on_url_reconstruction(app_client, monkeypatch):
     # Reproduce the old Starlette Host-derived path regardless of which
     # Starlette version is installed. Authentication follows the ASGI target.
     monkeypatch.setattr(Request, "url", property(lambda _: URL("http://attacker/health?")))
-    assert client.get("/diagnostics").status_code == 401
+    assert app_client.get("/diagnostics").status_code == 401
 
 
-def test_owner_can_read_the_dashboard(client: TestClient) -> None:
-    response = client.get("/", auth=("owner", PASSWORD))
+def test_owner_can_read_the_dashboard(app_client: TestClient) -> None:
+    response = app_client.get("/", auth=("owner", PASSWORD))
     assert response.status_code == 200
     assert response.headers["cache-control"] == "no-store"
 
 
-def test_cross_site_mutation_is_rejected(client: TestClient) -> None:
-    response = client.patch(
+def test_cross_site_mutation_is_rejected(app_client: TestClient) -> None:
+    response = app_client.patch(
         "/property/openrent_123/status",
         auth=("owner", PASSWORD),
         headers={"Origin": "https://attacker.example"},
@@ -93,12 +93,16 @@ def test_cross_site_mutation_is_rejected(client: TestClient) -> None:
     assert response.status_code == 403
 
 
+def _status_history(app_client: TestClient, property_id: str) -> list:
+    return app_client.portal.call(app_client.app.state.storage.get_status_history, property_id)
+
+
 @pytest.fixture
-def property_id(client, make_merged_property, make_quality_analysis):
+def property_id(app_client, make_merged_property, make_quality_analysis):
     merged = make_merged_property()
-    storage = client.app.state.storage
-    client.portal.call(storage.save_merged_property, merged)
-    client.portal.call(storage.save_quality_analysis, merged.unique_id, make_quality_analysis())
+    storage = app_client.app.state.storage
+    app_client.portal.call(storage.save_merged_property, merged)
+    app_client.portal.call(storage.save_quality_analysis, merged.unique_id, make_quality_analysis())
     return merged.unique_id
 
 
@@ -114,15 +118,15 @@ def property_id(client, make_merged_property, make_quality_analysis):
         {"Origin": "https://attacker.example", "X-Forwarded-Host": "attacker.example"},
     ],
 )
-def test_invalid_origin_cannot_change_status(client, property_id, headers):
-    response = client.patch(
+def test_invalid_origin_cannot_change_status(app_client, property_id, headers):
+    response = app_client.patch(
         f"/property/{property_id}/status",
         auth=("owner", PASSWORD),
         headers=headers,
         data={"status": "interested"},
     )
     assert response.status_code == 403
-    assert client.portal.call(client.app.state.storage.get_status_history, property_id) == []
+    assert _status_history(app_client, property_id) == []
 
 
 @pytest.mark.parametrize(
@@ -133,8 +137,8 @@ def test_invalid_origin_cannot_change_status(client, property_id, headers):
         {"Referer": "http://testserver/property/example"},
     ],
 )
-def test_owner_can_change_status_through_htmx(client, property_id, headers):
-    response = client.patch(
+def test_owner_can_change_status_through_htmx(app_client, property_id, headers):
+    response = app_client.patch(
         f"/property/{property_id}/status",
         auth=("owner", PASSWORD),
         headers={**headers, "HX-Request": "true"},
@@ -143,70 +147,70 @@ def test_owner_can_change_status_through_htmx(client, property_id, headers):
     assert response.status_code == 200
     assert "Interested" in response.text
     assert "nonce-" in response.headers["content-security-policy"]
-    history = client.portal.call(client.app.state.storage.get_status_history, property_id)
+    history = _status_history(app_client, property_id)
     assert [event["to_status"] for event in history] == ["interested"]
 
 
 @pytest.mark.parametrize("authorization", ["", "Basic broken", "Bearer fake"])
-def test_invalid_credentials_cannot_mutate(client, property_id, authorization):
-    response = client.patch(
+def test_invalid_credentials_cannot_mutate(app_client, property_id, authorization):
+    response = app_client.patch(
         f"/property/{property_id}/status",
         data={"status": "interested"},
         headers={"Authorization": authorization, "Origin": "http://testserver"},
     )
     assert response.status_code == 401
-    assert client.portal.call(client.app.state.storage.get_status_history, property_id) == []
+    assert _status_history(app_client, property_id) == []
 
 
-def test_cached_images_require_owner_and_use_private_cache(client):
+def test_cached_images_require_owner_and_use_private_cache(app_client):
     from home_finder.utils.image_cache import get_cache_dir, save_image_bytes
 
-    cache_dir = get_cache_dir(client.app.state.settings.data_dir, "openrent:123")
+    cache_dir = get_cache_dir(app_client.app.state.settings.data_dir, "openrent:123")
     save_image_bytes(cache_dir / "image.jpg", b"test-image")
     path = "/images/openrent_123/image.jpg"
-    assert client.get(path).status_code == 401
-    response = client.get(path, auth=("owner", PASSWORD))
+    assert app_client.get(path).status_code == 401
+    response = app_client.get(path, auth=("owner", PASSWORD))
     assert response.status_code == 200
     assert response.content == b"test-image"
     assert response.headers["cache-control"].startswith("private,")
 
 
-def test_owner_diagnostics_remain_available(client):
-    response = client.get("/diagnostics", auth=("owner", PASSWORD))
+def test_owner_diagnostics_remain_available(app_client):
+    response = app_client.get("/diagnostics", auth=("owner", PASSWORD))
     assert response.status_code == 200
     assert response.json()["pipeline_running"] is False
 
 
-def test_failed_authentication_is_rate_limited_and_recovers(client, monkeypatch):
+def test_failed_authentication_is_rate_limited_and_recovers(app_client, monkeypatch):
     now = [100.0]
     monkeypatch.setattr("home_finder.web.access.monotonic", lambda: now[0])
     for _ in range(10):
-        assert client.get("/", auth=("owner", "wrong")).status_code == 401
-    response = client.get("/", auth=("owner", "wrong"))
+        assert app_client.get("/", auth=("owner", "wrong")).status_code == 401
+    response = app_client.get("/", auth=("owner", "wrong"))
     assert response.status_code == 429
     assert response.headers["retry-after"] == "60"
-    assert client.get("/", auth=("owner", PASSWORD)).status_code == 200
-    assert client.get("/", auth=("owner", "wrong")).status_code == 429
-    challenge = client.get("/")
+    assert app_client.get("/", auth=("owner", PASSWORD)).status_code == 200
+    assert app_client.get("/", auth=("owner", "wrong")).status_code == 429
+    challenge = app_client.get("/")
     assert challenge.status_code == 401
     assert challenge.headers["www-authenticate"].startswith("Basic")
-    assert client.get("/health").status_code == 200
+    assert app_client.get("/health").status_code == 200
     now[0] += 61
-    assert client.get("/", auth=("owner", "wrong")).status_code == 401
+    assert app_client.get("/", auth=("owner", "wrong")).status_code == 401
 
 
 @pytest.mark.parametrize("failed_path", ["/", "/telegram/webhook"])
-def test_anonymous_peer_limit_cannot_lock_out_owner_or_telegram(client, failed_path):
-    client.app.state.settings.telegram_webhook_secret = SecretStr("test-secret")
+def test_anonymous_peer_limit_cannot_lock_out_owner_or_telegram(app_client, failed_path):
+    app_client.app.state.settings.telegram_webhook_secret = SecretStr("test-secret")
     for _ in range(10):
-        response = client.request("POST" if "webhook" in failed_path else "GET", failed_path)
+        response = app_client.request("POST" if "webhook" in failed_path else "GET", failed_path)
         assert response.status_code in {401, 403}
-    challenge = client.get("/")
+    challenge = app_client.get("/")
     assert challenge.status_code == 401
     assert challenge.headers["www-authenticate"].startswith("Basic")
-    assert client.get("/", auth=("owner", PASSWORD)).status_code == 200
+    assert app_client.get("/", auth=("owner", PASSWORD)).status_code == 200
     assert (
-        client.post(
+        app_client.post(
             "/telegram/webhook",
             headers={"X-Telegram-Bot-Api-Secret-Token": "test-secret"},
             json={"update_id": 1},
@@ -215,17 +219,17 @@ def test_anonymous_peer_limit_cannot_lock_out_owner_or_telegram(client, failed_p
     )
 
 
-def test_mutations_are_rate_limited_and_coalesce(client, property_id, monkeypatch):
+def test_mutations_are_rate_limited_and_coalesce(app_client, property_id, monkeypatch):
     now = [100.0]
     monkeypatch.setattr("home_finder.web.access.monotonic", lambda: now[0])
     for _ in range(30):
-        response = client.post(
+        response = app_client.post(
             f"/property/{property_id}/reanalyze",
             auth=("owner", PASSWORD),
             headers={"Origin": "http://testserver"},
         )
         assert response.status_code == 200
-    response = client.post(
+    response = app_client.post(
         f"/property/{property_id}/reanalyze",
         auth=("owner", PASSWORD),
         headers={"Origin": "http://testserver"},
@@ -234,7 +238,7 @@ def test_mutations_are_rate_limited_and_coalesce(client, property_id, monkeypatc
     assert response.headers["retry-after"] == "60"
     now[0] += 61
     assert (
-        client.post(
+        app_client.post(
             f"/property/{property_id}/reanalyze",
             auth=("owner", PASSWORD),
             headers={"Origin": "http://testserver"},
@@ -243,24 +247,28 @@ def test_mutations_are_rate_limited_and_coalesce(client, property_id, monkeypatc
     )
 
 
-@pytest.mark.parametrize("length", [None, "1", str(MAX_BODY_BYTES + 1), "9" * 5000])
-def test_oversized_requests_rejected_before_form_parsing(client, property_id, length):
+@pytest.mark.parametrize(
+    "length",
+    [None, "1", str(MAX_BODY_BYTES + 1), "9" * 5000],
+    ids=["chunked", "understated-length", "declared-over-limit", "5000-digit-length"],
+)
+def test_oversized_requests_rejected_before_form_parsing(app_client, property_id, length):
     headers = {"Origin": "http://testserver", "Content-Type": "application/x-www-form-urlencoded"}
     if length is not None:
         headers["Content-Length"] = length
-    response = client.patch(
+    response = app_client.patch(
         f"/property/{property_id}/status",
         auth=("owner", PASSWORD),
         headers=headers,
         content=iter([b"status=interested&ignored=", b"x" * MAX_BODY_BYTES]),
     )
     assert response.status_code == 413
-    assert client.portal.call(client.app.state.storage.get_status_history, property_id) == []
+    assert _status_history(app_client, property_id) == []
 
 
-def test_concurrent_owner_mutations_commit_separate_events(client, property_id):
+def test_concurrent_owner_mutations_commit_separate_events(app_client, property_id):
     def change_status(_):
-        return client.patch(
+        return app_client.patch(
             f"/property/{property_id}/status",
             auth=("owner", PASSWORD),
             headers={"Origin": "http://testserver"},
@@ -269,16 +277,16 @@ def test_concurrent_owner_mutations_commit_separate_events(client, property_id):
 
     with ThreadPoolExecutor(max_workers=4) as pool:
         assert list(pool.map(change_status, range(4))) == [200] * 4
-    assert len(client.portal.call(client.app.state.storage.get_status_history, property_id)) == 4
+    assert len(_status_history(app_client, property_id)) == 4
 
 
-def test_webhook_needs_secret_in_full_app_even_with_owner_credentials(client):
-    client.app.state.settings.telegram_webhook_secret = SecretStr("test-secret")
+def test_webhook_needs_secret_in_full_app_even_with_owner_credentials(app_client):
+    app_client.app.state.settings.telegram_webhook_secret = SecretStr("test-secret")
     with patch(
         "home_finder.web.telegram_webhook._answer_callback", new_callable=AsyncMock
     ) as answer:
         assert (
-            client.post(
+            app_client.post(
                 "/telegram/webhook",
                 auth=("owner", PASSWORD),
                 json={"update_id": 1},
@@ -286,7 +294,7 @@ def test_webhook_needs_secret_in_full_app_even_with_owner_credentials(client):
             == 403
         )
         assert (
-            client.post(
+            app_client.post(
                 "/telegram/webhook",
                 headers={"X-Telegram-Bot-Api-Secret-Token": "test-secret"},
                 json={"update_id": 1},
@@ -296,8 +304,8 @@ def test_webhook_needs_secret_in_full_app_even_with_owner_credentials(client):
         answer.assert_not_called()
 
 
-def test_concurrent_callback_retries_commit_once(client, property_id):
-    settings = client.app.state.settings
+def test_concurrent_callback_retries_commit_once(app_client, property_id):
+    settings = app_client.app.state.settings
     settings.telegram_webhook_secret = SecretStr("test-secret")
     settings.telegram_chat_id = 123
     update = {
@@ -311,7 +319,7 @@ def test_concurrent_callback_retries_commit_once(client, property_id):
     }
 
     def callback(_):
-        return client.post(
+        return app_client.post(
             "/telegram/webhook",
             json=update,
             headers={"X-Telegram-Bot-Api-Secret-Token": "test-secret"},
@@ -323,13 +331,13 @@ def test_concurrent_callback_retries_commit_once(client, property_id):
         with ThreadPoolExecutor(max_workers=4) as pool:
             assert list(pool.map(callback, range(4))) == [200] * 4
         answer.assert_awaited_once()
-    history = client.portal.call(client.app.state.storage.get_status_history, property_id)
+    history = _status_history(app_client, property_id)
     assert [event["to_status"] for event in history] == ["interested"]
 
 
-def test_canonical_origin_works_behind_https_proxy(client, property_id):
-    client.app.state.settings.web_base_url = "https://owner.example"
-    response = client.patch(
+def test_canonical_origin_works_behind_https_proxy(app_client, property_id):
+    app_client.app.state.settings.web_base_url = "https://owner.example"
+    response = app_client.patch(
         f"/property/{property_id}/status",
         auth=("owner", PASSWORD),
         headers={"Origin": "https://owner.example"},

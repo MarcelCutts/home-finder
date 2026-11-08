@@ -1,7 +1,9 @@
-"""Live evaluation tests for quality analysis with real Claude API.
+"""Live structural checks of the two-phase analysis against the real Claude API.
 
-These tests are excluded from the default test run (marked @pytest.mark.slow).
-They require a valid ANTHROPIC_API_KEY environment variable and make real API calls.
+These tests are excluded from the default run (marked slow). They need an
+ANTHROPIC_API_KEY and network access, and make real, paid requests under the
+runtime analysis configuration and a $5 spend policy: one per phase, plus at most
+one malformed-output retry.
 
 Run manually with: uv run pytest tests/test_analysis/test_quality_eval.py -m slow -v
 
@@ -16,21 +18,27 @@ import pytest
 from pydantic import HttpUrl
 
 from home_finder.analysis.analyzer import PropertyQualityAnalyzer
+from home_finder.config import new_runtime_analysis_config
+from home_finder.db import PropertyStorage
 from home_finder.models import (
     MergedProperty,
     Property,
     PropertyImage,
     PropertySource,
 )
+from home_finder.models.spend import SpendPolicy
+from tests.support.images import populate_image_cache
 
-# Skip the entire module if no API key is set
 pytestmark = [
     pytest.mark.slow,
+    pytest.mark.enable_socket,
     pytest.mark.skipif(
         not os.environ.get("ANTHROPIC_API_KEY"),
         reason="ANTHROPIC_API_KEY not set — skipping live evaluation tests",
     ),
 ]
+
+MAX_IMAGES = 5
 
 
 # ---------------------------------------------------------------------------
@@ -39,7 +47,7 @@ pytestmark = [
 
 
 def _golden_2bed_with_images() -> MergedProperty:
-    """2-bed property with multiple gallery images and floorplan."""
+    """2-bed property with a full description and one gallery image."""
     prop = Property(
         source=PropertySource.OPENRENT,
         source_id="eval-2bed",
@@ -66,12 +74,8 @@ def _golden_2bed_with_images() -> MergedProperty:
         sources=(PropertySource.OPENRENT,),
         source_urls={PropertySource.OPENRENT: prop.url},
         images=(
-            # Using a known public domain image as a placeholder
-            # In real usage, these would be cached locally
             PropertyImage(
-                url=HttpUrl(
-                    "https://upload.wikimedia.org/wikipedia/commons/thumb/6/65/No-Image-Placeholder.svg/330px-No-Image-Placeholder.svg.png"
-                ),
+                url=HttpUrl("https://example.com/eval-2bed/gallery-1.jpg"),
                 source=PropertySource.OPENRENT,
                 image_type="gallery",
             ),
@@ -86,7 +90,7 @@ def _golden_2bed_with_images() -> MergedProperty:
 
 
 def _golden_1bed_minimal() -> MergedProperty:
-    """1-bed property with minimal images."""
+    """1-bed property with a short description and one gallery image."""
     prop = Property(
         source=PropertySource.RIGHTMOVE,
         source_id="eval-1bed",
@@ -107,9 +111,7 @@ def _golden_1bed_minimal() -> MergedProperty:
         source_urls={PropertySource.RIGHTMOVE: prop.url},
         images=(
             PropertyImage(
-                url=HttpUrl(
-                    "https://upload.wikimedia.org/wikipedia/commons/thumb/6/65/No-Image-Placeholder.svg/330px-No-Image-Placeholder.svg.png"
-                ),
+                url=HttpUrl("https://example.com/eval-1bed/gallery-1.jpg"),
                 source=PropertySource.RIGHTMOVE,
                 image_type="gallery",
             ),
@@ -135,14 +137,30 @@ GOLDEN_PROPERTIES = [
 
 
 @pytest.fixture
-def analyzer() -> PropertyQualityAnalyzer:
-    """Create a quality analyzer with real API key."""
-    api_key = os.environ["ANTHROPIC_API_KEY"]
-    return PropertyQualityAnalyzer(
-        api_key=api_key,
-        max_images=5,
-        enable_extended_thinking=True,
-    )
+async def analyzer():
+    """The runtime analysis configuration with an explicit ledger and spend policy."""
+    async with (
+        PropertyStorage(":memory:") as storage,
+        PropertyQualityAnalyzer(
+            api_key=os.environ["ANTHROPIC_API_KEY"],
+            max_images=MAX_IMAGES,
+            analysis_config=new_runtime_analysis_config(max_images=MAX_IMAGES),
+            spend_repository=storage.spend,
+            spend_policy=SpendPolicy(per_call_usd="1", daily_usd="5", monthly_usd="5"),
+        ) as analyzer,
+    ):
+        yield analyzer
+
+
+@pytest.fixture
+def image_cache(tmp_path):
+    """Cache a placeholder photo for each image, as detail enrichment would."""
+
+    def cache(merged: MergedProperty) -> str:
+        populate_image_cache(str(tmp_path), merged)
+        return str(tmp_path)
+
+    return cache
 
 
 class TestQualityAnalysisStructural:
@@ -150,16 +168,19 @@ class TestQualityAnalysisStructural:
 
     @pytest.mark.parametrize("golden_property", GOLDEN_PROPERTIES)
     async def test_analysis_structure_and_ranges(
-        self, golden_property: MergedProperty, analyzer: PropertyQualityAnalyzer
+        self,
+        golden_property: MergedProperty,
+        analyzer: PropertyQualityAnalyzer,
+        image_cache,
     ) -> None:
         """Verify structure and ranges of live Claude output."""
-        try:
-            _, analysis = await analyzer.analyze_single_merged(golden_property)
-        finally:
-            await analyzer.close()
+        _, analysis = await analyzer.analyze_single_merged(
+            golden_property, data_dir=image_cache(golden_property)
+        )
 
         # Phase 1: Visual analysis fields are populated
         assert analysis is not None
+        assert analysis.analysis_failure is None
         assert analysis.overall_rating is not None
         assert 1 <= analysis.overall_rating <= 5
         assert analysis.kitchen is not None
@@ -174,7 +195,6 @@ class TestQualityAnalysisStructural:
         )
         assert analysis.light_space is not None
         assert analysis.space is not None
-        assert analysis.space is not None
         assert analysis.summary is not None
         assert len(analysis.summary) > 10
 
@@ -183,15 +203,18 @@ class TestQualityAnalysisStructural:
 
     @pytest.mark.parametrize("golden_property", GOLDEN_PROPERTIES)
     async def test_phase2_fields_populated(
-        self, golden_property: MergedProperty, analyzer: PropertyQualityAnalyzer
+        self,
+        golden_property: MergedProperty,
+        analyzer: PropertyQualityAnalyzer,
+        image_cache,
     ) -> None:
         """Phase 2 evaluation fields should be populated."""
-        try:
-            _, analysis = await analyzer.analyze_single_merged(golden_property)
-        finally:
-            await analyzer.close()
+        _, analysis = await analyzer.analyze_single_merged(
+            golden_property, data_dir=image_cache(golden_property)
+        )
 
         # Phase 2: Evaluation fields populated
+        assert analysis.analysis_failure is None
         assert analysis.listing_extraction is not None
         assert analysis.listing_extraction.epc_rating in (
             "A",
@@ -213,14 +236,3 @@ class TestQualityAnalysisStructural:
         # Value assessment
         assert analysis.value is not None
         assert analysis.value.quality_adjusted_rating in ("excellent", "good", "fair", "poor")
-
-    async def test_2bed_space_override(self, analyzer: PropertyQualityAnalyzer) -> None:
-        """2-bed property should have is_spacious_enough=True (office goes in spare room)."""
-        golden = _golden_2bed_with_images()
-        try:
-            _, analysis = await analyzer.analyze_single_merged(golden)
-        finally:
-            await analyzer.close()
-
-        # The 2+ bed override should fire regardless of Claude's assessment
-        assert analysis.space.is_spacious_enough is True

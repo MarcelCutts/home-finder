@@ -314,7 +314,8 @@ stage into its domain implementation. The full workflow runs in this order:
 Empty discovery still allows recovery and pending queues to advance. Dry runs
 follow the same data-processing sequence and skip notification transport.
 The [pipeline guide](docs/pipeline.md) explains the contracts, terminology,
-queue limits, reading order, and metric definitions.
+queue limits, reading order, and metric definitions. The
+[ingest pipeline walkthrough](docs/ingest-pipeline.md) explains each stage in detail.
 
 ### Deduplication
 

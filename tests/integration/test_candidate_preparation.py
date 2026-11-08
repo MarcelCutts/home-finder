@@ -1,6 +1,12 @@
-"""Candidate preparation and persistence with mocked acquisition boundaries."""
+"""Candidate preparation and persistence with mocked acquisition boundaries.
+
+Boundary: ``prepare_candidates`` from collection through selection, enrichment
+admission, commute assessment and consolidation, with real storage. Collection,
+detail acquisition and TravelTime are replaced.
+"""
 
 from collections.abc import Callable
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -10,12 +16,33 @@ from home_finder.config import Settings
 from home_finder.db import PropertyStorage
 from home_finder.enrichment.details import EnrichmentResult
 from home_finder.models import (
+    CommuteResult,
+    CommuteState,
     Property,
     PropertySource,
     TransportMode,
 )
 from home_finder.pipeline.assessment import complete_initial_assessment
 from home_finder.pipeline.candidates import prepare_candidates
+
+
+@pytest.fixture
+def preparation_settings(tmp_path: Path) -> Settings:
+    """No analysis or commute provider; the image cache lives in tmp_path."""
+    return Settings(
+        telegram_bot_token=SecretStr("fake:test-token"),
+        telegram_chat_id=0,
+        database_path=str(tmp_path / "home_finder.db"),
+        search_areas="e8",
+        min_price=1500,
+        max_price=2500,
+        min_bedrooms=1,
+        max_bedrooms=2,
+        enable_quality_filter=False,
+        require_floorplan=False,
+        traveltime_app_id="",
+        traveltime_api_key=SecretStr(""),
+    )
 
 
 @pytest.fixture
@@ -47,15 +74,15 @@ def synthetic_properties(make_property: Callable[..., Property]) -> list[Propert
 
 @pytest.mark.e2e
 class TestCandidatePreparation:
-    """Test prepare_candidates with mocked external APIs."""
+    """prepare_candidates with collection, detail acquisition and TravelTime replaced."""
 
     async def test_prepared_candidates_can_be_persisted_without_analysis(
-        self, test_settings: Settings, synthetic_properties: list[Property]
+        self,
+        storage: PropertyStorage,
+        preparation_settings: Settings,
+        synthetic_properties: list[Property],
     ):
         """Prepare candidates, then persist them through the assessment-completion contract."""
-        storage = PropertyStorage(":memory:")
-        await storage.initialize()
-
         with (
             patch(
                 "home_finder.pipeline.collection.scrape_all_platforms",
@@ -75,10 +102,13 @@ class TestCandidatePreparation:
             mock_fetcher_instance.close = AsyncMock()
             MockFetcher.return_value = mock_fetcher_instance
 
-            result = await prepare_candidates(test_settings, storage)
+            result = await prepare_candidates(preparation_settings, storage)
 
-        assert result is not None
-        assert len(result.candidates) > 0
+        # Every observed listing is represented by exactly one candidate.
+        represented_urls = [
+            str(url) for candidate in result.candidates for url in candidate.source_urls.values()
+        ]
+        assert sorted(represented_urls) == sorted(str(prop.url) for prop in synthetic_properties)
 
         # Pre-save (as pipeline does before analysis), then update with complete_initial_assessment
         await storage.processing.save_pre_analysis_properties(
@@ -87,38 +117,25 @@ class TestCandidatePreparation:
         for merged in result.candidates:
             await complete_initial_assessment(merged, None, storage)
 
-        # Verify properties are in DB
-        count = await storage.web.get_property_count()
-        assert count > 0
-        assert count == len(result.candidates)
-
-        await storage.close()
+        for candidate in result.candidates:
+            assert await storage.get_property(candidate.unique_id) is not None
+        assert await storage.web.get_property_count() == len(result.candidates)
 
     async def test_commute_assessment_preserves_over_limit_candidates(
-        self, test_settings: Settings, synthetic_properties: list[Property]
+        self,
+        storage: PropertyStorage,
+        preparation_settings: Settings,
+        synthetic_properties: list[Property],
     ):
         """Over-limit and unknown homes remain available; only measurements are saved."""
-        storage = PropertyStorage(":memory:")
-        await storage.initialize()
-
-        # Create settings with TravelTime credentials
-        settings_with_commute = Settings(
-            telegram_bot_token=SecretStr("fake:test-token"),
-            telegram_chat_id=0,
-            database_path=":memory:",
-            search_areas="e8",
-            min_price=1500,
-            max_price=2500,
-            min_bedrooms=1,
-            max_bedrooms=2,
-            enable_quality_filter=False,
-            require_floorplan=False,
-            traveltime_app_id="test-app",
-            traveltime_api_key=SecretStr("test-key"),
+        settings_with_commute = preparation_settings.model_copy(
+            update={
+                "traveltime_app_id": "test-app",
+                "traveltime_api_key": SecretStr("test-key"),
+            }
         )
 
-        # Mock CommuteAssessor to return only half
-        from home_finder.models import CommuteResult, CommuteState
+        # Two homes are measured (one within, one over the limit); the rest are unknown.
 
         mock_commute_results = [
             CommuteResult(
@@ -168,7 +185,6 @@ class TestCandidatePreparation:
 
             result = await prepare_candidates(settings_with_commute, storage)
 
-        assert result is not None
         assert result.progress.commute_within_limit_count == 1
         assert result.commute_lookup == {
             synthetic_properties[0].unique_id: (15, TransportMode.CYCLING),
@@ -178,31 +194,26 @@ class TestCandidatePreparation:
             m.unique_id for m in result.candidates
         }
 
-        await storage.close()
-
-    async def test_no_observations_returns_empty_batch(self, test_settings: Settings):
-        """Empty scrape should return None."""
-        storage = PropertyStorage(":memory:")
-        await storage.initialize()
-
+    async def test_no_observations_returns_empty_batch(
+        self, storage: PropertyStorage, preparation_settings: Settings
+    ):
         with patch(
             "home_finder.pipeline.collection.scrape_all_platforms",
             new_callable=AsyncMock,
             return_value=([], []),
         ):
-            result = await prepare_candidates(test_settings, storage)
+            result = await prepare_candidates(preparation_settings, storage)
 
         assert result.candidates == []
-        await storage.close()
+        assert result.commute_lookup == {}
 
     async def test_matching_listings_share_a_candidate_and_keep_the_distinct_home(
-        self, test_settings: Settings, make_property: Callable[..., Property]
+        self,
+        storage: PropertyStorage,
+        preparation_settings: Settings,
+        make_property: Callable[..., Property],
     ):
-        """Duplicate properties should be merged, reducing count."""
-        storage = PropertyStorage(":memory:")
-        await storage.initialize()
-
-        # Create properties that should match (same postcode, bedrooms, close price)
+        # The first two match (same postcode, coordinates, size and price); the third differs.
         props = [
             make_property(
                 source=PropertySource.OPENRENT,
@@ -248,9 +259,8 @@ class TestCandidatePreparation:
             mock_fetcher_instance.close = AsyncMock()
             MockFetcher.return_value = mock_fetcher_instance
 
-            result = await prepare_candidates(test_settings, storage)
+            result = await prepare_candidates(preparation_settings, storage)
 
-        assert result is not None
         assert len(result.candidates) == 2
         assert {frozenset(candidate.sources) for candidate in result.candidates} == {
             frozenset({PropertySource.OPENRENT, PropertySource.ZOOPLA}),
@@ -260,5 +270,3 @@ class TestCandidatePreparation:
             str(url) for candidate in result.candidates for url in candidate.source_urls.values()
         }
         assert represented_urls == {str(prop.url) for prop in props}
-
-        await storage.close()

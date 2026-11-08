@@ -6,7 +6,7 @@ import json
 import httpx2
 import pytest
 
-from home_finder.analysis import analyzer as quality_module
+from home_finder.analysis import analyzer as analyzer_module
 from home_finder.analysis.analyzer import APIUnavailableError, _VisualAnalysisResponse
 from home_finder.analysis.contracts import AnalysisOutputError, validate_output
 from home_finder.analysis.space_evidence import reconcile_floorplan_areas
@@ -203,16 +203,16 @@ async def test_scoped_areas_survive_native_evaluation_restart_without_mutating_c
 
     async with PropertyStorage(database) as storage:
         await storage.processing.save_pre_analysis_properties([merged], {})
-        async with quality(storage, respond, settings=new_runtime_analysis_config()) as model:
+        async with quality(storage, respond, settings=new_runtime_analysis_config()) as analyzer:
             with pytest.raises(APIUnavailableError):
-                await model.analyze_single_merged(merged, data_dir=images)
+                await analyzer.analyze_single_merged(merged, data_dir=images)
         checkpoint = (await checkpoint_rows(storage))[0]
         assert json.loads(checkpoint["data_json"]) == raw
 
     async with PropertyStorage(database) as storage:
         pending = (await storage.processing.get_pending_analysis_properties())[0]
-        async with quality(storage, respond, settings=new_runtime_analysis_config()) as model:
-            _, result = await model.analyze_single_merged(pending, data_dir=images)
+        async with quality(storage, respond, settings=new_runtime_analysis_config()) as analyzer:
+            _, result = await analyzer.analyze_single_merged(pending, data_dir=images)
         assert result.analysis_failure is None
         assert result.space.living_room_sqm == 17.75
         assert result.space.total_area_sqm == result.space.floorplan_total_area_sqm == 47.1
@@ -237,21 +237,23 @@ async def test_scope_schema_change_invalidates_old_checkpoint_without_rewriting_
         calls.append(json.loads(request.content))
         return httpx2.Response(200, json=response())
 
-    old_tool = copy.deepcopy(quality_module.VISUAL_ANALYSIS_TOOL)
+    old_tool = copy.deepcopy(analyzer_module.VISUAL_ANALYSIS_TOOL)
     room = old_tool["input_schema"]["properties"]["space"]["properties"]["room_areas"]["items"]
     room["properties"].pop("area_scope")
     room["required"].remove("area_scope")
     async with PropertyStorage(str(tmp_path / "scope-contract.db")) as storage:
         with monkeypatch.context() as legacy:
-            legacy.setattr(quality_module, "VISUAL_ANALYSIS_TOOL", old_tool)
-            async with quality(storage, respond, settings=new_runtime_analysis_config()) as model:
-                await model._run_visual_analysis(CONTENT, "fixture:scope-contract")
-                old_hash = model._analysis_provenance().visual_output_sha256
+            legacy.setattr(analyzer_module, "VISUAL_ANALYSIS_TOOL", old_tool)
+            async with quality(
+                storage, respond, settings=new_runtime_analysis_config()
+            ) as analyzer:
+                await analyzer._run_visual_analysis(CONTENT, "fixture:scope-contract")
+                old_hash = analyzer._analysis_provenance().visual_output_sha256
             old_checkpoint = (await checkpoint_rows(storage))[0]
-        async with quality(storage, respond, settings=new_runtime_analysis_config()) as model:
-            await model._run_visual_analysis(CONTENT, "fixture:scope-contract")
-            await model._run_visual_analysis(CONTENT, "fixture:scope-contract")
-            assert model._analysis_provenance().visual_output_sha256 != old_hash
+        async with quality(storage, respond, settings=new_runtime_analysis_config()) as analyzer:
+            await analyzer._run_visual_analysis(CONTENT, "fixture:scope-contract")
+            await analyzer._run_visual_analysis(CONTENT, "fixture:scope-contract")
+            assert analyzer._analysis_provenance().visual_output_sha256 != old_hash
         current = (await checkpoint_rows(storage))[0]
         assert current["input_sha256"] != old_checkpoint["input_sha256"]
         assert current["data_json"] == old_checkpoint["data_json"]

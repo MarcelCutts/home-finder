@@ -18,7 +18,7 @@ from home_finder.pipeline.collection import scrape_all_platforms
 @pytest.mark.parametrize("areas", ["hakney", "e8,hakney", "E8 3RH", "north wherever"])
 def test_settings_reject_unknown_or_non_outcode_area(areas):
     with pytest.raises(ValidationError, match="Unknown search area"):
-        Settings(_env_file=None, search_areas=areas)
+        Settings(search_areas=areas)
 
 
 @pytest.mark.parametrize("strict", [True, False])
@@ -36,7 +36,7 @@ def test_platform_aliases_and_filter_coverage_share_preflight():
             assert resolve_area_outcodes([alias]) == canonical
             assert LocationFilter([alias]).valid_outcodes == canonical
     assert resolve_area_outcodes([" EC1A ", "e8"]) == {"EC1A", "E8"}
-    assert Settings(_env_file=None, search_areas="").get_search_areas() == []
+    assert Settings(search_areas="").get_search_areas() == []
 
 
 async def test_direct_collection_preflights_before_creating_scrapers(monkeypatch):

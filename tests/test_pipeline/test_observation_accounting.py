@@ -8,7 +8,6 @@ import pytest
 from pydantic import SecretStr
 
 from home_finder.config import Settings
-from home_finder.db import PropertyStorage
 from home_finder.models import ListingTextEvidence, PropertySource
 from home_finder.pipeline.collection import collect_listings
 from home_finder.pipeline.flow import _run_pipeline_with_storage
@@ -17,18 +16,12 @@ from home_finder.scrapers.openrent import OpenRentScraper
 
 
 @pytest.fixture
-async def storage():
-    async with PropertyStorage(":memory:") as db:
-        yield db
-
-
-@pytest.fixture
 def settings(tmp_path):
     return Settings(
         _env_file=None,
         search_areas="e8",
-        data_dir=str(tmp_path),
-        database_path=":memory:",
+        # Settings derives data_dir (the image cache) from database_path's directory.
+        database_path=str(tmp_path / "home_finder.db"),
         min_price=1500,
         max_price=2500,
         min_bedrooms=1,

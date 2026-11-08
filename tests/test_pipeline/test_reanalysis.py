@@ -1,8 +1,10 @@
 """Tests for run_reanalysis() queue orchestration.
 
 Covers the async coordination logic, circuit breaker, error handling, and
-early return paths. Uses file-backed SQLite for realistic DB interaction
-and mocks PropertyQualityAnalyzer as the single I/O boundary.
+early return paths. Uses file-backed SQLite because run_reanalysis opens its
+own storage from settings, and mocks PropertyQualityAnalyzer as the single
+I/O boundary. _save_and_flag marks homes sent with mark_notified, which sets
+only the legacy notification_status.
 """
 
 from collections.abc import AsyncGenerator, Callable
@@ -319,14 +321,14 @@ class TestRunReanalysisSuccess:
 
 
 class TestRunReanalysisErrorHandling:
-    async def test_api_unavailable_preserves_completed_work_and_pending_queue(
+    async def test_api_unavailable_stops_queued_work_and_keeps_completed_work(
         self,
         populated_storage: PropertyStorage,
         reanalysis_settings: Settings,
         make_merged_property: Callable[..., MergedProperty],
         make_quality_analysis: Callable[..., PropertyQualityAnalysis],
     ) -> None:
-        """Provider failures pause queued work while completed analyses are saved."""
+        """The circuit breaker stops the queue after the provider becomes unavailable."""
         merged_list = []
         for i in range(3):
             m = await _save_and_flag(
@@ -350,17 +352,23 @@ class TestRunReanalysisErrorHandling:
         analyzer = _make_async_cm(AsyncMock())
         analyzer.analyze_single_merged = AsyncMock(side_effect=_mock_analyze)
         analyzer.close = AsyncMock()
+        # One slot makes the order deterministic: success, failure, then the breaker.
+        settings = reanalysis_settings.model_copy(update={"quality_concurrency": 1})
 
         with patch(
             "home_finder.pipeline.assessment.PropertyQualityAnalyzer", return_value=analyzer
         ):
-            await run_reanalysis(reanalysis_settings)
+            await run_reanalysis(settings)
 
-        # At least 1 should have completed
-        queue = await populated_storage.processing.get_reanalysis_queue()
-        completed_count = 3 - len(queue)
-        assert completed_count >= 1
-        # close() must still be called
+        assert call_count == 2
+        queued = {m.unique_id for m in await populated_storage.processing.get_reanalysis_queue()}
+        ratings = {
+            m.unique_id: (await populated_storage.get_quality_analysis(m.unique_id)).overall_rating
+            for m in merged_list
+        }
+        [completed] = [uid for uid, rating in ratings.items() if rating == 5]
+        assert queued == set(ratings) - {completed}
+        assert all(ratings[uid] == 4 for uid in queued)
         analyzer.close.assert_awaited_once()
 
     async def test_generic_exception_continues_others(

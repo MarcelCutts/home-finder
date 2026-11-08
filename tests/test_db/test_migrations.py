@@ -1,4 +1,8 @@
-"""Tests for the versioned migration runner."""
+"""The versioned migration runner and the data repairs individual migrations make.
+
+These tests call ``run_migrations`` directly, so the suite's migrated template
+database is never used here.
+"""
 
 from __future__ import annotations
 
@@ -33,9 +37,27 @@ async def _table_names(conn: aiosqlite.Connection) -> set[str]:
     return {r[0] for r in rows}
 
 
+async def _migrate_to(conn: aiosqlite.Connection, version: int) -> None:
+    """Build the schema an older release left behind."""
+    with patch("home_finder.db.migrations.MIGRATIONS", MIGRATIONS[:version]):
+        assert await run_migrations(conn) == version
+
+
+def _recording(applied: list[str]):
+    """Wrap each production migration so the test sees which ones ran."""
+
+    def wrap(migration):
+        async def run(conn: aiosqlite.Connection) -> None:
+            applied.append(migration.__name__)
+            await migration(conn)
+
+        return run
+
+    return [wrap(m) for m in MIGRATIONS]
+
+
 async def test_analysis_exhaustion_upgrade_preserves_other_lifecycle_axes(fresh_conn):
-    with patch("home_finder.db.migrations.MIGRATIONS", MIGRATIONS[:12]):
-        await run_migrations(fresh_conn)
+    await _migrate_to(fresh_conn, 12)
     for uid, attempts, status in [
         ("exhausted", 3, "pending_analysis"),
         ("sent", 4, "sent"),
@@ -86,12 +108,11 @@ class TestRunMigrations:
         assert version == len(MIGRATIONS)
         assert await _get_user_version(fresh_conn) == len(MIGRATIONS)
 
-    async def test_fresh_db_creates_all_tables(self, fresh_conn: aiosqlite.Connection):
-        """All expected tables should exist after running migrations."""
+    async def test_fresh_db_creates_every_table(self, fresh_conn: aiosqlite.Connection):
+        """The complete schema, including tables added by later migrations."""
         await run_migrations(fresh_conn)
 
-        tables = await _table_names(fresh_conn)
-        expected = {
+        assert await _table_names(fresh_conn) == {
             "properties",
             "property_images",
             "quality_analyses",
@@ -105,16 +126,20 @@ class TestRunMigrations:
             "property_events",
             "source_aliases",
             "source_listings",
+            "paid_attempts",
+            "visual_checkpoints",
+            "notification_deliveries",
         }
-        assert expected.issubset(tables), f"Missing tables: {expected - tables}"
 
-    async def test_idempotent_double_run(self, fresh_conn: aiosqlite.Connection):
-        """Running migrations twice should not error and should keep same version."""
-        v1 = await run_migrations(fresh_conn)
-        v2 = await run_migrations(fresh_conn)
+    async def test_current_db_runs_no_migration(self, fresh_conn: aiosqlite.Connection):
+        await run_migrations(fresh_conn)
+        applied: list[str] = []
 
-        assert v1 == v2
-        assert v1 == len(MIGRATIONS)
+        with patch("home_finder.db.migrations.MIGRATIONS", _recording(applied)):
+            version = await run_migrations(fresh_conn)
+
+        assert version == len(MIGRATIONS)
+        assert applied == []
 
     async def test_existing_db_transitions_from_version_zero(
         self, fresh_conn: aiosqlite.Connection
@@ -138,19 +163,25 @@ class TestRunMigrations:
         assert version == len(MIGRATIONS)
         assert await _get_user_version(fresh_conn) == len(MIGRATIONS)
 
-    async def test_version_matches_migration_count(self, fresh_conn: aiosqlite.Connection):
-        """Final user_version should always equal len(MIGRATIONS)."""
-        await run_migrations(fresh_conn)
+    async def test_partially_migrated_db_runs_only_the_remaining_migrations(
+        self, fresh_conn: aiosqlite.Connection
+    ):
+        await _migrate_to(fresh_conn, 8)
+        assert "paid_attempts" not in await _table_names(fresh_conn)
+        await fresh_conn.execute(
+            "INSERT INTO pipeline_runs (started_at, status) VALUES ('2026-01-01', 'completed')"
+        )
+        await fresh_conn.commit()
+        applied: list[str] = []
 
-        assert await _get_user_version(fresh_conn) == len(MIGRATIONS)
+        with patch("home_finder.db.migrations.MIGRATIONS", _recording(applied)):
+            version = await run_migrations(fresh_conn)
 
-    async def test_partially_migrated_db_resumes(self, fresh_conn: aiosqlite.Connection):
-        """If user_version is already at len(MIGRATIONS), no migration runs."""
-        await run_migrations(fresh_conn)
-
-        # Set version to current — run_migrations should be a no-op
-        version = await run_migrations(fresh_conn)
         assert version == len(MIGRATIONS)
+        assert applied == [m.__name__ for m in MIGRATIONS[8:]]
+        assert {"paid_attempts", "notification_deliveries"} <= await _table_names(fresh_conn)
+        cursor = await fresh_conn.execute("SELECT status FROM pipeline_runs")
+        assert [row[0] for row in await cursor.fetchall()] == ["completed"]
 
     async def test_migrations_list_not_empty(self):
         """MIGRATIONS list should contain at least the bootstrap migration."""
@@ -243,36 +274,23 @@ class TestRunMigrations:
             "idx_source_listings_source",
             "idx_source_listings_merged",
             "idx_source_listings_unmatched",
+            "idx_source_listings_off_market",
+            "idx_source_listings_url_unlinked",
+            "idx_status_events_telegram_update",
+            "idx_paid_attempts_operation",
+            "idx_paid_attempts_admitted_at",
+            "idx_paid_attempts_unresolved_operation",
+            "idx_notification_delivery_state",
         }
         assert expected_indexes.issubset(indexes), f"Missing indexes: {expected_indexes - indexes}"
 
 
-class TestBackfillSourceListings:
-    """Tests for the source_listings backfill in migrate_004."""
-
+class TestMigration004SourceListingsBackfill:
     async def test_backfill_creates_canonical_source_listings(
         self, fresh_conn: aiosqlite.Connection
     ):
         """Pre-populated properties produce one source_listing each with merged_id set."""
-        # Run all migrations except 004
-        from home_finder.db.migrations import (
-            migrate_001_initial_schema,
-            migrate_002_floor_area_sqm,
-            migrate_003_source_aliases,
-        )
-
-        await fresh_conn.execute("BEGIN IMMEDIATE")
-        await migrate_001_initial_schema(fresh_conn)
-        await fresh_conn.execute("PRAGMA user_version = 1")
-        await fresh_conn.commit()
-        await fresh_conn.execute("BEGIN IMMEDIATE")
-        await migrate_002_floor_area_sqm(fresh_conn)
-        await fresh_conn.execute("PRAGMA user_version = 2")
-        await fresh_conn.commit()
-        await fresh_conn.execute("BEGIN IMMEDIATE")
-        await migrate_003_source_aliases(fresh_conn)
-        await fresh_conn.execute("PRAGMA user_version = 3")
-        await fresh_conn.commit()
+        await _migrate_to(fresh_conn, 3)
 
         # Insert a property
         await fresh_conn.execute(
@@ -312,24 +330,7 @@ class TestBackfillSourceListings:
 
     async def test_backfill_creates_secondary_from_aliases(self, fresh_conn: aiosqlite.Connection):
         """Source aliases produce source_listings with is_backfilled=1 and correct merged_id."""
-        from home_finder.db.migrations import (
-            migrate_001_initial_schema,
-            migrate_002_floor_area_sqm,
-            migrate_003_source_aliases,
-        )
-
-        await fresh_conn.execute("BEGIN IMMEDIATE")
-        await migrate_001_initial_schema(fresh_conn)
-        await fresh_conn.execute("PRAGMA user_version = 1")
-        await fresh_conn.commit()
-        await fresh_conn.execute("BEGIN IMMEDIATE")
-        await migrate_002_floor_area_sqm(fresh_conn)
-        await fresh_conn.execute("PRAGMA user_version = 2")
-        await fresh_conn.commit()
-        await fresh_conn.execute("BEGIN IMMEDIATE")
-        await migrate_003_source_aliases(fresh_conn)
-        await fresh_conn.execute("PRAGMA user_version = 3")
-        await fresh_conn.commit()
+        await _migrate_to(fresh_conn, 3)
 
         # Insert an anchor property with source_urls JSON
         source_urls = json.dumps(
@@ -391,3 +392,161 @@ class TestBackfillSourceListings:
         assert secondary["is_backfilled"] == 1
         # URL should come from source_urls JSON
         assert secondary["url"] == "https://zoopla.co.uk/456"
+
+
+_PROPERTY_COLUMNS = (
+    "unique_id, source, source_id, url, title, price_pcm, bedrooms, address, first_seen,"
+    " notification_status"
+)
+_LISTING_COLUMNS = (
+    "unique_id, source, source_id, url, title, price_pcm, bedrooms, address, first_seen,"
+    " last_seen, merged_id"
+)
+
+
+class TestMigration005SourceListingsLinkage:
+    async def test_unlinked_listing_is_linked_to_the_home_naming_its_url(
+        self, fresh_conn: aiosqlite.Connection
+    ):
+        await _migrate_to(fresh_conn, 4)
+        source_urls = {"openrent": "https://openrent.com/123", "zoopla": "https://zoopla.co.uk/456"}
+        await fresh_conn.execute(
+            f"INSERT INTO properties ({_PROPERTY_COLUMNS}, sources, source_urls)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                "openrent:123",
+                "openrent",
+                "123",
+                source_urls["openrent"],
+                "Flat",
+                2000,
+                2,
+                "123 Mare Street",
+                "2025-01-15T10:00:00",
+                "sent",
+                json.dumps(["openrent", "zoopla"]),
+                json.dumps(source_urls),
+            ),
+        )
+        for unique_id, url, price, merged_id in (
+            ("openrent:123", source_urls["openrent"], 2000, "openrent:123"),
+            ("zoopla:456", source_urls["zoopla"], 1950, None),
+        ):
+            source, source_id = unique_id.split(":")
+            await fresh_conn.execute(
+                f"INSERT INTO source_listings ({_LISTING_COLUMNS})"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    unique_id,
+                    source,
+                    source_id,
+                    url,
+                    "Flat",
+                    price,
+                    2,
+                    "123 Mare Street",
+                    "2025-01-15T10:00:00",
+                    "2025-01-15T10:00:00",
+                    merged_id,
+                ),
+            )
+        await fresh_conn.commit()
+
+        await run_migrations(fresh_conn)
+
+        cursor = await fresh_conn.execute(
+            "SELECT merged_id FROM source_listings WHERE unique_id = 'zoopla:456'"
+        )
+        assert (await cursor.fetchone())["merged_id"] == "openrent:123"
+
+    async def test_duplicate_entries_in_sources_json_are_removed(
+        self, fresh_conn: aiosqlite.Connection
+    ):
+        await _migrate_to(fresh_conn, 4)
+        await fresh_conn.execute(
+            f"INSERT INTO properties ({_PROPERTY_COLUMNS}, sources)"
+            " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                "rightmove:789",
+                "rightmove",
+                "789",
+                "https://rightmove.co.uk/789",
+                "Flat",
+                2100,
+                2,
+                "45 Dalston Lane",
+                "2025-01-16T14:00:00",
+                "sent",
+                json.dumps(["rightmove", "zoopla", "zoopla"]),
+            ),
+        )
+        await fresh_conn.commit()
+
+        await run_migrations(fresh_conn)
+
+        cursor = await fresh_conn.execute(
+            "SELECT sources FROM properties WHERE unique_id = 'rightmove:789'"
+        )
+        assert json.loads((await cursor.fetchone())["sources"]) == ["rightmove", "zoopla"]
+
+
+async def _columns(conn: aiosqlite.Connection, table: str) -> set[str]:
+    cursor = await conn.execute(f"PRAGMA table_info({table})")
+    return {row["name"] for row in await cursor.fetchall()}
+
+
+async def test_migration_006_adds_off_market_tracking_columns(fresh_conn: aiosqlite.Connection):
+    await _migrate_to(fresh_conn, 5)
+    added_to_listings = {
+        "is_off_market",
+        "off_market_since",
+        "off_market_reason",
+        "last_checked_at",
+    }
+    added_to_properties = {"last_checked_at", "off_market_reason", "off_market_history"}
+    assert not added_to_listings & await _columns(fresh_conn, "source_listings")
+    assert not added_to_properties & await _columns(fresh_conn, "properties")
+
+    await _migrate_to(fresh_conn, 6)
+
+    assert added_to_listings <= await _columns(fresh_conn, "source_listings")
+    assert added_to_properties <= await _columns(fresh_conn, "properties")
+
+
+async def test_pre_versioned_database_has_wrapped_one_line_unwrapped(
+    fresh_conn: aiosqlite.Connection,
+):
+    """Migration 001 repairs one_line stored as a JSON object by an older writer."""
+    # A database from before versioning (user_version 0) already has these tables.
+    await fresh_conn.execute(
+        """CREATE TABLE properties (
+            unique_id TEXT PRIMARY KEY, source TEXT NOT NULL, source_id TEXT NOT NULL,
+            url TEXT NOT NULL, title TEXT NOT NULL, price_pcm INTEGER NOT NULL,
+            bedrooms INTEGER NOT NULL, address TEXT NOT NULL, postcode TEXT, latitude REAL,
+            longitude REAL, description TEXT, image_url TEXT, available_from TEXT,
+            first_seen TEXT NOT NULL, commute_minutes INTEGER, transport_mode TEXT,
+            notification_status TEXT NOT NULL DEFAULT 'pending', notified_at TEXT,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            sources TEXT, source_urls TEXT, min_price INTEGER, max_price INTEGER
+        )"""
+    )
+    await fresh_conn.execute(
+        """CREATE TABLE quality_analyses (
+            property_unique_id TEXT PRIMARY KEY, analysis_json TEXT NOT NULL,
+            overall_rating INTEGER, condition_concerns BOOLEAN DEFAULT 0,
+            concern_severity TEXT, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )"""
+    )
+    await fresh_conn.execute(
+        "INSERT INTO quality_analyses (property_unique_id, analysis_json, created_at)"
+        " VALUES (?, ?, '2026-01-01')",
+        ("openrent:100", json.dumps({"one_line": {"one_line": "Bright flat"}, "summary": "Good"})),
+    )
+    await fresh_conn.commit()
+
+    await run_migrations(fresh_conn)
+
+    cursor = await fresh_conn.execute(
+        "SELECT json_extract(analysis_json, '$.one_line') FROM quality_analyses"
+    )
+    assert (await cursor.fetchone())[0] == "Bright flat"

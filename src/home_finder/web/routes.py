@@ -878,8 +878,8 @@ async def update_property_status(
 ) -> Response:
     """Update property user status.
 
-    Returns a full card partial when HX-Target indicates a card-level swap
-    (quick-action buttons on dashboard), or a status badge partial for
+    Returns a full card partial when the form posts ``source=card`` (the
+    dashboard card's quick-action buttons), or the status selector partial for
     detail-page swaps.
     """
     form = await request.form(max_fields=4, max_files=0, max_part_size=1024)
