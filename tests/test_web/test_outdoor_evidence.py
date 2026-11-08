@@ -4,15 +4,12 @@ import json
 
 import pytest
 from bs4 import BeautifulSoup
-from fastapi import FastAPI
-from fastapi.testclient import TestClient
 
-from home_finder.config import Settings
 from home_finder.db import PropertyStorage
 from home_finder.filters.fit_score import FIT_SCORE_VERSION, compute_fit_score
 from home_finder.models.quality import OUTDOOR_SPACE_FLAGS
 from home_finder.web.filters import PropertyFilter
-from home_finder.web.routes import router
+from tests.support.web import web_client
 
 NO_TYPES = dict.fromkeys(OUTDOOR_SPACE_FLAGS, False)
 CASES = {
@@ -62,11 +59,7 @@ async def outdoor_storage(make_merged_property, make_quality_analysis):
 
 @pytest.fixture
 def outdoor_client(outdoor_storage):
-    app = FastAPI()
-    app.state.storage = outdoor_storage
-    app.state.settings = Settings(database_path=":memory:")
-    app.include_router(router)
-    return TestClient(app)
+    return web_client(outdoor_storage)
 
 
 @pytest.mark.parametrize("availability", ["yes", "no", "unknown"])

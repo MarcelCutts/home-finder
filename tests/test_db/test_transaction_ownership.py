@@ -16,7 +16,8 @@ from home_finder.models import NotificationStatus, Property, PropertyImage, User
 
 
 @pytest.fixture
-async def storage(tmp_path: Path, sample_property: Property) -> AsyncIterator[PropertyStorage]:
+async def file_storage(tmp_path: Path, sample_property: Property) -> AsyncIterator[PropertyStorage]:
+    """A database file holding one home, so a second connection can contend for locks."""
     async with PropertyStorage(str(tmp_path / "ownership.db")) as db:
         await db.save_property(sample_property)
         yield db
@@ -25,10 +26,10 @@ async def storage(tmp_path: Path, sample_property: Property) -> AsyncIterator[Pr
 @pytest.mark.asyncio
 @pytest.mark.parametrize("reader", ["storage", "dashboard"])
 async def test_failed_price_change_cannot_commit_through_unrelated_notification(
-    storage: PropertyStorage, sample_property: Property, reader: str
+    file_storage: PropertyStorage, sample_property: Property, reader: str
 ) -> None:
     """Pause after the price write, let a competing action run, then fail."""
-    conn = await storage._get_connection()
+    conn = await file_storage._get_connection()
     original_execute = conn.execute
     price_written = asyncio.Event()
     fail_price = asyncio.Event()
@@ -46,17 +47,17 @@ async def test_failed_price_change_cannot_commit_through_unrelated_notification(
 
     with patch.object(conn, "execute", new=intercept):
         price_task = asyncio.create_task(
-            storage.detect_and_record_price_change(sample_property.unique_id, 1700)
+            file_storage.detect_and_record_price_change(sample_property.unique_id, 1700)
         )
         await asyncio.wait_for(price_written.wait(), 2)
-        notify_task = asyncio.create_task(storage.mark_notified(sample_property.unique_id))
+        notify_task = asyncio.create_task(file_storage.mark_notified(sample_property.unique_id))
 
         async def read_price() -> int:
             if reader == "dashboard":
-                detail = await storage.web.get_property_detail(sample_property.unique_id)
+                detail = await file_storage.web.get_property_detail(sample_property.unique_id)
                 assert detail is not None
                 return detail["price_pcm"]
-            tracked = await storage.get_property(sample_property.unique_id)
+            tracked = await file_storage.get_property(sample_property.unique_id)
             assert tracked is not None
             return tracked.property.price_pcm
 
@@ -72,72 +73,76 @@ async def test_failed_price_change_cannot_commit_through_unrelated_notification(
         observed = await read_task
 
     assert observed == sample_property.price_pcm
-    current = await storage.get_property(sample_property.unique_id)
+    current = await file_storage.get_property(sample_property.unique_id)
     assert current is not None
     assert current.property.price_pcm == sample_property.price_pcm
     assert current.notification_status == NotificationStatus.SENT
-    assert await storage.get_price_history(sample_property.unique_id) == []
+    assert await file_storage.get_price_history(sample_property.unique_id) == []
 
 
 @pytest.mark.asyncio
 async def test_explicit_handle_allows_composition_but_not_implicit_or_child_scopes(
-    storage: PropertyStorage, sample_property: Property
+    file_storage: PropertyStorage, sample_property: Property
 ) -> None:
     image = PropertyImage(
         source=sample_property.source,
         url=HttpUrl("https://example.com/fixture.jpg"),
         image_type="gallery",
     )
-    async with storage._transaction() as conn:
+    async with file_storage._transaction() as conn:
         await conn.execute("UPDATE properties SET price_pcm = 1700")
-        await storage.save_property_images(sample_property.unique_id, [image], _conn=conn)
-        observed = await storage.get_property(sample_property.unique_id, _conn=conn)
+        await file_storage.save_property_images(sample_property.unique_id, [image], _conn=conn)
+        observed = await file_storage.get_property(sample_property.unique_id, _conn=conn)
         assert observed is not None and observed.property.price_pcm == 1700
-        assert await storage.get_property_images(sample_property.unique_id, _conn=conn) == [image]
+        assert await file_storage.get_property_images(sample_property.unique_id, _conn=conn) == [
+            image
+        ]
 
         with pytest.raises(RuntimeError, match="Nested database scope"):
-            await storage.mark_notified(sample_property.unique_id)
+            await file_storage.mark_notified(sample_property.unique_id)
         with pytest.raises(RuntimeError, match="Nested database scope"):
-            await storage.get_property(sample_property.unique_id)
+            await file_storage.get_property(sample_property.unique_id)
         with pytest.raises(RuntimeError, match="Nested database scope"):
-            await storage.close()
+            await file_storage.close()
 
         with pytest.raises(RuntimeError, match="not owned by this task"):
-            await asyncio.create_task(storage.get_property(sample_property.unique_id, _conn=conn))
+            await asyncio.create_task(
+                file_storage.get_property(sample_property.unique_id, _conn=conn)
+            )
 
     with pytest.raises(RuntimeError, match="not owned by this task"):
-        await storage.get_property(sample_property.unique_id, _conn=conn)
-    assert await storage.get_property_images(sample_property.unique_id) == [image]
+        await file_storage.get_property(sample_property.unique_id, _conn=conn)
+    assert await file_storage.get_property_images(sample_property.unique_id) == [image]
 
 
 @pytest.mark.asyncio
 async def test_read_scope_rejects_writes_and_resets_query_only(
-    storage: PropertyStorage, sample_property: Property
+    file_storage: PropertyStorage, sample_property: Property
 ) -> None:
-    async with storage._read_connection() as conn:
+    async with file_storage._read_connection() as conn:
         with pytest.raises(RuntimeError, match="active write transaction"):
-            async with storage._transaction(conn=conn):
+            async with file_storage._transaction(conn=conn):
                 pytest.fail("Read scope must not be upgraded")
         with pytest.raises(aiosqlite.OperationalError, match="readonly"):
             await conn.execute("UPDATE properties SET price_pcm = 1700")
-    await storage.mark_notified(sample_property.unique_id)
-    current = await storage.get_property(sample_property.unique_id)
+    await file_storage.mark_notified(sample_property.unique_id)
+    current = await file_storage.get_property(sample_property.unique_id)
     assert current is not None and current.property.price_pcm == sample_property.price_pcm
 
 
 @pytest.mark.asyncio
 async def test_cancelled_lock_waiter_does_not_touch_the_owner(
-    storage: PropertyStorage, sample_property: Property
+    file_storage: PropertyStorage, sample_property: Property
 ) -> None:
-    async with storage._transaction() as conn:
+    async with file_storage._transaction() as conn:
         await conn.execute("UPDATE properties SET price_pcm = 1700")
-        waiter = asyncio.create_task(storage.mark_notified(sample_property.unique_id))
+        waiter = asyncio.create_task(file_storage.mark_notified(sample_property.unique_id))
         await asyncio.sleep(0)  # Run the waiter until it blocks on ownership.
         waiter.cancel()
         with pytest.raises(asyncio.CancelledError):
             await waiter
         assert conn.in_transaction
-    current = await storage.get_property(sample_property.unique_id)
+    current = await file_storage.get_property(sample_property.unique_id)
     assert current is not None
     assert current.property.price_pcm == 1700
     assert current.notification_status == NotificationStatus.PENDING
@@ -146,9 +151,9 @@ async def test_cancelled_lock_waiter_does_not_touch_the_owner(
 @pytest.mark.asyncio
 @pytest.mark.parametrize("read", [False, True])
 async def test_cancellation_after_begin_is_cleaned_up(
-    storage: PropertyStorage, sample_property: Property, read: bool
+    file_storage: PropertyStorage, sample_property: Property, read: bool
 ) -> None:
-    conn = await storage._get_connection()
+    conn = await file_storage._get_connection()
     original = conn.execute
     begun = asyncio.Event()
 
@@ -161,9 +166,9 @@ async def test_cancellation_after_begin_is_cleaned_up(
 
     with patch.object(conn, "execute", side_effect=delayed_begin):
         operation = (
-            storage.get_property(sample_property.unique_id)
+            file_storage.get_property(sample_property.unique_id)
             if read
-            else storage.mark_notified(sample_property.unique_id)
+            else file_storage.mark_notified(sample_property.unique_id)
         )
         task = asyncio.create_task(operation)
         await asyncio.wait_for(begun.wait(), 2)
@@ -171,15 +176,15 @@ async def test_cancellation_after_begin_is_cleaned_up(
         with pytest.raises(asyncio.CancelledError):
             await task
     assert not conn.in_transaction
-    await storage.mark_notified(sample_property.unique_id)
+    await file_storage.mark_notified(sample_property.unique_id)
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("phase", ["commit", "rollback"])
 async def test_repeated_cancellation_waits_for_transaction_completion(
-    storage: PropertyStorage, sample_property: Property, phase: str
+    file_storage: PropertyStorage, sample_property: Property, phase: str
 ) -> None:
-    conn = await storage._get_connection()
+    conn = await file_storage._get_connection()
     original = getattr(conn, phase)
     finishing = asyncio.Event()
     finish = asyncio.Event()
@@ -191,7 +196,7 @@ async def test_repeated_cancellation_waits_for_transaction_completion(
         await original()
 
     async def operation() -> None:
-        async with storage._transaction() as owned:
+        async with file_storage._transaction() as owned:
             await owned.execute("UPDATE properties SET price_pcm = 1700")
             writing.set()
             if phase == "rollback":
@@ -206,7 +211,7 @@ async def test_repeated_cancellation_waits_for_transaction_completion(
         task.cancel()
         await asyncio.sleep(0)
         task.cancel()
-        notify = asyncio.create_task(storage.mark_notified(sample_property.unique_id))
+        notify = asyncio.create_task(file_storage.mark_notified(sample_property.unique_id))
         await asyncio.wait({notify}, timeout=0.05)
         assert not notify.done(), "Ownership was released before cleanup finished"
         finish.set()
@@ -215,7 +220,7 @@ async def test_repeated_cancellation_waits_for_transaction_completion(
         await notify
 
     assert not conn.in_transaction
-    current = await storage.get_property(sample_property.unique_id)
+    current = await file_storage.get_property(sample_property.unique_id)
     assert current is not None
     assert current.property.price_pcm == (1700 if phase == "commit" else sample_property.price_pcm)
     assert current.notification_status == NotificationStatus.SENT
@@ -223,63 +228,63 @@ async def test_repeated_cancellation_waits_for_transaction_completion(
 
 @pytest.mark.asyncio
 async def test_commit_failure_rolls_back_before_reusing_connection(
-    storage: PropertyStorage, sample_property: Property
+    file_storage: PropertyStorage, sample_property: Property
 ) -> None:
-    conn = await storage._get_connection()
+    conn = await file_storage._get_connection()
     with (
         patch.object(conn, "commit", side_effect=aiosqlite.OperationalError("commit failed")),
         pytest.raises(aiosqlite.OperationalError, match="commit failed"),
     ):
-        await storage.mark_notified(sample_property.unique_id)
+        await file_storage.mark_notified(sample_property.unique_id)
     assert not conn.in_transaction
-    current = await storage.get_property(sample_property.unique_id)
+    current = await file_storage.get_property(sample_property.unique_id)
     assert current is not None and current.notification_status == NotificationStatus.PENDING
-    await storage.mark_notified(sample_property.unique_id)
+    await file_storage.mark_notified(sample_property.unique_id)
 
 
 @pytest.mark.asyncio
 async def test_rollback_failure_closes_old_connection_before_reopening(
-    storage: PropertyStorage, sample_property: Property
+    file_storage: PropertyStorage, sample_property: Property
 ) -> None:
-    conn = await storage._get_connection()
+    conn = await file_storage._get_connection()
     with (
         patch.object(conn, "rollback", side_effect=aiosqlite.OperationalError("rollback failed")),
         pytest.raises(aiosqlite.OperationalError, match="rollback failed"),
     ):
-        async with storage._transaction() as owned:
+        async with file_storage._transaction() as owned:
             await owned.execute("UPDATE properties SET price_pcm = 1700")
             raise RuntimeError("abandon this write")
-    assert storage._conn is None
+    assert file_storage._conn is None
     with pytest.raises(ValueError, match="no active connection"):
         await conn.execute("SELECT 1")
-    current = await storage.get_property(sample_property.unique_id)
+    current = await file_storage.get_property(sample_property.unique_id)
     assert current is not None and current.property.price_pcm == sample_property.price_pcm
-    await storage.mark_notified(sample_property.unique_id)
+    await file_storage.mark_notified(sample_property.unique_id)
 
 
 @pytest.mark.asyncio
 async def test_external_lock_fails_without_partial_write_and_manual_retry_works(
-    storage: PropertyStorage, sample_property: Property
+    file_storage: PropertyStorage, sample_property: Property
 ) -> None:
-    conn = await storage._get_connection()
+    conn = await file_storage._get_connection()
     # Shorten the same SQLite busy timeout solely for this failure-path test.
     await conn.execute("PRAGMA busy_timeout=20")
-    async with aiosqlite.connect(storage.db_path) as other:
+    async with aiosqlite.connect(file_storage.db_path) as other:
         await other.execute("BEGIN IMMEDIATE")
         with pytest.raises(aiosqlite.OperationalError, match="database is locked"):
-            await storage.mark_notified(sample_property.unique_id)
+            await file_storage.mark_notified(sample_property.unique_id)
         assert not conn.in_transaction
         await other.rollback()
-    current = await storage.get_property(sample_property.unique_id)
+    current = await file_storage.get_property(sample_property.unique_id)
     assert current is not None and current.notification_status == NotificationStatus.PENDING
-    await storage.mark_notified(sample_property.unique_id)
+    await file_storage.mark_notified(sample_property.unique_id)
 
 
 @pytest.mark.asyncio
 async def test_close_drains_owner_and_cannot_be_interrupted_halfway(
-    storage: PropertyStorage, sample_property: Property
+    file_storage: PropertyStorage, sample_property: Property
 ) -> None:
-    conn = await storage._get_connection()
+    conn = await file_storage._get_connection()
     closing = asyncio.Event()
     finish = asyncio.Event()
     original = conn.close
@@ -290,9 +295,9 @@ async def test_close_drains_owner_and_cannot_be_interrupted_halfway(
         await original()
 
     with patch.object(conn, "close", side_effect=delayed_close):
-        async with storage._transaction() as owned:
+        async with file_storage._transaction() as owned:
             await owned.execute("UPDATE properties SET price_pcm = 1700")
-            closer = asyncio.create_task(storage.close())
+            closer = asyncio.create_task(file_storage.close())
             await asyncio.sleep(0)
             assert not closing.is_set()
         await asyncio.wait_for(closing.wait(), 2)
@@ -303,28 +308,28 @@ async def test_close_drains_owner_and_cannot_be_interrupted_halfway(
         finish.set()
         with pytest.raises(asyncio.CancelledError):
             await closer
-    assert storage._conn is None
-    current = await storage.get_property(sample_property.unique_id)
+    assert file_storage._conn is None
+    current = await file_storage.get_property(sample_property.unique_id)
     assert current is not None and current.property.price_pcm == 1700
 
 
 @pytest.mark.asyncio
 async def test_two_status_transactions_both_commit(
-    storage: PropertyStorage, sample_property: Property
+    file_storage: PropertyStorage, sample_property: Property
 ) -> None:
     await asyncio.gather(
-        storage.update_user_status(sample_property.unique_id, UserStatus.INTERESTED),
-        storage.update_user_status(sample_property.unique_id, UserStatus.ENQUIRED),
+        file_storage.update_user_status(sample_property.unique_id, UserStatus.INTERESTED),
+        file_storage.update_user_status(sample_property.unique_id, UserStatus.ENQUIRED),
     )
-    history = await storage.get_status_history(sample_property.unique_id)
+    history = await file_storage.get_status_history(sample_property.unique_id)
     assert {row["to_status"] for row in history} == {"interested", "enquired"}
 
 
 @pytest.mark.asyncio
 async def test_failed_status_change_cannot_commit_through_pipeline_write(
-    storage: PropertyStorage, sample_property: Property
+    file_storage: PropertyStorage, sample_property: Property
 ) -> None:
-    conn = await storage._get_connection()
+    conn = await file_storage._get_connection()
     original = conn.execute
     status_written = asyncio.Event()
     fail_status = asyncio.Event()
@@ -338,42 +343,42 @@ async def test_failed_status_change_cannot_commit_through_pipeline_write(
 
     with patch.object(conn, "execute", side_effect=intercept):
         status = asyncio.create_task(
-            storage.update_user_status(sample_property.unique_id, UserStatus.INTERESTED)
+            file_storage.update_user_status(sample_property.unique_id, UserStatus.INTERESTED)
         )
         await asyncio.wait_for(status_written.wait(), 2)
-        pipeline_run = asyncio.create_task(storage.runs.create_pipeline_run())
+        pipeline_run = asyncio.create_task(file_storage.runs.create_pipeline_run())
         await asyncio.wait({pipeline_run}, timeout=0.1)
         fail_status.set()
         with pytest.raises(RuntimeError, match="status event failed"):
             await status
         run_id = await pipeline_run
-    await storage.runs.complete_pipeline_run(run_id, "completed")
-    assert await storage.runs.get_last_pipeline_run() is not None
-    detail = await storage.web.get_property_detail(sample_property.unique_id)
+    await file_storage.runs.complete_pipeline_run(run_id, "completed")
+    assert await file_storage.runs.get_last_pipeline_run() is not None
+    detail = await file_storage.web.get_property_detail(sample_property.unique_id)
     assert detail is not None and detail["user_status"] == "new"
-    assert await storage.get_status_history(sample_property.unique_id) == []
+    assert await file_storage.get_status_history(sample_property.unique_id) == []
 
 
 @pytest.mark.asyncio
 async def test_failed_close_blocks_connection_replacement_until_cleanup_succeeds(
-    storage: PropertyStorage, sample_property: Property
+    file_storage: PropertyStorage, sample_property: Property
 ) -> None:
-    conn = await storage._get_connection()
+    conn = await file_storage._get_connection()
     with patch.object(conn, "close", side_effect=OSError("close failed")):
         with pytest.raises(OSError, match="close failed"):
-            await storage.close()
+            await file_storage.close()
         with pytest.raises(RuntimeError, match="cleanup failed"):
-            await storage.mark_notified(sample_property.unique_id)
-        assert storage._conn is conn
-    await storage.close()
-    await storage.mark_notified(sample_property.unique_id)
+            await file_storage.mark_notified(sample_property.unique_id)
+        assert file_storage._conn is conn
+    await file_storage.close()
+    await file_storage.mark_notified(sample_property.unique_id)
 
 
 @pytest.mark.asyncio
 async def test_cancelled_initial_configuration_closes_the_partial_connection(
     tmp_path: Path,
 ) -> None:
-    storage = PropertyStorage(str(tmp_path / "opening.db"))
+    file_storage = PropertyStorage(str(tmp_path / "opening.db"))
     original_connect = aiosqlite.connect
     configuring = asyncio.Event()
     opened: list[aiosqlite.Connection] = []
@@ -393,39 +398,39 @@ async def test_cancelled_initial_configuration_closes_the_partial_connection(
         return conn
 
     with patch("home_finder.db.storage.aiosqlite.connect", side_effect=connect):
-        task = asyncio.create_task(storage.initialize())
+        task = asyncio.create_task(file_storage.initialize())
         await asyncio.wait_for(configuring.wait(), 2)
         task.cancel()
         with pytest.raises(asyncio.CancelledError):
             await task
-    assert storage._conn is None
+    assert file_storage._conn is None
     with pytest.raises(ValueError, match="no active connection"):
         await opened[0].execute("SELECT 1")
-    async with storage:
-        assert await storage.web.get_property_count() == 0
+    async with file_storage:
+        assert await file_storage.web.get_property_count() == 0
 
 
 @pytest.mark.asyncio
 async def test_cancelled_write_does_not_rollback_another_task(
-    storage: PropertyStorage, sample_property: Property
+    file_storage: PropertyStorage, sample_property: Property
 ) -> None:
     written = asyncio.Event()
 
     async def cancelled_operation() -> None:
-        async with storage._transaction() as conn:
+        async with file_storage._transaction() as conn:
             await conn.execute("UPDATE properties SET price_pcm = 1700")
             written.set()
             await asyncio.Event().wait()
 
     task = asyncio.create_task(cancelled_operation())
     await asyncio.wait_for(written.wait(), 2)
-    notify = asyncio.create_task(storage.mark_notified(sample_property.unique_id))
+    notify = asyncio.create_task(file_storage.mark_notified(sample_property.unique_id))
     await asyncio.wait({notify}, timeout=0.1)
     task.cancel()
     with pytest.raises(asyncio.CancelledError):
         await task
     await notify
-    current = await storage.get_property(sample_property.unique_id)
+    current = await file_storage.get_property(sample_property.unique_id)
     assert current is not None
     assert current.property.price_pcm == sample_property.price_pcm
     assert current.notification_status == NotificationStatus.SENT

@@ -55,7 +55,7 @@ def assess(source, html, **kwargs):
         ("let agreed", ListingStatus.LET_AGREED),
     ],
 )
-def test_onthemarket_current_envelope_status(status, expected):
+def test_onthemarket_page_props_redux_state_sets_target_status(status, expected):
     value = {
         "props": {
             "pageProps": {
@@ -84,7 +84,8 @@ def test_onthemarket_current_envelope_status(status, expected):
         {"results": {"suggestedProperties": [{"id": 123, "status": "removed"}]}},
     ],
 )
-def test_onthemarket_unknown_current_state_cannot_borrow_legacy_status(state):
+def test_unusable_onthemarket_page_props_state_cannot_fall_back_to_legacy_state(state):
+    """A present ``pageProps`` envelope is authoritative even when it has no target record."""
     value = {
         "props": {
             "pageProps": {"initialReduxState": state},
@@ -99,7 +100,7 @@ def test_onthemarket_unknown_current_state_cannot_borrow_legacy_status(state):
 @pytest.mark.parametrize(
     "status,expected", [("available", ListingStatus.ACTIVE), ("removed", ListingStatus.REMOVED)]
 )
-async def test_explicit_target_status(source, status, expected):
+def test_explicit_target_status_sets_active_or_removed(source, status, expected):
     result = assess(source, page(source, status))
     assert result.status == expected
     assert result.reason == "target_structured_status"
@@ -107,7 +108,7 @@ async def test_explicit_target_status(source, status, expected):
 
 @pytest.mark.parametrize("source", ["rightmove", "zoopla", "onthemarket"])
 @pytest.mark.parametrize("status", ["LET_AGREED", "Letting agreed", "under-offer"])
-def test_target_let_agreed(source, status):
+def test_let_agreed_spellings_set_let_agreed(source, status):
     assert assess(source, page(source, status)).status == ListingStatus.LET_AGREED
 
 
@@ -149,12 +150,25 @@ def test_other_listing_cannot_set_target_status(source):
 
 @pytest.mark.parametrize("source", URLS)
 @pytest.mark.parametrize("status_code", [404, 429, 403, 500])
-def test_errors_do_not_prove_removal(source, status_code):
+def test_error_statuses_without_target_status_do_not_prove_removal(source, status_code):
     assert assess(source, "not found", status_code=status_code).status == ListingStatus.UNKNOWN
 
 
 @pytest.mark.parametrize("source", URLS)
-def test_gone_and_challenge_precedence(source):
+@pytest.mark.parametrize(
+    ("status", "expected", "reason"),
+    [
+        ("removed", ListingStatus.REMOVED, "target_structured_status"),
+        ("available", ListingStatus.UNKNOWN, "http_404_unconfirmed"),
+    ],
+)
+def test_404_counts_only_when_the_target_record_says_removed(source, status, expected, reason):
+    result = assess(source, page(source, status), status_code=404)
+    assert (result.status, result.reason) == (expected, reason)
+
+
+@pytest.mark.parametrize("source", URLS)
+def test_target_410_is_removed_unless_challenged_or_redirected(source):
     assert assess(source, "", status_code=410).status == ListingStatus.REMOVED
     result = assess(
         source, page(source, "removed"), status_code=410, headers={"CF-Mitigated": "Challenge"}
@@ -219,7 +233,7 @@ def test_malformed_mismatched_and_conflicting_primary_data():
     )
 
 
-def test_rightmove_primary_tags_and_boolean_flags():
+def test_rightmove_let_agreed_tag_or_flag_sets_let_agreed():
     for fields in ({"tags": ["LET_AGREED"]}, {"lettings": {"letAgreed": True}}):
         record = {"id": 123, **fields}
         html = f"<script>window.PAGE_MODEL = {json.dumps({'propertyData': record})}</script>"
@@ -236,3 +250,40 @@ def test_unrelated_linked_offer_cannot_remove_the_target():
     }
     html = f'<script type="application/ld+json">{json.dumps(data)}</script>'
     assert assess("openrent", html).status == ListingStatus.UNKNOWN
+
+
+@pytest.mark.parametrize(
+    ("source", "url", "payload"),
+    [
+        (
+            "onthemarket",
+            "https://www.onthemarket.com/details/123/",
+            '<script id="__NEXT_DATA__">'
+            '{"props":{"pageProps":{"initialReduxState":{"property":'
+            '{"id":"123","propertyLabels":["Rental development"],'
+            '"lettingDetails":{"items":["Availability date: 20 Nov 2030"]}}}}}}</script>',
+        ),
+        (
+            "zoopla",
+            "https://www.zoopla.co.uk/to-rent/details/123/",
+            "<script>self.__next_f.push("
+            + json.dumps(
+                [1, 'a:["$","$L1",null,{"taxonomy":{"listingId":"123","listingStatus":"to_rent"}}]']
+            )
+            + ")</script><main>Available from 19 November 2030</main>",
+        ),
+        (
+            "openrent",
+            "https://www.openrent.co.uk/property-to-rent/london/flat/123",
+            "<main><table><tr><td>Available From</td><td>20 November 2030</td></tr></table></main>",
+        ),
+    ],
+)
+def test_observed_move_in_dates_and_labels_are_not_explicit_status(source, url, payload):
+    """Labels, move-in dates and Zoopla's streamed taxonomy say nothing about availability."""
+    html = f'<link rel="canonical" href="{url}">' + payload
+    evidence = assess_listing_page(
+        source, html=html, status_code=200, requested_url=url, final_url=url
+    )
+    assert evidence.status == ListingStatus.UNKNOWN
+    assert evidence.reason == "no_target_status"

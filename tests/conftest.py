@@ -1,15 +1,14 @@
 """Shared pytest fixtures."""
 
-import gc
 import os
 import sys
-import threading
 from collections.abc import Callable, Generator
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 import pytest
+import structlog
 from hypothesis import HealthCheck, settings
 from pydantic import HttpUrl
 
@@ -25,11 +24,15 @@ from home_finder.models import (
     PropertyImage,
     PropertyQualityAnalysis,
     PropertySource,
-    SearchCriteria,
     SpaceAnalysis,
-    TransportMode,
     ValueAnalysis,
 )
+
+pytest_plugins = [
+    "tests.plugins.aiosqlite_leaks",
+    "tests.plugins.schema_template",
+    "tests.support.pytest_profile",
+]
 
 
 def pytest_configure(config: pytest.Config) -> None:
@@ -38,13 +41,55 @@ def pytest_configure(config: pytest.Config) -> None:
         sys.stdout.reconfigure(line_buffering=True)
     if hasattr(sys.stderr, "reconfigure") and not sys.stderr.isatty():
         sys.stderr.reconfigure(line_buffering=True)
+    _render_logged_exceptions_plainly()
+
+
+def _render_logged_exceptions_plainly() -> None:
+    """Keep structlog's default console output, but format tracebacks as plain text.
+
+    With ``rich`` installed (a dev dependency of inline-snapshot), structlog's
+    default renderer highlights the source and the locals of every frame for
+    each logged exception. Tests that log provider failures spent most of their
+    time there, rendering output that pytest captures and usually discards.
+    """
+    renderer = structlog.get_config()["processors"][-1]
+    if isinstance(renderer, structlog.dev.ConsoleRenderer):
+        renderer.exception_formatter = structlog.dev.plain_traceback
+
+
+def _is_xdist_active(config: pytest.Config) -> bool:
+    """Detect whether xdist is distributing tests (controller or worker)."""
+    if os.environ.get("PYTEST_XDIST_WORKER"):
+        return True
+    num_workers = config.getoption("numprocesses", default=0)
+    return bool(num_workers) and str(num_workers) != "0"
 
 
 def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
-    """Apply timeout exemptions for slow-marked tests."""
+    """Apply the browser and live-network test rules wherever those tests live.
+
+    Browser tests need real TCP sockets (a server plus Chromium), so they get
+    pytest-socket's ``enable_socket``. pytest-timeout's SIGALRM corrupts Playwright's
+    connection state and deadlocks teardown, so they rely on Playwright's own
+    timeouts instead. Under xdist they share one worker, and so one session server.
+
+    Slow tests check live services, so they get real sockets too (``--disable-socket``
+    in addopts would otherwise block the Python transports, e.g. Rightmove's httpx),
+    and 120 seconds unless they set their own timeout. A marker added to the item
+    takes precedence over class and module markers, so adding it unconditionally
+    would cut an explicit longer timeout short.
+    """
+    xdist_active = _is_xdist_active(config)
     for item in items:
+        if item.get_closest_marker("browser"):
+            item.add_marker(pytest.mark.enable_socket)
+            item.add_marker(pytest.mark.timeout(0))
+            if xdist_active:
+                item.add_marker(pytest.mark.xdist_group(name="browser"))
         if item.get_closest_marker("slow"):
-            item.add_marker(pytest.mark.timeout(120))
+            item.add_marker(pytest.mark.enable_socket)
+            if item.get_closest_marker("timeout") is None:
+                item.add_marker(pytest.mark.timeout(120))
 
 
 # Hypothesis settings profiles for different environments
@@ -75,6 +120,59 @@ def _isolate_settings_from_environment(monkeypatch: pytest.MonkeyPatch) -> None:
     )
 
 
+def _modified_ns(path: Path) -> int | None:
+    try:
+        return path.stat().st_mtime_ns
+    except FileNotFoundError:
+        return None
+
+
+@pytest.fixture(autouse=True)
+def _keep_data_out_of_the_repository(request: pytest.FixtureRequest) -> Generator[None]:
+    """Fail a test that starts an image cache or data directory in the repository.
+
+    Settings derives ``data_dir`` (the image cache) from ``database_path``, and
+    ignores a ``data_dir=`` keyword. ``database_path=":memory:"`` therefore puts
+    images in the working directory, shared by every xdist worker; a test once
+    flaked because another worker's files appeared in its cache.
+
+    This is a cheap top-level check, not a complete one: it notices ``image_cache/``
+    or ``data/`` being created, and a new home directory added to a leftover
+    ``image_cache/``. It does not see files written inside an existing home's
+    directory, or anything written under an existing ``data/``, where a local
+    pipeline may legitimately write.
+    """
+    roots = {request.config.rootpath, Path.cwd()}
+    watched = [root / name for root in roots for name in ("image_cache", "data")]
+    before = {path: _modified_ns(path) for path in watched}
+    yield
+    written = [
+        path
+        for path in watched
+        if _modified_ns(path) != before[path]
+        and (before[path] is None or path.name == "image_cache")
+    ]
+    if written:
+        names = ", ".join(sorted({f"{path.name}/" for path in written}))
+        pytest.fail(
+            f"{names} changed in the repository during this test (or one running at the same "
+            "time on another worker). Give Settings a database_path under tmp_path, e.g. "
+            'database_path=str(tmp_path / "home_finder.db").'
+        )
+
+
+@pytest.fixture(autouse=True)
+def _skip_telegram_delivery_pause(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Do not wait out Telegram flood-control pacing (1 second after each send).
+
+    Pipeline and recovery tests deliver several plans per run. The pacing itself
+    is asserted in test_notifiers/test_delivery_recovery.py.
+    """
+    from home_finder.notifiers import telegram
+
+    monkeypatch.setattr(telegram, "DELIVERY_PAUSE_SECONDS", 0.0)
+
+
 @pytest.fixture
 async def native_analysis_spending(monkeypatch):
     """Explicit test-only budget for suites exercising the actual SDK transport."""
@@ -101,51 +199,6 @@ async def native_analysis_spending(monkeypatch):
         yield storage, policy
 
 
-@pytest.fixture(autouse=True)
-def _cleanup_aiosqlite_threads(request: pytest.FixtureRequest):
-    """Safety net: detect and stop leaked aiosqlite worker threads.
-
-    aiosqlite v0.22+ creates a non-daemon worker thread per connection that
-    blocks on SimpleQueue.get() indefinitely.  If a test leaks a connection
-    (doesn't call ``await conn.close()``), the thread prevents clean process exit.
-    """
-    yield
-
-    # Browser tests run a uvicorn server in a daemon thread that holds its own
-    # aiosqlite connection.  Killing it mid-session breaks all subsequent tests.
-    if request.node.get_closest_marker("browser"):
-        return
-
-    from aiosqlite.core import _STOP_RUNNING_SENTINEL, Connection
-
-    leaked = False
-
-    # Strategy 1: find leaked Connection objects via gc, call stop()
-    gc.collect()
-    for obj in gc.get_objects():
-        if isinstance(obj, Connection) and obj._connection is not None:
-            leaked = True
-            obj.stop()
-
-    # Strategy 2: inject sentinel directly for orphaned threads
-    for thread in threading.enumerate():
-        if "_connection_worker_thread" in (thread.name or "") and thread.is_alive():
-            leaked = True
-            tx = getattr(thread, "_args", (None,))[0]
-            if tx is not None and hasattr(tx, "put_nowait"):
-                tx.put_nowait((None, lambda: _STOP_RUNNING_SENTINEL))
-                thread.join(timeout=1.0)
-
-    if leaked:
-        import warnings
-
-        warnings.warn(
-            "Test leaked aiosqlite connection(s) — add 'await storage.close()' to fixture teardown",
-            ResourceWarning,
-            stacklevel=1,
-        )
-
-
 @pytest.fixture
 def fixtures_path() -> Path:
     """Path to test fixtures directory."""
@@ -168,36 +221,6 @@ def sample_property() -> Property:
         longitude=-0.0553,
         description="A lovely flat with good transport links.",
         first_seen=datetime(2025, 1, 15, 10, 30),
-    )
-
-
-@pytest.fixture
-def sample_property_no_coords() -> Property:
-    """A valid sample property without coordinates."""
-    return Property(
-        source=PropertySource.RIGHTMOVE,
-        source_id="67890",
-        url=HttpUrl("https://www.rightmove.co.uk/properties/67890"),
-        title="2-bed apartment in Islington",
-        price_pcm=2100,
-        bedrooms=2,
-        address="45 Upper Street, Islington, London",
-        postcode="N1 0NY",
-        first_seen=datetime(2025, 1, 16, 14, 0),
-    )
-
-
-@pytest.fixture
-def default_search_criteria() -> SearchCriteria:
-    """Default search criteria matching the plan requirements."""
-    return SearchCriteria(
-        min_price=1800,
-        max_price=2500,
-        min_bedrooms=1,
-        max_bedrooms=2,
-        destination_postcode="N1 5AA",
-        max_commute_minutes=30,
-        transport_modes=(TransportMode.CYCLING, TransportMode.PUBLIC_TRANSPORT),
     )
 
 
@@ -415,83 +438,6 @@ def sample_quality_analysis() -> PropertyQualityAnalysis:
             "Bright, well-maintained flat with modern kitchen. Good for home office and hosting."
         ),
     )
-
-
-# ---------------------------------------------------------------------------
-# Crawlee state isolation (used by integration + scraper location leakage tests)
-# ---------------------------------------------------------------------------
-
-
-@pytest.fixture
-def reset_crawlee_state() -> Generator[None, None, None]:
-    """Reset Crawlee's global state between tests.
-
-    Crawlee caches service locators and storage clients that are bound to
-    specific event loops. Without resetting this state, tests running with
-    different event loops will fail with "attached to a different event loop".
-
-    Not autouse — only tests that exercise real Crawlee scrapers need this.
-    Use via @pytest.mark.usefixtures("reset_crawlee_state").
-    """
-    _clear_crawlee_caches()
-    yield
-    _clear_crawlee_caches()
-
-
-def _clear_crawlee_caches() -> None:
-    """Clear Crawlee's internal caches and state."""
-    try:
-        from crawlee._service_locator import service_locator
-
-        service_locator._configuration = None
-        service_locator._event_manager = None
-        service_locator._storage_client = None
-    except (ImportError, AttributeError):
-        pass
-
-    try:
-        from crawlee.storages import KeyValueStore
-
-        if hasattr(KeyValueStore, "_cache"):
-            KeyValueStore._cache.clear()
-        if hasattr(KeyValueStore, "_cache_by_id"):
-            KeyValueStore._cache_by_id.clear()
-        if hasattr(KeyValueStore, "_cache_by_name"):
-            KeyValueStore._cache_by_name.clear()
-    except (ImportError, AttributeError):
-        pass
-
-    try:
-        from crawlee.statistics import Statistics
-
-        if hasattr(Statistics, "_instance"):
-            Statistics._instance = None
-    except (ImportError, AttributeError):
-        pass
-
-    try:
-        from crawlee.crawlers import BasicCrawler
-
-        if hasattr(BasicCrawler, "_running_crawlers"):
-            BasicCrawler._running_crawlers.clear()
-    except (ImportError, AttributeError):
-        pass
-
-
-@pytest.fixture
-def set_crawlee_storage_dir(tmp_path: Path) -> Generator[None, None, None]:
-    """Use a temporary directory for Crawlee storage during tests.
-
-    Not autouse — only tests that exercise real Crawlee scrapers need this.
-    Use via @pytest.mark.usefixtures("set_crawlee_storage_dir").
-    """
-    old_value = os.environ.get("CRAWLEE_STORAGE_DIR")
-    os.environ["CRAWLEE_STORAGE_DIR"] = str(tmp_path / "crawlee_storage")
-    yield
-    if old_value is not None:
-        os.environ["CRAWLEE_STORAGE_DIR"] = old_value
-    else:
-        os.environ.pop("CRAWLEE_STORAGE_DIR", None)
 
 
 @pytest.fixture

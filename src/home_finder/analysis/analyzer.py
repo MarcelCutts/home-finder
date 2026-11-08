@@ -925,11 +925,10 @@ class PropertyQualityAnalyzer:
     ) -> "ImageBlockParam | None":
         """Build an image block from disk cache.
 
-        All images should already be cached by detail enrichment.  If the
-        cache misses, the image is skipped rather than re-downloaded — the
-        CDN download would face the same network conditions that caused the
-        enrichment miss, and skipping 1-2 of 20 images has negligible impact
-        on analysis quality.
+        All images should already be cached by detail enrichment. If the cache
+        misses, the image is skipped rather than re-downloaded — the CDN
+        download would face the same network conditions that caused the
+        enrichment miss. The assessment sees only the available cached evidence.
 
         Args:
             url: Image URL (used for media-type detection and logging).
@@ -1522,7 +1521,7 @@ class PropertyQualityAnalyzer:
                     db_range = profile["airborne_insulation_db"]
                     acoustic_context = (
                         f"Building construction: {construction}\n"
-                        f"Typical sound insulation: {db_range} dB airborne\n"
+                        f"Typical sound insulation: {db_range} airborne\n"
                         f"Hosting safety: {profile['hosting_safety']}\n"
                         f"{profile['summary']}"
                     )
@@ -1661,7 +1660,7 @@ class PropertyQualityAnalyzer:
         Args:
             visual_data: Phase 1 visual analysis output.
             eval_data: Phase 2 evaluation output.
-            bedrooms: Number of bedrooms (for space assessment override).
+            bedrooms: Unused; the space judgement is not overridden by bedroom count.
             property_id: Property ID for logging.
 
         Returns:

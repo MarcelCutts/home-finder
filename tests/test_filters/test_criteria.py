@@ -4,7 +4,7 @@ import pytest
 from pydantic import HttpUrl
 
 from home_finder.filters.criteria import CriteriaFilter
-from home_finder.models import Property, PropertySource, SearchCriteria, TransportMode
+from home_finder.models import Property, PropertySource, SearchCriteria
 
 
 @pytest.fixture
@@ -74,36 +74,23 @@ def default_criteria() -> SearchCriteria:
         max_bedrooms=2,
         destination_postcode="N1 5AA",
         max_commute_minutes=30,
-        transport_modes=(TransportMode.CYCLING, TransportMode.PUBLIC_TRANSPORT),
     )
 
 
 class TestCriteriaFilter:
     """Tests for CriteriaFilter."""
 
-    def test_filter_by_criteria(
+    def test_keeps_only_properties_within_price_and_bedroom_ranges(
         self, sample_properties: list[Property], default_criteria: SearchCriteria
     ) -> None:
-        """Test filtering properties by criteria."""
-        filter = CriteriaFilter(default_criteria)
-        filtered = filter.filter_properties(sample_properties)
+        criteria_filter = CriteriaFilter(default_criteria)
+        filtered = criteria_filter.filter_properties(sample_properties)
 
-        # Should only include properties that match price and bedroom criteria
-        assert len(filtered) == 2
+        # Excluded: 3 is a £1500 studio, 4 has three beds, 5 costs £2500.
+        assert [p.source_id for p in filtered] == ["1", "2"]
 
-        # Check correct properties are included
-        source_ids = {p.source_id for p in filtered}
-        assert "1" in source_ids  # 1 bed, £1900 - matches
-        assert "2" in source_ids  # 2 bed, £2200 - matches
-
-        # Check excluded properties
-        assert "3" not in source_ids  # Studio (0 beds), £1500 - too cheap, too few beds
-        assert "4" not in source_ids  # 3 beds - too many beds
-        assert "5" not in source_ids  # £2500 - too expensive
-
-    def test_filter_at_boundaries(self, default_criteria: SearchCriteria) -> None:
-        """Test filtering at exact boundary values."""
-        filter = CriteriaFilter(default_criteria)
+    def test_price_and_bedroom_limits_are_inclusive(self, default_criteria: SearchCriteria) -> None:
+        criteria_filter = CriteriaFilter(default_criteria)
 
         # At min price, min bedrooms - should match
         prop_min = Property(
@@ -149,65 +136,11 @@ class TestCriteriaFilter:
             address="Above Address",
         )
 
-        filtered = filter.filter_properties([prop_min, prop_max, prop_below_min, prop_above_max])
+        filtered = criteria_filter.filter_properties(
+            [prop_min, prop_max, prop_below_min, prop_above_max]
+        )
 
-        assert len(filtered) == 2
-        source_ids = {p.source_id for p in filtered}
-        assert "min" in source_ids
-        assert "max" in source_ids
-        assert "below" not in source_ids
-        assert "above" not in source_ids
+        assert [p.source_id for p in filtered] == ["min", "max"]
 
-    def test_filter_empty_list(self, default_criteria: SearchCriteria) -> None:
-        """Test filtering an empty list."""
-        filter = CriteriaFilter(default_criteria)
-        filtered = filter.filter_properties([])
-        assert len(filtered) == 0
-
-    def test_filter_all_match(self, default_criteria: SearchCriteria) -> None:
-        """Test when all properties match."""
-        filter = CriteriaFilter(default_criteria)
-
-        matching_props = [
-            Property(
-                source=PropertySource.OPENRENT,
-                source_id=f"match-{i}",
-                url=HttpUrl(f"https://example.com/{i}"),
-                title=f"Matching property {i}",
-                price_pcm=2000,
-                bedrooms=1,
-                address=f"Address {i}",
-            )
-            for i in range(5)
-        ]
-
-        filtered = filter.filter_properties(matching_props)
-        assert len(filtered) == 5
-
-    def test_filter_none_match(self, default_criteria: SearchCriteria) -> None:
-        """Test when no properties match."""
-        filter = CriteriaFilter(default_criteria)
-
-        non_matching_props = [
-            Property(
-                source=PropertySource.OPENRENT,
-                source_id="too-expensive",
-                url=HttpUrl("https://example.com/1"),
-                title="Too expensive",
-                price_pcm=5000,
-                bedrooms=1,
-                address="Address",
-            ),
-            Property(
-                source=PropertySource.OPENRENT,
-                source_id="too-many-beds",
-                url=HttpUrl("https://example.com/2"),
-                title="Too many beds",
-                price_pcm=2000,
-                bedrooms=5,
-                address="Address",
-            ),
-        ]
-
-        filtered = filter.filter_properties(non_matching_props)
-        assert len(filtered) == 0
+    def test_empty_input_gives_empty_output(self, default_criteria: SearchCriteria) -> None:
+        assert CriteriaFilter(default_criteria).filter_properties([]) == []

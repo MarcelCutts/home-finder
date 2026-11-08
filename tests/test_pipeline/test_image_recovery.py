@@ -161,8 +161,8 @@ class TestDownloadMissingImages:
         assert mock_download.call_args_list[-1].args == ("https://example.com/floor.jpg",)
 
 
-class TestReEnrichIncomplete:
-    """Tests for restore_missing_analysis_images()."""
+class TestRestoreMissingAnalysisImages:
+    """Restore missing cached images from stored URLs, without fetching detail pages."""
 
     async def test_repairs_missing_floorplan_even_when_gallery_is_complete(
         self, tmp_path: Path, make_merged_property: Callable[..., MergedProperty]

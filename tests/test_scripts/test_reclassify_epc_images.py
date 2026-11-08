@@ -1,11 +1,12 @@
 """Tests for scripts/reclassify_epc_images.py."""
 
 import importlib.util
+import random
 import sqlite3
 from io import BytesIO
 from pathlib import Path
 
-from PIL import Image, ImageDraw
+from PIL import Image, ImageChops, ImageDraw
 
 from home_finder.utils.image_cache import get_cache_dir, save_image_bytes, url_to_filename
 
@@ -45,24 +46,15 @@ def _make_epc_bytes() -> bytes:
 
 def _make_photo_bytes() -> bytes:
     """Create synthetic room photo image bytes."""
-    import random
-
-    rng = random.Random(42)
     img = Image.new("RGB", (400, 300), (135, 206, 235))
     draw = ImageDraw.Draw(img)
     draw.rectangle([0, 200, 400, 300], fill=(34, 139, 34))
     draw.rectangle([50, 100, 150, 200], fill=(139, 69, 19))
-    pixels = img.load()
-    assert pixels is not None
-    for y in range(300):
-        for x in range(400):
-            r, g, b = pixels[x, y]  # type: ignore[misc]
-            n = rng.randint(-20, 20)
-            pixels[x, y] = (
-                max(0, min(255, r + n)),
-                max(0, min(255, g + n)),
-                max(0, min(255, b + n)),
-            )
+    # Photo-like entropy: one uniform offset from -20 to +20 per pixel, clipped.
+    rng = random.Random(42)
+    to_offset = [value * 41 // 256 for value in range(256)]
+    noise = Image.frombytes("L", img.size, rng.randbytes(400 * 300)).point(to_offset)
+    img = ImageChops.add(img, Image.merge("RGB", (noise,) * 3), offset=-20)
     buf = BytesIO()
     img.save(buf, format="JPEG")
     return buf.getvalue()

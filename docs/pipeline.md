@@ -4,6 +4,9 @@ The pipeline is a recurring workflow with durable queues. A run collects new
 evidence and advances eligible work; it does not need to discover a new listing
 to process pending enrichment, assessment, reanalysis, or delivery.
 
+For a stage-by-stage walkthrough of one run, with every claim linked to the code,
+see [ingest-pipeline.md](ingest-pipeline.md).
+
 ## Reading order
 
 Start at [`pipeline/flow.py`](../src/home_finder/pipeline/flow.py). Its main body

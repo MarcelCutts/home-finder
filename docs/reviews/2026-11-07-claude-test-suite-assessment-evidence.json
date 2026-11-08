@@ -1,0 +1,114 @@
+{
+  "scope": {
+    "source_worktree": "/home/marcel/projects/lab/home-finder/.claude/worktrees/test-suite-quality-perf-b4e787",
+    "base_commit": "51dd9c6e05cd36d4fe4a7cf7ea8966023d63cc16",
+    "snapshot_utc": "2026-11-07T18:16:11.826032+00:00",
+    "sha256": {
+      "docs/reviews/2026-11-07-test-suite-review.md": "87246986bb525b8aa145e521f04830a02e196fa8c25762336a125bf2a2d98880",
+      "tests/conftest.py": "fa07ae4b5b6595c83fac66c410de64c9834c6d922bc1778897c4f05be6871a61",
+      "tests/plugins/schema_template.py": "ea07dac147f93b09a6b524aa3c5dbcbb0e4b80748b63240f6afc94cca8c277eb",
+      "tests/plugins/test_schema_template.py": "c80144ba982772e8abdc9c928e7adaea48edad859f54c9e44fc042b73d248fd2",
+      "tests/plugins/aiosqlite_leaks.py": "e7a237e62026fbbf460d2c57a57231fc1ed0bd83c2cf32c1aa2d558617079d8b",
+      "tests/plugins/timing_report.py": "e0024bd292f59797eef9b6ef755cd6c140efd92f80549394c63b84d4e57d3c23",
+      "tests/test_web/browser/test_browser_e2e.py": "6d5348861bdebde41eeb2f6d4f4052d67729ff09cdbb411fc5946b31a394d0f2",
+      "src/home_finder/matching/deduplication.py": "bc48fca5e775f4468f638c48b33f82b0375d0269a82419d137fcc017ee41b9eb",
+      "pyproject.toml": "482e5b5d45648d0f4d275dbc12833e79a403f6df4779cf3fefb8673f37a81778",
+      "uv.lock": "1ef1a8a5dd44a73024904a96c10551eac60677dea085dc479e0db306aa152791"
+    }
+  },
+  "environment": {
+    "python": "3.14.7",
+    "pytest": "9.1.1",
+    "pytest_xdist": "3.8.0",
+    "pytest_cov": "7.1.0",
+    "coverage": "7.13.2",
+    "aiosqlite": "0.22.1",
+    "structlog": "26.1.0",
+    "pydantic_settings": "2.15.0",
+    "workers": 4,
+    "uv_lock_identical_to_codex_worktree": true
+  },
+  "runs": {
+    "offline_fast": {
+      "passed": 4026,
+      "pytest_seconds": 21.37,
+      "warnings": 3,
+      "profile_seconds": 21.34304642677307,
+      "phase_seconds": {
+        "setup": 12.773347377940809,
+        "call": 29.50331635905968,
+        "teardown": 1.3327304939703026
+      }
+    },
+    "offline_ci_coverage": {
+      "passed": 4026,
+      "pytest_seconds": 25.51,
+      "process_seconds": 27.61,
+      "process_tree_cpu_user_seconds": 103.98,
+      "process_tree_cpu_system_seconds": 4.12,
+      "maxrss_kib": 584408,
+      "warnings": 4,
+      "coverage": {
+        "covered_lines": 12554,
+        "num_statements": 13515,
+        "percent_covered": 91.19054165521034,
+        "percent_covered_display": "91",
+        "missing_lines": 961,
+        "excluded_lines": 50,
+        "percent_statements_covered": 92.88938216796153,
+        "percent_statements_covered_display": "93",
+        "num_branches": 4670,
+        "num_partial_branches": 471,
+        "covered_branches": 4029,
+        "missing_branches": 641,
+        "percent_branches_covered": 86.27408993576017,
+        "percent_branches_covered_display": "86"
+      }
+    },
+    "chromium_local": {
+      "passed": 77,
+      "pytest_seconds": 37.1,
+      "warnings": 27
+    },
+    "corrected_template_only_in_tmp": {
+      "passed": 5,
+      "deselected": 3,
+      "warnings": 1
+    },
+    "worker_crash": {
+      "exit_code": 1,
+      "expected_failed": 1,
+      "json_written": true
+    }
+  },
+  "probes": {
+    "template_not_entered": true,
+    "empty_sqlite_row_misclassified": true,
+    "stopped_thread_retains_sqlite_lock": true,
+    "existing_owned_connection_stopped": true,
+    "nested_cache_write_not_detected": true,
+    "session_settings_read_environment": true,
+    "max_group_size_branch_reached_without_mocks": true,
+    "latest_leak_check_retested": {
+      "snapshot_file": "probes/latest_aiosqlite_leaks.py",
+      "sha256": "b93a28bace4fbfeebbf4c5142c9c4f30a5f4480208f10ce5ce35f111d849d5b4",
+      "lock_release_test_failed": true,
+      "preserve_owned_connection_test_failed": true
+    }
+  },
+  "other_evidence": {
+    "longest_nodeid_characters": 4000130,
+    "mark_notified_calls": 59,
+    "mark_notified_test_files": 21,
+    "beautifulsoup4_dependency_parents": [
+      "crawlee"
+    ]
+  },
+  "limits": [
+    "No paid API or live portal run",
+    "No GitHub Actions run",
+    "No claim that every deletion preserves behavior",
+    "Full runs use captured snapshot; later leak checker separately rechecked",
+    "An earlier coverage run accidentally collected a temporary session-settings probe (4027); it was excluded from final verification and replaced by the clean 4026-test run."
+  ]
+}

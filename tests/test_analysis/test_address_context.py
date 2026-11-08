@@ -70,9 +70,9 @@ async def test_canonical_address_and_conflicting_descriptions_reach_both_native_
 
     async with (
         PropertyStorage(str(tmp_path / "native-location.db")) as storage,
-        quality(storage, respond, settings=configuration(model, model)) as analyst,
+        quality(storage, respond, settings=configuration(model, model)) as analyzer,
     ):
-        _, result = await analyst.analyze_single_merged(merged, data_dir=images)
+        _, result = await analyzer.analyze_single_merged(merged, data_dir=images)
     assert result is not None and result.analysis_failure is None
     assert len(requests) == 2 and "tools" in requests[0] and "tools" not in requests[1]
     for body in requests:
@@ -115,9 +115,9 @@ async def test_location_change_invalidates_checkpoint_through_real_caller(
     # visual result while evaluation is unavailable.
     for _ in range(2):
         async with PropertyStorage(database) as storage:
-            async with quality(storage, respond) as analyst:
+            async with quality(storage, respond) as analyzer:
                 with pytest.raises(APIUnavailableError):
-                    await analyst.analyze_single_merged(merged, data_dir=images)
+                    await analyzer.analyze_single_merged(merged, data_dir=images)
             old_key = (await checkpoint_rows(storage))[0]["input_sha256"]
     assert len(visual_requests) == 1 and len(evaluation_requests) == 2
 
@@ -126,9 +126,9 @@ async def test_location_change_invalidates_checkpoint_through_real_caller(
     )
     async with (
         PropertyStorage(database) as storage,
-        quality(storage, respond) as analyst,
+        quality(storage, respond) as analyzer,
     ):
-        _, result = await analyst.analyze_single_merged(changed, data_dir=images)
+        _, result = await analyzer.analyze_single_merged(changed, data_dir=images)
         new_key = (await checkpoint_rows(storage))[0]["input_sha256"]
     assert result is not None and result.analysis_failure is None
     assert new_key != old_key and result.analysis_provenance.visual_input_sha256 == new_key

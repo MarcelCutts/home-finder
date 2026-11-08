@@ -3,6 +3,7 @@
 import asyncio
 import json
 from datetime import UTC, datetime, timedelta
+from unittest.mock import AsyncMock, patch
 
 import aiosqlite
 import pytest
@@ -12,6 +13,7 @@ from aiogram.methods import SendMessage
 from home_finder.db import PropertyStorage
 from home_finder.models.delivery import DiscoverySnapshot
 from home_finder.models.notifications import NotificationPolicy
+from home_finder.notifiers import telegram
 from home_finder.notifiers.delivery import deliver, discovery_plan
 from home_finder.notifiers.telegram import TelegramNotifier
 from home_finder.pipeline.delivery_admin import administer, read_report
@@ -22,12 +24,14 @@ METHOD = SendMessage(chat_id=123, text="fixture")
 
 
 @pytest.fixture
-def delivery_analysis(sample_quality_analysis):
+def delivery_analysis(notification_quality_analysis):
     from home_finder.models import BedroomAnalysis, FlooringNoiseAnalysis
 
-    return sample_quality_analysis.model_copy(
+    return notification_quality_analysis.model_copy(
         update={
-            "space": sample_quality_analysis.space.model_copy(update={"hosting_layout": "good"}),
+            "space": notification_quality_analysis.space.model_copy(
+                update={"hosting_layout": "good"}
+            ),
             "bedroom": BedroomAnalysis(
                 primary_is_double="yes", office_separation="dedicated_room", can_fit_desk="yes"
             ),
@@ -83,6 +87,20 @@ async def test_photo_receipt_survives_venue_rate_limit_and_restart(
         assert (await storage.deliveries.get(key))["plan_json"] == saved_plan
         assert not await deliver(sender, storage.deliveries, key)
         bot.send_venue.assert_called_once()
+
+
+async def test_resumed_delivery_pauses_after_each_delivered_plan(
+    enriched_merged_property, delivery_analysis, monkeypatch
+):
+    """Resuming saved plans keeps Telegram's flood-control pause after each delivery."""
+    monkeypatch.setattr(telegram, "DELIVERY_PAUSE_SECONDS", 1.0)
+    async with PropertyStorage(":memory:") as storage:
+        await seed(storage, enriched_merged_property, delivery_analysis)
+        sender, _bot = notifier(storage)
+        with patch("home_finder.notifiers.telegram.asyncio.sleep", new_callable=AsyncMock) as pause:
+            assert await sender.deliver_pending() == 1
+        assert await status(storage, enriched_merged_property.unique_id) == "sent"
+    pause.assert_awaited_once_with(1.0)
 
 
 @pytest.mark.parametrize("later_prices", [(), (1500,), (1700,), (1900,), (1700, 1650)])

@@ -1,9 +1,10 @@
 """Tests for PIL-based EPC chart detection."""
 
+import random
 from collections.abc import Callable
 from io import BytesIO
 
-from PIL import Image, ImageDraw
+from PIL import Image, ImageChops, ImageDraw
 
 from home_finder.utils.epc_detector import CONFIDENCE_THRESHOLD, detect_epc
 
@@ -22,6 +23,31 @@ def _make_image_bytes(
     buf = BytesIO()
     img.save(buf, format=fmt)
     return buf.getvalue()
+
+
+def _add_uniform_noise(
+    img: Image.Image,
+    spread: int,
+    *,
+    seed: int,
+    per_channel: bool = False,
+    mask: Image.Image | None = None,
+) -> None:
+    """Add integer noise from -spread to +spread to each pixel, clipped to 0-255.
+
+    Photos need this to reach realistic entropy. One draw per pixel shifts all
+    three channels alike unless ``per_channel`` is set. ``mask`` limits the noise
+    to its white pixels.
+    """
+    rng = random.Random(seed)
+    to_offset = [value * (2 * spread + 1) // 256 for value in range(256)]
+
+    def plane() -> Image.Image:
+        noise = rng.randbytes(img.width * img.height)
+        return Image.frombytes("L", img.size, noise).point(to_offset)
+
+    planes = (plane(), plane(), plane()) if per_channel else (plane(),) * 3
+    img.paste(ImageChops.add(img, Image.merge("RGB", planes), offset=-spread), mask=mask)
 
 
 def _draw_epc_chart(img: Image.Image) -> None:
@@ -89,8 +115,6 @@ def _draw_env_impact_chart(img: Image.Image) -> None:
 
 def _draw_colorful_photo(img: Image.Image) -> None:
     """Draw a colorful scene resembling a room photo (with noise for high entropy)."""
-    import random
-
     draw = ImageDraw.Draw(img)
     w, h = img.size
     draw.rectangle([0, 0, w, h // 3], fill=(135, 206, 235))
@@ -98,19 +122,8 @@ def _draw_colorful_photo(img: Image.Image) -> None:
     draw.rectangle([50, h // 3, 150, 2 * h // 3], fill=(139, 69, 19))
     draw.rectangle([200, h // 3 + 20, 250, h // 3 + 60], fill=(220, 20, 60))
     draw.ellipse([300, h // 3 - 20, 340, h // 3 + 20], fill=(255, 215, 0))
-    # Add pixel noise to push entropy above 5.5 (like real photos)
-    rng = random.Random(42)
-    pixels = img.load()
-    assert pixels is not None
-    for y in range(h):
-        for x in range(w):
-            r, g, b = pixels[x, y]  # type: ignore[misc]
-            n = rng.randint(-20, 20)
-            pixels[x, y] = (
-                max(0, min(255, r + n)),
-                max(0, min(255, g + n)),
-                max(0, min(255, b + n)),
-            )
+    # Noise pushes entropy above 5.5, like a real photo.
+    _add_uniform_noise(img, 20, seed=42)
 
 
 def _draw_floorplan(img: Image.Image) -> None:
@@ -188,7 +201,6 @@ class TestDetectEpc:
         These have higher entropy (~5.9) than single charts but the distinctive
         green/red bands and white background are still present.
         """
-        import random
 
         def _draw_dual_chart(img: Image.Image) -> None:
             draw = ImageDraw.Draw(img)
@@ -218,20 +230,10 @@ class TestDetectEpc:
                 bw = int(w * 0.12) + int(w * 0.04 * i)
                 draw.rectangle([offset_x, y, offset_x + bw, y + band_height], fill=color)
 
-            # Add slight noise to raise entropy (simulates text/labels)
-            rng = random.Random(99)
-            pixels = img.load()
-            assert pixels is not None
-            for y in range(h):
-                for x in range(w):
-                    r, g, b = pixels[x, y]  # type: ignore[misc]
-                    if r == 255 and g == 255 and b == 255:
-                        n = rng.randint(-8, 8)
-                        pixels[x, y] = (
-                            max(0, min(255, r + n)),
-                            max(0, min(255, g + n)),
-                            max(0, min(255, b + n)),
-                        )
+            # Slight noise on the white background raises entropy, like text and labels.
+            white = [band.point(lambda v: 255 if v == 255 else 0) for band in img.split()]
+            on_white = ImageChops.multiply(ImageChops.multiply(white[0], white[1]), white[2])
+            _add_uniform_noise(img, 8, seed=99, mask=on_white)
 
         img_bytes = _make_image_bytes(size=(800, 400), draw_fn=_draw_dual_chart)
         is_epc, confidence = detect_epc(img_bytes)
@@ -252,7 +254,6 @@ class TestDetectEpc:
         co-presence + bright walls can reach 0.624-0.650 without the entropy gate.
         The entropy early-return blocks these high-entropy photos.
         """
-        import random
 
         def _draw_vivid_room(img: Image.Image) -> None:
             draw = ImageDraw.Draw(img)
@@ -274,19 +275,9 @@ class TestDetectEpc:
             draw.rectangle([120, h // 2 + 20, 220, h - 20], fill=(60, 35, 20))
             # Window with sky
             draw.rectangle([280, 20, 380, 100], fill=(135, 190, 230))
-            # Heavy per-channel pixel noise for realistic photo entropy (>6.5).
-            # Real photos have independent RGB noise across many tonal regions.
-            rng = random.Random(55)
-            pixels = img.load()
-            assert pixels is not None
-            for y in range(h):
-                for x in range(w):
-                    r, g, b = pixels[x, y]  # type: ignore[misc]
-                    pixels[x, y] = (
-                        max(0, min(255, r + rng.randint(-55, 55))),
-                        max(0, min(255, g + rng.randint(-55, 55))),
-                        max(0, min(255, b + rng.randint(-55, 55))),
-                    )
+            # Heavy per-channel noise gives realistic photo entropy (>6.5): real
+            # photos have independent RGB noise across many tonal regions.
+            _add_uniform_noise(img, 55, seed=55, per_channel=True)
 
         img_bytes = _make_image_bytes(draw_fn=_draw_vivid_room)
         is_epc, confidence = detect_epc(img_bytes)
@@ -294,7 +285,6 @@ class TestDetectEpc:
 
     def test_blue_tinted_room_not_detected(self) -> None:
         """A room with blue walls/sky should NOT be detected as EPC."""
-        import random
 
         def _draw_blue_room(img: Image.Image) -> None:
             draw = ImageDraw.Draw(img)
@@ -307,19 +297,7 @@ class TestDetectEpc:
             draw.rectangle([50, 30, 150, 120], fill=(200, 220, 255))
             # Furniture
             draw.rectangle([200, h // 2 - 50, 350, h // 2], fill=(80, 60, 40))
-            # Add pixel noise for high entropy
-            rng = random.Random(77)
-            pixels = img.load()
-            assert pixels is not None
-            for y in range(h):
-                for x in range(w):
-                    r, g, b = pixels[x, y]  # type: ignore[misc]
-                    n = rng.randint(-25, 25)
-                    pixels[x, y] = (
-                        max(0, min(255, r + n)),
-                        max(0, min(255, g + n)),
-                        max(0, min(255, b + n)),
-                    )
+            _add_uniform_noise(img, 25, seed=77)
 
         img_bytes = _make_image_bytes(draw_fn=_draw_blue_room)
         is_epc, _confidence = detect_epc(img_bytes)

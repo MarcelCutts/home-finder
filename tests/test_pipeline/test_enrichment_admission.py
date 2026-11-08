@@ -22,7 +22,6 @@ def settings(tmp_path):
     return Settings(
         _env_file=None,
         database_path=str(tmp_path / "queue.db"),
-        data_dir=str(tmp_path),
         search_areas="e8",
         min_price=1000,
         max_price=2500,

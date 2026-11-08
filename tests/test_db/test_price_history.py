@@ -1,11 +1,9 @@
-"""Tests for price history and rent benchmarks (Ticket 10)."""
+"""Price changes, their history, price-drop notification flags and value recomputation."""
 
 import json
 import sqlite3
-from collections.abc import AsyncGenerator
 
 import pytest
-import pytest_asyncio
 from pydantic import HttpUrl
 
 from home_finder.db.storage import PropertyStorage
@@ -45,14 +43,6 @@ def merged_a(prop_a: Property) -> MergedProperty:
         min_price=1900,
         max_price=1900,
     )
-
-
-@pytest_asyncio.fixture
-async def storage() -> AsyncGenerator[PropertyStorage, None]:
-    s = PropertyStorage(":memory:")
-    await s.initialize()
-    yield s
-    await s.close()
 
 
 class TestDetectAndRecordPriceChange:

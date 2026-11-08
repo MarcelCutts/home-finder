@@ -6,7 +6,7 @@ import json
 import httpx2
 import pytest
 
-from home_finder.analysis import analyzer as quality_module
+from home_finder.analysis import analyzer as analyzer_module
 from home_finder.analysis.analyzer import APIUnavailableError, assess_value
 from home_finder.analysis.listing_text import supported_bills_included
 from home_finder.db import PropertyStorage
@@ -73,17 +73,17 @@ async def test_contradictory_areas_are_withheld_before_evaluation_and_after_rest
 
     async with PropertyStorage(database) as storage:
         await storage.processing.save_pre_analysis_properties([merged], {})
-        async with quality(storage, respond) as model:
+        async with quality(storage, respond) as analyzer:
             with pytest.raises(APIUnavailableError):
-                await model.analyze_single_merged(merged, data_dir=images)
+                await analyzer.analyze_single_merged(merged, data_dir=images)
         checkpoint = (await checkpoint_rows(storage))[0]
         # Paid visual evidence is retained as received, not discarded or mutated.
         assert json.loads(checkpoint["data_json"])["space"]["living_room_sqm"] == 43.8
 
     async with PropertyStorage(database) as storage:
         recovered = (await storage.processing.get_pending_analysis_properties())[0]
-        async with quality(storage, respond) as model:
-            _, result = await model.analyze_single_merged(recovered, data_dir=images)
+        async with quality(storage, respond) as analyzer:
+            _, result = await analyzer.analyze_single_merged(recovered, data_dir=images)
         assert result is not None and result.analysis_failure is None
         assert result.analysis_provenance.visual_input_sha256 == checkpoint["input_sha256"]
         assert result.space.living_room_sqm is None
@@ -125,9 +125,9 @@ async def test_supported_room_area_survives_but_bounding_dimensions_do_not(
 
     async with (
         PropertyStorage(str(tmp_path / "geometry.db")) as storage,
-        quality(storage, respond) as model,
+        quality(storage, respond) as analyzer,
     ):
-        _, result = await model.analyze_single_merged(merged, data_dir=images)
+        _, result = await analyzer.analyze_single_merged(merged, data_dir=images)
     expected = None if basis == "unknown" else 24.0
     assert result.space.living_room_sqm == seen[0]["space"]["living_room_sqm"] == expected
     assert result.space.room_areas[0].area_sqm == expected
@@ -157,9 +157,9 @@ async def test_conflict_without_a_printed_total_withholds_computed_total(
 
     async with (
         PropertyStorage(str(tmp_path / "unprinted.db")) as storage,
-        quality(storage, respond) as model,
+        quality(storage, respond) as analyzer,
     ):
-        _, result = await model.analyze_single_merged(merged, data_dir=images)
+        _, result = await analyzer.analyze_single_merged(merged, data_dir=images)
     assert result.space.total_area_sqm is None
 
 
@@ -170,22 +170,22 @@ async def test_area_contract_change_invalidates_old_visual_checkpoint(tmp_path, 
         calls.append(json.loads(request.content))
         return httpx2.Response(200, json=PHASE1_VISUAL_RESPONSE)
 
-    old_tool = copy.deepcopy(quality_module.VISUAL_ANALYSIS_TOOL)
+    old_tool = copy.deepcopy(analyzer_module.VISUAL_ANALYSIS_TOOL)
     old_space = old_tool["input_schema"]["properties"]["space"]["properties"]
     for field in ("floorplan_total_area_sqm", "area_notes"):
         old_space.pop(field)
     old_space["room_areas"]["items"]["properties"].pop("area_basis")
     async with PropertyStorage(str(tmp_path / "contract.db")) as storage:
         with monkeypatch.context() as legacy:
-            legacy.setattr(quality_module, "VISUAL_ANALYSIS_TOOL", old_tool)
-            async with quality(storage, respond) as model:
-                await model._run_visual_analysis(CONTENT, "fixture:area-contract")
-                old_hash = model._analysis_provenance().visual_output_sha256
+            legacy.setattr(analyzer_module, "VISUAL_ANALYSIS_TOOL", old_tool)
+            async with quality(storage, respond) as analyzer:
+                await analyzer._run_visual_analysis(CONTENT, "fixture:area-contract")
+                old_hash = analyzer._analysis_provenance().visual_output_sha256
             old_key = (await checkpoint_rows(storage))[0]["input_sha256"]
-        async with quality(storage, respond) as model:
-            await model._run_visual_analysis(CONTENT, "fixture:area-contract")
-            await model._run_visual_analysis(CONTENT, "fixture:area-contract")
-            assert model._analysis_provenance().visual_output_sha256 != old_hash
+        async with quality(storage, respond) as analyzer:
+            await analyzer._run_visual_analysis(CONTENT, "fixture:area-contract")
+            await analyzer._run_visual_analysis(CONTENT, "fixture:area-contract")
+            assert analyzer._analysis_provenance().visual_output_sha256 != old_hash
         assert (await checkpoint_rows(storage))[0]["input_sha256"] != old_key
     assert len(calls) == 2
 

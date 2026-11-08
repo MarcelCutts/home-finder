@@ -1,4 +1,4 @@
-"""Tests for connection health check and reconnection logic."""
+"""Storage connection lifecycle: context manager, health check, reconnection and close."""
 
 from __future__ import annotations
 
@@ -10,74 +10,55 @@ import pytest
 from home_finder.db.storage import PropertyStorage
 
 
+@pytest.mark.asyncio
+async def test_context_manager_initializes_and_closes() -> None:
+    storage = PropertyStorage(":memory:")
+    async with storage:
+        cursor = await (await storage._get_connection()).execute("PRAGMA user_version")
+        assert (await cursor.fetchone())[0] > 0
+    assert storage._conn is None
+
+
 class TestReconnectAfterClose:
-    """After close(), _get_connection() should transparently reconnect."""
+    """After close(), _get_connection() transparently reopens the same database file."""
 
     @pytest.mark.asyncio
-    async def test_reconnects_after_close(self) -> None:
-        storage = PropertyStorage(":memory:")
+    async def test_reconnects_to_the_same_database_after_close(
+        self, tmp_path, make_property
+    ) -> None:
+        storage = PropertyStorage(str(tmp_path / "reconnect.db"))
         await storage.initialize()
-
-        # Verify initial connection works
+        prop = make_property()
+        await storage.save_property(prop)
         conn1 = await storage._get_connection()
-        cursor = await conn1.execute("SELECT 1")
-        row = await cursor.fetchone()
-        assert row[0] == 1
 
-        # Close the connection
         await storage.close()
         assert storage._conn is None
 
-        # _get_connection should create a new connection
         conn2 = await storage._get_connection()
-        assert conn2 is not None
         assert conn2 is not conn1
-
-        # New connection should work
-        cursor = await conn2.execute("SELECT 1")
-        row = await cursor.fetchone()
-        assert row[0] == 1
-
+        assert await storage.get_property(prop.unique_id) is not None
         await storage.close()
 
     @pytest.mark.asyncio
-    async def test_pragmas_applied_after_reconnect(self) -> None:
-        storage = PropertyStorage(":memory:")
+    async def test_pragmas_applied_after_reconnect(self, tmp_path) -> None:
+        storage = PropertyStorage(str(tmp_path / "pragmas.db"))
         await storage.initialize()
-
         await storage.close()
 
-        # Reconnect
         conn = await storage._get_connection()
 
-        # Verify PRAGMAs were re-applied
-        cursor = await conn.execute("PRAGMA journal_mode")
-        journal = (await cursor.fetchone())[0]
-        # In-memory databases return "memory" for journal_mode, not "wal"
-        # For file-based DBs this would be "wal". Just verify the PRAGMA ran.
-        assert journal in ("wal", "memory")
+        async def pragma(name: str):
+            cursor = await conn.execute(f"PRAGMA {name}")
+            return (await cursor.fetchone())[0]
 
-        cursor = await conn.execute("PRAGMA busy_timeout")
-        timeout = (await cursor.fetchone())[0]
-        assert timeout == 5000
-
-        cursor = await conn.execute("PRAGMA synchronous")
+        assert await pragma("journal_mode") == "wal"
+        assert await pragma("busy_timeout") == 5000
         # FULL = 2: dispatch reservations must survive a host restart.
-        sync = (await cursor.fetchone())[0]
-        assert sync == 2
-
-        cursor = await conn.execute("PRAGMA cache_size")
-        cache = (await cursor.fetchone())[0]
-        assert cache == -32000
-
-        cursor = await conn.execute("PRAGMA foreign_keys")
-        fk = (await cursor.fetchone())[0]
-        assert fk == 1
-
-        cursor = await conn.execute("PRAGMA temp_store")
-        temp = (await cursor.fetchone())[0]
-        assert temp == 2  # MEMORY
-
+        assert await pragma("synchronous") == 2
+        assert await pragma("cache_size") == -32000
+        assert await pragma("foreign_keys") == 1
+        assert await pragma("temp_store") == 2  # MEMORY
         await storage.close()
 
     @pytest.mark.asyncio
@@ -119,28 +100,23 @@ class TestHealthCheckReconnectsOnFailure:
     """When SELECT 1 fails, the health check should drop the connection."""
 
     @pytest.mark.asyncio
-    async def test_reconnects_when_execute_raises(self) -> None:
-        storage = PropertyStorage(":memory:")
+    async def test_reconnects_to_the_same_database_when_the_probe_fails(
+        self, tmp_path, make_property
+    ) -> None:
+        storage = PropertyStorage(str(tmp_path / "probe.db"))
         await storage.initialize()
+        prop = make_property()
+        await storage.save_property(prop)
 
         # Force the health check to fire by backdating the timestamp
         storage._last_health_check = time.monotonic() - 60
-
-        # Make execute raise to simulate a dead connection
         old_conn = storage._conn
         assert old_conn is not None
         old_conn.execute = AsyncMock(side_effect=OSError("connection lost"))  # type: ignore[method-assign]
 
-        # _get_connection should detect the failure and reconnect
         conn = await storage._get_connection()
         assert conn is not old_conn
-        assert conn is not None
-
-        # New connection should work
-        cursor = await conn.execute("SELECT 1")
-        row = await cursor.fetchone()
-        assert row[0] == 1
-
+        assert await storage.get_property(prop.unique_id) is not None
         await storage.close()
 
     @pytest.mark.asyncio
