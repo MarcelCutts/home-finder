@@ -46,15 +46,15 @@ async def test_transparent_plan_wire_bytes_invalidate_old_visual_checkpoint(tmp_
 
     async with (
         PropertyStorage(str(tmp_path / "normalisation.db")) as storage,
-        quality(storage, respond) as model,
+        quality(storage, respond) as analyzer,
     ):
         url = "https://example.com/floorplan.jpg"
         with patch("home_finder.analysis.analyzer._resize_image_bytes", side_effect=lambda b: b):
-            old_block = await model._build_image_block(url, cached_path=path)
-        await model._run_visual_analysis([old_block], "fixture:plan")
+            old_block = await analyzer._build_image_block(url, cached_path=path)
+        await analyzer._run_visual_analysis([old_block], "fixture:plan")
         old_key = (await checkpoint_rows(storage))[0]["input_sha256"]
 
-        block = await model._build_image_block(url, cached_path=path)
+        block = await analyzer._build_image_block(url, cached_path=path)
         assert block["source"]["media_type"] == "image/png"
         decoded = base64.b64decode(block["source"]["data"])
         with Image.open(BytesIO(decoded)) as image:
@@ -62,10 +62,10 @@ async def test_transparent_plan_wire_bytes_invalidate_old_visual_checkpoint(tmp_
             assert image.getpixel((10, 50)) == (0, 0, 0)
             assert image.getpixel((90, 50)) == (255, 255, 255)
         assert path.read_bytes() == original
-        await model._run_visual_analysis([block], "fixture:plan")
+        await analyzer._run_visual_analysis([block], "fixture:plan")
         assert (await checkpoint_rows(storage))[0]["input_sha256"] != old_key
         # Repeat the same normalised request: reuse its paid observations.
-        await model._run_visual_analysis([block], "fixture:plan")
+        await analyzer._run_visual_analysis([block], "fixture:plan")
 
     assert len(calls) == 2
     assert calls[-1]["messages"][0]["content"] == [block]
@@ -119,10 +119,10 @@ async def test_two_evaluation_outages_then_restart_uses_one_visual_call(
                     else await storage.processing.get_pending_analysis_properties()
                 )
                 recovered = queue[0]
-            async with quality(storage, respond) as model:
+            async with quality(storage, respond) as analyzer:
                 if attempt < 2:
                     with pytest.raises(APIUnavailableError):
-                        await model.analyze_single_merged(recovered, data_dir=images)
+                        await analyzer.analyze_single_merged(recovered, data_dir=images)
                     assert len(await checkpoint_rows(storage)) == 1
                     checkpoint_report = (await storage.spend.report())["visual_checkpoints"]
                     assert len(checkpoint_report) == 1
@@ -133,7 +133,7 @@ async def test_two_evaluation_outages_then_restart_uses_one_visual_call(
                         "created_at",
                     }
                 else:
-                    _, analysis = await model.analyze_single_merged(recovered, data_dir=images)
+                    _, analysis = await analyzer.analyze_single_merged(recovered, data_dir=images)
                     assert analysis and analysis.overall_rating == 4
                     assert analysis.analysis_provenance.visual_input_sha256
                     if refresh:
@@ -246,19 +246,19 @@ async def test_billed_evaluation_failure_still_hits_its_attempt_limit(
 
     async with PropertyStorage(str(tmp_path / "limits.db")) as storage:
         for _ in range(2):
-            async with quality(storage, respond) as model:
-                _, analysis = await model.analyze_single_merged(merged, data_dir=images)
+            async with quality(storage, respond) as analyzer:
+                _, analysis = await analyzer.analyze_single_merged(merged, data_dir=images)
                 assert analysis.analysis_failure.phase == "evaluation"
                 assert analysis.analysis_failure.kind == "truncated"
-        async with quality(storage, respond) as model:
+        async with quality(storage, respond) as analyzer:
             with pytest.raises(SpendDeferred, match="attempt_limit"):
-                await model.analyze_single_merged(merged, data_dir=images)
+                await analyzer.analyze_single_merged(merged, data_dir=images)
         assert calls == {"visual": 1, "evaluation": 2}
         assert len(await checkpoint_rows(storage)) == 1
         assert (await storage.spend.report())["attempts"] == 3
 
 
-@pytest.mark.parametrize("hold", ["uncertain_evaluation", "budget"])
+@pytest.mark.parametrize("hold", ["uncertain_evaluation", "lifetime_limit"])
 async def test_reusing_visual_output_cannot_bypass_evaluation_holds(
     tmp_path, cached_analysis_property, hold
 ):
@@ -274,15 +274,15 @@ async def test_reusing_visual_output_cannot_bypass_evaluation_holds(
         return unavailable()
 
     async with PropertyStorage(str(tmp_path / "holds.db")) as storage:
-        async with quality(storage, respond) as model:
+        async with quality(storage, respond) as analyzer:
             with pytest.raises(APIUnavailableError):
-                await model.analyze_single_merged(merged, data_dir=images)
+                await analyzer.analyze_single_merged(merged, data_dir=images)
         before = await storage.spend.report()
-        budget = policy(lifetime_usd="0.000001") if hold == "budget" else policy()
-        async with quality(storage, respond, budget=budget) as model:
-            reason = "lifetime_limit" if hold == "budget" else "operation_unresolved"
+        spend_policy = policy(lifetime_usd="0.000001") if hold == "lifetime_limit" else policy()
+        async with quality(storage, respond, spend_policy=spend_policy) as analyzer:
+            reason = "lifetime_limit" if hold == "lifetime_limit" else "operation_unresolved"
             with pytest.raises(SpendDeferred, match=reason):
-                await model.analyze_single_merged(merged, data_dir=images)
+                await analyzer.analyze_single_merged(merged, data_dir=images)
         assert len(calls) == 2
         after = await storage.spend.report()
         assert {key: value for key, value in after.items() if key != "as_of"} == {
@@ -303,9 +303,9 @@ async def test_identity_tracks_effective_visual_inputs_only(tmp_path, monkeypatc
 
     content = [image_block("white"), image_block("blue"), {"type": "text", "text": "Rent 2000"}]
     async with PropertyStorage(str(tmp_path / "identity.db")) as storage:
-        async with quality(storage, respond) as model:
-            first = await model._run_visual_analysis(content, "fixture:identity")
-            assert await model._run_visual_analysis(content, "fixture:identity") == first
+        async with quality(storage, respond) as analyzer:
+            first = await analyzer._run_visual_analysis(content, "fixture:identity")
+            assert await analyzer._run_visual_analysis(content, "fixture:identity") == first
         settings = config()
         if change == "bytes":
             content[0] = image_block("red")
@@ -327,8 +327,8 @@ async def test_identity_tracks_effective_visual_inputs_only(tmp_path, monkeypatc
             tool = copy.deepcopy(module.VISUAL_ANALYSIS_TOOL)
             tool["description"] += " Revised contract."
             monkeypatch.setattr(module, "VISUAL_ANALYSIS_TOOL", tool)
-        async with quality(storage, respond, settings=settings) as model:
-            assert await model._run_visual_analysis(content, "fixture:identity") == first
+        async with quality(storage, respond, settings=settings) as analyzer:
+            assert await analyzer._run_visual_analysis(content, "fixture:identity") == first
         assert len(calls) == (1 if change == "evaluation_config" else 2)
         assert len(await checkpoint_rows(storage)) == 1
 
@@ -346,8 +346,8 @@ async def test_corrupt_checkpoint_defers_without_respending(tmp_path, corrupt, r
         return httpx2.Response(200, json=PHASE1_VISUAL_RESPONSE)
 
     async with PropertyStorage(str(tmp_path / "corrupt.db")) as storage:
-        async with quality(storage, respond) as model:
-            await model._run_visual_analysis(CONTENT, "fixture:corrupt")
+        async with quality(storage, respond) as analyzer:
+            await analyzer._run_visual_analysis(CONTENT, "fixture:corrupt")
             if reconciled:
                 attempt = (await checkpoint_rows(storage))[0]["attempt_id"]
                 await storage.spend.reconcile(
@@ -372,7 +372,7 @@ async def test_corrupt_checkpoint_defers_without_respending(tmp_path, corrupt, r
                            json_set(settlement_json, '$.result', 'truncated')"""
                     )
             with pytest.raises(SpendDeferred, match="visual_checkpoint_invalid"):
-                await model._run_visual_analysis(CONTENT, "fixture:corrupt")
+                await analyzer._run_visual_analysis(CONTENT, "fixture:corrupt")
         assert len(calls) == 1
         assert (await storage.spend.report())["attempts"] == 1
 
@@ -385,8 +385,8 @@ async def test_confirmation_above_reservation_blocks_checkpoint_reuse(tmp_path):
         return httpx2.Response(200, json=PHASE1_VISUAL_RESPONSE)
 
     async with PropertyStorage(str(tmp_path / "over-reservation.db")) as storage:
-        async with quality(storage, respond) as model:
-            await model._run_visual_analysis(CONTENT, "fixture:over-reservation")
+        async with quality(storage, respond) as analyzer:
+            await analyzer._run_visual_analysis(CONTENT, "fixture:over-reservation")
             attempt = (await checkpoint_rows(storage))[0]["attempt_id"]
             async with storage._read_connection() as conn:
                 receipt = await storage.spend._attempt(conn, attempt)
@@ -398,7 +398,7 @@ async def test_confirmation_above_reservation_blocks_checkpoint_reuse(tmp_path):
                 ),
             )
             with pytest.raises(SpendDeferred, match="visual_checkpoint_invalid"):
-                await model._run_visual_analysis(CONTENT, "fixture:over-reservation")
+                await analyzer._run_visual_analysis(CONTENT, "fixture:over-reservation")
         assert len(calls) == 1
         report = await storage.spend.report()
         assert report["attempts"] == report["over_reservation_count"] == 1
@@ -417,10 +417,10 @@ async def test_confirmed_unknown_attempt_cannot_back_a_visual_checkpoint(
         raise httpx2.ReadTimeout("fixture", request=request)
 
     async with PropertyStorage(str(tmp_path / "confirmed-unknown.db")) as storage:
-        async with quality(storage, respond) as model:
-            await model._run_visual_analysis(CONTENT, "fixture:unknown")
+        async with quality(storage, respond) as analyzer:
+            await analyzer._run_visual_analysis(CONTENT, "fixture:unknown")
             with pytest.raises(APIUnavailableError):
-                await model._run_visual_analysis(
+                await analyzer._run_visual_analysis(
                     [{"type": "text", "text": "Changed visual request"}], "fixture:unknown"
                 )
             attempt = (await storage.spend.report())["unresolved"][0]["attempt_id"]
@@ -438,7 +438,7 @@ async def test_confirmed_unknown_attempt_cannot_back_a_visual_checkpoint(
             async with storage._transaction() as conn:
                 await conn.execute("UPDATE visual_checkpoints SET attempt_id=?", (attempt,))
             with pytest.raises(SpendDeferred, match="visual_checkpoint_invalid"):
-                await model._run_visual_analysis(CONTENT, "fixture:unknown")
+                await analyzer._run_visual_analysis(CONTENT, "fixture:unknown")
         assert len(calls) == 2
         report = await storage.spend.report()
         assert report["attempts"] == 2 and report["held_nanousd"] == 0
@@ -456,14 +456,14 @@ async def test_failed_checkpoint_write_keeps_charge_unresolved_and_blocks_redisp
             await conn.execute("""CREATE TRIGGER checkpoint_failure
                 BEFORE INSERT ON visual_checkpoints
                 BEGIN SELECT RAISE(ABORT, 'fixture checkpoint failure'); END""")
-        async with quality(storage, respond) as model:
+        async with quality(storage, respond) as analyzer:
             with pytest.raises(APIUnavailableError, match="ledger_unavailable"):
-                await model._run_visual_analysis(CONTENT, "fixture:atomic")
+                await analyzer._run_visual_analysis(CONTENT, "fixture:atomic")
         assert await checkpoint_rows(storage) == []
         assert (await storage.spend.report())["unresolved"][0]["state"] == "dispatched"
-        async with quality(storage, respond) as model:
+        async with quality(storage, respond) as analyzer:
             with pytest.raises(SpendDeferred, match="operation_unresolved"):
-                await model._run_visual_analysis(CONTENT, "fixture:atomic")
+                await analyzer._run_visual_analysis(CONTENT, "fixture:atomic")
         assert len(calls) == 1
 
 
@@ -487,8 +487,8 @@ async def test_cancellation_after_response_finishes_both_receipt_and_checkpoint(
             await original(*args, **kwargs)
 
         monkeypatch.setattr(storage.spend, "settle_usage", settle)
-        async with quality(storage, respond) as model:
-            task = asyncio.create_task(model._run_visual_analysis(CONTENT, "fixture:cancel"))
+        async with quality(storage, respond) as analyzer:
+            task = asyncio.create_task(analyzer._run_visual_analysis(CONTENT, "fixture:cancel"))
             await asyncio.wait_for(reached.wait(), timeout=5)
             task.cancel()
             finish.set()
@@ -496,7 +496,7 @@ async def test_cancellation_after_response_finishes_both_receipt_and_checkpoint(
                 await task
             assert len(await checkpoint_rows(storage)) == 1
             assert (await storage.spend.report())["held_nanousd"] == 0
-            await model._run_visual_analysis(CONTENT, "fixture:cancel")
+            await analyzer._run_visual_analysis(CONTENT, "fixture:cancel")
             assert len(calls) == 1
 
 
@@ -515,11 +515,11 @@ async def test_old_completion_does_not_consume_checkpoint_for_changed_inputs(
 
     async with PropertyStorage(str(tmp_path / "completion.db")) as storage:
         await storage.processing.save_pre_analysis_properties([merged], {})
-        async with quality(storage, respond) as model:
-            _, analysis = await model.analyze_single_merged(merged, data_dir=images)
-            await model._run_visual_analysis(CONTENT, merged.unique_id)
+        async with quality(storage, respond) as analyzer:
+            _, analysis = await analyzer.analyze_single_merged(merged, data_dir=images)
+            await analyzer._run_visual_analysis(CONTENT, merged.unique_id)
             new_key = visual_input_key(
-                merged.unique_id, model._visual_request(CONTENT), model._analysis_provenance()
+                merged.unique_id, analyzer._visual_request(CONTENT), analyzer._analysis_provenance()
             )
         await storage.processing.complete_analysis(merged.unique_id, analysis)
         assert (await checkpoint_rows(storage))[0]["input_sha256"] == new_key

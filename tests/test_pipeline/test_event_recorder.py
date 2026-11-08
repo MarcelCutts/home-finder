@@ -1,19 +1,9 @@
 """Tests for the property event recorder (buffered diagnostics)."""
 
-from collections.abc import AsyncGenerator
-
 import pytest_asyncio
 
 from home_finder.db.storage import PropertyStorage
 from home_finder.pipeline.event_recorder import EventRecorder, PropertyEvent
-
-
-@pytest_asyncio.fixture
-async def storage() -> AsyncGenerator[PropertyStorage, None]:
-    s = PropertyStorage(":memory:")
-    await s.initialize()
-    yield s
-    await s.close()
 
 
 @pytest_asyncio.fixture

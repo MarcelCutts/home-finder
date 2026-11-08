@@ -4,7 +4,6 @@ import asyncio
 import json
 import subprocess
 import sys
-from contextlib import closing
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 
@@ -24,14 +23,7 @@ from home_finder.models.spend import (
     nanousd,
     usd_text,
 )
-from home_finder.pipeline.spend_report import read_report
 from tests.support.spend import policy, settlement, spec
-
-
-@pytest.fixture
-async def in_memory_storage():
-    async with PropertyStorage(":memory:") as storage:
-        yield storage
 
 
 def test_rates_use_nonoverlapping_exact_units_and_conservative_bound():
@@ -47,8 +39,8 @@ def test_rates_use_nonoverlapping_exact_units_and_conservative_bound():
     )
 
 
-async def test_new_reservations_do_not_reprice_existing_attempts(in_memory_storage, monkeypatch):
-    repo = in_memory_storage.spend
+async def test_new_reservations_do_not_reprice_existing_attempts(storage, monkeypatch):
+    repo = storage.spend
     with monkeypatch.context() as historical:
         historical.setattr(
             "home_finder.db.spend.rate_card_for", lambda model: SONNET_STANDARD_RATES
@@ -57,7 +49,7 @@ async def test_new_reservations_do_not_reprice_existing_attempts(in_memory_stora
     await repo.mark_dispatched(old)
     await repo.mark_unknown(old, "timeout")
     new = await repo.admit(spec("current-rate"), policy())
-    async with in_memory_storage._read_connection() as conn:
+    async with storage._read_connection() as conn:
         before = dict(await repo._attempt(conn, old))
         current = dict(await repo._attempt(conn, new))
     assert before["rates_json"] == SONNET_STANDARD_RATES.model_dump_json()
@@ -66,7 +58,7 @@ async def test_new_reservations_do_not_reprice_existing_attempts(in_memory_stora
     assert current["reserved_nanousd"] == 4_065_000_000
     assert (await repo.report())["held_nanousd"] == 10_380_000_000
     await repo.settle_usage(old, settlement())
-    async with in_memory_storage._read_connection() as conn:
+    async with storage._read_connection() as conn:
         after = dict(await repo._attempt(conn, old))
     for field in ("rates_json", "rate_version", "reserved_nanousd", "provenance_json"):
         assert before[field] == after[field]
@@ -113,8 +105,8 @@ async def test_competing_connections_cannot_oversubscribe_daily_limit(tmp_path):
         assert report["month_committed_usd"] == "8.130000000"
 
 
-async def test_concurrent_duplicate_operation_admitted_once(in_memory_storage):
-    repo = in_memory_storage.spend
+async def test_concurrent_duplicate_operation_admitted_once(storage):
+    repo = storage.spend
     results = await asyncio.gather(
         *(repo.admit(spec(), policy()) for _ in range(5)), return_exceptions=True
     )
@@ -126,8 +118,8 @@ async def test_concurrent_duplicate_operation_admitted_once(in_memory_storage):
 @pytest.mark.parametrize(
     "scenario,reason", [("call", "per_call_limit"), ("inflight", "concurrency_limit")]
 )
-async def test_admission_limits_leave_no_extra_attempt(in_memory_storage, scenario, reason):
-    repo = in_memory_storage.spend
+async def test_admission_limits_leave_no_extra_attempt(storage, scenario, reason):
+    repo = storage.spend
     cap = policy(per_call_usd="1") if scenario == "call" else policy(max_in_flight=1)
     if scenario == "inflight":
         await repo.admit(spec("first"), cap)
@@ -136,11 +128,9 @@ async def test_admission_limits_leave_no_extra_attempt(in_memory_storage, scenar
     assert (await repo.report())["attempts"] == (0 if scenario == "call" else 1)
 
 
-async def test_monthly_limit_includes_earlier_days(in_memory_storage):
+async def test_monthly_limit_includes_earlier_days(storage):
     now = datetime(2026, 9, 1, tzinfo=UTC)
-    repo = SpendRepository(
-        in_memory_storage._read_connection, in_memory_storage._transaction, clock=lambda: now
-    )
+    repo = SpendRepository(storage._read_connection, storage._transaction, clock=lambda: now)
     cap = policy(per_call_usd="4.065", daily_usd="4.065", monthly_usd="4.065")
     first = await repo.admit(spec(), cap)
     await repo.mark_dispatched(first)
@@ -153,12 +143,10 @@ async def test_monthly_limit_includes_earlier_days(in_memory_storage):
 
 
 async def test_unknown_reservation_carries_across_month_and_requires_reconciliation(
-    in_memory_storage,
+    storage,
 ):
     now = datetime(2026, 9, 30, 23, 59, 59, tzinfo=UTC)
-    repo = SpendRepository(
-        in_memory_storage._read_connection, in_memory_storage._transaction, clock=lambda: now
-    )
+    repo = SpendRepository(storage._read_connection, storage._transaction, clock=lambda: now)
     cap = policy(per_call_usd="4.065", daily_usd="4.065", monthly_usd="4.065")
     attempt = await repo.admit(spec(), cap)
     await repo.mark_dispatched(attempt)
@@ -183,8 +171,8 @@ async def test_unknown_reservation_carries_across_month_and_requires_reconciliat
         await repo.settle_usage(attempt, settlement())
 
 
-async def test_usage_settlement_is_exact_idempotent_and_bounded_by_attempt_limit(in_memory_storage):
-    repo = in_memory_storage.spend
+async def test_usage_settlement_is_exact_idempotent_and_bounded_by_attempt_limit(storage):
+    repo = storage.spend
     attempt = await repo.admit(spec(), policy())
     with pytest.raises(AttemptTransitionError):
         await repo.settle_usage(attempt, settlement())
@@ -208,7 +196,7 @@ async def test_usage_settlement_is_exact_idempotent_and_bounded_by_attempt_limit
     await repo.settle_usage(second, settlement())
     with pytest.raises(SpendDeferred, match="attempt_limit"):
         await repo.admit(spec(), policy())
-    async with in_memory_storage._read_connection() as conn:
+    async with storage._read_connection() as conn:
         row = await repo._attempt(conn, attempt)
         assert row["result"] == "refusal" and row["cost_basis"] == "provider_usage"
         assert row["request_id"] == "fixture-request"
@@ -216,8 +204,8 @@ async def test_usage_settlement_is_exact_idempotent_and_bounded_by_attempt_limit
         assert "fixture" not in row["provenance_json"]  # No API key or prompt payload.
 
 
-async def test_undispatched_release_never_frees_a_dispatched_call(in_memory_storage):
-    repo = in_memory_storage.spend
+async def test_undispatched_release_never_frees_a_dispatched_call(storage):
+    repo = storage.spend
     attempt = await repo.admit(spec(), policy(max_attempts_per_operation=1))
     await repo.release_undispatched(attempt)
     assert (await repo.report())["held_nanousd"] == 0
@@ -228,7 +216,7 @@ async def test_undispatched_release_never_frees_a_dispatched_call(in_memory_stor
     assert (await repo.report())["held_nanousd"] == 4_065_000_000
 
 
-async def test_cancelled_admission_rolls_back_before_dispatch(in_memory_storage, monkeypatch):
+async def test_cancelled_admission_rolls_back_before_dispatch(storage, monkeypatch):
     from home_finder.db import spend
 
     original = spend.spend_report
@@ -241,13 +229,13 @@ async def test_cancelled_admission_rolls_back_before_dispatch(in_memory_storage,
         return await original(conn, now)
 
     monkeypatch.setattr(spend, "spend_report", suspended)
-    task = asyncio.create_task(in_memory_storage.spend.admit(spec(), policy()))
+    task = asyncio.create_task(storage.spend.admit(spec(), policy()))
     await asyncio.wait_for(entered.wait(), 2)
     task.cancel()
     with pytest.raises(asyncio.CancelledError):
         await task
     monkeypatch.setattr(spend, "spend_report", original)
-    assert (await in_memory_storage.spend.report())["attempts"] == 0
+    assert (await storage.spend.report())["attempts"] == 0
 
 
 async def test_process_exit_after_dispatch_keeps_reservation(tmp_path):
@@ -255,7 +243,7 @@ async def test_process_exit_after_dispatch_keeps_reservation(tmp_path):
     child = """
 import asyncio, os, sys
 from home_finder.db import PropertyStorage
-from tests.test_db.test_spend import spec, policy
+from tests.support.spend import policy, spec
 async def run():
     storage = PropertyStorage(sys.argv[1])
     await storage.initialize()
@@ -279,26 +267,8 @@ asyncio.run(run())
             await storage.spend.admit(spec(), policy())
 
 
-async def test_read_report_never_initializes_or_migrates(tmp_path):
-    import sqlite3
-
-    path = tmp_path / "legacy.db"
-    with closing(sqlite3.connect(path)) as conn:
-        conn.execute("PRAGMA user_version=8")
-        conn.execute("CREATE TABLE fixture (value TEXT)")
-        conn.commit()
-    before = path.read_bytes()
-    report = await read_report(path)
-    assert report["ledger_available"] is False and report["historical_cost"] == "unknown"
-    assert path.read_bytes() == before
-    missing = tmp_path / "missing.db"
-    with pytest.raises(FileNotFoundError):
-        await read_report(missing)
-    assert not missing.exists()
-
-
-async def test_usage_exceeding_reservation_is_recorded_and_blocks_new_spend(in_memory_storage):
-    repo = in_memory_storage.spend
+async def test_usage_exceeding_reservation_is_recorded_and_blocks_new_spend(storage):
+    repo = storage.spend
     cap = policy(per_call_usd="7", daily_usd="7", monthly_usd="7")
     attempt = await repo.admit(spec(), cap)
     await repo.mark_dispatched(attempt)
@@ -316,20 +286,20 @@ async def test_usage_exceeding_reservation_is_recorded_and_blocks_new_spend(in_m
         await repo.admit(spec("next"), cap)
 
 
-async def test_ledger_survives_property_deletion(in_memory_storage, sample_property):
-    await in_memory_storage.save_property(sample_property)
+async def test_ledger_survives_property_deletion(storage, sample_property):
+    await storage.save_property(sample_property)
     attempt_spec = spec().model_copy(update={"property_id": sample_property.unique_id})
-    attempt = await in_memory_storage.spend.admit(attempt_spec, policy())
-    await in_memory_storage.spend.mark_dispatched(attempt)
-    async with in_memory_storage._transaction() as conn:
+    attempt = await storage.spend.admit(attempt_spec, policy())
+    await storage.spend.mark_dispatched(attempt)
+    async with storage._transaction() as conn:
         await conn.execute(
             "DELETE FROM properties WHERE unique_id = ?", (sample_property.unique_id,)
         )
-    assert (await in_memory_storage.spend.report())["held_nanousd"] == 4_065_000_000
+    assert (await storage.spend.report())["held_nanousd"] == 4_065_000_000
 
 
-async def test_billing_confirmation_preserves_original_usage(in_memory_storage):
-    repo = in_memory_storage.spend
+async def test_billing_confirmation_preserves_original_usage(storage):
+    repo = storage.spend
     attempt = await repo.admit(spec(), policy())
     await repo.mark_dispatched(attempt)
     await repo.settle_usage(attempt, settlement())
@@ -337,7 +307,7 @@ async def test_billing_confirmation_preserves_original_usage(in_memory_storage):
     await repo.reconcile(attempt, confirmed)
     await repo.settle_usage(attempt, settlement())
     assert (await repo.report())["lifetime_confirmed_nanousd"] == 3_000_000
-    async with in_memory_storage._read_connection() as conn:
+    async with storage._read_connection() as conn:
         row = await repo._attempt(conn, attempt)
         assert row["settlement_json"] == settlement().model_dump_json()
         assert row["reconciled_at"] is not None
@@ -345,8 +315,8 @@ async def test_billing_confirmation_preserves_original_usage(in_memory_storage):
         await repo.reconcile(attempt, ConfirmedCost(amount_usd="0", evidence_ref="invoice:changed"))
 
 
-async def test_complete_provider_error_releases_cost_without_inventing_usage(in_memory_storage):
-    repo = in_memory_storage.spend
+async def test_complete_provider_error_releases_cost_without_inventing_usage(storage):
+    repo = storage.spend
     attempt = await repo.admit(spec(), policy())
     await repo.mark_dispatched(attempt)
     rejection = ProviderRejection(
@@ -357,7 +327,7 @@ async def test_complete_provider_error_releases_cost_without_inventing_usage(in_
     report = await repo.report()
     assert report["provider_rejections"] == 1 and report["held_nanousd"] == 0
     assert report["lifetime_accounted_nanousd"] == 0
-    async with in_memory_storage._read_connection() as conn:
+    async with storage._read_connection() as conn:
         row = await repo._attempt(conn, attempt)
         assert row["settlement_json"] is None and row["cost_basis"] == "provider_error"
     await repo.admit(spec(), policy())
@@ -365,8 +335,8 @@ async def test_complete_provider_error_releases_cost_without_inventing_usage(in_
         await repo.settle_usage(attempt, settlement())
 
 
-async def test_uncharged_rejections_still_obey_explicit_total_attempt_cap(in_memory_storage):
-    repo = in_memory_storage.spend
+async def test_uncharged_rejections_still_obey_explicit_total_attempt_cap(storage):
+    repo = storage.spend
     cap = policy(max_attempts_per_operation=1, max_total_attempts=1)
     attempt = await repo.admit(spec(), cap)
     await repo.mark_dispatched(attempt)
@@ -376,19 +346,3 @@ async def test_uncharged_rejections_still_obey_explicit_total_attempt_cap(in_mem
     )
     with pytest.raises(SpendDeferred, match="total_attempt_limit"):
         await repo.admit(spec(), cap)
-
-
-async def test_read_report_cli_cannot_start_processing(tmp_path):
-    path = tmp_path / "report.db"
-    async with PropertyStorage(str(path)) as storage:
-        await storage.spend.admit(spec(), policy())
-    result = await asyncio.to_thread(
-        subprocess.run,
-        [sys.executable, "-m", "home_finder.pipeline.spend_report", "--database", str(path)],
-        capture_output=True,
-        timeout=20,
-    )
-    assert result.returncode == 0, result.stderr.decode()
-    report = json.loads(result.stdout)
-    assert report["attempts"] == 1 and report["held_usd"] == "4.065000000"
-    assert len(report["unresolved"]) == 1

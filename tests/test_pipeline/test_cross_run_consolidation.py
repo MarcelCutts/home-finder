@@ -4,16 +4,9 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from home_finder.db import PropertyStorage
 from home_finder.matching.deduplication import Deduplicator
 from home_finder.models import NotificationStatus, PropertySource
 from home_finder.pipeline.matching import consolidate_candidates
-
-
-@pytest.fixture
-async def storage():
-    async with PropertyStorage(":memory:") as db:
-        yield db
 
 
 @pytest.fixture

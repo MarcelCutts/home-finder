@@ -26,12 +26,12 @@ def unavailable():
     )
 
 
-def quality(storage, respond, *, settings=None, budget=None):
+def quality(storage, respond, *, settings=None, spend_policy=None):
     return PropertyQualityAnalyzer(
         "fixture",
         analysis_config=settings or config(),
         spend_repository=storage.spend,
-        spend_policy=budget or policy(),
+        spend_policy=spend_policy or policy(),
         http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(respond)),
     )
 

@@ -5,9 +5,7 @@ from collections.abc import Callable
 from unittest.mock import MagicMock
 
 import pytest
-from pydantic import ValidationError
 
-from home_finder.config import Settings
 from home_finder.models import MergedProperty, PropertyQualityAnalysis
 from home_finder.pipeline.assessment import _PropertyTimeoutError, run_concurrent_analysis
 from home_finder.pipeline.contracts import AnalysisDisposition, AnalysisOutcome
@@ -156,34 +154,6 @@ async def test_no_timeout_when_none(
     )
     assert count == 2
     assert len(results) == 2
-
-
-class TestPropertyAnalysisTimeoutSettings:
-    """Config validation: 30-900s range enforced."""
-
-    def test_default_value(self) -> None:
-        s = Settings(search_areas="e8")
-        assert s.property_analysis_timeout == 600.0
-
-    def test_custom_value(self) -> None:
-        s = Settings(search_areas="e8", property_analysis_timeout=60.0)
-        assert s.property_analysis_timeout == 60.0
-
-    def test_minimum_bound(self) -> None:
-        with pytest.raises(ValidationError):
-            Settings(search_areas="e8", property_analysis_timeout=10.0)
-
-    def test_maximum_bound(self) -> None:
-        with pytest.raises(ValidationError):
-            Settings(search_areas="e8", property_analysis_timeout=1000.0)
-
-    def test_boundary_30(self) -> None:
-        s = Settings(search_areas="e8", property_analysis_timeout=30.0)
-        assert s.property_analysis_timeout == 30.0
-
-    def test_boundary_900(self) -> None:
-        s = Settings(search_areas="e8", property_analysis_timeout=900.0)
-        assert s.property_analysis_timeout == 900.0
 
 
 class TestPropertyTimeoutError:

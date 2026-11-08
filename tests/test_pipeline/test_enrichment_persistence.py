@@ -32,7 +32,6 @@ async def test_scraped_area_survives_prequeue_enrichment_and_analysis_restart(
     settings = Settings(
         _env_file=None,
         database_path=str(tmp_path / "area.db"),
-        data_dir="",
         enable_quality_filter=False,
     )
     raw = make_merged_property(sources=(PropertySource.RIGHTMOVE,))
@@ -83,7 +82,6 @@ async def test_dropped_merged_home_recovers_every_accepted_source_and_enriched_f
     settings = Settings(
         _env_file=None,
         database_path=str(tmp_path / "dropped.db"),
-        data_dir="",
         require_floorplan=True,
     )
     first_seen = datetime.now(UTC) - timedelta(days=1)

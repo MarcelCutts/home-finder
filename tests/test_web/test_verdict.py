@@ -1,4 +1,4 @@
-"""Tests for the fits / watch out / find out lists that lead the listing page."""
+"""The fits / watch out / find out lists that lead the detail page (build_verdict)."""
 
 import pytest
 

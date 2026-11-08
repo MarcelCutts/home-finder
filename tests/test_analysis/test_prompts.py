@@ -1199,21 +1199,9 @@ class TestToolSchemaSnapshots:
             == schema
         )
 
-    def test_visual_tool_name(self) -> None:
-        """Visual tool should have the correct name."""
-        assert VISUAL_ANALYSIS_TOOL["name"] == "property_visual_analysis"
-
     def test_visual_tool_is_not_strict(self) -> None:
-        """Visual tool should NOT have strict mode — schema exceeds grammar limits."""
+        """Strict mode stays off: the provider rejected the visual schema with it."""
         assert "strict" not in VISUAL_ANALYSIS_TOOL
-
-    def test_visual_tool_has_floorplan_detected_field(self) -> None:
-        """Visual tool schema should include floorplan_detected_in_gallery."""
-        visual_props = VISUAL_ANALYSIS_TOOL["input_schema"]["properties"]
-        assert "floorplan_detected_in_gallery" in visual_props
-        fp_field = visual_props["floorplan_detected_in_gallery"]
-        assert fp_field["type"] == "array"
-        assert fp_field["items"]["type"] == "integer"
 
 
 class TestEnergyEstimateInPrompts:

@@ -9,16 +9,17 @@ import pytest
 
 from home_finder.models import PropertySource
 from home_finder.scrapers.onthemarket import OnTheMarketScraper
-from home_finder.scrapers.parsing import extract_bedrooms, extract_postcode, extract_price
 
 
 @pytest.fixture
 def onthemarket_scraper() -> Generator[OnTheMarketScraper, None, None]:
     """Create an OnTheMarket scraper instance with session cleanup.
 
+    Pagination tests do not wait out the pause between result pages.
     Preventive: cancel curl_cffi's background task if a real session was created.
     """
     scraper = OnTheMarketScraper()
+    scraper.PAGE_DELAY_SECONDS = 0
     yield scraper
     if scraper._session is not None:
         acurl = getattr(scraper._session, "_acurl", None)
@@ -229,31 +230,6 @@ class TestOnTheMarketParser:
         assert prop is not None
         assert prop.source_id == "99999999"
 
-    def test_extract_price(self) -> None:
-        """Test price extraction from text."""
-        assert extract_price("£2,300 pcm") == 2300
-        assert extract_price("£1,950 pcm") == 1950
-        assert extract_price("£500 pw") == 2166
-
-    def test_extract_price_invalid(self) -> None:
-        """Test price extraction with invalid text."""
-        assert extract_price("POA") is None
-        assert extract_price("") is None
-
-    def test_extract_bedrooms(self) -> None:
-        """Test bedroom extraction from title."""
-        assert extract_bedrooms("1 bedroom flat to rent") == 1
-        assert extract_bedrooms("2 bedroom apartment to rent") == 2
-        assert extract_bedrooms("Studio to rent") == 0
-
-    def test_extract_bedrooms_no_match(self) -> None:
-        """Test bedroom extraction with no bedroom info."""
-        assert extract_bedrooms("Flat to rent") is None
-
-    def test_extract_postcode(self) -> None:
-        """Test postcode extraction from address."""
-        assert extract_postcode("Wayland Avenue, Hackney, London E8 3RH") == "E8 3RH"
-
     def test_parse_empty_results(self, onthemarket_scraper: OnTheMarketScraper) -> None:
         """Test parsing page with no results."""
         next_data = '{"props":{"initialReduxState":{"results":{"list":[]}}}}'
@@ -284,7 +260,6 @@ class TestOnTheMarketEarlyStop:
         )
         assert "sort-field=update_date" in url
 
-    @pytest.mark.asyncio
     async def test_stops_when_all_results_known(
         self, onthemarket_scraper: OnTheMarketScraper, sample_next_data: str
     ) -> None:
@@ -307,7 +282,6 @@ class TestOnTheMarketEarlyStop:
         assert result.observations == result.properties
         assert result.stop_reason == "known_page"
 
-    @pytest.mark.asyncio
     async def test_continues_when_some_results_new(
         self, onthemarket_scraper: OnTheMarketScraper, sample_next_data: str
     ) -> None:

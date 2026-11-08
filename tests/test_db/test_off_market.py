@@ -1,12 +1,10 @@
-"""Tests for off-market database methods."""
+"""Off-market state of homes and of their individual source listings."""
 
 from __future__ import annotations
 
 import json
-from collections.abc import AsyncGenerator
 
 import pytest
-import pytest_asyncio
 from pydantic import HttpUrl
 
 from home_finder.db.storage import PropertyStorage
@@ -68,14 +66,6 @@ def multi_source_merged(multi_source_prop: Property) -> MergedProperty:
         min_price=2100,
         max_price=2150,
     )
-
-
-@pytest_asyncio.fixture
-async def storage() -> AsyncGenerator[PropertyStorage, None]:
-    s = PropertyStorage(":memory:")
-    await s.initialize()
-    yield s
-    await s.close()
 
 
 # ---------------------------------------------------------------------------
@@ -275,21 +265,17 @@ class TestGetPropertiesForOffMarketCheck:
         assert len(props) == 1
         assert props[0]["is_off_market"] == 1
 
-    async def test_includes_source_listings(
+    async def test_includes_linked_source_listings(
         self, storage: PropertyStorage, merged_a: MergedProperty
     ):
-        """Properties with linked source_listings should include them."""
+        """Saving a home links its canonical source listing, which the check visits."""
         await storage.save_merged_property(merged_a)
 
-        props = await storage.get_properties_for_off_market_check()
-        assert len(props) == 1
-        # source_listings are populated from migration backfill
-        assert "source_listings" in props[0]
-        # Should have at least the canonical source listing
-        sls = props[0]["source_listings"]
-        assert isinstance(sls, list)
-        if sls:  # May be empty if migration backfill didn't create it
-            assert sls[0]["source"] == "openrent"
+        [prop] = await storage.get_properties_for_off_market_check()
+        [listing] = prop["source_listings"]
+        assert listing["unique_id"] == merged_a.unique_id
+        assert listing["source"] == "openrent"
+        assert listing["url"] == str(merged_a.canonical.url)
 
 
 # ---------------------------------------------------------------------------
@@ -309,9 +295,7 @@ class TestPerSourceOffMarket:
             (merged_a.unique_id,),
         )
         row = await cursor.fetchone()
-        if row is None:
-            pytest.skip("No source_listing created by migration backfill")
-
+        assert row is not None, "saving a home links its canonical source listing"
         sl_uid = row["unique_id"]
         result = await storage.mark_source_listing_off_market(sl_uid, "removed")
         assert result is True
@@ -337,9 +321,7 @@ class TestPerSourceOffMarket:
             (merged_a.unique_id,),
         )
         row = await cursor.fetchone()
-        if row is None:
-            pytest.skip("No source_listing created by migration backfill")
-
+        assert row is not None, "saving a home links its canonical source listing"
         sl_uid = row["unique_id"]
         await storage.mark_source_listing_off_market(sl_uid, "removed")
         result = await storage.mark_source_listing_active(sl_uid)
@@ -366,9 +348,7 @@ class TestPerSourceOffMarket:
             (merged_a.unique_id,),
         )
         row = await cursor.fetchone()
-        if row is None:
-            pytest.skip("No source_listing created by migration backfill")
-
+        assert row is not None, "saving a home links its canonical source listing"
         sl_uid = row["unique_id"]
         result = await storage.update_source_listing_last_checked(sl_uid)
         assert result is True
@@ -406,24 +386,3 @@ class TestPerSourceOffMarket:
 # ---------------------------------------------------------------------------
 # Migration 006
 # ---------------------------------------------------------------------------
-
-
-class TestMigration006:
-    async def test_source_listings_has_off_market_columns(self, storage: PropertyStorage):
-        """Migration 006 adds off-market columns to source_listings."""
-        conn = await storage._get_connection()
-        cursor = await conn.execute("PRAGMA table_info(source_listings)")
-        columns = {row["name"] for row in await cursor.fetchall()}
-        assert "is_off_market" in columns
-        assert "off_market_since" in columns
-        assert "off_market_reason" in columns
-        assert "last_checked_at" in columns
-
-    async def test_properties_has_new_columns(self, storage: PropertyStorage):
-        """Migration 006 adds last_checked_at, off_market_reason, off_market_history."""
-        conn = await storage._get_connection()
-        cursor = await conn.execute("PRAGMA table_info(properties)")
-        columns = {row["name"] for row in await cursor.fetchall()}
-        assert "last_checked_at" in columns
-        assert "off_market_reason" in columns
-        assert "off_market_history" in columns

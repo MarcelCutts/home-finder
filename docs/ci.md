@@ -21,3 +21,11 @@ environment is ready. Merging code does not deploy it.
 This CI bootstrap changes no application behaviour, database schema, product
 scope, or agent execution queue. Runtime dependency upgrades and owner access
 remain separate reviewed changes.
+
+Offline test runs produce `test-results/offline-profile.json` and JUnit results,
+retained in the `test-observability` artifact alongside the existing separate
+`coverage` artifact. The timing summary separates setup, call, and teardown and
+includes worker/host context. Compare identical worker counts, coverage settings,
+and Hypothesis profiles before attributing a wall-time change to the application;
+shared-runner load can vary. The [test guide](../tests/README.md#performance-evidence)
+explains local profiling and the limits of these measurements.

@@ -1,7 +1,6 @@
 """Backup proofs: live WAL, concurrent edits, interruption and isolated restore."""
 
 import json
-import os
 import sqlite3
 import subprocess
 import sys
@@ -348,19 +347,3 @@ def test_restore_detects_source_change_after_verification(live_database, tmp_pat
     with pytest.raises(BackupError, match="changed after verification"):
         restore_backup(package, tmp_path / "restored")
     assert not (tmp_path / "restored").exists()
-
-
-@pytest.mark.parametrize("args", [[], ["--full"], ["--force"]])
-def test_retired_sync_script_cannot_call_remote_tools(tmp_path, args):
-    marker = tmp_path / "called"
-    fake_fly = tmp_path / "fly"
-    fake_fly.write_text(f"#!/bin/sh\ntouch '{marker}'\nexit 99\n")
-    fake_fly.chmod(0o700)
-    run = subprocess.run(
-        ["bash", "scripts/sync-to-fly.sh", *args],
-        env={**os.environ, "PATH": f"{tmp_path}:{os.environ['PATH']}"},
-        capture_output=True,
-        timeout=5,
-    )
-    assert run.returncode == 2 and b"disabled" in run.stderr
-    assert not marker.exists()

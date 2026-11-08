@@ -348,7 +348,6 @@ class TestOpenRentParser:
 class TestOpenRentScraperIntegration:
     """Integration tests for OpenRent scraper (with mocked HTTP)."""
 
-    @pytest.mark.asyncio
     async def test_scrape_returns_properties(
         self, openrent_scraper: OpenRentScraper, openrent_search_html: str
     ) -> None:
@@ -398,7 +397,6 @@ class TestOpenRentNoEarlyStop:
         )
         assert "sortType" not in url
 
-    @pytest.mark.asyncio
     async def test_does_not_early_stop_even_when_all_known(
         self, openrent_scraper: OpenRentScraper, openrent_search_html: str
     ) -> None:
@@ -443,7 +441,6 @@ class TestOpenRentNoEarlyStop:
 class TestOpenRent429Handling:
     """Tests for 429 rate limit handling."""
 
-    @pytest.mark.asyncio
     async def test_retries_on_429(self, openrent_scraper: OpenRentScraper) -> None:
         """Test that _fetch_page retries on 429 and succeeds on next attempt."""
         mock_response_429 = MagicMock()
@@ -464,7 +461,6 @@ class TestOpenRent429Handling:
         assert result == "<html>OK</html>"
         assert mock_session.get.call_count == 2
 
-    @pytest.mark.asyncio
     async def test_max_retries_exhausted(self, openrent_scraper: OpenRentScraper) -> None:
         """Test that _fetch_page returns None after max retries."""
         mock_response = MagicMock()
@@ -481,7 +477,6 @@ class TestOpenRent429Handling:
         assert result is None
         assert mock_session.get.call_count == 4  # MAX_RETRIES
 
-    @pytest.mark.asyncio
     async def test_proxy_passthrough(self) -> None:
         """Test that proxy_url is passed to curl_cffi session.get()."""
         scraper = OpenRentScraper(proxy_url="socks5://proxy:1080")
@@ -499,7 +494,6 @@ class TestOpenRent429Handling:
         call_kwargs = mock_session.get.call_args
         assert call_kwargs[1]["proxy"] == "socks5://proxy:1080"
 
-    @pytest.mark.asyncio
     async def test_session_cleanup(self) -> None:
         """Test that close() cleans up the session."""
         scraper = OpenRentScraper()
