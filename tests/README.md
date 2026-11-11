@@ -71,6 +71,13 @@ Split modules by responsibility. Matching tests separate grouping rules, canonic
 selection, and image evidence. A multi-step restart scenario can legitimately be
 long; snapshot size and assertion count alone are not reasons to split a test.
 
+Give `Settings` a `database_path` under `tmp_path` whenever the code under test may
+read or write cached images. `Settings.data_dir` is derived from that path, a
+`data_dir=` keyword is silently ignored, and `":memory:"` resolves to the working
+directory, which every xdist worker and the checkout's real cache would share. An
+autouse fixture fails any test that reads a `data_dir` inside the repository; the one
+test of that derivation itself opts out with the `repository_data_dir` marker.
+
 Comments explain a non-obvious constraint, fixture choice, or ordering requirement.
 Keep them synchronized with the assertions. Avoid repeating the next function
 call, and replace temporary labels such as “new fields” or numbered plan steps
@@ -167,6 +174,18 @@ Run the optional lanes explicitly:
 uv run pytest -n 0 -m 'browser and not slow'
 uv run pytest -n 0 -m 'slow and not browser'
 ```
+
+Mutation testing checks whether the tests would notice a changed line. It is
+configured for match scoring, the location filter and address normalisation, takes
+well under a minute, and gives the same result on every run:
+
+```sh
+uv run mutmut run
+uv run mutmut results   # surviving mutants; `mutmut show <name>` prints one
+```
+
+Run it before and after consolidating tests for those modules: equal coverage does
+not show that the remaining tests still catch the same mistakes.
 
 Slow tests receive a 120-second timeout unless they specify their own. Browser
 tests disable pytest-timeout because its signal handler interferes with Playwright;

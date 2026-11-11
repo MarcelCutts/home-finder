@@ -58,8 +58,8 @@ async def processing_storage(make_merged_property, make_quality_analysis):
 
 
 @pytest.fixture
-def processing_client(processing_storage):
-    return web_client(processing_storage)
+def processing_client(processing_storage, tmp_path):
+    return web_client(processing_storage, tmp_path)
 
 
 @pytest.mark.parametrize(

@@ -2,7 +2,7 @@
 
 import os
 import sys
-from collections.abc import Callable, Generator
+from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -99,9 +99,11 @@ settings.register_profile(
     max_examples=200,
     suppress_health_check=[HealthCheck.too_slow],
 )
+# Derandomized so that two mutation runs over the same tests kill the same mutants.
 settings.register_profile(
     "mutmut",
     max_examples=10,
+    derandomize=True,
     suppress_health_check=[HealthCheck.too_slow, HealthCheck.differing_executors],
 )
 settings.load_profile(os.getenv("HYPOTHESIS_PROFILE", "fast"))
@@ -120,45 +122,37 @@ def _isolate_settings_from_environment(monkeypatch: pytest.MonkeyPatch) -> None:
     )
 
 
-def _modified_ns(path: Path) -> int | None:
-    try:
-        return path.stat().st_mtime_ns
-    except FileNotFoundError:
-        return None
-
-
 @pytest.fixture(autouse=True)
-def _keep_data_out_of_the_repository(request: pytest.FixtureRequest) -> Generator[None]:
-    """Fail a test that starts an image cache or data directory in the repository.
+def _keep_data_out_of_the_repository(
+    request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Fail a test that reads a ``Settings.data_dir`` inside the repository.
 
-    Settings derives ``data_dir`` (the image cache) from ``database_path``, and
-    ignores a ``data_dir=`` keyword. ``database_path=":memory:"`` therefore puts
-    images in the working directory, shared by every xdist worker; a test once
-    flaked because another worker's files appeared in its cache.
-
-    This is a cheap top-level check, not a complete one: it notices ``image_cache/``
-    or ``data/`` being created, and a new home directory added to a leftover
-    ``image_cache/``. It does not see files written inside an existing home's
-    directory, or anything written under an existing ``data/``, where a local
-    pipeline may legitimately write.
+    Settings derives ``data_dir`` (the image cache) from ``database_path`` and ignores
+    a ``data_dir=`` keyword, so ``database_path=":memory:"`` resolves to the working
+    directory. The test would then share its cache with every other xdist worker and
+    with the checkout's real one; a test once flaked that way. Give Settings a
+    database path under ``tmp_path``.
     """
-    roots = {request.config.rootpath, Path.cwd()}
-    watched = [root / name for root in roots for name in ("image_cache", "data")]
-    before = {path: _modified_ns(path) for path in watched}
-    yield
-    written = [
-        path
-        for path in watched
-        if _modified_ns(path) != before[path]
-        and (before[path] is None or path.name == "image_cache")
-    ]
-    if written:
-        names = ", ".join(sorted({f"{path.name}/" for path in written}))
-        pytest.fail(
-            f"{names} changed in the repository during this test (or one running at the same "
-            "time on another worker). Give Settings a database_path under tmp_path, e.g. "
-            'database_path=str(tmp_path / "home_finder.db").'
-        )
+    if request.node.get_closest_marker("repository_data_dir"):
+        return
+    root = request.config.rootpath.resolve()
+    derive = Settings.data_dir.fget
+    assert derive is not None
+
+    def data_dir(self: Settings) -> str:
+        value = derive(self)
+        resolved = Path(value).resolve()
+        if resolved == root or root in resolved.parents:
+            # pytest.fail raises a BaseException, so the application's broad
+            # ``except Exception`` handlers cannot swallow it and let the test pass.
+            pytest.fail(
+                f"Settings.data_dir resolves to {resolved}, inside the repository. Give "
+                'Settings a database_path under tmp_path, e.g. str(tmp_path / "home_finder.db").'
+            )
+        return value
+
+    monkeypatch.setattr(Settings, "data_dir", property(data_dir))
 
 
 @pytest.fixture(autouse=True)

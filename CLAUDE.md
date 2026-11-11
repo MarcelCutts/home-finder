@@ -216,7 +216,9 @@ async with AsyncSession() as session:
   `test_delivery_recovery.py` and `test_off_market.py` do
 - Use `Property.model_copy()` for variations; `hypothesis` for property-based testing
 - **Concurrent-safe:** in-memory or `tmp_path` SQLite and `tmp_path` data dirs, so several agents
-  can run `pytest` at once. Fresh in-memory databases start from a migrated schema template
+  can run `pytest` at once. Give `Settings` a `database_path` under `tmp_path` when code may touch
+  cached images: `data_dir` derives from it, and a guard fails tests that read one inside the
+  repository. Fresh in-memory databases start from a migrated schema template
   (`tests/plugins/schema_template.py`); file databases, tests that patch `MIGRATIONS` and
   direct `run_migrations` calls still run the real migrations
 - `--test-profile=PATH` (`tests/support/pytest_profile.py`; `--timing-report` is an alias)

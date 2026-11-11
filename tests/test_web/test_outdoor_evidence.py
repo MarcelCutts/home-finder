@@ -58,8 +58,8 @@ async def outdoor_storage(make_merged_property, make_quality_analysis):
 
 
 @pytest.fixture
-def outdoor_client(outdoor_storage):
-    return web_client(outdoor_storage)
+def outdoor_client(outdoor_storage, tmp_path):
+    return web_client(outdoor_storage, tmp_path)
 
 
 @pytest.mark.parametrize("availability", ["yes", "no", "unknown"])

@@ -204,6 +204,15 @@ class TestComputeLifestyleIcons:
         assert icons is not None
         assert icons["workspace"]["state"] == "good"
 
+    def test_workspace_good_for_1bed_with_desk_space(self):
+        """Desk space in the bedroom is enough, even in a compact one-bed."""
+        analysis = make_fit_analysis(
+            bedroom={"can_fit_desk": "yes"}, space={"is_spacious_enough": False}
+        )
+        icons = compute_lifestyle_icons(analysis, 1)
+        assert icons is not None
+        assert icons["workspace"] == {"state": "good", "tooltip": "Can fit desk in bedroom"}
+
     def test_workspace_concern_for_compact_1bed(self):
         analysis = make_fit_analysis(
             space={"is_spacious_enough": False},
