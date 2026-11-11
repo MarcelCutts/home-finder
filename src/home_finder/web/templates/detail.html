@@ -335,10 +335,10 @@
     <section id="section-description" class="detail-section annotated-section">
         <h3>The listing's words, with notes</h3>
         <div class="annotated">
-            <p class="annotated-text">{% for seg in annotated.segments %}{% if seg.mark %}<span class="mark-{{ seg.mark }}">{{ seg.text }}</span><sup class="note-ref">{{ seg.note }}</sup>{% else %}{{ seg.text | e | replace("\n", "<br>" | safe) }}{% endif %}{% endfor %}</p>
+            <p class="annotated-text">{% for seg in annotated.segments %}{% if seg.note %}<span class="mark-wavy">{{ seg.text | e | replace("\n", "<br>" | safe) }}</span><sup class="note-ref"><a href="#note-{{ seg.note }}" id="note-ref-{{ seg.note }}" aria-label="Note {{ seg.note }}">{{ seg.note }}</a></sup>{% else %}{{ seg.text | e | replace("\n", "<br>" | safe) }}{% endif %}{% endfor %}</p>
             {% if annotated.notes %}
             <ol class="annotated-notes" aria-label="Our notes">
-                {% for note in annotated.notes %}<li>{{ note }}</li>{% endfor %}
+                {% for note in annotated.notes %}<li id="note-{{ loop.index }}">{{ note }}&nbsp;<a href="#note-ref-{{ loop.index }}" class="note-back" aria-label="Back to note {{ loop.index }} in the text">↩&#xFE0E;</a></li>{% endfor %}
             </ol>
             <p class="provenance-note">Each note names its source: the AI photo assessment or the stored area reference. The wording is the tool's.</p>
             {% endif %}
