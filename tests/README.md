@@ -148,8 +148,8 @@ records the measured tradeoffs and remaining coverage limits.
 Run from the repository root:
 
 ```sh
-uv run ruff check src tests scripts/summarize_test_profile.py
-uv run ruff format --check src tests scripts/summarize_test_profile.py
+uv run ruff check src tests scripts/summarize_test_profile.py scripts/check_doc_links.py
+uv run ruff format --check src tests scripts/summarize_test_profile.py scripts/check_doc_links.py
 uv run mypy src
 uv run pytest --cov --cov-report=term
 ```
