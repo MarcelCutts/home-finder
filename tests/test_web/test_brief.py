@@ -1,34 +1,41 @@
-"""The brief check and the lead line it gives a listing."""
+"""The brief check's claims and the lead line it gives a listing.
+
+Every case runs a realistic assessment through the real fit scorer, so a claim is
+tested against what the scorer would also see, not against a hand-made breakdown.
+"""
+
+from typing import Any
 
 import pytest
 from pydantic import ValidationError
 
 from home_finder.config import Settings
 from home_finder.filters.fit_score import compute_fit_score_and_breakdown
-from home_finder.web.brief import brief_lead, check_brief, must_have_dimensions
+from home_finder.web.brief import BriefCheck, brief_lead, check_brief, must_have_dimensions
+from tests.support.fit_score import make_fit_analysis
 
 LIMITS = {
     "min_bedrooms": 0,
     "max_bedrooms": 2,
     "max_price": 2500,
     "max_commute_minutes": 30,
-    "must_haves": "workspace,sound",
 }
+ALL_DIMENSIONS = "workspace,hosting,sound,kitchen,vibe,condition"
+PROP = {"bedrooms": 2, "price_pcm": 2300, "commute_minutes": 16, "postcode": "E8 3RH"}
 
 
-def dimension(key: str, score: int, confidence: float = 1.0, *factors: tuple[str, str]) -> dict:
-    return {
-        "key": key,
-        "label": key.title(),
-        "score": score,
-        "weight": 20,
-        "confidence": confidence,
-        "factors": [{"label": label, "state": state} for label, state in factors],
-    }
+def check(
+    analysis: dict[str, Any] | None,
+    *,
+    prop: dict[str, Any] = PROP,
+    must_haves: str = ALL_DIMENSIONS,
+) -> BriefCheck:
+    _, breakdown = compute_fit_score_and_breakdown(analysis, prop["bedrooms"] or 0)
+    return check_brief(prop, analysis, breakdown, **LIMITS, must_haves=must_haves)
 
 
-def states(check) -> dict[str, tuple[str, str]]:
-    return {item["label"]: (item["state"], item["found"]) for item in check["items"]}
+def claims(result: BriefCheck) -> dict[str, tuple[str, str]]:
+    return {item["label"]: (item["claim"], item["found"]) for item in result["items"]}
 
 
 def test_must_have_dimensions_keeps_weight_order() -> None:
@@ -44,153 +51,407 @@ def test_settings_reject_an_unknown_must_have_name() -> None:
     assert Settings(brief_must_haves="").brief_must_haves == ""
 
 
-def test_hard_limits_are_met_broken_or_unknown_with_evidence() -> None:
+def test_hard_limits_rest_on_the_listing_numbers() -> None:
     prop = {"bedrooms": 2, "price_pcm": 2500, "commute_minutes": None, "postcode": ""}
-    by_label = states(check_brief(prop, None, None, **LIMITS))
-    assert by_label["Up to 2 bedrooms"] == ("met", "2")
-    assert by_label["Up to £2,500 pcm"] == ("met", "£2,500, your limit")
-    assert by_label["Within 30 min"] == ("unknown", "no postcode in the listing")
+    by_label = claims(check(None, prop=prop))
+    assert by_label["Up to 2 bedrooms"] == ("supported", "2")
+    assert by_label["Up to £2,500 pcm"] == ("supported", "£2,500, your limit")
+    assert by_label["Within 30 min"] == ("needs_checking", "no postcode in the listing")
 
-    over = states(
-        check_brief({**prop, "price_pcm": 2650, "commute_minutes": 41}, None, None, **LIMITS)
+    over = claims(check(None, prop={**prop, "price_pcm": 2650, "commute_minutes": 41}))
+    assert over["Up to £2,500 pcm"] == ("conflict", "£2,650 pcm, £150 over your limit")
+    assert over["Within 30 min"] == ("conflict", "41 min estimated, 11 over")
+
+
+def test_room_to_host_is_not_supported_by_a_big_flat_whose_living_room_was_never_measured():
+    """Total area, a spacious feel, outdoor space and a good flow move the score, not the claim."""
+    analysis = make_fit_analysis(
+        space={
+            "living_room_sqm": None,
+            "total_area_sqm": 70,
+            "is_spacious_enough": True,
+            "hosting_layout": "excellent",
+        },
+        highlights=["Spacious living room"],
     )
-    assert over["Up to £2,500 pcm"] == ("broken", "£2,650 pcm, £150 over your limit")
-    assert over["Within 30 min"] == ("broken", "41 min estimated, 11 over")
-
-
-def test_a_low_score_with_thin_evidence_is_unknown_not_broken(make_quality_analysis) -> None:
-    """A real scorer result: two bedrooms earned, desk and broadband unknown, workspace 35."""
-    analysis = make_quality_analysis()
-    _, breakdown = compute_fit_score_and_breakdown(analysis, 2, postcode="E8 3RH")
-    workspace = next(dim for dim in breakdown if dim["key"] == "workspace")
-    assert workspace["score"] < 40 and workspace["confidence"] <= 0.5
-    prop = {"bedrooms": 2, "price_pcm": 2300, "commute_minutes": 16, "postcode": "E8 3RH"}
-    by_label = states(check_brief(prop, analysis, breakdown, **LIMITS))
-    assert by_label["Somewhere to work"] == (
-        "unknown",
-        "not seen in the photos: desk space, broadband",
+    _, breakdown = compute_fit_score_and_breakdown(analysis, 2)
+    hosting = next(dim for dim in breakdown or [] if dim["key"] == "hosting")
+    assert hosting["score"] >= 80, "the scorer still rewards the space"
+    assert claims(check(analysis))["Room to host"] == (
+        "needs_checking",
+        "living-room size not shown",
     )
 
 
-def test_a_missed_factor_with_a_low_score_breaks_a_dimension() -> None:
-    breakdown = [dimension("workspace", 0, 0.5, ("Studio (no separation)", "missed"))]
-    prop = {"bedrooms": 0, "price_pcm": 1800, "commute_minutes": 10, "postcode": "N1 1AA"}
-    by_label = states(check_brief(prop, {}, breakdown, **LIMITS))
-    assert by_label["Somewhere to work"] == ("broken", "Studio (no separation)")
+@pytest.mark.parametrize(
+    ("living_room_sqm", "expected"),
+    [
+        (24, ("supported", "Living room ~24 m²")),
+        (20, ("supported", "Living room ~20 m²")),
+        (15, ("needs_checking", "living room ~15 m², not clearly big enough")),
+        (10, ("conflict", "Living room only ~10 m²")),
+    ],
+)
+def test_a_measured_living_room_decides_room_to_host(living_room_sqm, expected) -> None:
+    analysis = make_fit_analysis(space={"living_room_sqm": living_room_sqm})
+    assert claims(check(analysis))["Room to host"] == expected
 
 
-def test_dimensions_split_into_must_and_nice_and_a_breaker_lowlight_breaks_one() -> None:
-    analysis = {
-        "lowlights": ["Potential traffic noise"],
-        "flooring_noise": {"noise_indicators": ["Railway line directly beside the building."]},
-    }
-    breakdown = [
-        dimension("workspace", 100, 1.0, ("Dedicated office", "earned")),
-        dimension("hosting", 95, 1.0, ("Spacious", "earned")),
-        dimension("sound", 88, 1.0, ("Double glazing", "earned")),
-        dimension("kitchen", 30, 1.0, ("Dishwasher", "missed")),
-        dimension("vibe", 68, 0.0),
-        dimension("condition", 75, 1.0, ("Good overall", "earned")),
-    ]
-    prop = {"bedrooms": 2, "price_pcm": 2300, "commute_minutes": 16, "postcode": "E3 4AB"}
-    check = check_brief(prop, analysis, breakdown, **LIMITS)
+@pytest.mark.parametrize(
+    ("label", "overrides", "expected"),
+    [
+        pytest.param(
+            "Somewhere to work",
+            {"bedroom": {"can_fit_desk": "unknown", "office_separation": "unknown"}},
+            ("needs_checking", "work separation and desk space not shown"),
+            id="a-second-bedroom-alone-is-not-an-office",
+        ),
+        pytest.param(
+            "Somewhere to work",
+            {"bedroom": {"can_fit_desk": "yes", "office_separation": "shared_space"}},
+            ("supported", "Room for a desk"),
+            id="shared-space-does-not-count-against-room-for-a-desk",
+        ),
+        pytest.param(
+            "Somewhere to work",
+            {"bedroom": {"can_fit_desk": "unknown", "office_separation": "shared_space"}},
+            ("needs_checking", "work spot in shared living space; desk space not shown"),
+            id="shared-space-alone-cannot-settle-it",
+        ),
+        pytest.param(
+            "Room to host",
+            {"space": {"living_room_sqm": 24, "hosting_layout": "poor"}},
+            ("conflict", "Poor hosting layout"),
+            id="a-poor-layout-outweighs-a-big-living-room",
+        ),
+        pytest.param(
+            "Somewhere to work",
+            {"bedroom": {"can_fit_desk": "no", "office_separation": "dedicated_room"}},
+            ("supported", "Dedicated office room"),
+            id="an-office-room-outranks-a-bedroom-with-no-room-for-a-desk",
+        ),
+        pytest.param(
+            "Somewhere to work",
+            {"bedroom": {"can_fit_desk": "no", "office_separation": "shared_space"}},
+            ("conflict", "No room for a desk"),
+            id="no-desk-room-counts-against-a-home-without-a-work-room",
+        ),
+        pytest.param(
+            "Quiet enough for calls",
+            {
+                "flooring_noise": {
+                    "building_construction": "solid_brick",
+                    "has_double_glazing": "yes",
+                }
+            },
+            (
+                "needs_checking",
+                "solid brick walls and double glazing help, but noise from outside isn't shown",
+            ),
+            id="walls-and-glazing-never-prove-quiet",
+        ),
+        pytest.param(
+            "Quiet enough for calls",
+            {"flooring_noise": {"building_construction": None, "has_double_glazing": "yes"}},
+            (
+                "needs_checking",
+                "double glazing help, but noise from outside isn't shown; construction not shown",
+            ),
+            id="double-glazing-alone-never-proves-quiet",
+        ),
+        pytest.param(
+            "Good condition",
+            {
+                "condition": {"overall_condition": "good"},
+                "listing_red_flags": {"missing_room_photos": ["Bathroom"]},
+            },
+            ("needs_checking", "looks good, but not every room was shown"),
+            id="a-room-missing-from-the-photos-keeps-good-condition-unproven",
+        ),
+        pytest.param(
+            "Quiet enough for calls",
+            {
+                "flooring_noise": {"building_construction": None, "has_double_glazing": "unknown"},
+                "light_space": {"floor_level": "lower"},
+            },
+            ("needs_checking", "construction and glazing not shown"),
+            id="floor-level-says-nothing-about-quiet",
+        ),
+        pytest.param(
+            "Quiet enough for calls",
+            {
+                "lowlights": ["Potential traffic noise"],
+                "flooring_noise": {"noise_indicators": ["Hard laminate flooring throughout"]},
+            },
+            ("conflict", "Potential road or rail noise"),
+            id="a-noise-tag-is-named-for-itself-not-for-the-first-note",
+        ),
+        pytest.param(
+            "Quiet enough for calls",
+            {"flooring_noise": {"building_construction": "timber_frame"}},
+            ("conflict", "Timber-frame construction"),
+            id="timber-frame-outweighs-double-glazing",
+        ),
+        pytest.param(
+            "Quiet enough for calls",
+            {"flooring_noise": {"building_construction": "mixed", "has_double_glazing": "unknown"}},
+            ("needs_checking", "mixed construction; glazing not shown"),
+            id="mixed-construction-cannot-settle-it",
+        ),
+        pytest.param(
+            "A kitchen that works",
+            {"kitchen": {"overall_quality": "modern", "hob_type": "electric"}},
+            ("conflict", "Electric hob"),
+            id="a-modern-finish-does-not-outweigh-an-electric-hob",
+        ),
+        pytest.param(
+            "A kitchen that works",
+            {"kitchen": {"overall_quality": "modern", "hob_type": "unknown"}},
+            ("needs_checking", "hob type not shown"),
+            id="a-modern-kitchen-without-a-known-hob",
+        ),
+        pytest.param(
+            "A kitchen that works",
+            {"kitchen": {"hob_type": "unknown"}, "lowlights": ["Electric hob"]},
+            ("conflict", "Electric hob"),
+            id="an-electric-hob-tag-counts-when-the-hob-field-is-unread",
+        ),
+        pytest.param(
+            "A kitchen that works",
+            {"kitchen": {"hob_type": "gas", "has_dishwasher": "no"}},
+            ("supported", "Gas hob"),
+            id="no-dishwasher-is-not-a-conflict",
+        ),
+        pytest.param(
+            "Light and feel",
+            {"light_space": {"natural_light": "good"}, "space": {"hosting_layout": "awkward"}},
+            ("supported", "Good natural light"),
+            id="an-awkward-layout-says-nothing-about-light",
+        ),
+        pytest.param(
+            "Light and feel",
+            {"light_space": {"natural_light": "fair"}},
+            ("needs_checking", "natural light only fair"),
+            id="fair-light-cannot-settle-it",
+        ),
+        pytest.param(
+            "Good condition",
+            {"condition": {"overall_condition": "unknown"}, "overall_rating": 3},
+            ("needs_checking", "condition not shown"),
+            id="the-desirability-rating-is-not-a-condition-reading",
+        ),
+        pytest.param(
+            "Good condition",
+            {"condition": {"overall_condition": "poor"}},
+            ("conflict", "Looks poor"),
+            id="a-poor-condition-reading",
+        ),
+        pytest.param(
+            "Good condition",
+            {"condition": {"overall_condition": "fair"}},
+            ("needs_checking", "condition only fair"),
+            id="fair-condition-cannot-settle-it",
+        ),
+        pytest.param(
+            "Good condition",
+            {"condition_concerns": True, "concern_severity": "moderate"},
+            ("conflict", "Moderate maintenance concerns"),
+            id="rated-concerns-count-against-a-seen-condition",
+        ),
+        pytest.param(
+            "Good condition",
+            {
+                "condition": {
+                    "overall_condition": "good",
+                    "maintenance_concerns": [
+                        "Only 1 photo provided - cannot assess overall property condition"
+                    ],
+                },
+                "condition_concerns": True,
+                "concern_severity": "serious",
+            },
+            ("needs_checking", "looks good, but not every room was shown"),
+            id="a-missing-photo-concern-is-a-gap-not-a-defect",
+        ),
+        pytest.param(
+            "Good condition",
+            {
+                "condition": {
+                    "maintenance_concerns": [
+                        "Bathroom not photographed - condition unknown",
+                        "Damp patch on the bedroom ceiling",
+                    ],
+                },
+                "condition_concerns": True,
+                "concern_severity": "moderate",
+            },
+            ("conflict", "Moderate maintenance concerns"),
+            id="a-seen-defect-still-counts-beside-a-photo-gap",
+        ),
+        pytest.param(
+            "Good condition",
+            {
+                "condition": {
+                    "overall_condition": "unknown",
+                    "maintenance_concerns": [
+                        "No interior photos provided - condition unverifiable"
+                    ],
+                },
+                "condition_concerns": True,
+                "concern_severity": "serious",
+            },
+            ("needs_checking", "condition not shown"),
+            id="concerns-only-about-missing-photos-are-gaps",
+        ),
+        pytest.param(
+            "Good condition",
+            {
+                "condition": {
+                    "overall_condition": "unknown",
+                    "maintenance_concerns": [
+                        "No interior photos provided - cannot assess condition",
+                        "Period property: risk of deferred maintenance",
+                    ],
+                },
+                "condition_concerns": True,
+                "concern_severity": "serious",
+            },
+            ("needs_checking", "condition not shown"),
+            id="without-a-condition-reading-concerns-are-guesses",
+        ),
+    ],
+)
+def test_each_need_rests_on_its_own_direct_evidence(label, overrides, expected) -> None:
+    assert claims(check(make_fit_analysis(**overrides)))[label] == expected
 
-    musts = [item for item in check["items"] if item["must"]]
+
+def test_a_studio_has_nowhere_separate_to_work() -> None:
+    """Even when the analysis reads the studio as shared space with room for a desk."""
+    analysis = make_fit_analysis(
+        bedroom={"office_separation": "shared_space", "can_fit_desk": "yes"}
+    )
+    studio = {**PROP, "bedrooms": 0}
+    assert claims(check(analysis, prop=studio))["Somewhere to work"] == (
+        "conflict",
+        "Studio (no separation)",
+    )
+
+
+def test_a_tagged_lowlight_leads_the_evidence_against() -> None:
+    analysis = make_fit_analysis(
+        bedroom={"office_separation": "dedicated_room", "can_fit_desk": "yes"},
+        lowlights=["No work-life separation"],
+    )
+    assert claims(check(analysis))["Somewhere to work"] == ("conflict", "No work-life separation")
+
+
+def test_must_haves_come_first_and_the_counts_match_the_claims() -> None:
+    analysis = make_fit_analysis(
+        bedroom={"office_separation": "dedicated_room"},
+        lowlights=["Potential traffic noise"],
+        kitchen={"hob_type": "unknown"},
+    )
+    result = check(analysis, must_haves="workspace,sound,kitchen")
+    musts = [item for item in result["items"] if item["must"]]
     assert [item["label"] for item in musts] == [
         "Up to 2 bedrooms",
         "Up to £2,500 pcm",
         "Within 30 min",
         "Somewhere to work",
         "Quiet enough for calls",
+        "A kitchen that works",
     ]
-    assert check["items"][: len(musts)] == musts, "must-haves come first"
-    by_label = states(check)
-    assert by_label["Somewhere to work"] == ("met", "Dedicated office")
-    # The typed noise lowlight breaks "quiet" whatever the sound score, with the
-    # photos' own evidence as the reason.
-    assert by_label["Quiet enough for calls"] == (
-        "broken",
-        "Railway line directly beside the building",
-    )
-    assert by_label["A kitchen that works"] == ("broken", "Dishwasher")
-    assert by_label["Light and feel"] == ("unknown", "not seen in the photos")
+    assert result["items"][: len(musts)] == musts
+    assert [item["label"] for item in result["items"][len(musts) :]] == [
+        "Room to host",
+        "Light and feel",
+        "Good condition",
+    ]
     assert (
-        check["must_total"],
-        check["must_met"],
-        check["must_broken"],
-        check["must_unknown"],
-    ) == (
-        5,
-        4,
-        1,
-        0,
+        result["must_total"],
+        result["must_supported"],
+        result["must_conflict"],
+        result["must_needs_checking"],
+    ) == (6, 4, 1, 1)
+
+
+def test_the_templates_still_read_each_claim_under_its_earlier_name() -> None:
+    analysis = make_fit_analysis(lowlights=["Potential traffic noise"], kitchen={"hob_type": None})
+    result = check(analysis, must_haves="workspace,sound,kitchen")
+    earlier = {"supported": "met", "conflict": "broken", "needs_checking": "unknown"}
+    assert {item["claim"]: item["state"] for item in result["items"]} == earlier
+    assert (result["must_met"], result["must_broken"], result["must_unknown"]) == (
+        result["must_supported"],
+        result["must_conflict"],
+        result["must_needs_checking"],
     )
 
 
-def test_lead_order_limit_then_risk_then_gap_then_clear() -> None:
-    prop = {"bedrooms": 2, "price_pcm": 2200, "commute_minutes": 28, "postcode": "E17 1AA"}
-    quiet = [
-        dimension("workspace", 90, 1.0, ("Desk space", "earned")),
-        dimension("sound", 80, 1.0, ("Double glazing", "earned")),
+@pytest.mark.parametrize("analysis", [None, {}])
+def test_without_an_accepted_assessment_each_must_have_dimension_needs_checking(analysis):
+    result = check(analysis, must_haves="workspace,sound")
+    dimensions = [item for item in result["items"] if item["kind"] == "dimension"]
+    assert [(item["claim"], item["found"]) for item in dimensions] == [
+        ("needs_checking", "not assessed yet"),
+        ("needs_checking", "not assessed yet"),
     ]
-    analysis = {"highlights": ["Dishwasher", "Gas hob"]}
+    assert result["must_needs_checking"] == 2
 
-    clear = brief_lead(check_brief(prop, analysis, quiet, **LIMITS), analysis)
+
+def test_lead_order_limit_then_risk_then_needs_checking_then_clear() -> None:
+    supported = make_fit_analysis(
+        bedroom={"office_separation": "dedicated_room"},
+        highlights=["Dishwasher included", "Gas hob"],
+    )
+    clear = brief_lead(check(supported, must_haves="workspace,condition"), supported)
     assert clear == {
         "kind": "clear",
-        "kicker": "All 5 must-haves met",
+        "kicker": "All 5 must-haves supported",
         "title": "Nothing breaks your brief.",
-        "detail": "Best thing: dishwasher.",
+        # Quiet is a nice-to-have here, and walls and glazing never settle it.
+        "detail": "Best thing: dishwasher included. Nice-to-haves: 1 to check.",
     }
 
-    # A photo-based breaker is a risk to check, not a broken limit.
-    noisy = {"lowlights": ["New-build acoustics"]}
-    risk = brief_lead(check_brief(prop, noisy, quiet, **LIMITS), noisy)
+    # A conflict the analysis found is a risk to check, not a broken limit.
+    noisy = make_fit_analysis(lowlights=["New-build acoustics"])
+    risk = brief_lead(check(noisy, must_haves="workspace,sound"), noisy)
     assert risk["kind"] == "risk"
     assert risk["kicker"] == "Puts a must-have at risk"
     assert risk["title"] == "New-build acoustics."
     assert risk["detail"].startswith("Your must-have: quiet enough for calls.")
 
-    # A broken limit outranks a risk.
-    over = brief_lead(check_brief({**prop, "price_pcm": 2600}, noisy, quiet, **LIMITS), noisy)
+    over = brief_lead(
+        check(noisy, prop={**PROP, "price_pcm": 2600}, must_haves="workspace,sound"), noisy
+    )
     assert over["kind"] == "broken" and over["title"] == "£2,600 pcm, £100 over your limit."
 
 
-def test_an_unknown_lead_counts_what_is_met_and_names_the_other_gaps() -> None:
-    prop = {"bedrooms": 2, "price_pcm": 2300, "commute_minutes": None, "postcode": "E3 1AA"}
-    one_gap = [
-        dimension("workspace", 90, 1.0, ("Desk space", "earned")),
-        dimension("sound", 80, 1.0, ("Double glazing", "earned")),
-    ]
-    lead = brief_lead(check_brief(prop, {}, one_gap, **LIMITS), {})
-    assert lead["title"] == "Can't check 'within 30 min': not worked out yet."
-    assert lead["detail"] == "The other 4 must-haves are met."
+def test_the_lead_never_clears_a_brief_whose_must_haves_need_checking() -> None:
+    """A big flat whose living room was never measured: the score is high, the lead is honest."""
+    analysis = make_fit_analysis(
+        space={"living_room_sqm": None, "total_area_sqm": 70, "is_spacious_enough": True}
+    )
+    lead = brief_lead(check(analysis, must_haves="workspace,hosting"), analysis)
+    assert lead == {
+        "kind": "unknown",
+        "kicker": "A must-have needs checking",
+        "title": "Room to host: living-room size not shown.",
+        "detail": "The other 4 must-haves are supported.",
+    }
 
-    two_gaps = [
-        dimension("workspace", 90, 1.0, ("Desk space", "earned")),
-        dimension("sound", 0, 0.0),
-    ]
-    lead = brief_lead(check_brief(prop, {}, two_gaps, **LIMITS), {})
-    assert lead["detail"] == "3 of 5 must-haves met; quiet enough for calls also still unknown."
+    unrouted = {**PROP, "commute_minutes": None}
+    lead = brief_lead(check(analysis, prop=unrouted, must_haves="workspace,hosting"), analysis)
+    assert lead["kicker"] == "2 must-haves need checking"
+    assert lead["title"] == "Within 30 min: not worked out yet."
+    assert lead["detail"] == "3 of 5 must-haves supported; room to host also needs checking."
 
 
 def test_a_clear_lead_still_reports_weak_nice_to_haves() -> None:
-    prop = {"bedrooms": 2, "price_pcm": 2200, "commute_minutes": 20, "postcode": "E17 1AA"}
-    breakdown = [
-        dimension("workspace", 90, 1.0, ("Desk space", "earned")),
-        dimension("sound", 80, 1.0, ("Double glazing", "earned")),
-        dimension("kitchen", 20, 1.0, ("Dishwasher", "missed")),
-        dimension("vibe", 50, 0.0),
-    ]
-    lead = brief_lead(check_brief(prop, {}, breakdown, **LIMITS), {})
+    analysis = make_fit_analysis(
+        kitchen={"hob_type": "electric"},
+        light_space={"natural_light": "unknown"},
+        highlights=[],
+    )
+    lead = brief_lead(check(analysis, must_haves="workspace,condition"), analysis)
     assert lead["kind"] == "clear"
-    assert lead["detail"] == "Nice-to-haves: 1 not met, 1 unknown."
-
-
-@pytest.mark.parametrize("analysis", [None, {}])
-def test_missing_analysis_leaves_must_have_dimensions_unknown(analysis) -> None:
-    prop = {"bedrooms": 1, "price_pcm": 1900, "commute_minutes": 22, "postcode": "E8 3RH"}
-    check = check_brief(prop, analysis, None, **LIMITS)
-    unknown = [item for item in check["items"] if item["state"] == "unknown"]
-    assert [item["found"] for item in unknown] == ["not assessed yet", "not assessed yet"]
-    assert check["must_unknown"] == 2
+    assert lead["detail"] == "Nice-to-haves: 1 in conflict, 2 to check."

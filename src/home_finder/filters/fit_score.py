@@ -16,13 +16,11 @@ from typing import Any, Final, NotRequired, TypeAlias, TypedDict
 
 from pydantic import ValidationError
 
-from home_finder.data.area_context import HOSTING_TOLERANCE
 from home_finder.models.quality import PropertyQualityAnalysis, outdoor_availability
-from home_finder.utils.address import extract_outcode
 
-# Increment when weights, signals, dimensions or contextual scoring data change.
+# Increment when weights, signals or dimensions change.
 # Triggers automatic recomputation via _backfill_fit_scores().
-FIT_SCORE_VERSION: Final = 3
+FIT_SCORE_VERSION: Final = 4
 
 AnalysisInput: TypeAlias = PropertyQualityAnalysis | dict[str, Any] | None
 
@@ -30,11 +28,13 @@ AnalysisInput: TypeAlias = PropertyQualityAnalysis | dict[str, Any] | None
 def normalized_fit_inputs(
     analysis: AnalysisInput, *, postcode: str | None = None
 ) -> dict[str, Any] | None:
-    """One eligibility and context boundary for every score consumer.
+    """One eligibility boundary for every score consumer.
 
     Partial or failed assessments are retained as evidence but cannot become
-    recommendations through scorer defaults. Do not mutate supplied evidence or
-    trust an area-context field supplied inside model output/old JSON.
+    recommendations through scorer defaults. Do not mutate supplied evidence.
+
+    The score reads only the assessment. ``postcode`` is no longer read, here or
+    by the entry points that take it; they keep it so their callers need not change.
     """
     values = analysis.model_dump() if isinstance(analysis, PropertyQualityAnalysis) else analysis
     if not isinstance(values, dict):
@@ -57,9 +57,7 @@ def normalized_fit_inputs(
         )
     except ValidationError:
         return None
-    outcode = extract_outcode(postcode)
-    area = HOSTING_TOLERANCE.get(outcode) if outcode else None
-    return {**decoded.model_dump(), "_area_hosting_tolerance": area.get("rating") if area else None}
+    return decoded.model_dump()
 
 
 # ── Fit tiers (single source of truth) ────────────────────────────────────────
@@ -354,20 +352,6 @@ def _score_hosting(analysis: dict[str, Any], bedrooms: int) -> _DimensionResult:
         score += 10
         signals += 1
         factors.append({"label": "Low noise risk", "state": "earned"})
-
-    area_tolerance = analysis.get("_area_hosting_tolerance")
-    if area_tolerance == "high":
-        score += 10
-        signals += 1
-        factors.append({"label": "Area hosting guide: tolerant (unverified)", "state": "earned"})
-    elif area_tolerance == "low":
-        score -= 10
-        signals += 1
-        factors.append(
-            {"label": "Area hosting guide: noise-sensitive (unverified)", "state": "missed"}
-        )
-    elif area_tolerance == "moderate":
-        signals += 1  # neutral score impact
 
     confidence = min(1.0, signals * 0.4) if signals > 0 else 0.0
     return _DimensionResult(score, confidence, factors)

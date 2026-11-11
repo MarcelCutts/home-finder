@@ -49,7 +49,54 @@ def test_serious_condition_concerns_lead_watch_out(make_quality_analysis, severi
 )
 def test_photo_tag_gives_way_to_a_red_flag_naming_the_room(make_quality_analysis, flags, expected):
     analysis = make_quality_analysis(lowlights=["No bathroom photos"], listing_red_flags=flags)
-    assert build_verdict(analysis, None)["watch"] == expected
+    verdict = build_verdict(analysis, None)
+    assert verdict["find_out"] == expected
+    assert verdict["watch"] == []
+
+
+def test_a_concern_written_as_a_missing_photo_is_unknown_not_a_fault(make_quality_analysis):
+    """The analysis sometimes writes a gap as a concern; it belongs with the unknowns."""
+    analysis = make_quality_analysis(
+        condition=ConditionAnalysis(
+            overall_condition="good",
+            maintenance_concerns=[
+                "Bathroom not photographed - condition unknown",
+                "Damp patch on ceiling",
+            ],
+        ),
+        condition_concerns=True,
+        concern_severity="moderate",
+        listing_red_flags=ListingRedFlags(
+            description_concerns=["Only 3 photos for entire property", "Price above average"]
+        ),
+    )
+    verdict = build_verdict(analysis, None)
+    assert verdict["watch"] == ["Damp patch on ceiling", "Price above average"]
+    assert verdict["find_out"] == [
+        "Bathroom not photographed - condition unknown",
+        "Only 3 photos for entire property",
+    ]
+
+
+def test_what_the_photos_leave_out_is_unknown_not_a_fault(make_quality_analysis):
+    """Photo gaps are something to find out; the concerns the listing text raised stay faults."""
+    flags = ListingRedFlags(
+        missing_room_photos=["Bathroom", "Second bedroom"],
+        too_few_photos=True,
+        selective_angles=True,
+        description_concerns=["Railway beside the building"],
+    )
+    analysis = make_quality_analysis(
+        lowlights=["Missing key photos", "No dishwasher"], listing_red_flags=flags
+    )
+    verdict = build_verdict(analysis, [dimension(("Dishwasher", "unknown"))])
+    assert verdict["watch"] == ["No dishwasher", "Railway beside the building"]
+    assert verdict["find_out"] == [
+        "Few supplied photos",
+        "Limited views in supplied photos",
+        "Not seen in supplied photos: Bathroom, Second bedroom",
+        "Dishwasher",
+    ]
 
 
 def test_epc_highlight_is_left_to_the_costs_when_the_listing_states_a_band(make_quality_analysis):

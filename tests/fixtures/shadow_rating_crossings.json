@@ -544,9 +544,9 @@
         "model_rating": 3,
         "candidate_rating": 4,
         "observed_weight_percent": 50,
-        "baseline_fit_score": 55,
-        "candidate_fit_score": 60,
-        "baseline_alert": false,
+        "baseline_fit_score": 65,
+        "candidate_fit_score": 70,
+        "baseline_alert": true,
         "candidate_alert": true
       }
     },
