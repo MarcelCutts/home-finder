@@ -2,6 +2,7 @@
 
 import re
 from collections import Counter
+from datetime import time
 from pathlib import Path
 
 import pytest
@@ -311,6 +312,19 @@ def test_explicit_queue_limits_override_legacy_default(monkeypatch):
     settings = Settings(max_reanalyses_per_run=2)
     assert settings.max_initial_analyses_per_run == 3
     assert settings.max_reanalyses_per_run == 2
+
+
+def test_commute_arrival_defaults_to_nine_and_reads_london_clock_time(monkeypatch):
+    monkeypatch.delenv("HOME_FINDER_COMMUTE_ARRIVAL_TIME", raising=False)
+    assert Settings(_env_file=None).commute_arrival_time == time(9, 0)
+    monkeypatch.setenv("HOME_FINDER_COMMUTE_ARRIVAL_TIME", "08:15")
+    assert Settings(_env_file=None).commute_arrival_time == time(8, 15)
+
+
+def test_commute_arrival_rejects_an_offset(monkeypatch):
+    monkeypatch.setenv("HOME_FINDER_COMMUTE_ARRIVAL_TIME", "09:00+01:00")
+    with pytest.raises(ValidationError, match="London clock time"):
+        Settings(_env_file=None)
 
 
 @pytest.fixture
