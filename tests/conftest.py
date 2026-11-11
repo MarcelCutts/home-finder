@@ -99,9 +99,11 @@ settings.register_profile(
     max_examples=200,
     suppress_health_check=[HealthCheck.too_slow],
 )
+# Derandomized so that two mutation runs over the same tests kill the same mutants.
 settings.register_profile(
     "mutmut",
     max_examples=10,
+    derandomize=True,
     suppress_health_check=[HealthCheck.too_slow, HealthCheck.differing_executors],
 )
 settings.load_profile(os.getenv("HYPOTHESIS_PROFILE", "fast"))

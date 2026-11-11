@@ -175,6 +175,18 @@ uv run pytest -n 0 -m 'browser and not slow'
 uv run pytest -n 0 -m 'slow and not browser'
 ```
 
+Mutation testing checks whether the tests would notice a changed line. It is
+configured for match scoring, the location filter and address normalisation, takes
+well under a minute, and gives the same result on every run:
+
+```sh
+uv run mutmut run
+uv run mutmut results   # surviving mutants; `mutmut show <name>` prints one
+```
+
+Run it before and after consolidating tests for those modules: equal coverage does
+not show that the remaining tests still catch the same mistakes.
+
 Slow tests receive a 120-second timeout unless they specify their own. Browser
 tests disable pytest-timeout because its signal handler interferes with Playwright;
 they use Playwright's action and assertion timeouts instead. A command-line
