@@ -53,8 +53,11 @@ async def _migrated_template() -> sqlite3.Connection:
 
 
 async def _is_empty_in_memory(conn: aiosqlite.Connection) -> bool:
-    # File databases run in WAL mode, where the connection can keep a snapshot taken
-    # before the copy and so not see the copied schema; they migrate for real.
+    # An in-memory database is private to this connection, so nothing can write to it
+    # between this check and the copy. A file database can be opened by another
+    # connection or process in that gap, and the copy would overwrite its writes: SQLite
+    # cannot start a backup inside a transaction on the destination. Copying into file
+    # databases does work, but saved only about 3% of a run, so they migrate for real.
     async with conn.execute(
         "SELECT (SELECT file FROM pragma_database_list WHERE name = 'main'),"
         " (SELECT user_version FROM pragma_user_version),"
