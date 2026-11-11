@@ -5,6 +5,7 @@ from typing import Final, TypedDict
 from home_finder.analysis.image_review import SUPPLIED_PHOTO_LOWLIGHT_LABELS
 from home_finder.filters.fit_score import FitDimension
 from home_finder.models import PropertyLowlight, PropertyQualityAnalysis
+from home_finder.web.brief import describes_missing_evidence
 
 # Photo-coverage tags say less than the red flags about which rooms are missing.
 _PHOTO_LOWLIGHTS: Final = frozenset(
@@ -33,7 +34,10 @@ def build_verdict(
     """Sort the analysis into what fits the brief, what to watch and what is still unknown.
 
     Each list keeps the analysis's own order of importance: its top highlights and
-    lowlights come first, then the longer condition and listing observations.
+    lowlights come first, then the longer condition and listing observations. A room
+    or view the photos leave out is a gap in the evidence, not a fault in the home,
+    so it is something to find out, ahead of the details the analysis has no reading of.
+    That holds whether the analysis flagged the gap or wrote it as a concern.
     """
     extraction = analysis.listing_extraction
     listing_epc = extraction is not None and extraction.epc_rating not in (None, "unknown")
@@ -43,24 +47,36 @@ def build_verdict(
     ]
 
     flags = analysis.listing_red_flags
-    photo_flags = flags is not None and (
-        flags.too_few_photos or flags.selective_angles or bool(flags.missing_room_photos)
+    # The flags list the photo gaps first, then the concerns the listing text raised.
+    listing_concerns = list(flags.description_concerns) if flags is not None else []
+    photo_gaps = (
+        [item for item in flags.display_items if item not in listing_concerns]
+        if flags is not None
+        else []
     )
     lowlights = analysis.display_lowlights or []
+    if not photo_gaps:
+        # Any photo red flag replaces the photo tags, which say less about what is missing.
+        photo_gaps = [tag for tag in lowlights if tag in _PHOTO_LOWLIGHTS]
     watch = [
         tag
         for tag in lowlights
-        if tag != PropertyLowlight.SERVICE_CHARGE_UNSTATED
-        and not (photo_flags and tag in _PHOTO_LOWLIGHTS)
+        if tag != PropertyLowlight.SERVICE_CHARGE_UNSTATED and tag not in _PHOTO_LOWLIGHTS
     ]
-    concerns = analysis.condition.maintenance_concerns if analysis.condition_concerns else []
-    watch = [*concerns, *watch] if analysis.concern_severity == "serious" else [*watch, *concerns]
-    if flags is not None:
-        watch.extend(flags.display_items)
+    maintenance = analysis.condition.maintenance_concerns if analysis.condition_concerns else []
+    written_gaps = [
+        text for text in [*maintenance, *listing_concerns] if describes_missing_evidence(text)
+    ]
+    maintenance = [text for text in maintenance if text not in written_gaps]
+    if analysis.concern_severity == "serious":
+        watch = [*maintenance, *watch]
+    else:
+        watch = [*watch, *maintenance]
+    watch.extend(text for text in listing_concerns if text not in written_gaps)
 
     # A service charge is the landlord's cost, so an unstated one is nothing for the tenant
     # to find out; the lowlight stays out of every list.
-    find_out: list[str] = []
+    find_out = [*photo_gaps, *written_gaps]
     for dimension in fit_breakdown or []:
         find_out.extend(f["label"] for f in dimension["factors"] if f["state"] == "unknown")
 

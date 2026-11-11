@@ -232,12 +232,13 @@ rollback requires the verified pre-upgrade database, including all accounting.
 
 ## Assessment scores
 
-Fit score version 3 uses the same rating eligibility and property postcode context
-for storage, dashboard cards/details/maps, Telegram text and new delivery plans.
-An unrated or failed assessment has no fit recommendation. Free-form noise notes,
-including an empty default list, are not acoustic evidence for scoring; typed
-construction, glazing and hosting-risk fields remain inputs. The area hosting
-guide is explicitly labelled unverified in the score explanation.
+Fit score version 4 uses the same rating eligibility for storage, dashboard
+cards/details/maps, Telegram text and new delivery plans, and reads only the
+assessment. An unrated or failed assessment has no fit recommendation. Free-form
+noise notes, including an empty default list, are not acoustic evidence for
+scoring; typed construction, glazing and hosting-risk fields remain inputs. The
+hand-written postcode hosting guide is no longer a score factor; it is still given
+to the analysis model as unverified area context.
 
 Initialization backfills older derived scores to the current version. It preserves
 the original assessment JSON, personal choices, paid attempts and delivery history.

@@ -58,7 +58,7 @@ class TestDetailPage:
         assert "Back to Dashboard" in resp.text
 
     @pytest.mark.parametrize("saved_count", [3, 0])
-    async def test_every_red_flag_is_listed_under_watch_out(
+    async def test_every_red_flag_is_listed_and_photo_gaps_are_unknowns(
         self,
         client: TestClient,
         storage: PropertyStorage,
@@ -67,7 +67,10 @@ class TestDetailPage:
         base_analysis: PropertyQualityAnalysis,
         saved_count: int,
     ) -> None:
-        """The saved count can leave out photo flags, so it decides nothing shown."""
+        """The saved count can leave out photo flags, so it decides nothing shown.
+
+        What the photos leave out is listed as unknown, not as something wrong.
+        """
         flags = ListingRedFlags(
             missing_room_photos=["Second bedroom"],
             selective_angles=True,
@@ -85,10 +88,12 @@ class TestDetailPage:
         soup = _soup(client.get(f"/property/{merged_a.unique_id}").text)
         assert [li.get_text() for li in soup.select(".verdict-watch li")] == [
             "Potential road or rail noise",
-            "Limited views in supplied photos",
-            "Not seen in supplied photos: Second bedroom",
             "Railway beside the building",
             "Price above average",
+        ]
+        assert [li.get_text() for li in soup.select(".verdict-find li")][:2] == [
+            "Limited views in supplied photos",
+            "Not seen in supplied photos: Second bedroom",
         ]
 
     async def test_facts_and_verdict_lead_the_page(
@@ -521,13 +526,10 @@ class TestListingText:
 
         lead = soup.select_one(".detail-lead")
         assert "detail-lead-risk" in lead["class"]
-        assert (
-            lead.select_one(".detail-lead-title").get_text()
-            == "Railway line directly beside the building."
-        )
+        # The noise tag is named for itself: the first noise note may be about the floors.
+        assert lead.select_one(".detail-lead-title").get_text() == "Potential road or rail noise."
         assert lead.select_one(".detail-lead-detail").get_text() == (
-            "Your must-have: quiet enough for calls. "
-            "Photos can't settle this; check it at a viewing."
+            "Your must-have: quiet enough for calls. Check it at a viewing."
         )
 
         groups = [li.get_text(strip=True) for li in soup.select(".brief-check .brief-group")]

@@ -105,7 +105,7 @@ def test_failed_assessment_stays_unavailable_even_with_complete_good_observation
     ],
 )
 def test_threshold_crossing_does_not_override_owner_or_market_stops(context, reason):
-    result = compare(FIXTURES[4]["analysis"], **context)
+    result = compare(FIXTURES[5]["analysis"], FIXTURES[5], **context)
     assert result["threshold_crossed"] is True
     assert result["selection_changed"] is False
     assert result["baseline_selection"]["reason"] == reason
@@ -114,10 +114,13 @@ def test_threshold_crossing_does_not_override_owner_or_market_stops(context, rea
 
 
 def test_explicit_notification_threshold_is_used_in_both_comparisons():
-    result = compare(FIXTURES[4]["analysis"], policy=NotificationPolicy(min_fit_score=61))
+    result = compare(
+        FIXTURES[5]["analysis"], FIXTURES[5], policy=NotificationPolicy(min_fit_score=62)
+    )
     assert result["threshold_crossed"] is False
-    assert result["candidate_selection"]["fit_score"] == 60
-    assert result["candidate_selection"]["min_fit_score"] == 61
+    assert result["candidate_selection"]["fit_score"] == 61
+    assert result["baseline_selection"]["min_fit_score"] == 62
+    assert result["candidate_selection"]["min_fit_score"] == 62
 
 
 def make_database(path, *, corrupt=None):
@@ -167,7 +170,7 @@ def test_database_report_is_reproducible_and_leaves_every_stored_byte_unchanged(
     assert report["mode"] == "offline_rating_shadow"
     assert report["changes_stored_ratings"] is False and report["creates_deliveries"] is False
     assert report["total_homes"] == report["compared_homes"] == 7
-    assert report["threshold_crossings"] == report["selection_changes"] == 3
+    assert report["threshold_crossings"] == report["selection_changes"] == 2
     assert report["coverage"] == {"complete": 3, "partial": 4}
     assert len(report["source_sha256"]) == 64
     assert path.read_bytes() == before
@@ -192,12 +195,12 @@ def test_source_identity_changes_with_owner_context(tmp_path):
     make_database(path)
     first = read_report(path, NotificationPolicy())
     with closing(sqlite3.connect(path)) as conn:
-        conn.execute("UPDATE properties SET user_status='archived' WHERE unique_id='fixture:4'")
+        conn.execute("UPDATE properties SET user_status='archived' WHERE unique_id='fixture:5'")
         conn.commit()
     second = read_report(path, NotificationPolicy())
     assert first["source_sha256"] != second["source_sha256"]
-    assert second["threshold_crossings"] == 3
-    assert second["selection_changes"] == 2
+    assert second["threshold_crossings"] == 2
+    assert second["selection_changes"] == 1
 
 
 def test_missing_database_is_never_created(tmp_path):
@@ -215,7 +218,7 @@ def test_cli_needs_no_credentials_and_only_prints_json(tmp_path, monkeypatch, ca
     monkeypatch.setattr("sys.argv", ["rating_shadow_report", "--database", str(path)])
     before = path.read_bytes()
     main()
-    assert json.loads(capsys.readouterr().out)["threshold_crossings"] == 3
+    assert json.loads(capsys.readouterr().out)["threshold_crossings"] == 2
     assert path.read_bytes() == before
 
 
@@ -235,9 +238,16 @@ def test_cli_rejects_invalid_policy_without_creating_database(
     assert not path.exists()
 
 
-def test_low_coverage_crossing_keeps_the_known_risk_in_the_report():
+def test_a_half_observed_rating_lift_keeps_the_known_risk_in_the_report():
+    """The candidate lifts a rating read from half the evidence; the report must say so.
+
+    It no longer crosses the default threshold: without the area guide's extra hosting
+    signal, the baseline already alerts.
+    """
     result = compare(FIXTURES[4]["analysis"])
     assert result["shadow"]["observed_components"] == ("condition", "light")
     assert result["shadow"]["missing_components"] == ("kitchen", "bathroom", "space")
     assert result["shadow"]["coverage"] == "partial"
-    assert compute_fit_score(FIXTURES[4]["analysis"], 2, postcode="E8") == 55
+    assert (result["model_rating"], result["shadow"]["candidate_rating"]) == (3, 4)
+    baseline = compute_fit_score(FIXTURES[4]["analysis"], 2, postcode="E8")
+    assert (baseline, result["candidate_selection"]["fit_score"]) == (65, 70)
