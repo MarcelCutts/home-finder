@@ -50,8 +50,8 @@ jobs:
           python-version: ${{ env.PYTHON_VERSION }}
           enable-cache: true
       - run: uv sync --locked --all-extras
-      - run: uv run ruff check --output-format=github src tests scripts/summarize_test_profile.py
-      - run: uv run ruff format --check src tests scripts/summarize_test_profile.py
+      - run: uv run ruff check --output-format=github src tests scripts/summarize_test_profile.py scripts/check_doc_links.py
+      - run: uv run ruff format --check src tests scripts/summarize_test_profile.py scripts/check_doc_links.py
 
   typecheck:
     runs-on: ubuntu-24.04
@@ -131,6 +131,25 @@ jobs:
           path: dist/
           if-no-files-found: error
           retention-days: 7
+
+  doc-links:
+    # Advisory: keep it out of the required checks. It warns when a pull request
+    # edits code that docs/ingest-pipeline.md cites, and fails only when a link is
+    # wrong at its own pinned commit. The script uses only the standard library.
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          # The check reads files at each link's pinned commit and at the base branch.
+          fetch-depth: 0
+      - run: >-
+          python3 scripts/check_doc_links.py check docs/ingest-pipeline.md
+          --since "origin/$BASE_REF" --github
+        env:
+          BASE_REF: ${{ github.base_ref }}
 
   slow-tests:
     if: inputs.run_live_tests
