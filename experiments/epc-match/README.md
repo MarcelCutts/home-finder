@@ -15,18 +15,21 @@ habitable rooms) brings the total to **10 single matches (0.9%)**.
 
 **The matches that are made look right, but few can be proven.** Only 10
 single matches exist, so all 10 were hand-checked rather than a sample of 30.
-The **correct-match rate is 9 of the 9 decided (95% interval 70–100%)**,
-with one more that can't be told. But **only 2 of the 10 are proven** by a
-fact naming the dwelling (a flat number, a lettered house number); the other
-7 are consistent with the listing without proof. Two of those 7 are the same
-flat, listed twice, so per home it is 8 of 8.
+**None was shown wrong, but only 2 of the 10 are proven** by a fact naming
+the dwelling (a flat number, a lettered house number). Another 7 are
+consistent with the listing on type, rooms and age, without proof, and 1
+can't be told. Two of those 7 are the same flat, listed twice, so per home it
+is 2 proven, 6 consistent and 1 unclear of 9. Counting consistent matches as
+correct gives 9 of the 9 decided (95% interval 70–100%); that is an upper
+reading, not a measured rate.
 
 **EPC floor area is good enough to show as an approximate size, but not as an
 exact one, and it can't be attached to listings at this coverage.** A flat
 assessed twice gets a floor area a median 3.2% different; 75% of repeats agree
 within 10%, and 9% disagree by more than 20%. The two matched homes with a
-listing figure agree within 2%. So a correctly matched EPC area is a fair
-guide to size, within 10% three times in four. The problem is the match, not
+listing figure agree within 2%. That measures how well two certificates for
+one flat agree, not how close either is to the true area, so it is the best
+case: a correctly matched EPC area repeats within 10% three times in four. The problem is the match, not
 the number: at about 1% of listings, it isn't worth building on.
 
 **The rating and floor area may be shown to renters under the Open Government
@@ -98,7 +101,7 @@ bedrooms, the app's property type, floor and photo notes, and the advert text
 where the database kept it (October only). Floor areas were left off the sheet
 so the verdict couldn't lean on the agreement being measured.
 
-| | correct (proven) | likely | wrong | unclear | correct-match rate |
+| | correct (proven) | likely | wrong | unclear | not shown wrong |
 |---|---|---|---|---|---|
 | strict (postcode, street, number) | 2 | 1 | 0 | 1 | 3/3 |
 | narrowed by rooms | 0 | 6 | 0 | 0 | 6/6 |
@@ -220,9 +223,12 @@ made mainly to get a home's size (for rent per m², say) is not an
 energy-efficiency purpose. Showing it as part of the home's EPC summary keeps
 it within the energy purpose.
 
-**What must not happen:** republishing a certificate's address or postcode, or
-keeping them beyond the match. Address data shared for a permitted purpose
-must carry the Ordnance Survey and Royal Mail notice. This experiment keeps
+**What to avoid:** using a certificate's address or postcode for anything
+outside the permitted energy purposes, which needs an Ordnance Survey or Royal
+Mail licence. Sharing address data for a permitted purpose is allowed if it
+carries the Ordnance Survey and Royal Mail notice. A cautious product keeps
+addresses only as long as the match needs. The published register also leaves
+out certificates whose owners opted out, so some homes can never match. This experiment keeps
 them under the gitignored `data/`, as non-commercial research.
 
 **Before building on it:** ask MHCLG (mhclg.digital-services@communities.gov.uk)
