@@ -33,7 +33,7 @@ from tests.support.web import web_client
 @pytest.mark.parametrize("postcode", ["N15 3RH", " n16 3rh ", "E8 3RH", None])
 @pytest.mark.parametrize("assessment", ["rated", "unrated", "failed"])
 async def test_saved_score_matches_card_detail_map_messages_and_plan(
-    make_merged_property, make_quality_analysis, postcode, assessment
+    make_merged_property, make_quality_analysis, postcode, assessment, tmp_path
 ):
     merged = make_merged_property(bedrooms=2, postcode=postcode)
     analysis = make_quality_analysis(**make_fit_analysis())
@@ -61,7 +61,7 @@ async def test_saved_score_matches_card_detail_map_messages_and_plan(
         assert markers[0]["fit_score"] == score
         assert markers[0]["is_assessed"] == (assessment == "rated")
 
-        client = web_client(storage)
+        client = web_client(storage, tmp_path)
         card = client.get(f"/property/{merged.unique_id}/card")
         detail = client.get(f"/property/{merged.unique_id}")
         assert card.status_code == detail.status_code == 200

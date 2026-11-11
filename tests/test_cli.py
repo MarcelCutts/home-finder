@@ -30,10 +30,10 @@ def _isolate_cli_logging(monkeypatch):
 
 
 @pytest.fixture
-def effects(monkeypatch):
+def effects(monkeypatch, tmp_path):
     settings = Settings(
         analysis_config=new_runtime_analysis_config(),
-        database_path=":memory:",
+        database_path=str(tmp_path / "home_finder.db"),
         telegram_bot_token="123456:offline-fixture",
         telegram_chat_id=123456,
         anthropic_api_key="",

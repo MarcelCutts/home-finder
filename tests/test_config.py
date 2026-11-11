@@ -1,5 +1,6 @@
 """Configuration loading, documented defaults and startup validation."""
 
+import contextlib
 import re
 from collections import Counter
 from datetime import time
@@ -468,6 +469,7 @@ class TestDataDir:
         )
         assert s.data_dir == "/some/path/data"
 
+    @pytest.mark.repository_data_dir
     def test_data_dir_memory(self) -> None:
         s = Settings(
             telegram_bot_token=SecretStr("fake:token"),
@@ -475,6 +477,20 @@ class TestDataDir:
             database_path=":memory:",
         )
         assert s.data_dir == "."
+
+    def test_suite_refuses_a_data_dir_inside_the_repository(self) -> None:
+        """Every test without the marker above is failed by the guard in tests/conftest.py."""
+        s = Settings(
+            telegram_bot_token=SecretStr("fake:token"),
+            telegram_chat_id=0,
+            database_path=":memory:",
+        )
+        # A broad application handler, here suppress(Exception), must not hide the failure.
+        with (
+            pytest.raises(pytest.fail.Exception, match="inside the repository"),
+            contextlib.suppress(Exception),
+        ):
+            _ = s.data_dir
 
 
 class TestPropertyAnalysisTimeout:

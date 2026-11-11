@@ -1,6 +1,7 @@
 """Initial assessment: completing a home, the assessment batch and estimated floor area."""
 
 from collections.abc import Callable
+from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, patch
 
@@ -83,6 +84,7 @@ class TestInitialAssessments:
     async def test_disabled_analysis_completes_each_candidate_without_provider_calls(
         self,
         _mock_wards: AsyncMock,
+        tmp_path: Path,
         storage: PropertyStorage,
         make_property: Callable[..., Property],
         make_merged_property: Callable[..., MergedProperty],
@@ -92,7 +94,7 @@ class TestInitialAssessments:
         settings = Settings(
             telegram_bot_token=SecretStr("fake:token"),
             telegram_chat_id=0,
-            database_path=":memory:",
+            database_path=str(tmp_path / "home_finder.db"),
             search_areas="e8",
             enable_quality_filter=False,
             traveltime_app_id="",
@@ -113,6 +115,7 @@ class TestInitialAssessments:
     async def test_callback_receives_correct_args(
         self,
         _mock_wards: AsyncMock,
+        tmp_path: Path,
         storage: PropertyStorage,
         make_property: Callable[..., Property],
         make_merged_property: Callable[..., MergedProperty],
@@ -126,7 +129,7 @@ class TestInitialAssessments:
         settings = Settings(
             telegram_bot_token=SecretStr("fake:token"),
             telegram_chat_id=0,
-            database_path=":memory:",
+            database_path=str(tmp_path / "home_finder.db"),
             search_areas="e8",
             enable_quality_filter=False,
             traveltime_app_id="",
@@ -150,12 +153,13 @@ class TestInitialAssessments:
         assert q is None  # quality disabled
 
     async def test_one_home_analysis_failure_leaves_it_pending_and_completes_other_homes(
-        self, _mock_wards, storage, make_merged_property, make_quality_analysis
+        self, _mock_wards, tmp_path, storage, make_merged_property, make_quality_analysis
     ):
         homes = [make_merged_property(price_pcm=1800 + i * 10) for i in range(3)]
         batch = CandidateBatch(candidates=homes)
         settings = Settings(
             _env_file=None,
+            database_path=str(tmp_path / "home_finder.db"),
             search_areas="e8",
             enable_quality_filter=True,
             anthropic_api_key=SecretStr("synthetic-test-key"),

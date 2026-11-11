@@ -4,6 +4,7 @@ Collection and enrichment are replaced; storage, selection and consolidation are
 """
 
 from collections.abc import Callable
+from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, patch
 
@@ -22,11 +23,11 @@ from home_finder.pipeline.candidates import prepare_candidates
 
 
 @pytest.fixture
-def test_settings() -> Settings:
+def test_settings(tmp_path: Path) -> Settings:
     return Settings(
         telegram_bot_token=SecretStr("fake:test-token"),
         telegram_chat_id=0,
-        database_path=":memory:",
+        database_path=str(tmp_path / "home_finder.db"),
         search_areas="e8",
         min_price=1500,
         max_price=2500,

@@ -63,6 +63,7 @@ markers = [
     "e2e: End-to-end tests combining multiple pipeline stages",
     "browser: Browser-based E2E tests (requires Playwright)",
     "allow_hosts: Allow specific hosts for network access (pytest-socket)",
+    "repository_data_dir: The test may resolve Settings.data_dir inside the repository",
 ]
 
 [tool.ruff]
