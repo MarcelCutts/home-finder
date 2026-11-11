@@ -10,6 +10,7 @@ from bs4 import BeautifulSoup
 from fastapi.testclient import TestClient
 from pydantic import HttpUrl
 
+from home_finder.analysis.listing_text import select_listing_text
 from home_finder.db.storage import PropertyStorage
 from home_finder.models import (
     FlooringNoiseAnalysis,
@@ -156,21 +157,41 @@ class TestDetailPage:
         assert "A nice flat." in resp.text
 
     async def test_xss_in_description_escaped(
-        self, client: TestClient, storage: PropertyStorage, prop_a: Property
+        self,
+        client: TestClient,
+        storage: PropertyStorage,
+        prop_a: Property,
+        base_analysis: PropertyQualityAnalysis,
     ) -> None:
+        """A script tag is dropped with its contents; an encoded one is shown, escaped.
+
+        Both renderings are covered: plain without an analysis, annotated with one.
+        """
         merged = MergedProperty(
             canonical=prop_a,
             sources=(PropertySource.OPENRENT,),
             source_urls={PropertySource.OPENRENT: prop_a.url},
             min_price=1900,
             max_price=1900,
-            descriptions={PropertySource.OPENRENT: '<script>alert("xss")</script>'},
+            descriptions={
+                PropertySource.OPENRENT: (
+                    'Flat with a balcony.<script>alert("xss")</script> Shown: '
+                    "&lt;script&gt;alert(1)&lt;/script&gt;"
+                )
+            },
         )
         await storage.save_merged_property(merged)
-        resp = client.get(f"/property/{merged.unique_id}")
-        assert resp.status_code == 200
-        assert "<script>" not in resp.text
-        assert "&lt;script&gt;" in resp.text
+        plain = client.get(f"/property/{merged.unique_id}").text
+
+        noisy = base_analysis.model_copy(update={"lowlights": ["Potential traffic noise"]})
+        await storage.save_quality_analysis(prop_a.unique_id, noisy)
+        annotated = client.get(f"/property/{merged.unique_id}").text
+        assert 'class="mark-wavy">balcony</span>' in annotated
+
+        for page in (plain, annotated):
+            assert "<script>alert" not in page
+            assert "xss" not in page
+            assert ". Shown: &lt;script&gt;alert(1)&lt;/script&gt;" in page
 
     async def test_studio_detail_page_is_not_zero_bed(
         self,
@@ -523,15 +544,106 @@ class TestListingText:
             strip=True
         ) == soup.select_one(".fit-brief-score").get_text(strip=True)
 
-        notes = [li.get_text() for li in soup.select(".annotated-notes li")]
-        assert notes[0] == "Marketing wording."
+        notes = [li.find(string=True).strip() for li in soup.select(".annotated-notes li")]
         assert soup.select_one("#section-nav a[href='#section-description']") is not None
-        assert (
+        assert notes == [
             "Photo assessment: Railway line directly beside the building. Check noise at a viewing."
-            in notes
-        )
-        assert soup.select_one(".annotated-text .mark-strike").get_text() == "stunning"
+        ]
+        # Only the finding is marked; "stunning" is left as the agent wrote it.
+        assert [m.get_text() for m in soup.select(".annotated-text .mark-wavy")] == [
+            "private balcony"
+        ]
         assert soup.select_one("#section-description .description-text") is None
+
+    async def test_note_numbers_link_to_their_notes_and_back(
+        self, client, storage, prop_a, merged_a, base_analysis
+    ) -> None:
+        analysis = base_analysis.model_copy(
+            update={
+                "lowlights": ["Potential traffic noise"],
+                "kitchen": base_analysis.kitchen.model_copy(update={"has_dishwasher": "no"}),
+            }
+        )
+        await storage.save_merged_property(merged_a)
+        await storage.update_source_text(
+            merged_a.unique_id,
+            ListingTextEvidence.observed(
+                observed_at=datetime.now(UTC),
+                description="A flat with a private balcony and a fitted kitchen.",
+            ),
+        )
+        await storage.save_quality_analysis(prop_a.unique_id, analysis)
+        soup = _soup(client.get(f"/property/{merged_a.unique_id}").text)
+
+        refs = soup.select(".annotated-text .note-ref a")
+        notes = soup.select(".annotated-notes li")
+        assert [ref.get_text() for ref in refs] == ["1", "2"]
+        assert len(notes) == 2
+        for number, (ref, note) in enumerate(zip(refs, notes, strict=True), start=1):
+            # Forward: the number names its note to a screen reader and lands on it.
+            assert ref["aria-label"] == f"Note {number}"
+            assert soup.select_one(ref["href"]) is note
+            # Back: the note's own link returns to the number that cited it.
+            back = note.select_one("a.note-back")
+            assert back["aria-label"] == f"Back to note {number} in the text"
+            assert soup.select_one(back["href"]) is ref
+
+    async def test_advert_markup_renders_as_line_breaks_with_notes_on_the_words(
+        self, client, storage, prop_a, merged_a, base_analysis
+    ) -> None:
+        """Portal markup becomes line breaks in both renderings, never visible tags."""
+        await storage.save_merged_property(merged_a)
+        await storage.update_source_text(
+            merged_a.unique_id,
+            ListingTextEvidence.observed(
+                observed_at=datetime.now(UTC),
+                description="Bright flat.<br /><br /><b>Private balcony</b>.<BR/>Gas &amp; oven.",
+            ),
+        )
+        plain = client.get(f"/property/{merged_a.unique_id}").text
+        assert "Bright flat.<br><br>Private balcony.<br>Gas &amp; oven." in plain
+        assert "&lt;" not in plain
+
+        noisy = base_analysis.model_copy(update={"lowlights": ["Potential traffic noise"]})
+        await storage.save_quality_analysis(prop_a.unique_id, noisy)
+        annotated = client.get(f"/property/{merged_a.unique_id}").text
+        assert (
+            '<p class="annotated-text">Bright flat.<br><br><span class="mark-wavy">Private balcony'
+            '</span><sup class="note-ref">'
+        ) in annotated
+        assert "</sup>.<br>Gas &amp; oven.</p>" in annotated
+        assert "&lt;" not in annotated
+
+    async def test_page_shows_the_advert_the_analysis_read_not_the_longest(
+        self, client, storage, prop_a, base_analysis
+    ) -> None:
+        zoopla_url = HttpUrl("https://www.zoopla.co.uk/to-rent/details/100")
+        longer = "A much longer advert from the other portal. " * 5
+        merged = MergedProperty(
+            canonical=prop_a,
+            sources=(PropertySource.OPENRENT, PropertySource.ZOOPLA),
+            source_urls={PropertySource.OPENRENT: prop_a.url, PropertySource.ZOOPLA: zoopla_url},
+            min_price=1900,
+            max_price=1900,
+            descriptions={PropertySource.OPENRENT: "Main advert.", PropertySource.ZOOPLA: longer},
+        )
+        await storage.save_merged_property(merged)
+
+        # No analysis: the home's canonical source, however short.
+        page = client.get(f"/property/{merged.unique_id}").text
+        assert "Main advert." in page
+        assert longer.strip() not in page
+
+        # The analysis read only Zoopla's advert, unchanged since, so the notes sit on it.
+        # Its kept inputs come from the analysis's own selection, hashes and all.
+        zoopla_only = merged.model_copy(update={"descriptions": {PropertySource.ZOOPLA: longer}})
+        read_zoopla = base_analysis.model_copy(
+            update={"listing_text_inputs": select_listing_text(zoopla_only)}
+        )
+        await storage.save_quality_analysis(prop_a.unique_id, read_zoopla)
+        page = client.get(f"/property/{merged.unique_id}").text
+        assert f'<p class="annotated-text">{longer.strip()}</p>' in page
+        assert "Main advert." not in page
 
     async def test_listing_text_keeps_its_paragraph_breaks(
         self, client, storage, prop_a, merged_a, base_analysis
