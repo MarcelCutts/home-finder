@@ -166,6 +166,8 @@ def _workspace_evidence(values: Mapping[str, Any], bedrooms: int | None) -> _Evi
     doesn't make an office. A desk in shared living space answers neither way.
     A studio is the exception: with the bed in the only room there is nowhere
     separate to work, which the analysis is told to record but sometimes doesn't.
+    "No room for a desk" doesn't count against a home with a work room or area:
+    the analysis is asked that about the main bedroom.
     """
     evidence = _Evidence()
     if bedrooms == 0:
@@ -186,7 +188,8 @@ def _workspace_evidence(values: Mapping[str, Any], bedrooms: int | None) -> _Evi
     if desk == "yes":
         evidence.support.append("Room for a desk")
     elif desk == "no":
-        evidence.against.append("No room for a desk")
+        if separation not in ("dedicated_room", "separate_area"):
+            evidence.against.append("No room for a desk")
     else:
         evidence.unseen.append("desk space")
     return evidence
@@ -218,18 +221,21 @@ def _hosting_evidence(values: Mapping[str, Any], _bedrooms: int | None) -> _Evid
 
 
 def _sound_evidence(values: Mapping[str, Any], _bedrooms: int | None) -> _Evidence:
-    """Quiet enough for calls: the walls and windows, and noise the analysis tagged.
+    """Quiet enough for calls: noise the analysis tagged, and walls or windows against it.
 
-    Floor level and the risk of disturbing neighbours move the score only: the
-    first is a weak proxy, and the second is about the noise you make.
+    Nothing here supports the claim. Solid walls and double glazing are guessed
+    from photos and say nothing about the street outside, so they leave it to
+    check. Floor level and the risk of disturbing neighbours move the score only:
+    the first is a weak proxy, and the second is about the noise you make.
     """
     evidence = _Evidence()
     flooring = _section(values, "flooring_noise")
     construction = flooring.get("building_construction")
+    helps: list[str] = []
     if construction == "solid_brick":
-        evidence.support.append("Solid brick walls")
+        helps.append("solid brick walls")
     elif construction == "concrete":
-        evidence.support.append("Concrete construction")
+        helps.append("concrete construction")
     elif construction == "timber_frame":
         evidence.against.append("Timber-frame construction")
     elif construction == "mixed":
@@ -238,11 +244,13 @@ def _sound_evidence(values: Mapping[str, Any], _bedrooms: int | None) -> _Eviden
         evidence.unseen.append("construction")
     glazing = flooring.get("has_double_glazing")
     if glazing == "yes":
-        evidence.support.append("Double glazed")
+        helps.append("double glazing")
     elif glazing == "no":
         evidence.against.append("No double glazing")
     else:
         evidence.unseen.append("glazing")
+    if helps:
+        evidence.unsure.insert(0, f"{_join(helps)} help, but noise from outside isn't shown")
     return evidence
 
 
@@ -294,8 +302,9 @@ def _condition_evidence(values: Mapping[str, Any], _bedrooms: int | None) -> _Ev
 
     The overall rating is about desirability, not condition, so it doesn't count;
     nor do "Excellent condition" or "Recently refurbished" highlights, which can
-    repeat the advert. A concern about a room the photos leave out is a gap, not a
-    defect: it keeps a good reading from counting as support. Rated concerns count
+    repeat the advert. A room the photos leave out is a gap, not a defect, whether
+    the analysis listed it or wrote it as a concern: it keeps a good reading from
+    counting as support. Rated concerns count
     against only once the condition itself was seen, and not when every listed
     concern is about a missing room; without a condition reading they are guesses
     about what the photos leave out.
@@ -306,8 +315,9 @@ def _condition_evidence(values: Mapping[str, Any], _bedrooms: int | None) -> _Ev
     flagged = bool(values.get("condition_concerns"))
     concerns = [str(text) for text in section.get("maintenance_concerns") or []] if flagged else []
     unseen_rooms = [text for text in concerns if describes_missing_evidence(text)]
+    missing_photos = _section(values, "listing_red_flags").get("missing_room_photos")
     if condition in ("excellent", "good"):
-        if unseen_rooms:
+        if unseen_rooms or missing_photos:
             evidence.unsure.append(f"looks {condition}, but not every room was shown")
         else:
             evidence.support.append(f"Looks {condition}")

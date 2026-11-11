@@ -127,8 +127,46 @@ def test_a_measured_living_room_decides_room_to_host(living_room_sqm, expected) 
         pytest.param(
             "Somewhere to work",
             {"bedroom": {"can_fit_desk": "no", "office_separation": "dedicated_room"}},
+            ("supported", "Dedicated office room"),
+            id="an-office-room-outranks-a-bedroom-with-no-room-for-a-desk",
+        ),
+        pytest.param(
+            "Somewhere to work",
+            {"bedroom": {"can_fit_desk": "no", "office_separation": "shared_space"}},
             ("conflict", "No room for a desk"),
-            id="evidence-against-outweighs-evidence-for",
+            id="no-desk-room-counts-against-a-home-without-a-work-room",
+        ),
+        pytest.param(
+            "Quiet enough for calls",
+            {
+                "flooring_noise": {
+                    "building_construction": "solid_brick",
+                    "has_double_glazing": "yes",
+                }
+            },
+            (
+                "needs_checking",
+                "solid brick walls and double glazing help, but noise from outside isn't shown",
+            ),
+            id="walls-and-glazing-never-prove-quiet",
+        ),
+        pytest.param(
+            "Quiet enough for calls",
+            {"flooring_noise": {"building_construction": None, "has_double_glazing": "yes"}},
+            (
+                "needs_checking",
+                "double glazing help, but noise from outside isn't shown; construction not shown",
+            ),
+            id="double-glazing-alone-never-proves-quiet",
+        ),
+        pytest.param(
+            "Good condition",
+            {
+                "condition": {"overall_condition": "good"},
+                "listing_red_flags": {"missing_room_photos": ["Bathroom"]},
+            },
+            ("needs_checking", "looks good, but not every room was shown"),
+            id="a-room-missing-from-the-photos-keeps-good-condition-unproven",
         ),
         pytest.param(
             "Quiet enough for calls",
@@ -365,12 +403,13 @@ def test_lead_order_limit_then_risk_then_needs_checking_then_clear() -> None:
         bedroom={"office_separation": "dedicated_room"},
         highlights=["Dishwasher included", "Gas hob"],
     )
-    clear = brief_lead(check(supported, must_haves="workspace,sound"), supported)
+    clear = brief_lead(check(supported, must_haves="workspace,condition"), supported)
     assert clear == {
         "kind": "clear",
         "kicker": "All 5 must-haves supported",
         "title": "Nothing breaks your brief.",
-        "detail": "Best thing: dishwasher included.",
+        # Quiet is a nice-to-have here, and walls and glazing never settle it.
+        "detail": "Best thing: dishwasher included. Nice-to-haves: 1 to check.",
     }
 
     # A conflict the analysis found is a risk to check, not a broken limit.
@@ -413,6 +452,6 @@ def test_a_clear_lead_still_reports_weak_nice_to_haves() -> None:
         light_space={"natural_light": "unknown"},
         highlights=[],
     )
-    lead = brief_lead(check(analysis, must_haves="workspace,sound"), analysis)
+    lead = brief_lead(check(analysis, must_haves="workspace,condition"), analysis)
     assert lead["kind"] == "clear"
-    assert lead["detail"] == "Nice-to-haves: 1 in conflict, 1 to check."
+    assert lead["detail"] == "Nice-to-haves: 1 in conflict, 2 to check."
