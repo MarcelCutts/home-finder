@@ -4194,9 +4194,15 @@ nav.container-fluid li {
 .detail-section table.fit-working thead th { color: var(--text-dim); font-weight: 400; font-size: 0.78rem; white-space: normal; vertical-align: bottom; }
 .detail-section table.fit-working tfoot td { border-top: 1.5px solid currentColor; font-weight: 700; padding-top: 0.3rem; }
 .annotated-text { margin: 0 0 1rem; font-size: 1.125rem; line-height: 1.55; max-width: 70ch; }
-.mark-strike { text-decoration: line-through; text-decoration-color: var(--red); text-decoration-thickness: 2px; }
 .mark-wavy { text-decoration: underline wavy var(--red); text-underline-offset: 4px; }
 .note-ref { color: var(--red); font-weight: 600; font-size: 0.7em; margin-left: 0.1em; }
+/* Each note number links to its note and back; the one landed on is shaded, clear of
+   the sticky section bar. Vertical padding gives the small figures a taller tap area
+   without moving them off their words. */
+.note-ref a, .note-back { color: inherit; text-decoration: none; padding: 0.3em 0; }
+.note-ref a:hover, .note-back:hover { text-decoration: underline; }
+.note-ref a, .annotated-notes li { scroll-margin-top: 3rem; }
+.note-ref a:target, .annotated-notes li:target { background: var(--paper-shade); }
 .annotated-notes { margin: 0 0 0.5rem; padding-left: 1.4rem; color: var(--red); display: flex; flex-direction: column; gap: 0.3rem; max-width: 60ch; }
 .annotated-notes li::marker { font-weight: 600; }
 /* On a phone the working table tightens so its four columns fit without scrolling. These
