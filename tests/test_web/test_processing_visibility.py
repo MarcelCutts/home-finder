@@ -6,14 +6,11 @@ from urllib.parse import parse_qs, urlsplit
 import pytest
 import pytest_asyncio
 from bs4 import BeautifulSoup
-from fastapi import FastAPI
-from fastapi.testclient import TestClient
 
-from home_finder.config import Settings
 from home_finder.db.storage import PropertyStorage
 from home_finder.models import PropertyImage, PropertySource
 from home_finder.web.filters import PropertyFilter
-from home_finder.web.routes import router
+from tests.support.web import web_client
 
 
 @pytest_asyncio.fixture
@@ -62,11 +59,7 @@ async def processing_storage(make_merged_property, make_quality_analysis):
 
 @pytest.fixture
 def processing_client(processing_storage):
-    app = FastAPI()
-    app.state.storage = processing_storage
-    app.state.settings = Settings(database_path=":memory:")
-    app.include_router(router)
-    return TestClient(app)
+    return web_client(processing_storage)
 
 
 @pytest.mark.parametrize(

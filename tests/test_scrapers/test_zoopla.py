@@ -10,7 +10,6 @@ import pytest
 from bs4 import BeautifulSoup
 
 from home_finder.models import PropertySource
-from home_finder.scrapers.parsing import extract_bedrooms, extract_postcode, extract_price
 from home_finder.scrapers.zoopla import ZooplaListing, ZooplaScraper
 
 
@@ -189,33 +188,6 @@ class TestZooplaHtmlParser:
         url = "https://www.zoopla.co.uk/to-rent/property/hackney/"
         prop_id = zoopla_scraper._extract_property_id(url)
         assert prop_id is None
-
-    def test_extract_price(self) -> None:
-        """Test price extraction from text."""
-        assert extract_price("£2,300 pcm") == 2300
-        assert extract_price("£1,950 pcm") == 1950
-        assert extract_price("£500 pw") == 2166  # Weekly to monthly
-
-    def test_extract_price_invalid(self) -> None:
-        """Test price extraction with invalid text."""
-        assert extract_price("POA") is None
-        assert extract_price("") is None
-
-    def test_extract_bedrooms(self) -> None:
-        """Test bedroom extraction from title."""
-        assert extract_bedrooms("1 bed flat to rent") == 1
-        assert extract_bedrooms("2 bed apartment to rent") == 2
-        assert extract_bedrooms("Studio to rent") == 0
-        assert extract_bedrooms("3 bedroom house") == 3
-
-    def test_extract_bedrooms_no_match(self) -> None:
-        """Test bedroom extraction with no bedroom info."""
-        assert extract_bedrooms("Flat to rent") is None
-
-    def test_extract_postcode(self) -> None:
-        """Test postcode extraction from address."""
-        assert extract_postcode("Wayland Avenue, Hackney, London E8 3RH") == "E8 3RH"
-        assert extract_postcode("Some Street, N1") == "N1"
 
     def test_parse_empty_results(self, zoopla_scraper: ZooplaScraper) -> None:
         """Test parsing page with no results."""
@@ -415,7 +387,6 @@ class TestZooplaEarlyStop:
         )
         assert "results_sort=newest_listings" in url
 
-    @pytest.mark.asyncio
     async def test_stops_when_all_results_known(self, zoopla_scraper: ZooplaScraper) -> None:
         """When all page-1 properties are already in DB, stop without fetching page 2."""
         listings_data = [
@@ -464,7 +435,6 @@ class TestZooplaEarlyStop:
         assert result.observations == result.properties
         assert result.stop_reason == "known_page"
 
-    @pytest.mark.asyncio
     async def test_continues_when_some_results_new(self, zoopla_scraper: ZooplaScraper) -> None:
         """When only some results are known, don't early-stop — fetch next page."""
         listings_data = [
@@ -586,7 +556,6 @@ class TestCloudflareDetection:
 class TestFetchPageRetry:
     """Tests for _fetch_page retry logic with Cloudflare handling."""
 
-    @pytest.mark.asyncio
     async def test_retries_on_403_challenge(self, zoopla_scraper: ZooplaScraper) -> None:
         """403 Cloudflare challenge should be retried, then succeed on 200."""
         challenge_resp = _make_response(
@@ -607,7 +576,6 @@ class TestFetchPageRetry:
         assert result == "<html>property data</html>"
         assert mock_session.get.call_count == 2
 
-    @pytest.mark.asyncio
     async def test_retries_on_soft_200_challenge(self, zoopla_scraper: ZooplaScraper) -> None:
         """200 response with cf-mitigated header should be retried."""
         soft_challenge = _make_response(
@@ -629,7 +597,6 @@ class TestFetchPageRetry:
         assert result == "<html>real data</html>"
         assert mock_session.get.call_count == 2
 
-    @pytest.mark.asyncio
     async def test_does_not_retry_hard_404(self, zoopla_scraper: ZooplaScraper) -> None:
         """404 without challenge markers should NOT be retried."""
         resp = _make_response(status_code=404, text="Not Found")
@@ -643,7 +610,6 @@ class TestFetchPageRetry:
         assert result is None
         assert mock_session.get.call_count == 1
 
-    @pytest.mark.asyncio
     async def test_retries_on_exception(self, zoopla_scraper: ZooplaScraper) -> None:
         """Network exceptions should be retried with backoff."""
         ok_resp = _make_response(status_code=200, text="<html>data</html>")
@@ -662,7 +628,6 @@ class TestFetchPageRetry:
         assert result == "<html>data</html>"
         assert mock_session.get.call_count == 2
 
-    @pytest.mark.asyncio
     async def test_exhausted_after_4_attempts(self, zoopla_scraper: ZooplaScraper) -> None:
         """After 4 failed challenge attempts, return None."""
         challenge_resp = _make_response(
@@ -682,7 +647,6 @@ class TestFetchPageRetry:
         assert result is None
         assert mock_session.get.call_count == 4
 
-    @pytest.mark.asyncio
     async def test_passes_impersonate_target(self, zoopla_scraper: ZooplaScraper) -> None:
         """impersonate_target kwarg should be forwarded to session.get."""
         ok_resp = _make_response(status_code=200, text="<html>ok</html>")
@@ -706,7 +670,6 @@ class TestProfileRotation:
             target = zoopla_scraper._pick_impersonate_target()
             assert target in ZooplaScraper._IMPERSONATE_TARGETS
 
-    @pytest.mark.asyncio
     async def test_scrape_passes_impersonate_to_fetch(self, zoopla_scraper: ZooplaScraper) -> None:
         """scrape() should pass a chosen impersonate target to _fetch_page."""
         # Skip _warm_up to avoid creating a real AsyncSession (curl_cffi bypasses
@@ -731,7 +694,6 @@ class TestProfileRotation:
 class TestWarmUp:
     """Tests for homepage warm-up before searching."""
 
-    @pytest.mark.asyncio
     async def test_warm_up_visits_homepage(self) -> None:
         """Warm-up should GET the homepage to establish cookies."""
         scraper = ZooplaScraper()
@@ -749,7 +711,6 @@ class TestWarmUp:
         assert call_args[0][0] == "https://www.zoopla.co.uk/"
         assert scraper._warmed_up is True
 
-    @pytest.mark.asyncio
     async def test_warm_up_only_once(self) -> None:
         """Warm-up should not re-run if already done."""
         scraper = ZooplaScraper()
@@ -761,7 +722,6 @@ class TestWarmUp:
 
         mock_session.get.assert_not_called()
 
-    @pytest.mark.asyncio
     async def test_warm_up_failure_is_graceful(self) -> None:
         """Warm-up failure should not prevent scraping."""
         scraper = ZooplaScraper()
@@ -774,7 +734,6 @@ class TestWarmUp:
         # Should be marked as warmed up (won't retry)
         assert scraper._warmed_up is True
 
-    @pytest.mark.asyncio
     async def test_scrape_calls_warm_up(self) -> None:
         """scrape() should call _warm_up before fetching pages."""
         scraper = ZooplaScraper()
@@ -803,7 +762,6 @@ class TestWarmUp:
 class TestAdaptiveDelay:
     """Tests for adaptive inter-area delay based on consecutive blocks."""
 
-    @pytest.mark.asyncio
     async def test_normal_delay_no_blocks(self) -> None:
         """With 0 consecutive blocks, delay should be 10-20s."""
         scraper = ZooplaScraper()
@@ -816,7 +774,6 @@ class TestAdaptiveDelay:
         delay = mock_sleep.call_args[0][0]
         assert 10.0 <= delay <= 20.0
 
-    @pytest.mark.asyncio
     async def test_slowdown_delay_1_block(self) -> None:
         """With 1 consecutive block, delay should be 20-40s."""
         scraper = ZooplaScraper()
@@ -829,7 +786,6 @@ class TestAdaptiveDelay:
         delay = mock_sleep.call_args[0][0]
         assert 20.0 <= delay <= 40.0
 
-    @pytest.mark.asyncio
     async def test_extended_cooldown_3_blocks(self) -> None:
         """With 3+ consecutive blocks, delay should be 45-75s."""
         scraper = ZooplaScraper()
@@ -846,7 +802,6 @@ class TestAdaptiveDelay:
 class TestConsecutiveBlockTracking:
     """Tests for consecutive block counter and session refresh."""
 
-    @pytest.mark.asyncio
     async def test_success_resets_counter(self) -> None:
         """Successful fetch should reset consecutive block counter."""
         scraper = ZooplaScraper()
@@ -862,7 +817,6 @@ class TestConsecutiveBlockTracking:
         assert result == "<html>data</html>"
         assert scraper._consecutive_blocks == 0
 
-    @pytest.mark.asyncio
     async def test_exhaustion_increments_counter(self) -> None:
         """Exhausted retries should increment consecutive block counter."""
         scraper = ZooplaScraper()
@@ -884,7 +838,6 @@ class TestConsecutiveBlockTracking:
         assert result is None
         assert scraper._consecutive_blocks == 1
 
-    @pytest.mark.asyncio
     async def test_session_reset_at_2_blocks(self) -> None:
         """Session should be reset after 2 consecutive blocks."""
         scraper = ZooplaScraper()
@@ -909,7 +862,6 @@ class TestConsecutiveBlockTracking:
         assert scraper._session is None
         assert scraper._warmed_up is False
 
-    @pytest.mark.asyncio
     async def test_no_session_reset_at_1_block(self) -> None:
         """Session should NOT be reset after only 1 block."""
         scraper = ZooplaScraper()
@@ -971,7 +923,6 @@ class TestMaxAreasPerRun:
 class TestSessionReset:
     """Tests for session reset."""
 
-    @pytest.mark.asyncio
     async def test_reset_clears_session_and_warmup(self) -> None:
         """_reset_session should close session and clear warmed_up flag."""
         scraper = ZooplaScraper()
@@ -986,7 +937,6 @@ class TestSessionReset:
         assert scraper._session is None
         assert scraper._warmed_up is False
 
-    @pytest.mark.asyncio
     async def test_reset_noop_without_session(self) -> None:
         """_reset_session should be safe to call without an active session."""
         scraper = ZooplaScraper()

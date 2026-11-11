@@ -1,11 +1,16 @@
-"""Tests for scripts/audit_image_cache.py."""
+"""Tests for scripts/audit_image_cache.py, run against the production schema."""
 
+import asyncio
+import functools
 import importlib.util
 import sqlite3
+import tempfile
 from pathlib import Path
 
+import aiosqlite
 import pytest
 
+from home_finder.db.migrations import run_migrations
 from home_finder.utils.image_cache import (
     get_cache_dir,
     save_image_bytes,
@@ -26,6 +31,26 @@ reflag_partial = _mod.reflag_partial
 main = _mod.main
 
 
+@functools.cache
+def _migrated_schema() -> sqlite3.Connection:
+    """The production schema, built once per worker by the real migrations."""
+
+    async def migrate(path: Path) -> None:
+        async with aiosqlite.connect(path) as conn:
+            await run_migrations(conn)
+
+    template = sqlite3.connect(":memory:", check_same_thread=False)
+    with tempfile.TemporaryDirectory() as tmp:
+        path = Path(tmp) / "schema.db"
+        asyncio.run(migrate(path))
+        source = sqlite3.connect(path)
+        try:
+            source.backup(template)
+        finally:
+            source.close()
+    return template
+
+
 def _setup_db(
     db_path: Path,
     rows: list[tuple[str, str, str, str]],
@@ -33,62 +58,35 @@ def _setup_db(
     property_ids: list[str] | None = None,
     quality_analyses: list[tuple[str, str]] | None = None,
 ) -> None:
-    """Create property_images, properties, and quality_analyses tables and insert rows.
+    """Give db_path the production schema and insert the scenario's rows.
 
-    Each row is (property_unique_id, source, url, image_type).
-    property_ids: optional list of unique_ids to insert into properties table.
+    Each row is (property_unique_id, source, url, image_type). Only property_ids get
+    a properties row, so other image rows belong to homes no longer stored (the
+    script opens the database with foreign keys unenforced, as SQLite does by default).
     quality_analyses: optional list of (property_unique_id, analysis_json) to insert.
     """
     conn = sqlite3.connect(str(db_path))
     try:
-        conn.execute(
-            "CREATE TABLE IF NOT EXISTS property_images ("
-            "  id INTEGER PRIMARY KEY AUTOINCREMENT,"
-            "  property_unique_id TEXT NOT NULL,"
-            "  source TEXT NOT NULL,"
-            "  url TEXT NOT NULL,"
-            "  image_type TEXT NOT NULL,"
-            "  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,"
-            "  UNIQUE(property_unique_id, url)"
-            ")"
-        )
-        conn.execute(
-            "CREATE TABLE IF NOT EXISTS properties ("
-            "  unique_id TEXT PRIMARY KEY,"
-            "  source TEXT NOT NULL DEFAULT '',"
-            "  source_id TEXT NOT NULL DEFAULT '',"
-            "  url TEXT NOT NULL DEFAULT '',"
-            "  title TEXT NOT NULL DEFAULT ''"
-            ")"
-        )
-        conn.execute(
-            "CREATE TABLE IF NOT EXISTS quality_analyses ("
-            "  property_unique_id TEXT PRIMARY KEY,"
-            "  analysis_json TEXT NOT NULL,"
-            "  overall_rating INTEGER,"
-            "  reanalysis_requested_at TEXT,"
-            "  FOREIGN KEY (property_unique_id) REFERENCES properties(unique_id)"
-            ")"
-        )
+        _migrated_schema().backup(conn)
         for prop_id, source, url, img_type in rows:
             conn.execute(
                 "INSERT INTO property_images (property_unique_id, source, url, image_type)"
                 " VALUES (?, ?, ?, ?)",
                 (prop_id, source, url, img_type),
             )
-        if property_ids:
-            for uid in property_ids:
-                conn.execute(
-                    "INSERT OR IGNORE INTO properties (unique_id) VALUES (?)",
-                    (uid,),
-                )
-        if quality_analyses:
-            for uid, analysis_json in quality_analyses:
-                conn.execute(
-                    "INSERT INTO quality_analyses (property_unique_id, analysis_json)"
-                    " VALUES (?, ?)",
-                    (uid, analysis_json),
-                )
+        for uid in property_ids or []:
+            source, _, source_id = uid.partition(":")
+            conn.execute(
+                "INSERT OR IGNORE INTO properties (unique_id, source, source_id, url, title,"
+                " price_pcm, bedrooms, address, first_seen) VALUES (?, ?, ?, ?, 'Fixture',"
+                " 1800, 1, 'Fixture address', '2026-01-01T00:00:00+00:00')",
+                (uid, source, source_id, f"https://example.com/{source}/{source_id}"),
+            )
+        for uid, analysis_json in quality_analyses or []:
+            conn.execute(
+                "INSERT INTO quality_analyses (property_unique_id, analysis_json) VALUES (?, ?)",
+                (uid, analysis_json),
+            )
         conn.commit()
     finally:
         conn.close()

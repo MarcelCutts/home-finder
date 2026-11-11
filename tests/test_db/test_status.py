@@ -1,10 +1,8 @@
-"""Tests for user status tracking (Ticket 7)."""
+"""Owner status changes on a home and their recorded history."""
 
-from collections.abc import AsyncGenerator
 from pathlib import Path
 
 import pytest
-import pytest_asyncio
 from pydantic import HttpUrl
 
 from home_finder.db.storage import DuplicateTelegramUpdateError, PropertyStorage
@@ -39,14 +37,6 @@ def merged_a(prop_a: Property) -> MergedProperty:
         min_price=1900,
         max_price=1900,
     )
-
-
-@pytest_asyncio.fixture
-async def storage() -> AsyncGenerator[PropertyStorage, None]:
-    s = PropertyStorage(":memory:")
-    await s.initialize()
-    yield s
-    await s.close()
 
 
 class TestUpdateUserStatus:

@@ -6,29 +6,9 @@ from urllib.parse import parse_qs, urlencode, urlsplit
 
 import pytest
 from bs4 import BeautifulSoup
-from fastapi import FastAPI
-from fastapi.testclient import TestClient
 
-from home_finder.config import Settings
-from home_finder.db import PropertyStorage
 from home_finder.models import UserStatus
 from home_finder.web.filters import PropertyFilter
-from home_finder.web.routes import router
-
-
-@pytest.fixture
-async def storage():
-    async with PropertyStorage(":memory:") as storage:
-        yield storage
-
-
-@pytest.fixture
-def client(storage):
-    app = FastAPI()
-    app.state.storage = storage
-    app.state.settings = Settings(_env_file=None, database_path=":memory:")
-    app.include_router(router)
-    return TestClient(app)
 
 
 @pytest.mark.parametrize(

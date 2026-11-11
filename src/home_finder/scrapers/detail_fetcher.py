@@ -40,7 +40,7 @@ from home_finder.utils.circuit_breaker import ConsecutiveFailureBreaker
 from home_finder.utils.http_evidence import is_challenge
 from home_finder.utils.image_cache import is_valid_image_bytes
 
-_MAX_RETRIES = 2  # cross-run retry handles persistent failures
+_MAX_FETCH_ATTEMPTS = 2  # cross-run retry handles persistent failures
 _FLOOR_AREA_MIN_SQFT = 100
 _FLOOR_AREA_MAX_SQFT = 5000
 _RETRY_BASE_DELAY = 2.0  # seconds, doubled each retry (2, 4)
@@ -446,15 +446,17 @@ class DetailFetcher:
     async def _httpx_get_with_retry(self, url: str) -> httpx.Response:
         """GET with retry on 429 Too Many Requests."""
         client = await self._get_client()
+        last_response: httpx.Response | None = None
 
         @retry(
-            stop=stop_after_attempt(_MAX_RETRIES),
+            stop=stop_after_attempt(_MAX_FETCH_ATTEMPTS),
             wait=wait_exponential(multiplier=2, min=2, max=8),
             retry=retry_if_exception_type(RetryableHttpError),
             reraise=True,
         )
         async def _do_get() -> httpx.Response:
-            response = await client.get(url)
+            nonlocal last_response
+            response = last_response = await client.get(url)
             if response.status_code == 429:
                 raise RetryableHttpError(response.status_code, url)
             response.raise_for_status()
@@ -463,10 +465,9 @@ class DetailFetcher:
         try:
             return await _do_get()
         except RetryableHttpError:
-            # Final 429 after exhaustion — raise as httpx error for caller
-            response = await client.get(url)
-            response.raise_for_status()
-            return response  # unreachable but satisfies type checker
+            # Preserve the final response; reporting exhaustion must not send again.
+            assert last_response is not None
+            return last_response.raise_for_status()
 
     async def _throttle(self, lock: asyncio.Lock, attr: str, interval: float) -> None:
         """Ensure minimum interval between requests for a specific throttle."""
@@ -525,7 +526,7 @@ class DetailFetcher:
         last_response: Any = None
 
         @retry(
-            stop=stop_after_attempt(_MAX_RETRIES),
+            stop=stop_after_attempt(_MAX_FETCH_ATTEMPTS),
             wait=wait_exponential(multiplier=2, min=2, max=8) + wait_random(0, 1),
             retry=retry_if_exception_type(RetryableHttpError),
             reraise=True,
@@ -541,7 +542,7 @@ class DetailFetcher:
         try:
             return await _do_get()
         except RetryableHttpError:
-            logger.warning("rate_limit_retries_exhausted", url=url, attempts=_MAX_RETRIES)
+            logger.warning("rate_limit_retries_exhausted", url=url, attempts=_MAX_FETCH_ATTEMPTS)
             return last_response
 
     async def fetch_floorplan_url(self, prop: Property) -> str | None:

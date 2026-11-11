@@ -61,7 +61,7 @@ from home_finder.utils.image_cache import (
 )
 from home_finder.utils.image_hash import hash_from_disk, hashes_match
 from home_finder.utils.negotiation import generate_negotiation_brief
-from home_finder.web.annotate import annotate_listing
+from home_finder.web.annotate import annotate_listing, choose_advert_text
 from home_finder.web.app import _compute_static_version
 from home_finder.web.brief import brief_lead, check_brief
 from home_finder.web.deliveries import DELIVERY_STATES, delivery_view
@@ -720,15 +720,12 @@ async def property_detail(
         if cached is not None:
             image_url_map[img_url] = f"/images/{safe_id}/{cached.name}"
 
-    # Get the longest description
-    descriptions: dict[str, str] = prop.get("descriptions_dict", {})
-    best_description = ""
-    for desc in descriptions.values():
-        if desc and len(desc) > len(best_description):
-            best_description = desc
-    # Fall back to canonical description
-    if not best_description and prop.get("description"):
-        best_description = prop.get("description") or ""
+    # One source's advert, the analysis's own reading first, as plain text.
+    best_description = choose_advert_text(
+        prop.get("listing_evidence", {}),
+        canonical_source=cast("str | None", prop.get("source")),
+        analysis=qa,
+    )
 
     # Compute Marcel Fit Score + breakdown for detail page
     fit_score = None
@@ -878,8 +875,8 @@ async def update_property_status(
 ) -> Response:
     """Update property user status.
 
-    Returns a full card partial when HX-Target indicates a card-level swap
-    (quick-action buttons on dashboard), or a status badge partial for
+    Returns a full card partial when the form posts ``source=card`` (the
+    dashboard card's quick-action buttons), or the status selector partial for
     detail-page swaps.
     """
     form = await request.form(max_fields=4, max_files=0, max_part_size=1024)

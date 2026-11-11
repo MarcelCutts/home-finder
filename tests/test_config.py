@@ -300,7 +300,7 @@ def test_legacy_analysis_limit_defaults_each_queue(monkeypatch, legacy_limit):
     monkeypatch.setenv("HOME_FINDER_MAX_ANALYSIS_PER_RUN", str(legacy_limit))
     monkeypatch.delenv("HOME_FINDER_MAX_INITIAL_ANALYSES_PER_RUN", raising=False)
     monkeypatch.delenv("HOME_FINDER_MAX_REANALYSES_PER_RUN", raising=False)
-    settings = Settings(_env_file=None)
+    settings = Settings()
     assert settings.max_initial_analyses_per_run == legacy_limit
     assert settings.max_reanalyses_per_run == legacy_limit
 
@@ -308,7 +308,7 @@ def test_legacy_analysis_limit_defaults_each_queue(monkeypatch, legacy_limit):
 def test_explicit_queue_limits_override_legacy_default(monkeypatch):
     monkeypatch.setenv("HOME_FINDER_MAX_ANALYSIS_PER_RUN", "5")
     monkeypatch.setenv("HOME_FINDER_MAX_INITIAL_ANALYSES_PER_RUN", "3")
-    settings = Settings(_env_file=None, max_reanalyses_per_run=2)
+    settings = Settings(max_reanalyses_per_run=2)
     assert settings.max_initial_analyses_per_run == 3
     assert settings.max_reanalyses_per_run == 2
 
@@ -461,3 +461,22 @@ class TestDataDir:
             database_path=":memory:",
         )
         assert s.data_dir == "."
+
+
+class TestPropertyAnalysisTimeout:
+    """The per-property analysis wall clock defaults to 600 s and accepts 30-900 s."""
+
+    def test_default_is_ten_minutes(self) -> None:
+        assert Settings(search_areas="e8").property_analysis_timeout == 600.0
+
+    @pytest.mark.parametrize("seconds", [30.0, 60.0, 900.0])
+    def test_accepts_values_within_bounds(self, seconds: float) -> None:
+        assert (
+            Settings(search_areas="e8", property_analysis_timeout=seconds).property_analysis_timeout
+            == seconds
+        )
+
+    @pytest.mark.parametrize("seconds", [10.0, 1000.0])
+    def test_rejects_values_outside_bounds(self, seconds: float) -> None:
+        with pytest.raises(ValidationError):
+            Settings(search_areas="e8", property_analysis_timeout=seconds)

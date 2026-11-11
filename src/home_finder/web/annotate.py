@@ -1,32 +1,195 @@
 """Notes on the listing's own words.
 
-The listing text is shown as written, and the analysis is attached as numbered
-notes to the phrases they concern. Every note names its source (the photo
-assessment or the stored area reference) and states what was seen, never that the
-listing omitted or contradicted something: this code never compares the text with
-the finding. A note attaches to a phrase only when a typed finding exists; the
-free-form noise prose on its own is not enough, because it mixes positive and
-negative observations. Marketing adjectives are struck through, every one of them,
-with one shared note.
+One advert is chosen, cleaned of the portal's markup, and shown as written, with
+the analysis attached as numbered notes to the phrases they concern. Every note
+names its source (the photo assessment or the stored area reference) and states
+what was seen, never that the listing omitted or contradicted something: this code
+never compares the text with the finding. A note attaches to a phrase only when a
+typed finding exists; the free-form noise prose on its own is not enough, because
+it mixes positive and negative observations. Marketing adjectives get no mark of
+their own: striking every one through added little to the findings.
 
-Candidates are collected first, overlaps are settled with the specific findings
-winning over adjectives, and only then are the notes numbered, in text order, so
-every note has an anchor and every anchor a note.
+Candidates are collected first, overlaps are settled by position, and only then are
+the notes numbered, in text order, so every note has exactly one anchor and every
+anchor a note.
 """
 
 import re
-from typing import Any, Final, Literal, TypedDict
+from collections.abc import Mapping
+from html.parser import HTMLParser
+from typing import Any, Final, NamedTuple, TypedDict
 
-from home_finder.models import PropertyLowlight
+from home_finder.analysis.listing_text import source_text_hash
+from home_finder.models import ListingTextEvidence, PropertyLowlight, PropertySource
 
-Mark = Literal["strike", "wavy"]
+# Cleaning the portal's markup
 
-_ADJECTIVES: Final = (
-    "stunning|beautiful|immaculate|fantastic|amazing|superb|wonderful|gorgeous|luxurious|"
-    "charming|delightful|exceptional|stylish|impressive|spectacular|incredible|lovely|"
-    "fabulous|magnificent|breathtaking|outstanding|exquisite"
-)
-_ADJECTIVE_RE: Final = re.compile(rf"\b(?:{_ADJECTIVES})\b", re.IGNORECASE)
+
+class _Break(NamedTuple):
+    """The newlines a tag stands for: each "<br>" adds one, a block needs at least some."""
+
+    added: int
+    at_least: int
+
+
+# Every tag not named here is dropped, keeping its words.
+_BREAKS: Final[dict[str, _Break]] = {
+    "br": _Break(added=1, at_least=0),
+    "p": _Break(added=0, at_least=2),
+    **{
+        tag: _Break(added=0, at_least=1)
+        for tag in (
+            *("div", "li", "ul", "ol", "dt", "dd", "blockquote", "hr", "tr", "td", "th"),
+            *("h1", "h2", "h3", "h4", "h5", "h6"),
+        )
+    },
+}
+# Their contents are code, never the agent's words.
+_CODE_TAGS: Final = frozenset({"script", "style"})
+# Collapsed after joining, so spaces either side of an inline tag become one.
+_SPACE_RUN_RE: Final = re.compile(r"[ \t\f\v]+")
+
+
+class _AdvertParser(HTMLParser):
+    """Split an advert into its words and the line breaks its tags stand for."""
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.pieces: list[str | _Break] = []
+        self._in_code = False
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        self._tag(tag, opening=True)
+
+    def handle_startendtag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        # "<br/>" is one break; the default would also count it as a closing tag. An
+        # empty "<script/>" has no contents to hide, so it must not start hiding words.
+        if tag not in _CODE_TAGS:
+            self._tag(tag, opening=True)
+
+    def handle_endtag(self, tag: str) -> None:
+        self._tag(tag, opening=False)
+
+    def handle_data(self, data: str) -> None:
+        if not self._in_code:
+            self.pieces.append(data)
+
+    def _tag(self, tag: str, *, opening: bool) -> None:
+        if tag in _CODE_TAGS:
+            self._in_code = opening
+        elif tag in _BREAKS:
+            self.pieces.append(_BREAKS[tag])
+
+
+def _join(pieces: list[str | _Break]) -> str:
+    """Join words, turning each run of breaks into the newlines it stands for.
+
+    Whitespace beside a run, newlines included, is the source's own formatting
+    around its tags, so it goes; the run alone decides the breaks there.
+    """
+    out: list[str] = []
+    added = at_least = 0
+    for piece in pieces:
+        if isinstance(piece, _Break):
+            added += piece.added
+            at_least = max(at_least, piece.at_least)
+            continue
+        if added or at_least:
+            piece = piece.lstrip()
+            if not piece:
+                continue  # whitespace between two tags does not end the run
+            while out and not out[-1].strip():
+                out.pop()
+            if out:
+                out[-1] = out[-1].rstrip()
+            out.append("\n" * max(added, at_least))
+            added = at_least = 0
+        out.append(piece)
+    return "".join(out)
+
+
+def clean_advert_text(text: str) -> str:
+    """Return a portal's advert as plain text, for escaping and display.
+
+    Each "<br>" is a line break, a block such as a list item or table cell starts a
+    new line, and a paragraph is set off by a blank line; every other tag is
+    dropped, along with the contents of scripts and styles, and entities are
+    decoded once. Newlines beside those tags are the portal's formatting and go
+    (portals send a "\\r" by each "<br/>"); any other newline in the advert is
+    kept, so plain paragraphs survive a stray tag. Runs of spaces collapse to one,
+    lines are trimmed and no more than one blank line is kept. The result is text,
+    never markup, so it must still be escaped when rendered. Fact extraction uses
+    its own normaliser with other rules, utils.listing_facts.plain_listing_text.
+    """
+    parser = _AdvertParser()
+    parser.feed(text.replace("\r\n", "\n").replace("\r", "\n"))
+    parser.close()
+    words = _SPACE_RUN_RE.sub(" ", _join(parser.pieces))
+    words = re.sub(r"[^\S\n]*\n[^\S\n]*", "\n", words)  # any space but a newline, "&nbsp;" too
+    return re.sub(r"\n{3,}", "\n\n", words).strip()
+
+
+# Choosing the advert
+
+
+def _field(analysis: Any, name: str) -> Any:
+    if analysis is None:
+        return None
+    if isinstance(analysis, dict):
+        return analysis.get(name)
+    return getattr(analysis, name, None)
+
+
+def _unchanged_since_read(text: ListingTextEvidence, read_hash: str | None) -> bool:
+    """Whether a source's evidence is unchanged since the analysis read it.
+
+    The hash covers the whole evidence, observation dates and origins included, so
+    a new description or features breaks the match, and so does a re-scrape that
+    observes the same words again; the page then falls back to the canonical
+    advert. A source the analysis kept no hash for is not hashed.
+    """
+    return read_hash is not None and read_hash == source_text_hash(text)
+
+
+def choose_advert_text(
+    evidence: Mapping[PropertySource, ListingTextEvidence],
+    *,
+    canonical_source: str | None,
+    analysis: Any,
+) -> str:
+    """Pick one source's advert for the listing page, cleaned.
+
+    One advert, never a merge, so the notes sit on one agent's words. Sources rank:
+
+    1. those whose text is unchanged since the analysis read it, as the hashes in
+       its kept inputs show, so the notes sit on words the analysis saw (perhaps
+       only the start of a long advert, which the analysis reads in part);
+    2. then the home's canonical source, the listing its record is built on;
+    3. then by source name, the order the analysis reads them in.
+
+    Length plays no part: the longest advert is not the most accurate one. With no
+    kept inputs, or every source changed since, the canonical source comes first.
+    An advert that is blank once cleaned is passed over, and with none left the
+    text is empty.
+    """
+    read_hashes = _field(_field(analysis, "listing_text_inputs"), "source_hashes") or {}
+    ranked = sorted(
+        evidence.items(),
+        key=lambda item: (
+            not _unchanged_since_read(item[1], read_hashes.get(item[0].value)),
+            item[0] != canonical_source,
+            item[0].value,
+        ),
+    )
+    for _, text in ranked:
+        cleaned = clean_advert_text(text.description or "")
+        if cleaned:
+            return cleaned
+    return ""
+
+
+# Notes on the advert
+
 _OUTDOOR_RE: Final = re.compile(
     r"\b(?:private )?(?:balcon(?:y|ies)|terrace|garden|roof terrace)\b", re.I
 )
@@ -47,16 +210,9 @@ _ROOM_RES: Final[dict[str, re.Pattern[str]]] = {
     "living": re.compile(r"\b(?:reception(?: room)?|living room|lounge)\b", re.I),
 }
 
-ADJECTIVE_NOTE: Final = "Marketing wording."
-
-# A specific finding outranks an adjective when the two overlap.
-_FINDING: Final = 0
-_ADJECTIVE: Final = 1
-
 
 class Segment(TypedDict):
     text: str
-    mark: Mark | None
     note: int | None
 
 
@@ -66,19 +222,9 @@ class Annotated(TypedDict):
 
 
 class _Candidate(TypedDict):
-    priority: int
     start: int
     end: int
-    mark: Mark
     message: str
-
-
-def _field(analysis: Any, name: str) -> Any:
-    if analysis is None:
-        return None
-    if isinstance(analysis, dict):
-        return analysis.get(name)
-    return getattr(analysis, name, None)
 
 
 def _lowlights(analysis: Any) -> set[str]:
@@ -137,26 +283,20 @@ def _missing_rooms(analysis: Any) -> list[str]:
 def annotate_listing(
     text: str, analysis: Any, *, outcode: str | None = None, price_pcm: int | None = None
 ) -> Annotated:
-    """Split the listing text into segments, some marked and numbered, plus the notes."""
+    """Split cleaned advert text into segments, some numbered, plus their notes.
+
+    The text is expected from clean_advert_text, so the segments are exactly what
+    the page escapes and shows, and every note's span matches the words it marks.
+    """
     candidates: list[_Candidate] = []
 
-    def propose(
-        match: re.Match[str] | None, mark: Mark, message: str | None, priority: int
-    ) -> None:
+    def propose(match: re.Match[str] | None, message: str | None) -> None:
         if match is not None and message:
-            candidates.append(
-                _Candidate(
-                    priority=priority,
-                    start=match.start(),
-                    end=match.end(),
-                    mark=mark,
-                    message=message,
-                )
-            )
+            candidates.append(_Candidate(start=match.start(), end=match.end(), message=message))
 
-    propose(_OUTDOOR_RE.search(text), "wavy", _noise_note(analysis), _FINDING)
-    propose(_KITCHEN_RE.search(text), "wavy", _kitchen_note(analysis), _FINDING)
-    propose(_PRESTIGE_RE.search(text), "wavy", _value_note(analysis, outcode, price_pcm), _FINDING)
+    propose(_OUTDOOR_RE.search(text), _noise_note(analysis))
+    propose(_KITCHEN_RE.search(text), _kitchen_note(analysis))
+    propose(_PRESTIGE_RE.search(text), _value_note(analysis, outcode, price_pcm))
     for room in _missing_rooms(analysis):
         key = next((k for k in _ROOM_RES if k in room.lower()), None)
         if key is None:
@@ -164,33 +304,25 @@ def annotate_listing(
         # The room as the analysis names it ("second bedroom") beats the generic word.
         exact = re.compile(r"\b" + r"\s+".join(map(re.escape, room.split())) + r"\b", re.I)
         found = exact.search(text) or _ROOM_RES[key].search(text)
-        propose(found, "wavy", f"{room.capitalize()} not seen in the supplied photos.", _FINDING)
-    for match in _ADJECTIVE_RE.finditer(text):
-        propose(match, "strike", ADJECTIVE_NOTE, _ADJECTIVE)
+        propose(found, f"{room.capitalize()} not seen in the supplied photos.")
 
-    # Settle overlaps: specific findings first, then by position.
+    # Settle overlaps by position: the earlier phrase keeps its note, the later loses it.
+    # A repeated room yields the same message on the same phrase, so it is dropped here.
     accepted: list[_Candidate] = []
-    for cand in sorted(candidates, key=lambda c: (c["priority"], c["start"])):
+    for cand in sorted(candidates, key=lambda c: c["start"]):
         if all(cand["end"] <= a["start"] or cand["start"] >= a["end"] for a in accepted):
             accepted.append(cand)
-    accepted.sort(key=lambda c: c["start"])
 
-    # Number the notes in text order; a repeated message shares its number.
+    # Number the notes in text order, one per marked phrase.
     notes: list[str] = []
-    numbers: dict[str, int] = {}
     segments: list[Segment] = []
     cursor = 0
     for cand in accepted:
-        number = numbers.get(cand["message"])
-        if number is None:
-            notes.append(cand["message"])
-            number = numbers[cand["message"]] = len(notes)
+        notes.append(cand["message"])
         if cand["start"] > cursor:
-            segments.append(Segment(text=text[cursor : cand["start"]], mark=None, note=None))
-        segments.append(
-            Segment(text=text[cand["start"] : cand["end"]], mark=cand["mark"], note=number)
-        )
+            segments.append(Segment(text=text[cursor : cand["start"]], note=None))
+        segments.append(Segment(text=text[cand["start"] : cand["end"]], note=len(notes)))
         cursor = cand["end"]
     if cursor < len(text):
-        segments.append(Segment(text=text[cursor:], mark=None, note=None))
+        segments.append(Segment(text=text[cursor:], note=None))
     return Annotated(segments=segments, notes=notes)

@@ -310,7 +310,8 @@ async def test_real_pipeline_cancellation_does_not_enter_enrichment_or_analysis(
         mocks.append(mock)
     notifier = Mock(side_effect=AssertionError("notification reached"))
     monkeypatch.setattr("home_finder.pipeline.flow.TelegramNotifier", notifier)
-    settings = Settings(_env_file=None, search_areas="e8", data_dir=str(tmp_path))
+    # data_dir, where the image cache lives, is the database's directory.
+    settings = Settings(search_areas="e8", database_path=str(tmp_path / "home_finder.db"))
     async with PropertyStorage(":memory:") as storage:
         task = asyncio.create_task(
             _run_pipeline_with_storage(settings, storage, only_scrapers={"rightmove"}, dry_run=True)

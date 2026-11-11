@@ -126,9 +126,8 @@ async def test_actual_scrape_to_storage_retains_observations_beyond_selection_ca
 
     monkeypatch.setattr(RightmoveScraper, "_fetch_page", fetch)
     settings = Settings(
-        _env_file=None,
-        database_path=":memory:",
-        data_dir=str(tmp_path),
+        # data_dir, where the image cache lives, is the database's directory.
+        database_path=str(tmp_path / "home_finder.db"),
         search_areas="e8",
         min_price=1200,
         max_price=2600,
@@ -169,15 +168,22 @@ def test_legacy_json_strings_cannot_break_object_boundary(description) -> None:
     assert detail_property(html, "123")["text"]["description"] == description
 
 
+# Named by reason: the oversized payload would otherwise become a 4-million-character test ID.
 @pytest.mark.parametrize(
     "html,reason",
     [
-        ('window.__PAGE_MODEL = {"data":"[]","encoding":"on"}', "page_model_node_limit"),
-        ('window.PAGE_MODEL = {"data":"[]","encoding":"on"}', "unsupported_page_model_variant"),
-        ('window.PAGE_MODEL = {"propertyData":{}}', "missing_property_data"),
-        ('window.PAGE_MODEL = {"propertyData":{"id":999}}', "mismatched_property_id"),
-        ("<html></html>", "missing_page_model"),
-        (" " * (MAX_PAYLOAD_CHARACTERS + 1), "page_model_size_limit"),
+        pytest.param(html, reason, id=reason)
+        for html, reason in [
+            ('window.__PAGE_MODEL = {"data":"[]","encoding":"on"}', "page_model_node_limit"),
+            (
+                'window.PAGE_MODEL = {"data":"[]","encoding":"on"}',
+                "unsupported_page_model_variant",
+            ),
+            ('window.PAGE_MODEL = {"propertyData":{}}', "missing_property_data"),
+            ('window.PAGE_MODEL = {"propertyData":{"id":999}}', "mismatched_property_id"),
+            ("<html></html>", "missing_page_model"),
+            (" " * (MAX_PAYLOAD_CHARACTERS + 1), "page_model_size_limit"),
+        ]
     ],
 )
 def test_unsupported_or_wrong_target_detail_fails_explicitly(html, reason) -> None:

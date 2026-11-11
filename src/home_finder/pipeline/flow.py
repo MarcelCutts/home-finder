@@ -15,7 +15,7 @@ from home_finder.models import (
     PropertyAggregate,
     PropertyQualityAnalysis,
 )
-from home_finder.notifiers import TelegramNotifier
+from home_finder.notifiers import TelegramNotifier, telegram
 from home_finder.pipeline.assessment import (
     AssessmentCallback,
     CommuteInfo,
@@ -389,7 +389,7 @@ def _make_notify_callback(
                     )
                 )
 
-        await asyncio.sleep(1)  # Telegram rate limit
+        await asyncio.sleep(telegram.DELIVERY_PAUSE_SECONDS)
 
     return _notify
 

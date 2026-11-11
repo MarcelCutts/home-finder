@@ -1,14 +1,18 @@
-"""Image evidence distinguishes homes and removes repeated gallery images."""
+"""Image evidence distinguishes homes, and a merged home keeps one copy of each photo."""
 
 from pathlib import Path
 
+import pytest
 from pydantic import HttpUrl
 
+from home_finder.matching import deduplication
 from home_finder.matching.deduplication import (
+    Deduplicator,
     _group_items_greedy,
     _perceptual_dedup_images,
 )
-from home_finder.models import PropertyImage, PropertySource
+from home_finder.matching.scoring import MatchConfidence, calculate_match_score
+from home_finder.models import MergedProperty, Property, PropertyImage, PropertySource
 from home_finder.utils.image_cache import (
     find_cached_file,
     get_cache_dir,
@@ -24,93 +28,49 @@ from tests.support.matching import (
 )
 
 
+def _gallery_image(url: str, source: PropertySource) -> PropertyImage:
+    return PropertyImage(url=HttpUrl(url), source=source, image_type="gallery")
+
+
+def _cache_gallery(data_dir: Path, unique_id: str, photos: list[bytes]) -> None:
+    """Write gallery files where enrichment caches them for ``unique_id``."""
+    cache_dir = get_cache_dir(str(data_dir), unique_id)
+    for index, photo in enumerate(photos):
+        save_image_bytes(cache_dir / f"gallery_{index:03d}_{index:08x}.jpg", photo)
+
+
 class TestPerceptualImageDedup:
-    def test_same_image_different_cdns_deduplicated(self, tmp_path: Path) -> None:
-        """Identical bytes, different URLs -> one survives."""
+    def test_distinct_photos_are_both_kept(self, tmp_path: Path) -> None:
         uid = "openrent:100"
         data_dir = str(tmp_path)
-        same_bytes = make_solid_jpeg((100, 100, 100))
+        img1 = _gallery_image("https://cdn-a.com/photo1.jpg", PropertySource.OPENRENT)
+        img2 = _gallery_image("https://cdn-b.com/photo2.jpg", PropertySource.ZOOPLA)
 
-        img1 = PropertyImage(
-            url=HttpUrl("https://cdn-a.com/photo.jpg"),
-            source=PropertySource.OPENRENT,
-            image_type="gallery",
-        )
-        img2 = PropertyImage(
-            url=HttpUrl("https://cdn-b.com/photo.jpg"),
-            source=PropertySource.ZOOPLA,
-            image_type="gallery",
-        )
-
-        # Cache both images under same uid (single-source scenario)
-        for i, img in enumerate([img1, img2]):
-            fname = url_to_filename(str(img.url), "gallery", i)
-            cache_dir = get_cache_dir(data_dir, uid)
-            cache_dir.mkdir(parents=True, exist_ok=True)
-            save_image_bytes(cache_dir / fname, same_bytes)
-
-        # Verify caching + hashing works (catches flaky PIL/imagehash failures)
-        for img in [img1, img2]:
-            cached = find_cached_file(data_dir, uid, str(img.url), "gallery")
-            assert cached is not None, f"Cache miss for {img.url}"
-            assert hash_from_disk(cached) is not None, f"Hash failed for {cached}"
-
-        result = _perceptual_dedup_images([img1, img2], data_dir, [uid])
-
-        assert len(result) == 1
-
-    def test_different_images_both_kept(self, tmp_path: Path) -> None:
-        uid = "openrent:100"
-        data_dir = str(tmp_path)
-
-        img1 = PropertyImage(
-            url=HttpUrl("https://cdn-a.com/photo1.jpg"),
-            source=PropertySource.OPENRENT,
-            image_type="gallery",
-        )
-        img2 = PropertyImage(
-            url=HttpUrl("https://cdn-b.com/photo2.jpg"),
-            source=PropertySource.ZOOPLA,
-            image_type="gallery",
-        )
-
-        # Cache visually distinct images — use patterns, not just solid colors,
-        # because pHash is designed to ignore small color differences.
+        # pHash tolerates colour changes, so the distinct photo needs a different pattern.
         cache_dir = get_cache_dir(data_dir, uid)
-        cache_dir.mkdir(parents=True, exist_ok=True)
-        fname1 = url_to_filename(str(img1.url), "gallery", 0)
-        fname2 = url_to_filename(str(img2.url), "gallery", 1)
-        save_image_bytes(cache_dir / fname1, make_solid_jpeg((255, 0, 0)))
-        save_image_bytes(cache_dir / fname2, make_checkerboard_jpeg())
+        save_image_bytes(
+            cache_dir / url_to_filename(str(img1.url), "gallery", 0), make_solid_jpeg((255, 0, 0))
+        )
+        save_image_bytes(
+            cache_dir / url_to_filename(str(img2.url), "gallery", 1), make_checkerboard_jpeg()
+        )
 
         result = _perceptual_dedup_images([img1, img2], data_dir, [uid])
 
         assert len(result) == 2
 
-    def test_source_priority_keeps_zoopla_over_openrent(self, tmp_path: Path) -> None:
-        """Zoopla version kept when deduping identical images."""
+    def test_repeated_photo_keeps_the_zoopla_copy_over_openrent(self, tmp_path: Path) -> None:
         uid = "openrent:100"
         data_dir = str(tmp_path)
         same_bytes = make_solid_jpeg((100, 100, 100))
-
-        img_or = PropertyImage(
-            url=HttpUrl("https://cdn-or.com/photo.jpg"),
-            source=PropertySource.OPENRENT,
-            image_type="gallery",
-        )
-        img_zp = PropertyImage(
-            url=HttpUrl("https://cdn-zp.com/photo.jpg"),
-            source=PropertySource.ZOOPLA,
-            image_type="gallery",
-        )
+        img_or = _gallery_image("https://cdn-or.com/photo.jpg", PropertySource.OPENRENT)
+        img_zp = _gallery_image("https://cdn-zp.com/photo.jpg", PropertySource.ZOOPLA)
 
         cache_dir = get_cache_dir(data_dir, uid)
-        cache_dir.mkdir(parents=True, exist_ok=True)
         for i, img in enumerate([img_or, img_zp]):
-            fname = url_to_filename(str(img.url), "gallery", i)
-            save_image_bytes(cache_dir / fname, same_bytes)
+            save_image_bytes(cache_dir / url_to_filename(str(img.url), "gallery", i), same_bytes)
 
-        # Verify caching + hashing works (catches flaky PIL/imagehash failures)
+        # Fail here, not in the dedup assertion, if caching or hashing itself breaks.
         for img in [img_or, img_zp]:
             cached = find_cached_file(data_dir, uid, str(img.url), "gallery")
             assert cached is not None, f"Cache miss for {img.url}"
@@ -118,128 +78,63 @@ class TestPerceptualImageDedup:
 
         result = _perceptual_dedup_images([img_or, img_zp], data_dir, [uid])
 
-        assert len(result) == 1
-        assert result[0].source == PropertySource.ZOOPLA
+        assert result == [img_zp]
 
-    def test_uncached_images_always_kept(self, tmp_path: Path) -> None:
-        """Can't hash -> don't drop."""
-        uid = "openrent:100"
-        data_dir = str(tmp_path)
+    def test_photos_missing_from_the_cache_are_kept(self, tmp_path: Path) -> None:
+        img1 = _gallery_image("https://cdn.com/no-cache.jpg", PropertySource.OPENRENT)
+        img2 = _gallery_image("https://cdn.com/also-no-cache.jpg", PropertySource.ZOOPLA)
 
-        img1 = PropertyImage(
-            url=HttpUrl("https://cdn.com/no-cache.jpg"),
-            source=PropertySource.OPENRENT,
-            image_type="gallery",
-        )
-        img2 = PropertyImage(
-            url=HttpUrl("https://cdn.com/also-no-cache.jpg"),
-            source=PropertySource.ZOOPLA,
-            image_type="gallery",
-        )
-
-        # Don't cache anything
-        result = _perceptual_dedup_images([img1, img2], data_dir, [uid])
+        result = _perceptual_dedup_images([img1, img2], str(tmp_path), ["openrent:100"])
 
         assert len(result) == 2
 
-    def test_empty_data_dir_skips_dedup(self) -> None:
-        """When data_dir is empty, dedup shouldn't be called (guarded in caller)."""
-        img1 = PropertyImage(
-            url=HttpUrl("https://cdn.com/a.jpg"),
-            source=PropertySource.OPENRENT,
-            image_type="gallery",
-        )
-        img2 = PropertyImage(
-            url=HttpUrl("https://cdn.com/b.jpg"),
-            source=PropertySource.ZOOPLA,
-            image_type="gallery",
-        )
+    def test_single_photo_is_returned_unchanged(self, tmp_path: Path) -> None:
+        img = _gallery_image("https://cdn.com/only.jpg", PropertySource.OPENRENT)
 
-        # Empty data_dir — images won't be found in cache
-        result = _perceptual_dedup_images([img1, img2], "", ["uid"])
-
-        assert len(result) == 2
-
-    def test_single_image_no_dedup_needed(self, tmp_path: Path) -> None:
-        uid = "openrent:100"
-        data_dir = str(tmp_path)
-        img = PropertyImage(
-            url=HttpUrl("https://cdn.com/only.jpg"),
-            source=PropertySource.OPENRENT,
-            image_type="gallery",
-        )
-
-        result = _perceptual_dedup_images([img], data_dir, [uid])
+        result = _perceptual_dedup_images([img], str(tmp_path), ["openrent:100"])
 
         assert len(result) == 1
         assert result[0] is img
 
-    def test_cross_source_images_found_in_separate_cache_dirs(self, tmp_path: Path) -> None:
-        """Images cached under different unique_ids are found and deduplicated.
+    def test_repeated_photo_is_found_across_each_listing_cache(self, tmp_path: Path) -> None:
+        """Before cache consolidation each listing's photos sit under its own unique_id.
 
-        This simulates the real pipeline: OpenRent images are cached under
-        ``image_cache/openrent_100/`` and Zoopla images under
-        ``image_cache/zoopla_456/``. Perceptual dedup must search both dirs.
+        The Zoopla copy comes first here, so the higher-priority photo is the one
+        compared against later duplicates.
         """
         uid_or = "openrent:100"
         uid_zp = "zoopla:456"
         data_dir = str(tmp_path)
         same_bytes = make_solid_jpeg((100, 100, 100))
+        img_zp = _gallery_image("https://cdn-zp.com/photo.jpg", PropertySource.ZOOPLA)
+        img_or = _gallery_image("https://cdn-or.com/photo.jpg", PropertySource.OPENRENT)
 
-        img_or = PropertyImage(
-            url=HttpUrl("https://cdn-or.com/photo.jpg"),
-            source=PropertySource.OPENRENT,
-            image_type="gallery",
+        save_image_bytes(
+            get_cache_dir(data_dir, uid_or) / url_to_filename(str(img_or.url), "gallery", 0),
+            same_bytes,
         )
-        img_zp = PropertyImage(
-            url=HttpUrl("https://cdn-zp.com/photo.jpg"),
-            source=PropertySource.ZOOPLA,
-            image_type="gallery",
+        save_image_bytes(
+            get_cache_dir(data_dir, uid_zp) / url_to_filename(str(img_zp.url), "gallery", 0),
+            same_bytes,
         )
 
-        # Cache each image under its own source's directory (real pipeline flow)
-        cache_or = get_cache_dir(data_dir, uid_or)
-        cache_or.mkdir(parents=True, exist_ok=True)
-        save_image_bytes(cache_or / url_to_filename(str(img_or.url), "gallery", 0), same_bytes)
+        result = _perceptual_dedup_images([img_zp, img_or], data_dir, [uid_or, uid_zp])
 
-        cache_zp = get_cache_dir(data_dir, uid_zp)
-        cache_zp.mkdir(parents=True, exist_ok=True)
-        save_image_bytes(cache_zp / url_to_filename(str(img_zp.url), "gallery", 0), same_bytes)
+        assert result == [img_zp]
 
-        result = _perceptual_dedup_images([img_or, img_zp], data_dir, [uid_or, uid_zp])
-
-        assert len(result) == 1
-        # Zoopla has higher source priority
-        assert result[0].source == PropertySource.ZOOPLA
-
-    def test_cross_source_distinct_images_both_kept(self, tmp_path: Path) -> None:
-        """Different images in separate cache dirs are both kept."""
+    def test_distinct_photos_in_separate_caches_are_both_kept(self, tmp_path: Path) -> None:
         uid_or = "openrent:100"
         uid_zp = "zoopla:456"
         data_dir = str(tmp_path)
+        img_or = _gallery_image("https://cdn-or.com/photo.jpg", PropertySource.OPENRENT)
+        img_zp = _gallery_image("https://cdn-zp.com/photo.jpg", PropertySource.ZOOPLA)
 
-        img_or = PropertyImage(
-            url=HttpUrl("https://cdn-or.com/photo.jpg"),
-            source=PropertySource.OPENRENT,
-            image_type="gallery",
-        )
-        img_zp = PropertyImage(
-            url=HttpUrl("https://cdn-zp.com/photo.jpg"),
-            source=PropertySource.ZOOPLA,
-            image_type="gallery",
-        )
-
-        cache_or = get_cache_dir(data_dir, uid_or)
-        cache_or.mkdir(parents=True, exist_ok=True)
         save_image_bytes(
-            cache_or / url_to_filename(str(img_or.url), "gallery", 0),
+            get_cache_dir(data_dir, uid_or) / url_to_filename(str(img_or.url), "gallery", 0),
             make_solid_jpeg((255, 0, 0)),
         )
-
-        cache_zp = get_cache_dir(data_dir, uid_zp)
-        cache_zp.mkdir(parents=True, exist_ok=True)
         save_image_bytes(
-            cache_zp / url_to_filename(str(img_zp.url), "gallery", 0),
+            get_cache_dir(data_dir, uid_zp) / url_to_filename(str(img_zp.url), "gallery", 0),
             make_checkerboard_jpeg(),
         )
 
@@ -248,234 +143,48 @@ class TestPerceptualImageDedup:
         assert len(result) == 2
 
 
-class TestImageEvidenceRequirement:
-    """Verify MEDIUM matches without image evidence are rejected."""
+def _same_building_pair() -> list[MergedProperty]:
+    """Rightmove (outcode only) and Zoopla 26 m apart with the same street and rent.
 
-    async def test_same_building_different_flat_rejected(self) -> None:
-        """Two properties at same coords/street/outcode, similar price, but
-        different gallery images (both have hashes, zero matches) → stay separate.
+    Without images the pair scores about 74 points: a MEDIUM-confidence match.
+    """
+    rightmove = make_listing(
+        PropertySource.RIGHTMOVE, "rm1", postcode="E8", latitude=51.5465, longitude=-0.0553
+    )
+    zoopla = make_listing(
+        PropertySource.ZOOPLA, "zp1", postcode="E8 3RH", latitude=51.5467, longitude=-0.0551
+    )
+    return [as_aggregate(rightmove), as_aggregate(zoopla)]
 
-        This is the "same building, different flat" false positive class.
-        Rightmove only has an outcode (no full postcode match):
-        Score: coords ~31 + street 20 + outcode 10 + price 15 = ~76 (MEDIUM).
-        """
-        from home_finder.matching.scoring import calculate_match_score
 
-        # Rightmove with outcode only (realistic — RM rarely has full postcodes)
-        p_rm = make_listing(
-            PropertySource.RIGHTMOVE,
-            "rm1",
-            postcode="E8",
-            latitude=51.5465,
-            longitude=-0.0553,
-            price_pcm=1800,
-        )
-        # Zoopla with full postcode
-        p_zp = make_listing(
-            PropertySource.ZOOPLA,
-            "zp1",
-            postcode="E8 3RH",
-            latitude=51.5467,
-            longitude=-0.0551,
-            price_pcm=1800,
-        )
+def _assert_location_alone_groups(items: list[MergedProperty]) -> None:
+    """Control: without gallery hashes the pair is grouped, so images decide the outcome."""
+    groups = _group_items_greedy(items, {})
+    assert [len(group) for group in groups] == [2]
 
-        # Guard test assumptions: score must be a MEDIUM match (60-79).
-        # If scoring constants change, this will catch drift before the
-        # grouping assertion becomes meaningless.
-        image_hashes: dict[str, list[str]] = {
-            "rightmove:rm1": ["abcdef1234567890"],
-            "zoopla:zp1": ["9876543210fedcba"],
-        }
-        score = calculate_match_score(p_rm, p_zp, image_hashes)
-        assert score.is_match, f"Test assumption: should be a match, got {score.total}"
-        assert score.total < 80, f"Test assumption: should be MEDIUM, got {score.total}"
 
-        items = [as_aggregate(p_rm), as_aggregate(p_zp)]
+class TestGalleryEvidenceRequirement:
+    """Galleries that are present on both sides and share no photo veto a match."""
+
+    async def test_disagreeing_galleries_veto_a_medium_confidence_match(self) -> None:
+        items = _same_building_pair()
+        image_hashes = {"rightmove:rm1": ["abcdef1234567890"], "zoopla:zp1": ["9876543210fedcba"]}
+        score = calculate_match_score(items[0].canonical, items[1].canonical, image_hashes)
+        assert score.confidence is MatchConfidence.MEDIUM
+        assert score.image_hash == 0
+        _assert_location_alone_groups(items)
 
         groups = _group_items_greedy(items, image_hashes)
 
-        # Should stay separate: both have galleries, zero image matches,
-        # and total score is < 80
-        assert len(groups) == 2
-        assert all(len(g) == 1 for g in groups)
+        assert [len(group) for group in groups] == [1, 1]
 
-    async def test_no_gallery_hashes_still_merges(self) -> None:
-        """Same scenario but neither property has gallery hashes → still merges.
+    async def test_disagreeing_galleries_veto_a_high_confidence_match(self) -> None:
+        """Same address, postcode, coordinates and rent, but no shared photo.
 
-        Can't penalize for missing data — no galleries means we don't know.
+        Location signals agree for every flat in one building, so they cannot tell
+        two flats apart; only the galleries can.
         """
-        p_rm = make_listing(
-            PropertySource.RIGHTMOVE,
-            "rm1",
-            latitude=51.5465,
-            longitude=-0.0553,
-            price_pcm=1800,
-        )
-        p_zp = make_listing(
-            PropertySource.ZOOPLA,
-            "zp1",
-            latitude=51.5467,
-            longitude=-0.0551,
-            price_pcm=1800,
-        )
-
-        items = [as_aggregate(p_rm), as_aggregate(p_zp)]
-
-        # Empty image_hashes — no galleries available
-        groups = _group_items_greedy(items, {})
-
-        # Should still merge (can't penalize for missing data)
-        assert len(groups) == 1
-        assert len(groups[0]) == 2
-
-    async def test_one_has_gallery_other_doesnt_still_merges(self) -> None:
-        """Only one property has gallery hashes → still merges.
-
-        The "both_have_galleries" check requires BOTH to have hashes.
-        """
-        p_rm = make_listing(
-            PropertySource.RIGHTMOVE,
-            "rm1",
-            latitude=51.5465,
-            longitude=-0.0553,
-            price_pcm=1800,
-        )
-        p_zp = make_listing(
-            PropertySource.ZOOPLA,
-            "zp1",
-            latitude=51.5467,
-            longitude=-0.0551,
-            price_pcm=1800,
-        )
-
-        items = [as_aggregate(p_rm), as_aggregate(p_zp)]
-
-        # Only RM has gallery hashes
-        image_hashes = {
-            "rightmove:rm1": ["abcdef1234567890"],
-        }
-
-        groups = _group_items_greedy(items, image_hashes)
-
-        # Should still merge (only one has gallery)
-        assert len(groups) == 1
-        assert len(groups[0]) == 2
-
-    async def test_image_match_present_still_merges(self) -> None:
-        """Both have galleries AND images match → merges normally."""
-        p_rm = make_listing(
-            PropertySource.RIGHTMOVE,
-            "rm1",
-            latitude=51.5465,
-            longitude=-0.0553,
-            price_pcm=1800,
-        )
-        p_zp = make_listing(
-            PropertySource.ZOOPLA,
-            "zp1",
-            latitude=51.5467,
-            longitude=-0.0551,
-            price_pcm=1800,
-        )
-
-        items = [as_aggregate(p_rm), as_aggregate(p_zp)]
-
-        # Same hash → image match will be detected by scoring
-        same_hash = "abcdef1234567890"
-        image_hashes = {
-            "rightmove:rm1": [same_hash, "extra_hash_1"],
-            "zoopla:zp1": [same_hash, "extra_hash_2"],
-        }
-
-        groups = _group_items_greedy(items, image_hashes)
-
-        # Should merge (image evidence present)
-        assert len(groups) == 1
-        assert len(groups[0]) == 2
-
-    async def test_empty_gallery_hashes_rejected(self) -> None:
-        """Both have hash keys but empty lists → treated as "galleries checked,
-        no images hashed". This is the edge case where hashing was attempted
-        but produced nothing (e.g. all images failed to download/hash).
-
-        both_have_galleries=True (keys present), count_gallery_hash_matches=0
-        (empty lists), so the MEDIUM match is rejected.
-        """
-        p_rm = make_listing(
-            PropertySource.RIGHTMOVE,
-            "rm1",
-            postcode="E8",
-            latitude=51.5465,
-            longitude=-0.0553,
-            price_pcm=1800,
-        )
-        p_zp = make_listing(
-            PropertySource.ZOOPLA,
-            "zp1",
-            postcode="E8 3RH",
-            latitude=51.5467,
-            longitude=-0.0551,
-            price_pcm=1800,
-        )
-
-        items = [as_aggregate(p_rm), as_aggregate(p_zp)]
-
-        # Both keys present but empty lists — hashing attempted, nothing produced
-        image_hashes: dict[str, list[str]] = {
-            "rightmove:rm1": [],
-            "zoopla:zp1": [],
-        }
-
-        groups = _group_items_greedy(items, image_hashes)
-
-        # Should stay separate: both_have_galleries=True, no image matches,
-        # score is MEDIUM (<80)
-        assert len(groups) == 2
-        assert all(len(g) == 1 for g in groups)
-
-    async def test_high_score_without_images_rejected_when_galleries_present(self) -> None:
-        """Score >= 80 with galleries but no image match → rejected.
-
-        Full postcode (40) + coords (40) + street (20) + outcode (10) + price (15)
-        = 125 at exact match. Despite the high location score, zero matching
-        images means these could be different flats in the same building.
-        Location signals are perfectly correlated for same-building properties,
-        so they're uninformative — only image evidence can disambiguate.
-        """
-        p_rm = make_listing(
-            PropertySource.RIGHTMOVE,
-            "rm1",
-            price_pcm=1800,
-        )
-        p_zp = make_listing(
-            PropertySource.ZOOPLA,
-            "zp1",
-            price_pcm=1800,
-        )
-
-        items = [as_aggregate(p_rm), as_aggregate(p_zp)]
-
-        # Both have galleries, no image matches, score is very high
-        image_hashes = {
-            "rightmove:rm1": ["aaaa1111bbbb2222"],
-            "zoopla:zp1": ["cccc3333dddd4444"],
-        }
-
-        groups = _group_items_greedy(items, image_hashes)
-
-        # Should stay separate: image evidence says "no match", location
-        # score is uninformative for same-building disambiguation
-        assert len(groups) == 2
-        assert all(len(g) == 1 for g in groups)
-
-    async def test_same_building_different_flat_rejected_gallery_mismatch(self) -> None:
-        """Two properties at the same address with different galleries → separate.
-
-        Simulates the real-world false positive: identical postcode, coords,
-        street, price (~125 points) but completely different gallery images.
-        """
-        p_rm = make_listing(
+        rightmove = make_listing(
             PropertySource.RIGHTMOVE,
             "rm1",
             price_pcm=1750,
@@ -484,7 +193,7 @@ class TestImageEvidenceRequirement:
             longitude=-0.0240,
             address="15 Copperfield Road, London",
         )
-        p_or = make_listing(
+        openrent = make_listing(
             PropertySource.OPENRENT,
             "or1",
             price_pcm=1750,
@@ -493,55 +202,191 @@ class TestImageEvidenceRequirement:
             longitude=-0.0240,
             address="15 Copperfield Road, London",
         )
-
-        items = [as_aggregate(p_rm), as_aggregate(p_or)]
-
-        # Both have gallery hashes, zero overlap
+        items = [as_aggregate(rightmove), as_aggregate(openrent)]
         image_hashes = {
             "rightmove:rm1": ["1111111111111111", "2222222222222222", "3333333333333333"],
             "openrent:or1": ["aaaaaaaaaaaaaaaa", "bbbbbbbbbbbbbbbb", "cccccccccccccccc"],
         }
+        score = calculate_match_score(rightmove, openrent, image_hashes)
+        assert score.confidence is MatchConfidence.HIGH
+        assert score.image_hash == 0
+        _assert_location_alone_groups(items)
 
         groups = _group_items_greedy(items, image_hashes)
 
-        assert len(groups) == 2
-        assert all(len(g) == 1 for g in groups)
+        assert [len(group) for group in groups] == [1, 1]
 
-    async def test_same_flat_with_matching_images_still_merges(self) -> None:
-        """Two properties at the same address with overlapping galleries → merged.
+    async def test_empty_hash_lists_count_as_galleries_without_a_shared_photo(self) -> None:
+        """Hashing was attempted for both listings but produced no hashes."""
+        items = _same_building_pair()
+        _assert_location_alone_groups(items)
 
-        When gallery images confirm it's the same flat, the match proceeds.
-        """
-        p_rm = make_listing(
-            PropertySource.RIGHTMOVE,
-            "rm1",
-            price_pcm=1750,
-            postcode="E3 4RB",
-            latitude=51.5310,
-            longitude=-0.0240,
-            address="15 Copperfield Road, London",
-        )
-        p_zp = make_listing(
-            PropertySource.ZOOPLA,
-            "zp1",
-            price_pcm=1750,
-            postcode="E3 4RB",
-            latitude=51.5310,
-            longitude=-0.0240,
-            address="15 Copperfield Road, London",
-        )
+        groups = _group_items_greedy(items, {"rightmove:rm1": [], "zoopla:zp1": []})
 
-        items = [as_aggregate(p_rm), as_aggregate(p_zp)]
+        assert [len(group) for group in groups] == [1, 1]
 
-        # Both have gallery hashes, two shared image hashes (need 2+ for full credit)
-        shared_hash = "abcdef1234567890"
-        shared_hash_2 = "abcdef1234567891"
+    async def test_missing_galleries_keep_a_location_match(self) -> None:
+        """No galleries means no evidence either way, so the match stands."""
+        groups = _group_items_greedy(_same_building_pair(), {})
+
+        assert [len(group) for group in groups] == [2]
+
+    async def test_gallery_on_one_side_only_keeps_a_location_match(self) -> None:
+        groups = _group_items_greedy(_same_building_pair(), {"rightmove:rm1": ["abcdef1234567890"]})
+
+        assert [len(group) for group in groups] == [2]
+
+    async def test_one_shared_photo_keeps_a_location_match(self) -> None:
+        shared = "abcdef1234567890"
         image_hashes = {
-            "rightmove:rm1": ["1111111111111111", shared_hash, shared_hash_2],
-            "zoopla:zp1": ["aaaaaaaaaaaaaaaa", shared_hash, shared_hash_2],
+            "rightmove:rm1": [shared, "0000000000000000"],
+            "zoopla:zp1": [shared, "ffffffffffffffff"],
         }
 
-        groups = _group_items_greedy(items, image_hashes)
+        groups = _group_items_greedy(_same_building_pair(), image_hashes)
 
-        assert len(groups) == 1
-        assert len(groups[0]) == 2
+        assert [len(group) for group in groups] == [2]
+
+
+# Outcode-only listings modelled on a real pair that only gallery images could join:
+# street (20) + outcode (10) + rent (15) = 45 points without images.
+APEX_ONTHEMARKET = make_listing(
+    PropertySource.ONTHEMARKET,
+    "18751817",
+    address="Apex Gardens, Forster Road, Tottenham",
+    postcode="N15",
+    latitude=None,
+    longitude=None,
+)
+APEX_RIGHTMOVE = make_listing(
+    PropertySource.RIGHTMOVE,
+    "172249586",
+    address="Apex Gardens, Forster Road, Tottenham",
+    postcode="N15",
+    latitude=51.53,  # wrong area, so coordinates earn nothing
+    longitude=-0.23,
+)
+
+
+def _with_hero(listing: Property, url: str) -> Property:
+    return listing.model_copy(update={"image_url": HttpUrl(url)})
+
+
+class TestGalleryHashAcquisition:
+    """The deduplicator hashes cached galleries, falling back to hero thumbnails."""
+
+    async def test_shared_cached_photos_merge_an_outcode_only_pair(self, tmp_path: Path) -> None:
+        photos = [make_solid_jpeg((100, 100, 100)), make_checkerboard_jpeg()]
+        _cache_gallery(tmp_path, APEX_ONTHEMARKET.unique_id, photos)
+        _cache_gallery(tmp_path, APEX_RIGHTMOVE.unique_id, photos)
+        deduplicator = Deduplicator(
+            enable_cross_platform=True, enable_image_hashing=True, data_dir=str(tmp_path)
+        )
+
+        result = await deduplicator.deduplicate_merged_async(
+            [as_aggregate(APEX_ONTHEMARKET), as_aggregate(APEX_RIGHTMOVE)]
+        )
+
+        assert len(result) == 1
+        assert set(result[0].sources) == {PropertySource.ONTHEMARKET, PropertySource.RIGHTMOVE}
+
+    async def test_distinct_cached_photos_leave_an_outcode_only_pair_apart(
+        self, tmp_path: Path
+    ) -> None:
+        _cache_gallery(tmp_path, APEX_ONTHEMARKET.unique_id, [make_solid_jpeg((255, 0, 0))])
+        _cache_gallery(tmp_path, APEX_RIGHTMOVE.unique_id, [make_checkerboard_jpeg()])
+        deduplicator = Deduplicator(
+            enable_cross_platform=True, enable_image_hashing=True, data_dir=str(tmp_path)
+        )
+
+        result = await deduplicator.deduplicate_merged_async(
+            [as_aggregate(APEX_ONTHEMARKET), as_aggregate(APEX_RIGHTMOVE)]
+        )
+
+        assert len(result) == 2
+
+    async def test_outcode_only_pair_without_any_image_stays_apart(self, tmp_path: Path) -> None:
+        deduplicator = Deduplicator(
+            enable_cross_platform=True, enable_image_hashing=True, data_dir=str(tmp_path)
+        )
+
+        result = await deduplicator.deduplicate_merged_async(
+            [as_aggregate(APEX_ONTHEMARKET), as_aggregate(APEX_RIGHTMOVE)]
+        )
+
+        assert len(result) == 2
+
+    async def test_disabled_image_hashing_ignores_shared_cached_photos(
+        self, tmp_path: Path
+    ) -> None:
+        photos = [make_solid_jpeg((100, 100, 100)), make_checkerboard_jpeg()]
+        _cache_gallery(tmp_path, APEX_ONTHEMARKET.unique_id, photos)
+        _cache_gallery(tmp_path, APEX_RIGHTMOVE.unique_id, photos)
+        deduplicator = Deduplicator(
+            enable_cross_platform=True, enable_image_hashing=False, data_dir=str(tmp_path)
+        )
+
+        result = await deduplicator.deduplicate_merged_async(
+            [as_aggregate(APEX_ONTHEMARKET), as_aggregate(APEX_RIGHTMOVE)]
+        )
+
+        assert len(result) == 2
+
+    async def test_matching_hero_thumbnails_merge_listings_without_cached_galleries(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        requested: list[str] = []
+
+        async def fetch_hero_hashes(properties: list[Property]) -> dict[str, str]:
+            requested.extend(prop.unique_id for prop in properties)
+            return {prop.unique_id: "abcdef1234567890" for prop in properties}
+
+        monkeypatch.setattr(deduplication, "fetch_image_hashes_batch", fetch_hero_hashes)
+        onthemarket = _with_hero(APEX_ONTHEMARKET, "https://media.onthemarket.com/hero.jpg")
+        rightmove = _with_hero(APEX_RIGHTMOVE, "https://media.rightmove.co.uk/hero.jpg")
+        deduplicator = Deduplicator(enable_cross_platform=True, enable_image_hashing=True)
+
+        result = await deduplicator.deduplicate_merged_async(
+            [as_aggregate(onthemarket), as_aggregate(rightmove)]
+        )
+
+        assert sorted(requested) == sorted([onthemarket.unique_id, rightmove.unique_id])
+        assert len(result) == 1
+        assert set(result[0].sources) == {PropertySource.ONTHEMARKET, PropertySource.RIGHTMOVE}
+
+    async def test_hero_fallback_fetches_only_uncached_candidates_with_a_hero_image(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Of four listings, only the Rightmove one needs a hero thumbnail.
+
+        OnTheMarket has a cached gallery, the Zoopla listing in the same block has
+        no hero image, and the OpenRent listing has no other listing to match.
+        """
+        requested: list[str] = []
+
+        async def fetch_hero_hashes(properties: list[Property]) -> dict[str, str]:
+            requested.extend(prop.unique_id for prop in properties)
+            return {}
+
+        monkeypatch.setattr(deduplication, "fetch_image_hashes_batch", fetch_hero_hashes)
+        _cache_gallery(tmp_path, APEX_ONTHEMARKET.unique_id, [make_solid_jpeg((100, 100, 100))])
+        rightmove = _with_hero(APEX_RIGHTMOVE, "https://media.rightmove.co.uk/hero.jpg")
+        zoopla_without_hero = make_listing(PropertySource.ZOOPLA, "zp-no-hero", postcode="N15")
+        lone_openrent = _with_hero(
+            make_listing(PropertySource.OPENRENT, "or-lone", postcode="E8 3RH"),
+            "https://media.openrent.co.uk/hero.jpg",
+        )
+        deduplicator = Deduplicator(
+            enable_cross_platform=True, enable_image_hashing=True, data_dir=str(tmp_path)
+        )
+
+        await deduplicator.deduplicate_merged_async(
+            [
+                as_aggregate(APEX_ONTHEMARKET),
+                as_aggregate(rightmove),
+                as_aggregate(zoopla_without_hero),
+                as_aggregate(lone_openrent),
+            ]
+        )
+
+        assert requested == [rightmove.unique_id]

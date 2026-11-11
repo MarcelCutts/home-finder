@@ -1,10 +1,13 @@
-"""Selection, matching, and persistence contracts without the run coordinator."""
+"""Selection, matching, and persistence contracts without the run coordinator.
 
-from collections.abc import AsyncGenerator
+Listings are wrapped and grouped through the production entry points
+(``properties_to_merged`` then ``deduplicate_merged_async``), as candidate
+preparation does.
+"""
+
 from datetime import UTC, datetime, timedelta
 
 import pytest
-import pytest_asyncio
 from pydantic import HttpUrl
 
 from home_finder.db import PropertyStorage
@@ -12,15 +15,6 @@ from home_finder.filters.criteria import CriteriaFilter
 from home_finder.matching.deduplication import Deduplicator
 from home_finder.models import Property, PropertySource, SearchCriteria
 from home_finder.pipeline.matching import consolidate_candidates
-
-
-@pytest_asyncio.fixture
-async def storage() -> AsyncGenerator[PropertyStorage, None]:
-    """Create an in-memory storage instance."""
-    storage = PropertyStorage(":memory:")
-    await storage.initialize()
-    yield storage
-    await storage.close()
 
 
 @pytest.fixture
@@ -101,11 +95,10 @@ def criteria() -> SearchCriteria:
 class TestSelectionAndPersistence:
     """Selected listings become distinct stored homes through filtering and matching."""
 
-    @pytest.mark.asyncio
-    async def test_pipeline_filters_and_dedupes(
+    async def test_selected_listings_become_distinct_stored_homes(
         self, storage: PropertyStorage, mixed_properties: list[Property], criteria: SearchCriteria
     ) -> None:
-        """Properties go through criteria filter, deduplication, then storage."""
+        """The over-budget listing is rejected and one home on two portals is stored once."""
         criteria_filter = CriteriaFilter(criteria)
         filtered = criteria_filter.filter_properties(mixed_properties)
 
@@ -114,7 +107,9 @@ class TestSelectionAndPersistence:
         assert all(p.price_pcm <= 2200 for p in filtered)
 
         deduplicator = Deduplicator(enable_cross_platform=True)
-        merged = await deduplicator.deduplicate_and_merge_async(filtered)
+        merged = await deduplicator.deduplicate_merged_async(
+            deduplicator.properties_to_merged(filtered)
+        )
 
         # OpenRent and Rightmove listings are same property → merged
         assert len(merged) == 2
@@ -129,34 +124,36 @@ class TestSelectionAndPersistence:
         count = await storage.web.get_property_count()
         assert count == 2
 
-    @pytest.mark.asyncio
-    async def test_pipeline_rerun_finds_no_new(
+    async def test_repeat_selection_finds_no_new_homes(
         self, storage: PropertyStorage, mixed_properties: list[Property], criteria: SearchCriteria
     ) -> None:
-        """Running pipeline twice should find no new properties second time."""
+        """Homes stored by the first pass are not new to the second."""
         criteria_filter = CriteriaFilter(criteria)
         deduplicator = Deduplicator(enable_cross_platform=True)
 
         # First run
         filtered = criteria_filter.filter_properties(mixed_properties)
-        merged = await deduplicator.deduplicate_and_merge_async(filtered)
+        merged = await deduplicator.deduplicate_merged_async(
+            deduplicator.properties_to_merged(filtered)
+        )
         new = await storage.filter_new_merged(merged)
         for m in new:
             await storage.save_merged_property(m)
 
         # Second run
         filtered2 = criteria_filter.filter_properties(mixed_properties)
-        merged2 = await deduplicator.deduplicate_and_merge_async(filtered2)
+        merged2 = await deduplicator.deduplicate_merged_async(
+            deduplicator.properties_to_merged(filtered2)
+        )
         new2 = await storage.filter_new_merged(merged2)
 
         # No new properties
         assert len(new2) == 0
 
-    @pytest.mark.asyncio
-    async def test_pipeline_with_price_updates(
+    async def test_resaving_a_listing_updates_its_price(
         self, storage: PropertyStorage, criteria: SearchCriteria
     ) -> None:
-        """Properties with updated prices should be handled correctly."""
+        """A second save of the same listing replaces its price rather than adding a home."""
         prop_v1 = Property(
             source=PropertySource.OPENRENT,
             source_id="price-test",
@@ -197,10 +194,9 @@ class TestSelectionAndPersistence:
 
 @pytest.mark.integration
 class TestScraperToFilter:
-    """Test scrapers output flows correctly into filters."""
+    """Listings shaped like scraper output pass through criteria selection."""
 
-    def test_scraper_output_compatible_with_filter(self, criteria: SearchCriteria) -> None:
-        """Scraper output should work directly with CriteriaFilter."""
+    def test_listing_within_criteria_is_selected(self, criteria: SearchCriteria) -> None:
         # Simulate scraper output (list of Property)
         scraped = [
             Property(
@@ -221,8 +217,9 @@ class TestScraperToFilter:
         assert len(result) == 1
         assert result[0].unique_id == "openrent:test1"
 
-    def test_filter_chain_preserves_property_data(self, criteria: SearchCriteria) -> None:
-        """Filters should preserve all property data through the chain."""
+    def test_selection_and_wrapping_preserve_every_listing_field(
+        self, criteria: SearchCriteria
+    ) -> None:
         original = Property(
             source=PropertySource.RIGHTMOVE,
             source_id="preserve-test",
@@ -266,11 +263,11 @@ class TestScraperToFilter:
 
 @pytest.mark.integration
 class TestFilterToStorage:
-    """Test filtered properties store correctly."""
+    """Selected listings are stored and read back."""
 
-    @pytest.mark.asyncio
-    async def test_deduped_properties_store_correctly(self, storage: PropertyStorage) -> None:
-        """After deduplication, properties store and retrieve correctly."""
+    async def test_wrapped_listing_is_stored_with_its_commute(
+        self, storage: PropertyStorage
+    ) -> None:
         props = [
             Property(
                 source=PropertySource.RIGHTMOVE,
@@ -297,9 +294,7 @@ class TestFilterToStorage:
         assert stored.property.title == "Test Flat"
         assert stored.commute_minutes == 25
 
-    @pytest.mark.asyncio
-    async def test_storage_handles_all_sources(self, storage: PropertyStorage) -> None:
-        """Storage should handle properties from all sources."""
+    async def test_listings_from_every_portal_are_stored(self, storage: PropertyStorage) -> None:
         sources = [
             (PropertySource.OPENRENT, "openrent"),
             (PropertySource.RIGHTMOVE, "rightmove"),
@@ -332,9 +327,8 @@ class TestFilterToStorage:
 
 @pytest.mark.integration
 class TestCrossPlatformConsolidation:
-    """Test cross-platform dedup across pipeline re-runs."""
+    """A home stored by one run absorbs the same flat from another portal in a later run."""
 
-    @pytest.mark.asyncio
     async def test_cross_platform_consolidation_preserves_record_and_sent_status(
         self, storage: PropertyStorage, criteria: SearchCriteria
     ) -> None:
@@ -416,27 +410,26 @@ class TestCrossPlatformConsolidation:
 
 @pytest.mark.integration
 class TestEdgeCases:
-    """Test edge cases in the pipeline."""
+    """Selections that leave nothing, or nothing safe to match."""
 
-    @pytest.mark.asyncio
-    async def test_empty_scrape_results(
+    async def test_empty_collection_selects_nothing(
         self, storage: PropertyStorage, criteria: SearchCriteria
     ) -> None:
-        """Pipeline handles empty scrape results gracefully."""
         criteria_filter = CriteriaFilter(criteria)
         deduplicator = Deduplicator(enable_cross_platform=True)
 
         filtered = criteria_filter.filter_properties([])
         assert len(filtered) == 0
 
-        merged = await deduplicator.deduplicate_and_merge_async(filtered)
+        merged = await deduplicator.deduplicate_merged_async(
+            deduplicator.properties_to_merged(filtered)
+        )
         assert len(merged) == 0
 
         new = await storage.filter_new_merged(merged)
         assert len(new) == 0
 
-    def test_all_properties_filtered_out(self, criteria: SearchCriteria) -> None:
-        """Pipeline handles when all properties are filtered out."""
+    def test_listings_over_budget_are_all_rejected(self, criteria: SearchCriteria) -> None:
         # All properties outside criteria
         expensive_properties = [
             Property(
@@ -454,32 +447,30 @@ class TestEdgeCases:
         filtered = CriteriaFilter(criteria).filter_properties(expensive_properties)
         assert len(filtered) == 0
 
-    @pytest.mark.asyncio
-    async def test_properties_without_postcode_not_cross_deduped(self) -> None:
-        """Properties without postcodes are kept even if otherwise similar."""
-        props = [
+    async def test_listings_without_postcode_are_never_matched(self) -> None:
+        """Identical address, coordinates, price and size still do not merge without a
+        postcode, because matching only compares listings that share an outcode."""
+        twins = [
             Property(
-                source=PropertySource.OPENRENT,
-                source_id="no-postcode-1",
-                url=HttpUrl("https://openrent.com/1"),
-                title="Property 1",
+                source=source,
+                source_id=f"no-postcode-{index}",
+                url=HttpUrl(f"https://example.com/{source.value}/{index}"),
+                title=f"Property {index}",
                 price_pcm=2000,
                 bedrooms=1,
-                address="Address 1",
+                address="Flat 4, 123 Mare Street, Hackney",
                 postcode=None,
-            ),
-            Property(
-                source=PropertySource.RIGHTMOVE,
-                source_id="no-postcode-2",
-                url=HttpUrl("https://rightmove.co.uk/2"),
-                title="Property 2",
-                price_pcm=2000,
-                bedrooms=1,
-                address="Address 2",
-                postcode=None,
-            ),
+                latitude=51.5465,
+                longitude=-0.0553,
+            )
+            for index, source in enumerate((PropertySource.OPENRENT, PropertySource.RIGHTMOVE))
         ]
+        matcher = Deduplicator(enable_cross_platform=True)
 
-        deduped = await Deduplicator(enable_cross_platform=True).deduplicate_and_merge_async(props)
-        # Without postcodes, can't confidently dedupe
-        assert len(deduped) == 2
+        assert len(await matcher.deduplicate_merged_async(matcher.properties_to_merged(twins))) == 2
+        # The same pair with a full postcode is one home, so the postcode decided it.
+        with_postcode = [twin.model_copy(update={"postcode": "E8 3RH"}) for twin in twins]
+        assert (
+            len(await matcher.deduplicate_merged_async(matcher.properties_to_merged(with_postcode)))
+            == 1
+        )

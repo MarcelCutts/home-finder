@@ -1,10 +1,14 @@
 """Tests for shared location mappings."""
 
+import pytest
+
 from home_finder.data.location_mappings import (
     AREA_MAPPINGS,
     BOROUGH_AREAS,
+    BOROUGH_OUTCODES,
     RIGHTMOVE_LOCATIONS,
     RIGHTMOVE_OUTCODES,
+    normalize_area,
 )
 
 # ---------------------------------------------------------------------------
@@ -207,3 +211,59 @@ class TestAliasCollisions:
                         f"canonical name of '{conflicting.name}'"
                     )
                     raise AssertionError(msg)
+
+
+class TestNormalizeArea:
+    """Tests for normalize_area function."""
+
+    @pytest.mark.parametrize(
+        ("area", "expected"),
+        [
+            ("hackney", "hackney"),
+            ("Hackney", "hackney"),
+            ("HACKNEY", "hackney"),
+            ("tower hamlets", "tower-hamlets"),
+            ("Tower Hamlets", "tower-hamlets"),
+            ("waltham forest", "waltham-forest"),
+            ("E8", "e8"),
+            ("e8", "e8"),
+        ],
+    )
+    def test_normalize_area(self, area: str, expected: str) -> None:
+        """Test area normalization."""
+        assert normalize_area(area) == expected
+
+
+class TestBoroughOutcodes:
+    """Tests for borough outcode mapping."""
+
+    def test_hackney_outcodes(self) -> None:
+        """Test Hackney has expected outcodes."""
+        outcodes = BOROUGH_OUTCODES["hackney"]
+        assert "E5" in outcodes
+        assert "E8" in outcodes
+        assert "E9" in outcodes
+        assert "N16" in outcodes
+
+    def test_islington_outcodes(self) -> None:
+        """Test Islington has expected outcodes."""
+        outcodes = BOROUGH_OUTCODES["islington"]
+        assert "N1" in outcodes
+        assert "N5" in outcodes
+        assert "N7" in outcodes
+        assert "EC1" in outcodes
+
+    def test_tower_hamlets_outcodes(self) -> None:
+        """Test Tower Hamlets has expected outcodes."""
+        outcodes = BOROUGH_OUTCODES["tower-hamlets"]
+        assert "E1" in outcodes
+        assert "E2" in outcodes
+        assert "E3" in outcodes
+        assert "E14" in outcodes
+
+    def test_westminster_outcodes(self) -> None:
+        """Test Westminster has expected outcodes (for leakage detection)."""
+        outcodes = BOROUGH_OUTCODES["westminster"]
+        assert "SW1V" in outcodes
+        assert "W1" in outcodes
+        assert "WC1" in outcodes

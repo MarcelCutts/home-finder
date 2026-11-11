@@ -1,4 +1,9 @@
-"""Shared fixtures for notifier tests."""
+"""Shared fixtures for notifier tests.
+
+Message assertions in this directory depend on these values (the "1 Bed Flat" title,
+the "£300 below E8 average" value note, the viewing notes), so they are named
+``notification_*`` rather than reusing the root ``sample_*`` fixture names.
+"""
 
 from datetime import datetime
 
@@ -23,8 +28,8 @@ from home_finder.models import (
 
 
 @pytest.fixture
-def sample_property() -> Property:
-    """Create a sample property for notification tests."""
+def notification_property() -> Property:
+    """A single-source OpenRent listing in E8 with coordinates."""
     return Property(
         source=PropertySource.OPENRENT,
         source_id="12345",
@@ -41,24 +46,24 @@ def sample_property() -> Property:
 
 
 @pytest.fixture
-def sample_tracked_property(sample_property: Property) -> TrackedProperty:
-    """Create a sample tracked property with commute info."""
+def notification_tracked_property(notification_property: Property) -> TrackedProperty:
+    """The notification property with an 18-minute cycling commute."""
     return TrackedProperty(
-        property=sample_property,
+        property=notification_property,
         commute_minutes=18,
         transport_mode=TransportMode.CYCLING,
     )
 
 
 @pytest.fixture
-def sample_merged_property(sample_property: Property) -> MergedProperty:
-    """Create a sample merged property with two sources."""
+def notification_merged_property(notification_property: Property) -> MergedProperty:
+    """The notification property listed on OpenRent and Zoopla, with one gallery image."""
     zoopla_url = HttpUrl("https://www.zoopla.co.uk/to-rent/details/99999")
     return MergedProperty(
-        canonical=sample_property,
+        canonical=notification_property,
         sources=(PropertySource.OPENRENT, PropertySource.ZOOPLA),
         source_urls={
-            PropertySource.OPENRENT: sample_property.url,
+            PropertySource.OPENRENT: notification_property.url,
             PropertySource.ZOOPLA: zoopla_url,
         },
         images=(
@@ -74,8 +79,8 @@ def sample_merged_property(sample_property: Property) -> MergedProperty:
 
 
 @pytest.fixture
-def sample_quality_analysis() -> PropertyQualityAnalysis:
-    """Create a sample quality analysis with overall_rating."""
+def notification_quality_analysis() -> PropertyQualityAnalysis:
+    """A rated analysis with highlights, lowlights, a value note and viewing notes."""
     return PropertyQualityAnalysis(
         kitchen=KitchenAnalysis(
             overall_quality="modern",

@@ -50,8 +50,8 @@ jobs:
           python-version: ${{ env.PYTHON_VERSION }}
           enable-cache: true
       - run: uv sync --locked --all-extras
-      - run: uv run ruff check --output-format=github src tests
-      - run: uv run ruff format --check src tests
+      - run: uv run ruff check --output-format=github src tests scripts/summarize_test_profile.py
+      - run: uv run ruff format --check src tests scripts/summarize_test_profile.py
 
   typecheck:
     runs-on: ubuntu-24.04
@@ -70,8 +70,8 @@ jobs:
 
   test:
     runs-on: ubuntu-24.04
-    # The expanded suite passed in ~14 minutes; main hit 15 minutes at 97%.
-    # Keep a bounded allowance for runner variance and report the slowest tests.
+    # Retain headroom for shared-runner variance. Timing artifacts distinguish
+    # setup, test execution and teardown so regressions have evidence.
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -83,15 +83,31 @@ jobs:
           python-version: ${{ env.PYTHON_VERSION }}
           enable-cache: true
       - run: uv sync --locked --all-extras
-      - run: uv run pytest --cov --cov-report=xml --cov-report=term --durations=20
+      - run: >-
+          uv run pytest --cov --cov-report=xml --cov-report=term --durations=20
+          --test-profile=test-results/offline-profile.json
+          --junitxml=test-results/offline.xml
         env:
           PYTHONUNBUFFERED: "1"
           HYPOTHESIS_PROFILE: ci
+      - name: Summarize test timing
+        if: ${{ !cancelled() }}
+        run: |
+          if [ -f test-results/offline-profile.json ]; then
+            uv run python scripts/summarize_test_profile.py test-results/offline-profile.json --markdown | tee -a "$GITHUB_STEP_SUMMARY"
+          fi
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: ${{ !cancelled() }}
         with:
           name: coverage
           path: coverage.xml
+          retention-days: 7
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: ${{ !cancelled() }}
+        with:
+          name: test-observability
+          path: test-results/
           retention-days: 7
 
   build:
@@ -132,7 +148,7 @@ jobs:
       - run: uv sync --locked --all-extras
       # Some live sort tests also have the browser marker.
       - run: uv run playwright install chromium --with-deps
-      - run: uv run pytest -m slow -v --timeout=120
+      - run: uv run pytest -n 0 -m slow -v --force-enable-socket --timeout=120
         env:
           PYTHONUNBUFFERED: "1"
 
@@ -151,7 +167,7 @@ jobs:
           enable-cache: true
       - run: uv sync --locked --all-extras
       - run: uv run playwright install chromium --with-deps
-      - run: uv run pytest -m 'browser and not slow' -v --tracing=retain-on-failure
+      - run: uv run pytest -n 0 -m 'browser and not slow' -v --tracing=retain-on-failure
         env:
           PYTHONUNBUFFERED: "1"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
