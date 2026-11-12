@@ -290,7 +290,7 @@ def _enrich_fit_scores(properties: list[Any], settings: Settings | None = None) 
     Mutates dicts in place. Reads analysis_json from each property dict.
     Sets None defaults for properties without analysis data. The brief needs the
     settings; without them it is left out. With them, the card's icons and highlight
-    tags are held to the brief, so a card never claims more than its lead does.
+    tags are held to the brief, so a card never claims more than the brief does.
     """
     for prop in properties:
         prop["lead"] = None

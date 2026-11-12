@@ -1,9 +1,11 @@
 """What the tool says about a home in short: the listing page's three lists (what fits,
 what doesn't, what's unknown) and the queue card's glance icons and highlight tags.
 
-Both are held to the brief (``web/brief.py``). The analysis and the scorer read wider
-signals than the brief accepts as evidence, so left alone they can show a need as met
-where the brief says it needs checking. Nothing here may claim more than the brief does.
+What fits, the card's tags and the card's icons are held to the brief (``web/brief.py``).
+The analysis and the scorer read wider signals than the brief accepts as evidence, so
+left alone a tag or an icon can show a need as met where the brief says it needs
+checking. The other two lists are not held to it: they report what the analysis
+found against the home and what it could not see.
 """
 
 from collections.abc import Sequence
