@@ -1,4 +1,7 @@
 {% from "_macros.html" import commute_pill, fit_badge, lifestyle_icons %}
+{# The fit score doesn't count rent, bedrooms or commute, so a home that breaks one of
+   those limits keeps its number but isn't called a good or great fit. #}
+{% set breaks_limit = prop.lead and prop.lead.kind == 'broken' %}
 <article class="property-card{% if prop.is_off_market %} property-card-off-market{% endif %}"
          data-property-id="{{ prop.unique_id }}"
          data-status="{{ prop.user_status or 'new' }}"
@@ -39,7 +42,7 @@
             {# Meta row: rating | postcode | commute pill #}
             <div class="card-meta">
                 <div class="card-meta-left">
-                    {% if prop.fit_score is not none %}
+                    {% if prop.fit_score is not none and not breaks_limit %}
                     <span class="fit-tier-pill {{ fit_tier_class(prop.fit_score) }}">{{ fit_tier_label(prop.fit_score) }}</span>
                     {% endif %}
                     {% if prop.postcode %}
@@ -140,7 +143,7 @@
             {% endif %}
         </div>
     </a>
-    {{ fit_badge(prop.fit_score, prop.fit_breakdown, prop.unique_id) }}
+    {{ fit_badge(prop.fit_score, prop.fit_breakdown, prop.unique_id, band=not breaks_limit) }}
     {% if not prop.user_status or prop.user_status == 'new' %}
     <div class="card-quick-actions">
         <button class="card-action-btn card-action-interested"

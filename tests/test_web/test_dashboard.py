@@ -286,3 +286,21 @@ async def test_card_claims_no_more_than_the_brief(
 
     listing = _soup(client.get(f"/property/{merged_a.unique_id}").text)
     assert [li.get_text() for li in listing.select(".verdict-fits li")] == ["Gas hob"]
+
+
+@pytest.mark.parametrize(("max_price", "named"), [(2500, True), (1800, False)])
+async def test_card_names_the_fit_band_only_inside_the_hard_limits(
+    client, storage, prop_a, merged_a, base_analysis, max_price: int, named: bool
+) -> None:
+    """The score ignores rent, bedrooms and commute, so over a limit it stays a bare number."""
+    await storage.save_merged_property(merged_a, commute_minutes=22)
+    await storage.save_quality_analysis(prop_a.unique_id, base_analysis)
+    client.app.state.settings = client.app.state.settings.model_copy(
+        update={"max_price": max_price}
+    )
+    card = _soup(client.get("/").text).select_one("article.property-card")
+
+    assert ("card-lead-broken" in card.select_one(".card-lead")["class"]) is not named
+    assert card.select_one(".fit-badge").get_text(strip=True).isdigit()
+    assert (card.select_one(".fit-tier-pill") is not None) is named
+    assert (card.select_one(".fit-popover-tier") is not None) is named
