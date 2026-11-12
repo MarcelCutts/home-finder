@@ -1,11 +1,24 @@
-"""The three short lists that lead a listing page: what fits, what doesn't, what's unknown."""
+"""What the tool says about a home in short: the listing page's three lists (what fits,
+what doesn't, what's unknown) and the queue card's glance icons and highlight tags.
 
+Both are held to the brief (``web/brief.py``). The analysis and the scorer read wider
+signals than the brief accepts as evidence, so left alone they can show a need as met
+where the brief says it needs checking. Nothing here may claim more than the brief does.
+"""
+
+from collections.abc import Sequence
 from typing import Final, TypedDict
 
 from home_finder.analysis.image_review import SUPPLIED_PHOTO_LOWLIGHT_LABELS
-from home_finder.filters.fit_score import FitDimension
-from home_finder.models import PropertyLowlight, PropertyQualityAnalysis
-from home_finder.web.brief import describes_missing_evidence
+from home_finder.filters.fit_score import FitDimension, LifestyleIcon
+from home_finder.models import PropertyHighlight, PropertyLowlight, PropertyQualityAnalysis
+from home_finder.web.brief import (
+    DIMENSION_NEEDS,
+    BriefCheck,
+    BriefItem,
+    Claim,
+    describes_missing_evidence,
+)
 
 # Photo-coverage tags say less than the red flags about which rooms are missing.
 _PHOTO_LOWLIGHTS: Final = frozenset(
@@ -18,6 +31,23 @@ _PHOTO_LOWLIGHTS: Final = frozenset(
 )
 
 
+# Highlights that assert a need outright. The analysis can tag them from the advert's
+# own words (the brief's evidence rules say why), so each stands only where the brief
+# finds direct evidence for its need.
+_HIGHLIGHT_NEEDS: Final[dict[str, str]] = {
+    PropertyHighlight.SPACIOUS_LIVING: "hosting",
+    PropertyHighlight.EXCELLENT_CONDITION: "condition",
+    PropertyHighlight.RECENTLY_REFURBISHED: "condition",
+}
+
+# How a card icon shows each claim.
+_ICON_STATE: Final[dict[Claim, str]] = {
+    "supported": "good",
+    "conflict": "concern",
+    "needs_checking": "neutral",
+}
+
+
 class Verdict(TypedDict):
     fits: list[str]
     watch: list[str]
@@ -28,8 +58,57 @@ def _unique(items: list[str]) -> list[str]:
     return list(dict.fromkeys(item for item in items if item))
 
 
+def _brief_lines(check: BriefCheck) -> dict[str, BriefItem]:
+    """The brief's line for each fit dimension it covers, by the dimension's key."""
+    by_label = {item["label"]: item for item in check["items"]}
+    return {key: by_label[label] for key, label in DIMENSION_NEEDS.items() if label in by_label}
+
+
+def highlights_within_brief(highlights: Sequence[str], check: BriefCheck | None) -> list[str]:
+    """Leave out the highlights that assert a need the brief doesn't support.
+
+    "Spacious living room" beside a brief line saying the living room was never
+    measured is the page contradicting itself. Without a brief nothing is dropped.
+    """
+    if check is None:
+        return list(highlights)
+    lines = _brief_lines(check)
+
+    def stands(tag: str) -> bool:
+        line = lines.get(_HIGHLIGHT_NEEDS.get(tag, ""))
+        return line is None or line["claim"] == "supported"
+
+    return [tag for tag in highlights if stands(tag)]
+
+
+def icons_from_brief(
+    icons: dict[str, LifestyleIcon] | None, check: BriefCheck
+) -> dict[str, LifestyleIcon] | None:
+    """Make each card icon show the brief's claim for its need, in the brief's words.
+
+    The scorer draws its icons from wider signals than the brief takes as evidence:
+    a general sense of space makes its hosting icon good where the brief, with no
+    living-room measurement, says room to host needs checking. An icon whose need has
+    a line in the brief takes that line's claim and evidence; the rest (overall
+    space, internet) keep the scorer's.
+    """
+    if icons is None:
+        return None
+    lines = _brief_lines(check)
+    held = dict(icons)
+    for key in icons:
+        line = lines.get(key)
+        if line is not None:
+            held[key] = LifestyleIcon(
+                state=_ICON_STATE[line["claim"]], tooltip=f"{line['label']}: {line['found']}"
+            )
+    return held
+
+
 def build_verdict(
-    analysis: PropertyQualityAnalysis, fit_breakdown: list[FitDimension] | None
+    analysis: PropertyQualityAnalysis,
+    fit_breakdown: list[FitDimension] | None,
+    brief_check: BriefCheck | None = None,
 ) -> Verdict:
     """Sort the analysis into what fits the brief, what to watch and what is still unknown.
 
@@ -37,7 +116,8 @@ def build_verdict(
     lowlights come first, then the longer condition and listing observations. A room
     or view the photos leave out is a gap in the evidence, not a fault in the home,
     so it is something to find out, ahead of the details the analysis has no reading of.
-    That holds whether the analysis flagged the gap or wrote it as a concern.
+    That holds whether the analysis flagged the gap or wrote it as a concern. With the
+    brief to hand, what fits leaves out the highlights the brief doesn't support.
     """
     extraction = analysis.listing_extraction
     listing_epc = extraction is not None and extraction.epc_rating not in (None, "unknown")
@@ -45,6 +125,7 @@ def build_verdict(
     fits = [
         tag for tag in analysis.highlights or [] if not (listing_epc and tag[:3].upper() == "EPC")
     ]
+    fits = highlights_within_brief(fits, brief_check)
 
     flags = analysis.listing_red_flags
     # The flags list the photo gaps first, then the concerns the listing text raised.

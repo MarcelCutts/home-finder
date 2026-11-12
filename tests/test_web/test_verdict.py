@@ -1,10 +1,39 @@
-"""The fits / watch out / find out lists that lead the detail page (build_verdict)."""
+"""What the tool says in short (web/verdict.py): the listing page's fits / watch out /
+find out lists, and the card icons and highlight tags held to the brief."""
 
 import pytest
 
-from home_finder.filters.fit_score import FitDimension
-from home_finder.models import ConditionAnalysis, ListingExtraction, ListingRedFlags
-from home_finder.web.verdict import build_verdict
+from home_finder.filters.fit_score import (
+    FitDimension,
+    compute_fit_score_and_breakdown,
+    compute_lifestyle_icons,
+)
+from home_finder.models import (
+    ConditionAnalysis,
+    FlooringNoiseAnalysis,
+    ListingExtraction,
+    ListingRedFlags,
+    PropertyQualityAnalysis,
+    SpaceAnalysis,
+)
+from home_finder.web.brief import BriefCheck, check_brief
+from home_finder.web.verdict import build_verdict, highlights_within_brief, icons_from_brief
+
+
+def brief_for(analysis: PropertyQualityAnalysis, bedrooms: int = 1) -> BriefCheck:
+    """The brief check for a one-bed inside every hard limit, with the default must-haves."""
+    _, breakdown = compute_fit_score_and_breakdown(analysis, bedrooms)
+    listing = {"bedrooms": bedrooms, "price_pcm": 1900, "commute_minutes": 20, "postcode": "E8 3RH"}
+    return check_brief(
+        listing,
+        analysis,
+        breakdown,
+        min_bedrooms=0,
+        max_bedrooms=2,
+        max_price=2500,
+        max_commute_minutes=30,
+        must_haves="workspace,hosting",
+    )
 
 
 def dimension(*factors: tuple[str, str]) -> FitDimension:
@@ -121,3 +150,75 @@ def test_find_out_collects_unknowns_once_and_service_charge_is_dropped(
     verdict = build_verdict(analysis, breakdown)
     assert verdict["watch"] == ["No dishwasher"]
     assert verdict["find_out"] == ["Dishwasher", "Broadband"]
+
+
+@pytest.mark.parametrize(
+    ("living_room_sqm", "expected"),
+    [
+        (None, ["Gas hob"]),  # never measured: the brief says room to host needs checking
+        (22.0, ["Spacious living room", "Gas hob"]),  # measured and roomy: supported
+    ],
+)
+def test_spacious_living_room_fits_only_where_the_brief_supports_room_to_host(
+    make_quality_analysis, living_room_sqm, expected
+):
+    analysis = make_quality_analysis(
+        highlights=["Spacious living room", "Gas hob"],
+        space=SpaceAnalysis(living_room_sqm=living_room_sqm, is_spacious_enough=True),
+    )
+    check = brief_for(analysis)
+    assert build_verdict(analysis, None, check)["fits"] == expected
+    assert highlights_within_brief(analysis.highlights, check) == expected
+    # Without a brief there is nothing to hold the highlight to.
+    assert build_verdict(analysis, None)["fits"] == ["Spacious living room", "Gas hob"]
+
+
+def test_condition_highlights_wait_for_every_room_to_be_shown(make_quality_analysis):
+    """A good-looking home with a room left out of the photos needs checking, not praise."""
+    highlights = ["Excellent condition", "Recently refurbished", "Period features"]
+    shown = make_quality_analysis(highlights=highlights)
+    gaps = make_quality_analysis(
+        highlights=highlights, listing_red_flags=ListingRedFlags(missing_room_photos=["Bathroom"])
+    )
+    assert highlights_within_brief(highlights, brief_for(shown)) == highlights
+    assert highlights_within_brief(highlights, brief_for(gaps)) == ["Period features"]
+
+
+@pytest.mark.parametrize(
+    ("space", "lowlights", "expected"),
+    [
+        (
+            SpaceAnalysis(is_spacious_enough=True),
+            [],
+            {"state": "neutral", "tooltip": "Room to host: living-room size not shown"},
+        ),
+        (
+            SpaceAnalysis(living_room_sqm=22.0, is_spacious_enough=True),
+            [],
+            {"state": "good", "tooltip": "Room to host: Living room ~22 m²"},
+        ),
+        (
+            SpaceAnalysis(living_room_sqm=22.0, is_spacious_enough=True),
+            ["Compact living room"],
+            {"state": "concern", "tooltip": "Room to host: Compact living room"},
+        ),
+    ],
+    ids=["needs checking", "supported", "conflict"],
+)
+def test_card_icon_shows_the_briefs_claim_in_the_briefs_words(
+    make_quality_analysis, space, lowlights, expected
+):
+    """The scorer calls all three of these homes good for hosting: spacious, double glazed."""
+    analysis = make_quality_analysis(
+        space=space,
+        lowlights=lowlights,
+        flooring_noise=FlooringNoiseAnalysis(has_double_glazing="yes"),
+    )
+    scored = compute_lifestyle_icons(analysis, 1)
+    assert scored["hosting"]["state"] == "good"
+
+    held = icons_from_brief(scored, brief_for(analysis))
+    assert held["hosting"] == expected
+    # Overall space has no line in the brief, so its icon stays the scorer's.
+    assert held["space"] == scored["space"]
+    assert icons_from_brief(None, brief_for(analysis)) is None

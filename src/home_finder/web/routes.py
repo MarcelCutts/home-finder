@@ -72,7 +72,7 @@ from home_finder.web.filters import (
     FilterDep,
     _parse_optional_int,
 )
-from home_finder.web.verdict import build_verdict
+from home_finder.web.verdict import build_verdict, highlights_within_brief, icons_from_brief
 from home_finder.web.working import fit_working
 
 logger = get_logger(__name__)
@@ -288,8 +288,9 @@ def _enrich_fit_scores(properties: list[Any], settings: Settings | None = None) 
     """Compute fit_score, fit_breakdown, lifestyle_icons and the brief lead for each property.
 
     Mutates dicts in place. Reads analysis_json from each property dict.
-    Sets None defaults for properties without analysis data. The brief lead needs
-    the settings; without them it is left out.
+    Sets None defaults for properties without analysis data. The brief needs the
+    settings; without them it is left out. With them, the card's icons and highlight
+    tags are held to the brief, so a card never claims more than its lead does.
     """
     for prop in properties:
         prop["lead"] = None
@@ -319,6 +320,8 @@ def _enrich_fit_scores(properties: list[Any], settings: Settings | None = None) 
             check = check_brief(prop, analysis, fit_breakdown, **_brief_limits(settings))
             prop["brief_check"] = check
             prop["lead"] = brief_lead(check, analysis)
+            prop["lifestyle_icons"] = icons_from_brief(prop["lifestyle_icons"], check)
+            prop["highlights"] = highlights_within_brief(prop.get("highlights") or [], check)
 
 
 @router.get("/count")
@@ -737,13 +740,12 @@ async def property_detail(
             qa, bedrooms, postcode=prop.get("postcode")
         )
 
-    verdict = build_verdict(qa, fit_breakdown) if qa is not None else None
-
     # The brief: what was asked for, measured against this listing; its first gap
-    # opens the page. The agent's words get notes from the same analysis.
+    # leads the take. The lists and the agent's words draw on the same analysis.
     settings = request.app.state.settings
     brief_check = check_brief(prop, qa, fit_breakdown, **_brief_limits(settings))
     lead = brief_lead(brief_check, qa) if qa is not None else None
+    verdict = build_verdict(qa, fit_breakdown, brief_check) if qa is not None else None
     annotated = (
         annotate_listing(best_description, qa, outcode=outcode, price_pcm=prop.get("price_pcm"))
         if best_description and qa
