@@ -235,33 +235,34 @@
             {% endif %}
         </header>
 
-        {# 3. The take: the judgement, once. The brief's first gap, the score, and one thing to check. #}
+        {# 3. The take: the judgement, once. One thing to check, the brief's first gap, then the score. #}
         {% if lead %}
         <aside class="take take-{{ lead.kind }}" aria-label="Against your brief">
             {{ processing_notice() }}
-            {# The first must-have this listing breaks, or can't be checked, or none #}
-            <div class="detail-lead detail-lead-{{ lead.kind }}">
-                <p class="detail-lead-kicker">{{ lead.kicker }}</p>
-                <p class="detail-lead-title">{{ lead.title }}</p>
-                {% if lead.detail %}<p class="detail-lead-detail">{{ lead.detail }}</p>{% endif %}
-            </div>
-            {% if fit_score is not none %}
-            <div class="take-part take-fit">
-                <p class="take-label">Fit with your brief</p>
-                <p class="take-fit-line">
-                    <span class="fit-brief-score">{{ fit_score }}</span>
-                    {# The score doesn't count rent, bedrooms or commute, so its band is left out when one of those limits is broken. #}
-                    {% set band = (fit_tier_label(fit_score) | lower | capitalize) if lead.kind != 'broken' else none %}
-                    <span class="take-fit-band">{{ band or "" }}{% if working and working.lowest %}{{ " · lowest" if band else "Lowest" }}: {{ working.lowest.label | lower }} <span class="figure">{{ working.lowest.score }}</span>{% endif %}</span>
-                </p>
-                {% if working %}<a class="take-link" href="#fit-working">How the <span class="figure">{{ fit_score }}</span> is made</a>{% endif %}
-            </div>
-            {% endif %}
+            {# What to do with it comes first: the one thing to check at a viewing #}
             {% if first_check %}
             <div class="take-part take-check">
                 <p class="take-label">Check at a viewing</p>
                 <p class="take-check-item">{{ first_check }}</p>
                 <a class="take-link" href="#section-viewing">Viewing checklist</a>
+            </div>
+            {% endif %}
+            {# The first must-have this listing breaks, or can't be checked, or none #}
+            <div class="take-part detail-lead detail-lead-{{ lead.kind }}">
+                <p class="detail-lead-kicker">{{ lead.kicker }}</p>
+                <p class="detail-lead-title">{{ lead.title }}</p>
+                {% if lead.detail %}<p class="detail-lead-detail">{{ lead.detail }}</p>{% endif %}
+            </div>
+            {# The score as a number with its lowest dimension. Its tier name ("Good fit")
+               stays off this page until the score has been calibrated. #}
+            {% if fit_score is not none %}
+            <div class="take-part take-fit">
+                <p class="take-label">Fit with your brief</p>
+                <p class="take-fit-line">
+                    <span class="fit-brief-score">{{ fit_score }}</span>
+                    {% if working and working.lowest %}<span class="take-fit-lowest">lowest: {{ working.lowest.label | lower }} <span class="figure">{{ working.lowest.score }}</span></span>{% endif %}
+                </p>
+                {% if working %}<a class="take-link" href="#fit-working">How the <span class="figure">{{ fit_score }}</span> is made</a>{% endif %}
             </div>
             {% endif %}
             {# Where the reading comes from, at the place it is first met #}

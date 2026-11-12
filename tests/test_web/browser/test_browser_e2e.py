@@ -729,7 +729,7 @@ class TestHomeFirstLayout:
             ".detail-lead-title",
             ".detail-lead-detail",
             ".take-label",
-            ".take-fit-band",
+            ".take-fit-lowest",
             ".take-link",
             ".provenance-note",
         ):

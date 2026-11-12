@@ -2200,8 +2200,9 @@ nav.container-fluid li {
 .listing-top-with-take > .detail-media { grid-column: 1; grid-row: 1; }
 .listing-top-with-take > .take { grid-column: 2; grid-row: 1; }
 
-/* The take: the tool's judgement, stated once. A panel as tall as the photos beside it,
-   its parts ruled apart, with the provenance line at its foot. */
+/* The take: the tool's judgement, stated once. A panel as tall as the photos beside it:
+   the thing to check, the lead and the score, ruled apart, with the provenance line at
+   its foot. */
 .take {
     display: flex;
     flex-direction: column;
@@ -2219,7 +2220,8 @@ nav.container-fluid li {
     margin: 0;
     color: var(--text-muted);
 }
-.take-part {
+/* Each part after the first is ruled off from the one above. */
+.take-part ~ .take-part {
     padding-top: 0.9rem;
     border-top: 1px solid var(--rule-strong);
 }
@@ -2244,11 +2246,11 @@ nav.container-fluid li {
     line-height: 1.1;
     color: var(--text);
 }
-.take-fit-band {
+.take-fit-lowest {
     font-size: 0.9rem;
     color: var(--text-muted);
 }
-.take-fit-band .figure {
+.take-fit-lowest .figure {
     font-size: 0.95em;
 }
 .take-check-item {

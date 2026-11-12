@@ -15,7 +15,7 @@ from pydantic import HttpUrl
 
 from home_finder.analysis.listing_text import select_listing_text
 from home_finder.db.storage import PropertyStorage
-from home_finder.filters.fit_score import fit_tier_label
+from home_finder.filters.fit_score import FIT_TIERS
 from home_finder.models import (
     FlooringNoiseAnalysis,
     ListingExtraction,
@@ -391,10 +391,15 @@ class TestDetailPage:
         assert "off-market-banner" not in resp.text
 
 
-class TestTake:
-    """The take beside the photos: the brief's first gap, the fit score, one thing to check."""
+def _tier_words(text: str) -> list[str]:
+    """The fit tier names ("Good Fit", "Okay", ...) that appear in a piece of page text."""
+    return [tier["label"] for tier in FIT_TIERS if tier["label"].lower() in text.lower()]
 
-    async def test_take_states_the_lead_the_score_and_the_first_check(
+
+class TestTake:
+    """The take beside the photos: one thing to check, the brief's first gap, the fit score."""
+
+    async def test_take_leads_with_the_first_check_then_the_lead_then_the_score(
         self,
         client: TestClient,
         storage: PropertyStorage,
@@ -420,14 +425,20 @@ class TestTake:
         lead = take.select_one(".detail-lead")
         assert "detail-lead-unknown" in lead["class"]
         assert lead.select_one(".detail-lead-kicker").get_text() == "2 must-haves need checking"
-        score = int(take.select_one(".fit-brief-score").get_text(strip=True))
-        band = take.select_one(".take-fit-band").get_text(" ", strip=True)
-        assert band.startswith(fit_tier_label(score).capitalize())
-        assert "lowest:" in band
         # The one thing to check is the first check the analysis wrote for this home.
         check = take.select_one(".take-check")
         assert check.select_one(".take-check-item").get_text() == "Run every tap."
         assert check.a["href"] == "#section-viewing"
+        # It opens the panel; the lead follows, then the score.
+        parts = take.select(":scope > .take-part")
+        assert [part["class"][1] for part in parts] == ["take-check", "detail-lead", "take-fit"]
+        # The score is a number with its lowest dimension, and no tier name: tiers stay
+        # off this page until the score is calibrated.
+        fit = take.select_one(".take-fit")
+        assert fit.select_one(".fit-brief-score").get_text(strip=True).isdigit()
+        assert fit.select_one(".take-fit-lowest").get_text(" ", strip=True).startswith("lowest:")
+        assert fit.a["href"] == "#fit-working"
+        assert _tier_words(take.get_text(" ")) == []
         # The take is where the AI's reading is first met, so its provenance line is here.
         assert "AI reading of the listing photos" in take.select_one(".provenance-note").get_text()
         assert soup.select_one("#section-overview .provenance-note") is None
@@ -461,8 +472,11 @@ class TestTake:
         take = _soup(client.get(f"/property/{merged_a.unique_id}").text).select_one(".take")
         item = take.select_one(".take-check-item")
         assert (item.get_text() if item else None) == expected
+        # With nothing to check, the lead opens the panel.
+        first = take.select_one(":scope > .take-part")
+        assert first["class"][1] == ("take-check" if expected else "detail-lead")
 
-    async def test_broken_hard_limit_leads_the_take_without_a_fit_band(
+    async def test_broken_hard_limit_is_marked_in_the_take(
         self,
         client: TestClient,
         storage: PropertyStorage,
@@ -470,22 +484,22 @@ class TestTake:
         merged_a: MergedProperty,
         base_analysis: PropertyQualityAnalysis,
     ) -> None:
-        """The score doesn't count the limits, so a home over one isn't called a fit beside it."""
+        """A home over a hard limit says so in red, on the panel and in the lead's kicker."""
         await storage.save_merged_property(merged_a, commute_minutes=22)
         await storage.save_quality_analysis(prop_a.unique_id, base_analysis)
         client.app.state.settings = client.app.state.settings.model_copy(update={"max_price": 1800})
         take = _soup(client.get(f"/property/{merged_a.unique_id}").text).select_one(".take")
 
+        assert "take-broken" in take["class"]
         lead = take.select_one(".detail-lead")
         assert "detail-lead-broken" in lead["class"]
         assert lead.select_one(".detail-lead-kicker").get_text() == "Breaks a must-have"
         assert lead.select_one(".detail-lead-title").get_text() == (
             "£1,900 pcm, £100 over your limit."
         )
+        # The score ignores the limits; it stays a number, with no tier name beside it.
         assert take.select_one(".fit-brief-score") is not None
-        band = take.select_one(".take-fit-band").get_text(" ", strip=True)
-        assert band.startswith("Lowest:")
-        assert "fit" not in band.lower()
+        assert _tier_words(take.get_text(" ")) == []
 
     async def test_unassessed_home_has_no_take_and_says_so_under_the_title(
         self, client: TestClient, storage: PropertyStorage, merged_a: MergedProperty

@@ -301,9 +301,9 @@ def _brief_limits(settings: Settings) -> dict[str, Any]:
 def _breaks_hard_limit(listing: Mapping[str, Any], settings: Settings) -> bool:
     """Whether a listing is outside the brief's rent, bedroom or commute limit.
 
-    The fit score doesn't count those limits. Wherever the score's band is named, a
-    home that breaks one keeps its number without the name: the card and the listing
-    page read this from the lead, and the map popup from the marker's flag.
+    The fit score doesn't count those limits. Where the score's band is named, a home
+    that breaks one keeps its number without the name: the card reads this from the
+    lead, and the map popup from the marker's flag. The listing page names no band.
     """
     check = check_brief(listing, None, None, **_brief_limits(settings))
     return brief_lead(check, None)["kind"] == "broken"
