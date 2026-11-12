@@ -375,18 +375,6 @@ def test_must_haves_come_first_and_the_counts_match_the_claims() -> None:
     ) == (6, 4, 1, 1)
 
 
-def test_the_templates_still_read_each_claim_under_its_earlier_name() -> None:
-    analysis = make_fit_analysis(lowlights=["Potential traffic noise"], kitchen={"hob_type": None})
-    result = check(analysis, must_haves="workspace,sound,kitchen")
-    earlier = {"supported": "met", "conflict": "broken", "needs_checking": "unknown"}
-    assert {item["claim"]: item["state"] for item in result["items"]} == earlier
-    assert (result["must_met"], result["must_broken"], result["must_unknown"]) == (
-        result["must_supported"],
-        result["must_conflict"],
-        result["must_needs_checking"],
-    )
-
-
 @pytest.mark.parametrize("analysis", [None, {}])
 def test_without_an_accepted_assessment_each_must_have_dimension_needs_checking(analysis):
     result = check(analysis, must_haves="workspace,sound")

@@ -31,15 +31,7 @@ from home_finder.models import PropertyLowlight
 from home_finder.models.quality import lowlight_display_label
 
 Claim = Literal["supported", "conflict", "needs_checking"]
-# The templates still read each claim under its earlier name.
-State = Literal["met", "broken", "unknown"]
 Kind = Literal["limit", "dimension"]
-
-_TEMPLATE_STATE: Final[dict[Claim, State]] = {
-    "supported": "met",
-    "conflict": "broken",
-    "needs_checking": "unknown",
-}
 
 # What each fit dimension is called when it is a line in the brief. The workspace
 # need is somewhere to work; a separate office is the best evidence for it, not
@@ -60,7 +52,6 @@ class BriefItem(TypedDict):
     found: str  # the evidence, in a few words
     must: bool
     kind: Kind
-    state: State  # the claim under the name the templates read
 
 
 class BriefCheck(TypedDict):
@@ -69,10 +60,6 @@ class BriefCheck(TypedDict):
     must_supported: int
     must_conflict: int
     must_needs_checking: int
-    # The same three counts under the names the templates read.
-    must_met: int
-    must_broken: int
-    must_unknown: int
 
 
 class Lead(TypedDict):
@@ -355,9 +342,7 @@ def _join(labels: list[str]) -> str:
 
 
 def _item(label: str, claim: Claim, found: str, must: bool, kind: Kind) -> BriefItem:
-    return BriefItem(
-        label=label, claim=claim, found=found, must=must, kind=kind, state=_TEMPLATE_STATE[claim]
-    )
+    return BriefItem(label=label, claim=claim, found=found, must=must, kind=kind)
 
 
 def _dimension_item(
@@ -459,9 +444,6 @@ def check_brief(
         must_supported=supported,
         must_conflict=conflict,
         must_needs_checking=needs_checking,
-        must_met=supported,
-        must_broken=conflict,
-        must_unknown=needs_checking,
     )
 
 
