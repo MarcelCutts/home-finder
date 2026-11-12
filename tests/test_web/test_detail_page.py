@@ -1,17 +1,20 @@
 """Listing detail page (GET /property/{id}, rendered by property_detail into detail.html).
 
+The page puts the home first: photos, then title and rent, with the tool's take beside
+them, then the assessment, the viewing checklist, the advert's words and the rest.
 The costs section and the floorplans have their own modules.
 """
 
 from datetime import UTC, datetime
 
 import pytest
-from bs4 import BeautifulSoup
+from bs4 import BeautifulSoup, Tag
 from fastapi.testclient import TestClient
 from pydantic import HttpUrl
 
 from home_finder.analysis.listing_text import select_listing_text
 from home_finder.db.storage import PropertyStorage
+from home_finder.filters.fit_score import fit_tier_label
 from home_finder.models import (
     FlooringNoiseAnalysis,
     ListingExtraction,
@@ -24,12 +27,18 @@ from home_finder.models import (
     PropertySource,
     PropertyType,
     UserStatus,
+    ViewingNotes,
 )
 from home_finder.models.analysis import ImageReviewCoverage
 
 
 def _soup(html: str) -> BeautifulSoup:
     return BeautifulSoup(html, "html.parser")
+
+
+def _landmark_name(el: Tag) -> str:
+    """A page landmark by its id, else by its first class; the title by its tag."""
+    return "h1" if el.name == "h1" else el.get("id") or el["class"][0]
 
 
 def _single_source(prop: Property) -> MergedProperty:
@@ -96,7 +105,94 @@ class TestDetailPage:
             "Not seen in supplied photos: Second bedroom",
         ]
 
-    async def test_facts_and_verdict_lead_the_page(
+    async def test_home_comes_first_and_the_judgement_is_stated_once(
+        self,
+        client: TestClient,
+        storage: PropertyStorage,
+        prop_a: Property,
+        merged_a: MergedProperty,
+        base_analysis: PropertyQualityAnalysis,
+    ) -> None:
+        """Photos, then title and rent, then the take; the sections follow in reading order."""
+        analysis = base_analysis.model_copy(
+            update={"viewing_notes": ViewingNotes(check_items=["Run every tap."])}
+        )
+        await storage.save_merged_property(merged_a, commute_minutes=22)
+        await storage.save_quality_analysis(prop_a.unique_id, analysis)
+        soup = _soup(client.get(f"/property/{merged_a.unique_id}").text)
+
+        landmarks = soup.select(
+            "#section-photos, h1, .listing-rent, .take, #section-nav, #section-overview, "
+            "#section-viewing, #section-description, #section-quality, #section-costs, "
+            "#section-location, #section-area"
+        )
+        assert [_landmark_name(el) for el in landmarks] == [
+            "section-photos",
+            "h1",
+            "listing-rent",
+            "take",
+            "section-nav",
+            "section-overview",
+            "section-viewing",
+            "section-description",
+            "section-quality",
+            "section-costs",
+            "section-location",
+            "section-area",
+        ]
+        # The section links follow the same order; the photos are above them.
+        assert [a["href"] for a in soup.select("#section-nav a")] == [
+            "#section-overview",
+            "#section-viewing",
+            "#section-description",
+            "#section-quality",
+            "#section-costs",
+            "#section-location",
+            "#section-area",
+            "#top",
+        ]
+
+        # No judgement ahead of the photos, and each statement of it appears once:
+        # the lead and the score in the take, the brief's lines in the assessment.
+        judgement = ["detail-lead", "fit-brief-score", "brief-check", "fit-working"]
+        assert soup.select_one("#section-photos").find_previous(class_=judgement) is None
+        for name in judgement:
+            assert len(soup.select(f".{name}")) == 1
+        take = soup.select_one(".take")
+        assert take.select_one(".detail-lead") is not None
+        assert take.select_one(".fit-brief-score") is not None
+        assert soup.select_one("#section-overview .brief-check") is not None
+
+    async def test_header_gives_rent_beside_the_title_and_three_facts(
+        self,
+        client: TestClient,
+        storage: PropertyStorage,
+        prop_a: Property,
+        merged_a: MergedProperty,
+        base_analysis: PropertyQualityAnalysis,
+    ) -> None:
+        await storage.save_merged_property(merged_a, commute_minutes=22)
+        await storage.save_quality_analysis(prop_a.unique_id, base_analysis)
+        header = _soup(client.get(f"/property/{merged_a.unique_id}").text).select_one(
+            ".detail-header"
+        )
+
+        assert header.h1.get_text() == "1 bed in E8"
+        assert " ".join(header.select_one(".listing-rent").get_text(" ").split()) == (
+            "Rent £1,900 pcm"
+        )
+        facts = {
+            fact.dt.get_text(strip=True): " ".join(fact.dd.get_text(" ").split())
+            for fact in header.select(".detail-facts .detail-fact")
+        }
+        # Rent and fit are no longer cells: one sits beside the title, the other in the take.
+        assert list(facts) == ["Bedrooms", "Floor area", "Commute"]
+        assert facts["Bedrooms"] == "1"
+        assert facts["Floor area"] == "Not listed"
+        assert facts["Commute"].startswith("22 min")
+        assert header.select_one(".status-selector") is not None
+
+    async def test_assessment_lists_what_fits_what_doesnt_and_whats_unknown(
         self,
         client: TestClient,
         storage: PropertyStorage,
@@ -112,23 +208,14 @@ class TestDetailPage:
                 "lowlights": ["Service charge unstated"],
             }
         )
-        await storage.save_merged_property(merged_a, commute_minutes=22)
+        await storage.save_merged_property(merged_a)
         await storage.save_quality_analysis(prop_a.unique_id, analysis)
-        soup = _soup(client.get(f"/property/{merged_a.unique_id}").text)
+        verdict = _soup(client.get(f"/property/{merged_a.unique_id}").text).select_one(
+            "#section-overview"
+        )
 
-        facts = {
-            fact.dt.get_text(strip=True): " ".join(fact.dd.get_text(" ").split())
-            for fact in soup.select(".detail-facts .detail-fact")
-        }
-        assert facts["Rent"] == "£1,900 pcm"
-        assert facts["Bedrooms"] == "1"
-        assert facts["Floor area"] == "Not listed"
-        assert facts["Commute"].startswith("22 min")
-        assert facts["Fit"].endswith("of 100")
-
-        verdict = soup.select_one("#section-overview")
         assert verdict.h2.get_text() == "Garden flat with a gas hob"
-        assert "AI reading of the listing photos" in verdict.select_one(".provenance-note").text
+        assert verdict.select_one(".verdict-summary").get_text() == "Nice place."
         fits = verdict.select_one(".verdict-fits")
         assert [li.get_text() for li in fits.select(":scope > ul li")] == [
             *highlights,
@@ -141,12 +228,7 @@ class TestDetailPage:
         assert "Service charge" not in find_out
         headings = [h3.get_text(strip=True) for h3 in verdict.select(".verdict-list h3")]
         assert headings == ["What fits", "What doesn't", "What's unknown"]
-        assert verdict.select_one("#section-fit") is not None
-
-        order = [
-            el["id"] for el in soup.select("#section-overview, #section-costs, #section-quality")
-        ]
-        assert order == ["section-overview", "section-costs", "section-quality"]
+        assert verdict.select_one("#section-fit h3").get_text() == "Your brief"
 
     async def test_description_rendered(
         self, client: TestClient, storage: PropertyStorage, merged_a: MergedProperty
@@ -222,10 +304,11 @@ class TestDetailPage:
         trigger = _soup(resp.text).select_one(".status-selector .status-selector-trigger")
         assert trigger.get_text(strip=True) == "Viewing"
 
-    async def test_listing_age_pill_on_detail(
-        self, client: TestClient, storage: PropertyStorage
+    @pytest.mark.parametrize("checked", [False, True])
+    async def test_freshness_says_when_first_seen_and_whether_availability_was_checked(
+        self, client: TestClient, storage: PropertyStorage, checked: bool
     ) -> None:
-        """Detail page should show listing age pill for properties with first_seen."""
+        """An unchecked listing says so plainly; a checked one says when."""
         prop = Property(
             source=PropertySource.OPENRENT,
             source_id="999",
@@ -240,10 +323,18 @@ class TestDetailPage:
         )
         merged = _single_source(prop)
         await storage.save_merged_property(merged)
+        expected = "First seen 1 Jan 2025 · availability not checked"
+        if checked:
+            await storage.update_property_last_checked(merged.unique_id)
+            saved = await storage.web.get_property_detail(merged.unique_id)
+            stamp = datetime.fromisoformat(saved["last_checked_at"])
+            expected = (
+                f"First seen 1 Jan 2025 · availability last checked {stamp.day} {stamp:%b %Y}"
+            )
+
         resp = client.get(f"/property/{merged.unique_id}")
-        assert resp.status_code == 200
-        assert "listing-age-pill" in resp.text
-        assert "First seen" in resp.text
+        freshness = _soup(resp.text).select_one(".detail-header .listing-freshness")
+        assert " ".join(freshness.get_text(" ").split()) == expected
         assert "May be negotiable" not in resp.text
 
     async def test_off_market_banner_on_detail(
@@ -265,6 +356,113 @@ class TestDetailPage:
         resp = client.get(f"/property/{merged_a.unique_id}")
         assert resp.status_code == 200
         assert "off-market-banner" not in resp.text
+
+
+class TestTake:
+    """The take beside the photos: the brief's first gap, the fit score, one thing to check."""
+
+    async def test_take_states_the_lead_the_score_and_the_first_check(
+        self,
+        client: TestClient,
+        storage: PropertyStorage,
+        prop_a: Property,
+        merged_a: MergedProperty,
+        base_analysis: PropertyQualityAnalysis,
+    ) -> None:
+        analysis = base_analysis.model_copy(
+            update={
+                "viewing_notes": ViewingNotes(
+                    check_items=["Run every tap.", "Open every window."],
+                    questions_for_agent=["Is the furniture staying?"],
+                    deal_breaker_tests=["Make a phone call in the bedroom."],
+                )
+            }
+        )
+        await storage.save_merged_property(merged_a, commute_minutes=22)
+        await storage.save_quality_analysis(prop_a.unique_id, analysis)
+        soup = _soup(client.get(f"/property/{merged_a.unique_id}").text)
+        take = soup.select_one("aside.take")
+
+        assert "listing-top-with-take" in take.parent["class"]
+        lead = take.select_one(".detail-lead")
+        assert "detail-lead-unknown" in lead["class"]
+        assert lead.select_one(".detail-lead-kicker").get_text() == "2 must-haves need checking"
+        score = int(take.select_one(".fit-brief-score").get_text(strip=True))
+        band = take.select_one(".take-fit-band").get_text(" ", strip=True)
+        assert band.startswith(fit_tier_label(score).capitalize())
+        assert "lowest:" in band
+        # The one thing to check is the first check the analysis wrote for this home.
+        check = take.select_one(".take-check")
+        assert check.select_one(".take-check-item").get_text() == "Run every tap."
+        assert check.a["href"] == "#section-viewing"
+        # The take is where the AI's reading is first met, so its provenance line is here.
+        assert "AI reading of the listing photos" in take.select_one(".provenance-note").get_text()
+        assert soup.select_one("#section-overview .provenance-note") is None
+
+    @pytest.mark.parametrize(
+        ("notes", "expected"),
+        [
+            (
+                ViewingNotes(deal_breaker_tests=["Make a phone call in the bedroom."]),
+                "Make a phone call in the bedroom.",
+            ),
+            (ViewingNotes(questions_for_agent=["Is the furniture staying?"]), None),
+            (None, None),
+        ],
+        ids=["first quick test stands in", "questions are not checks", "no viewing notes"],
+    )
+    async def test_take_shows_a_check_only_when_the_analysis_wrote_one(
+        self,
+        client: TestClient,
+        storage: PropertyStorage,
+        prop_a: Property,
+        merged_a: MergedProperty,
+        base_analysis: PropertyQualityAnalysis,
+        notes: ViewingNotes | None,
+        expected: str | None,
+    ) -> None:
+        await storage.save_merged_property(merged_a)
+        await storage.save_quality_analysis(
+            prop_a.unique_id, base_analysis.model_copy(update={"viewing_notes": notes})
+        )
+        take = _soup(client.get(f"/property/{merged_a.unique_id}").text).select_one(".take")
+        item = take.select_one(".take-check-item")
+        assert (item.get_text() if item else None) == expected
+
+    async def test_broken_hard_limit_leads_the_take_without_a_fit_band(
+        self,
+        client: TestClient,
+        storage: PropertyStorage,
+        prop_a: Property,
+        merged_a: MergedProperty,
+        base_analysis: PropertyQualityAnalysis,
+    ) -> None:
+        """The score doesn't count the limits, so a home over one isn't called a fit beside it."""
+        await storage.save_merged_property(merged_a, commute_minutes=22)
+        await storage.save_quality_analysis(prop_a.unique_id, base_analysis)
+        client.app.state.settings = client.app.state.settings.model_copy(update={"max_price": 1800})
+        take = _soup(client.get(f"/property/{merged_a.unique_id}").text).select_one(".take")
+
+        lead = take.select_one(".detail-lead")
+        assert "detail-lead-broken" in lead["class"]
+        assert lead.select_one(".detail-lead-kicker").get_text() == "Breaks a must-have"
+        assert lead.select_one(".detail-lead-title").get_text() == (
+            "£1,900 pcm, £100 over your limit."
+        )
+        assert take.select_one(".fit-brief-score") is not None
+        band = take.select_one(".take-fit-band").get_text(" ", strip=True)
+        assert band.startswith("Lowest:")
+        assert "fit" not in band.lower()
+
+    async def test_unassessed_home_has_no_take_and_says_so_under_the_title(
+        self, client: TestClient, storage: PropertyStorage, merged_a: MergedProperty
+    ) -> None:
+        await storage.save_merged_property(merged_a)
+        soup = _soup(client.get(f"/property/{merged_a.unique_id}").text)
+        assert soup.select_one(".take") is None
+        assert "listing-top-with-take" not in soup.select_one(".listing-top")["class"]
+        notice = soup.select_one(".detail-header .processing-notice")
+        assert notice.get_text() == "Not assessed. A fit score is not available yet."
 
 
 class TestQualitySection:
@@ -415,8 +613,11 @@ class TestAreaSummary:
         assert card.select_one(".area-summary-header strong").get_text() == (
             "London Fields / Broadway Market"
         )
+        # The neighbourhood's hand-written hosting rating is unverified, so the listing
+        # page doesn't show it; the area page still does.
         badges = [badge.get_text() for badge in card.select(".area-summary-badges .badge")]
-        assert [badge.split(":")[0] for badge in badges] == ["Hosting", "WFH"]
+        assert [badge.split(":")[0] for badge in badges] == ["WFH"]
+        assert "Hosting:" not in card.get_text()
         link = card.select_one(".area-summary-link")
         assert link.get_text().startswith("Full area guide")
         assert link["href"] == "/area/E8?highlight=London%20Fields%20/%20Broadway%20Market"
@@ -497,7 +698,7 @@ class TestListingText:
     async def test_two_voices_lead_brief_notes_and_working_render(
         self, client, storage, prop_a, merged_a, base_analysis
     ) -> None:
-        """The listing opens with the brief's first gap, lists the brief, and annotates the text."""
+        """The take leads with the brief's first gap; the brief is listed and the text annotated."""
         analysis = base_analysis.model_copy(
             update={
                 "lowlights": ["Potential traffic noise", "No dishwasher"],
@@ -524,7 +725,7 @@ class TestListingText:
         )
         soup = _soup(client.get(f"/property/{merged_a.unique_id}").text)
 
-        lead = soup.select_one(".detail-lead")
+        lead = soup.select_one(".take .detail-lead")
         assert "detail-lead-risk" in lead["class"]
         # The noise tag is named for itself: the first noise note may be about the floors.
         assert lead.select_one(".detail-lead-title").get_text() == "Potential road or rail noise."
@@ -534,15 +735,19 @@ class TestListingText:
 
         groups = [li.get_text(strip=True) for li in soup.select(".brief-check .brief-group")]
         assert groups == ["Must-haves", "Nice-to-haves"]
-        broken = soup.select_one(".brief-check .brief-broken")
-        assert broken.select_one(".brief-label").get_text() == "Quiet enough for calls"
+        conflict = soup.select_one(".brief-check .brief-conflict")
+        assert conflict.select_one(".brief-label").get_text() == "Quiet enough for calls"
+        assert "brief-must" in conflict["class"]
 
-        assert soup.select_one(".fit-brief-score") is not None
-        rows = soup.select(".fit-working tbody tr")
-        assert len(rows) == 6
-        assert soup.select_one(".fit-working tfoot td:last-child").get_text(
-            strip=True
-        ) == soup.select_one(".fit-brief-score").get_text(strip=True)
+        # The score's working is closed until asked for, from the take or the brief check.
+        score = soup.select_one(".take .fit-brief-score").get_text(strip=True)
+        working = soup.select_one("#section-fit details#fit-working")
+        assert not working.has_attr("open")
+        assert working.summary.get_text(" ", strip=True) == f"How the {score} is made"
+        assert len(working.select(".fit-working tbody tr")) == 6
+        assert working.select_one(".fit-working tfoot td:last-child").get_text(strip=True) == score
+        link = soup.select_one(".take a[href='#fit-working']")
+        assert link.get_text(" ", strip=True) == f"How the {score} is made"
 
         notes = [li.find(string=True).strip() for li in soup.select(".annotated-notes li")]
         assert soup.select_one("#section-nav a[href='#section-description']") is not None

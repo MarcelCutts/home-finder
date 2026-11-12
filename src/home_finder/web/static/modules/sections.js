@@ -15,6 +15,23 @@
   }
 }
 
+// A link to a disclosure opens it: the take's "How the N is made" points at the score's
+// working, which is closed until asked for. Without this the link still lands on the
+// closed summary.
+{
+  const openDisclosure = function (hash) {
+    if (!hash || hash.length < 2) return;
+    const target = document.getElementById(decodeURIComponent(hash.slice(1)));
+    const details = target && target.closest("details");
+    if (details) details.open = true;
+  };
+  document.addEventListener("click", function (e) {
+    const link = e.target.closest('a[href^="#"]');
+    if (link) openDisclosure(link.getAttribute("href"));
+  });
+  openDisclosure(window.location.hash);
+}
+
 // Section navigation: sticky shadow + active link highlighting
 {
   const nav = document.getElementById("section-nav");
