@@ -266,19 +266,64 @@ def test_conflicting_html_bills_bullets_remain_unknown(claimed):
         ("ex_council", "A bright ex-local authority flat.", None, "ex_council"),
         ("warehouse", "A converted warehouse apartment.", None, "warehouse"),
         ("new_build", "A brand new build apartment.", None, "new_build"),
+        # Adjectives may sit between the type and the home.
+        ("victorian", "A Victorian ground floor garden flat.", None, "victorian"),
+        ("victorian", "A stunning Victorian two double bedroom conversion.", None, "victorian"),
+        ("victorian", "This Victorian, split-level conversion.", None, "victorian"),
+        ("new_build", "A newly built two bedroom apartment.", None, "new_build"),
+        ("purpose_built", "A purpose-built 1930s mansion block.", None, "purpose_built"),
+        # Other ways an advert says the same thing.
+        ("victorian", "The house is Victorian, with high ceilings.", None, "victorian"),
+        ("victorian", "Set within a converted Victorian school.", None, "victorian"),
+        ("victorian", "The first floor of this modern Victorian residence.", None, "victorian"),
+        ("warehouse", "A live/work warehouse unit in Hackney Wick.", None, "warehouse"),
+        ("warehouse", "Warehouse studio with exposed brick.", None, "warehouse"),
+        ("new_build", "A newbuild apartment by the canal.", None, "new_build"),
+        ("ex_council", "A spacious ex-LA flat.", None, "ex_council"),
+        ("purpose_built", None, ["[Rightmove] Purpose Built"], "purpose_built"),
+        # A conversion of an era building is a period conversion; a loft conversion is not.
+        (
+            "period_conversion",
+            "First floor of a converted Victorian house.",
+            None,
+            "period_conversion",
+        ),
+        ("period_conversion", "A Victorian house with a loft conversion.", None, "unknown"),
         # The advert names no type: a guess from the photos is not a listing fact.
         ("new_build", "An apartment set within a modern development.", None, "unknown"),
         ("ex_council", "Situated on the second floor, this wonderful flat.", None, "unknown"),
         ("victorian", None, None, "unknown"),
-        # The era describes the neighbourhood, not the property.
+        # The type describes the neighbourhood, not the property.
         ("victorian", "Moments from Victoria Park and its Victorian terraces.", None, "unknown"),
+        ("victorian", "A road lined with Victorian terraces, lovely flat.", None, "unknown"),
         ("georgian", "Close to the Georgian squares of Islington.", None, "unknown"),
+        ("georgian", "A modern flat close to the Georgian Sutton House.", None, "unknown"),
+        ("edwardian", "Moments from the Edwardian Hackney Empire building.", None, "unknown"),
+        ("new_build", "Overlooking the new build development next door.", None, "unknown"),
         ("warehouse", "Close to the warehouse bars of Hackney Wick.", None, "unknown"),
-        # A style is not an era.
+        ("warehouse", "In the former warehouse district.", None, "unknown"),
+        # A nearby place elsewhere in the sentence does not stop the home being named.
+        ("victorian", "Close to the station, this Victorian flat is bright.", None, "victorian"),
+        ("victorian", "Opposite London Fields this Victorian conversion.", None, "victorian"),
+        ("victorian", "A Victorian house opposite the park.", None, "victorian"),
+        # A style, a revival or a fitting is not the building's type.
         ("victorian", "A Victorian style terraced house, built in 2019.", None, "unknown"),
+        ("victorian", "A Victorian styled house built in 2019.", None, "unknown"),
+        ("georgian", "A neo-Georgian house built in 1998.", None, "unknown"),
+        ("georgian", "Georgian windows, flat roof.", None, "unknown"),
+        ("victorian", "Original Victorian fireplaces in this bright flat.", None, "unknown"),
+        ("period_conversion", "Boasting period features this flat is bright.", None, "unknown"),
+        ("warehouse", "A warehouse style apartment.", None, "unknown"),
+        ("warehouse", "A warehouse conversion style live work apartment.", None, "unknown"),
+        # The phrase describes something other than the building.
+        ("purpose_built", "Benefits from purpose built bike storage.", None, "unknown"),
+        ("new_build", "With a newly built kitchen extension.", None, "unknown"),
+        ("ex_council", "Flats in the former council offices.", None, "unknown"),
+        ("period_conversion", "A flat in a period mansion block.", None, "unknown"),
         # The advert names a different or broader type than the one claimed.
         ("victorian", "Ground floor of a period conversion.", None, "unknown"),
         ("new_build", "This is not a new build.", None, "unknown"),
+        ("new_build", "This isn\u2019t a new build, it has character.", None, "unknown"),
         ("unknown", "A Victorian conversion.", None, "unknown"),
     ],
 )
@@ -288,11 +333,18 @@ def test_property_type_requires_listing_text_that_names_it(
     assert supported_property_type(PropertyType(claimed), description, features) == expected
 
 
-def test_adverts_naming_two_eras_support_neither_era():
-    description = "[Rightmove]\nVictorian conversion\n\n[Zoopla]\nEdwardian conversion"
+@pytest.mark.parametrize(
+    "description",
+    [
+        "[Rightmove]\nVictorian conversion\n\n[Zoopla]\nEdwardian conversion",
+        "A Victorian/Edwardian conversion.",
+        "A late Victorian or early Edwardian conversion.",
+    ],
+)
+def test_adverts_naming_two_eras_support_neither_era(description):
     assert supported_property_type(PropertyType.VICTORIAN, description, None) == "unknown"
     assert supported_property_type(PropertyType.EDWARDIAN, description, None) == "unknown"
-    # Both sources still agree that it is a period conversion.
+    # Either way the advert says it is a period conversion.
     conversion = PropertyType.PERIOD_CONVERSION
     assert supported_property_type(conversion, description, None) == conversion
 

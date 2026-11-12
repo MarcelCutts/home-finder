@@ -28,9 +28,12 @@ DIMENSION_TOLERANCE_M = 0.021
 Dimensions = tuple[float, float]
 
 
-def load(directory: Path) -> dict[str, list[dict[str, Any]]]:
+Runs = dict[str, list[dict[str, Any]]]
+
+
+def load(directory: Path) -> Runs:
     """Valid analyses by home; a home run several times has several."""
-    runs: dict[str, list[dict[str, Any]]] = collections.defaultdict(list)
+    runs: Runs = collections.defaultdict(list)
     for path in sorted(directory.glob("*.json")):
         run = json.loads(path.read_text())
         analysis = run.get("analysis")
@@ -94,12 +97,12 @@ def score_living_room(
         counts["rectangular: other figure"] += 1
 
 
-def score(directory: Path) -> None:
-    runs = load(directory)
-    label = "/".join(directory.parts[-2:])
-    if not runs:
-        print(f"\n== {label}: no valid runs")
-        return
+def section(analysis: dict[str, Any], name: str) -> dict[str, Any]:
+    """One part of an analysis; an analysis may store a part it left out as null."""
+    return analysis.get(name) or {}
+
+
+def score(runs: Runs, label: str) -> None:
     total: collections.Counter[str] = collections.Counter()
     method: collections.Counter[str] = collections.Counter()
     rooms: collections.Counter[str] = collections.Counter()
@@ -110,7 +113,7 @@ def score(directory: Path) -> None:
     wrong: list[str] = []
     for case_id, home in HOMES.items():
         for analysis in runs.get(case_id, []):
-            space = analysis["space"]
+            space = section(analysis, "space")
             value = space.get("total_area_sqm")
             if value is None:
                 total["missing"] += 1
@@ -123,15 +126,16 @@ def score(directory: Path) -> None:
             score_rooms(space, home, rooms)
             score_living_room(space, home, living)
             if "floor_level" in home:
-                answer = analysis["light_space"].get("floor_level")
+                answer = section(analysis, "light_space").get("floor_level")
                 right = answer == home["floor_level"]
                 unsure = answer in (None, "unknown")
                 floor["right" if right else "unknown" if unsure else "wrong"] += 1
             for flag in home.get("outdoor", []):
-                outdoor["shown" if analysis["outdoor_space"].get(flag) else "missed"] += 1
+                shown = section(analysis, "outdoor_space").get(flag)
+                outdoor["shown" if shown else "missed"] += 1
     for case_id in NO_FLOORPLAN:
         for analysis in runs.get(case_id, []):
-            space = analysis["space"]
+            space = section(analysis, "space")
             given = space.get("total_area_sqm") is not None
             absent[f"area given ({space.get('area_estimation_method')})" if given else "none"] += 1
     runs_scored = sum(total.values())
@@ -163,9 +167,8 @@ def score(directory: Path) -> None:
     )
 
 
-def score_adverts(directory: Path) -> None:
+def score_adverts(runs: Runs) -> None:
     """Compare the stored listing extraction with what the advert text states."""
-    runs = load(directory)
     stated: collections.Counter[str] = collections.Counter()
     unstated: collections.Counter[str] = collections.Counter()
     by_field: dict[str, collections.Counter[str]] = collections.defaultdict(collections.Counter)
@@ -175,18 +178,22 @@ def score_adverts(directory: Path) -> None:
         for analysis in runs.get(case_id, []):
             extraction = analysis.get("listing_extraction") or {}
             for field in ADVERT_FIELDS:
-                answer = extraction.get(field)
+                # None, "unknown" and "" all mean the analysis left the field empty.
+                answer = None if extraction.get(field) in EMPTY else extraction[field]
                 label = home.get(field)
                 if label is None:
-                    outcome = "left empty" if answer in EMPTY else "claimed"
+                    outcome = "left empty" if answer is None else "claimed"
                     unstated[outcome] += 1
                     if outcome == "claimed":
                         claims[f"{field}={answer} ({case_id})"] += 1
                     continue
-                allowed = [label["value"], *label.get("accept", [])]
-                if answer in allowed or (answer in EMPTY and label["value"] in EMPTY):
+                allowed = [
+                    None if value in EMPTY else value
+                    for value in (label["value"], *label.get("accept", []))
+                ]
+                if answer in allowed:
                     outcome = "right"
-                elif answer in EMPTY:
+                elif answer is None:
                     outcome = "missed"
                 else:
                     outcome = "wrong"
@@ -228,8 +235,13 @@ def main() -> None:
     )
     for argument in arguments:
         directory = Path(argument).resolve()
-        score(directory)
-        score_adverts(directory)
+        runs = load(directory)
+        label = "/".join(directory.parts[-2:])
+        if not runs:
+            print(f"\n== {label}: no valid runs")
+            continue
+        score(runs, label)
+        score_adverts(runs)
 
 
 if __name__ == "__main__":
