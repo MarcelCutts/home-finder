@@ -144,7 +144,7 @@
                     {% endif %}
                 </div>
                 {% endif %}
-                {% if gallery %}<div class="hero-photo-count"><span class="figure">{{ gallery|length }}</span> photos</div>{% endif %}
+                {% if gallery %}<div class="hero-photo-count"><span class="figure">{{ gallery|length }}</span> photo{{ "" if gallery|length == 1 else "s" }}</div>{% endif %}
             </div>
         </section>
         {% else %}

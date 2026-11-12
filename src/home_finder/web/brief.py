@@ -16,9 +16,10 @@ checking for room to host, however high its hosting score. When direct evidence
 points both ways the conflict wins, because it is the one to check at a viewing.
 
 The first must-have in conflict, or failing that the first that needs checking,
-gives the listing page its opening line. A dimension's conflict rests on the analysis of
-photos, floorplan and text, or for a studio on the bedroom count; either way the
-lead presents it as a risk to check at a viewing, not a settled fact.
+gives the listing its lead: the first line of the take beside the photos, and of
+the queue card. A dimension's conflict rests on the analysis of photos, floorplan
+and text, or for a studio on the bedroom count; either way the lead presents it as
+a risk to check at a viewing, not a settled fact.
 """
 
 import re
@@ -459,7 +460,7 @@ def _sentence(text: str) -> str:
 
 
 def brief_lead(check: BriefCheck, analysis: Any) -> Lead:
-    """The one line a listing opens with.
+    """The one line that leads a listing's take and its queue card.
 
     In order: a hard limit in conflict; a dimension in conflict, as a risk to check;
     a must-have that needs checking; or, only when every must-have is supported, all

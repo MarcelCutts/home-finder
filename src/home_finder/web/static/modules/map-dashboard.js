@@ -108,8 +108,9 @@ if (mapEl && resultsEl) {
     meta.appendChild(document.createTextNode(" pcm"));
     container.appendChild(meta);
 
-    // Fit score pill
-    if (p.fit_score != null && typeof p.fit_score === "number") {
+    // Fit band pill. The score doesn't count rent, bedrooms or commute, so a home
+    // that breaks one of those limits isn't named a good or great fit, as on its card.
+    if (p.fit_score != null && typeof p.fit_score === "number" && !p.breaks_limit) {
       const pill = document.createElement("span");
       var tier = fitTiers.find(function(t) { return p.fit_score >= t.min; }) || fitTiers[fitTiers.length - 1];
       pill.className = "fit-tier-pill " + tier.tier_class;

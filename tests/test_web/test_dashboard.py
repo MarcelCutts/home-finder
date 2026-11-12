@@ -304,3 +304,27 @@ async def test_card_names_the_fit_band_only_inside_the_hard_limits(
     assert card.select_one(".fit-badge").get_text(strip=True).isdigit()
     assert (card.select_one(".fit-tier-pill") is not None) is named
     assert (card.select_one(".fit-popover-tier") is not None) is named
+
+
+@pytest.mark.parametrize(
+    ("max_price", "assessed", "flagged"),
+    [
+        (1800, True, True),
+        (2500, True, False),
+        # No score, so the popup has no band to leave out.
+        (1800, False, False),
+    ],
+)
+async def test_map_marker_says_when_its_popup_must_not_name_a_fit_band(
+    client, storage, prop_a, merged_a, base_analysis, max_price: int, assessed: bool, flagged: bool
+) -> None:
+    """The popup builds its band from the score; the marker tells it about a broken limit."""
+    await storage.save_merged_property(merged_a, commute_minutes=22)
+    if assessed:
+        await storage.save_quality_analysis(prop_a.unique_id, base_analysis)
+    client.app.state.settings = client.app.state.settings.model_copy(
+        update={"max_price": max_price}
+    )
+    (marker,) = _map_markers(client.get("/").text)
+    assert (marker["fit_score"] is not None) is assessed
+    assert marker["breaks_limit"] is flagged

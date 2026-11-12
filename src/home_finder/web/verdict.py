@@ -70,15 +70,20 @@ def highlights_within_brief(highlights: Sequence[str], check: BriefCheck | None)
     """Leave out the highlights that assert a need the brief doesn't support.
 
     "Spacious living room" beside a brief line saying the living room was never
-    measured is the page contradicting itself. Without a brief nothing is dropped.
+    measured is the page contradicting itself. Such a highlight also goes when the
+    brief has no line for its need, which happens when that dimension wasn't
+    assessed: no line is no support. Without a brief nothing is dropped.
     """
     if check is None:
         return list(highlights)
     lines = _brief_lines(check)
 
     def stands(tag: str) -> bool:
-        line = lines.get(_HIGHLIGHT_NEEDS.get(tag, ""))
-        return line is None or line["claim"] == "supported"
+        need = _HIGHLIGHT_NEEDS.get(tag)
+        if need is None:
+            return True
+        line = lines.get(need)
+        return line is not None and line["claim"] == "supported"
 
     return [tag for tag in highlights if stands(tag)]
 

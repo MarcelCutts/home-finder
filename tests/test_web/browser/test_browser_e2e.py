@@ -695,6 +695,17 @@ class TestHomeFirstLayout:
         expect(page.locator("#fit-working .fit-working")).to_be_visible()
         expect(page.locator("#fit-working summary")).to_be_in_viewport()
 
+    def test_malformed_fragment_does_not_stop_the_page_scripts(self, page):
+        """The fragment is read at load; a stray "%" in it must not abort sections.js."""
+        errors: list[str] = []
+        page.on("pageerror", lambda exc: errors.append(str(exc)))
+        page.goto(self.LISTING + "#100%")
+        expect(page.locator("h1")).to_be_visible()
+        # The section bar's scroll handler is set up after the fragment is read.
+        page.evaluate("window.scrollTo(0, 600)")
+        expect(page.locator("#section-nav")).to_have_class(re.compile(r"\bsticky\b"))
+        assert errors == []
+
     def test_floorplan_tile_opens_the_floorplan_with_the_keyboard(self, page):
         page.goto(self.LISTING)
         tile = page.locator(".hero-plan a")
@@ -724,6 +735,16 @@ class TestHomeFirstLayout:
         ):
             colour = take.locator(selector).first.evaluate("el => getComputedStyle(el).color")
             assert _contrast(colour, [_page_paper(page), panel]) >= 4.5, selector
+        # The fixture's lead is all clear. The other leads colour their kicker red (a
+        # broken limit), ink (a risk) or muted (needs checking); measure those tokens too.
+        for token in ("--red", "--ink", "--muted", "--green"):
+            colour = page.evaluate(
+                "(token) => { const probe = document.createElement('span');"
+                " probe.style.color = `var(${token})`; document.body.append(probe);"
+                " const colour = getComputedStyle(probe).color; probe.remove(); return colour; }",
+                token,
+            )
+            assert _contrast(colour, [_page_paper(page), panel]) >= 4.5, token
 
 
 @pytest.mark.browser

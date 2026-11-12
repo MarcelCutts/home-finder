@@ -6,6 +6,7 @@ The costs section and the floorplans have their own modules.
 """
 
 from datetime import UTC, datetime
+from zoneinfo import ZoneInfo
 
 import pytest
 from bs4 import BeautifulSoup, Tag
@@ -294,6 +295,30 @@ class TestDetailPage:
             assert soup.select_one(meta)["content"] == "Studio · 15 Mare Street, E8 3RH"
         assert "0 bed" not in resp.text
 
+    @pytest.mark.parametrize(("photos", "chip"), [(1, "1 photo"), (3, "3 photos")])
+    async def test_photo_count_names_one_photo_in_the_singular(
+        self,
+        client: TestClient,
+        storage: PropertyStorage,
+        merged_a: MergedProperty,
+        photos: int,
+        chip: str,
+    ) -> None:
+        await storage.save_merged_property(merged_a)
+        await storage.save_property_images(
+            merged_a.unique_id,
+            [
+                PropertyImage(
+                    source=PropertySource.OPENRENT,
+                    url=HttpUrl(f"https://example.com/photo-{index}.jpg"),
+                    image_type="gallery",
+                )
+                for index in range(photos)
+            ],
+        )
+        soup = _soup(client.get(f"/property/{merged_a.unique_id}").text)
+        assert soup.select_one(".hero-photo-count").get_text(" ", strip=True) == chip
+
     async def test_listing_page_carries_no_status_tracking(
         self, client: TestClient, storage: PropertyStorage, merged_a: MergedProperty
     ) -> None:
@@ -333,7 +358,9 @@ class TestDetailPage:
         if checked:
             await storage.update_property_last_checked(merged.unique_id)
             saved = await storage.web.get_property_detail(merged.unique_id)
-            stamp = datetime.fromisoformat(saved["last_checked_at"])
+            stamp = datetime.fromisoformat(saved["last_checked_at"]).astimezone(
+                ZoneInfo("Europe/London")
+            )
             expected = (
                 f"First seen 1 Jan 2025 · availability last checked {stamp.day} {stamp:%b %Y}"
             )

@@ -21,7 +21,15 @@
 {
   const openDisclosure = function (hash) {
     if (!hash || hash.length < 2) return;
-    const target = document.getElementById(decodeURIComponent(hash.slice(1)));
+    let id;
+    try {
+      id = decodeURIComponent(hash.slice(1));
+    } catch {
+      // A fragment with a stray "%" names no element. This runs at load, so a throw
+      // here would stop every handler below from being set up.
+      return;
+    }
+    const target = document.getElementById(id);
     const details = target && target.closest("details");
     if (details) details.open = true;
   };

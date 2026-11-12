@@ -20,9 +20,19 @@ from home_finder.web.brief import BriefCheck, check_brief
 from home_finder.web.verdict import build_verdict, highlights_within_brief, icons_from_brief
 
 
-def brief_for(analysis: PropertyQualityAnalysis, bedrooms: int = 1) -> BriefCheck:
-    """The brief check for a one-bed inside every hard limit, with the default must-haves."""
+def brief_for(
+    analysis: PropertyQualityAnalysis,
+    bedrooms: int = 1,
+    *,
+    unassessed: frozenset[str] = frozenset(),
+) -> BriefCheck:
+    """The brief check for a one-bed inside every hard limit, with the default must-haves.
+
+    ``unassessed`` names fit dimensions to leave out of the breakdown, as when the
+    scorer has no reading for them.
+    """
     _, breakdown = compute_fit_score_and_breakdown(analysis, bedrooms)
+    breakdown = [dim for dim in breakdown or [] if dim["key"] not in unassessed]
     listing = {"bedrooms": bedrooms, "price_pcm": 1900, "commute_minutes": 20, "postcode": "E8 3RH"}
     return check_brief(
         listing,
@@ -182,6 +192,15 @@ def test_condition_highlights_wait_for_every_room_to_be_shown(make_quality_analy
     )
     assert highlights_within_brief(highlights, brief_for(shown)) == highlights
     assert highlights_within_brief(highlights, brief_for(gaps)) == ["Period features"]
+
+
+def test_condition_highlight_goes_when_the_brief_has_no_condition_line(make_quality_analysis):
+    """A nice-to-have the scorer didn't assess has no brief line; no line is no support."""
+    highlights = ["Excellent condition", "Period features"]
+    analysis = make_quality_analysis(highlights=highlights)
+    check = brief_for(analysis, unassessed=frozenset({"condition"}))
+    assert "Good condition" not in [item["label"] for item in check["items"]]
+    assert highlights_within_brief(highlights, check) == ["Period features"]
 
 
 @pytest.mark.parametrize(

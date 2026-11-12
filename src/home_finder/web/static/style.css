@@ -1685,13 +1685,15 @@ nav.container-fluid li {
 /* One large photo with its thumbnails beside it; the floorplan, when there is one, is
    the last tile. The height follows the window, so the title and rent under the photos
    stay on the first screen, and grows to match a taller take. Tiles take their size
-   from the grid, never from the photo inside, so photos are positioned over them. */
+   from the grid, never from the photo inside, so photos are positioned over them.
+   The height is the row's own minimum, not a min-height on the box: the tiles have
+   no content height, and a row sized only by a box's min-height depends on the
+   browser re-resolving the fr track against it. */
 .hero-gallery {
     display: grid;
     grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
-    grid-template-rows: minmax(0, 1fr);
+    grid-template-rows: minmax(clamp(20rem, 54vh, 33.75rem), 1fr);
     flex: 1 1 auto;
-    min-height: clamp(20rem, 54vh, 33.75rem);
     gap: 4px;
     border-radius: var(--radius);
     overflow: hidden;
@@ -3625,7 +3627,6 @@ nav.container-fluid li {
         overflow-x: auto;
         scroll-snap-type: x mandatory;
         height: 280px;
-        min-height: 0;
         gap: 0;
         border-radius: var(--radius);
         -ms-overflow-style: none;
