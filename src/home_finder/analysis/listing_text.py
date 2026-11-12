@@ -8,7 +8,7 @@ import re
 from itertools import zip_longest
 from typing import Literal
 
-from home_finder.models import MergedProperty
+from home_finder.models import MergedProperty, PropertyType
 from home_finder.models.listing_text import ListingTextEvidence, ListingTextInputs
 from home_finder.utils.listing_facts import plain_listing_text, supported_band
 
@@ -119,3 +119,64 @@ def supported_bills_included(
         else:
             return "unknown"
     return claimed if states == {claimed} else "unknown"
+
+
+# A word for the dwelling itself, singular: plurals usually describe the neighbourhood.
+_DWELLING = (
+    r"(?:conversion|converted|terraced?|house|building|property|flat|apartment|"
+    r"maisonette|home|townhouse|mansion|block|villa|cottage|build)"
+)
+_ERAS = (PropertyType.VICTORIAN, PropertyType.EDWARDIAN, PropertyType.GEORGIAN)
+
+
+def _near_dwelling(word: str) -> str:
+    """The word within two words of the dwelling, and not as a style ("Victorian style")."""
+    return rf"\b{word}\s+(?!style\b)(?:[\w-]+\s+){{0,2}}{_DWELLING}\b"
+
+
+_STATED_TYPES: dict[PropertyType, str] = {
+    **{era: _near_dwelling(era.value) for era in _ERAS},
+    PropertyType.PERIOD_CONVERSION: _near_dwelling("period"),
+    PropertyType.NEW_BUILD: (
+        r"\bnew[\s-]build\b|\bnewly[\s-]built\b|"
+        r"\bbrand[\s-]new\s+(?:development|building|block|build)\b"
+    ),
+    PropertyType.PURPOSE_BUILT: r"\bpurpose[\s-]built\b",
+    PropertyType.WAREHOUSE: (
+        r"\bwarehouse\s+(?:conversion|apartment|flat|building|development|loft)\b|"
+        r"\b(?:converted|former)\s+warehouse\b"
+    ),
+    PropertyType.EX_COUNCIL: (
+        r"\bex[\s-]?(?:council|local[\s-]authority)\b|\bformer\s+(?:council|local[\s-]authority)\b"
+    ),
+}
+
+
+def supported_property_type(
+    claimed: PropertyType, description: str | None, features: list[str] | None
+) -> PropertyType:
+    """Retain a claimed building type only when the listing text names it.
+
+    The model sees the building in the photos and tends to name a type the advert
+    does not state; that guess would reach the card, the score and the acoustic
+    profile as a stated fact. Only wording about the property counts: an era must
+    sit within two words of a word for the dwelling, so "Victoria Park" or "Georgian
+    squares nearby" establish nothing. An advert naming two eras leaves the era unknown.
+    This checks textual support, not the building's actual age or construction.
+    """
+    if claimed == PropertyType.UNKNOWN:
+        return claimed
+    text = plain_listing_text([description or "", *(features or [])]).lower()
+    text = re.sub(r"\s+", " ", text)
+    stated: set[PropertyType] = set()
+    for property_type, pattern in _STATED_TYPES.items():
+        for match in re.finditer(pattern, text):
+            if re.search(r"\b(?:not|non|no)[\s-]+(?:an?\s+)?$", text[: match.start()]):
+                continue
+            stated.add(property_type)
+            # "Victorian conversion" names both the era and a period conversion.
+            if property_type in _ERAS and re.search(r"\bconver", match.group()):
+                stated.add(PropertyType.PERIOD_CONVERSION)
+    if len(stated.intersection(_ERAS)) > 1:
+        stated.difference_update(_ERAS)
+    return claimed if claimed in stated else PropertyType.UNKNOWN

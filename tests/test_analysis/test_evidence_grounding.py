@@ -8,9 +8,9 @@ import pytest
 
 from home_finder.analysis import analyzer as analyzer_module
 from home_finder.analysis.analyzer import APIUnavailableError, assess_value
-from home_finder.analysis.listing_text import supported_bills_included
+from home_finder.analysis.listing_text import supported_bills_included, supported_property_type
 from home_finder.db import PropertyStorage
-from home_finder.models import PropertyQualityAnalysis
+from home_finder.models import PropertyQualityAnalysis, PropertyType
 from tests.support.analysis_responses import (
     PHASE1_VISUAL_RESPONSE,
     PHASE2_EVALUATION_RESPONSE,
@@ -253,6 +253,76 @@ def test_html_bills_bullets_only_remove_leading_markers(marker, claimed, declara
 def test_conflicting_html_bills_bullets_remain_unknown(claimed):
     description = "<ul><li>- Bills included</li><li>- Bills not included</li></ul>"
     assert supported_bills_included(claimed, description, None) == "unknown"
+
+
+@pytest.mark.parametrize(
+    ("claimed", "description", "features", "expected"),
+    [
+        ("victorian", "A one bedroom Victorian conversion garden flat.", None, "victorian"),
+        ("period_conversion", "A Victorian conversion garden flat.", None, "period_conversion"),
+        ("period_conversion", None, ["[Rightmove] Period Build"], "period_conversion"),
+        ("victorian", "<p>A charming <b>Victorian</b> house.</p>", None, "victorian"),
+        ("purpose_built", "A flat in a purpose-built block.", None, "purpose_built"),
+        ("ex_council", "A bright ex-local authority flat.", None, "ex_council"),
+        ("warehouse", "A converted warehouse apartment.", None, "warehouse"),
+        ("new_build", "A brand new build apartment.", None, "new_build"),
+        # The advert names no type: a guess from the photos is not a listing fact.
+        ("new_build", "An apartment set within a modern development.", None, "unknown"),
+        ("ex_council", "Situated on the second floor, this wonderful flat.", None, "unknown"),
+        ("victorian", None, None, "unknown"),
+        # The era describes the neighbourhood, not the property.
+        ("victorian", "Moments from Victoria Park and its Victorian terraces.", None, "unknown"),
+        ("georgian", "Close to the Georgian squares of Islington.", None, "unknown"),
+        ("warehouse", "Close to the warehouse bars of Hackney Wick.", None, "unknown"),
+        # A style is not an era.
+        ("victorian", "A Victorian style terraced house, built in 2019.", None, "unknown"),
+        # The advert names a different or broader type than the one claimed.
+        ("victorian", "Ground floor of a period conversion.", None, "unknown"),
+        ("new_build", "This is not a new build.", None, "unknown"),
+        ("unknown", "A Victorian conversion.", None, "unknown"),
+    ],
+)
+def test_property_type_requires_listing_text_that_names_it(
+    claimed, description, features, expected
+):
+    assert supported_property_type(PropertyType(claimed), description, features) == expected
+
+
+def test_adverts_naming_two_eras_support_neither_era():
+    description = "[Rightmove]\nVictorian conversion\n\n[Zoopla]\nEdwardian conversion"
+    assert supported_property_type(PropertyType.VICTORIAN, description, None) == "unknown"
+    assert supported_property_type(PropertyType.EDWARDIAN, description, None) == "unknown"
+    # Both sources still agree that it is a period conversion.
+    conversion = PropertyType.PERIOD_CONVERSION
+    assert supported_property_type(conversion, description, None) == conversion
+
+
+@pytest.mark.parametrize(
+    ("description", "expected"),
+    [
+        ("A bright flat near the park.", "unknown"),
+        ("A charming Victorian conversion flat.", "victorian"),
+    ],
+)
+async def test_analysis_keeps_a_property_type_only_when_the_advert_names_it(
+    tmp_path, cached_analysis_property, description, expected
+):
+    merged, images = cached_analysis_property
+    merged = merged.model_copy(update={"descriptions": {merged.canonical.source: description}})
+    # The evaluation fixture answers "victorian" whatever the advert says.
+    assert '"property_type": "victorian"' in PHASE2_EVALUATION_RESPONSE["content"][0]["text"]
+
+    def respond(request):
+        evaluating = evaluation_visual(request) is not None
+        body = PHASE2_EVALUATION_RESPONSE if evaluating else PHASE1_VISUAL_RESPONSE
+        return httpx2.Response(200, json=body)
+
+    async with PropertyStorage(str(tmp_path / "property-type.db")) as storage:
+        await storage.processing.save_pre_analysis_properties([merged], {})
+        async with quality(storage, respond) as analyzer:
+            _, result = await analyzer.analyze_single_merged(merged, data_dir=images)
+    assert result is not None and result.analysis_failure is None
+    assert result.listing_extraction.property_type == expected
 
 
 @pytest.mark.parametrize("price", [1800, 1900, 2200])
