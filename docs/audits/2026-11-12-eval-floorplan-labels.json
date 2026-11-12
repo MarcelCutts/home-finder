@@ -1,0 +1,713 @@
+{
+  "about": "What each floorplan prints, read from the image on 2026-11-12 by Claude (not a survey, and not yet spot-checked by a person). Metres as printed; feet and inches as printed, kept so the two can be checked against each other. Homes are the 30 from the October 2026 bake-off, by case id.",
+  "homes": {
+    "cabafe00bcb": {
+      "total_printed": "Approx Gross Internal Area = 47.5 sq m / 511 sq ft; Restricted Head Height = 3.8 sq m / 41 sq ft; Total = 51.3 sq m / 552 sq ft",
+      "total_sqm": 51.3,
+      "total_sqft": 552,
+      "also_accept_sqm": [
+        47.5
+      ],
+      "also_accept_sqft": [
+        511
+      ],
+      "note": "Two figures are printed: gross internal area, and a total that adds the area under restricted head height.",
+      "rooms": [
+        {
+          "name": "Bedroom",
+          "m": [
+            4.23,
+            3.38
+          ],
+          "ft": [
+            "13'10\"",
+            "11'1\""
+          ]
+        },
+        {
+          "name": "Bathroom",
+          "m": [
+            2.5,
+            2.32
+          ],
+          "ft": [
+            "8'2\"",
+            "7'7\""
+          ]
+        },
+        {
+          "name": "Reception Room",
+          "m": [
+            4.1,
+            3.38
+          ],
+          "ft": [
+            "13'5\"",
+            "11'1\""
+          ],
+          "living": true
+        },
+        {
+          "name": "Kitchen",
+          "m": [
+            2.8,
+            2.25
+          ],
+          "ft": [
+            "9'2\"",
+            "7'4\""
+          ]
+        }
+      ],
+      "floor_printed": "First Floor and Second Floor, entrance stair from the ground floor",
+      "floor_level": "lower"
+    },
+    "c6a9db682ca": {
+      "total_printed": "32 SQM",
+      "total_sqm": 32.0,
+      "total_sqft": null,
+      "note": "No room dimensions are printed.",
+      "rooms": []
+    },
+    "c218d61fc0d": {
+      "total_printed": "Approx. Gross Internal Area = 42.8 sq m / 460 sq ft",
+      "total_sqm": 42.8,
+      "total_sqft": 460,
+      "rooms": [
+        {
+          "name": "Reception Room / Kitchen",
+          "m": [
+            6.85,
+            3.55
+          ],
+          "ft": [
+            "22'6\"",
+            "11'8\""
+          ],
+          "living": true,
+          "irregular": true
+        },
+        {
+          "name": "Bedroom",
+          "m": [
+            5.29,
+            2.85
+          ],
+          "ft": [
+            "17'4\"",
+            "9'4\""
+          ]
+        }
+      ],
+      "floor_printed": "First Floor",
+      "floor_level": "lower"
+    },
+    "c5fffd6fc3b": {
+      "total_printed": "552 SQ FT / 51.3 SQ M",
+      "total_sqm": 51.3,
+      "total_sqft": 552,
+      "rooms": [
+        {
+          "name": "Balcony",
+          "m": [
+            1.96,
+            1.88
+          ],
+          "ft": [
+            "6'5",
+            "6'2"
+          ],
+          "external": true
+        },
+        {
+          "name": "Reception Room",
+          "m": [
+            4.78,
+            3.51
+          ],
+          "ft": [
+            "15'8",
+            "11'6"
+          ],
+          "living": true
+        },
+        {
+          "name": "Bedroom",
+          "m": [
+            4.78,
+            2.57
+          ],
+          "ft": [
+            "15'8",
+            "8'5"
+          ]
+        },
+        {
+          "name": "Kitchen",
+          "m": [
+            3.18,
+            1.96
+          ],
+          "ft": [
+            "10'5",
+            "6'5"
+          ]
+        }
+      ],
+      "floor_printed": "SECOND FLOOR",
+      "floor_level": "lower",
+      "outdoor": [
+        "has_balcony"
+      ]
+    },
+    "cdb55a12a34": {
+      "total_printed": "TOTAL FLOOR AREA : 462 sq.ft. (42.9 sq.m.) approx.",
+      "total_sqm": 42.9,
+      "total_sqft": 462,
+      "rooms": [
+        {
+          "name": "Living Room / Bedroom",
+          "m": [
+            3.46,
+            3.34
+          ],
+          "ft": [
+            "11'4\"",
+            "11'0\""
+          ],
+          "living": true
+        },
+        {
+          "name": "Bedroom",
+          "m": [
+            3.46,
+            3.44
+          ],
+          "ft": [
+            "11'4\"",
+            "11'4\""
+          ]
+        },
+        {
+          "name": "WC",
+          "m": [
+            1.94,
+            0.91
+          ],
+          "ft": [
+            "6'4\"",
+            "3'0\""
+          ]
+        },
+        {
+          "name": "Bathroom",
+          "m": [
+            1.94,
+            1.48
+          ],
+          "ft": [
+            "6'4\"",
+            "4'10\""
+          ]
+        },
+        {
+          "name": "Kitchen",
+          "m": [
+            2.94,
+            2.74
+          ],
+          "ft": [
+            "9'8\"",
+            "9'0\""
+          ]
+        }
+      ],
+      "floor_printed": "2ND FLOOR",
+      "floor_level": "lower"
+    },
+    "c7100ef648b": {
+      "total_printed": "APPROXIMATE GROSS INTERNAL FLOOR AREA: 440 SQ FT - 40.90 SQ M",
+      "total_sqm": 40.9,
+      "total_sqft": 440,
+      "rooms": [
+        {
+          "name": "Bedroom",
+          "m": [
+            3.23,
+            2.9
+          ],
+          "ft": [
+            "10'7\"",
+            "9'6\""
+          ]
+        },
+        {
+          "name": "Living/Dining Room",
+          "m": [
+            5.03,
+            3.05
+          ],
+          "ft": [
+            "16'6\"",
+            "10'"
+          ],
+          "living": true
+        },
+        {
+          "name": "Kitchen",
+          "m": [
+            3.03,
+            2.22
+          ],
+          "ft": [
+            "9'11\"",
+            "7'3\""
+          ]
+        }
+      ],
+      "floor_printed": "EIGHTH FLOOR",
+      "floor_level": "top"
+    },
+    "c281ffe24f1": {
+      "total_printed": "GROUND FLOOR 486 SQ FT / 45.2 SQ M",
+      "total_sqm": 45.2,
+      "total_sqft": 486,
+      "note": "The image is a transparent PNG with black ink; it reads as solid black unless placed on white.",
+      "rooms": [
+        {
+          "name": "Reception Room",
+          "m": [
+            6.96,
+            3.15
+          ],
+          "ft": [
+            "22'10",
+            "10'4"
+          ],
+          "living": true,
+          "irregular": true
+        },
+        {
+          "name": "Bedroom",
+          "m": [
+            4.62,
+            2.72
+          ],
+          "ft": [
+            "15'2",
+            "8'11"
+          ]
+        }
+      ],
+      "floor_printed": "GROUND FLOOR",
+      "floor_level": "ground",
+      "outdoor": [
+        "has_shared_garden"
+      ]
+    },
+    "ce8b8d1130c": {
+      "total_printed": "APPROXIMATE GROSS INTERNAL FLOOR AREA: 559 SQ FT - 51.90 SQ M",
+      "total_sqm": 51.9,
+      "total_sqft": 559,
+      "rooms": [
+        {
+          "name": "Bedroom",
+          "m": [
+            5.45,
+            3.31
+          ],
+          "ft": [
+            "17'11\"",
+            "10'10\""
+          ]
+        },
+        {
+          "name": "Bedroom",
+          "m": [
+            3.83,
+            2.0
+          ],
+          "ft": [
+            "12'7\"",
+            "6'7\""
+          ]
+        },
+        {
+          "name": "Kitchen",
+          "m": [
+            2.7,
+            2.21
+          ],
+          "ft": [
+            "8'10\"",
+            "7'3\""
+          ]
+        },
+        {
+          "name": "Living Room",
+          "m": [
+            5.43,
+            3.14
+          ],
+          "ft": [
+            "17'9\"",
+            "10'3\""
+          ],
+          "living": true,
+          "irregular": true
+        }
+      ],
+      "floor_printed": "THIRD FLOOR",
+      "floor_level": "upper"
+    },
+    "cbc2ff95d3d": {
+      "total_printed": "TOTAL FLOOR AREA : 422 sq.ft. (39.2 sq.m.) approx.",
+      "total_sqm": 39.2,
+      "total_sqft": 422,
+      "rooms": [
+        {
+          "name": "Bathroom",
+          "m": [
+            2.74,
+            1.4
+          ],
+          "ft": [
+            "9'0\"",
+            "4'7\""
+          ]
+        },
+        {
+          "name": "Bedroom",
+          "m": [
+            3.9,
+            2.24
+          ],
+          "ft": [
+            "12'9\"",
+            "7'4\""
+          ]
+        },
+        {
+          "name": "Living Room/Dining Room",
+          "m": [
+            4.39,
+            4.29
+          ],
+          "ft": [
+            "14'5\"",
+            "14'1\""
+          ],
+          "living": true
+        },
+        {
+          "name": "Kitchen",
+          "m": [
+            2.19,
+            1.67
+          ],
+          "ft": [
+            "7'2\"",
+            "5'6\""
+          ]
+        }
+      ],
+      "floor_printed": "SECOND FLOOR",
+      "floor_level": "lower"
+    },
+    "c7c7cd95c9a": {
+      "total_printed": "Approximate gross internal area 48.03 sq m / 517 sq ft",
+      "total_sqm": 48.03,
+      "total_sqft": 517,
+      "rooms": [
+        {
+          "name": "Bedroom",
+          "m": [
+            3.34,
+            3.15
+          ],
+          "ft": [
+            "10'11\"",
+            "10'4\""
+          ]
+        },
+        {
+          "name": "Kitchen/Reception Room",
+          "m": [
+            8.42,
+            3.15
+          ],
+          "ft": [
+            "27'7\"",
+            "10'4\""
+          ],
+          "living": true,
+          "irregular": true
+        }
+      ],
+      "floor_printed": "Ground Floor",
+      "floor_level": "ground"
+    },
+    "c67eae66d5e": {
+      "total_printed": "TOTAL APPROX. FLOOR PLAN AREA 423 SQ.FT (39 SQ.M.)",
+      "total_sqm": 39.0,
+      "total_sqft": 423,
+      "rooms": [
+        {
+          "name": "Balcony",
+          "m": [
+            4.58,
+            2.31
+          ],
+          "ft": [
+            "15'0",
+            "7'7"
+          ],
+          "external": true
+        },
+        {
+          "name": "Bedroom",
+          "m": [
+            3.86,
+            3.14
+          ],
+          "ft": [
+            "12'8",
+            "10'4"
+          ]
+        },
+        {
+          "name": "Reception Room/Dining Room/Kitchen",
+          "m": [
+            6.26,
+            3.17
+          ],
+          "ft": [
+            "20'6",
+            "10'5"
+          ],
+          "living": true
+        },
+        {
+          "name": "Bathroom",
+          "m": [
+            2.1,
+            1.93
+          ],
+          "ft": [
+            "6'10",
+            "6'4"
+          ]
+        }
+      ],
+      "floor_printed": "FOURTH FLOOR",
+      "floor_level": "upper",
+      "outdoor": [
+        "has_balcony"
+      ]
+    },
+    "c4a1aa70169": {
+      "total_printed": "Total Area: 46.6 m² ... 501 ft² (excluding balcony)",
+      "total_sqm": 46.6,
+      "total_sqft": 501,
+      "rooms": [
+        {
+          "name": "Balcony",
+          "m": [
+            3.04,
+            1.48
+          ],
+          "ft": [
+            "10'0\"",
+            "4'10\""
+          ],
+          "external": true
+        },
+        {
+          "name": "Bedroom",
+          "m": [
+            3.04,
+            4.13
+          ],
+          "ft": [
+            "10'0\"",
+            "13'6\""
+          ]
+        },
+        {
+          "name": "Living room",
+          "m": [
+            3.96,
+            6.23
+          ],
+          "ft": [
+            "13'0\"",
+            "20'5\""
+          ],
+          "living": true,
+          "irregular": true
+        },
+        {
+          "name": "Bathroom",
+          "m": [
+            1.93,
+            3.14
+          ],
+          "ft": [
+            "6'4\"",
+            "10'4\""
+          ]
+        }
+      ],
+      "floor_printed": "2nd floor flat",
+      "floor_level": "lower",
+      "outdoor": [
+        "has_balcony"
+      ]
+    },
+    "ca67f7ead1f": {
+      "total_printed": "First Floor Approximate Floor Area 249.93 sq. ft. (23.22 sq. m); Second Floor Approximate Floor Area 314.19 sq. ft. (29.19 sq. m)",
+      "total_sqm": 52.41,
+      "total_sqft": 564.12,
+      "note": "No single total is printed; the label is the sum of the two printed floor areas.",
+      "rooms": [
+        {
+          "name": "Bedroom",
+          "m": [
+            3.29,
+            3.11
+          ],
+          "ft": [
+            "10'-9\"",
+            "10'-2\""
+          ]
+        },
+        {
+          "name": "Bathroom",
+          "m": [
+            2.3,
+            1.68
+          ],
+          "ft": [
+            "7'-6\"",
+            "5'-6\""
+          ]
+        },
+        {
+          "name": "Kitchen",
+          "m": [
+            3.79,
+            2.34
+          ],
+          "ft": [
+            "12'-5\"",
+            "7'-8\""
+          ]
+        },
+        {
+          "name": "Living room",
+          "m": [
+            4.61,
+            4.51
+          ],
+          "ft": [
+            "15'-1\"",
+            "14'-9\""
+          ],
+          "living": true
+        }
+      ],
+      "floor_printed": "First Floor and Second Floor",
+      "floor_level": "lower"
+    },
+    "c7815468aad": {
+      "total_printed": "APPROX. GROSS INTERNAL FLOOR AREA 613.54 SQ. FT / 57.00 SQ. M",
+      "total_sqm": 57.0,
+      "total_sqft": 613.54,
+      "note": "The floorplan is gallery image 3; the listing declares no floorplan.",
+      "rooms": [
+        {
+          "name": "Kitchen/Diner",
+          "m": [
+            3.43,
+            2.85
+          ],
+          "ft": [
+            "11'3\"",
+            "9'4\""
+          ]
+        },
+        {
+          "name": "Bedroom",
+          "m": [
+            3.8,
+            2.85
+          ],
+          "ft": [
+            "12'6\"",
+            "9'4\""
+          ]
+        },
+        {
+          "name": "Reception Room",
+          "m": [
+            4.85,
+            3.24
+          ],
+          "ft": [
+            "15'11\"",
+            "10'8\""
+          ],
+          "living": true
+        },
+        {
+          "name": "Terrace",
+          "m": [
+            5.33,
+            1.92
+          ],
+          "ft": [
+            "17'6\"",
+            "6'4\""
+          ],
+          "external": true
+        },
+        {
+          "name": "Terrace",
+          "m": [
+            10.83,
+            2.28
+          ],
+          "ft": [
+            "35'6\"",
+            "7'6\""
+          ],
+          "external": true
+        }
+      ],
+      "floor_printed": "GROUND FLOOR FLAT",
+      "floor_level": "ground",
+      "outdoor": [
+        "has_terrace"
+      ]
+    }
+  },
+  "no_floorplan": [
+    "cbfa2bd6c46",
+    "cf401a92f6b",
+    "c061035c6bf",
+    "c6dc0972cc5",
+    "c8afdb3eb81",
+    "c916001f683",
+    "c8e59aed070",
+    "c6ff566637a",
+    "cbd500e12fe",
+    "c3416f2470a",
+    "c6583a76a2e",
+    "c66220bd66a",
+    "c7edf310a1c",
+    "c721966250d",
+    "c2909afced5",
+    "c29543517b2"
+  ],
+  "no_floorplan_note": "Every gallery image of these homes was looked at on 2026-11-12; none is a floorplan."
+}

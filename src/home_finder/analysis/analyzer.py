@@ -27,6 +27,7 @@ from home_finder.analysis.listing_text import (
     select_listing_text,
     supported_bills_included,
     supported_council_tax_band,
+    supported_property_type,
 )
 from home_finder.analysis.space_evidence import reconcile_floorplan_areas
 from home_finder.analysis.spend import AnalysisSpendMeter, visual_input_key
@@ -1897,10 +1898,12 @@ class PropertyQualityAnalyzer:
             band = supported_council_tax_band(extraction.council_tax_band, description, features)
             epc = supported_band("epc", extraction.epc_rating, description, features)
             bills = supported_bills_included(extraction.bills_included, description, features)
+            property_type = supported_property_type(extraction.property_type, description, features)
             if (
                 band != extraction.council_tax_band
                 or epc != extraction.epc_rating
                 or bills != extraction.bills_included
+                or property_type != extraction.property_type
             ):
                 analysis = analysis.model_copy(
                     update={
@@ -1909,6 +1912,7 @@ class PropertyQualityAnalyzer:
                                 "council_tax_band": band,
                                 "epc_rating": epc,
                                 "bills_included": bills,
+                                "property_type": property_type,
                             }
                         )
                     }
