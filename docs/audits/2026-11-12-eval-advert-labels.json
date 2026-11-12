@@ -1,0 +1,314 @@
+{
+  "about": "What each advert states, read from the advert text on 2026-11-12 by Claude (not yet spot-checked by a person). A field that is absent for a home means the advert does not state it, so the right answer is unknown or empty. 'accept' lists other answers that the wording also supports. Homes are the 30 from the October 2026 bake-off, by case id.",
+  "fields": [
+    "epc_rating",
+    "service_charge_pcm",
+    "deposit_weeks",
+    "bills_included",
+    "pets_allowed",
+    "parking",
+    "council_tax_band",
+    "property_type",
+    "furnished_status",
+    "broadband_type"
+  ],
+  "homes": {
+    "cabafe00bcb": {
+      "furnished_status": {
+        "value": "unfurnished",
+        "quote": "available unfurnished"
+      }
+    },
+    "cbfa2bd6c46": {
+      "epc_rating": {
+        "value": "B",
+        "quote": "EPC Rating: B"
+      },
+      "deposit_weeks": {
+        "value": null,
+        "accept": [
+          5
+        ],
+        "quote": "Deposit / Bond: £2,423.07",
+        "note": "Given in pounds; it equals 5.0 weeks of the stated weekly rent."
+      },
+      "furnished_status": {
+        "value": "unknown",
+        "accept": [
+          "furnished",
+          "unfurnished"
+        ],
+        "quote": "furnished or unfurnished (tenant can decide)"
+      },
+      "pets_allowed": {
+        "value": "no",
+        "quote": "No Pets, sorry"
+      },
+      "bills_included": {
+        "value": "no",
+        "quote": "Bills not included"
+      },
+      "parking": {
+        "value": "none",
+        "quote": "No Parking Available"
+      }
+    },
+    "cf401a92f6b": {
+      "furnished_status": {
+        "value": "unfurnished",
+        "quote": "offered unfurnished"
+      }
+    },
+    "c6a9db682ca": {
+      "note": "The October runs saved no copy of this advert's text, but their answers match it, so the model was given it.",
+      "epc_rating": {
+        "value": "C",
+        "quote": "EPC rating: C"
+      },
+      "parking": {
+        "value": "dedicated",
+        "quote": "Parking: Allocated"
+      }
+    },
+    "c061035c6bf": {
+      "deposit_weeks": {
+        "value": null,
+        "accept": [
+          4
+        ],
+        "quote": "Deposit: £2,200",
+        "note": "Given in pounds; one month's rent, about 4.3 weeks."
+      }
+    },
+    "c7815468aad": {},
+    "c218d61fc0d": {},
+    "c6dc0972cc5": {},
+    "c8afdb3eb81": {
+      "property_type": {
+        "value": "victorian",
+        "accept": [
+          "period_conversion"
+        ],
+        "quote": "Victorian conversion garden flat"
+      },
+      "deposit_weeks": {
+        "value": null,
+        "accept": [
+          5
+        ],
+        "quote": "Security Deposit: £2,596",
+        "note": "Given in pounds; 5.0 weeks of the advertised rent."
+      },
+      "council_tax_band": {
+        "value": "C",
+        "quote": "Council Tax Band: C"
+      }
+    },
+    "c5fffd6fc3b": {},
+    "c916001f683": {},
+    "cdb55a12a34": {
+      "bills_included": {
+        "value": "no",
+        "quote": "per Calendar Month (Excluding Bills)"
+      },
+      "council_tax_band": {
+        "value": "B",
+        "quote": "Council Tax Band B"
+      },
+      "deposit_weeks": {
+        "value": 5,
+        "quote": "Deposit is 5 weeks rent"
+      },
+      "epc_rating": {
+        "value": "C",
+        "quote": "EPC rating C"
+      },
+      "furnished_status": {
+        "value": "part_furnished",
+        "quote": "offered as part furnished"
+      }
+    },
+    "c8e59aed070": {
+      "furnished_status": {
+        "value": "furnished",
+        "quote": "Property is offered furnished"
+      },
+      "deposit_weeks": {
+        "value": null,
+        "accept": [
+          4
+        ],
+        "quote": "Deposit / Bond is £2,100.00",
+        "note": "Given in pounds; one month's rent, about 4.3 weeks."
+      },
+      "pets_allowed": {
+        "value": "no",
+        "quote": "No Pets, sorry"
+      },
+      "bills_included": {
+        "value": "no",
+        "quote": "Bills not included"
+      },
+      "epc_rating": {
+        "value": "B",
+        "quote": "EPC Rating: B"
+      }
+    },
+    "c6ff566637a": {
+      "furnished_status": {
+        "value": "unfurnished",
+        "quote": "Unfurnished"
+      }
+    },
+    "c7100ef648b": {},
+    "cbd500e12fe": {
+      "furnished_status": {
+        "value": "furnished",
+        "quote": "Furnished, but happy to remove furniture if needed"
+      },
+      "bills_included": {
+        "value": "no",
+        "quote": "Bills not included (£200-£400/month)"
+      },
+      "deposit_weeks": {
+        "value": 5,
+        "quote": "5 weeks deposit"
+      }
+    },
+    "c281ffe24f1": {},
+    "c3416f2470a": {
+      "furnished_status": {
+        "value": "furnished",
+        "accept": [
+          "unknown"
+        ],
+        "quote": "stunning furnished ... available furnished or unfurnished"
+      }
+    },
+    "c6583a76a2e": {
+      "furnished_status": {
+        "value": "unfurnished",
+        "quote": "This unfurnished ground-floor one-bedroom flat"
+      }
+    },
+    "ce8b8d1130c": {
+      "parking": {
+        "value": "dedicated",
+        "accept": [
+          "unknown"
+        ],
+        "quote": "Estate Parking",
+        "note": "Parking on the estate; whether a space is allocated is not stated."
+      }
+    },
+    "cbc2ff95d3d": {
+      "property_type": {
+        "value": "period_conversion",
+        "quote": "Period Build"
+      },
+      "furnished_status": {
+        "value": "part_furnished",
+        "quote": "Offered: Part furnished"
+      }
+    },
+    "c66220bd66a": {
+      "property_type": {
+        "value": "victorian",
+        "accept": [
+          "period_conversion"
+        ],
+        "quote": "charming Victorian conversion"
+      }
+    },
+    "c7edf310a1c": {
+      "property_type": {
+        "value": "period_conversion",
+        "quote": "middle floor period conversion"
+      },
+      "furnished_status": {
+        "value": "unfurnished",
+        "quote": "Property comes unfurnished"
+      },
+      "deposit_weeks": {
+        "value": null,
+        "accept": [
+          5
+        ],
+        "quote": "Deposit / Bond: £2,250.00",
+        "note": "Given in pounds; 5.0 weeks of the stated weekly rent."
+      },
+      "pets_allowed": {
+        "value": "no",
+        "quote": "No Pets, sorry",
+        "note": "Stated in one of the two portal copies; the other omits the line."
+      },
+      "bills_included": {
+        "value": "no",
+        "quote": "Bills not included"
+      },
+      "parking": {
+        "value": "none",
+        "quote": "No Parking Available"
+      },
+      "epc_rating": {
+        "value": "C",
+        "quote": "EPC Rating: C"
+      }
+    },
+    "c7c7cd95c9a": {
+      "furnished_status": {
+        "value": "furnished",
+        "quote": "Stylishly Furnished"
+      }
+    },
+    "c67eae66d5e": {
+      "parking": {
+        "value": "street",
+        "quote": "Residential Permit Parking",
+        "note": "Permit parking is on-street, not an allocated space."
+      }
+    },
+    "c721966250d": {
+      "furnished_status": {
+        "value": "furnished",
+        "quote": "Property is offered furnished"
+      },
+      "deposit_weeks": {
+        "value": null,
+        "accept": [
+          5
+        ],
+        "quote": "Deposit / Bond is £2,532.69",
+        "note": "Given in pounds; 5.0 weeks of the stated weekly rent."
+      },
+      "pets_allowed": {
+        "value": "yes",
+        "accept": [
+          "unknown"
+        ],
+        "quote": "Pets considered / by arrangement"
+      },
+      "bills_included": {
+        "value": "no",
+        "quote": "Bills not included"
+      },
+      "parking": {
+        "value": "none",
+        "quote": "No Parking Available"
+      },
+      "epc_rating": {
+        "value": "D",
+        "quote": "EPC Rating: D"
+      }
+    },
+    "c2909afced5": {
+      "property_type": {
+        "value": "period_conversion",
+        "quote": "ground floor of a period conversion"
+      }
+    },
+    "c4a1aa70169": {},
+    "ca67f7ead1f": {},
+    "c29543517b2": {}
+  }
+}
