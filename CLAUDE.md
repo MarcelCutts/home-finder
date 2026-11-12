@@ -192,7 +192,7 @@ async with AsyncSession() as session:
   - Detail: `prop`, `outcode`, `area_context`, `best_description`, `source_names`, `image_url_map`
   - Property card `prop` dict: `unique_id`, `title`, `price_pcm`, `bedrooms`, `postcode`, `image_url`, `quality_rating`, `quality_concerns`, `quality_severity`, `quality_summary`, `sources_list`, `commute_minutes`, `transport_mode`, `min_price`, `max_price`, `latitude`, `longitude`, `status`, `highlights`, `lowlights`, `value_rating`
 - **Templates:**
-  - `_status_controls.html` — Status pill groups (triage/progress/outcome) for detail page
+  - `_status_controls.html` — Status pill groups (triage/progress/outcome); returned by `PATCH /property/{id}/status`, not shown on the listing page
   - `_macros.html` — Shared Jinja2 macros
 
 ## Testing Patterns

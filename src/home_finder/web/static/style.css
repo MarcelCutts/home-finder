@@ -2097,7 +2097,7 @@ nav.container-fluid li {
 
 /* ===== Detail Header ===== */
 /* Under the photos: what it is and where, with the rent beside it in large figures;
-   then the facts, your status and how fresh the listing is. */
+   then the facts and how fresh the listing is. */
 .detail-header {
     display: flex;
     flex-direction: column;
@@ -2140,8 +2140,7 @@ nav.container-fluid li {
 .detail-header-facts {
     align-items: center;
 }
-.detail-header .processing-notice,
-.detail-header .status-history-section {
+.detail-header .processing-notice {
     margin: 0;
 }
 .detail-meta {
@@ -2173,12 +2172,6 @@ nav.container-fluid li {
 .meta-dim {
     color: var(--text-dim);
     font-size: 0.85rem;
-}
-.detail-header-meta {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: 0.5rem 0.75rem;
 }
 .listing-freshness {
     margin: 0;

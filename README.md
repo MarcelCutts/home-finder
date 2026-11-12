@@ -108,7 +108,7 @@ The `--serve` flag starts a FastAPI web server on port 8000 without collection. 
 - **Property detail pages**: Full gallery with lightbox (keyboard + touch/swipe navigation), floorplan, quality analysis breakdown, area context (rental benchmarks, council tax, crime rates, rent trends), and source links
 - **Quality summary on cards**: Condition severity badge and one-line AI summary on each card
 - **Map marker interaction**: Clicking a marker scrolls to the card if visible, or fetches and pins it at the top of results with a dismiss button
-- **Property status workflow**: Pill-based status controls (triage → progress → outcome) with quick-action buttons (star/skip) on new property cards
+- **Property status workflow**: Quick-action buttons (star/skip) on new property cards and a Status filter (triage → progress → outcome) on the dashboard; the detail page has no status control
 - **Thumbnails**: Gallery images served as 480px thumbnails for faster card loading
 - **Telegram integration**: When `HOME_FINDER_WEB_BASE_URL` is set, Telegram notifications include a "Details" button linking to the web dashboard
 

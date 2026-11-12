@@ -771,10 +771,6 @@ async def property_detail(
                 prop["floor_area_sqm"] = total_sqm
                 prop["floor_area_source"] = "estimated"
 
-    # Status tracking (Ticket 7)
-    user_status = prop.get("user_status") or "new"
-    status_history = await storage.get_status_history(unique_id)
-
     # Price history (Ticket 10)
     price_history = await storage.get_price_history(unique_id)
 
@@ -812,10 +808,6 @@ async def property_detail(
             "fit_score": fit_score,
             "fit_breakdown": fit_breakdown,
             "cost_breakdown": cost_breakdown,
-            "user_status": user_status,
-            "user_statuses": list(UserStatus),
-            "status_meta": USER_STATUS_META,
-            "status_history": status_history,
             "price_history": price_history,
             "negotiation": negotiation,
             "rental_guidance": GUIDANCE,

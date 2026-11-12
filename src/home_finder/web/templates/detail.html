@@ -181,7 +181,7 @@
         </div>
         {% endif %}
 
-        {# 2. What it is, where and the rent; then your status and how fresh the listing is #}
+        {# 2. What it is, where and the rent; then three facts and how fresh the listing is #}
         <header class="detail-header">
             <div class="detail-header-row">
                 <div class="detail-header-what">
@@ -222,37 +222,16 @@
                         <dd>{{ commute_pill(prop.commute_minutes, prop.transport_mode) }}</dd>
                     </div>
                 </dl>
-                <div class="detail-header-meta">
-                    {% set unique_id = prop.unique_id %}
-                    {% set current_status = user_status %}
-                    <div class="status-selector-wrap">
-                        {% include "_status_controls.html" %}
-                    </div>
-                    {# Freshness: when the collector first saw it, and whether anyone has checked it is still listed #}
-                    <p class="listing-freshness">
-                        <span title="When this listing was first collected, not how long it has been on the market">First seen <span class="figure">{{ prop.first_seen | short_date }}</span></span>
-                        <span class="meta-sep">&middot;</span>
-                        {% if prop.last_checked_at %}availability last checked <span class="figure">{{ prop.last_checked_at | short_date }}</span>{% else %}availability not checked{% endif %}
-                    </p>
-                </div>
+                {# Freshness: when the collector first saw it, and whether anyone has checked it is still listed #}
+                <p class="listing-freshness">
+                    <span title="When this listing was first collected, not how long it has been on the market">First seen <span class="figure">{{ prop.first_seen | short_date }}</span></span>
+                    <span class="meta-sep">&middot;</span>
+                    {% if prop.last_checked_at %}availability last checked <span class="figure">{{ prop.last_checked_at | short_date }}</span>{% else %}availability not checked{% endif %}
+                </p>
             </div>
             {% if not lead %}{{ processing_notice() }}{% endif %}
             {% if prop.notification_label %}
             <p class="processing-notice">{{ prop.notification_label }}.</p>
-            {% endif %}
-            {% if status_history %}
-            <details class="status-history-section">
-                <summary>Status History ({{ status_history|length }})</summary>
-                <div class="status-history-timeline">
-                    {% for event in status_history %}
-                    <div class="status-history-event">
-                        <span class="status-history-date">{{ event.created_at[:10] }}</span>
-                        <span class="status-history-label">{{ event.from_status or 'new' }} &rarr; {{ event.to_status }}</span>
-                        {% if event.source != 'web' %}<span class="status-history-source">via {{ event.source }}</span>{% endif %}
-                    </div>
-                    {% endfor %}
-                </div>
-            </details>
             {% endif %}
         </header>
 
@@ -685,5 +664,4 @@
 <script type="module" src="/static/modules/gallery.js?v={{ static_version }}"></script>
 <script type="module" src="/static/modules/map-detail.js?v={{ static_version }}"></script>
 <script type="module" src="/static/modules/sections.js?v={{ static_version }}"></script>
-<script type="module" src="/static/modules/status.js?v={{ static_version }}"></script>
 {% endblock %}

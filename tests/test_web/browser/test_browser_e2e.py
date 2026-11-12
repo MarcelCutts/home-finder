@@ -428,22 +428,26 @@ class TestMapProvider:
 class TestDashboardBrowser:
     """Test dashboard page in real browser."""
 
-    def test_owner_can_change_status_and_reload(self, page):
-        page.goto("/property/openrent:1001")
-        page.locator(".status-selector-trigger").click()
-        with page.expect_response(
-            lambda response: response.request.method == "PATCH" and "/status" in response.url
-        ) as changed:
-            page.get_by_role("menuitem", name="Interested", exact=True).click()
-        assert changed.value.status == 200
-        expect(page.locator(".status-selector-trigger")).to_contain_text("Interested")
-        page.reload()
-        expect(page.locator(".status-selector-trigger")).to_contain_text("Interested")
+    def test_owner_can_change_status_from_the_queue_and_it_survives_a_reload(self, page):
+        """The queue's star button sets a status; the listing page has no status control."""
+        page.goto("/")
+        card = page.locator('article.property-card[data-property-id="openrent:1001"]')
+        try:
+            with page.expect_response(
+                lambda response: response.request.method == "PATCH" and "/status" in response.url
+            ) as changed:
+                card.get_by_role("button", name="Mark interested", exact=True).click()
+            assert changed.value.status == 200
+            expect(card).to_have_attribute("data-status", "interested")
+            page.reload()
+            expect(card).to_have_attribute("data-status", "interested")
 
-        # Restore the shared fixture so other browser scenarios keep their baseline.
-        page.locator(".status-selector-trigger").click()
-        page.get_by_role("menuitem", name="New", exact=True).click()
-        expect(page.locator(".status-selector-trigger")).to_contain_text("New")
+            page.goto("/property/openrent:1001")
+            expect(page.locator("h1")).to_be_visible()
+            expect(page.locator(".status-selector")).to_have_count(0)
+        finally:
+            # Restore the shared fixture so other browser scenarios keep their baseline.
+            _set_status(page, "openrent:1001", "new")
 
     def test_loads_property_cards(self, page):
         page.goto("/")
@@ -818,6 +822,19 @@ def _contrast(text: str, grounds: list[str]) -> float:
     return (max(fg, bg) + 0.05) / (min(fg, bg) + 0.05)
 
 
+def _set_status(page, property_id: str, status: str) -> None:
+    """Set a home's status through the route, from the page so the request is same-origin.
+
+    The listing page has no status control, and the queue's buttons only move a new home on.
+    """
+    code = page.evaluate(
+        "([id, status]) => fetch(`/property/${id}/status`,"
+        " {method: 'PATCH', body: new URLSearchParams({status})}).then(r => r.status)",
+        [property_id, status],
+    )
+    assert code == 200
+
+
 def _page_paper(page) -> str:
     """The page's ground colour. Pico paints it on the root element; the body is transparent."""
     return page.evaluate("getComputedStyle(document.documentElement).backgroundColor")
@@ -891,28 +908,6 @@ class TestThemes:
         assert working.evaluate("el => el.scrollWidth <= el.clientWidth")
         cell = page.locator(".fit-working tbody td:not(:first-child)").first
         assert cell.evaluate("el => getComputedStyle(el).fontSize") == "12.48px"
-
-    @pytest.mark.parametrize("theme", ["light", "dark"])
-    def test_status_control_text_keeps_contrast_in_every_state(self, page, theme):
-        """The status control tints its fill with its text colour, over the page's paper."""
-        page.emulate_media(color_scheme=theme)
-        page.goto("/property/openrent:1001")
-        trigger = page.locator(".status-selector-trigger")
-        expect(trigger).to_be_visible()
-
-        def ratio() -> float:
-            text, fill = trigger.evaluate(
-                "el => [getComputedStyle(el).color, getComputedStyle(el).backgroundColor]"
-            )
-            return _contrast(text, [_page_paper(page), fill])
-
-        assert ratio() >= 4.5
-        trigger.hover()
-        page.wait_for_timeout(300)  # the fill transitions over 150ms
-        assert ratio() >= 4.5
-        trigger.click()
-        page.wait_for_timeout(300)
-        assert ratio() >= 4.5
 
     @pytest.mark.parametrize("theme", ["light", "dark"])
     def test_map_tiles_follow_the_theme(self, page, theme, fixture_tiles):
@@ -1276,10 +1271,7 @@ class TestFilterNavigation:
             expect(card.locator(".fit-popover")).to_be_visible()
             assert not console_errors
         finally:
-            page.goto("/property/openrent:1003")
-            page.locator(".status-selector-trigger").click()
-            page.get_by_role("menuitem", name="New", exact=True).click()
-            expect(page.locator(".status-selector-trigger")).to_contain_text("New")
+            _set_status(page, "openrent:1003", "new")
 
 
 @pytest.mark.browser

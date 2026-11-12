@@ -190,7 +190,9 @@ class TestDetailPage:
         assert facts["Bedrooms"] == "1"
         assert facts["Floor area"] == "Not listed"
         assert facts["Commute"].startswith("22 min")
-        assert header.select_one(".status-selector") is not None
+        # With them, how fresh the listing is; nothing else.
+        assert header.select_one(".listing-freshness") is not None
+        assert header.select_one(".status-selector") is None
 
     async def test_assessment_lists_what_fits_what_doesnt_and_whats_unknown(
         self,
@@ -292,17 +294,21 @@ class TestDetailPage:
             assert soup.select_one(meta)["content"] == "Studio · 15 Mare Street, E8 3RH"
         assert "0 bed" not in resp.text
 
-    async def test_status_control_shows_the_saved_status(
+    async def test_listing_page_carries_no_status_tracking(
         self, client: TestClient, storage: PropertyStorage, merged_a: MergedProperty
     ) -> None:
-        """The header's status control replaced the old status bar."""
+        """A saved status and its history stay in the data; the page shows neither."""
         await storage.save_merged_property(merged_a)
         await storage.update_user_status(merged_a.unique_id, UserStatus.VIEWING_BOOKED)
+        assert len(await storage.get_status_history(merged_a.unique_id)) == 1
+
         resp = client.get(f"/property/{merged_a.unique_id}")
         assert resp.status_code == 200
-        assert "detail-status-bar" not in resp.text
-        trigger = _soup(resp.text).select_one(".status-selector .status-selector-trigger")
-        assert trigger.get_text(strip=True) == "Viewing"
+        soup = _soup(resp.text)
+        assert soup.select_one(".status-selector, .status-selector-wrap") is None
+        assert soup.select_one(".status-history-section") is None
+        assert "Status History" not in resp.text
+        assert "Viewing" not in soup.select_one(".detail-header").get_text()
 
     @pytest.mark.parametrize("checked", [False, True])
     async def test_freshness_says_when_first_seen_and_whether_availability_was_checked(
