@@ -253,8 +253,8 @@
                 <p class="detail-lead-title">{{ lead.title }}</p>
                 {% if lead.detail %}<p class="detail-lead-detail">{{ lead.detail }}</p>{% endif %}
             </div>
-            {# The score as a number with its lowest dimension. Its tier name ("Good fit")
-               stays off this page until the score has been calibrated. #}
+            {# The score as a number with its lowest dimension. Tier names ("Good fit") stay
+               off this page, here and in the working below, until the score is calibrated. #}
             {% if fit_score is not none %}
             <div class="take-part take-fit">
                 <p class="take-label">Fit with your brief</p>
@@ -337,7 +337,7 @@
                     <tfoot><tr><td colspan="3">= <span class="figure">{{ working.total }}</span>, rounded</td><td>{{ working.score }}</td></tr></tfoot>
                 </table>
                 </div>
-                <p class="fit-breakdown-legend">Share of total is the weight after confidence: a dimension the photos barely showed counts for less. Points are shown to one decimal, so they can differ from the total by a tenth. <span class="figure">{{ FIT_TIERS[1]['min'] }}</span> and above counts as a good fit.</p>
+                <p class="fit-breakdown-legend">Share of total is the weight after confidence: a dimension the photos barely showed counts for less. Points are shown to one decimal, so they can differ from the total by a tenth.</p>
             </details>
             {% endif %}
         </div>

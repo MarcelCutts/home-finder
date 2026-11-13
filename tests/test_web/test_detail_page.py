@@ -42,6 +42,11 @@ def _landmark_name(el: Tag) -> str:
     return "h1" if el.name == "h1" else el.get("id") or el["class"][0]
 
 
+def _tier_words(text: str) -> list[str]:
+    """The fit tier names ("Good Fit", "Okay", ...) that appear in a piece of page text."""
+    return [tier["label"] for tier in FIT_TIERS if tier["label"].lower() in text.lower()]
+
+
 def _single_source(prop: Property) -> MergedProperty:
     return MergedProperty(
         canonical=prop,
@@ -389,11 +394,6 @@ class TestDetailPage:
         resp = client.get(f"/property/{merged_a.unique_id}")
         assert resp.status_code == 200
         assert "off-market-banner" not in resp.text
-
-
-def _tier_words(text: str) -> list[str]:
-    """The fit tier names ("Good Fit", "Okay", ...) that appear in a piece of page text."""
-    return [tier["label"] for tier in FIT_TIERS if tier["label"].lower() in text.lower()]
 
 
 class TestTake:
@@ -795,6 +795,10 @@ class TestListingText:
         assert working.select_one(".fit-working tfoot td:last-child").get_text(strip=True) == score
         link = soup.select_one(".take a[href='#fit-working']")
         assert link.get_text(" ", strip=True) == f"How the {score} is made"
+        # Neither the working nor anything else on the page names a fit tier: tiers
+        # stay off the listing page until the score is calibrated.
+        assert _tier_words(working.get_text(" ")) == []
+        assert _tier_words(soup.select_one("article.listing").get_text(" ")) == []
 
         notes = [li.find(string=True).strip() for li in soup.select(".annotated-notes li")]
         assert soup.select_one("#section-nav a[href='#section-description']") is not None
