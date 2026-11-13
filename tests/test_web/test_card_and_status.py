@@ -63,7 +63,10 @@ class TestCardPartial:
 
 
 class TestStatusChange:
-    """PATCH /property/{unique_id}/status from the detail page's status control or a card."""
+    """PATCH /property/{unique_id}/status, from a card or as the status control partial.
+
+    The listing page no longer shows that control; the route still returns it.
+    """
 
     async def test_patch_returns_selector_partial(
         self, client: TestClient, storage: PropertyStorage, merged_a: MergedProperty

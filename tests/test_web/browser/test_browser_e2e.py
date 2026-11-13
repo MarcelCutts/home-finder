@@ -428,22 +428,26 @@ class TestMapProvider:
 class TestDashboardBrowser:
     """Test dashboard page in real browser."""
 
-    def test_owner_can_change_status_and_reload(self, page):
-        page.goto("/property/openrent:1001")
-        page.locator(".status-selector-trigger").click()
-        with page.expect_response(
-            lambda response: response.request.method == "PATCH" and "/status" in response.url
-        ) as changed:
-            page.get_by_role("menuitem", name="Interested", exact=True).click()
-        assert changed.value.status == 200
-        expect(page.locator(".status-selector-trigger")).to_contain_text("Interested")
-        page.reload()
-        expect(page.locator(".status-selector-trigger")).to_contain_text("Interested")
+    def test_owner_can_change_status_from_the_queue_and_it_survives_a_reload(self, page):
+        """The queue's star button sets a status; the listing page has no status control."""
+        page.goto("/")
+        card = page.locator('article.property-card[data-property-id="openrent:1001"]')
+        try:
+            with page.expect_response(
+                lambda response: response.request.method == "PATCH" and "/status" in response.url
+            ) as changed:
+                card.get_by_role("button", name="Mark interested", exact=True).click()
+            assert changed.value.status == 200
+            expect(card).to_have_attribute("data-status", "interested")
+            page.reload()
+            expect(card).to_have_attribute("data-status", "interested")
 
-        # Restore the shared fixture so other browser scenarios keep their baseline.
-        page.locator(".status-selector-trigger").click()
-        page.get_by_role("menuitem", name="New", exact=True).click()
-        expect(page.locator(".status-selector-trigger")).to_contain_text("New")
+            page.goto("/property/openrent:1001")
+            expect(page.locator("h1")).to_be_visible()
+            expect(page.locator(".status-selector")).to_have_count(0)
+        finally:
+            # Restore the shared fixture so other browser scenarios keep their baseline.
+            _set_status(page, "openrent:1001", "new")
 
     def test_loads_property_cards(self, page):
         page.goto("/")
@@ -608,6 +612,142 @@ class TestPropertyDetailBrowser:
 
 
 @pytest.mark.browser
+class TestHomeFirstLayout:
+    """The listing page opens on the home: photos on the first screen, the take beside them."""
+
+    LISTING = "/property/openrent:1003"
+
+    @pytest.mark.parametrize(
+        ("width", "height"),
+        [(1280, 800), (1440, 900), (1920, 1080), (2560, 1440), (375, 812)],
+    )
+    def test_first_photo_and_rent_are_on_the_first_screen(self, page, width, height):
+        page.set_viewport_size({"width": width, "height": height})
+        page.goto(self.LISTING)
+        _wait_for_webfonts(page)
+        photo = page.locator("#section-photos img").first.bounding_box()
+        # Only the site bar is above the first photo.
+        assert 0 < photo["y"] < 120
+        rent = page.locator(".listing-rent").bounding_box()
+        assert rent["y"] + rent["height"] <= height
+        assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
+
+    def test_take_sits_beside_the_photos_and_matches_their_height(self, page):
+        page.set_viewport_size({"width": 1440, "height": 900})
+        page.goto(self.LISTING)
+        _wait_for_webfonts(page)
+        photos = page.locator("#section-photos").bounding_box()
+        take = page.locator(".take").bounding_box()
+        assert take["x"] >= photos["x"] + photos["width"]
+        # Same top and same height: neither leaves an empty block beside the other.
+        assert abs(take["y"] - photos["y"]) <= 1
+        assert abs(take["height"] - photos["height"]) <= 1
+        # The title and rent run under both.
+        title = page.locator("h1").bounding_box()
+        assert title["y"] >= photos["y"] + photos["height"]
+
+    def test_take_follows_the_title_and_rent_on_a_phone(self, page):
+        page.set_viewport_size({"width": 375, "height": 812})
+        page.goto(self.LISTING)
+        _wait_for_webfonts(page)
+        tops = [
+            page.locator(selector).first.bounding_box()["y"]
+            for selector in ("#section-photos", "h1", ".listing-rent", ".take", "#section-overview")
+        ]
+        assert tops == sorted(tops)
+        # The photos are a swipe strip: each photo a full-width slide.
+        strip = page.locator(".hero-gallery")
+        assert strip.evaluate("el => getComputedStyle(el).scrollSnapType") == "x mandatory"
+        assert strip.evaluate("el => el.scrollWidth > el.clientWidth")
+
+    def test_listing_is_a_centred_column_and_the_queue_stays_fluid(self, page):
+        page.set_viewport_size({"width": 1920, "height": 1080})
+        page.goto(self.LISTING)
+        main = page.locator("main").bounding_box()
+        viewport = page.evaluate("document.documentElement.clientWidth")
+        assert main["width"] == 1240
+        assert abs(main["x"] - (viewport - 1240) / 2) <= 1
+        # The site bar's contents line up with the column.
+        logo = page.locator(".nav-logo").bounding_box()
+        assert main["x"] <= logo["x"] <= main["x"] + 32
+
+        page.goto("/")
+        assert page.locator("main").bounding_box()["width"] == viewport
+
+    def test_score_working_opens_from_its_summary_with_the_keyboard(self, page):
+        page.goto(self.LISTING)
+        table = page.locator("#fit-working .fit-working")
+        expect(table).not_to_be_visible()
+        summary = page.locator("#fit-working summary")
+        summary.focus()
+        assert summary.evaluate("el => getComputedStyle(el).outlineStyle") == "solid"
+        page.keyboard.press("Enter")
+        expect(table).to_be_visible()
+        page.keyboard.press("Enter")
+        expect(table).not_to_be_visible()
+
+    def test_take_link_opens_the_score_working(self, page):
+        page.set_viewport_size({"width": 1440, "height": 900})
+        page.goto(self.LISTING)
+        link = page.locator(".take a[href='#fit-working']")
+        expect(link).to_be_visible()
+        link.click()
+        expect(page.locator("#fit-working .fit-working")).to_be_visible()
+        expect(page.locator("#fit-working summary")).to_be_in_viewport()
+
+    def test_malformed_fragment_does_not_stop_the_page_scripts(self, page):
+        """The fragment is read at load; a stray "%" in it must not abort sections.js."""
+        errors: list[str] = []
+        page.on("pageerror", lambda exc: errors.append(str(exc)))
+        page.goto(self.LISTING + "#100%")
+        expect(page.locator("h1")).to_be_visible()
+        # The section bar's scroll handler is set up after the fragment is read.
+        page.evaluate("window.scrollTo(0, 600)")
+        expect(page.locator("#section-nav")).to_have_class(re.compile(r"\bsticky\b"))
+        assert errors == []
+
+    def test_floorplan_tile_opens_the_floorplan_with_the_keyboard(self, page):
+        page.goto(self.LISTING)
+        tile = page.locator(".hero-plan a")
+        tile.focus()
+        page.keyboard.press("Enter")
+        gallery = page.locator("#gallery-view")
+        expect(gallery).to_be_visible()
+        expect(page.locator("#gallery-tab-floorplan")).to_have_attribute("aria-selected", "true")
+        page.keyboard.press("Escape")
+        expect(gallery).not_to_be_visible()
+        expect(tile).to_be_focused()
+
+    @pytest.mark.parametrize("theme", ["light", "dark"])
+    def test_take_text_keeps_contrast_on_its_panel(self, page, theme):
+        page.emulate_media(color_scheme=theme)
+        page.goto(self.LISTING)
+        take = page.locator(".take")
+        panel = take.evaluate("el => getComputedStyle(el).backgroundColor")
+        for selector in (
+            ".detail-lead-kicker",
+            ".detail-lead-title",
+            ".detail-lead-detail",
+            ".take-label",
+            ".take-fit-lowest",
+            ".take-link",
+            ".provenance-note",
+        ):
+            colour = take.locator(selector).first.evaluate("el => getComputedStyle(el).color")
+            assert _contrast(colour, [_page_paper(page), panel]) >= 4.5, selector
+        # The fixture's lead is all clear. The other leads colour their kicker red (a
+        # broken limit), ink (a risk) or muted (needs checking); measure those tokens too.
+        for token in ("--red", "--ink", "--muted", "--green"):
+            colour = page.evaluate(
+                "(token) => { const probe = document.createElement('span');"
+                " probe.style.color = `var(${token})`; document.body.append(probe);"
+                " const colour = getComputedStyle(probe).color; probe.remove(); return colour; }",
+                token,
+            )
+            assert _contrast(colour, [_page_paper(page), panel]) >= 4.5, token
+
+
+@pytest.mark.browser
 class TestMapViewBrowser:
     """Test dashboard map view."""
 
@@ -703,6 +843,24 @@ def _contrast(text: str, grounds: list[str]) -> float:
     return (max(fg, bg) + 0.05) / (min(fg, bg) + 0.05)
 
 
+def _set_status(page, property_id: str, status: str) -> None:
+    """Set a home's status through the route, from the page so the request is same-origin.
+
+    The listing page has no status control, and the queue's buttons only move a new home on.
+    """
+    code = page.evaluate(
+        "([id, status]) => fetch(`/property/${id}/status`,"
+        " {method: 'PATCH', body: new URLSearchParams({status})}).then(r => r.status)",
+        [property_id, status],
+    )
+    assert code == 200
+
+
+def _page_paper(page) -> str:
+    """The page's ground colour. Pico paints it on the root element; the body is transparent."""
+    return page.evaluate("getComputedStyle(document.documentElement).backgroundColor")
+
+
 def _tokens(page) -> dict[str, str]:
     """The theme's tokens plus its color-scheme, which the map tiles read."""
     return page.evaluate(
@@ -761,6 +919,8 @@ class TestThemes:
 
         page.goto("/property/openrent:1003")
         working = page.locator(".fit-working-wrap")
+        expect(working).not_to_be_visible()
+        page.locator(".take a[href='#fit-working']").click()
         expect(working).to_be_visible()
         _wait_for_webfonts(page)
         assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
@@ -769,32 +929,6 @@ class TestThemes:
         assert working.evaluate("el => el.scrollWidth <= el.clientWidth")
         cell = page.locator(".fit-working tbody td:not(:first-child)").first
         assert cell.evaluate("el => getComputedStyle(el).fontSize") == "12.48px"
-
-    @pytest.mark.parametrize("theme", ["light", "dark"])
-    def test_status_control_text_keeps_contrast_in_every_state(self, page, theme):
-        """The status control tints its fill with its text colour, over the header band."""
-        page.emulate_media(color_scheme=theme)
-        page.goto("/property/openrent:1001")
-        trigger = page.locator(".status-selector-trigger")
-        expect(trigger).to_be_visible()
-
-        def ratio() -> float:
-            text, fill = trigger.evaluate(
-                "el => [getComputedStyle(el).color, getComputedStyle(el).backgroundColor]"
-            )
-            band = page.locator(".detail-header").evaluate(
-                "el => getComputedStyle(el).backgroundColor"
-            )
-            paper = page.evaluate("getComputedStyle(document.body).backgroundColor")
-            return _contrast(text, [paper, band, fill])
-
-        assert ratio() >= 4.5
-        trigger.hover()
-        page.wait_for_timeout(300)  # the fill transitions over 150ms
-        assert ratio() >= 4.5
-        trigger.click()
-        page.wait_for_timeout(300)
-        assert ratio() >= 4.5
 
     @pytest.mark.parametrize("theme", ["light", "dark"])
     def test_map_tiles_follow_the_theme(self, page, theme, fixture_tiles):
@@ -1158,10 +1292,7 @@ class TestFilterNavigation:
             expect(card.locator(".fit-popover")).to_be_visible()
             assert not console_errors
         finally:
-            page.goto("/property/openrent:1003")
-            page.locator(".status-selector-trigger").click()
-            page.get_by_role("menuitem", name="New", exact=True).click()
-            expect(page.locator(".status-selector-trigger")).to_contain_text("New")
+            _set_status(page, "openrent:1003", "new")
 
 
 @pytest.mark.browser
@@ -1215,16 +1346,18 @@ class TestFitScorePopover:
         expect(page.locator(".fit-popover").first).not_to_be_visible()
 
     def test_detail_page_shows_fit_breakdown(self, page):
-        """Detail page for analyzed property shows fit breakdown card."""
+        """Detail page for analyzed property shows the brief card with the score's working."""
         page.goto("/property/openrent:1003")
         breakdown = page.locator(".fit-breakdown-card")
         expect(breakdown).to_be_visible()
-        # Should have 6 dimension rows
+        # Six dimension rows, behind the disclosure until it is opened
         expect(page.locator(".fit-working-row")).to_have_count(6)
+        expect(page.locator(".fit-working-row").first).not_to_be_visible()
 
     def test_detail_breakdown_labels(self, page):
-        """Detail breakdown shows correct dimension labels."""
+        """Detail breakdown shows correct dimension labels once its disclosure is open."""
         page.goto("/property/openrent:1003")
+        page.locator("#fit-working summary").click()
         labels = page.locator(".fit-working-label")
         expect(labels.first).to_be_visible()
         label_texts = [labels.nth(i).text_content().strip() for i in range(labels.count())]

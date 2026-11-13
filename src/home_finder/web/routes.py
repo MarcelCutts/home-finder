@@ -4,12 +4,14 @@ import asyncio
 import functools
 import json
 import math
+from collections.abc import Mapping
 from datetime import UTC, datetime
 from decimal import Decimal
 from html import escape as html_escape
 from pathlib import Path
 from typing import Annotated, Any, Final, Literal, cast
 from urllib.parse import urlencode
+from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
@@ -72,7 +74,7 @@ from home_finder.web.filters import (
     FilterDep,
     _parse_optional_int,
 )
-from home_finder.web.verdict import build_verdict
+from home_finder.web.verdict import build_verdict, highlights_within_brief, icons_from_brief
 from home_finder.web.working import fit_working
 
 logger = get_logger(__name__)
@@ -197,14 +199,26 @@ def bed_label_filter(bedrooms: int | None) -> str:
     return "Studio" if bedrooms == 0 else f"{bedrooms} bed"
 
 
+# The dates shown on a page are London's; the stored timestamps are UTC.
+_LONDON: Final = ZoneInfo("Europe/London")
+
+
 def short_date_filter(iso_str: str | None) -> str:
-    """Format an ISO timestamp as a date such as "13 Feb 2026"."""
+    """Format an ISO timestamp as its London date, such as "13 Feb 2026".
+
+    Timestamps are stored in UTC. The date a renter means is London's, which in
+    summer is a day later than UTC's for the hour before 1am. A timestamp with no
+    offset is read as UTC, as ``listing_age_filter`` reads it.
+    """
     if not iso_str:
         return ""
     try:
         dt = datetime.fromisoformat(iso_str)
     except ValueError:
         return ""
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=UTC)
+    dt = dt.astimezone(_LONDON)
     return f"{dt.day} {dt:%b %Y}"
 
 
@@ -284,12 +298,24 @@ def _brief_limits(settings: Settings) -> dict[str, Any]:
     }
 
 
+def _breaks_hard_limit(listing: Mapping[str, Any], settings: Settings) -> bool:
+    """Whether a listing is outside the brief's rent, bedroom or commute limit.
+
+    The fit score doesn't count those limits. Where the score's band is named, a home
+    that breaks one keeps its number without the name: the card reads this from the
+    lead, and the map popup from the marker's flag. The listing page names no band.
+    """
+    check = check_brief(listing, None, None, **_brief_limits(settings))
+    return brief_lead(check, None)["kind"] == "broken"
+
+
 def _enrich_fit_scores(properties: list[Any], settings: Settings | None = None) -> None:
     """Compute fit_score, fit_breakdown, lifestyle_icons and the brief lead for each property.
 
     Mutates dicts in place. Reads analysis_json from each property dict.
-    Sets None defaults for properties without analysis data. The brief lead needs
-    the settings; without them it is left out.
+    Sets None defaults for properties without analysis data. The brief needs the
+    settings; without them it is left out. With them, the card's icons and highlight
+    tags are held to the brief, so a card never claims more than the brief does.
     """
     for prop in properties:
         prop["lead"] = None
@@ -319,6 +345,8 @@ def _enrich_fit_scores(properties: list[Any], settings: Settings | None = None) 
             check = check_brief(prop, analysis, fit_breakdown, **_brief_limits(settings))
             prop["brief_check"] = check
             prop["lead"] = brief_lead(check, analysis)
+            prop["lifestyle_icons"] = icons_from_brief(prop["lifestyle_icons"], check)
+            prop["highlights"] = highlights_within_brief(prop.get("highlights") or [], check)
 
 
 @router.get("/count")
@@ -461,11 +489,16 @@ async def dashboard(
         logger.error("map_markers_query_failed", exc_info=True)
         map_markers = []
 
-    # Rewrite external CDN URLs in map markers too
+    # Rewrite external CDN URLs in map markers too, and flag the scored homes whose
+    # popup must not name a fit band.
+    settings = request.app.state.settings
     for marker in map_markers:
         resolved = _resolve_cached_thumbnail(marker["id"], marker.get("image_url"), data_dir)
         if resolved:
             marker["image_url"] = resolved
+        marker["breaks_limit"] = marker["fit_score"] is not None and _breaks_hard_limit(
+            {**marker, "price_pcm": marker["price"]}, settings
+        )
 
     properties_json = json.dumps(map_markers)
 
@@ -737,13 +770,12 @@ async def property_detail(
             qa, bedrooms, postcode=prop.get("postcode")
         )
 
-    verdict = build_verdict(qa, fit_breakdown) if qa is not None else None
-
     # The brief: what was asked for, measured against this listing; its first gap
-    # opens the page. The agent's words get notes from the same analysis.
+    # leads the take. The lists and the agent's words draw on the same analysis.
     settings = request.app.state.settings
     brief_check = check_brief(prop, qa, fit_breakdown, **_brief_limits(settings))
     lead = brief_lead(brief_check, qa) if qa is not None else None
+    verdict = build_verdict(qa, fit_breakdown, brief_check) if qa is not None else None
     annotated = (
         annotate_listing(best_description, qa, outcode=outcode, price_pcm=prop.get("price_pcm"))
         if best_description and qa
@@ -768,10 +800,6 @@ async def property_detail(
             if isinstance(total_sqm, (int, float)) and total_sqm > 0:
                 prop["floor_area_sqm"] = total_sqm
                 prop["floor_area_source"] = "estimated"
-
-    # Status tracking (Ticket 7)
-    user_status = prop.get("user_status") or "new"
-    status_history = await storage.get_status_history(unique_id)
 
     # Price history (Ticket 10)
     price_history = await storage.get_price_history(unique_id)
@@ -810,10 +838,6 @@ async def property_detail(
             "fit_score": fit_score,
             "fit_breakdown": fit_breakdown,
             "cost_breakdown": cost_breakdown,
-            "user_status": user_status,
-            "user_statuses": list(UserStatus),
-            "status_meta": USER_STATUS_META,
-            "status_history": status_history,
             "price_history": price_history,
             "negotiation": negotiation,
             "rental_guidance": GUIDANCE,
@@ -876,8 +900,9 @@ async def update_property_status(
     """Update property user status.
 
     Returns a full card partial when the form posts ``source=card`` (the
-    dashboard card's quick-action buttons), or the status selector partial for
-    detail-page swaps.
+    dashboard card's quick-action buttons), or the status selector partial
+    otherwise. No page renders that selector now: status tracking left the listing
+    page, and the partial is kept until the queue's tracking is decided.
     """
     form = await request.form(max_fields=4, max_files=0, max_part_size=1024)
     status_value = str(form.get("status", "")).strip().lower()

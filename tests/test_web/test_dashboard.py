@@ -8,7 +8,14 @@ from bs4 import BeautifulSoup
 from fastapi.testclient import TestClient
 
 from home_finder.db.storage import PropertyStorage
-from home_finder.models import MergedProperty, Property, PropertyQualityAnalysis, ValueAnalysis
+from home_finder.models import (
+    FlooringNoiseAnalysis,
+    MergedProperty,
+    Property,
+    PropertyQualityAnalysis,
+    SpaceAnalysis,
+    ValueAnalysis,
+)
 
 
 def _soup(html: str) -> BeautifulSoup:
@@ -246,3 +253,78 @@ async def test_figures_are_marked_and_source_badges_carry_no_inline_colour(
     assert re.fullmatch(r"\d/\d", dashboard.select_one(".card-must .figure").get_text())
     badges = dashboard.select(".source-badge")
     assert badges and all(not badge.has_attr("style") for badge in badges)
+
+
+async def test_card_claims_no_more_than_the_brief(
+    client, storage, prop_a, merged_a, base_analysis
+) -> None:
+    """A spacious, double-glazed home whose living room was never measured.
+
+    The scorer's hosting icon would be good and the analysis tagged the living room
+    spacious; the brief says room to host needs checking, so the card and the listing
+    page say no more than that.
+    """
+    analysis = base_analysis.model_copy(
+        update={
+            "space": SpaceAnalysis(is_spacious_enough=True),
+            "flooring_noise": FlooringNoiseAnalysis(has_double_glazing="yes"),
+            "highlights": ["Spacious living room", "Gas hob"],
+        }
+    )
+    await storage.save_merged_property(merged_a, commute_minutes=22)
+    await storage.save_quality_analysis(prop_a.unique_id, analysis)
+
+    card = _soup(client.get("/").text).select_one("article.property-card")
+    assert "room to host also needs checking" in card.select_one(".card-lead").get_text()
+    icons = {icon["title"]: icon["data-state"] for icon in card.select(".lifestyle-icon")}
+    assert icons["Room to host: living-room size not shown"] == "neutral"
+    assert icons["A kitchen that works: Gas hob"] == "good"
+    assert [chip.get_text() for chip in card.select(".highlight-positive")] == ["Gas hob"]
+    # The card fetched for a map marker is held to the brief the same way.
+    marker_card = _soup(client.get(f"/property/{merged_a.unique_id}/card").text)
+    assert [chip.get_text() for chip in marker_card.select(".highlight-positive")] == ["Gas hob"]
+
+    listing = _soup(client.get(f"/property/{merged_a.unique_id}").text)
+    assert [li.get_text() for li in listing.select(".verdict-fits li")] == ["Gas hob"]
+
+
+@pytest.mark.parametrize(("max_price", "named"), [(2500, True), (1800, False)])
+async def test_card_names_the_fit_band_only_inside_the_hard_limits(
+    client, storage, prop_a, merged_a, base_analysis, max_price: int, named: bool
+) -> None:
+    """The score ignores rent, bedrooms and commute, so over a limit it stays a bare number."""
+    await storage.save_merged_property(merged_a, commute_minutes=22)
+    await storage.save_quality_analysis(prop_a.unique_id, base_analysis)
+    client.app.state.settings = client.app.state.settings.model_copy(
+        update={"max_price": max_price}
+    )
+    card = _soup(client.get("/").text).select_one("article.property-card")
+
+    assert ("card-lead-broken" in card.select_one(".card-lead")["class"]) is not named
+    assert card.select_one(".fit-badge").get_text(strip=True).isdigit()
+    assert (card.select_one(".fit-tier-pill") is not None) is named
+    assert (card.select_one(".fit-popover-tier") is not None) is named
+
+
+@pytest.mark.parametrize(
+    ("max_price", "assessed", "flagged"),
+    [
+        (1800, True, True),
+        (2500, True, False),
+        # No score, so the popup has no band to leave out.
+        (1800, False, False),
+    ],
+)
+async def test_map_marker_says_when_its_popup_must_not_name_a_fit_band(
+    client, storage, prop_a, merged_a, base_analysis, max_price: int, assessed: bool, flagged: bool
+) -> None:
+    """The popup builds its band from the score; the marker tells it about a broken limit."""
+    await storage.save_merged_property(merged_a, commute_minutes=22)
+    if assessed:
+        await storage.save_quality_analysis(prop_a.unique_id, base_analysis)
+    client.app.state.settings = client.app.state.settings.model_copy(
+        update={"max_price": max_price}
+    )
+    (marker,) = _map_markers(client.get("/").text)
+    assert (marker["fit_score"] is not None) is assessed
+    assert marker["breaks_limit"] is flagged

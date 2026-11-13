@@ -246,6 +246,7 @@ h1, h2, h3, h4, h5, h6 {
 .fit-dim-score,
 .fit-brief-score,
 .detail-facts dd,
+.listing-rent,
 .money-total-amount,
 .cost-bills-amount,
 .fit-working td:not(:first-child),
@@ -311,6 +312,25 @@ nav.container-fluid a {
 }
 nav.container-fluid li {
     color: var(--text-muted);
+}
+
+/* The listing page reads as one centred column about 1,240px wide, as the portals'
+   listing pages do. The bar keeps its full-width rule and only its contents line up
+   with the column. The queue and the other pages stay fluid. */
+.listing-page {
+    --page-max: 77.5rem;
+}
+.listing-page > main.container-fluid,
+.listing-page > footer.container-fluid {
+    max-width: var(--page-max);
+}
+.listing-page > nav.container-fluid {
+    padding-inline: max(var(--pico-spacing), calc((100% - var(--page-max)) / 2 + var(--pico-spacing)));
+}
+/* Pico pads an article as a card; here the article is the page. */
+.listing {
+    margin-bottom: 0;
+    padding: 0;
 }
 
 /* ===== Filter bar (glassmorphic) ===== */
@@ -1443,12 +1463,6 @@ nav.container-fluid li {
 }
 
 /* Fit breakdown card (detail page) */
-.fit-breakdown-card h4, .fit-breakdown-card .fit-brief-title {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    margin-bottom: 0.85rem;
-}
 /* Donut ring for detail page overall score */
 .fit-breakdown-donut-wrap {
     position: relative;
@@ -1668,20 +1682,30 @@ nav.container-fluid li {
 .badge-muted { background: transparent; border: 1px solid var(--rule); color: var(--muted); font-size: 0.7rem; opacity: 0.7; }
 
 /* ===== Hero Gallery ===== */
+/* One large photo with its thumbnails beside it; the floorplan, when there is one, is
+   the last tile. The height follows the window, so the title and rent under the photos
+   stay on the first screen, and grows to match a taller take. Tiles take their size
+   from the grid, never from the photo inside, so photos are positioned over them.
+   The height is the row's own minimum, not a min-height on the box: the tiles have
+   no content height, and a row sized only by a box's min-height depends on the
+   browser re-resolving the fr track against it. */
 .hero-gallery {
     display: grid;
-    grid-template-columns: 3fr 2fr;
-    height: 460px;
+    grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
+    grid-template-rows: minmax(clamp(20rem, 54vh, 33.75rem), 1fr);
+    flex: 1 1 auto;
     gap: 4px;
     border-radius: var(--radius);
     overflow: hidden;
-    margin-bottom: 1.75rem;
     position: relative;
+}
+.hero-gallery-solo {
+    grid-template-columns: minmax(0, 1fr);
 }
 .hero-photo-count {
     position: absolute;
     bottom: 12px;
-    right: 12px;
+    left: 12px;
     background: var(--overlay-scrim-strong);
     backdrop-filter: blur(8px);
     color: var(--overlay-ink);
@@ -1697,36 +1721,52 @@ nav.container-fluid li {
 .hero-gallery .hero-main {
     position: relative;
     overflow: hidden;
+    min-height: 0;
     cursor: pointer;
     background: none;
     border: none;
     padding: 0;
 }
-.hero-gallery .hero-main img {
+.hero-gallery .hero-main img,
+.hero-gallery .hero-thumb img {
+    position: absolute;
+    inset: 0;
     width: 100%;
     height: 100%;
     object-fit: cover;
     display: block;
 }
+/* Thumbnails two abreast; an odd one out takes the whole row. */
 .hero-gallery .hero-thumbs {
     display: grid;
-    grid-template-columns: 1fr 1fr;
-    grid-template-rows: 1fr 1fr;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-auto-rows: minmax(0, 1fr);
     gap: 4px;
+    min-height: 0;
+}
+.hero-gallery .hero-thumb:last-child:nth-child(odd) {
+    grid-column: 1 / -1;
+}
+/* Beside the take the photos have less width, so the thumbnails become one narrow strip
+   down the right edge and the main photo keeps its shape. A lone second tile stays wide. */
+@media (min-width: 1025px) {
+    .listing-top-with-take .hero-gallery:not(.hero-gallery-solo, .hero-gallery-pair) {
+        grid-template-columns: minmax(0, 1fr) clamp(7.5rem, 18%, 10rem);
+    }
+    .listing-top-with-take .hero-gallery:not(.hero-gallery-pair) .hero-thumbs {
+        grid-template-columns: minmax(0, 1fr);
+    }
 }
 .hero-gallery .hero-thumb {
     position: relative;
     overflow: hidden;
+    min-height: 0;
     cursor: pointer;
     background: none;
     border: none;
     padding: 0;
 }
 .hero-gallery .hero-thumb img {
-    width: 100%;
-    height: 100%;
-    object-fit: cover;
-    display: block;
     transition: transform 0.2s, filter 0.2s;
 }
 .hero-gallery .hero-thumb:hover img {
@@ -1749,6 +1789,39 @@ nav.container-fluid li {
 }
 .hero-gallery .hero-more-overlay:hover {
     background: var(--overlay-scrim);
+}
+/* The floorplan tile shows the whole drawing on its own white paper, never cropped. */
+.hero-gallery .hero-plan {
+    background: var(--plan-paper);
+    scroll-margin-top: 3rem;
+}
+.hero-plan a {
+    position: absolute;
+    inset: 0;
+}
+.hero-plan a:focus-visible {
+    outline-offset: -3px;
+}
+.hero-gallery .hero-plan img {
+    object-fit: contain;
+    padding: 4px;
+}
+.hero-gallery .hero-plan:hover img {
+    transform: none;
+    filter: none;
+}
+.hero-plan-label {
+    position: absolute;
+    left: 6px;
+    bottom: 6px;
+    padding: 0.1rem 0.4rem;
+    background: var(--overlay-scrim-strong);
+    color: var(--overlay-ink);
+    font-size: 0.7rem;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    border-radius: var(--radius);
+    pointer-events: none;
 }
 
 /* ===== Floorplan ===== */
@@ -2025,16 +2098,24 @@ nav.container-fluid li {
 }
 
 /* ===== Detail Header ===== */
+/* Under the photos: what it is and where, with the rent beside it in large figures;
+   then the facts and how fresh the listing is. */
 .detail-header {
-    margin-bottom: 0.75rem;
-    padding-bottom: 1rem;
-    border-bottom: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    gap: 0.85rem;
+    min-width: 0;
 }
 .detail-header-row {
     display: flex;
+    flex-wrap: wrap;
     justify-content: space-between;
-    align-items: baseline;
-    gap: 1.5rem;
+    align-items: flex-start;
+    gap: 0.6rem 1.5rem;
+}
+.detail-header-what {
+    flex: 1 1 22rem;
+    min-width: 0;
 }
 .detail-header h1 {
     margin-bottom: 0.25rem;
@@ -2043,6 +2124,26 @@ nav.container-fluid li {
     letter-spacing: -0.01em;
     line-height: 1.15;
     min-width: 0;
+}
+.listing-rent {
+    margin: 0;
+    font-size: 2rem;
+    font-weight: 600;
+    line-height: 1.15;
+    white-space: nowrap;
+    color: var(--text);
+}
+.listing-rent-unit {
+    font-family: var(--font-tool);
+    font-size: 0.95rem;
+    font-weight: 500;
+    color: var(--text-muted);
+}
+.detail-header-facts {
+    align-items: center;
+}
+.detail-header .processing-notice {
+    margin: 0;
 }
 .detail-meta {
     color: var(--text-muted);
@@ -2074,29 +2175,126 @@ nav.container-fluid li {
     color: var(--text-dim);
     font-size: 0.85rem;
 }
-.detail-header-meta {
-    display: flex;
-    align-items: center;
-    gap: 0.75rem;
-    flex-shrink: 0;
+.listing-freshness {
+    margin: 0;
+    font-size: 0.8rem;
+    color: var(--text-muted);
+}
+.listing-freshness .figure {
+    font-size: 0.95em;
 }
 
-/* ===== Listing page: facts, verdict, photos ===== */
-/* Five facts in one strip; the 1px gaps over a border-coloured ground draw the rules. */
-.detail-facts {
+/* ===== Listing page: the home first, the take beside it ===== */
+/* Photos, then the header, then the take, in that order in the page and on a narrow
+   screen. On a wide one the take moves up beside the photos. */
+.listing-top {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(min(9rem, 100%), 1fr));
+    grid-template-columns: minmax(0, 1fr);
+    gap: 1.1rem 1.5rem;
+    margin-bottom: 1.25rem;
+}
+.listing-top-with-take {
+    grid-template-columns: minmax(0, 1fr) minmax(17rem, 21.5rem);
+}
+.listing-top-with-take > * { grid-column: 1 / -1; }
+.listing-top-with-take > .detail-media { grid-column: 1; grid-row: 1; }
+.listing-top-with-take > .take { grid-column: 2; grid-row: 1; }
+
+/* The take: the tool's judgement, stated once. A panel as tall as the photos beside it:
+   the thing to check, the lead and the score, ruled apart, with the provenance line at
+   its foot. */
+.take {
+    display: flex;
+    flex-direction: column;
+    gap: 0.9rem;
+    min-width: 0;
+    padding: 1.1rem 1.25rem;
+    background: var(--paper-shade);
+    border-radius: var(--radius);
+}
+/* A hard limit the listing breaks is marked on the panel itself, not only in its words. */
+.take-broken {
+    box-shadow: inset 3px 0 0 var(--red);
+}
+.take .processing-notice {
+    margin: 0;
+    color: var(--text-muted);
+}
+/* Each part after the first is ruled off from the one above. */
+.take-part ~ .take-part {
+    padding-top: 0.9rem;
+    border-top: 1px solid var(--rule-strong);
+}
+.take-label {
+    margin: 0 0 0.25rem;
+    font-size: var(--text-label);
+    font-weight: 700;
+    letter-spacing: var(--tracking-label);
+    text-transform: uppercase;
+    color: var(--text-muted);
+}
+.take-fit-line {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 0.1rem 0.6rem;
+    margin: 0;
+}
+.fit-brief-score {
+    font-size: 2rem;
+    font-weight: 600;
+    line-height: 1.1;
+    color: var(--text);
+}
+.take-fit-lowest {
+    font-size: 0.9rem;
+    color: var(--text-muted);
+}
+.take-fit-lowest .figure {
+    font-size: 0.95em;
+}
+.take-check-item {
+    margin: 0;
+    font-size: 0.95rem;
+    line-height: 1.45;
+}
+.take-link {
+    display: inline-block;
+    margin-top: 0.35rem;
+    font-size: 0.85rem;
+    color: var(--text);
+    text-decoration: underline;
+    text-decoration-color: var(--rule-control);
+    text-underline-offset: 3px;
+}
+.take-link:hover {
+    text-decoration-color: var(--ink);
+}
+.take .provenance-note {
+    max-width: none;
+    margin: auto 0 0;
+    padding-top: 0.9rem;
+    font-size: 0.78rem;
+    line-height: 1.5;
+}
+
+/* Three facts in one strip, as wide as their contents; the 1px gaps over a rule-coloured
+   ground draw the rules. The rent sits beside the title and the fit score in the take. */
+.detail-facts {
+    display: flex;
+    flex-wrap: wrap;
     gap: 1px;
-    margin: 1rem 0 0;
+    margin: 0;
     background: var(--border);
     border: 1px solid var(--border);
     border-radius: var(--radius);
     overflow: hidden;
 }
 .detail-fact {
+    flex: 1 1 auto;
     background: var(--bg-card);
-    padding: 0.7rem 1rem;
-    min-width: 0;
+    padding: 0.55rem 1rem;
+    min-width: 7.5rem;
 }
 .detail-facts dt {
     margin: 0;
@@ -2108,13 +2306,10 @@ nav.container-fluid li {
 }
 .detail-facts dd {
     margin: 0.15rem 0 0;
-    font-size: 1.35rem;
+    font-size: 1.25rem;
     font-weight: 600;
     line-height: 1.25;
     color: var(--text);
-}
-.detail-fact-rent dd {
-    font-size: 1.6rem;
 }
 .detail-facts .detail-fact-unit {
     font-family: var(--font-tool);
@@ -2130,12 +2325,6 @@ nav.container-fluid li {
     font-weight: 500;
     color: var(--text-muted);
 }
-.detail-facts dd a {
-    color: inherit;
-    text-decoration: underline;
-    text-decoration-color: var(--border-hover);
-    text-underline-offset: 4px;
-}
 .detail-facts .commute-pill {
     font-size: 0.85rem;
 }
@@ -2148,22 +2337,26 @@ nav.container-fluid li {
 }
 
 .verdict-headline {
-    margin: 0 0 0.35rem;
+    margin: 0 0 0.5rem;
     font-size: 1.35rem;
     font-weight: 700;
     line-height: 1.35;
     letter-spacing: -0.015em;
 }
-.verdict-body {
-    display: grid;
-    grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
-    gap: 1.5rem;
-    align-items: start;
+.verdict-summary {
+    max-width: 75ch;
+    margin: 0 0 1.5rem;
+    font-size: 0.95rem;
+    line-height: 1.6;
+    color: var(--text-muted);
 }
+/* The three lists share the full width, then the brief runs under them, so no list
+   has to stand beside a taller card. */
 .verdict-lists {
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(min(11rem, 100%), 1fr));
-    gap: 1.25rem 1.5rem;
+    gap: 1.25rem 2rem;
+    margin-bottom: 1.75rem;
 }
 .detail-section .verdict-list-title {
     margin: 0 0 0.5rem;
@@ -2191,64 +2384,30 @@ nav.container-fluid li {
 .verdict-more summary {
     cursor: pointer;
 }
-.verdict-body .fit-breakdown-card {
+.verdict-section .fit-breakdown-card {
     margin-bottom: 0;
-}
-.verdict-summary {
-    max-width: 75ch;
-    margin: 1.5rem 0 0;
-    font-size: 0.9rem;
-    line-height: 1.65;
-    color: var(--text-muted);
 }
 
-/* Photos with the floorplan beside them */
+/* Photos, and the notes on the floorplan under them. The photos stretch to the take's
+   height when the take is the taller of the two, so neither leaves a gap. */
 .detail-media {
-    margin-bottom: 2.5rem;
-    scroll-margin-top: 3rem;
-}
-.detail-media .hero-gallery {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
     margin-bottom: 0;
-}
-.detail-media-with-plan {
-    display: grid;
-    grid-template-columns: minmax(0, 2fr) minmax(0, 1fr);
-    gap: 0.75rem;
-    align-items: start;
-}
-.detail-media-with-plan .hero-gallery {
-    grid-template-columns: 2fr 1fr;
-}
-.detail-media-with-plan .hero-gallery .hero-thumbs {
-    grid-template-columns: 1fr;
-}
-.floorplan-panel {
-    margin: 0;
-    padding: 0.75rem;
-    background: var(--bg-card);
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
     scroll-margin-top: 3rem;
 }
-.floorplan-panel-image {
-    height: 380px;
+.detail-media.detail-image-placeholder {
+    justify-content: center;
 }
-.floorplan-panel-image a {
-    display: block;
-    height: 100%;
+/* The caption belongs to the photos, so it sits closer to them than the grid's gap. */
+.floorplan-notes {
+    margin-top: -0.6rem;
 }
-.floorplan-panel .floorplan-image {
-    width: 100%;
-    height: 100%;
-    max-height: none;
-    object-fit: contain;
-    background: var(--plan-paper);
-    border-radius: var(--radius);
+.floorplan-notes .provenance-note {
+    margin: 0;
 }
-.floorplan-panel figcaption {
-    margin: 0.6rem 0 0;
-}
-.floorplan-panel .floorplan-all {
+.floorplan-notes .floorplan-all {
     display: inline;
     width: auto;
     margin: 0;
@@ -2261,28 +2420,20 @@ nav.container-fluid li {
     text-underline-offset: 3px;
     cursor: pointer;
 }
-.floorplan-panel .floorplan-repeats .floorplan-frame {
+.floorplan-notes .floorplan-repeats {
+    margin: 0.5rem 0 0;
+}
+.floorplan-notes .floorplan-repeats .floorplan-frame {
     padding: 0.5rem;
 }
 @media (max-width: 1024px) {
-    .verdict-body,
-    .detail-media-with-plan {
-        grid-template-columns: 1fr;
+    .listing-top-with-take {
+        grid-template-columns: minmax(0, 1fr);
     }
-    .detail-media-with-plan .hero-gallery {
-        grid-template-columns: 1fr;
-    }
-    .floorplan-panel-image {
-        height: auto;
-    }
-    .floorplan-panel .floorplan-image {
-        height: auto;
-        max-height: 70vh;
-    }
-}
-@media (max-width: 768px) {
-    .detail-fact-rent {
-        grid-column: 1 / -1;
+    .listing-top-with-take > .detail-media,
+    .listing-top-with-take > .take {
+        grid-column: 1;
+        grid-row: auto;
     }
 }
 
@@ -2537,12 +2688,17 @@ nav.container-fluid li {
 .listing-details-section { margin: 2rem 0 1.5rem; }
 
 /* ===== Viewing checklist ===== */
+/* Each group's items run in two balanced columns where there is room: a readable line
+   length, and no group left standing beside a taller one. */
 .viewing-checklist {
     list-style: none;
     margin: 0;
     padding: 0;
+    columns: 2 24rem;
+    column-gap: 2.5rem;
 }
 .viewing-checklist li {
+    break-inside: avoid;
     padding: 0.35rem 0 0.35rem 1.75rem;
     position: relative;
     font-size: 0.84rem;
@@ -3262,8 +3418,9 @@ nav.container-fluid li {
     transition: max-height 0.35s ease, opacity 0.25s ease;
     padding: 0 1rem;
 }
+/* No height cap when open: in a narrow column ten items run past any fixed one. */
 .viewing-group-body.open {
-    max-height: 600px;
+    max-height: none;
     opacity: 1;
     padding: 0 1rem 0.75rem;
 }
@@ -3376,26 +3533,6 @@ nav.container-fluid li {
     .card-grid {
         grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
     }
-    /* Detail header: stack on smaller screens */
-    .detail-header-row {
-        flex-direction: column;
-        gap: 0.25rem;
-    }
-    .detail-header-meta {
-        flex-wrap: wrap;
-        gap: 0.5rem;
-    }
-    /* Hero gallery: stack on tablet */
-    .hero-gallery {
-        grid-template-columns: 1fr;
-        height: auto;
-    }
-    .hero-gallery .hero-main img {
-        height: 350px;
-    }
-    .hero-gallery .hero-thumbs {
-        height: 180px;
-    }
 }
 @media (max-width: 768px) {
     /* Non-sticky filter bar on mobile to save viewport */
@@ -3478,18 +3615,17 @@ nav.container-fluid li {
     .split-active #dashboard-map {
         height: 50vh;
     }
-    /* Detail page: stack address + badges vertically on mobile */
-    .detail-header-row {
-        flex-direction: column;
-        gap: 0.25rem;
+    /* Detail page: the facts strip takes the full width, under the rent */
+    .detail-header-facts .detail-facts {
+        flex: 1 1 100%;
     }
-    .detail-header-meta {
-        flex-wrap: wrap;
-        gap: 0.5rem;
+    .listing-rent {
+        font-size: 1.75rem;
     }
     /* Hero gallery: scroll-snap carousel on mobile */
     .hero-gallery {
         display: flex;
+        flex: none;
         overflow-x: auto;
         scroll-snap-type: x mandatory;
         height: 280px;
@@ -3545,7 +3681,7 @@ nav.container-fluid li {
         grid-template-columns: 1fr 1fr;
     }
     .detail-header h1 {
-        font-size: 1.25rem;
+        font-size: 1.35rem;
     }
     /* Fit factors mobile */
     .fit-factors {
@@ -3589,10 +3725,6 @@ nav.container-fluid li {
     }
     .overview-card {
         padding: 0.85rem 1rem;
-    }
-    .fit-breakdown-card h4, .fit-breakdown-card .fit-brief-title {
-        font-size: 0.9rem;
-        flex-wrap: wrap;
     }
     .fit-breakdown-label {
         min-width: 58px;
@@ -3970,18 +4102,6 @@ nav.container-fluid li {
     padding: 0.1rem 0.35rem;
 }
 
-/* ===== Listing age pill (detail header) ===== */
-.listing-age-pill {
-    display: inline-flex;
-    align-items: center;
-    padding: 0.12rem 0.5rem;
-    font-size: 0.75rem;
-    border-radius: var(--radius);
-    background: var(--paper-shade);
-    color: var(--text-muted);
-    white-space: nowrap;
-}
-
 /* ===== Negotiation card (Ticket 10) ===== */
 .negotiation-card {
     cursor: default;
@@ -4159,13 +4279,14 @@ nav.container-fluid li {
 }
 
 /* ── The brief on a listing: the lead line, the brief check, the score's working, notes on the text ── */
-.detail-lead { margin: 0 0 1rem; display: flex; flex-direction: column; gap: 0.2rem; }
+/* The lead, inside the take: compact, since the photos are the page's opening now. */
+.detail-lead { margin: 0; display: flex; flex-direction: column; gap: 0.25rem; }
 .detail-lead-kicker { margin: 0; font-size: var(--text-label); font-weight: 700; letter-spacing: var(--tracking-label); text-transform: uppercase; color: var(--text-muted); }
 .detail-lead-broken .detail-lead-kicker { color: var(--red); }
 .detail-lead-risk .detail-lead-kicker { color: var(--ink); }
 .detail-lead-clear .detail-lead-kicker { color: var(--green); }
-.detail-lead-title { margin: 0; font-size: 1.75rem; line-height: 1.1; font-weight: 700; letter-spacing: -0.01em; max-width: 24ch; text-wrap: balance; }
-.detail-lead-detail { margin: 0.2rem 0 0; color: var(--text-muted); max-width: 60ch; }
+.detail-lead-title { margin: 0; font-size: 1.3rem; line-height: 1.2; font-weight: 700; letter-spacing: -0.01em; text-wrap: balance; }
+.detail-lead-detail { margin: 0.1rem 0 0; font-size: 0.9rem; color: var(--text-muted); }
 .card-lead { margin: 0.35rem 0 0; font-weight: 600; line-height: 1.3; }
 .card-lead-broken { color: var(--red); }
 .card-lead-risk { color: var(--ink); }
@@ -4173,19 +4294,23 @@ nav.container-fluid li {
 .card-must { margin: 0.1rem 0 0; font-size: 0.78rem; font-variant-numeric: tabular-nums; color: var(--text-muted); }
 .card-must .figure,
 .commute-pill .figure { font-size: 0.95em; }
-.fit-brief-title { font-size: 1.05rem; }
-.fit-brief-score { font-size: 1.6rem; font-weight: 600; font-variant-numeric: tabular-nums; margin-left: auto; }
-.fit-breakdown-band { color: var(--text-muted); font-weight: 400; font-size: 0.9rem; }
-.brief-check { list-style: none; margin: 0 0 0.9rem; padding: 0; display: flex; flex-direction: column; gap: 0.25rem; font-size: 0.9rem; }
-.brief-check li { list-style: none; margin: 0; padding: 0; }
-.brief-group { font-size: var(--text-label); font-weight: 700; letter-spacing: var(--tracking-label); text-transform: uppercase; color: var(--text-muted); padding-top: 0.4rem; }
+.fit-brief-title { font-size: 1.05rem; margin-bottom: 0.6rem; }
+/* Must-haves and nice-to-haves side by side where there is room, each line ruled. */
+.brief-check { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(20rem, 100%), 1fr)); gap: 0.9rem 2.5rem; margin: 0 0 0.9rem; font-size: 0.9rem; }
+.detail-section .brief-group { margin: 0 0 0.3rem; font-size: var(--text-label); font-weight: 700; letter-spacing: var(--tracking-label); text-transform: uppercase; color: var(--text-muted); }
+.brief-list { list-style: none; margin: 0; padding: 0; }
+.brief-list li { list-style: none; margin: 0; padding: 0.3rem 0; border-top: 1px solid var(--rule); }
 .brief-item { display: flex; justify-content: space-between; gap: 0.75rem; }
 .brief-found { text-align: right; color: var(--text-muted); }
-.brief-must.brief-met .brief-found { color: var(--green); }
-.brief-must.brief-broken .brief-found { color: var(--red); }
+.brief-must.brief-supported .brief-found { color: var(--green); }
+.brief-must.brief-conflict .brief-found { color: var(--red); }
+/* The score's working: closed until asked for, from here or from the take's link. */
+.fit-working-details { margin: 0; padding-top: 0.75rem; border-top: 1px solid var(--rule); scroll-margin-top: 3.5rem; }
+.fit-working-details summary { width: fit-content; font-size: 0.9rem; font-weight: 700; line-height: 1.4; color: var(--text); }
+.fit-working-details .fit-working-wrap,
+.fit-working-details .fit-breakdown-legend { max-width: 36rem; }
 .fit-working-wrap { overflow-x: auto; margin: 0 0 0.5rem; }
 .detail-section table.fit-working { width: 100%; border: 0; border-radius: 0; border-collapse: collapse; font-size: 0.85rem; font-variant-numeric: tabular-nums; margin: 0; }
-.detail-section table.fit-working caption { text-align: left; font-weight: 700; padding: 0 0 0.3rem; caption-side: top; }
 .detail-section table.fit-working thead th,
 .detail-section table.fit-working tbody td,
 .detail-section table.fit-working tfoot td { background: transparent; border: 0; padding: 0.15rem 0.35rem; text-align: right; text-transform: none; letter-spacing: 0; font-size: 0.85rem; color: inherit; white-space: nowrap; }

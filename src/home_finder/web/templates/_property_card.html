@@ -1,4 +1,7 @@
 {% from "_macros.html" import commute_pill, fit_badge, lifestyle_icons %}
+{# The fit score doesn't count rent, bedrooms or commute, so a home that breaks one of
+   those limits keeps its number but isn't called a good or great fit. #}
+{% set breaks_limit = prop.lead and prop.lead.kind == 'broken' %}
 <article class="property-card{% if prop.is_off_market %} property-card-off-market{% endif %}"
          data-property-id="{{ prop.unique_id }}"
          data-status="{{ prop.user_status or 'new' }}"
@@ -39,7 +42,7 @@
             {# Meta row: rating | postcode | commute pill #}
             <div class="card-meta">
                 <div class="card-meta-left">
-                    {% if prop.fit_score is not none %}
+                    {% if prop.fit_score is not none and not breaks_limit %}
                     <span class="fit-tier-pill {{ fit_tier_class(prop.fit_score) }}">{{ fit_tier_label(prop.fit_score) }}</span>
                     {% endif %}
                     {% if prop.postcode %}
@@ -57,7 +60,7 @@
             {# The one thing against the brief: a broken must-have, a gap, or all clear #}
             {% if prop.lead %}
             <p class="card-lead card-lead-{{ prop.lead.kind }}">{{ prop.lead.title }}{% if prop.lead.detail %} <span class="card-lead-detail">{{ prop.lead.detail }}</span>{% endif %}</p>
-            <p class="card-must">must-haves <span class="figure">{{ prop.brief_check.must_met }}/{{ prop.brief_check.must_total }}</span>{% if prop.brief_check.must_broken %} &middot; <span class="figure">{{ prop.brief_check.must_broken }}</span> in conflict{% endif %}{% if prop.brief_check.must_unknown %} &middot; <span class="figure">{{ prop.brief_check.must_unknown }}</span> to check{% endif %}</p>
+            <p class="card-must">must-haves <span class="figure">{{ prop.brief_check.must_supported }}/{{ prop.brief_check.must_total }}</span>{% if prop.brief_check.must_conflict %} &middot; <span class="figure">{{ prop.brief_check.must_conflict }}</span> in conflict{% endif %}{% if prop.brief_check.must_needs_checking %} &middot; <span class="figure">{{ prop.brief_check.must_needs_checking }}</span> to check{% endif %}</p>
             {% endif %}
 
             {# AI summary text (2-line clamp) #}
@@ -140,7 +143,7 @@
             {% endif %}
         </div>
     </a>
-    {{ fit_badge(prop.fit_score, prop.fit_breakdown, prop.unique_id) }}
+    {{ fit_badge(prop.fit_score, prop.fit_breakdown, prop.unique_id, band=not breaks_limit) }}
     {% if not prop.user_status or prop.user_status == 'new' %}
     <div class="card-quick-actions">
         <button class="card-action-btn card-action-interested"

@@ -1,4 +1,5 @@
-"""Floorplans on the detail page: repeated plans are set aside, never hidden."""
+"""Floorplans on the detail page: the plan is a tile among the photos, and repeated
+plans are set aside, never hidden."""
 
 import io
 from pathlib import Path
@@ -79,10 +80,16 @@ async def test_repeated_plan_from_another_portal_is_shown_once(
         if index != 0
     ]
     repeat = f"/images/{safe_id}/{url_to_filename(next(iter(plans)), 'floorplan', 0)}"
-    panel = soup.select_one("#section-floorplan")
-    assert [img["src"] for img in panel.select(".floorplan-panel-image img")] == distinct[:1]
-    assert "See all 3 plans" in panel.figcaption.get_text()
-    variants = panel.select_one("details.floorplan-repeats")
+    # The first distinct plan is the last tile of the photo strip and opens the lightbox.
+    tile = soup.select("#section-photos .hero-thumbs > .hero-thumb")[-1]
+    assert tile["id"] == "section-floorplan"
+    assert [img["src"] for img in tile.select("img")] == distinct[:1]
+    assert tile.a["data-lightbox"] == "floorplan"
+    # Its source, and the way to the other plans, sit under the photos.
+    notes = soup.select_one(".floorplan-notes")
+    caption = notes.select_one(f"#{tile.a['aria-describedby']}")
+    assert "See all 3 plans" in caption.get_text()
+    variants = notes.select_one("details.floorplan-repeats")
     assert variants.summary.get_text() == "Additional floorplan versions (1)"
     assert "label wasn't recorded" in variants.get_text()
     assert variants.img.parent["data-lightbox"] == "floorplan"
@@ -119,14 +126,13 @@ async def test_uncached_plan_from_another_portal_is_set_aside_not_hidden(
     )
 
     soup = BeautifulSoup(client.get(f"/property/{merged_a.unique_id}").text, "html.parser")
-    section = soup.select_one("#section-floorplan")
     assert [img["src"] for img in soup.select(".gallery-floorplan-img")] == [
         f"/images/{safe_dir_name(merged_a.unique_id)}/"
         f"{url_to_filename(cached_url, 'floorplan', 0)}",
         same_site_url,
         other_site_url,
     ]
-    repeats = section.select_one("details.floorplan-repeats")
+    repeats = soup.select_one(".floorplan-notes details.floorplan-repeats")
     assert repeats.summary.get_text() == "Additional floorplan versions (1)"
     assert [img["src"] for img in repeats.select("img")] == [other_site_url]
     assert repeats.img.parent["data-lightbox"] == "floorplan"
